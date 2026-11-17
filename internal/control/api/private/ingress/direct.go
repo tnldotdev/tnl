@@ -3,11 +3,10 @@ package ingress
 import "time"
 
 type DirectConfig struct {
-	Store               Store
-	LeaseDuration       time.Duration
-	RoutingPollInterval time.Duration
-	Now                 func() time.Time
-	Report              func(error)
+	Store         Store
+	LeaseDuration time.Duration
+	Now           func() time.Time
+	Report        func(error)
 }
 
 // DirectClient executes private ingress operations in-process for standalone.

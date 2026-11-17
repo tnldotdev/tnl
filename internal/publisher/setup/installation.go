@@ -14,7 +14,6 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -41,13 +40,11 @@ func (Installation) GoString() string { return "private publication installation
 type Publication struct {
 	Database     *clientstate.Database
 	Server       string
-	Route        controlv1.PublicURL
-	Control      publisheridentity.OwnerControl
+	Service      controlv1.Service
+	Control      publisheridentity.ServiceOwnerControl
 	Options      installedjobs.ServiceOptions
 	Job          installedjobs.Job
-	TargetCAFile string
 	ServerCAFile string
-	ProjectRoot  string
 }
 
 type Presentation struct {
@@ -59,7 +56,16 @@ type Presentation struct {
 }
 
 func InstallPublication(ctx context.Context, selected Publication, presentation Presentation) error {
-	options, database, server, publicURL := selected.Options, selected.Database, selected.Server, selected.Route
+	options, database, server, service := selected.Options, selected.Database, selected.Server, selected.Service
+	if database == nil || service.Ephemeral || !service.Enabled || service.Endpoint == nil {
+		return installedjobs.ErrScope
+	}
+	if err := publisheridentity.MatchServiceDeclaration(service, string(selected.Job.Protocol), selected.Job.Trust); err != nil {
+		return err
+	}
+	if err := target.PreflightPrivate(ctx, selected.Job.TargetPlan()); err != nil {
+		return err
+	}
 	// one protected setup journal per supervisor root. EnsurePublication retains
 	// the exact key through failed registration, lost replies, and retries.
 	digest := sha256.Sum256([]byte(options.Root))
@@ -73,34 +79,23 @@ func InstallPublication(ctx context.Context, selected Publication, presentation 
 	if err != nil {
 		return err
 	}
-	control, authority, err := installedjobs.Clients(installedjobs.Job{Server: server})
+	serverCA, err := ReadTrust(selected.ServerCAFile)
 	if err != nil {
 		return err
 	}
-	credential, err := EnsurePublication(ctx, profile, selected.Control, control.NativeControl, authority, server, publicURL)
+	control, authority, err := installedjobs.Clients(installedjobs.Job{Server: server, ServerCAPEM: serverCA})
+	if err != nil {
+		return err
+	}
+	credential, err := EnsurePublication(ctx, profile, selected.Control, control.NativeControl, authority, server, service)
 	if err != nil {
 		return err
 	}
 	job := selected.Job
-	job.Kind, job.ID, job.Server, job.PublicURLID, job.Protocol = installedjobs.KindPublicURL, installedjobs.PublicURLJobKey(server, publicURL.Id), server, publicURL.Id, config.ProtocolHTTP
-	job.PublisherIdentityID, job.GrantID, job.VerifyReadiness = credential.PublisherIdentityID, credential.GrantID, true
-	caPath := selected.TargetCAFile
-	if caPath != "" && !filepath.IsAbs(caPath) {
-		caPath = filepath.Join(selected.ProjectRoot, caPath)
-	}
-	if caPath != "" {
-		if len(job.TargetCAPEM) != 0 {
-			return installedjobs.ErrScope
-		}
-		job.TargetCAPEM, err = ReadTrust(caPath)
-		if err != nil {
-			return err
-		}
-	}
-	job.ServerCAPEM, err = ReadTrust(selected.ServerCAFile)
-	if err != nil {
-		return err
-	}
+	job.Kind, job.ID, job.Server, job.ServiceID = installedjobs.KindService, installedjobs.ServiceJobKey(server, service.Id), server, service.Id
+	job.PublisherIdentityID, job.GrantID = credential.PublisherIdentityID, credential.GrantID
+	job.TrustRevision, job.PublisherPool, job.Endpoint = service.TrustRevision, service.PublisherPool, service.Endpoint
+	job.ServerCAPEM = serverCA
 	return DeliverInstallation(ctx, options, Installation{Job: job, Credential: credential}, presentation)
 }
 
@@ -192,21 +187,6 @@ func Register(ctx context.Context, options installedjobs.ServiceOptions, payload
 		return err
 	}
 	switch job.Kind {
-	case installedjobs.KindPublicURL:
-		job.VerifyReadiness = true
-		if identity.PublicUrlId == nil || *identity.PublicUrlId != job.PublicURLID || job.ID != installedjobs.PublicURLJobKey(job.Server, job.PublicURLID) {
-			return installedjobs.ErrScope
-		}
-		publicURL, err := native.SavedPublicURL(ctx)
-		if err != nil {
-			return err
-		}
-		if publicURL.Id != job.PublicURLID || publicURL.Ephemeral || publicURL.Purpose != controlv1.App || publicURL.ServiceProtocol != controlv1.Http {
-			return installedjobs.ErrScope
-		}
-		if _, err := target.EnrolledAddress(publicURL, job.Target); err != nil {
-			return err
-		}
 	case installedjobs.KindService:
 		if identity.ServiceId == nil || *identity.ServiceId != job.ServiceID || job.ID != installedjobs.ServiceJobKey(job.Server, job.ServiceID) {
 			return installedjobs.ErrScope
@@ -215,7 +195,7 @@ func Register(ctx context.Context, options installedjobs.ServiceOptions, payload
 		if err != nil {
 			return err
 		}
-		if service.TrustRevision != job.TrustRevision || service.PublisherPool != job.PublisherPool {
+		if service.Ephemeral || service.TrustRevision != job.TrustRevision || service.PublisherPool != job.PublisherPool {
 			return installedjobs.ErrScope
 		}
 		if err := publisheridentity.MatchServiceDeclaration(service, string(job.Protocol), job.Trust); err != nil {
@@ -224,6 +204,7 @@ func Register(ctx context.Context, options installedjobs.ServiceOptions, payload
 		if err := target.PreflightPrivate(ctx, job.TargetPlan()); err != nil {
 			return err
 		}
+		job.Endpoint = service.Endpoint
 	default:
 		return installedjobs.ErrScope
 	}
@@ -258,7 +239,7 @@ func WaitReady(ctx context.Context, registry *installedjobs.Registry, id string)
 		if err != nil {
 			return err
 		}
-		if job.Enabled && job.Status.State == "ready" && (job.Kind == installedjobs.KindService || job.Status.RunNumber != 0 && job.Status.PublicURL != "") {
+		if job.Enabled && job.Kind == installedjobs.KindService && job.Status.State == "ready" && job.Status.RunNumber != 0 {
 			return nil
 		}
 		if job.Status.State == "blocked" {

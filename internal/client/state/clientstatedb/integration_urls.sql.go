@@ -44,15 +44,19 @@ func (q *Queries) IntegrationURLReady(ctx context.Context, arg IntegrationURLRea
 }
 
 const markIntegrationURLReady = `-- name: MarkIntegrationURLReady :exec
-INSERT INTO integration_url_leases (server_origin, hostname, publisher_instance_id, expires_at)
-VALUES (?1, ?2, ?3, ?4)
-ON CONFLICT(server_origin, hostname) DO UPDATE SET publisher_instance_id = excluded.publisher_instance_id, expires_at = excluded.expires_at
+INSERT INTO integration_url_leases (server_origin, hostname, publisher_instance_id, service_id, run_number, expires_at)
+VALUES (?1, ?2, ?3,
+    ?4, ?5, ?6)
+ON CONFLICT(server_origin, hostname) DO UPDATE SET publisher_instance_id = excluded.publisher_instance_id,
+    service_id = excluded.service_id, run_number = excluded.run_number, expires_at = excluded.expires_at
 `
 
 type MarkIntegrationURLReadyParams struct {
 	ServerOrigin        string
 	Hostname            string
 	PublisherInstanceID string
+	ServiceID           string
+	RunNumber           int64
 	ExpiresAt           int64
 }
 
@@ -61,6 +65,8 @@ func (q *Queries) MarkIntegrationURLReady(ctx context.Context, arg MarkIntegrati
 		arg.ServerOrigin,
 		arg.Hostname,
 		arg.PublisherInstanceID,
+		arg.ServiceID,
+		arg.RunNumber,
 		arg.ExpiresAt,
 	)
 	return err

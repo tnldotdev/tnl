@@ -38,10 +38,6 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := session.Identity.Memberships[0]
-	domains, err := d.ListTeamDomains(ctx, session.Identity.Identity.ID, m.TeamID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	handler, err := NewHandler(Config{}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -60,19 +56,18 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 		return nil
 	}
 	pool := true
-	membership := m.ID
-	body := controlv1.CreatePublicURLRequest{TeamId: m.TeamID, DomainId: domains[0].ID, MembershipId: &membership, CanonicalHostname: "pool." + m.ManagedLabel + ".example.test", Target: "http://127.0.0.1:3000",
-		PublicUrlScope: controlv1.Member, Purpose: controlv1.App, PublisherPool: &pool}
-	created, err := api.CreatePublicURLWithResponse(ctx, &controlv1.CreatePublicURLParams{IdempotencyKey: "pool"}, body, auth)
-	if err != nil || created.JSON201 == nil || created.JSON201.PublisherPool == nil || !*created.JSON201.PublisherPool {
+	body := controlv1.CreateServiceRequest{TeamId: m.TeamID, Name: "pool", PublisherPool: &pool,
+		Configuration: &controlv1.ProjectServiceConfiguration{Target: "http://127.0.0.1:3000", Public: new(true)}}
+	created, err := api.CreateServiceWithResponse(ctx, &controlv1.CreateServiceParams{IdempotencyKey: "pool"}, body, auth)
+	if err != nil || created.JSON201 == nil || !created.JSON201.PublisherPool {
 		t.Fatalf("authorized pool API field missing: %+v %v", created, err)
 	}
 	pool = false
-	retry, err := api.CreatePublicURLWithResponse(ctx, &controlv1.CreatePublicURLParams{IdempotencyKey: "pool"}, body, auth)
+	retry, err := api.CreateServiceWithResponse(ctx, &controlv1.CreateServiceParams{IdempotencyKey: "pool"}, body, auth)
 	if err != nil || retry.StatusCode() != 409 {
 		t.Fatalf("pool intent not bound to creation retry: %+v %v", retry, err)
 	}
-	if anonymous, err := api.CreatePublicURLWithResponse(ctx, &controlv1.CreatePublicURLParams{IdempotencyKey: "anonymous"}, body); err != nil || anonymous.StatusCode() != 401 {
+	if anonymous, err := api.CreateServiceWithResponse(ctx, &controlv1.CreateServiceParams{IdempotencyKey: "anonymous"}, body); err != nil || anonymous.StatusCode() != 401 {
 		t.Fatalf("anonymous pool configuration accepted: %+v %v", anonymous, err)
 	}
 	secret := strings.Repeat("x", 32)

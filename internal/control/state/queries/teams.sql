@@ -295,60 +295,6 @@ SET state = 'quarantined',
 WHERE id = sqlc.arg(slug_reservation_id)
   AND state = 'active';
 
--- name: LockMembershipPublicURLs :many
-SELECT routes.*
-FROM control.public_urls AS routes
-WHERE routes.team_id = sqlc.arg(team_id)
-  AND (
-      routes.membership_id = sqlc.arg(membership_id)
-      OR EXISTS (
-          SELECT 1
-          FROM control.publish_runs AS sessions
-          WHERE sessions.public_url_id = routes.id
-            AND sessions.membership_id = sqlc.arg(membership_id)
-            AND sessions.closed_at IS NULL
-      )
-  )
-  AND routes.lifecycle_state <> 'deleted'
-ORDER BY routes.id
-FOR UPDATE;
-
--- name: LockDomainPublicURLs :many
-SELECT *
-FROM control.public_urls
-WHERE team_id = sqlc.arg(team_id)
-  AND domain_id = sqlc.arg(domain_id)
-  AND lifecycle_state <> 'deleted'
-ORDER BY id
-FOR UPDATE;
-
--- name: SuspendAuthorityPublicURL :execrows
-UPDATE control.public_urls
-SET lifecycle_state = 'suspended',
-    dns_state = CASE
-        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN 'removing'
-        ELSE dns_state
-    END,
-    dns_revision = CASE
-        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN dns_revision + 1
-        ELSE dns_revision
-    END,
-    dns_work_owner = NULL,
-    dns_work_expires_at = NULL,
-    dns_available_at = CASE
-        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN sqlc.arg(suspended_at)
-        ELSE dns_available_at
-    END,
-    dns_last_error = NULL,
-    mutation_revision = mutation_revision + 1,
-    suspension_revision = suspension_revision + 1,
-    suspension_reason = sqlc.arg(suspension_reason),
-    suspended_at = sqlc.arg(suspended_at),
-    updated_at = sqlc.arg(suspended_at)
-WHERE id = sqlc.arg(public_url_id)
-  AND lifecycle_state <> 'deleted'
-  AND mutation_revision < 9223372036854775807;
-
 -- name: ExpireTeamInvitations :many
 UPDATE control.team_invitations
 SET state = 'expired'
@@ -402,14 +348,14 @@ RETURNING id;
 
 -- name: TeamSharedNameInUse :one
 SELECT EXISTS (
-    SELECT 1 FROM control.public_urls AS public_url
-    JOIN control.domains AS domain ON domain.id = public_url.domain_id
-    WHERE public_url.team_id = sqlc.arg(team_id)
-      AND public_url.public_url_scope = 'shared'
-      AND public_url.lifecycle_state <> 'deleted'
+    SELECT 1 FROM control.service_endpoints AS endpoint
+    JOIN control.services AS service ON service.id = endpoint.service_id
+    JOIN control.domains AS domain ON domain.id = endpoint.domain_id
+    WHERE service.team_id = sqlc.arg(team_id)
+      AND service.deleted_at IS NULL AND endpoint.retired_at IS NULL
       AND domain.kind = 'custom'
-      AND (public_url.canonical_hostname = sqlc.arg(label)::text || '.' || domain.canonical_domain
-        OR public_url.canonical_hostname LIKE '%.' || sqlc.arg(label)::text || '.' || domain.canonical_domain)
+      AND (endpoint.hostname = sqlc.arg(label)::text || '.' || domain.canonical_domain
+        OR endpoint.hostname LIKE '%.' || sqlc.arg(label)::text || '.' || domain.canonical_domain)
 );
 
 -- name: TeamMemberSlugReserved :one

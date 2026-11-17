@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 const MaxBatch = 256
@@ -56,6 +57,7 @@ type Observation struct {
 	SourceIP            string    `json:"source_ip,omitempty"`
 	Outcome             string    `json:"outcome"`
 	Reason              string    `json:"reason,omitempty"`
+	RoutingAuthority    []byte    `json:"routing_authority,omitempty"`
 }
 
 type Batch struct {
@@ -97,7 +99,7 @@ func validID(id string) bool {
 }
 
 func ValidService(id, kind string) bool {
-	return kind == "public_url" && opaqueid.Valid(id, opaqueid.PublicURLPrefix) || kind == "service" && opaqueid.Valid(id, opaqueid.ServicePrefix)
+	return kind == "service" && opaqueid.Valid(id, opaqueid.ServicePrefix)
 }
 
 // ValidReference accepts native and authority-issued identifiers. stored scope
@@ -127,16 +129,25 @@ func (o Observation) Validate() error {
 		!opaqueid.Valid(o.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || !ValidReason(o.Reason) {
 		return ErrInvalid
 	}
-	if o.DeliveryGeneration < 0 || o.DeliveryGeneration > 0 && o.PairID == "" || o.PairID != "" && (o.DeliveryGeneration < 1 || !opaqueid.Valid(o.PairID, "cpp_") || o.ServiceKind != "service" || o.RunID == "") {
+	if o.DeliveryGeneration < 0 || o.DeliveryGeneration > 0 && o.PairID == "" || o.PairID != "" && (o.DeliveryGeneration < 1 || !opaqueid.Valid(o.PairID, "cpp_") || o.RunID == "") {
 		return ErrInvalid
 	}
 	serviceDenial := o.RunID == "" && o.RunNumber == 0 && o.EventType == "connection.open" &&
-		(o.Outcome == "denied" || o.ServiceKind == "public_url" && o.Outcome == "failed")
-	if !serviceDenial && (o.RunNumber < 1 || o.ServiceKind == "public_url" && !opaqueid.Valid(o.RunID, opaqueid.PublishRunPrefix) ||
-		o.ServiceKind == "service" && !opaqueid.Valid(o.RunID, opaqueid.ServiceRunPrefix)) {
+		o.Outcome == "denied"
+	if serviceDenial && o.Reason != "capacity" && o.Reason != "unavailable" && o.Reason != "invalid_request" &&
+		(o.Reason != "ip_policy" || len(o.RoutingAuthority) == 0) {
 		return ErrInvalid
 	}
-	if o.ServiceKind == "service" && (o.RunID == "" || o.SourceIP == "") {
+	if len(o.RoutingAuthority) > 0 && (!serviceDenial || len(o.RoutingAuthority) > tunnelv1.MaxVisitorSourceAuthorityBytes) {
+		return ErrInvalid
+	}
+	if !serviceDenial && (o.RunNumber < 1 || !opaqueid.Valid(o.RunID, opaqueid.ServiceRunPrefix)) {
+		return ErrInvalid
+	}
+	// only the denied open above may omit a selected service run. control
+	// checks a signed routing authority or the native pending receipt. neither
+	// kind of denial claims an authenticated visitor or grants access.
+	if o.SourceIP == "" {
 		return ErrInvalid
 	}
 	if o.SourceIP != "" {
@@ -151,7 +162,7 @@ func (o Observation) Validate() error {
 			return ErrInvalid
 		}
 	case "http.decision":
-		if o.ServiceKind != "public_url" || o.Outcome != "allowed" && o.Outcome != "denied" && o.Outcome != "failed" {
+		if o.PairID != "" || o.Outcome != "allowed" && o.Outcome != "denied" && o.Outcome != "failed" {
 			return ErrInvalid
 		}
 	default:

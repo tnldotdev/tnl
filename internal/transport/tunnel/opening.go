@@ -3,7 +3,6 @@ package tunnel
 import (
 	"context"
 	"errors"
-	"io"
 
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -21,32 +20,13 @@ type OpeningError struct {
 func (e *OpeningError) Error() string { return "open visitor stream: " + e.Err.Error() }
 func (e *OpeningError) Unwrap() error { return e.Err }
 
-func (s *Session) OpenVisitorStream(ctx context.Context, h tunnelv1.VisitorStreamHeader, initial []byte, events ReturnEvents) (muxsession.Stream, error) {
-	h.TraceContext = observability.WireTrace(ctx)
-	return s.openStream(ctx, h.ConfirmBeforeBytes, events, func(w muxsession.Stream) (int, error) { return tunnelv1.WriteVisitorOpening(w, h, initial) }, nil)
-}
-
-// confirmation is one phase of the same opening. when requested, send metadata
-// first and wait for acceptance before writing the visitor prefix.
-func (s *Session) OpenInternalForwardingStream(ctx context.Context, h tunnelv1.InternalForwardingHeader, proxy, initial []byte, events ReturnEvents) (muxsession.Stream, error) {
-	if len(proxy) > tunnelv1.MaxInitialBytes || len(initial) > tunnelv1.MaxInitialBytes-len(proxy) {
-		return nil, &OpeningError{Err: tunnelv1.ErrOpeningSize}
-	}
-	h.TraceContext = observability.WireTrace(ctx)
-	first, after := initial, []byte(nil)
-	if h.ConfirmBeforeBytes {
-		first, after = nil, initial
-	}
-	return s.openStream(ctx, h.ConfirmBeforeBytes, events, func(w muxsession.Stream) (int, error) { return tunnelv1.WriteForwardingOpening(w, h, proxy, first) }, after)
-}
-
-// private service openings retain their metadata-only acceptance boundary.
+// service openings retain their metadata-only acceptance boundary.
 func (s *Session) OpenServiceForwardingStream(ctx context.Context, h tunnelv1.ServiceForwardingHeader) (muxsession.Stream, error) {
 	h.TraceContext = observability.WireTrace(ctx)
-	return s.openStream(ctx, true, ReturnEvents{}, func(w muxsession.Stream) (int, error) { return tunnelv1.WriteServiceOpening(w, h) }, nil)
+	return s.openStream(ctx, func(w muxsession.Stream) (int, error) { return tunnelv1.WriteServiceOpening(w, h) })
 }
 
-func (s *Session) openStream(ctx context.Context, confirm bool, events ReturnEvents, write func(muxsession.Stream) (int, error), after []byte) (result muxsession.Stream, err error) {
+func (s *Session) openStream(ctx context.Context, write func(muxsession.Stream) (int, error)) (result muxsession.Stream, err error) {
 	stream, err := s.transport.OpenStream(ctx)
 	if err != nil {
 		return nil, &OpeningError{Err: err}
@@ -67,21 +47,9 @@ func (s *Session) openStream(ctx context.Context, confirm bool, events ReturnEve
 	if err != nil {
 		return nil, err
 	}
-	response := &returnStream{Stream: stream, events: events}
-	if confirm {
-		if err := response.accept(); err != nil {
-			return nil, err
-		}
-	}
-	if len(after) > 0 {
-		n, writeErr := stream.Write(after)
-		written += max(0, n)
-		if writeErr == nil && n != len(after) {
-			writeErr = io.ErrShortWrite
-		}
-		if writeErr != nil {
-			return nil, writeErr
-		}
+	response := &returnStream{Stream: stream}
+	if err := response.accept(); err != nil {
+		return nil, err
 	}
 	return response, nil
 }

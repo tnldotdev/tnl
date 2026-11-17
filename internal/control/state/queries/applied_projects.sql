@@ -16,6 +16,13 @@ SELECT sqlc.embed(deployment),binding.service FROM control.applied_project_servi
 JOIN control.deployments deployment ON deployment.id=binding.deployment_id AND deployment.deleted_at IS NULL
 WHERE binding.service_id=sqlc.arg(service_id);
 
+-- name: ListDeploymentServiceConfigurations :many
+SELECT binding.service_id,binding.service,sqlc.embed(deployment)
+FROM control.applied_project_services binding
+JOIN control.deployments deployment ON deployment.id=binding.deployment_id AND deployment.deleted_at IS NULL
+WHERE binding.service_id=ANY(sqlc.arg(service_ids)::text[])
+ORDER BY binding.service_id;
+
 -- name: ListProjectServiceDeclarations :many
 SELECT name,protocol FROM control.project_services WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) ORDER BY name;
 

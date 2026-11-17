@@ -31,7 +31,6 @@ type relayRuntime struct {
 	configuredIdentity string
 	processRunID       string
 	controller         *relay.Controller
-	registry           *relay.Registry
 	serviceRegistry    *relay.ServiceRegistry
 	publisher          *relay.PublisherAcceptor
 	connector          *relay.ConnectorAcceptor
@@ -233,11 +232,8 @@ func (d *daemon) startRelayRuntime(
 		return nil, err
 	}
 	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	registry := relay.NewRegistry()
 	serviceRegistry := relay.NewServiceRegistry()
 	serviceRegistry.Instrument(runtimeConfig.metrics)
-	registry.Instrument(runtimeConfig.metrics)
-	runtime.registry = registry
 	runtime.serviceRegistry = serviceRegistry
 	controller, err := relay.NewController(relay.ControllerConfig{
 		Observer: runtimeConfig.metrics,
@@ -256,11 +252,11 @@ func (d *daemon) startRelayRuntime(
 			logOperationalError(ctx, "renew relay lease", failure.ServerControlConnectionFailed, err)
 		},
 		CertificateChanged: runtimeConfig.certificateChanged,
-		Load: func() (int64, int64) {
-			publicConnections, publicStreams := registry.Load()
-			serviceConnections, privateStreams := serviceRegistry.Load()
-			return publicConnections + serviceConnections, publicStreams + privateStreams
-		}, LeaseChanged: func(previous, current relayv1.RelayLease) {
+		Load:               serviceRegistry.Load, LeaseChanged: func(previous, current relayv1.RelayLease) {
+			if previous.RelayLeaseRevision > 0 && current.RelayLeaseRevision == 0 {
+				// lost serving authority closes existing streams, not only readiness.
+				_ = serviceRegistry.Close()
+			}
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.SetRelayLeaseExpiry(runtimeConfig.relayID, current.LeaseExpiresAt)
 			}
@@ -272,8 +268,6 @@ func (d *daemon) startRelayRuntime(
 					d.background(func() {
 						ctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 						defer cancel()
-						_ = runtime.registry.Drain(ctx)
-						_ = runtime.registry.Close()
 						_ = runtime.serviceRegistry.Drain(ctx)
 						_ = runtime.serviceRegistry.Close()
 					})
@@ -302,13 +296,12 @@ func (d *daemon) startRelayRuntime(
 	runtime.connector = &relay.ConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: privateKey, Claim: claim, Publishers: serviceRegistry}
 	publisherAcceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
 		Observer: runtimeConfig.metrics,
-		Control:  controller, Registry: registry,
 		Connector: func(id string) (*relay.ConnectorAcceptor, bool) {
 			return runtime.connector, id == runtimeConfig.relayServiceID
 		},
-		Private: &relay.ServicePublisherAcceptor{Select: func(id string) (relay.ServicePublisherTarget, bool) {
+		Select: func(id string) (relay.ServicePublisherTarget, bool) {
 			return relay.ServicePublisherTarget{Control: controller, Registry: serviceRegistry}, id == runtimeConfig.relayServiceID
-		}},
+		},
 		ReadyConnectionsDelta: func(delta int) {
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.AddReadyPublisherConnections(delta)
@@ -337,8 +330,8 @@ func (d *daemon) startRelayRuntime(
 		return nil, err
 	}
 	forwardingAcceptor, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
-		Observer: runtimeConfig.metrics,
-		Registry: registry, CurrentLease: controller.Lease,
+		Observer:        runtimeConfig.metrics,
+		CurrentLease:    controller.Lease,
 		ServiceRegistry: serviceRegistry,
 		ClusterSecrets:  runtimeConfig.clusterSecrets, StreamCapacity: streamCapacity,
 		StreamsDelta: func(delta int) {
@@ -356,7 +349,9 @@ func (d *daemon) startRelayRuntime(
 				runtimeConfig.metrics.ObserveRelayStreamRejection(reason)
 			}
 		},
-		Report: func(err error) { logOperationalError(ctx, "forward through relay", failure.ServerRelayFailed, err) },
+		Report: func(err error) {
+			d.reportOperationalError(ctx, "forward through relay", failure.ServerRelayFailed, err)
+		},
 	})
 	if err != nil {
 		return nil, err

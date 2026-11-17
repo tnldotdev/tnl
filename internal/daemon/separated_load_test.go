@@ -31,7 +31,7 @@ var (
 	runtimeLoadPublicURLs         = flag.Int("tnl-runtime-load-public-urls", 4, "runtime load public URL count")
 	runtimeLoadStartParallel      = flag.Int("tnl-runtime-load-start-parallel", 4, "maximum concurrently activating publishers (1-1000)")
 	runtimeLoadReadyTimeout       = flag.Duration("tnl-runtime-load-ready-timeout", 30*time.Second, "publisher readiness timeout (30s-5m)")
-	runtimeLoadCertificateWorkers = flag.Int("tnl-runtime-load-public-url-certificate-workers", 8, "public URL certificate workers per control process (1-8)")
+	runtimeLoadCertificateWorkers = flag.Int("tnl-runtime-load-service-certificate-workers", 8, "service certificate workers per control process (1-8)")
 	runtimeLoadRPS                = flag.Int("tnl-runtime-load-rps", 16, "runtime load offered requests/second")
 	runtimeLoadDuration           = flag.Duration("tnl-runtime-load-duration", 10*time.Second, "runtime measurement window")
 	runtimeLoadWorkers            = flag.Int("tnl-runtime-load-workers", 128, "total visitor concurrency across four containers")
@@ -85,9 +85,9 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 		var states string
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		err := database.QueryRowContext(ctx, `SELECT jsonb_build_object('sessions',
-			(SELECT jsonb_agg(jsonb_build_object('state', state, 'public_url_id', public_url_id, 'version', publish_run_number, 'expires_at', publisher_expires_at)) FROM control.publish_runs),
-			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'public_url_id', public_url_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'last_error', last_error)) FROM control.acme_orders))::text`).Scan(&states)
+		err := database.QueryRowContext(ctx, `SELECT jsonb_build_object('service_runs',
+			(SELECT jsonb_agg(jsonb_build_object('state', state, 'service_id', service_id, 'service_run_id', id, 'run_number', run_number, 'expires_at', publisher_expires_at)) FROM control.service_runs),
+			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'service_id', service_id, 'service_run_id', service_run_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'error_present', last_error IS NOT NULL)) FROM control.acme_orders WHERE service_id<>''))::text`).Scan(&states)
 		t.Logf("separated_failure_state=%s error=%v", states, err)
 	}()
 	for _, name := range separatedPlan(t)["ready"] {
@@ -213,7 +213,7 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 		t.Fatal("publisher readiness timeout must be between 30s and 5m")
 	}
 	if *runtimeLoadCertificateWorkers < 1 || *runtimeLoadCertificateWorkers > 8 {
-		t.Fatal("public URL certificate workers must be between 1 and 8")
+		t.Fatal("service certificate workers must be between 1 and 8")
 	}
 	if rate < 4 || rate > 2000 {
 		t.Fatal("separated runtime load requests per second must be between 4 and 2000")

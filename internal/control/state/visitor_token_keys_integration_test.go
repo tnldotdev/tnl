@@ -20,7 +20,7 @@ import (
 const testVisitorIssuer = "https://control.example.test"
 
 func signingTestPermission(now time.Time) visitortoken.Permission {
-	return visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, Hostname: "preview.example.test", Port: 443,
+	return visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}, Hostname: "preview.example.test", Port: 443,
 		VisitorPolicyRevision: 1, Subject: visitortoken.Browser{IdentityID: "ident_" + strings.Repeat("A", 22), SessionID: "cs_" + strings.Repeat("B", 22)}, ExpiresAt: now.Add(5 * time.Minute)}
 }
 

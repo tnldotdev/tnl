@@ -9,11 +9,11 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func publishProtocol(value string) (controlv1.PublicURLServiceProtocol, error) {
+func publishProtocol(value string) (controlv1.ServiceProtocol, error) {
 	if value == "" {
-		return controlv1.Http, nil
+		return controlv1.ServiceProtocolHTTP, nil
 	}
-	protocol := controlv1.PublicURLServiceProtocol(value)
+	protocol := controlv1.ServiceProtocol(value)
 	if value != "http" && value != "tcp" && value != "mysql" && value != "postgres" {
 		return "", failure.Wrap("select service protocol", failure.InvalidTunnelFlags,
 			errors.New("protocol must be http, tcp, mysql, or postgres; publish an existing sshd as tcp"))
@@ -21,28 +21,9 @@ func publishProtocol(value string) (controlv1.PublicURLServiceProtocol, error) {
 	return protocol, nil
 }
 
-func privatePublishProtocol(value string) (controlv1.ServiceProtocol, error) {
-	if value == "" {
-		value = "http"
-	}
-	protocol := controlv1.ServiceProtocol(value)
-	if !protocol.Valid() {
-		return "", publisherCLIError("private protocol must be http, tcp, mysql, or postgres")
-	}
-	return protocol, nil
-}
-
-func savedPublicAddress(publicURL controlv1.PublicURL) (string, error) {
-	if publicURL.ServiceProtocol != controlv1.Http {
-		return "", failure.Wrap("read public URL protocol", failure.ServerResponseInvalid,
-			errors.New("control returned a public URL with an unknown service protocol"))
-	}
-	return "https://" + publicURL.CanonicalHostname, nil
-}
-
-func validateTCPPublishOptions[P ~string](flags publishCommand, protocol P) error {
+func validateTCPPublishOptions(flags publishCommand, protocol controlv1.ServiceProtocol) error {
 	if flags.service && (flags.RequirePostQuantum != nil || flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" || flags.Ephemeral || flags.Open) {
-		return publisherCLIError("this configured service is private; add an explicit publicURL block to enable public HTTPS")
+		return publisherCLIError("set public: true on the configured binding to enable public endpoint access")
 	}
 	if flags.TargetTLS != nil && !*flags.TargetTLS && (flags.TargetTLSName != "" || flags.TargetCAFile != "" || strings.HasPrefix(flags.Target, "https://")) {
 		return publisherCLIError("target TLS cannot be disabled while target trust is configured")
@@ -73,9 +54,5 @@ func validateTCPPublishOptions[P ~string](flags publishCommand, protocol P) erro
 	if flags.Concurrency != nil && (*flags.Concurrency < 1 || *flags.Concurrency > 4096) {
 		return failure.Wrap("validate private stream capacity", failure.InvalidTunnelFlags, errors.New("service concurrency must be between 1 and 4096"))
 	}
-	return nil
-}
-
-func selectPublishInspection(_ *publishCommand, _ controlv1.PublicURLServiceProtocol) error {
 	return nil
 }

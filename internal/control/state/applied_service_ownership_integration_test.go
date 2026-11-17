@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/netip"
 	"reflect"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
@@ -74,7 +76,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	r.ExpectedRevision = remoteApplied.Revision
 	initial := applyPrivateOwnershipRevision(t, d, r)
 	assertPrivateOwnershipEntry(t, d, r, initial, "local")
-	assertPrivateOwnershipAssignments(t, d, replicas, initial, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, initial, r.ActorID, now)
 	realize := func() []appliedPrivateResource {
 		var resources []appliedPrivateResource
 		for i := range worktrees {
@@ -84,12 +86,12 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 				t.Fatal(err)
 			}
 			retry, err := d.RealizeLocalProjectService(ctx, request)
-			if err != nil || !reflect.DeepEqual(value, retry) || value.Kind != "service" || value.Metadata == nil || value.Metadata.PublisherPool {
+			if err != nil || !reflect.DeepEqual(value, retry) || value.ServiceID == "" || value.Metadata == nil || value.Metadata.PublisherPool {
 				t.Fatal("local realization lost its independent resource", value, retry, err)
 			}
-			resource := inspectAppliedPrivateResource(t, d, r, value.ServiceID, localProjectPrivateName(request, local.Name), false, outsider, extra)
+			resource := inspectAppliedPrivateResource(t, d, r, value.ServiceID, localProjectServiceName(request, local.Name), false, outsider, extra)
 			if active {
-				e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActorID}, PublisherScope{TeamID: r.TeamID, Kind: "service", ServiceID: value.ServiceID}, now)
+				e := publisherEnrollment(t, d, serviceTestAuthority{TeamID: r.TeamID, ActingIdentityID: r.ActorID}, PublisherScope{TeamID: r.TeamID, Kind: "service", ServiceID: value.ServiceID}, now)
 				public, key, err := ed25519.GenerateKey(rand.Reader)
 				if err != nil {
 					t.Fatal(err)
@@ -100,7 +102,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 				}
 				access := publisherAccess(t, d, publisher, key, "", now)
 				resource.access = append(resource.access, access)
-				resource.runs = append(resource.runs, readyAppliedServiceRun(t, d, access, key, resource.record, leases, now))
+				resource.runs = append(resource.runs, readyAppliedServiceRun(t, d, access, key, resource.record, netip.MustParseAddr("127.0.0.1"), leases, now))
 			}
 			resources = append(resources, resource)
 		}
@@ -141,7 +143,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	}
 	assertPrivateOwnershipLocalCount(t, d, r, 0)
 	shared := inspectAppliedPrivateResource(t, d, r, deployment.Services[0].ServiceID, local.Name, true, outsider, extra)
-	assertPrivateOwnershipAssignments(t, d, replicas, deployment, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, deployment, r.ActorID, now)
 	if members != 0 || active {
 		// a new binding needs explicit approval; earlier publishers stay unapproved.
 		enroll()
@@ -161,13 +163,13 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 		shared.access = append(shared.access, access)
 		approved, err := d.GetServiceForPublisher(ctx, shared.record.ID, access.PublisherIdentity, now)
 		if err != nil || !reflect.DeepEqual(approved, shared.record) {
-			t.Fatal("assignment did not authorize exact saved metadata", approved, err)
+			t.Fatalf("assignment did not authorize exact saved metadata: got=%+v want=%+v err=%v", approved, shared.record, err)
 		}
 		if active {
-			shared.runs = append(shared.runs, readyAppliedServiceRun(t, d, access, replica.private, approved, leases, now))
+			shared.runs = append(shared.runs, readyAppliedServiceRun(t, d, access, replica.private, approved, netip.MustParseAddr("127.0.0.1"), leases, now))
 		}
 	}
-	assertPrivateOwnershipAssignments(t, d, replicas, deployment, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, deployment, r.ActorID, now)
 	assertPrivateOwnershipInventory(t, d, reader.IdentityID, []appliedPrivateResource{shared}, active, now)
 	if extra {
 		assertPrivateOwnershipInventory(t, d, outsider, []appliedPrivateResource{shared}, active, now)
@@ -179,7 +181,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	if err != nil || len(projection.Services) != 0 {
 		t.Fatal("private resource leaked into public metadata", projection, err)
 	}
-	if _, err = d.GetProjectPublicMetadata(ctx, r.TeamID, r.ProjectKey, reader.IdentityID, now); !errors.Is(err, ErrPublicURLAccess) {
+	if _, err = d.GetProjectPublicMetadata(ctx, r.TeamID, r.ProjectKey, reader.IdentityID, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("private visitor permission authorized public project metadata", err)
 	}
 	applyPrivateOwnershipRevision(t, d, r)
@@ -197,7 +199,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	assertPrivateOwnershipEntry(t, d, r, deferred, "local")
 	assertAppliedPrivateRetired(t, d, r, shared)
 	assertPrivateOwnershipLocalCount(t, d, r, 0)
-	assertPrivateOwnershipAssignments(t, d, replicas, deferred, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, deferred, r.ActorID, now)
 	assertPrivateOwnershipInventory(t, d, reader.IdentityID, nil, false, now)
 	assertPrivateOwnershipInventory(t, d, outsider, nil, false, now)
 	newLocals := realize()
@@ -229,10 +231,10 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 	for _, resource := range newLocals {
 		assertAppliedPrivateRetired(t, d, r, resource)
 	}
-	assertPrivateOwnershipAssignments(t, d, replicas, regrouped, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, regrouped, r.ActorID, now)
 	// neither the original nor the replacement approval follows a reused name.
 	enroll()
-	assertPrivateOwnershipAssignments(t, d, replicas, regrouped, now)
+	assertPrivateOwnershipAssignments(t, d, replicas, regrouped, r.ActorID, now)
 }
 
 type appliedPrivateResource struct {
@@ -271,13 +273,50 @@ func inspectAppliedPrivateResource(t *testing.T, d *Database, r ApplyProjectConf
 		t.Fatal("new resource inherited old visitor grants", grants)
 	}
 	if extra {
+		declaration, digest, err := d.GetServiceConfiguration(ctx, id, r.ActorID)
+		if err != nil || declaration == nil {
+			t.Fatal("cannot inspect private resource configuration before visitor grant", err)
+		}
 		g, err := d.CreateServiceGrant(ctx, id, r.ActorID, "extra/"+id, "identity", outsider, nil, r.Now)
-		if err != nil {
-			t.Fatal(err)
+		if err != nil || !opaqueid.Valid(g.ID, opaqueid.ServiceGrantPrefix) || g.ServiceID != id || g.Kind != "identity" || g.IdentityID != outsider || g.InvitationID != "" || !g.CreatedAt.Equal(r.Now) || g.ExpiresAt != nil || g.RevokedAt != nil {
+			t.Fatal("extra visitor grant is not exact and current", g, err)
 		}
 		grants = append(grants, g)
+		// one new visitor grant advances the saved-service revision, not target
+		// trust, endpoint settings, or configuration. derive that sole change
+		// from the mutation rather than accepting a new metadata snapshot.
+		value.ServiceRevision++
+		assertRecord := func() {
+			t.Helper()
+			saved, err := d.GetService(ctx, id, r.ActorID)
+			if err != nil || !reflect.DeepEqual(saved, value) {
+				t.Fatalf("visitor grant changed unexpected saved metadata: got=%+v want=%+v err=%v", saved, value, err)
+			}
+		}
+		assertRecord()
+		retry, err := d.CreateServiceGrant(ctx, id, r.ActorID, "extra/"+id, "identity", outsider, nil, r.Now)
+		if err != nil || !reflect.DeepEqual(retry, g) {
+			t.Fatal("extra visitor grant retry did not preserve the exact grant", retry, g, err)
+		}
+		if _, err = d.CreateServiceGrant(ctx, id, r.ActorID, "extra/"+id, "identity", r.ActorID, nil, r.Now); !errors.Is(err, ErrServiceConflict) {
+			t.Fatal("extra visitor grant retry accepted a different identity", err)
+		}
+		assertRecord()
+		savedDeclaration, savedDigest, err := d.GetServiceConfiguration(ctx, id, r.ActorID)
+		if err != nil || !reflect.DeepEqual(savedDeclaration, declaration) || savedDigest != digest {
+			t.Fatal("visitor grant replaced private resource configuration or its digest", err)
+		}
+		if _, err = d.GetService(ctx, id, outsider); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("extra visitor grant authorized management metadata", err)
+		}
+		if _, _, err = d.GetServiceConfiguration(ctx, id, outsider); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("extra visitor grant authorized manager configuration", err)
+		}
+		if _, _, err = d.ListServices(ctx, r.TeamID, outsider, ""); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("extra visitor grant authorized team management inventory", err)
+		}
 	}
-	if err = d.DeleteService(ctx, id, r.ActorID, r.Now); !errors.Is(err, ErrProjectManaged) {
+	if err = d.DeleteService(ctx, id, r.ActorID, observedServiceDeletion(t, d, id), r.Now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("transition lost definition ownership", err)
 	}
 	return appliedPrivateResource{record: value, grants: grants}
@@ -295,21 +334,31 @@ func assertPrivateOwnershipEntry(t *testing.T, d *Database, r ApplyProjectConfig
 		t.Fatal("incorrect applied service", status.Services)
 	}
 	s := status.Services[0]
-	var privateID, publicID, deploymentID, visitorGrant string
-	if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(service_id,''),COALESCE(public_url_id,''),COALESCE(deployment_id,''),COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service='db'`, r.TeamID, r.ProjectKey).Scan(&privateID, &publicID, &deploymentID, &visitorGrant); err != nil {
+	var privateID, deploymentID, visitorGrant string
+	if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(service_id,''),COALESCE(deployment_id,''),COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service='db'`, r.TeamID, r.ProjectKey).Scan(&privateID, &deploymentID, &visitorGrant); err != nil {
 		t.Fatal(err)
 	}
 	if publisher == "local" {
-		if s.Kind != "local" || s.ServiceID != "" || s.TrustRevision != 0 || privateID != "" || publicID != "" || deploymentID != "" || visitorGrant != "" {
+		if s.Kind != "local" || s.ServiceID != "" || s.TrustRevision != 0 || privateID != "" || deploymentID != "" || visitorGrant != "" {
 			t.Fatal("local apply must defer resource and grant allocation", s)
 		}
-	} else if s.Kind != "service" || !opaqueid.Valid(s.ServiceID, opaqueid.ServicePrefix) || privateID != s.ServiceID || publicID != "" || deploymentID == "" || visitorGrant == "" || s.TrustRevision != 1 {
+	} else if s.Kind != "service" || !opaqueid.Valid(s.ServiceID, opaqueid.ServicePrefix) || privateID != s.ServiceID || deploymentID == "" || visitorGrant == "" || s.TrustRevision != 1 {
 		t.Fatal("deployment apply committed an incomplete private resource", s)
 	}
 }
 
-func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enrolledDeploymentReplica, status AppliedProjectConfiguration, now time.Time) {
+func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enrolledDeploymentReplica, status AppliedProjectConfiguration, actor string, now time.Time) {
 	t.Helper()
+	desired := status.Configuration.Services["db"]
+	if status.Deployment != "local" {
+		if status.Configuration.Settings == nil || desired.DomainID == "" || desired.DomainID != status.Configuration.Settings.DomainID {
+			t.Fatal("desired configuration lost its captured domain")
+		}
+		saved, err := d.GetProjectConfiguration(t.Context(), status.TeamID, status.ProjectKey, actor, status.Deployment)
+		if err != nil || saved.Configuration.Services["db"].DomainID != desired.DomainID {
+			t.Fatal("desired domain did not persist independently of publisher assignments", err)
+		}
+	}
 	want := 0
 	approved := func(replica enrolledDeploymentReplica) bool {
 		return status.Services[0].Kind != "local" && slices.ContainsFunc(replica.assignments.Services, func(binding DeploymentPublisherServiceAssignment) bool {
@@ -345,11 +394,17 @@ func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enr
 			t.Fatal("deployment lost its private assignment")
 		}
 		a := assignments.Services[0]
-		if a.Service != "db" || a.Kind != "service" || a.ServiceID != status.Services[0].ServiceID || a.TrustRevision != status.Services[0].TrustRevision || !reflect.DeepEqual(a.Configuration, status.Configuration.Services["db"]) {
+		if a.Configuration.Public != nil || a.Configuration.Hostname != "" || a.Configuration.DomainID != "" {
+			t.Fatal("publisher assignment retained control-owned endpoint settings")
+		}
+		// derive the expected boundary independently of the projection under test.
+		serving := desired
+		serving.Public, serving.Hostname, serving.DomainID = nil, "", ""
+		if a.Service != "db" || a.ServiceID != status.Services[0].ServiceID || a.TrustRevision != status.Services[0].TrustRevision || !reflect.DeepEqual(a.Configuration, serving) {
 			t.Fatal("deployment received wrong private resource or metadata", a)
 		}
 		var exact bool
-		if err = d.pool.QueryRow(t.Context(), `SELECT kind='service' AND service_id=$2 AND public_url_id IS NULL AND revoked_at IS NULL FROM control.publisher_grants WHERE id=$1 AND publisher_identity_id=$3`, a.GrantID, a.ServiceID, replica.member.PublisherIdentityID).Scan(&exact); err != nil || !exact {
+		if err = d.pool.QueryRow(t.Context(), `SELECT kind='service' AND service_id=$2 AND revoked_at IS NULL FROM control.publisher_grants WHERE id=$1 AND publisher_identity_id=$3`, a.GrantID, a.ServiceID, replica.member.PublisherIdentityID).Scan(&exact); err != nil || !exact {
 			t.Fatal("deployment grant is not exact", err)
 		}
 		if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replica.lease.AccessToken, assignments.Revision, assignments.ConfigurationHash, true, now); err != nil {
@@ -360,13 +415,17 @@ func assertPrivateOwnershipAssignments(t *testing.T, d *Database, replicas []enr
 
 func assertPrivateOwnershipInventory(t *testing.T, d *Database, actor string, resources []appliedPrivateResource, ready bool, now time.Time) {
 	t.Helper()
-	items, _, err := d.ListAvailableServices(t.Context(), actor, "", now)
+	items, _, err := d.ListAvailableServices(t.Context(), actor, "", "connector", now)
 	if err != nil || len(items) != len(resources) {
 		t.Fatal("visitor inventory retained old resources or lost current resources", items, err)
 	}
 	for _, resource := range resources {
 		index := slices.IndexFunc(items, func(item ServiceInventory) bool { return item.ID == resource.record.ID })
-		if index < 0 || !reflect.DeepEqual(items[index].ServiceMetadata, resource.record.ServiceMetadata) || (items[index].ServiceRunID != "") != ready {
+		// visitor inventory retains protocol, pool, trust revision and endpoint,
+		// not the publisher's target TLS declaration.
+		want := resource.record.ServiceMetadata
+		want.TLS = nil
+		if index < 0 || !reflect.DeepEqual(items[index].ServiceMetadata, want) || (items[index].ServiceRunID != "") != ready {
 			t.Fatal("authorized inventory lost exact metadata or readiness", items)
 		}
 	}
@@ -413,9 +472,9 @@ func assertAppliedPrivateRetired(t *testing.T, d *Database, r ApplyProjectConfig
 	}
 }
 
-func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, key ed25519.PrivateKey, service ServiceRecord, leases map[string]RelayLease, now time.Time) ServiceRunState {
+func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, key ed25519.PrivateKey, service ServiceRecord, observedSourceIP netip.Addr, leases map[string]RelayLease, now time.Time, certificateLifetime ...time.Duration) ServiceRunState {
 	t.Helper()
-	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, "ownership", now, service.ServiceMetadata)
+	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, access.PublisherIdentity, "ownership", now, ServiceRunRequest{Metadata: service.ServiceMetadata})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,10 +482,10 @@ func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, k
 	if err != nil {
 		t.Fatal(err)
 	}
-	installPrivateTestCertificate(t, d, prepared, run, now)
+	installPrivateTestCertificate(t, d, prepared, run, now, certificateLifetime...)
 	for _, slot := range run.Connections {
 		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-		if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+		if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, observedSourceIP, lease, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
@@ -514,10 +573,15 @@ func assertPrivateOwnershipRollback(t *testing.T, d *Database, r ApplyProjectCon
 
 func privateOwnershipSnapshot(t *testing.T, d *Database) map[string]string {
 	t.Helper()
+	return privateOwnershipSnapshotQuery(t, d.pool)
+}
+
+func privateOwnershipSnapshotQuery(t *testing.T, q controlstatedb.DBTX) map[string]string {
+	t.Helper()
 	result := map[string]string{}
-	for _, table := range []string{"applied_projects", "applied_project_services", "local_project_services", "deployments", "deployment_publisher_service_grants", "services", "visitor_grants", "publisher_grants", "service_runs", "publisher_service_connection_slots", "connector_peer_pairs", "service_audit_events"} {
+	for _, table := range []string{"applied_projects", "applied_project_services", "local_project_services", "deployments", "deployment_publisher_service_grants", "services", "visitor_grants", "publisher_grants", "service_runs", "service_connection_slots", "connector_peer_pairs", "service_audit_events"} {
 		var rows string
-		if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb)::text FROM control.`+table+` r`).Scan(&rows); err != nil {
+		if err := q.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb)::text FROM control.`+table+` r`).Scan(&rows); err != nil {
 			t.Fatal(err)
 		}
 		result[table] = rows

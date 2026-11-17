@@ -45,7 +45,7 @@ func (s Stream) forwardKubernetes(ctx context.Context, client net.Conn, state tl
 	return httpstream.Serve(live, client, &url.URL{Scheme: "https", Host: target.Address}, target.Dial, func(next http.Handler) http.Handler {
 		return wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Host != s.Authority && s.Authority != "" || r.URL.IsAbs() || r.URL.Host != "" || strings.HasPrefix(r.URL.Path, "/__tnl/") || r.Method == http.MethodConnect {
-				DenyHTTP(w, http.StatusMisdirectedRequest)
+				DenyHTTP(w, r, http.StatusMisdirectedRequest)
 				return
 			}
 			check, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -55,7 +55,7 @@ func (s Stream) forwardKubernetes(ctx context.Context, client net.Conn, state tl
 			authDone(managedAuthorizationError(decision, err))
 			cancel()
 			if err != nil || !decision.Allowed || !decision.ValidUntil.After(time.Now()) {
-				DenyHTTP(w, HTTPDecisionStatus(err))
+				DenyHTTP(w, r, HTTPDecisionStatus(err))
 				return
 			}
 			release, ok := admitRequest(s.HTTPRequests, w, r)
@@ -92,5 +92,5 @@ func (s Stream) forwardKubernetes(ctx context.Context, client net.Conn, state tl
 			// Authorization belongs to the cluster, independently of tnl admission.
 			next.ServeHTTP(w, r)
 		}))
-	})
+	}, httpstream.ResponseHooks{}, s.HTTPDrain)
 }

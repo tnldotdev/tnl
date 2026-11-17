@@ -10,10 +10,17 @@ import (
 )
 
 // EnsurePublication uses an isolated setup store, not the operator's profile.
-// the connector owner journal retains a pending secret before redemption and the
-// resulting exact-URL signing identity before any privileged installation.
-func EnsurePublication(ctx context.Context, store *clientstate.Store, operator publisheridentity.OwnerControl, control publisheridentity.NativeControl, authority publisheridentity.EnrollmentAuthority, server string, publicURL controlv1.PublicURL) (credentialfile.File, error) {
-	_, identity, err := publisheridentity.EnsureOwner(ctx, store, operator, authority, publicURL)
+// owner journal retains a pending secret before redemption and the resulting
+// exact-service signing identity before any privileged installation.
+func EnsurePublication(ctx context.Context, store *clientstate.Store, operator publisheridentity.ServiceOwnerControl, control publisheridentity.NativeControl, authority publisheridentity.EnrollmentAuthority, server string, service controlv1.Service) (credentialfile.File, error) {
+	if service.Ephemeral {
+		return credentialfile.File{}, publisheridentity.ErrScope
+	}
+	trust, err := publisheridentity.ServiceTrust(service)
+	if err != nil {
+		return credentialfile.File{}, err
+	}
+	_, identity, err := publisheridentity.EnsureServiceOwner(ctx, store, operator, authority, service)
 	if err != nil {
 		return credentialfile.File{}, err
 	}
@@ -28,12 +35,15 @@ func EnsurePublication(ctx context.Context, store *clientstate.Store, operator p
 	if err != nil {
 		return credentialfile.File{}, err
 	}
-	current, err := native.SavedPublicURL(ctx)
+	current, err := native.SavedService(ctx)
 	if err != nil {
 		return credentialfile.File{}, err
 	}
-	if current.Id != publicURL.Id || current.TeamId != publicURL.TeamId {
+	if current.Id != service.Id || current.TeamId != service.TeamId || current.TrustRevision != service.TrustRevision || current.Protocol != service.Protocol || current.PublisherPool != service.PublisherPool || current.Ephemeral {
 		return credentialfile.File{}, publisheridentity.ErrScope
+	}
+	if err := publisheridentity.MatchServiceDeclaration(current, string(service.Protocol), trust); err != nil {
+		return credentialfile.File{}, err
 	}
 	return credentialfile.New(server, identity, saved.SigningKey)
 }

@@ -163,7 +163,7 @@ func TestIntegrationDeploymentManagementHTTPContracts(t *testing.T) {
 			t.Fatal("management implied administration or visitor access", code, err)
 		}
 	}
-	publication, err := api.GetPublisherServiceWithResponse(ctx, runtime)
+	publication, err := api.GetPublisherServiceWithResponse(ctx, production.Services["db"].Id, runtime)
 	if err != nil || publication.StatusCode() != 404 {
 		t.Fatal("management implied service publication", err)
 	}

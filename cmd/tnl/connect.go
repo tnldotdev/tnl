@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
@@ -111,9 +112,11 @@ func validateConnectMode(flags connectStartCommand) error {
 	return connector.ValidateMode(flags.options())
 }
 
-func runInstalledConnector(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, ready func() error) error {
+func runInstalledConnector(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, ready func() error, deadline func() time.Time, shutdown context.Context) error {
 	operations := connectorOperations()
 	operations.Telemetry = telemetry
+	operations.ShutdownDeadline = deadline
+	operations.ShutdownContext = shutdown
 	return operations.RunInstalled(ctx, job, ready)
 }
 func runKubeCredential(ctx context.Context, flags kubeCredentialCommand, output io.Writer) error {
@@ -179,13 +182,13 @@ func runConnectAvailable(ctx context.Context, command connectAvailableCommand, o
 		return err
 	}
 	defer session.Close()
-	services, err := session.Authenticated().Control.ListAvailableServices(ctx)
+	services, err := session.Authenticated().Control.ListAvailableServices(ctx, controlv1.ServiceAccessPathConnector)
 	if err != nil {
 		return err
 	}
 	if command.Output == statusOutputJSON {
 		if services == nil {
-			services = []controlv1.Service{}
+			services = []controlv1.ServiceSummary{}
 		}
 		return json.NewEncoder(output).Encode(services)
 	}

@@ -26,7 +26,7 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 			t.Fatalf("fixture git: %v %s", err, output)
 		}
 	}
-	configuration := `{"version":1,"tnl":{"server":"https://control.example","team":"acme","services":{"database":{"protocol":"postgres"},"unrequested":{"protocol":"mysql"},"web":{},"managed":{}},"deployments":{"local":{"targets":{"database":{"address":"unused.invalid:5432"},"unrequested":{"address":"unused.invalid:3306"},"web":{"public_url":{},"address":"http://unused.invalid:3000"},"managed":{"address":"http://unused.invalid:3001","http":{}}}},"production":{"targets":{"database":{"address":"prod.invalid:5432"}}}},"workloads":{"migrate":{"deployment":"production","github":{"workflow":".github/workflows/migrate.yml","branch":"main","events":["push"]},"services":["database"]}}}}`
+	configuration := `{"version":1,"tnl":{"server":"https://control.example","team":"acme","services":{"database":{"protocol":"postgres"},"unrequested":{"protocol":"mysql"},"web":{},"managed":{}},"deployments":{"local":{"targets":{"database":{"public":true,"address":"unused.invalid:5432"},"unrequested":{"address":"unused.invalid:3306"},"web":{"public":true,"address":"http://unused.invalid:3000","http":{"access":{"mode":"anonymous"}}},"managed":{"address":"http://unused.invalid:3001","http":{}}}},"production":{"targets":{"database":{"address":"prod.invalid:5432"}}}},"workloads":{"migrate":{"deployment":"production","github":{"workflow":".github/workflows/migrate.yml","branch":"main","events":["push"]},"services":["database"]}}}}`
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -44,12 +44,16 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 	all := options
 	all.Service = nil
 	_, implicit, err := connectionProject(t.Context(), all)
-	if err != nil || !slices.Equal(implicit.Services, []string{"database", "managed", "unrequested"}) {
-		t.Fatal("context confused managed policy with public URL declarations", implicit.Services, err)
+	if err != nil || !slices.Equal(implicit.Services, []string{"database", "managed", "unrequested", "web"}) {
+		t.Fatal("context treated public reachability or anonymous HTTP as a different service", implicit.Services, err)
 	}
 	all.Service = []string{"web"}
+	if _, scope, err := connectionProject(t.Context(), all); err != nil || !slices.Equal(scope.Services, []string{"web"}) {
+		t.Fatal("native context could not select a public HTTP service", scope.Services, err)
+	}
+	all.Service = []string{"missing"}
 	if _, _, err := connectionProject(t.Context(), all); !errors.Is(err, connectorruntime.ErrInvalid) {
-		t.Fatal("native context selected a public URL declaration", err)
+		t.Fatal("native context accepted an undeclared service", err)
 	}
 	options.Workload = "migrate"
 	if _, scope, err := connectionProject(t.Context(), options); err != nil || scope.TeamID != "acme" {
@@ -90,7 +94,7 @@ func TestConnectionKubernetesUsesSavedAuthHint(t *testing.T) {
 	localCluster, localRegion := "unapplied-local", "us-west-2"
 	b := connectorConnectionBackend{directory: directory, executable: "/absolute/tnl", connectorConnectionSession: connectorConnectionSession{teamID: team}, scope: connectorruntime.Context{Workload: "test", Server: "https://control.example", TeamID: team, SourceID: "source", ProjectLabel: "shop"}}
 	b.project.Config.Services = map[string]config.Service{"cluster": {Target: &config.ServiceTarget{Type: "eks", Cluster: &localCluster, Region: &localRegion}}}
-	saved := controlv1.Service{Id: service, Endpoint: &controlv1.ServiceEndpoint{Hostname: "cluster.example"}, KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "applied-cluster", Region: "us-east-1"}}
+	saved := controlv1.ServiceSummary{Id: service, Endpoint: &controlv1.ServiceEndpoint{Hostname: "cluster.example"}, KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "applied-cluster", Region: "us-east-1"}}
 	kube, err := b.prepareKube(t.Context(), "cluster", saved, connectorruntime.Connection{Host: "127.0.0.1", Port: 25443, URL: "https://cluster.example:25443", TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"})
 	if err != nil {
 		t.Fatal(err)

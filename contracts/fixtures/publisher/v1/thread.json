@@ -6,9 +6,9 @@
   "latest_event_cursor": "4",
   "scope": {
     "preview_id": "pv_0123456789abcdefghijkl",
-    "public_url_id": "url_0123456789abcdefghijkl",
-    "publish_run_id": "pr_0123456789abcdefghijkl",
-    "publish_run_number": "2",
+    "service_id": "svc_0123456789abcdefghijkl",
+    "service_run_id": "srun_0123456789abcdefghijkl",
+    "run_number": "2",
     "service": "web",
     "page_path": "/settings",
     "page_title": "settings"

@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-// private forwarding includes up to three configured 256-byte process IDs,
+// service forwarding includes up to three configured 256-byte process IDs,
 // each of which may expand sixfold in JSON, plus fixed opaque IDs and metadata.
 const MaxServiceHeaderBytes = 8 << 10
 
@@ -39,7 +39,7 @@ type PublicServiceAdmission struct {
 }
 
 func (a PublicServiceAdmission) valid() bool {
-	return validIdentifier(a.IngressID) && opaqueid.Valid(a.IngressRunID, opaqueid.IngressRunPrefix) && a.IngressLeaseRevision > 0 && a.DestinationPort >= 1024
+	return validIdentifier(a.IngressID) && opaqueid.Valid(a.IngressRunID, opaqueid.IngressRunPrefix) && a.IngressLeaseRevision > 0 && (a.DestinationPort == 443 || a.DestinationPort >= 1024)
 }
 
 func (h ServiceStreamHeader) validate() error {
@@ -63,8 +63,8 @@ func validPrivateSourceIP(value string) bool {
 	return err == nil && addr.IsValid() && addr.Zone() == "" && addr.String() == value
 }
 
-// ServiceForwardingHeader carries the current relay lease and public service/run
-// admission. it never accepts public URL IDs or a connector admission.
+// ServiceForwardingHeader carries the current relay lease and service run
+// admission. it never accepts a connector admission.
 type ServiceForwardingHeader struct {
 	ServiceStreamHeader
 	ConnectionSlot     uint8     `json:"connection_slot"`
@@ -72,7 +72,7 @@ type ServiceForwardingHeader struct {
 	RelayID            string    `json:"relay_id"`
 	RelayRunID         string    `json:"relay_run_id"`
 	RelayLeaseRevision uint64    `json:"relay_lease_revision"`
-	LeaseExpiresAt     time.Time `json:"lease_expires_at"`
+	ServingUntil       time.Time `json:"serving_until"`
 }
 
 func (h ServiceForwardingHeader) Validate() error {
@@ -80,7 +80,7 @@ func (h ServiceForwardingHeader) Validate() error {
 		return err
 	}
 	if h.ConnectionSlot > 1 || !validIdentifier(h.RelayServiceID) || !validIdentifier(h.RelayID) ||
-		!opaqueid.Valid(h.RelayRunID, opaqueid.RelayRunPrefix) || h.RelayLeaseRevision == 0 || h.LeaseExpiresAt.IsZero() {
+		!opaqueid.Valid(h.RelayRunID, opaqueid.RelayRunPrefix) || h.RelayLeaseRevision == 0 || h.ServingUntil.IsZero() {
 		return errors.New("tunnelv1: invalid public service forwarding header")
 	}
 	return nil

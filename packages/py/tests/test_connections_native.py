@@ -248,7 +248,7 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
                 ),
             }
 
-    def native(binary: Path, *args: str, input_value: object = None) -> object:
+    def native(binary: Path, *args: str, input_value: object = None, **budget: object) -> object:
         if args[0] == "sdk-prepare":
             return selected(binary, args)
         calls.append(args[0])
@@ -257,9 +257,12 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
         if args[0] == "sdk-close":
             # this fixture supplies selection replies, so join its selected real
             # owner directly. production registry routing has separate coverage.
-            result = command(binary, "stop", "--handle", args[-1])
-            assert not Path(args[-1]).exists()
-            if current is not None and current["connection_handle"] == args[-1]:
+            handle = args[args.index("--handle") + 1]
+            deadline = budget.get("deadline")
+            assert isinstance(deadline, float)
+            result = command(binary, "stop", "--handle", handle, deadline=deadline)
+            assert not Path(handle).exists()
+            if current is not None and current["connection_handle"] == handle:
                 assert_port_reusable(port)
             return result
         if args[0] != "start":

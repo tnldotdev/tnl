@@ -14,10 +14,7 @@ import (
 // Stores declares each API capability explicitly. nil optional stores retain
 // their existing unavailable responses; methods on another store never enable them.
 type Stores struct {
-	PublicURLs                PublicURLStore
-	Certificates              CertificateStore
 	Admin                     AdminStore
-	Visitors                  VisitorStore
 	Previews                  PreviewStore
 	PreviewTeamAccess         PreviewTeamAccessStore
 	BrowserAccess             BrowserAccessStore
@@ -25,9 +22,7 @@ type Stores struct {
 	ShareAccess               ShareAccessStore
 	Feedback                  FeedbackStore
 	Guests                    GuestStore
-	GuestAuthorization        guestAuthorizationStore
 	GuestPublishers           GuestPublisherStore
-	PublisherRuns             PublisherRunStore
 	PublisherIdentities       PublisherIdentityStore
 	DeploymentRuntime         DeploymentRuntimeStore
 	PublisherRuntime          PublisherRuntimeStore
@@ -54,11 +49,9 @@ type Stores struct {
 }
 
 type GuestStore interface {
-	CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
+	CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (controlstate.GuestTrial, error)
 	GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
-	GuestOwnsPublicURL(context.Context, string, string) (bool, error)
-	GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
-	AllocateGuestDemoNumber(context.Context, string, time.Time) (int64, error)
+	AllocateGuestDemoService(context.Context, controlstate.AllocateGuestDemoServiceRequest) (controlstate.ServiceRecord, error)
 	GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
 }
 
@@ -88,7 +81,7 @@ type ServiceRunStore interface {
 
 type ServiceClientCertificateStore interface {
 	IssueServiceClientCertificate(context.Context, string, string, string, []byte, time.Time) (controlstate.ServiceClientCertificate, error)
-	AuthorizeServiceClientCertificate(context.Context, string, string, string, string, int64, netip.Addr, []byte, time.Time) (controlstate.ServiceVisitorValidity, error)
+	AuthorizeServiceClientCertificate(context.Context, string, string, string, string, int64, netip.Addr, int, []byte, time.Time) (controlstate.ServiceVisitorValidity, error)
 }
 
 type ServiceHTTPStore interface {
@@ -104,6 +97,7 @@ type ServiceAuditStore interface {
 
 type ConnectorPeerPairStore interface {
 	connectorPeerPairStore
+	RetireConnectorPeerPair(context.Context, string, string, controlstate.ConnectorPeerPairRetireRequest, time.Time) (controlstate.ConnectorPeerPairRetirement, error)
 	RebindConnectorPeerPair(context.Context, string, string, controlstate.ConnectorPeerPairRebindRequest, time.Time) (controlstate.ConnectorPeerPairRebindState, error)
 	ListConnectorPeerPairs(context.Context, string, string, string, string, time.Time) (controlstate.ConnectorPeerPairCandidates, error)
 	ConfirmConnectorPeerPairPrepared(context.Context, string, string, string, string, controlstate.ConnectorPeerPairPrepared, time.Time) error
@@ -125,11 +119,10 @@ func DatabaseStores(database *controlstate.Database) Stores {
 		return Stores{}
 	}
 	return Stores{
-		PublicURLs: database, Certificates: database, Admin: database,
-		Visitors: database, Previews: database, PreviewTeamAccess: database,
+		Admin: database, Previews: database, PreviewTeamAccess: database,
 		BrowserAccess: database, Shares: database, ShareAccess: database, Feedback: database,
-		Guests: database, GuestAuthorization: database, GuestPublishers: database,
-		PublisherRuns: database, PublisherIdentities: database, DeploymentRuntime: database,
+		Guests: database, GuestPublishers: database,
+		PublisherIdentities: database, DeploymentRuntime: database,
 		PublisherRuntime: database, ProjectConfiguration: database, ProjectServices: database, Deployments: database, DeploymentPublishers: database, DeploymentCredentials: database, DeploymentConnect: database, DeploymentPublication: database,
 		LocalProjects: database, Services: database, ServiceRuns: database,
 		ServiceCertificates: database, ServiceClientCertificates: database, ServiceHTTP: database,

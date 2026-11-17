@@ -203,6 +203,12 @@ func (c *Client) ReleaseTeamDomain(ctx context.Context, teamID, domainID string)
 	return err
 }
 
+func (c *Client) GetTeamDomain(ctx context.Context, teamID, domainID string) (authorityv1.Domain, error) {
+	return request[authorityv1.Domain](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetTeamDomain(ctx, teamID, domainID, editors...)
+	})
+}
+
 type authorityRequest func(context.Context, ...authorityv1.RequestEditorFn) (*http.Response, error)
 
 func request[T any](ctx context.Context, client *Client, call authorityRequest) (T, error) {

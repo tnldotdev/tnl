@@ -2,14 +2,17 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,8 +23,8 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -130,12 +133,9 @@ func assertIntegrationPublicURLCertificate(t *testing.T, response *http.Response
 
 type integrationPublishingIdentity struct {
 	controlOrigin, hostname, teamID, domainID, membershipID string
-	policyRevision                                          uint64
 	state                                                   *clientstate.Store
 	routes                                                  *clientcontrol.Client
 	authority                                               *clientauthority.Client
-	certificatePlan                                         controlv1.CertificatePlan
-	publicURLScope                                          controlv1.PublicURLScope
 }
 
 func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, controlHTTP *http.Client, hostnameLabel string, owner *runtimeTopology) *integrationPublishingIdentity {
@@ -193,129 +193,133 @@ func newIntegrationPublishingIdentity(t *testing.T, controlOrigin string, contro
 	hostname := hostnameLabel + "." + membership.ManagedLabel + "." + domain.CanonicalDomain
 	return &integrationPublishingIdentity{
 		controlOrigin: controlOrigin, hostname: hostname, teamID: team.Id, domainID: domain.Id, membershipID: membership.Id,
-		policyRevision: uint64(team.PolicyRevision), state: publisherState, routes: authenticated.Control, authority: authenticated.Authority, publicURLScope: controlv1.Member,
-		certificatePlan: controlv1.CertificatePlan{CacheKey: hostname, Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.Dns01},
+		state: publisherState, routes: authenticated.Control, authority: authenticated.Authority,
 	}
 }
 
-// the fixture retains a control session only until the selected saved URL and
-// its native publisher are prepared, before the runtime acquires identity locks.
-type integrationScopedRunControl struct {
-	*clientcontrol.Client
-	state     *clientstate.Store
-	authority *clientauthority.Client
-}
-
-func (i *integrationPublishingIdentity) publisherConfig(target string, quicConnector, tcpConnector muxsession.Connector) publisher.Config {
-	return publisher.Config{
-		Control: &integrationScopedRunControl{Client: i.routes, state: i.state, authority: i.authority}, ControlURL: i.controlOrigin, TeamID: i.teamID, DomainID: i.domainID, MembershipID: i.membershipID,
-		PolicyRevision: i.policyRevision, PublicURLScope: i.publicURLScope, Purpose: controlv1.App,
-		Hostname: i.hostname, Target: target, AccessMode: controlv1.Anonymous, AllowedIPPrefixes: []string{"127.0.0.1/32"},
-		State: i.state, QUICConnector: quicConnector, TCPConnector: tcpConnector,
-		FallbackDelay: 10 * time.Millisecond, DrainTime: time.Second,
+// preparation uses management authority only to save the declaration and issue
+// the exact native grant. the service owner never inherits that control session.
+func (i *integrationPublishingIdentity) prepareService(t *testing.T, target string, quic, tcp muxsession.Connector, declaration controlv1.ProjectServiceConfiguration) (controlv1.Service, publisherservice.RunConfig) {
+	t.Helper()
+	prepareCtx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	declaration.Protocol, declaration.Public = new(controlv1.ServiceProtocolHTTP), new(true)
+	if declaration.Hostname == nil {
+		declaration.Hostname = &i.hostname
+	}
+	declaration.DomainId = &i.domainID
+	if declaration.Target == "" {
+		declaration.Target = target
+		if target == "" {
+			declaration.Target = "app"
+		}
+	}
+	if declaration.Http == nil {
+		declaration.Http = &controlv1.ProjectServiceHTTP{}
+	}
+	if declaration.Http.Access == nil {
+		declaration.Http.Access = &controlv1.ProjectHTTPAccess{}
+	}
+	if declaration.Http.Access.Mode == nil {
+		declaration.Http.Access.Mode = new(controlv1.Anonymous)
+	}
+	if declaration.Http.Access.Ip == nil {
+		declaration.Http.Access.Ip = new([]string{"127.0.0.1/32"})
+	}
+	digest := sha256.Sum256([]byte(*declaration.Hostname))
+	name := "fixture-" + hex.EncodeToString(digest[:8])
+	saved, err := i.routes.CreateServiceAt(prepareCtx, i.teamID, name, "fixture:"+*declaration.Hostname,
+		&controlv1.ServicePlacement{DomainId: &i.domainID, Hostname: declaration.Hostname},
+		controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP}, &declaration)
+	if err != nil {
+		t.Fatal("save fixture service", err)
+	}
+	native, identity, err := publisheridentity.EnsureServiceOwner(prepareCtx, i.state, i.routes, i.authority, saved)
+	if err != nil {
+		t.Fatal("enroll fixture service publisher", err)
+	}
+	return saved, publisherservice.RunConfig{
+		Control: native, Access: native.Access, State: i.state, ServiceID: saved.Id,
+		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
+		Target: strings.TrimPrefix(target, "http://"), Metadata: publisheridentity.ServiceMetadata(saved),
+		RelayQUIC: quic, RelayTCP: tcp, DrainTime: time.Second, HeartbeatInterval: 15 * time.Second,
 	}
 }
 
 type integrationPublisher struct {
 	cancel      context.CancelFunc
 	done        chan struct{}
-	events      eventRecorder[publisher.Event]
+	events      eventRecorder[publisherservice.RunStatus]
+	ready       eventRecorder[controlv1.ServiceRunPreparation]
 	cursor      int
 	mu          sync.Mutex
 	err         error
+	run         integrationPublisherRun
 	diagnostics func() string
 }
 
-func prepareIntegrationPublisher(ctx context.Context, config publisher.Config) (publisher.Config, error) {
-	bootstrap, _ := config.Control.(*integrationScopedRunControl)
-	observed, _ := config.Control.(*certificateObservingControlClient)
-	if observed != nil {
-		bootstrap = observed.bootstrap
-	}
-	if bootstrap != nil {
-		prepare, cancel := context.WithTimeout(ctx, 15*time.Second)
-		defer cancel()
-		publicURL, err := bootstrap.GetPublicURLByHostname(prepare, config.TeamID, config.Hostname)
-		if errors.Is(err, clientcontrol.ErrNotFound) {
-			mode := config.AccessMode
-			if mode == "" {
-				mode = controlv1.Anonymous
-			}
-			target := config.Target
-			if config.PreserveSavedPublicURLTarget {
-				target = ""
-			}
-			body := controlv1.CreatePublicURLRequest{TeamId: config.TeamID, DomainId: config.DomainID,
-				RequirePostQuantum: config.RequirePostQuantum,
-				CanonicalHostname:  config.Hostname, PublicUrlScope: config.PublicURLScope,
-				Purpose: config.Purpose, Target: target, AccessMode: &mode,
-				AllowedIpPrefixes: &config.AllowedIPPrefixes, Ephemeral: &config.Ephemeral}
-			if config.PublicURLScope == controlv1.Member {
-				body.MembershipId = &config.MembershipID
-			}
-			publicURL, err = bootstrap.CreatePublicURL(prepare, body, "fixture-"+config.Hostname)
-		}
-		if err != nil {
-			return config, fmt.Errorf("prepare saved public URL: %w", err)
-		}
-		native, identity, err := publisheridentity.EnsureOwner(prepare, bootstrap.state, bootstrap.Client, bootstrap.authority, publicURL)
-		if err != nil {
-			return config, fmt.Errorf("prepare enrolled public publisher: %w", err)
-		}
-		config.Control, config.PublisherIdentityID = native, identity.ClientId
-		config.Identity, config.Audit = native, native
-		config.VisitorControl, config.BrowserControl = bootstrap.Client, bootstrap.Client
-		config.Shares, config.Previews, config.FeedbackControl = bootstrap.Client, bootstrap.Client, bootstrap.Client
-		config.Management, config.AccessManagement = nil, nil
-		if observed != nil {
-			observed.Native = native
-			config.Control = observed
-		}
-	}
-	return config, nil
+type integrationPublisherRun struct {
+	serviceID, runID, hostname string
+	number                     int64
 }
 
-func startOwnedIntegrationPublisher(t *testing.T, owner *runtimeTopology, config publisher.Config, diagnostics func() string) *integrationPublisher {
+func startOwnedIntegrationPublisher(t *testing.T, owner *runtimeTopology, config publisherservice.RunConfig, diagnostics func() string) *integrationPublisher {
 	return startOwnedIntegrationPublisherContext(t, context.Background(), owner, config, diagnostics)
 }
 
-func startOwnedIntegrationPublisherContext(t *testing.T, parent context.Context, owner *runtimeTopology, config publisher.Config, diagnostics func() string) *integrationPublisher {
+func startOwnedIntegrationPublisherContext(t *testing.T, parent context.Context, owner *runtimeTopology, config publisherservice.RunConfig, diagnostics func() string) *integrationPublisher {
 	t.Helper()
-	var err error
-	config, err = prepareIntegrationPublisher(t.Context(), config)
-	if err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithCancel(parent)
-	handle := &integrationPublisher{cancel: cancel, done: make(chan struct{}), diagnostics: diagnostics}
+	handle := &integrationPublisher{cancel: cancel, done: make(chan struct{}), diagnostics: diagnostics,
+		run: integrationPublisherRun{serviceID: config.ServiceID}}
 	owner.publishers = append(owner.publishers, runtimeProcess{name: "publisher", cancel: cancel, wait: handle.wait})
-	config.Logf = t.Logf
-	previous := config.Observe
-	config.Observe = func(event publisher.Event) error {
-		if previous != nil {
-			if err := previous(event); err != nil {
+	var binding controlv1.ServiceRunPreparation
+	prepared, ready, status := config.Prepared, config.Ready, config.ObserveReadiness
+	config.Prepared = func(run controlv1.ServiceRunPreparation) error {
+		handle.mu.Lock()
+		handle.run = integrationPublisherRun{serviceID: run.ServiceId, runID: run.ServiceRunId, hostname: run.Hostname, number: run.RunNumber}
+		handle.mu.Unlock()
+		if prepared != nil {
+			if err := prepared(run); err != nil {
 				return err
 			}
 		}
-		return handle.observe(event)
+		binding = run
+		return nil
+	}
+	config.Ready = func() error {
+		if ready != nil {
+			if err := ready(); err != nil {
+				return err
+			}
+		}
+		handle.ready.append(binding)
+		return nil
+	}
+	config.ObserveReadiness = func(current publisherservice.RunStatus) {
+		if status != nil {
+			status(current)
+		}
+		handle.observe(current)
 	}
 	go func() {
-		err := publisher.Run(ctx, config)
+		err := publisherservice.Publish(ctx, config)
 		handle.mu.Lock()
 		handle.err = err
 		handle.mu.Unlock()
 		handle.events.close()
+		handle.ready.close()
 		close(handle.done)
 	}()
 	return handle
 }
 
-func (p *integrationPublisher) observe(event publisher.Event) error {
+func (p *integrationPublisher) observe(event publisherservice.RunStatus) error {
 	p.events.append(event)
 	return nil
 }
 
-func (p *integrationPublisher) observedEvents() []publisher.Event {
+func (p *integrationPublisher) observedEvents() []publisherservice.RunStatus {
 	events, _ := p.events.snapshot()
 	return events
 }
@@ -324,6 +328,16 @@ func (p *integrationPublisher) result() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.err
+}
+
+func (p *integrationPublisher) readinessFailureDetails() string {
+	p.mu.Lock()
+	run := p.run
+	p.mu.Unlock()
+	events := p.observedEvents()
+	omitted := max(0, len(events)-16)
+	return fmt.Sprintf("; publisher service_id=%s service_run_id=%s run_number=%d hostname=%s; readiness observations omitted=%d latest=%+v",
+		run.serviceID, run.runID, run.number, run.hostname, omitted, events[omitted:])
 }
 
 func (p *integrationPublisher) stop() error {
@@ -341,24 +355,22 @@ func (p *integrationPublisher) wait() error {
 	return nil
 }
 
-func waitForPublisherReady(t *testing.T, handle *integrationPublisher) publisher.Event {
+func waitForPublisherReady(t *testing.T, handle *integrationPublisher) controlv1.ServiceRunPreparation {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	for {
-		event, err := handle.events.next(ctx, &handle.cursor)
-		if err != nil {
-			diagnostics := ""
-			if handle.diagnostics != nil {
-				diagnostics = handle.diagnostics()
-			}
-			t.Fatalf("publisher did not become ready: %v; result %v%s", err, handle.result(), diagnostics)
+	run, err := handle.ready.next(ctx, &handle.cursor)
+	if err != nil {
+		diagnostics := ""
+		if handle.diagnostics != nil {
+			diagnostics = handle.diagnostics()
 		}
-		if event.Type == publisher.EventReady {
-			return event
-		}
+		t.Fatalf("publisher did not become ready: %v; result %v%s%s", err, handle.result(), handle.readinessFailureDetails(), diagnostics)
 	}
+	return run
 }
+
+func serviceHTTPAddress(run controlv1.ServiceRunPreparation) string { return "https://" + run.Hostname }
 
 func stopIntegrationPublisher(t *testing.T, handle *integrationPublisher) {
 	t.Helper()

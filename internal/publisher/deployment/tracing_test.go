@@ -24,7 +24,7 @@ func TestSharedOwnerKeepsDeploymentPhasesAndWorkersInTheirIdentity(t *testing.T)
 		control.assignment.Services[0].ServiceId = "service-" + suffix
 		identity := observability.Identity{TeamID: member.TeamId, DeploymentID: member.DeploymentId, PublisherIdentityID: member.PublisherIdentityId}
 		go func() {
-			done <- (Runtime{Control: control, Member: *member, Private: private, PollInterval: time.Millisecond, Publish: func(worker context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+			done <- (Runtime{Control: control, Member: *member, Private: private, PollInterval: time.Millisecond, Publish: func(worker context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 				identities <- observability.IdentityFromContext(worker)
 				health(true)
 				<-worker.Done()

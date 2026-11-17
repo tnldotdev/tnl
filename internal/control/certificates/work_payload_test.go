@@ -25,9 +25,9 @@ func TestCertificateCleanupRequiresIssuedPayloadBeforeDNS(t *testing.T) {
 				work.RenewAt = nil
 			}
 			dns := &dnsChallengesStub{}
-			worker := &PublicURLWorker{config: PublicURLConfig{DNSChallenges: dns}}
+			worker := &ServiceWorker{config: ServiceConfig{DNSChallenges: dns}}
 			if err := worker.advance(t.Context(), api, &work, now); err == nil || len(dns.cleanupCalls) != 0 || work.State != controlstate.ACMEOrderWaitingForInstall {
-				t.Fatal("malformed issued public URL reached DNS cleanup", err)
+				t.Fatal("malformed issued service certificate reached DNS cleanup", err)
 			}
 			relayDNS := &relayDNSChallengesStub{}
 			relay := &RelayWorker{config: RelayConfig{DNSChallenges: relayDNS}}
@@ -67,7 +67,7 @@ func TestRetiredIssuanceKeepsUncertainFinalizationRecoverable(t *testing.T) {
 					api.getOrderErr = &acme.Error{Status: 503}
 				}
 				dns := &dnsChallengesStub{}
-				worker := &PublicURLWorker{config: PublicURLConfig{DNSChallenges: dns, PollInterval: time.Second}}
+				worker := &ServiceWorker{config: ServiceConfig{DNSChallenges: dns, PollInterval: time.Second}}
 				err := worker.advance(t.Context(), api, &work, now)
 				if status == "unavailable" {
 					if err == nil {
@@ -77,13 +77,7 @@ func TestRetiredIssuanceKeepsUncertainFinalizationRecoverable(t *testing.T) {
 				} else if err != nil {
 					t.Fatal(err)
 				}
-				want := retired
-				if status == "pending" {
-					want = controlstate.ACMEOrderAuthorizing
-				} else if status == "ready" {
-					want = controlstate.ACMEOrderReadyToFinalize
-				}
-				if work.State != want || !work.FinalizationPossible || work.NotAfter != nil || len(dns.cleanupCalls) != 0 || len(api.finalizations) != 0 {
+				if work.State != retired || !work.AvailableAt.After(now) || !work.FinalizationPossible || work.NotAfter != nil || len(dns.cleanupCalls) != 0 || len(api.finalizations) != 0 {
 					t.Fatal("uncertain finalization was cleaned up or lost its recovery path")
 				}
 			})
@@ -91,7 +85,7 @@ func TestRetiredIssuanceKeepsUncertainFinalizationRecoverable(t *testing.T) {
 	}
 }
 
-func TestPublicURLWorkerChallengeMethodPayloadBoundary(t *testing.T) {
+func TestServiceWorkerChallengeMethodPayloadBoundary(t *testing.T) {
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 	for _, test := range []struct {
 		name, method, reference string
@@ -105,8 +99,8 @@ func TestPublicURLWorkerChallengeMethodPayloadBoundary(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			api := &acmeStub{}
 			dns := &dnsChallengesStub{verified: true}
-			worker := &PublicURLWorker{config: PublicURLConfig{DNSChallenges: dns}}
-			work := controlstate.ACMEOrderWork{Subject: testCertificateSubject("public-url")}
+			worker := &ServiceWorker{config: ServiceConfig{DNSChallenges: dns}}
+			work := controlstate.ACMEOrderWork{Subject: testCertificateSubject("service")}
 			authorization := controlstate.ACMEAuthorizationWork{
 				ID: "authorization", Identifier: "app.example.test", State: controlstate.ACMEAuthorizationPresented,
 				AuthorizationURL: "https://acme.example/authz", ChallengeURL: "https://acme.example/challenge",
@@ -125,7 +119,7 @@ func TestPublicURLWorkerChallengeMethodPayloadBoundary(t *testing.T) {
 	}
 }
 
-func TestPublicURLWorkerReusesAuthorizationWithOldTLSALPNChallenge(t *testing.T) {
+func TestServiceWorkerReusesAuthorizationWithOldTLSALPNChallenge(t *testing.T) {
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 	const hostname = "app.example.test"
 	for _, status := range []string{"valid", "pending"} {
@@ -137,8 +131,8 @@ func TestPublicURLWorkerReusesAuthorizationWithOldTLSALPNChallenge(t *testing.T)
 					Expires: timePointer(now.Add(time.Hour)), Challenges: []acme.Challenge{{Type: "tls-alpn-01", URL: "https://acme.example/old-challenge", Token: "old-token"}}},
 			}
 			dns := &dnsChallengesStub{}
-			worker := &PublicURLWorker{config: PublicURLConfig{DNSChallenges: dns}}
-			work := controlstate.ACMEOrderWork{Subject: testCertificateSubject("public-url"), State: controlstate.ACMEOrderAuthorizing,
+			worker := &ServiceWorker{config: ServiceConfig{DNSChallenges: dns}}
+			work := controlstate.ACMEOrderWork{Subject: testCertificateSubject("service"), State: controlstate.ACMEOrderAuthorizing,
 				OrderURL: api.order.URL, ChallengeMethod: certificateidentity.ChallengeDNS01, CertificateIdentifiers: []string{hostname}}
 			err := worker.advance(t.Context(), api, &work, now)
 			if status == "valid" {
@@ -156,7 +150,7 @@ func TestPublicURLWorkerReusesAuthorizationWithOldTLSALPNChallenge(t *testing.T)
 	}
 }
 
-func TestPublicURLWorkerDiscoversRequiredAuthorizationExpiry(t *testing.T) {
+func TestServiceWorkerDiscoversRequiredAuthorizationExpiry(t *testing.T) {
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 	for _, orderExpires := range []*time.Time{nil, timePointer(now.Add(time.Hour))} {
 		remote := acme.Authorization{URL: "https://acme.example/authz", Status: "pending", Identifier: acme.Identifier{Type: "dns", Value: "app.example.test"},

@@ -38,8 +38,6 @@ type AddressRecord struct {
 	DomainID             string
 	Owner                AddressOwner
 	CanonicalHostname    string
-	Namespace            string
-	WildcardHostname     string
 	IngressIPv4Addresses []string
 	IngressIPv6Addresses []string
 }
@@ -53,7 +51,7 @@ type Provider interface {
 
 type DNSVerifier interface {
 	Verify(context.Context, string, []string) (bool, error)
-	VerifyPublicURL(context.Context, string, []string, []string, []string) (bool, error)
+	VerifyAddress(context.Context, string, []string, []string, []string) (bool, error)
 }
 
 type Store interface {
@@ -63,8 +61,6 @@ type Store interface {
 	DNSAuthorityReleaseReady(context.Context, string, time.Time) (bool, error)
 	GetDNSAuthority(context.Context, string) (controlstate.DNSAuthority, error)
 	GetIngressPool(context.Context, string) (controlstate.IngressPool, error)
-	ClaimDNSPublicURLWork(context.Context, string, time.Time, time.Duration) (controlstate.DNSPublicURLWork, bool, error)
-	SaveDNSPublicURLWork(context.Context, controlstate.DNSPublicURLWork, time.Time) (controlstate.DNSPublicURLWork, error)
 }
 
 type Config struct {
@@ -100,13 +96,12 @@ func observeDNS(ctx context.Context, observer DNSObserver, kind, phase string, s
 }
 
 type Worker struct {
-	store         Store
-	provider      Provider
-	verifier      DNSVerifier
-	config        Config
-	now           func() time.Time
-	publicURLNext bool
-	managedNext   bool
+	store       Store
+	provider    Provider
+	verifier    DNSVerifier
+	config      Config
+	now         func() time.Time
+	managedNext bool
 }
 
 func New(store Store, provider Provider, verifier DNSVerifier, config Config) (*Worker, error) {
@@ -167,27 +162,7 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 }
 
 func (w *Worker) processExisting(ctx context.Context, now time.Time) (bool, error) {
-	if w.publicURLNext {
-		found, err := w.processPublicURL(ctx, now)
-		if found || err != nil {
-			w.publicURLNext = false
-			return found, err
-		}
-		found, err = w.processAuthority(ctx, now)
-		if found || err != nil {
-			w.publicURLNext = true
-		}
-		return found, err
-	}
 	found, err := w.processAuthority(ctx, now)
-	if found || err != nil {
-		w.publicURLNext = true
-		return found, err
-	}
-	found, err = w.processPublicURL(ctx, now)
-	if found || err != nil {
-		w.publicURLNext = false
-	}
 	if found || err != nil {
 		return found, err
 	}

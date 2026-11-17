@@ -90,10 +90,10 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		t.Fatalf("query mode = %v, want exec", mode)
 	}
 	for _, table := range []string{
-		"schema_identity", "identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_retry_keys", "dns_authorities", "dns_challenge_changes",
-		"public_urls", "publish_runs", "publisher_service_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_reservations",
+		"schema_identity", "identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_trials", "dns_authorities", "dns_challenge_changes",
+		"services", "service_runs", "service_connection_slots", "relay_services", "relay_leases", "ingress_leases", "relay_service_reservations",
 		"acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_run_fences",
-		"public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
+		"service_recovery_episodes", "service_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
 	} {
 		var exists bool
 		if err := database.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'control' AND table_name = $1)`, table).Scan(&exists); err != nil {
@@ -103,16 +103,21 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 			t.Errorf("control.%s missing after migration", table)
 		}
 		var key string
+		wantKey := "id"
+		if table == "service_connection_slots" {
+			wantKey = "publisher_connection_id"
+		}
 		if err := database.pool.QueryRow(ctx, `SELECT a.attname FROM pg_constraint AS c
 			JOIN pg_attribute AS a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-			WHERE c.conrelid = ('control.' || $1)::regclass AND c.contype = 'p'`, table).Scan(&key); err != nil || key != "id" {
-			t.Errorf("control.%s primary key = %q, %v; want id", table, key, err)
+			WHERE c.conrelid = ('control.' || $1)::regclass
+			AND (c.contype='p' OR $1='service_connection_slots' AND c.contype='u' AND a.attname='publisher_connection_id')`, table).Scan(&key); err != nil || key != wantKey {
+			t.Errorf("control.%s identity key = %q, %v; want %s", table, key, err, wantKey)
 		}
 	}
-	for _, view := range []string{"publish_run_connection_slots", "service_connection_slots", "publisher_service_runs"} {
+	for _, view := range []string{"publish_run_connection_slots", "publisher_service_connection_slots", "publisher_service_runs"} {
 		var exists bool
-		if err := database.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.views WHERE table_schema='control' AND table_name=$1)`, view).Scan(&exists); err != nil || !exists {
-			t.Errorf("control.%s typed view missing: %v", view, err)
+		if err := database.pool.QueryRow(ctx, `SELECT to_regclass('control.'||$1) IS NOT NULL`, view).Scan(&exists); err != nil || exists {
+			t.Errorf("control.%s retired view remains: %v", view, err)
 		}
 	}
 	var version int64
@@ -124,7 +129,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		t.Fatalf("baseline identity = %q, %v; want v1", identity, err)
 	}
 	// serving roles require the exact coordinated baseline and version.
-	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.public_urls ADD COLUMN future_note text`); err != nil {
+	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.services ADD COLUMN future_note text`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.pool.Exec(ctx, `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES ($1, true)`, schemaVersion+1); err != nil {
@@ -250,41 +255,35 @@ func TestIntegrationMigrationRejectsUnknownBaseline(t *testing.T) {
 }
 
 func TestIntegrationScopedForeignKeys(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "scoped_foreign_keys")
-	seedControlPublicURL(t, database, now, "owner_a")
-	seedControlPublicURL(t, database, now, "owner_b")
-	insertTestPublishRun(t, database, testPublishRun{
-		ID: "session_owner_a", PublicURLID: "public_url_owner_a", TeamID: "team_owner_a",
-		ActingIdentityID: "identity_owner_a", CertificateCacheKey: "owner_a", CertificateScope: "owner_a",
-		CertificateIdentifiers: []string{"route-owner_a.example.test"}, ChallengeMethod: "dns-01",
-		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
-	})
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.member_slug_reservations
-		(id, team_id, member_slug, state, created_at) VALUES
-		('reservation_owner_b_extra', 'team_owner_b', 'extra', 'invited', $1)`, now); err != nil {
-		t.Fatal(err)
-	}
-	account, err := database.EnsureACMEAccount(t.Context(), "https://acme.example.test/scoped-fk", "operator@example.test", now)
+	f := newServicePublicationFixture(t)
+	database, now, actor := f.database, f.now, f.actor(t)
+	other, err := database.CreateTeam(t.Context(), authorityTeamRequest(actor), now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	otherService, err := database.CreateServiceAt(t.Context(), other.ID, actor, "other", "other", ServicePlacement{}, now,
+		ServiceMetadata{}, &ProjectServiceConfiguration{Target: "localhost:3000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.member_slug_reservations
+		(id, team_id, member_slug, state, created_at) VALUES
+		('reservation_owner_b_extra', $2, 'extra', 'invited', $1)`, now, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	work := createPlanIssuanceWork(t, database, now, f.run, f.prepared.CertificatePlan, false, nil)
 	for _, test := range []struct {
 		name, query string
 		args        []any
 	}{
-		{name: "membership_slug", query: `UPDATE control.team_memberships SET slug_reservation_id = 'reservation_owner_b_extra' WHERE team_id = 'team_owner_a'`},
+		{name: "membership_slug", query: `UPDATE control.team_memberships SET slug_reservation_id = 'reservation_owner_b_extra' WHERE team_id = $1`, args: []any{f.service.TeamID}},
 		{name: "invitation_slug", query: `INSERT INTO control.team_invitations (id, team_id, slug_reservation_id, initial_role,
 			invited_by_identity_id, idempotency_key, request_digest, token_digest, state, created_at, expires_at)
-			VALUES ('invitation_wrong_team', 'team_owner_a', 'reservation_owner_b_extra', 'member', 'identity_owner_a',
-			'wrong-team', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'), 'pending', now(), now() + interval '1 hour')`},
-		{name: "publish_run_team", query: `UPDATE control.publish_runs SET team_id = 'team_owner_b' WHERE id = 'session_owner_a'`},
-		{name: "missing_recovery_run", query: `INSERT INTO control.public_url_recovery_episodes (public_url_id, publish_run_number, state, opened_at) VALUES ('public_url_owner_a', 2, 'open', now())`},
-		{name: "acme_order_run", query: `INSERT INTO control.acme_orders (id, account_id, publish_run_id, public_url_id, publish_run_number,
-			idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_identifiers,
-			challenge_method, csr_der, csr_digest, state, available_at, created_at, updated_at)
-			VALUES ('order_wrong_run', $1, 'session_owner_a', 'public_url_owner_b', 1,
-			'wrong-run', decode(repeat('03', 32), 'hex'), 'owner_a', 'owner_a', ARRAY['owner-a.example.test'],
-			'dns-01', decode('01', 'hex'), decode(repeat('04', 32), 'hex'), 'pending', now(), now(), now())`, args: []any{account.ID}},
+			VALUES ('invitation_wrong_team', $1, 'reservation_owner_b_extra', 'member', $2,
+			'wrong-team', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'), 'pending', now(), now() + interval '1 hour')`, args: []any{f.service.TeamID, actor}},
+		{name: "service_run_team", query: `UPDATE control.service_runs SET service_id=$2 WHERE id=$1`, args: []any{f.run.RunID, otherService.ID}},
+		{name: "missing_recovery_run", query: `INSERT INTO control.service_recovery_episodes (service_id, service_run_id, run_number, state, opened_at) VALUES ($1, 'srun_missing', 2, 'open', now())`, args: []any{f.service.ID}},
+		{name: "acme_order_run", query: `UPDATE control.acme_orders SET service_id=$2 WHERE id=$1`, args: []any{work.ID, otherService.ID}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := database.pool.Exec(t.Context(), test.query, test.args...)
@@ -294,19 +293,25 @@ func TestIntegrationScopedForeignKeys(t *testing.T) {
 			}
 		})
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET default_domain_id = 'domain_owner_b' WHERE id = 'team_owner_a'`); err == nil {
+	domain, err := database.ClaimTeamDomain(t.Context(), ClaimDomainRequest{
+		IdentityID: actor, TeamID: other.ID, IdempotencyKey: "foreign-domain", Domain: "foreign.example.test",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.teams SET default_domain_id=$2 WHERE id=$1`, f.service.TeamID, domain.ID); err == nil {
 		t.Fatal("another team's custom domain became the default")
 	}
 }
 
 func TestIntegrationPublisherConnectionSchemaConstraints(t *testing.T) {
-	f := newPublishRunFixture(t)
+	f := newServicePublicationFixture(t)
 	// exercise the constraints on real rows, rather than matching SQL source
 	// spelling. each failing statement is atomic and leaves the fixture intact.
 	for _, test := range []struct{ name, query, code string }{
-		{"slot_lower_bound", `UPDATE control.publish_run_connection_slots SET connection_slot = -1 WHERE connection_slot = 0`, "23514"},
-		{"slot_upper_bound", `UPDATE control.publish_run_connection_slots SET connection_slot = 2 WHERE connection_slot = 1`, "23514"},
-		{"distinct_services", `UPDATE control.publish_run_connection_slots SET relay_service_id = (SELECT relay_service_id FROM control.publish_run_connection_slots WHERE connection_slot = 0) WHERE connection_slot = 1`, "23505"},
+		{"slot_lower_bound", `UPDATE control.service_connection_slots SET connection_slot = -1 WHERE connection_slot = 0`, "23514"},
+		{"slot_upper_bound", `UPDATE control.service_connection_slots SET connection_slot = 2 WHERE connection_slot = 1`, "23514"},
+		{"distinct_services", `UPDATE control.service_connection_slots SET relay_service_id = (SELECT relay_service_id FROM control.service_connection_slots WHERE connection_slot = 0) WHERE connection_slot = 1`, "23505"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := f.database.pool.Exec(t.Context(), test.query)

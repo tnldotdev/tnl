@@ -38,7 +38,7 @@ type replacementExchanged struct {
 }
 type replacementValidated struct {
 	replacementExchanged
-	services map[string]controlv1.Service
+	services map[string]controlv1.ServiceSummary
 	metadata meta.PublicMetadata
 }
 

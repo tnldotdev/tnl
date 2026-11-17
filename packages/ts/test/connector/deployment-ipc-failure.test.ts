@@ -28,19 +28,27 @@ vi.mock("node:child_process", () => ({
     _options: unknown,
     callback: (error: Error | null, stdout: string) => void,
   ) {
+    let onClose = () => {};
+    const complete = (error: Error | null, stdout: string) => {
+      callback(error, stdout);
+      onClose();
+    };
     return {
+      once(_event: string, done: () => void) {
+        onClose = done;
+      },
       stdin: {
         on() {},
         end(input: string | undefined) {
           fixture.calls.push({ args, input: input === undefined ? undefined : JSON.parse(input) });
           queueMicrotask(() => {
             if (args[2] === "sdk-stop") {
-              callback(null, JSON.stringify({ schema: 1, state: "stopped" }));
+              complete(null, JSON.stringify({ schema: 1, state: "stopped" }));
             } else if (args.includes("--recover-handle") && !fixture.recover) {
-              callback(new Error("native recovery unavailable"), "");
+              complete(new Error("native recovery unavailable"), "");
             } else {
               fixture.preparations++;
-              callback(null, JSON.stringify(prepared(fixture.preparations)));
+              complete(null, JSON.stringify(prepared(fixture.preparations)));
             }
           });
         },

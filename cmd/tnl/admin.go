@@ -59,7 +59,7 @@ type adminMaintenanceListCommand struct {
 
 type adminMaintenanceSetCommand struct {
 	remoteFlags `embed:""`
-	Name        controlv1.MaintenanceControlName `arg:"" name:"name" required:"" enum:"public_url_creation,publish_run_creation,certificate_issuance" help:"Maintenance control to change."`
+	Name        controlv1.MaintenanceControlName `arg:"" name:"name" required:"" enum:"service_creation,service_run_creation,certificate_issuance" help:"Maintenance control to change."`
 }
 
 func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand, stdout, stderr io.Writer) error {
@@ -76,8 +76,8 @@ func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand,
 			clioutput.Fields(
 				clioutput.Field{Label: "server", Value: server},
 				clioutput.Field{Label: "role", Value: string(value.Role)},
-				clioutput.Field{Label: "public URLs", Value: fmt.Sprintf("%d enabled / %d suspended", value.EnabledPublicUrls, value.SuspendedPublicUrls)},
-				clioutput.Field{Label: "publish runs", Value: fmt.Sprintf("%d ready / %d starting", value.ReadyPublishRuns, value.StartingPublishRuns)},
+				clioutput.Field{Label: "services", Value: fmt.Sprintf("%d enabled / %d suspended", value.EnabledServices, value.SuspendedServices)},
+				clioutput.Field{Label: "service runs", Value: fmt.Sprintf("%d ready / %d starting", value.ReadyServiceRuns, value.StartingServiceRuns)},
 				clioutput.Field{Label: "started", Value: adminTime(value.StartedAt)},
 				clioutput.Field{Label: "current", Value: adminTime(value.CurrentTime)},
 			),

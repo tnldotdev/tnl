@@ -76,6 +76,30 @@ func (q *Queries) LockVisitorTokenIssuer(ctx context.Context) (string, error) {
 	return issuer, err
 }
 
+const lockVisitorTokenSigningAuthority = `-- name: LockVisitorTokenSigningAuthority :one
+SELECT signing.id, signing.public_key, signing.seed_ciphertext, signing.storage_key_id, signing.created_at, signing.retain_until, signing.retired_at, signing.revoked_at
+FROM control.visitor_token_keys AS signing
+CROSS JOIN control.visitor_verification_key_revision AS authority
+WHERE signing.retired_at IS NULL AND signing.revoked_at IS NULL AND authority.id=1
+FOR SHARE OF authority
+`
+
+func (q *Queries) LockVisitorTokenSigningAuthority(ctx context.Context) (ControlVisitorTokenKey, error) {
+	row := q.db.QueryRow(ctx, lockVisitorTokenSigningAuthority)
+	var i ControlVisitorTokenKey
+	err := row.Scan(
+		&i.ID,
+		&i.PublicKey,
+		&i.SeedCiphertext,
+		&i.StorageKeyID,
+		&i.CreatedAt,
+		&i.RetainUntil,
+		&i.RetiredAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const lockVisitorTokenSigningKey = `-- name: LockVisitorTokenSigningKey :one
 SELECT id, public_key, seed_ciphertext, storage_key_id, created_at, retain_until, retired_at, revoked_at FROM control.visitor_token_keys WHERE retired_at IS NULL AND revoked_at IS NULL FOR UPDATE
 `

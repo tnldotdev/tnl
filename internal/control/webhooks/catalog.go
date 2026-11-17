@@ -16,12 +16,13 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const maxFeedBytes = 8 << 20
-const freshness = 15 * time.Minute
-const lastGood = 24 * time.Hour
+const freshness = ippolicy.ProviderFreshFor
+const lastGood = ippolicy.ProviderLastGoodFor
 const retryDelay = 30 * time.Second
 
 var ErrUnknown = errors.New("unknown webhook provider")
@@ -36,6 +37,7 @@ type Result struct {
 	Source Source
 	ETag   string
 	MaxAge int
+	Window ippolicy.ProviderWindow
 }
 
 type cached struct {
@@ -72,7 +74,10 @@ func (c *Catalog) Read(ctx context.Context, name string) (Result, error) {
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	now := c.now()
-	current := func(maxAge int) Result { return Result{Source: entry.source, ETag: entry.etag, MaxAge: maxAge} }
+	current := func(maxAge int) Result {
+		return Result{Source: entry.source, ETag: entry.etag, MaxAge: maxAge,
+			Window: ippolicy.NewProviderWindow(entry.checked, now)}
+	}
 	if !entry.checked.IsZero() && now.Before(entry.checked.Add(freshness)) {
 		return current(int(entry.checked.Add(freshness).Sub(now).Seconds())), nil
 	}

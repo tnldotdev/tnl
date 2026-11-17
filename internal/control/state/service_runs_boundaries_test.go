@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"math"
 	"reflect"
@@ -30,12 +29,12 @@ func TestServiceRunLifecycleBoundary(t *testing.T) {
 			if tc.state.valid() != tc.valid || tc.state.active() != tc.active {
 				t.Fatal("private run lifecycle crossed the active publisher boundary")
 			}
-			run := controlstatedb.ControlServiceRun{State: string(tc.state), PublisherExpiresAt: timestamptz(now.Add(time.Nanosecond))}
+			run := controlstatedb.ControlServiceRun{State: string(tc.state), PublisherExpiresAt: timestamptz(now), ServingUntil: timestamptz(now.Add(time.Nanosecond))}
 			if activeServiceRun(run, now) != tc.active {
 				t.Fatal("stored run crossed the active publisher boundary")
 			}
 			if activeServiceRun(run, now.Add(time.Nanosecond)) {
-				t.Fatal("publisher lease remained active at its expiry")
+				t.Fatal("publisher serving authority remained active at its expiry")
 			}
 			run.ClosedAt = timestamptz(now)
 			if activeServiceRun(run, now) {
@@ -163,53 +162,4 @@ func systemTrustDigest(host string) string {
 	// these bytes are the existing target trust snapshot context.
 	digest := sha256.Sum256([]byte(host + "\x00system\x00"))
 	return hex.EncodeToString(digest[:])
-}
-
-func TestServiceRunPublicURLProjectionBoundary(t *testing.T) {
-	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
-	expires := now.Add(time.Hour)
-	base := controlstatedb.ControlPublicUrl{
-		ID: "url", TeamID: "team", DomainID: "domain", MembershipID: text("member"),
-		CanonicalHostname: "app.example.test", Target: "http://127.0.0.1:1234", Namespace: "example.test",
-		PublicURLScope: "member", Purpose: "app", AccessMode: "restricted", PolicyRevision: 17,
-		LifecycleState: "enabled", DnsAuthorityReference: text("dns-authority"), DnsState: "ready",
-		NextPublishRunNumber: 23, MutationRevision: 31, Ephemeral: true, ExpiresAt: timestamptz(expires),
-		CreatedAt: timestamptz(now), UpdatedAt: timestamptz(now.Add(time.Second)), ServiceProtocol: "http", PublisherPool: true,
-	}
-	fixture, err := json.Marshal(struct {
-		controlstatedb.ControlPublicUrl
-		OpenPublishRunID string
-	}{base, "open-run"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var retry controlstatedb.GetPublicURLByCreatorIdempotencyRow
-	var identity controlstatedb.GetIdentityPublicURLRow
-	var list controlstatedb.ListIdentityPublicURLsRow
-	var authorized controlstatedb.ListAuthorizedPublicURLsDataRow
-	var auth controlstatedb.GetPublicURLForAuthorizationDataRow
-	for _, row := range []any{&retry, &identity, &list, &authorized, &auth} {
-		if err := json.Unmarshal(fixture, row); err != nil {
-			t.Fatal(err)
-		}
-	}
-	expected := PublicURL{ID: "url", TeamID: "team", DomainID: "domain", MembershipID: "member", CanonicalHostname: "app.example.test", Target: "http://127.0.0.1:1234", Namespace: "example.test", PublicURLScope: "member", Purpose: "app", AccessMode: "restricted", PolicyRevision: 17, LifecycleState: "enabled", DNSAuthorityReference: "dns-authority", DNSState: "ready", NextPublishRunNumber: 23, MutationRevision: 31, AuthorizationPublishRunNumber: 23, Ephemeral: true, ExpiresAt: &expires, OpenPublishRunID: "open-run", CreatedAt: now, UpdatedAt: now.Add(time.Second), ServiceProtocol: "http", PublisherPool: true}
-	for name, actual := range map[string]PublicURL{
-		"model": publicURLFromModel(base, "open-run"), "retry": publicURLFromIdempotencyRow(retry),
-		"identity": publicURLFromIdentityRow(identity), "list": publicURLFromListRow(list), "authorized list": publicURLFromAuthorizedListRow(authorized),
-	} {
-		t.Run(name, func(t *testing.T) {
-			if !reflect.DeepEqual(actual, expected) {
-				t.Fatalf("projection fields differ:\nactual: %#v\nexpected: %#v", actual, expected)
-			}
-		})
-	}
-	for _, number := range []int64{0, 7, math.MaxInt64} {
-		auth.AuthorizationPublishRunNumber = number
-		actual := publicURLFromAuthorizationRow(auth)
-		expected.AuthorizationPublishRunNumber = uint64(number)
-		if !reflect.DeepEqual(actual, expected) {
-			t.Fatal("authorization-specific run number override changed other projection fields")
-		}
-	}
 }

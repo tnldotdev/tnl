@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,73 +20,68 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type selectiveShareAuthorizer struct {
-	principal publicURLReadPrincipal
-	requests  []authorization.Request
-}
-
-func (a *selectiveShareAuthorizer) AuthorizePublicURLReads(_ context.Context, _ string) (publicURLReadPrincipal, error) {
-	return a.principal, nil
-}
-
-func (a *selectiveShareAuthorizer) Authorize(_ context.Context, request authorization.Request) (authorization.Decision, error) {
-	a.requests = append(a.requests, request)
-	if request.PublicURLID == "url_2" {
-		return authorization.Decision{}, authorization.ErrForbidden
-	}
-	return authorization.Decision{IdentityID: "identity_1", TeamID: "team_1", PolicyRevision: 7}, nil
-}
-
-type shareRoutesStub struct {
-	PublicURLStore
-}
-
-func (*shareRoutesStub) GetPublicURLForAuthorization(_ context.Context, id string) (controlstate.PublicURL, error) {
-	if id == "url_missing" {
-		return controlstate.PublicURL{}, controlstate.ErrPublicURLNotFound
-	}
-	return controlstate.PublicURL{
-		ID: id, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
-		CanonicalHostname: "web.example.test", Target: "http://127.0.0.1:3000",
-		PublicURLScope: controlstate.PublicURLScopeMember, MutationRevision: 3,
-		LifecycleState: controlstate.PublicURLLifecycleEnabled,
-		Purpose:        controlstate.PublicURLPurposeApp, ServiceProtocol: controlstate.PublicURLServiceHTTP,
-	}, nil
-}
-
 type shareStoreStub struct {
-	created  controlstate.CreateShareRequest
-	share    controlstate.Share
-	guestID  string
-	guestURL string
+	created                            controlstate.CreateShareRequest
+	share                              controlstate.Share
+	guestID                            string
+	guestURL                           string
+	guestFailure                       error
+	guestOwner, guestService, guestKey string
+	guestCredential                    controlstate.GuestCredential
+	guestFingerprint                   [32]byte
+	guestCalls                         int
 }
 
 func (s *shareStoreStub) CreateShare(_ context.Context, request controlstate.CreateShareRequest, now time.Time) (controlstate.Share, error) {
 	s.created = request
-	scope := "url"
+	scope := "service"
 	if request.PreviewID != "" {
 		scope = "preview"
 	}
+	team := request.TeamID
+	if team == "" {
+		team = "team_1"
+	}
 	s.share = controlstate.Share{
-		ID: "shr_example", PreviewID: request.PreviewID, TeamID: request.TeamID, Scope: scope, Label: request.Label,
-		CreatedByIdentityID: request.ActingIdentityID, PublicURLIDs: []string{request.PublicURLs[0].PublicURLID},
+		ID: "shr_example", PreviewID: request.PreviewID, TeamID: team, Scope: scope, Label: request.Label,
+		CreatedByIdentityID: request.ActingIdentityID, ServiceIDs: slices.Clone(request.ServiceIDs),
+		EntryServiceID: request.EntryServiceID, EntryHostname: "web.example.test",
 		CreatedAt: now, ExpiresAt: request.ExpiresAt,
 	}
 	return s.share, nil
 }
 
-func (s *shareStoreStub) CreateGuestShare(_ context.Context, guestID, urlID, _, label string, _ [32]byte, expiresAt, now time.Time) (controlstate.Share, error) {
-	if urlID != "url_guest" {
+func (s *shareStoreStub) CreateGuestShare(_ context.Context, credential controlstate.GuestCredential, serviceID, key, label string, fingerprint [32]byte, expiresAt, now time.Time) (controlstate.Share, error) {
+	s.guestCalls++
+	s.guestCredential, s.guestKey, s.guestFingerprint = credential, key, fingerprint
+	if s.guestFailure != nil {
+		return controlstate.Share{}, s.guestFailure
+	}
+	if credential.SourceIP != netip.MustParseAddr("192.0.2.7") {
+		return controlstate.Share{}, authorization.ErrGuestIPChanged
+	}
+	if serviceID != s.guestService {
 		return controlstate.Share{}, controlstate.ErrShareStale
 	}
-	s.guestID, s.guestURL = guestID, urlID
-	s.share = controlstate.Share{SchemaVersion: 1, ID: "shr_guest", Scope: "guest", Label: label, TeamID: "team_guest", PublicURLIDs: []string{urlID},
-		CreatedByIdentityID: guestID, CreatedAt: now, ExpiresAt: expiresAt}
+	s.guestID, s.guestURL = s.guestOwner, serviceID
+	s.share = controlstate.Share{SchemaVersion: 1, ID: "shr_guest", Scope: "guest", Label: label, GuestID: s.guestOwner,
+		ServiceIDs: []string{serviceID}, EntryServiceID: serviceID, EntryHostname: "web.example.test", CreatedAt: now, ExpiresAt: expiresAt}
 	return s.share, nil
 }
 
 func (s *shareStoreStub) GetShare(_ context.Context, _ string) (controlstate.Share, error) {
 	return s.share, nil
+}
+
+func (s *shareStoreStub) GetShareForManagement(_ context.Context, _, actor string, _ time.Time) (controlstate.Share, error) {
+	if actor != s.share.CreatedByIdentityID {
+		return controlstate.Share{}, controlstate.ErrShareNotFound
+	}
+	return s.share, nil
+}
+
+func (*shareStoreStub) ResolveCompanyAccount(context.Context, string, string) (string, error) {
+	return "identity_1", nil
 }
 
 func (s *shareStoreStub) ListShares(_ context.Context, _, _ string) (controlstate.SharePage, error) {
@@ -98,46 +95,37 @@ func (s *shareStoreStub) ListTeamShares(_ context.Context, teamID, identityID, _
 	return controlstate.SharePage{Shares: []controlstate.Share{s.share}}, nil
 }
 
-func (s *shareStoreStub) RevokeShare(_ context.Context, _, _ string, now time.Time) (controlstate.Share, error) {
+func (s *shareStoreStub) RevokeShare(_ context.Context, _, actor string, now time.Time) (controlstate.Share, error) {
+	if actor != s.share.CreatedByIdentityID {
+		return controlstate.Share{}, controlstate.ErrShareNotFound
+	}
 	s.share.RevokedAt = &now
 	return s.share, nil
 }
 
-func TestShareCreateAuthorizesEachIncludedURLAndDeliversCredentialOnce(t *testing.T) {
+func TestShareCreateChecksIncludedServiceAndDeliversCredentialOnce(t *testing.T) {
 	preview := &previewStoreStub{preview: controlstate.Preview{
-		ID: "pv_preview", TeamID: "team_1", CreatedByIdentityID: "identity_1", PublicURLIDs: []string{"url_1"},
+		ID: "pv_preview", TeamID: "team_1", CreatedByIdentityID: "identity_1", ServiceIDs: []string{"svc_1"},
 	}}
-	routes := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
-		ID: "url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
-		CanonicalHostname: "web.example.test", Target: "http://127.0.0.1:3000",
-		PublicURLScope: controlstate.PublicURLScopeMember, MutationRevision: 3,
-		LifecycleState: controlstate.PublicURLLifecycleEnabled,
-		Purpose:        controlstate.PublicURLPurposeApp, ServiceProtocol: controlstate.PublicURLServiceHTTP,
-	}}
-	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
-		IdentityID: "identity_1", TeamID: "team_1", PolicyRevision: 7,
-		PublicURLMembershipID: "membership_1", DomainID: "domain_1",
-		CanonicalHostname: "web.example.test", PublicURLScope: authorization.PublicURLScopeMember,
-	}}
+	authorizer := &recordingAuthorizer{principal: testControlReadPrincipal()}
 	shares := &shareStoreStub{}
-	h := &handler{store: routes, previews: preview, shares: shares, authorizer: authorizer}
+	h := &handler{previews: preview, shares: shares, authorizer: authorizer}
 	create := func(ids string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodPost, "/v1/previews/pv_preview/shares", strings.NewReader(fmt.Sprintf(`{"public_url_ids":%s,"entry_public_url_id":"url_1","expires_at":"%s"}`, ids, time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339))))
+		request := httptest.NewRequest(http.MethodPost, "/v1/previews/pv_preview/shares", strings.NewReader(fmt.Sprintf(`{"service_ids":%s,"entry_service_id":"svc_1","expires_at":"%s"}`, ids, time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339))))
 		request.Header.Set("Authorization", "Bearer access-token")
 		request.Header.Set("Idempotency-Key", "first-share")
 		response := httptest.NewRecorder()
 		h.CreateShare(response, request, "pv_preview", controlv1.CreateShareParams{})
 		return response
 	}
-	if response := create(`["url_other"]`); response.Code != http.StatusBadRequest || len(authorizer.requests) != 0 {
-		t.Fatalf("URL outside group = %d %s, authorized=%v", response.Code, response.Body.String(), authorizer.requests)
+	if response := create(`["svc_other"]`); response.Code != http.StatusBadRequest || shares.created.PreviewID != "" {
+		t.Fatalf("service outside preview = %d %s, stored=%+v", response.Code, response.Body.String(), shares.created)
 	}
-	response := create(`["url_1"]`)
+	response := create(`["svc_1"]`)
 	if response.Code != http.StatusCreated || shares.created.PreviewID != "pv_preview" ||
-		shares.created.ActingIdentityID != "identity_1" || shares.created.PublicURLs[0].ExpectedMutationRevision != 3 ||
-		len(authorizer.requests) != 1 || authorizer.requests[0].Operation != authorization.OperationShareCreate ||
+		shares.created.ActingIdentityID != "identity_1" || !slices.Equal(shares.created.ServiceIDs, []string{"svc_1"}) || shares.created.EntryServiceID != "svc_1" ||
 		strings.Contains(response.Body.String(), "fingerprint") || response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("share creation = %d %s, request=%+v, authorization=%v", response.Code, response.Body.String(), shares.created, authorizer.requests)
+		t.Fatalf("share creation = %d %s, request=%+v", response.Code, response.Body.String(), shares.created)
 	}
 	var creation controlv1.ShareCreation
 	if err := json.Unmarshal(response.Body.Bytes(), &creation); err != nil {
@@ -168,13 +156,13 @@ func TestShareCreateAuthorizesEachIncludedURLAndDeliversCredentialOnce(t *testin
 	if otherList.Code != http.StatusNotFound {
 		t.Fatalf("other team shares were listed: %d %s", otherList.Code, otherList.Body.String())
 	}
-	preview.preview.CreatedByIdentityID = "different-identity"
+	authorizer.principal.identityID = "different-identity"
 	denied := httptest.NewRecorder()
 	h.RevokeShare(denied, read, "shr_example")
 	if denied.Code != http.StatusNotFound || shares.share.RevokedAt != nil {
 		t.Fatalf("other identity revoked a share: %d %s", denied.Code, denied.Body.String())
 	}
-	preview.preview.CreatedByIdentityID = "identity_1"
+	authorizer.principal.identityID = "identity_1"
 	revoked := httptest.NewRecorder()
 	h.RevokeShare(revoked, read, "shr_example")
 	if revoked.Code != http.StatusOK || shares.share.RevokedAt == nil ||
@@ -183,39 +171,20 @@ func TestShareCreateAuthorizesEachIncludedURLAndDeliversCredentialOnce(t *testin
 	}
 }
 
-func TestShareCreationDoesNotStorePartiallyAuthorizedSnapshot(t *testing.T) {
-	preview := &previewStoreStub{preview: controlstate.Preview{
-		ID: "pv_preview", TeamID: "team_1", CreatedByIdentityID: "identity_1", PublicURLIDs: []string{"url_1", "url_2"},
-	}}
-	authorizer := &selectiveShareAuthorizer{principal: testPublicURLReadPrincipal()}
+func TestDirectShareCreationAuthorizesOneServiceWithoutPreview(t *testing.T) {
 	shares := &shareStoreStub{}
-	h := &handler{store: &shareRoutesStub{}, previews: preview, shares: shares, authorizer: authorizer}
-	body := fmt.Sprintf(`{"public_url_ids":["url_1","url_2"],"entry_public_url_id":"url_1","expires_at":"%s"}`, time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339))
-	request := httptest.NewRequest(http.MethodPost, "/v1/previews/pv_preview/shares", strings.NewReader(body))
-	request.Header.Set("Authorization", "Bearer access-token")
-	request.Header.Set("Idempotency-Key", "two-services")
-	response := httptest.NewRecorder()
-	h.CreateShare(response, request, "pv_preview", controlv1.CreateShareParams{})
-	if response.Code != http.StatusForbidden || len(authorizer.requests) != 2 ||
-		authorizer.requests[0].PublicURLID != "url_1" || authorizer.requests[1].PublicURLID != "url_2" || shares.created.PreviewID != "" {
-		t.Fatalf("partial authorization = %d %s, requests=%+v, stored=%+v", response.Code, response.Body.String(), authorizer.requests, shares.created)
-	}
-}
-
-func TestDirectShareCreationAuthorizesOneURLWithoutPreview(t *testing.T) {
-	shares := &shareStoreStub{}
-	authorizer := &selectiveShareAuthorizer{principal: testPublicURLReadPrincipal()}
-	h := &handler{store: &shareRoutesStub{}, shares: shares, authorizer: authorizer}
-	body := fmt.Sprintf(`{"public_url_ids":["url_1"],"entry_public_url_id":"url_1","expires_at":"%s","label":"ci"}`,
+	authorizer := &recordingAuthorizer{principal: testControlReadPrincipal()}
+	h := &handler{shares: shares, authorizer: authorizer}
+	body := fmt.Sprintf(`{"service_ids":["svc_1"],"entry_service_id":"svc_1","expires_at":"%s","label":"ci"}`,
 		time.Now().UTC().Add(time.Hour).Format(time.RFC3339))
 	request := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer access-token")
 	request.Header.Set("Idempotency-Key", "exact-url")
 	response := httptest.NewRecorder()
-	h.CreateURLShare(response, request, controlv1.CreateURLShareParams{})
+	h.CreateServiceShare(response, request, controlv1.CreateServiceShareParams{})
 	if response.Code != http.StatusCreated || shares.created.PreviewID != "" || shares.created.Label != "ci" ||
-		len(shares.created.PublicURLs) != 1 || shares.created.PublicURLs[0].PublicURLID != "url_1" ||
-		!strings.Contains(response.Body.String(), `"scope":"url"`) || strings.Contains(response.Body.String(), `"preview_id"`) {
+		len(shares.created.ServiceIDs) != 1 || shares.created.ServiceIDs[0] != "svc_1" || shares.created.EntryServiceID != "svc_1" ||
+		!strings.Contains(response.Body.String(), `"scope":"service"`) || strings.Contains(response.Body.String(), `"preview_id"`) {
 		t.Fatalf("exact share = %d %s, request=%+v", response.Code, response.Body.String(), shares.created)
 	}
 	read := httptest.NewRequest(http.MethodGet, "/v1/shares/shr_example", nil)
@@ -228,13 +197,12 @@ func TestDirectShareCreationAuthorizesOneURLWithoutPreview(t *testing.T) {
 }
 
 func TestGuestShareChecksTrialCredentialAndSourceBeforeMinting(t *testing.T) {
-	shares := &shareStoreStub{}
-	guest := &guestCreationStoreStub{guest: controlstate.GuestTrial{ID: "gst_guest", ExpiresAt: time.Now().Add(time.Hour)}}
-	fallback := &selectiveShareAuthorizer{principal: testPublicURLReadPrincipal()}
-	authorizer := guestAuthorizer{fallback: fallback, store: guestStoreStub{guest: guest.guest}}
-	h := &handler{config: Config{GuestDemoEnabled: true}, guests: guest, shares: shares, authorizer: authorizer, store: &shareRoutesStub{}}
-	body := fmt.Sprintf(`{"public_url_ids":["url_guest"],"entry_public_url_id":"url_guest","expires_at":"%s","label":"trial"}`,
-		guest.guest.ExpiresAt.UTC().Format(time.RFC3339Nano))
+	guest := guestAPIStore(t)
+	shares := &shareStoreStub{guestOwner: guest.guest.ID, guestService: guest.record.ID}
+	fallback := &guestHumanAuthorizer{}
+	h := &handler{guests: guest, shares: shares, authorizer: fallback}
+	body := fmt.Sprintf(`{"service_ids":[%q],"entry_service_id":%q,"expires_at":"%s","label":"trial"}`,
+		guest.record.ID, guest.record.ID, guest.guest.ExpiresAt.UTC().Format(time.RFC3339Nano))
 	for _, test := range []struct {
 		ip     string
 		status int
@@ -246,54 +214,114 @@ func TestGuestShareChecksTrialCredentialAndSourceBeforeMinting(t *testing.T) {
 		request.RemoteAddr = test.ip
 		request.Header.Set("Authorization", "Bearer guest-token")
 		request.Header.Set("Idempotency-Key", "guest-share")
+		request.Header.Set("X-Forwarded-For", "192.0.2.7")
 		response := httptest.NewRecorder()
-		h.CreateURLShare(response, request, controlv1.CreateURLShareParams{})
+		h.CreateServiceShare(response, request, controlv1.CreateServiceShareParams{})
 		if response.Code != test.status {
-			t.Fatalf("guest share from %s = %d %s", test.ip, response.Code, response.Body.String())
+			t.Fatalf("guest share from %s = %d", test.ip, response.Code)
 		}
 		if test.status == http.StatusForbidden && shares.guestID != "" ||
-			test.status == http.StatusCreated && (shares.guestID != "gst_guest" || shares.guestURL != "url_guest" || shares.share.Label != "trial") || len(fallback.requests) != 0 {
-			t.Fatalf("guest share leaked or bypassed source check: response=%s, store=%+v", response.Body.String(), shares)
+			test.status == http.StatusCreated && (shares.guestID != guest.guest.ID || shares.guestURL != guest.record.ID || shares.share.Label != "trial") || fallback.reads != 0 {
+			t.Fatal("guest share leaked or bypassed state source check", response.Code)
+		}
+		if test.status == http.StatusCreated {
+			var result controlv1.ShareCreation
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			secret, err := base64.RawURLEncoding.DecodeString(result.TokenSource.Secret)
+			if err != nil || sha256.Sum256(secret) != shares.guestFingerprint ||
+				result.Share.GuestId != guest.guest.ID || result.Share.TeamId != "" || result.Share.CreatedByIdentityId != "" ||
+				strings.Contains(response.Body.String(), `"team_id"`) || strings.Contains(response.Body.String(), `"created_by_identity_id"`) {
+				t.Fatal("guest share fabricated a human owner or changed its credential")
+			}
 		}
 	}
 	rejected := func(id string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(strings.ReplaceAll(body, "url_guest", id)))
+		request := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(strings.ReplaceAll(body, guest.record.ID, id)))
 		request.RemoteAddr = "192.0.2.7:1234"
 		request.Header.Set("Authorization", "Bearer guest-token")
 		request.Header.Set("Idempotency-Key", id)
 		response := httptest.NewRecorder()
-		h.CreateURLShare(response, request, controlv1.CreateURLShareParams{})
+		h.CreateServiceShare(response, request, controlv1.CreateServiceShareParams{})
 		return response
 	}
-	unrelated, missing := rejected("url_unrelated"), rejected("url_missing")
+	unrelated, missing := rejected("svc_unrelated"), rejected("svc_missing")
 	if unrelated.Code != http.StatusConflict || missing.Code != unrelated.Code {
-		t.Fatal("guest share responses revealed whether an unowned public URL exists")
+		t.Fatal("guest share responses revealed whether an unowned service exists")
 	}
-	h.authorizer = guestAuthorizer{fallback: fallback, store: guestStoreStub{lookupErr: errors.New("guest database unavailable")}}
+	guest.lookupErr = errors.New("guest database unavailable")
 	request := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer guest-token")
 	request.Header.Set("Idempotency-Key", "failed-lookup")
 	response := httptest.NewRecorder()
-	h.CreateURLShare(response, request, controlv1.CreateURLShareParams{})
-	if response.Code != http.StatusServiceUnavailable || len(fallback.requests) != 0 {
+	h.CreateServiceShare(response, request, controlv1.CreateServiceShareParams{})
+	if response.Code != http.StatusServiceUnavailable || fallback.reads != 0 {
 		t.Fatalf("guest lookup error fell through to team authorization: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestGuestTrialCannotShareAnArbitraryPreviewOrMismatchedBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, preview, ids, entry string
+		status                    int
+	}{
+		{"preview", "pv_arbitrary", `["svc_guest"]`, "svc_guest", 403},
+		{"entry", "", `["svc_guest"]`, "svc_other", 400},
+		{"multiple", "", `["svc_guest","svc_other"]`, "svc_guest", 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			trials := guestAPIStore(t)
+			shares, human := &shareStoreStub{}, &guestHumanAuthorizer{}
+			h := &handler{guests: trials, shares: shares, authorizer: human}
+			body := fmt.Sprintf(`{"service_ids":%s,"entry_service_id":%q,"expires_at":%q}`, tc.ids, tc.entry,
+				trials.guest.ExpiresAt.Format(time.RFC3339Nano))
+			r := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(body))
+			r.RemoteAddr = "192.0.2.7:1234"
+			r.Header.Set("Authorization", "Bearer guest-token")
+			r.Header.Set("Idempotency-Key", "share")
+			w := httptest.NewRecorder()
+			h.createShare(w, r, tc.preview)
+			if w.Code != tc.status || human.reads != 0 || shares.guestCalls != 0 || shares.created.ActingIdentityID != "" {
+				t.Fatal("trial reached generic preview or mismatched share management", w.Code)
+			}
+		})
 	}
 }
 
 func TestUnrecognizedGuestCredentialUsesSignedInShareAuthorization(t *testing.T) {
 	shares := &shareStoreStub{}
-	authorizer := &selectiveShareAuthorizer{principal: testPublicURLReadPrincipal()}
+	authorizer := &guestHumanAuthorizer{}
 	h := &handler{config: Config{GuestDemoEnabled: true}, guests: &guestCreationStoreStub{},
-		shares: shares, authorizer: guestAuthorizer{fallback: authorizer, store: guestStoreStub{}}, store: &shareRoutesStub{}}
-	body := fmt.Sprintf(`{"public_url_ids":["url_1"],"entry_public_url_id":"url_1","expires_at":"%s"}`,
+		shares: shares, authorizer: authorizer}
+	body := fmt.Sprintf(`{"service_ids":["svc_1"],"entry_service_id":"svc_1","expires_at":"%s"}`,
 		time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano))
 	request := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(body))
-	request.Header.Set("Authorization", "Bearer signed-in-token")
+	request.Header.Set("Authorization", "Bearer human-token")
 	request.Header.Set("Idempotency-Key", "signed-in-share")
 	response := httptest.NewRecorder()
-	h.CreateURLShare(response, request, controlv1.CreateURLShareParams{})
+	h.CreateServiceShare(response, request, controlv1.CreateServiceShareParams{})
 	if response.Code != http.StatusCreated || shares.created.ActingIdentityID != "identity_1" ||
-		len(authorizer.requests) != 1 || authorizer.requests[0].Operation != authorization.OperationShareCreate {
-		t.Fatalf("signed-in share = %d %s, authorization=%+v", response.Code, response.Body.String(), authorizer.requests)
+		authorizer.reads != 1 || !slices.Equal(shares.created.ServiceIDs, []string{"svc_1"}) {
+		t.Fatalf("signed-in share = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestGuestShareMissingServiceOwnershipFailsClosed(t *testing.T) {
+	shares := &shareStoreStub{guestFailure: errors.New("guest ownership unavailable")}
+	guest := guestAPIStore(t)
+	fallback := &guestHumanAuthorizer{}
+	h := &handler{config: Config{GuestDemoEnabled: true}, guests: guest, shares: shares,
+		authorizer: fallback}
+	body := fmt.Sprintf(`{"service_ids":["svc_guest"],"entry_service_id":"svc_guest","expires_at":"%s"}`, guest.guest.ExpiresAt.UTC().Format(time.RFC3339Nano))
+	request := httptest.NewRequest(http.MethodPost, "/v1/shares", strings.NewReader(body))
+	request.RemoteAddr = "192.0.2.7:1234"
+	request.Header.Set("Authorization", "Bearer guest-token")
+	request.Header.Set("Idempotency-Key", "missing-guest-service")
+	response := httptest.NewRecorder()
+	h.CreateServiceShare(response, request, controlv1.CreateServiceShareParams{})
+	if response.Code != http.StatusServiceUnavailable ||
+		shares.share.ID != "" || fallback.reads != 0 {
+		t.Fatal("missing guest ownership fabricated authority or hid its dependency", response.Code, response.Body.String())
 	}
 }

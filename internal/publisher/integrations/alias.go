@@ -5,18 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
+	"sync"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // AliasPublisher uses the same elected lifecycle as OAuth and webhooks, but only
 // the selected entry-service tunnel may prepare its run. every request rechecks
 // selection and destination identity before reaching the local proxy.
-func AliasPublisher(state *clientstate.Database, store *clientstate.Store, selection clientstate.AliasSelection, tunnelID string, base publisher.Config, report func(publisher.Event, error)) Publisher {
+func AliasPublisher(state *clientstate.Database, store *clientstate.Store, selection clientstate.AliasSelection, tunnelID string, prepare func(context.Context) (Snapshot, error), report func(bool, error)) Publisher {
 	candidate := func(ctx context.Context) (clientstate.AliasSelection, clientstate.TunnelInfo, error) {
 		current, receiver, err := state.AliasCandidate(ctx, selection.ID)
 		if err != nil {
@@ -25,16 +26,19 @@ func AliasPublisher(state *clientstate.Database, store *clientstate.Store, selec
 		if receiver.ID != tunnelID {
 			return current, receiver, clientstate.ErrAliasNotSelected
 		}
-		if current.Hostname != base.Hostname || current.Fingerprint != selection.Fingerprint {
+		if current.Hostname != selection.Hostname || current.Fingerprint != selection.Fingerprint {
 			return current, receiver, clientstate.ErrAliasPolicyConflict
+		}
+		if !opaqueid.Valid(receiver.ServiceID, opaqueid.ServicePrefix) {
+			return current, receiver, clientstate.ErrAliasReceiverUnavailable
 		}
 		return current, receiver, nil
 	}
 	revision := func(selection clientstate.AliasSelection, receiver clientstate.TunnelInfo) string {
-		return fmt.Sprintf("%d:%s:%s:%d", selection.Revision, receiver.ID, receiver.PublicURLID, receiver.PublishRunNumber)
+		return fmt.Sprintf("%d:%s:%s:%d", selection.Revision, receiver.ID, receiver.ServiceID, receiver.PublishRunNumber)
 	}
 	return Publisher{
-		State: state, Store: store, Server: selection.Scope.Server, Hostname: base.Hostname,
+		State: state, Store: store, Server: selection.Scope.Server, Hostname: selection.Hostname,
 		Eligible: func(ctx context.Context) (bool, error) {
 			_, _, err := candidate(ctx)
 			if errors.Is(err, clientstate.ErrAliasNotSelected) || errors.Is(err, clientstate.ErrAliasReceiverUnavailable) {
@@ -47,15 +51,42 @@ func AliasPublisher(state *clientstate.Database, store *clientstate.Store, selec
 			if err != nil {
 				return Snapshot{}, err
 			}
+			snapshot, err := prepare(ctx)
+			if err != nil {
+				return Snapshot{}, err
+			}
+			if snapshot.Service.Endpoint == nil || snapshot.Service.Endpoint.Hostname != current.Hostname {
+				return Snapshot{}, clientstate.ErrAliasPolicyConflict
+			}
 			owner, err := opaqueid.New(opaqueid.InvocationPrefix)
 			if err != nil {
 				return Snapshot{}, err
 			}
-			config := base
+			config := snapshot.Config
 			config.PreviewID, config.Feedback = "", false
-			config.AdmitRequest = func(request *http.Request, run publisher.PublishRunIdentity) error {
-				if base.AdmitRequest != nil {
-					if err := base.AdmitRequest(request, publisher.PublishRunIdentity{Hostname: receiver.Hostname, PublicURLID: receiver.PublicURLID, Number: receiver.PublishRunNumber}); err != nil {
+			admit, prepared, readiness := config.AdmitRequest, config.Prepared, snapshot.Readiness
+			var mu sync.Mutex
+			var run controlv1.ServiceRunPreparation
+			prepareOAuth := PrepareOAuthReturn(state, selection.Scope.Server)
+			config.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
+				if preparation.ServiceId != config.ServiceID || preparation.RunNumber < 1 || !opaqueid.Valid(preparation.ServiceRunId, opaqueid.ServiceRunPrefix) {
+					return clientstate.ErrAliasSelectionStale
+				}
+				mu.Lock()
+				if run.ServiceId != "" && (run.ServiceId != preparation.ServiceId || run.ServiceRunId != preparation.ServiceRunId || run.RunNumber != preparation.RunNumber) {
+					mu.Unlock()
+					return clientstate.ErrAliasSelectionStale
+				}
+				run = preparation
+				mu.Unlock()
+				if prepared != nil {
+					return prepared(preparation)
+				}
+				return nil
+			}
+			config.AdmitRequest = func(request *http.Request) error {
+				if admit != nil {
+					if err := admit(request); err != nil {
 						return err
 					}
 				}
@@ -66,36 +97,47 @@ func AliasPublisher(state *clientstate.Database, store *clientstate.Store, selec
 				if err != nil {
 					return diagnostic.Wrap(diagnostic.AliasUnavailable, err)
 				}
-				query := request.URL.Query()
-				if request.Method == http.MethodGet && len(query["state"]) == 1 {
-					if err := state.AdmitAliasOAuthReturn(request.Context(), selection.Scope.Server, current.Hostname,
-						query.Get("state"), request.URL.EscapedPath(), run.PublicURLID, run.Number); err != nil {
-						return diagnostic.Wrap(diagnostic.OAuthCallbackExpired, err)
-					}
-				}
 				return nil
 			}
-			config.Observe = func(event publisher.Event) error {
-				switch event.Type {
-				case publisher.EventReady:
-					return state.MarkAliasRunReady(ctx, clientstate.AliasPublishRun{Selection: current, Receiver: receiver,
-						Owner: owner, PublicURLID: event.PublicURLID, Number: event.PublishRunNumber})
-				case publisher.EventProvisioning, publisher.EventDraining:
-					cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					defer cancel()
-					return state.ClearAliasRun(cleanup, current.ID, owner)
+			// the alias owns its own claim; never inherit an ordinary app's
+			// request preparation or spend a return in the early owner check.
+			config.HTTPPrepareRequest = func(request *http.Request, serving publisherservice.HTTPRun) (func(context.Context) error, error) {
+				mu.Lock()
+				captured := run
+				mu.Unlock()
+				expected := publisherservice.HTTPRun{Hostname: current.Hostname,
+					ServiceID: captured.ServiceId, RunID: captured.ServiceRunId, Number: captured.RunNumber}
+				if serving != expected {
+					return nil, diagnostic.Wrap(diagnostic.AliasUnavailable, clientstate.ErrAliasSelectionStale)
 				}
-				return nil
+				return prepareOAuth(request, serving)
 			}
-			return Snapshot{Config: config, Revision: revision(current, receiver)}, nil
+			snapshot.Readiness = func(ctx context.Context, ready bool) error {
+				var err error
+				if ready {
+					mu.Lock()
+					captured := run
+					mu.Unlock()
+					err = state.MarkAliasRunReady(ctx, clientstate.AliasPublishRun{Selection: current, Receiver: receiver,
+						Owner: owner, ServiceID: captured.ServiceId, Number: uint64(captured.RunNumber)})
+				} else {
+					err = state.ClearAliasRun(ctx, current.ID, owner)
+				}
+				if readiness != nil {
+					err = errors.Join(err, readiness(ctx, ready))
+				}
+				return err
+			}
+			snapshot.Config, snapshot.Revision = config, revision(current, receiver)
+			return snapshot, nil
 		},
 		Revision: func(ctx context.Context) (string, error) {
 			current, receiver, err := candidate(ctx)
 			return revision(current, receiver), err
 		},
-		Report: func(event publisher.Event, err error) {
+		Report: func(ready bool, err error) {
 			if report != nil && !errors.Is(err, clientstate.ErrAliasNotSelected) && !errors.Is(err, clientstate.ErrAliasReceiverUnavailable) {
-				report(event, err)
+				report(ready, err)
 			}
 		},
 	}

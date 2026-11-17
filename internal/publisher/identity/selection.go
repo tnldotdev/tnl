@@ -16,13 +16,13 @@ import (
 
 var ErrSetupRequired = errors.New("no namespace publisher is set up; run tnl publisher setup --namespace")
 
-func namespaceScope(team, domain string) string {
-	digest := sha256.Sum256([]byte(team + "\x00" + domain))
+func namespaceScope(team, domain, namespace string) string {
+	digest := sha256.Sum256([]byte(team + "\x00" + domain + "\x00" + namespace))
 	return "owner-namespace:" + hex.EncodeToString(digest[:])
 }
 
 func matchesNamespace(i authorityv1.PublisherEnrollmentResult, team, domain, namespace string) bool {
-	return i.Kind == authorityv1.Namespace && i.TeamId == team && i.DomainId != nil && *i.DomainId == domain && i.Namespace != nil && *i.Namespace == namespace && i.PublicUrlId == nil
+	return i.Kind == authorityv1.Namespace && i.TeamId == team && i.DomainId != nil && *i.DomainId == domain && i.Namespace != nil && *i.Namespace == namespace
 }
 
 // LoadLocalNamespace never issues grants. it verifies the saved scope and
@@ -31,7 +31,7 @@ func LoadLocalNamespace(ctx context.Context, state *clientstate.Store, control N
 	if state == nil || team == "" || domain == "" || namespace == "" {
 		return nil, ErrScope
 	}
-	saved, found, err := state.SelectedPublisherIdentity(ctx, "namespace", namespaceScope(team, domain))
+	saved, found, err := state.SelectedPublisherIdentity(ctx, "namespace", namespaceScope(team, domain, namespace))
 	if err != nil {
 		return nil, err
 	}
@@ -96,13 +96,18 @@ func saveDefaultNamespace(ctx context.Context, state *clientstate.Store, identit
 	return state.SelectPublisherIdentity(ctx, "default_namespace", "", identity.ClientId)
 }
 
-// EnsureNamespace is called only by explicit local setup. a pending enrollment
-// survives a lost redemption reply, so a retry uses the same signing key.
-func EnsureNamespace(ctx context.Context, state *clientstate.Store, control OwnerControl, authority EnrollmentAuthority, team, domain, namespace string) (*Native, authorityv1.PublisherEnrollmentResult, error) {
+type NamespaceOwnerControl interface {
+	ServiceOwnerControl
+	ServiceAllocationControl
+}
+
+// EnsureNamespace selects one real namespace and its allocation capability. a
+// pending enrollment survives a lost reply, so a retry uses the same signing key.
+func EnsureNamespace(ctx context.Context, state *clientstate.Store, control NamespaceOwnerControl, authority EnrollmentAuthority, team, domain, namespace string) (*Native, authorityv1.PublisherEnrollmentResult, error) {
 	if state == nil || team == "" || domain == "" || namespace == "" {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
-	return ensureSelectedEnrollment(ctx, state, control, nil, authority, enrollmentSelection{kind: "namespace", team: team, id: domain, namespace: namespace})
+	return ensureSelectedEnrollment(ctx, state, control, NativeControl{Services: control, Allocations: control}, authority, enrollmentSelection{kind: "namespace", team: team, id: domain, namespace: namespace})
 }
 
 // LoadFile uses only a portable signing key. an explicit server must match the
@@ -115,14 +120,18 @@ func LoadFile(path, server string, control NativeControl, authority AssertionExc
 	if server == "" || f.ControlURL != server {
 		return nil, ErrScope
 	}
-	if control.PublicURLControl == nil || control.ControlURL() != f.ControlURL {
-		return nil, ErrScope
-	}
 	i, key, err := f.Validate()
 	if err != nil {
 		return nil, err
 	}
-	return NewNative(control, authority, i, key)
+	native, err := NewNative(control, authority, i, key)
+	if err != nil {
+		return nil, err
+	}
+	if native.ControlURL() != f.ControlURL {
+		return nil, ErrScope
+	}
+	return native, nil
 }
 
 // ResolveAdHoc selects one scoped identity for temporary app-owned HTTP

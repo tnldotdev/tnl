@@ -1,0 +1,20 @@
+paths:
+  /v1/publisher/services:
+    post:
+      operationId: allocatePublisherService
+      tags: [services]
+      summary: Allocate a temporary HTTP service
+      description: The current namespace grant retains ownership. Allocation issues no child grant or signing key.
+      security: [{ publisherAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/AllocateServiceRequest" }
+      responses:
+        "201":
+          description: Service assigned to this invocation
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

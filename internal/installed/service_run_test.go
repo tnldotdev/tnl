@@ -11,20 +11,21 @@ import (
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
-func TestPrivatePublisherCannotUseAPublicURLGrant(t *testing.T) {
+func TestServicePublisherRejectsDifferentGrantScope(t *testing.T) {
 	r := testRegistry(t)
 	job, identity, key := fixture(t, "private")
+	identity.Kind, identity.ServiceId = authorityv1.Namespace, nil
 	service, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	job.Kind, job.ServiceID, job.PublicURLID = KindService, service, ""
+	job.Kind, job.ServiceID = KindService, service
 	job.TrustRevision = 1
 	job.Protocol, job.Target = "tcp", "127.0.0.1:22"
 	if err := r.Install(t.Context(), job, identity, key); !errors.Is(err, ErrScope) {
-		t.Fatalf("public grant installed for service: %v", err)
+		t.Fatalf("namespace grant installed for service: %v", err)
 	}
-	identity.Kind, identity.ServiceId, identity.PublicUrlId = authorityv1.Service, &service, nil
+	identity.Kind, identity.ServiceId = authorityv1.Service, &service
 	if err := r.Install(t.Context(), job, identity, key); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestConnectorIsUserOnlyAndJoinsBeforeRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	started, joined := make(chan struct{}), make(chan struct{})
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Connect: func(ctx context.Context, got Job, _ *clienttelemetry.Collector, ready func() error) error {
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Connect: func(ctx context.Context, got Job, _ *clienttelemetry.Collector, ready func() error, _ func() time.Time, _ context.Context) error {
 		if got.ServiceID != service || got.IdentityID != job.IdentityID || got.Target != job.Target {
 			return ErrScope
 		}

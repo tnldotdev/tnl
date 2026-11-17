@@ -4,67 +4,69 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database, services publisherServices, hostname string, purpose controlv1.PublicURLPurpose, allowed ...[]string) (publisher.Config, error) {
-	cfg := integrationURLConfig(services, hostname, purpose)
+var errIntegrationIntent = errors.New("saved service requires explicit integration handler and anonymous access configuration")
+
+// integration shutdown carries the enclosing owner's bound, independently of
+// an individual run attempt. routine retries must not start that terminal fence.
+type integrationShutdown struct {
+	deadline func() time.Time
+	fence    context.Context
+}
+
+func (s integrationShutdown) bind(ctx context.Context, cfg *publisherservice.RunConfig) {
+	cfg.ShutdownContext = s.fence
+	_, bounded := ctx.Deadline()
+	if s.deadline == nil && !bounded {
+		return
+	}
+	cfg.ShutdownDeadline = func() time.Time {
+		var until time.Time
+		if ctx.Err() != nil && s.deadline != nil {
+			until = s.deadline()
+		}
+		if parent, ok := ctx.Deadline(); ok && (until.IsZero() || parent.Before(until)) {
+			until = parent
+		}
+		return until
+	}
+}
+
+func nativeIntegrationConfig(ctx context.Context, services publisherServices, hostname string, intent targetsyntax.IntegrationTarget, allowed []string, shutdown integrationShutdown) (publisherservice.RunConfig, controlv1.Service, error) {
+	if !intent.Valid() {
+		return publisherservice.RunConfig{}, controlv1.Service{}, publisheridentity.ErrScope
+	}
+	services.hostname = hostname
+	access := &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Anonymous)}
 	if len(allowed) != 0 {
-		cfg.AllowedIPPrefixes = append([]string{}, allowed[0]...)
+		prefixes := slices.Clone(allowed)
+		access.Ip = &prefixes
 	}
-	lock, err := clientstate.LockHostnameContext(ctx, services.state, hostname)
-	if err != nil {
-		return cfg, err
-	}
-	defer lock.Close()
-	publicURL, err := services.routes.GetPublicURLByHostname(ctx, services.teamID, hostname)
-	if errors.Is(err, clientcontrol.ErrNotFound) {
-		key, keyErr := opaqueid.New(opaqueid.IdempotencyPrefix)
-		if keyErr != nil {
-			return cfg, keyErr
+	declaration := controlv1.ProjectServiceConfiguration{Target: string(intent),
+		Http: &controlv1.ProjectServiceHTTP{Access: access,
+			Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(32)}}}
+	native, saved, err := selectNativeProjectPublisher(ctx, services, declaration, func(_ controlv1.Service, current *controlv1.ProjectServiceConfiguration) (*controlv1.ProjectServiceConfiguration, error) {
+		if current == nil || current.Target != string(intent) || current.TargetTls != nil || current.TargetDiscovery != nil || current.Http == nil ||
+			current.Http.Access == nil || current.Http.Access.Mode == nil || *current.Http.Access.Mode != controlv1.Anonymous {
+			return nil, failure.Wrap("prepare integration service", failure.ServerResponseInvalid, errIntegrationIntent)
 		}
-		protocol := controlv1.Http
-		body := controlv1.CreatePublicURLRequest{TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: hostname, PublicUrlScope: services.publicURLScope, Purpose: purpose, ServiceProtocol: &protocol, Target: "", AllowedIpPrefixes: &cfg.AllowedIPPrefixes}
-		if services.publicURLScope == controlv1.Member {
-			body.MembershipId = &services.membershipID
-		}
-		publicURL, err = services.routes.CreatePublicURL(ctx, body, key)
-	}
+		return &declaration, nil
+	})
 	if err != nil {
-		return cfg, err
+		return publisherservice.RunConfig{}, controlv1.Service{}, err
 	}
-	if publicURL.TeamId != services.teamID || publicURL.DomainId != services.domainID || publicURL.CanonicalHostname != hostname || publicURL.Purpose != purpose || publicURL.ServiceProtocol != controlv1.Http || publicURL.Target != "" || publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled || publicURL.PublicUrlScope != services.publicURLScope {
-		return cfg, failure.Wrap("read integration URL", failure.ServerResponseInvalid, errors.New("integration URL differs from the selected project"))
-	}
-	if publicURL.PublicUrlScope == controlv1.Member && (publicURL.MembershipId == nil || *publicURL.MembershipId != services.membershipID) || publicURL.PublicUrlScope == controlv1.Shared && publicURL.MembershipId != nil {
-		return cfg, failure.Wrap("read integration URL", failure.ServerResponseInvalid, errors.New("integration URL belongs to a different membership"))
-	}
-	currentPolicy := []string{}
-	if publicURL.AllowedIpPrefixes != nil {
-		currentPolicy = *publicURL.AllowedIpPrefixes
-	}
-	if !slices.Equal(currentPolicy, cfg.AllowedIPPrefixes) {
-		publicURL, err = services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{AllowedIpPrefixes: new(append([]string{}, cfg.AllowedIPPrefixes...)), ExpectedMutationRevision: publicURL.MutationRevision})
-		if err != nil {
-			return cfg, err
-		}
-	}
-	native, _, err := publisheridentity.EnsureOwner(ctx, services.state, services.authenticated.Control, services.authenticated.Authority, publicURL)
-	if err != nil {
-		return cfg, err
-	}
-	if err := native.SelectPublicURL(publicURL); err != nil {
-		return cfg, err
-	}
-	cfg.Control, cfg.PreserveSavedPublicURLTarget = native, true
-	cfg.PublisherIdentityID = native.PublisherIdentityID()
-	configureNativePublication(&cfg, native, services.routes)
-	return cfg, nil
+	cfg := publisherservice.RunConfig{Control: native, State: services.state, Access: native.Access,
+		PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
+		ServiceID: saved.Id, Metadata: publisheridentity.ServiceMetadata(saved), InspectionMode: inspection.None}
+	shutdown.bind(ctx, &cfg)
+	return cfg, saved, nil
 }

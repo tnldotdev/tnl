@@ -24,7 +24,7 @@ func (d *Database) ListServices(ctx context.Context, teamID, actorID, after stri
 	if err = serviceManager(ctx, tx, teamID, actorID); err != nil {
 		return nil, "", err
 	}
-	rows, err := controlstatedb.New(tx).ListServicesForTeam(ctx, controlstatedb.ListServicesForTeamParams{TeamID: teamID, AfterID: after})
+	rows, err := controlstatedb.New(tx).ListServicesForTeam(ctx, controlstatedb.ListServicesForTeamParams{TeamID: text(teamID), AfterID: after})
 	if err != nil {
 		return nil, "", err
 	}
@@ -59,19 +59,9 @@ func (d *Database) GetService(ctx context.Context, serviceID, actorID string) (r
 		return result, err
 	}
 	defer rollback(ctx, tx, "get service", &retErr)()
-	var row controlstatedb.ControlService
-	if _, signed := serviceActor(ctx); signed {
-		row, err = lockService(ctx, tx, serviceID, actorID)
-	} else {
-		row, err = controlstatedb.New(tx).GetService(ctx, serviceID)
-		if err == nil {
-			err = serviceManager(ctx, tx, row.TeamID, actorID)
-		}
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ServiceRecord{}, ErrServiceAccess
-	} else if err != nil {
-		return ServiceRecord{}, err
+	row, err := serviceForManagement(ctx, tx, serviceID, actorID)
+	if err != nil {
+		return result, err
 	}
 	result, err = checkedServiceRecord(row)
 	if err != nil {
@@ -86,6 +76,27 @@ func (d *Database) GetService(ctx context.Context, serviceID, actorID string) (r
 	return result, nil
 }
 
+func serviceForManagement(ctx context.Context, tx pgx.Tx, serviceID, actorID string) (controlstatedb.ControlService, error) {
+	var row controlstatedb.ControlService
+	var err error
+	if _, signed := serviceActor(ctx); signed {
+		row, err = lockManagedService(ctx, tx, serviceID, actorID)
+	} else {
+		row, err = controlstatedb.New(tx).GetService(ctx, serviceID)
+		if err == nil {
+			var member serviceMembership
+			member, err = serviceMembershipForActor(ctx, tx, row.TeamID.String, actorID, time.Now())
+			if err == nil {
+				err = requireServiceManagement(ctx, tx, row, member)
+			}
+		}
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return row, ErrServiceAccess
+	}
+	return row, err
+}
+
 func serviceSource(ctx context.Context, q *controlstatedb.Queries, record *ServiceRecord) error {
 	source, err := q.GetServiceSource(ctx, text(record.ID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -98,38 +109,75 @@ func serviceSource(ctx context.Context, q *controlstatedb.Queries, record *Servi
 	return nil
 }
 
-func (d *Database) ListAvailableServices(ctx context.Context, identityID, cursor string, now time.Time) ([]ServiceInventory, string, error) {
-	if cursor != "" && !opaqueid.Valid(cursor, opaqueid.ServicePrefix) {
+func (d *Database) ListAvailableServices(ctx context.Context, identityID, cursor string, path controlv1.ServiceAccessPath, now time.Time) (_ []ServiceInventory, _ string, retErr error) {
+	if !path.Valid() || cursor != "" && !opaqueid.Valid(cursor, opaqueid.ServicePrefix) {
 		return nil, "", ErrServiceAccess
 	}
-	rows, err := controlstatedb.New(d.pool).ListAvailableServices(ctx, controlstatedb.ListAvailableServicesParams{
-		ControlSessionID: companySessionID(ctx, identityID),
-		IdentityID:       identityID, AfterID: cursor, Now: timestamptz(now),
-	})
+	// HTTP identity permission locks the current person. retain the caller's
+	// real control-session context and one snapshot across sparse candidate scans.
+	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
-		return nil, "", fmt.Errorf("controlstate: list services: %w", err)
+		return nil, "", err
 	}
-	page := make([]ServiceInventory, 0, min(len(rows), 100))
-	next := ""
-	for i, row := range rows {
-		if i == 100 {
-			next = rows[i-1].ID
+	defer rollback(ctx, tx, "list available services", &retErr)()
+	q := controlstatedb.New(tx)
+	page := make([]ServiceInventory, 0, 100)
+	after := cursor
+	for {
+		rows, err := q.ListAvailableServices(ctx, controlstatedb.ListAvailableServicesParams{
+			ControlSessionID: companySessionID(ctx, identityID), AccessPath: string(path),
+			IdentityID: identityID, AfterID: after, Now: timestamptz(now),
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("controlstate: list services: %w", err)
+		}
+		for _, row := range rows {
+			after = row.ID
+			reason := row.VisitorAccess
+			if path == controlv1.ServiceAccessPathPublicEndpoint && row.Protocol == "http" {
+				permission, err := d.serviceHTTPIdentityPermission(ctx, tx, row.ID, identityID, now)
+				if errors.Is(err, ErrServiceAccess) || errors.Is(err, ErrVisitorSignIn) {
+					continue
+				}
+				if err != nil {
+					return nil, "", err
+				}
+				// anonymous traffic permission does not grant discovery.
+				if !permission.VisitAllowed || permission.Reason == "" || permission.Reason == "anonymous" {
+					continue
+				}
+				reason = permission.Reason
+			}
+			metadata := ServiceMetadata{Protocol: row.Protocol, PublisherPool: row.PublisherPool, TrustRevision: row.TrustRevision,
+				Endpoint: managedServiceTLS(row.Protocol, row.CertificateHostname, int(row.ServicePort.Int32), row.Public)}
+			if path == controlv1.ServiceAccessPathPublicEndpoint && (metadata.Endpoint == nil || !metadata.Endpoint.Public) {
+				continue
+			}
+			// look ahead only after authorization. resume from the last returned
+			// service, never from a denied candidate or the unreturned lookahead.
+			if len(page) == 100 {
+				if err := tx.Commit(ctx); err != nil {
+					return nil, "", err
+				}
+				return page, page[len(page)-1].ID, nil
+			}
+			var kube *controlv1.KubernetesAuth
+			if row.Protocol == "kubernetes" {
+				kube, err = d.visitorKubernetesAuth(ctx, q, row.ID)
+				if err != nil {
+					return nil, "", err
+				}
+			}
+			page = append(page, ServiceInventory{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID.String, TeamName: row.TeamName, VisitorAccess: reason,
+				Name: row.Name, CreatedAt: row.CreatedAt.Time, ServiceRunID: row.ServiceRunID.String, RunNumber: row.RunNumber.Int64, KubernetesAuth: kube,
+				RequirePostQuantum: row.RequirePostQuantum})
+		}
+		if len(rows) < 101 {
 			break
 		}
-		metadata, err := decodeServiceMetadata(row.Protocol, row.TlsMetadata, row.PublisherPool, row.TrustRevision)
-		if err != nil {
-			return nil, "", err
-		}
-		metadata.Endpoint = managedServiceTLS(row.CertificateHostname, int(row.ServicePort.Int32), row.Public)
-		var kube *controlv1.KubernetesAuth
-		if row.Protocol == "kubernetes" {
-			kube, err = d.visitorKubernetesAuth(ctx, controlstatedb.New(d.pool), row.ID)
-			if err != nil {
-				return nil, "", err
-			}
-		}
-		page = append(page, ServiceInventory{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID, Name: row.Name, CreatedAt: row.CreatedAt.Time,
-			ServiceRunID: row.ServiceRunID.String, RunNumber: row.RunNumber.Int64, KubernetesAuth: kube})
 	}
-	return page, next, nil
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
+	}
+	return page, "", nil
 }

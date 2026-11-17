@@ -81,12 +81,15 @@ schemas:
         items:
           type: object
           additionalProperties: false
-          required: [service, hostname, port]
+          required: [service, service_id, hostname, port]
           properties:
             service: { type: string }
-            public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
             service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
-            port: { type: integer, minimum: 1, maximum: 65535 }
+            port:
+              type: integer
+              minimum: 0
+              maximum: 65535
+              description: Logical HTTP service port 443, independent of public reachability.
             hostname: { type: string }
   RealizeLocalProjectServiceRequest:
     type: object
@@ -97,18 +100,15 @@ schemas:
       source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
       worktree_key: { type: string, minLength: 1, maxLength: 128 }
       worktree_label: { type: string, minLength: 1, maxLength: 63 }
-      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
-      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
   LocalProjectService:
     type: object
     additionalProperties: false
-    required: [service, worktree_key, service_kind, service_id]
+    required: [service, worktree_key, service_id]
     properties:
       service: { type: string }
       worktree_key: { type: string }
-      service_kind: { type: string, enum: [service, public_url] }
-      service_id: { type: string }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       hostname: { type: string }
       metadata: { $ref: "../openapi.yaml#/components/schemas/ServiceMetadata" }
   ApplyProjectConfigurationRequest:
@@ -162,7 +162,7 @@ schemas:
         type: object
         maxProperties: 32
         additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWebhook" }
-        description: Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public_url enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
+        description: Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public reachability enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
       settings:
         $ref: "../openapi.yaml#/components/schemas/DeploymentSettings"
       services:
@@ -178,7 +178,6 @@ schemas:
     properties:
       description: { type: string, maxLength: 1024 }
       domain_id: { type: string }
-      public: { type: boolean, default: false }
   ProjectWorkload:
     type: object
     additionalProperties: false
@@ -275,6 +274,7 @@ schemas:
         uniqueItems: true
         items: { type: string, pattern: "^(POST|GET|PUT|PATCH|DELETE|HEAD|OPTIONS)$" }
       source_ips:
+        description: Explicit replacement for this endpoint's provider-managed sender ranges, not an additional union. No provider fetch is needed for this endpoint. Other endpoints retain their own source checks; applications still verify webhook signatures.
         type: array
         minItems: 1
         maxItems: 256
@@ -290,18 +290,40 @@ schemas:
       target:
         type: string
         maxLength: 8192
-        description: Public URL targets are HTTP/HTTPS origins with an explicit port and no trailing slash. Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP public URL listener to its application owner in any deployment. Only local declarations may use compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets.
+        description: "Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP listener to its application owner in any deployment. integration:oauth and integration:webhooks explicitly select a non-ephemeral, in-process HTTP handler and require explicit anonymous HTTP access; they are not app listeners or separate resources. Only local declarations may use integration, compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets."
       target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
-      public_url: { $ref: "../openapi.yaml#/components/schemas/ProjectServicePublicURL" }
+      public:
+        type: boolean
+        description: Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. Omission or false keeps connector access only.
+      hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        description: Exact authorized service hostname, not an HTTPS origin. Does not enable public endpoint access.
+      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      ephemeral:
+        type: boolean
+        default: false
+        description: Remove this service after its publication stops rather than retaining it for a later run.
+      require_post_quantum:
+        type: boolean
+        description: Require hybrid post-quantum key agreement for visitor TLS, independently of target TLS.
+      traffic: { $ref: "../openapi.yaml#/components/schemas/TrafficSelection" }
       target_tls: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetTLS" }
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceAccess" }
       http: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceHTTP" }
   ProjectServiceHTTP:
     type: object
     additionalProperties: false
-    description: Local readiness and path mounts, or restricted HTTP access and request limits for a saved deployment. The deployment owns its endpoint and reachability.
+    description: HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
     properties:
-      access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
+      request_body_idle_timeout:
+        type: string
+        minLength: 1
+        maxLength: 64
+        default: 30s
+        description: Positive Go duration while awaiting incoming request body bytes. Defaults to 30s; explicit zero, negative, and overflowing durations are invalid. Body progress resets the timer. Target backpressure does not spend it; completion removes it without limiting responses or WebSockets.
+      access: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPAccess" }
       limits: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
       readiness:
         type: object
@@ -320,21 +342,7 @@ schemas:
             service: { type: string }
             strip_prefix: { type: boolean }
       open: { type: boolean }
-  ProjectServicePublicURL:
-    type: object
-    additionalProperties: false
-    properties:
-      require_post_quantum: { type: boolean }
-      domain_id: { type: string }
-      hostname: { type: string, maxLength: 253 }
-      access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }
-      limits: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicLimits" }
-      ephemeral:
-        type: boolean
-        default: false
-        description: Local declarations may request an ephemeral worktree URL.
-    description: Enables an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the team/project/deployment and retain their own visitor policy. Remote declarations cannot mark a named URL ephemeral; unnamed application publication allocates temporary URLs separately.
-  ProjectPublicAccess:
+  ProjectHTTPAccess:
     type: object
     additionalProperties: false
     properties:
@@ -342,15 +350,8 @@ schemas:
       ip:
         type: array
         minItems: 1
-        maxItems: 256
-        uniqueItems: true
+        description: "At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. The request body limit bounds raw input before normalization. IP matches only narrow the visitor access mode; they never grant access by themselves."
         items: { type: string, maxLength: 64 }
-  ProjectPublicLimits:
-    type: object
-    additionalProperties: false
-    properties:
-      http: { $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits" }
-      traffic: { $ref: "../openapi.yaml#/components/schemas/TrafficSelection" }
   ProjectHTTPApplicationLimits:
     type: object
     additionalProperties: false
@@ -373,6 +374,10 @@ schemas:
     description: "Publisher-to-target TLS trust, separate from visitor TLS. ca_pem adds CA certificates to the publisher's system roots. Control computes digest from the exact hostname and CA bytes. Omit it when changing trust settings; a supplied digest must match."
     properties:
       hostname: { type: string, minLength: 1, maxLength: 253 }
+      hostname_from_target:
+        type: boolean
+        x-go-type-skip-optional-pointer: true
+        description: "System trust captured without a hostname override. Target updates follow the replacement origin's hostname. Omitted or false pins hostname, even when it equals the current target. Not allowed with ca_pem; for an address target, hostname must match its host."
       ca_pem:
         {
           "type": "string",
@@ -454,14 +459,16 @@ schemas:
         items: { type: string }
       namespace: { type: string }
       domain_id: { type: string }
-      public: { type: boolean }
+      public:
+        type: boolean
+        description: Read-only summary indicating that at least one binding has public endpoint access configured. Not a deployment-wide default.
   AppliedProjectService:
     type: object
     required: [service, deployment, service_kind, desired_revision, trust_revision]
     properties:
       service: { type: string }
       deployment: { type: string }
-      service_kind: { type: string, enum: [public_url, service, local] }
+      service_kind: { type: string, enum: [service, local] }
       service_id: { type: string }
       hostname: { type: string }
       desired_revision:

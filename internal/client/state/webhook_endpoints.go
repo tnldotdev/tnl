@@ -51,7 +51,7 @@ func decodeWebhook(name string, encoded []byte) (config.Webhook, error) {
 	}
 	services := config.Services{}
 	if definition.Service != "" {
-		services[definition.Service] = config.Service{Tunnel: &config.Tunnel{}}
+		services[definition.Service] = config.Service{Public: new(true)}
 	}
 	if err := config.ValidateTNL(config.TNL{Services: services, Webhooks: map[string]config.Webhook{name: definition}}); err != nil {
 		return definition, err
@@ -109,7 +109,7 @@ func (d *Database) WebhookReceivers(ctx context.Context, server string, scope In
 		}
 		receivers = append(receivers, TunnelInfo{
 			ID: row.ID, Server: row.ServerOrigin, IntegrationScope: IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot.String, Namespace: row.IntegrationNamespace.String}, Hostname: row.Hostname.String,
-			Target: row.Target.String, PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
+			Target: row.Target.String, ServiceID: row.ServiceID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
 			PublicURL: "https://" + row.Hostname.String,
 		})
 	}
@@ -119,10 +119,11 @@ func (d *Database) WebhookReceivers(ctx context.Context, server string, scope In
 func (d *Database) WebhookReceiverCurrent(ctx context.Context, receiver TunnelInfo) (bool, error) {
 	count, err := d.queries.WebhookReceiverCurrent(ctx, clientstatedb.WebhookReceiverCurrentParams{
 		TunnelID: receiver.ID, ServerOrigin: receiver.Server,
-		Target:           sql.NullString{String: receiver.Target, Valid: true},
-		PublicURLID:      sql.NullString{String: receiver.PublicURLID, Valid: true},
-		PublishRunNumber: sql.NullInt64{Int64: int64(receiver.PublishRunNumber), Valid: true},
-		Now:              d.now().UTC().UnixNano(),
+		Target:             sql.NullString{String: receiver.Target, Valid: true},
+		ServiceID:          sql.NullString{String: receiver.ServiceID, Valid: receiver.ServiceID != ""},
+		PublishRunNumber:   sql.NullInt64{Int64: int64(receiver.PublishRunNumber), Valid: true},
+		PrimaryProjectRoot: receiver.IntegrationScope.primaryProjectRoot(), IntegrationNamespace: receiver.IntegrationScope.namespace(),
+		Now: d.now().UTC().UnixNano(),
 	})
 	if err != nil {
 		return false, err

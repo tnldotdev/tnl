@@ -38,12 +38,11 @@ type TNL struct {
 	Feedback           *bool               `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
 	OAuth              bool                `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
 	Inspection         *Inspection         `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP services."`
-	Tunnel             *Tunnel             `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Defaults for local public_url blocks and remote HTTP policy. Defaults never enable publication."`
 	Deployment         string              `json:"deployment" yaml:"deployment"`
 	DeploymentSettings DeploymentSettings  `json:"deployment_settings" yaml:"deployment_settings"`
-	Services           Services            `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Bindings for the selected deployment. A local public_url block enables a public URL; remote reachability belongs to the deployment."`
+	Services           Services            `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Bindings for the selected deployment. Public endpoint access is selected on each binding, independently of visitor authorization."`
 	Webhooks           map[string]Webhook  `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
-	Aliases            map[string]Alias    `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
+	Aliases            map[string]Alias    `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Project HTTP aliases assigned to the primary checkout by default, or explicitly to another worktree."`
 	Workloads          map[string]Workload `json:"workloads,omitempty" yaml:"workloads,omitempty" jsonschema_description:"Named provider identities granting access to exact configured services."`
 }
 
@@ -52,23 +51,27 @@ type Services map[string]Service
 type DeploymentSettings struct {
 	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
 	Domain      *string `json:"domain,omitempty" yaml:"domain,omitempty" jsonschema_description:"Ready team domain; defaults to the team's default domain when the namespace is first allocated."`
-	Public      bool    `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Enable direct ingress access. Omitted or false uses loopback DNS and requires tnl connect. Native TLS and visitor authorization apply in either mode."`
 }
 
-// ServiceAccess declares team access for a service or local public URL.
+// ServiceAccess declares team access for a service.
 type ServiceAccess struct {
 	Team bool `json:"team,omitempty" yaml:"team,omitempty"`
 }
 
 // Service contains the resolved settings for one deployment binding.
 type Service struct {
-	Name       *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name; defaults to the configuration key."`
-	Access     *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Declare team access for this service or public URL."`
-	Inspection *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
-	Tunnel     *Tunnel        `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Enable an HTTP public URL. Local URLs belong to the developer preview; remote saved URLs belong to the selected deployment."`
-	Protocol   *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=mysql,enum=postgres,enum=kubernetes" jsonschema_description:"Defaults to http. Protocol selects native client guidance, never public exposure or target TLS."`
-	Target     *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
-	HTTP       *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
+	Name               *string        `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name; defaults to the configuration key."`
+	Access             *ServiceAccess `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Declare team access for this service."`
+	Public             *bool          `json:"public,omitempty" yaml:"public,omitempty"`
+	Inspection         *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
+	Hostname           *string        `json:"hostname,omitempty" yaml:"hostname,omitempty" jsonschema_description:"Exact canonical DNS hostname for the service endpoint, independent of public reachability."`
+	Domain             *string        `json:"domain,omitempty" yaml:"domain,omitempty" jsonschema_description:"Ready team domain used for the service endpoint."`
+	Ephemeral          *bool          `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty" jsonschema_description:"Remove the service after its publication stops."`
+	RequirePostQuantum *bool          `json:"require_post_quantum,omitempty" yaml:"require_post_quantum,omitempty" jsonschema_description:"Require hybrid post-quantum key agreement for visitor TLS."`
+	Traffic            *TrafficLimits `json:"traffic,omitempty" yaml:"traffic,omitempty"`
+	Protocol           *string        `json:"protocol,omitempty" yaml:"protocol,omitempty" jsonschema:"enum=http,enum=tcp,enum=mysql,enum=postgres,enum=kubernetes" jsonschema_description:"Defaults to http. Protocol selects native client guidance, never public exposure or target TLS."`
+	Target             *ServiceTarget `json:"target,omitempty" yaml:"target,omitempty"`
+	HTTP               *HTTPService   `json:"http,omitempty" yaml:"http,omitempty"`
 }
 
 // TrustSource is an evaluated CA source, not a service configuration setting.
@@ -77,7 +80,7 @@ type TrustSource struct {
 	CA       string  `json:"ca" yaml:"ca"`
 }
 
-// ServiceName selects a saved name for either publication path.
+// ServiceName selects the saved name for one service.
 func ServiceName(serviceName string, service Service) string {
 	if service.Name != nil {
 		return *service.Name
@@ -108,11 +111,12 @@ type TargetTLS struct {
 }
 
 type HTTPService struct {
-	Access    *Access              `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"Restricted visitor access for a remote service. IP rules narrow access; the deployment owns reachability."`
-	Limits    *WorkLimits          `json:"limits,omitempty" yaml:"limits,omitempty" jsonschema_description:"HTTP request limits for a remote service."`
-	Readiness *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty" jsonschema_description:"Readiness probe for a local HTTP service. Remote publisher assignments do not support readiness overrides."`
-	Paths     map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Path mounts between local HTTP services. Remote publisher assignments do not support path mounts."`
-	Open      *bool                `json:"open,omitempty" yaml:"open,omitempty"`
+	RequestBodyIdleTimeout *Duration            `json:"request_body_idle_timeout,omitempty" yaml:"request_body_idle_timeout,omitempty" jsonschema:"default=30s" jsonschema_description:"Positive Go duration while awaiting incoming request body bytes; defaults to 30s. Body progress resets the timer. Target backpressure, completed uploads, responses, and WebSockets do not spend this timeout."`
+	Access                 *Access              `json:"access,omitempty" yaml:"access,omitempty" jsonschema_description:"HTTP visitor access; restricted by default. Anonymous access and IP rules are independent of public endpoint access."`
+	Limits                 *WorkLimits          `json:"limits,omitempty" yaml:"limits,omitempty" jsonschema_description:"HTTP request limits for a local or remote service."`
+	Readiness              *Readiness           `json:"readiness,omitempty" yaml:"readiness,omitempty" jsonschema_description:"Readiness probe for a local HTTP service. Remote publisher assignments do not support readiness overrides."`
+	Paths                  map[string]PathMount `json:"paths,omitempty" yaml:"paths,omitempty" jsonschema_description:"Path mounts between local HTTP services. Remote publisher assignments do not support path mounts."`
+	Open                   *bool                `json:"open,omitempty" yaml:"open,omitempty"`
 }
 
 func ServicePaths(service Service) map[string]PathMount {
@@ -135,8 +139,6 @@ func Protocol(service Service) string {
 	}
 	return *service.Protocol
 }
-
-func IsPublicService(service Service) bool { return service.Tunnel != nil }
 
 func SelectedDeployment(configuration TNL) string {
 	if configuration.Deployment == "" {
@@ -162,7 +164,7 @@ func ServicePublish(service Service) *Publish {
 	return result
 }
 
-// PathMount selects a local service reached at a path on another service's public URL.
+// PathMount selects a local service reached at a path on another HTTP service.
 type PathMount struct {
 	Service     string `json:"service" yaml:"service"`
 	StripPrefix bool   `json:"strip_prefix,omitempty" yaml:"strip_prefix,omitempty"`
@@ -205,24 +207,6 @@ func (m *PathMount) UnmarshalYAML(node *yaml.Node) error {
 	}
 	*m = PathMount(value)
 	return nil
-}
-
-type Tunnel struct {
-	RequirePostQuantum *bool   `json:"require_post_quantum,omitempty" yaml:"require_post_quantum,omitempty" jsonschema_description:"Require hybrid post-quantum key agreement for public HTTPS visitors."`
-	Domain             *string `json:"domain,omitempty" yaml:"domain,omitempty"`
-	Name               *string `json:"-" yaml:"-"`
-	PublicURL          *string `json:"hostname,omitempty" yaml:"hostname,omitempty" jsonschema_description:"Exact authorized public hostname or HTTPS origin. Mutually exclusive with the service's name override."`
-	Open               *bool   `json:"-" yaml:"-"`
-	Access             *Access `json:"access,omitempty" yaml:"access,omitempty"`
-	Ephemeral          *bool   `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
-	Limits             *Limits `json:"limits,omitempty" yaml:"limits,omitempty"`
-}
-
-// Limits apply to application requests after visitor access.
-type Limits struct {
-	HTTP    *WorkLimits    `json:"http,omitempty" yaml:"http,omitempty"`
-	TCP     *WorkLimits    `json:"tcp,omitempty" yaml:"tcp,omitempty"`
-	Traffic *TrafficLimits `json:"traffic,omitempty" yaml:"traffic,omitempty"`
 }
 
 type WorkLimits struct {

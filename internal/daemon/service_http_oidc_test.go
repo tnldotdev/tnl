@@ -97,7 +97,7 @@ func (p *serviceHTTPTestOIDC) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func checkServiceHTTPCompany(t *testing.T, f *privateSeparatedFixture, issuer *serviceHTTPTestOIDC, client *http.Client, base string, service controlv1.Service, identity string) {
+func checkServiceHTTPCompany(t *testing.T, f *privateSeparatedFixture, issuer *serviceHTTPTestOIDC, client *http.Client, base string, service controlv1.ServiceSummary, identity string) {
 	t.Helper()
 	ctx, now := t.Context(), time.Now()
 	seed, err := f.database.CreateOIDCControlSession(ctx, f.controlConfig.ManagedDomain, controlstate.OIDCIdentity{Issuer: testOIDCIssuer, Subject: "operator", DisplayName: "operator", AssertionDigest: sha256.Sum256([]byte("service-http-company-owner")), AssertionExpiry: now.Add(time.Minute)}, time.Hour, 24*time.Hour, now)
@@ -207,7 +207,7 @@ func checkServiceHTTPCompany(t *testing.T, f *privateSeparatedFixture, issuer *s
 		}
 	}
 	var member string
-	if err = f.inspect.QueryRowContext(ctx, `SELECT session.control_session_id,m.id FROM control.service_http_browser_sessions session JOIN control.team_memberships m ON m.team_id=$2 AND m.identity_id=$3 WHERE session.cookie_digest=$1`, digest[:], service.TeamId, identity).Scan(&principal.SessionID, &member); err != nil {
+	if err = f.inspect.QueryRowContext(ctx, `SELECT session.control_session_id,m.id FROM control.service_http_browser_sessions session JOIN control.team_memberships m ON m.team_id=$2 AND m.identity_id=$3 WHERE session.token_digest=$1`, digest[:], service.TeamId, identity).Scan(&principal.SessionID, &member); err != nil {
 		t.Fatal(err)
 	}
 	principal.IdentityID = identity

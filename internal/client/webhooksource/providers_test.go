@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 )
 
 type memoryCache map[string]CacheEntry
@@ -40,6 +42,7 @@ func TestProviderCatalogRevalidationAndBoundedOutage(t *testing.T) {
 		}
 		response.Header().Set("Cache-Control", "public, max-age=300")
 		response.Header().Set("ETag", `"first"`)
+		ippolicy.NewProviderWindow(now, now).WriteHeaders(response.Header())
 		if request.Header.Get("If-None-Match") == `"first"` {
 			response.WriteHeader(http.StatusNotModified)
 			return

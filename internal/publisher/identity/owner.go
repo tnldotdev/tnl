@@ -5,32 +5,16 @@ import (
 	"errors"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // OwnerControl uses a current control session only to issue enrollment. the
 // resulting adapter authenticates publishing with its own key and exact grant.
 type OwnerControl interface {
-	PublicURLControl
 	CreatePublisherEnrollment(context.Context, controlv1.CreatePublisherEnrollmentRequest) (controlv1.PublisherEnrollment, error)
 }
 
-// EnsureOwner prepares a saved URL for an interactive owner or directory
-// publisher. one server-scoped local lock protects enrollment and reuse. the
-// short-lived pending secret is encrypted in client state, then replaced with
-// the signing key after redemption; it never enters public metadata.
-func EnsureOwner(ctx context.Context, state *clientstate.Store, control OwnerControl, authority EnrollmentAuthority, publicURL controlv1.PublicURL) (*Native, authorityv1.PublisherEnrollmentResult, error) {
-	if state == nil || control == nil || authority == nil || publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled || !publicURL.Purpose.Valid() || !opaqueid.Valid(publicURL.Id, opaqueid.PublicURLPrefix) || publicURL.TeamId == "" {
-		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
-	}
-	return ensureSelectedEnrollment(ctx, state, control, nil, authority, enrollmentSelection{
-		kind: "saved_public_url", team: publicURL.TeamId, id: publicURL.Id, publicURL: &publicURL,
-	})
-}
-
-// NamespaceScope rejects saved URL and guest grants before an ad-hoc worker
+// NamespaceScope rejects exact-service and guest grants before an ad-hoc worker
 // allocates anything. one fork belongs to one invocation and exact cleanup.
 func (n *Native) NamespaceScope() error {
 	if n == nil || n.identity.kind != "namespace" {
@@ -43,17 +27,22 @@ func (n *Native) Fork() (*Native, error) {
 	if n == nil {
 		return nil, ErrScope
 	}
-	copy, err := NewNative(n.NativeControl, n.authority, n.identity.enrollment(), n.private)
+	copy, err := newNative(n.NativeControl, n.authority, n.identity, n.private)
 	if err != nil {
 		return nil, err
 	}
+	copy.selectedServiceID = n.selectedServiceID
+	copy.allocationInvocation = n.allocationInvocation
+	copy.allocatedServiceID = n.allocatedServiceID
+	copy.allocationFinished = n.allocationFinished
+	copy.deploymentAllocation = n.deploymentAllocation
 	return copy.WithTraffic(n.traffic)
 }
 
 // ControlURL lets native-only callers keep certificate state on the same
 // server as the adapter's explicit HTTP authentication boundary.
 func (n *Native) ControlURL() string {
-	return n.NativeControl.ControlURL()
+	return n.Services.ControlURL()
 }
 
 var ErrSelection = errors.New("select one publisher enrollment key, saved publisher ID, or native publisher")

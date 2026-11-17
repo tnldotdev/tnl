@@ -29,14 +29,12 @@ schemas:
     properties:
       service: { type: string }
       deployment: { type: string }
-      service_kind: { type: string, enum: [local, service, public_url] }
+      service_kind: { type: string, enum: [local, service] }
       worktree_key: { type: string, description: "Opaque worktree selector, not a checkout path." }
       service_id: { type: string }
-      public_url_id: { type: string }
       hostname: { type: string }
-      port: { type: integer, minimum: 1, maximum: 65535 }
+      port: { type: integer, minimum: 0, maximum: 65535 }
       service_run_id: { type: string }
-      publish_run_id: { type: string }
       run_number:
         {
           type: string,

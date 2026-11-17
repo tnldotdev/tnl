@@ -46,6 +46,18 @@ type connectorRebindOperation struct {
 	installed                [2]bool
 	activated                [2]bool
 	staged, retired          bool
+	cleanupErr               error
+}
+
+// retry is false unless this coordinator or an existing strict control result
+// explicitly permits waiting. causes alone are not a retry disposition.
+type connectorRecoveryResult struct {
+	err   error
+	retry bool
+}
+
+func connectorRecoveryControlResult(err error) connectorRecoveryResult {
+	return connectorRecoveryResult{err: err, retry: err != nil && connectorTemporary(err)}
 }
 
 func connectorBindingRevision(pair controlv1.ConnectorPeerPair) peer.BindingRevision {
@@ -63,6 +75,9 @@ func connectorPhaseConflict(err error) bool {
 }
 
 func connectorBindingChanged(err error) bool {
+	if connectorRetryVeto(err) {
+		return false
+	}
 	changed, denied := false, false
 	var visit func(error)
 	visit = func(cause error) {
@@ -96,6 +111,11 @@ func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 		p.mu.Unlock()
 		return
 	}
+	if next == connectorRebinding && p.bindingCancel != nil {
+		// publish the old binding's stop with its state transition. reconnect
+		// guards hold this lock, so none can see rebinding before its cause.
+		p.bindingCancel()
+	}
 	p.recoveryState = next
 	if next == connectorRebinding && p.recoveryStarted.IsZero() {
 		p.recoveryStarted = time.Now()
@@ -106,7 +126,7 @@ func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 			p.connectivity.Suspend()
 		}
 	}
-	until, stop := p.until, p.bindingCancel
+	until := p.until
 	active := make([]*PreparedConnector, 0, len(p.active))
 	if next == connectorRebinding {
 		for use := range p.active {
@@ -118,9 +138,6 @@ func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 	p.notifyLocked()
 	p.mu.Unlock()
 	if next == connectorRebinding {
-		if stop != nil {
-			stop()
-		}
 		if p.permissions != nil {
 			if err := p.permissions.Suspend(until); err != nil {
 				p.cancel(err)
@@ -145,10 +162,10 @@ func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 func (p *connectorConnection) newRebindPhase(phase controlv1.ConnectorPeerPairRebindPhase, operation string, generation int64, relays []controlv1.ConnectorPeerPairRelay, challenge string, proofs []controlv1.ConnectorPeerPairPathProof) (*connectorRebindPhase, error) {
 	p.mu.Lock()
 	run, pair := p.run, p.pair
-	current := p.ownerCurrentLocked()
+	ownerErr := p.ownerErrorLocked()
 	p.mu.Unlock()
-	if !current {
-		return nil, ErrServiceConnection
+	if ownerErr != nil {
+		return nil, ownerErr
 	}
 	started := time.Now()
 	request, err := connectorRebindRequest(p.signer, run, pair, p.owner, phase, operation, generation, relays, challenge, proofs)
@@ -158,15 +175,16 @@ func (p *connectorConnection) newRebindPhase(phase controlv1.ConnectorPeerPairRe
 func (p *connectorConnection) callRebind(phase *connectorRebindPhase) (controlv1.ConnectorPeerPairRebindState, time.Time, error) {
 	p.mu.Lock()
 	run, original, until, highWater := p.run, p.pair, p.until, p.highWater
-	current := p.ownerCurrentLocked()
+	ownerErr := p.ownerErrorLocked()
 	p.mu.Unlock()
-	if !current {
-		return controlv1.ConnectorPeerPairRebindState{}, time.Time{}, ErrServiceConnection
+	if ownerErr != nil {
+		return controlv1.ConnectorPeerPairRebindState{}, time.Time{}, ownerErr
 	}
 	call, stop := context.WithDeadline(p.ctx, minConnectorCall(until))
 	defer stop()
 	state, err := p.config.Control.RebindConnectorPeerPair(call, run.ServiceID, original.PairId, phase.request)
 	if err != nil {
+		p.observeControlDenial(err)
 		return state, time.Time{}, err
 	}
 	pendingUntil, err := validateConnectorRebindState(call, p.signer, run, original, phase.request, state, phase.started, highWater)
@@ -175,8 +193,8 @@ func (p *connectorConnection) callRebind(phase *connectorRebindPhase) (controlv1
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !p.ownerCurrentLocked() {
-		return state, time.Time{}, ErrServiceConnection
+	if ownerErr := p.ownerErrorLocked(); ownerErr != nil {
+		return state, time.Time{}, ownerErr
 	}
 	p.highWater = state.HighWaterGeneration
 	return state, pendingUntil, nil
@@ -197,23 +215,30 @@ func (p *connectorConnection) inspectBinding() (controlv1.ConnectorPeerPairRebin
 	return state, until, err
 }
 
-func (p *connectorConnection) retirePending(op *connectorRebindOperation) {
+func (p *connectorConnection) retirePending(op *connectorRebindOperation) error {
 	if op.retired {
-		return
+		return op.cleanupErr
 	}
 	op.retired = true
 	p.endpoint.SuspendBinding()
 	for slot, leg := range op.legs {
-		_ = p.paths[slot].carrier.Install(nil)
+		op.cleanupErr = errors.Join(op.cleanupErr, connectorCleanupFailure(p.paths[slot].carrier.Install(nil)))
+		if previous := p.paths[slot].leg; previous != nil {
+			op.cleanupErr = errors.Join(op.cleanupErr, connectorCleanupFailure(previous.Close()))
+		}
 		if leg != nil {
-			_ = leg.Close()
+			op.cleanupErr = errors.Join(op.cleanupErr, connectorCleanupFailure(leg.Close()))
 			op.legs[slot] = nil
 		}
+		op.installed[slot], op.activated[slot] = false, false
 	}
+	return op.cleanupErr
 }
 
 func (p *connectorConnection) abandonPending(op *connectorRebindOperation) error {
-	p.retirePending(op)
+	if cleanup := p.retirePending(op); cleanup != nil {
+		return cleanup
+	}
 	state, _, err := p.inspectBinding()
 	if err != nil {
 		return err
@@ -251,25 +276,25 @@ func (p *connectorConnection) abandonPending(op *connectorRebindOperation) error
 	return connectorRecoveryWait(nil)
 }
 
-func (p *connectorConnection) recoverBinding() error {
+func (p *connectorConnection) recoverBinding() connectorRecoveryResult {
 	p.mu.Lock()
 	recovery := p.recoveryState
 	op := p.rebind
-	current := p.ownerCurrentLocked()
+	ownerErr := p.ownerErrorLocked()
 	p.mu.Unlock()
-	if !current {
-		return ErrServiceConnection
+	if ownerErr != nil {
+		return connectorRecoveryResult{err: ownerErr}
 	}
 	if recovery == connectorBindingReady {
-		return nil
+		return connectorRecoveryResult{}
 	}
 	if op == nil {
 		state, _, err := p.inspectBinding()
 		if err != nil {
-			return err
+			return connectorRecoveryControlResult(err)
 		}
 		if state.Active == nil || state.Pending != nil {
-			return ErrServiceConnection
+			return connectorRecoveryResult{err: ErrServiceConnection}
 		}
 		p.mu.Lock()
 		unchanged := p.recoveryState == connectorInspecting && state.Active.DeliveryGeneration == p.pair.DeliveryGeneration && state.Active.BindingState == controlv1.ConnectorPeerPairBindingActive &&
@@ -285,24 +310,24 @@ func (p *connectorConnection) recoverBinding() error {
 		}
 		p.mu.Unlock()
 		if unchanged {
-			return nil
+			return connectorRecoveryResult{}
 		}
 		p.requestRecovery(connectorRebinding)
 		if len(state.ReadyRelays) != 2 {
-			return connectorRecoveryWait(nil)
+			return connectorRecoveryControlResult(connectorRecoveryWait(nil))
 		}
 		operation, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 		if err != nil {
-			return err
+			return connectorRecoveryResult{err: err}
 		}
 		prepare, err := p.newRebindPhase(controlv1.ConnectorPeerPairPrepare, operation, state.HighWaterGeneration, state.ReadyRelays, "", nil)
 		if err != nil {
-			return err
+			return connectorRecoveryResult{err: err}
 		}
 		op = &connectorRebindOperation{prepare: prepare}
 		for slot := range op.initial {
 			if _, err := rand.Read(op.initial[slot][:]); err != nil {
-				return err
+				return connectorRecoveryResult{err: err}
 			}
 		}
 		p.mu.Lock()
@@ -310,51 +335,58 @@ func (p *connectorConnection) recoverBinding() error {
 		p.mu.Unlock()
 	}
 	if op.retired || !op.until.IsZero() && !op.until.After(time.Now()) {
-		return p.abandonPending(op)
+		return connectorRecoveryControlResult(p.abandonPending(op))
 	}
 	if op.pair.PairId == "" {
 		state, until, err := p.callRebind(op.prepare)
 		if err != nil {
 			if connectorBindingChanged(err) {
-				return p.reconcileRebind(op)
+				return connectorRecoveryControlResult(p.reconcileRebind(op))
 			}
-			return err
+			return connectorRecoveryControlResult(err)
 		}
 		if state.Pending == nil || state.Operation == nil || state.Operation.Status != controlv1.ConnectorPeerPairOperationPending {
-			return p.abandonPending(op)
+			return connectorRecoveryControlResult(p.abandonPending(op))
 		}
 		op.pair, op.until = *state.Pending, until
 	}
 	if !op.staged {
 		// no new leg worker can enter after requestRecovery cancels this binding.
 		p.legUses.Wait()
+		var cleanup error
 		for _, path := range p.paths {
 			if path.leg != nil {
-				_ = path.leg.Close()
+				operation := path.leg.session.Err()
+				if closeErr := connectorCleanupFailure(path.leg.Close()); closeErr != nil {
+					cleanup = errors.Join(cleanup, operation, closeErr)
+				}
 			}
 		}
+		if cleanup != nil {
+			return connectorRecoveryResult{err: cleanup}
+		}
 		if err := p.endpoint.StageBinding(connectorBindingRevision(op.pair)); err != nil {
-			return err
+			return connectorRecoveryResult{err: err}
 		}
 		op.staged = true
 	}
-	if err := p.connectPendingLegs(op); err != nil {
-		return err
+	if result := p.connectPendingLegs(op); result.err != nil {
+		return result
 	}
 	proofs, ready := p.endpoint.BindingProofs(connectorBindingRevision(op.pair))
 	if !ready {
-		return connectorRecoveryWait(nil)
+		return connectorRecoveryControlResult(connectorRecoveryWait(nil))
 	}
 	if op.activate == nil {
 		state, _, err := p.inspectBinding()
 		if err != nil {
-			return err
+			return connectorRecoveryControlResult(err)
 		}
 		if state.Pending == nil || state.Pending.OperationId != op.pair.OperationId {
-			return p.abandonPending(op)
+			return connectorRecoveryControlResult(p.abandonPending(op))
 		}
 		if state.Pending.PublisherPreparedUntil == nil || state.Pending.PublisherProvedUntil == nil || !state.Pending.PublisherProvedUntil.After(state.Pending.ObservedAt) {
-			return connectorRecoveryWait(nil)
+			return connectorRecoveryControlResult(connectorRecoveryWait(nil))
 		}
 		wire := make([]controlv1.ConnectorPeerPairPathProof, 0, len(proofs))
 		for _, proof := range proofs {
@@ -362,17 +394,17 @@ func (p *connectorConnection) recoverBinding() error {
 		}
 		op.activate, err = p.newRebindPhase(controlv1.ConnectorPeerPairActivate, op.pair.OperationId, op.pair.DeliveryGeneration, nil, op.pair.BindingChallenge, wire)
 		if err != nil {
-			return err
+			return connectorRecoveryResult{err: err}
 		}
 	}
 	state, _, err := p.callRebind(op.activate)
 	if err != nil {
 		if connectorBindingChanged(err) {
-			return p.reconcileRebind(op)
+			return connectorRecoveryControlResult(p.reconcileRebind(op))
 		}
-		return err
+		return connectorRecoveryControlResult(err)
 	}
-	return p.installActiveBinding(op, state)
+	return connectorRecoveryControlResult(p.installActiveBinding(op, state))
 }
 
 // a signed phase can lose its assignment race without losing owner authority.
@@ -406,86 +438,175 @@ func (p *connectorConnection) reconcileRebind(op *connectorRebindOperation) erro
 	return connectorRecoveryWait(nil)
 }
 
-func (p *connectorConnection) connectPendingLegs(op *connectorRebindOperation) error {
+func connectorOwnedOperationDisposition(err error) reconnectDisposition {
+	if connectorRetryVeto(err) {
+		return terminateConnection
+	}
+	if attempt, ok := err.(*connectorLegAttemptError); ok {
+		return attempt.disposition(false)
+	}
+	if connectorReconnectError(err) == rebindConnection {
+		return rebindConnection
+	}
+	if connectorAttemptTemporary(err) {
+		return retryAttempt
+	}
+	return terminateConnection
+}
+
+func (p *connectorConnection) pendingRetry(op *connectorRebindOperation, cause error) connectorRecoveryResult {
+	p.mu.Lock()
+	current := p.ownerCurrentLocked()
+	p.mu.Unlock()
+	if !current {
+		return connectorRecoveryResult{err: errors.Join(cause, context.Cause(p.ctx), ErrServiceConnection)}
+	}
+	if !op.until.After(time.Now()) {
+		result := connectorRecoveryControlResult(p.abandonPending(op))
+		result.err = errors.Join(cause, result.err)
+		return result
+	}
+	return connectorRecoveryResult{err: cause, retry: true}
+}
+
+func (p *connectorConnection) pendingLegFailures(op *connectorRebindOperation, failures [2]error) connectorRecoveryResult {
+	result := connectorRecoveryResult{err: errors.Join(failures[:]...)}
+	if result.err == nil {
+		return result
+	}
+	retire := false
+	for _, err := range failures {
+		if err == nil {
+			continue
+		}
+		switch connectorOwnedOperationDisposition(err) {
+		case retryAttempt:
+		case rebindConnection, retirePath:
+			retire = true
+		default:
+			return result
+		}
+	}
+	if retire {
+		if cleanup := p.retirePending(op); cleanup != nil {
+			result.err = errors.Join(result.err, cleanup)
+			return result
+		}
+	}
+	return p.pendingRetry(op, result.err)
+}
+
+func (p *connectorConnection) connectPendingLegs(op *connectorRebindOperation) connectorRecoveryResult {
 	key, err := connectorPairSecret(op.pair.Key)
 	if err != nil {
-		return err
+		return connectorRecoveryResult{err: err}
 	}
+	p.mu.Lock()
+	callUntil := earliestConnectorDeadline(op.until, p.until, p.run.ValidUntil, p.permission.ExpiresAt)
+	p.mu.Unlock()
 	var starts sync.WaitGroup
 	var failures [2]error
-	for slot := range op.legs {
-		if leg := op.legs[slot]; leg != nil && leg.session.Err() != nil {
-			_ = leg.Close()
+	// failed physical cleanup fences this operation before any new dial starts.
+	for slot, leg := range op.legs {
+		if leg != nil && leg.session.Err() != nil {
+			operation := leg.session.Err()
+			if cleanup := connectorCleanupFailure(leg.Close()); cleanup != nil {
+				failures[slot] = errors.Join(operation, cleanup)
+			}
 			op.legs[slot], op.installed[slot], op.activated[slot] = nil, false, false
 		}
+	}
+	if err := errors.Join(failures[:]...); err != nil {
+		return connectorRecoveryResult{err: errors.Join(err, context.Cause(p.ctx))}
+	}
+	for slot := range op.legs {
 		if op.legs[slot] != nil {
 			continue
 		}
 		starts.Go(func() {
-			call, stop := context.WithDeadline(p.ctx, minConnectorCall(op.until))
+			call, stop := context.WithDeadline(p.ctx, minConnectorCall(callUntil))
 			defer stop()
-			op.legs[slot], failures[slot] = dialConnectorLeg(call, p.ctx, p.config, p.signer, op.pair, key, slot, nil, op.initial[slot])
+			op.legs[slot], failures[slot] = dialConnectorLeg(call, p.packetCtx, p.config, p.signer, op.pair, key, slot, nil, op.initial[slot])
 			if failures[slot] == nil {
 				failures[slot] = context.Cause(call)
 			}
 			if failures[slot] != nil && op.legs[slot] != nil {
-				_ = op.legs[slot].Close()
+				failures[slot] = errors.Join(failures[slot], connectorCleanupFailure(op.legs[slot].Close()))
 				op.legs[slot] = nil
 			}
 		})
 	}
 	starts.Wait()
-	if err := errors.Join(failures[:]...); err != nil {
-		if disposition := connectorReconnectError(err); disposition == rebindConnection || disposition == retirePath {
-			p.retirePending(op)
-			return connectorRecoveryWait(err)
-		}
-		return err
+	if result := p.pendingLegFailures(op, failures); result.err != nil {
+		return result
+	}
+	p.mu.Lock()
+	current := p.ownerCurrentLocked()
+	p.mu.Unlock()
+	if !current {
+		return connectorRecoveryResult{err: errors.Join(ErrServiceConnection, context.Cause(p.ctx), p.retirePending(op))}
+	}
+	if !op.until.After(time.Now()) {
+		return connectorRecoveryControlResult(p.abandonPending(op))
 	}
 	if op.legs[0].receipt.SourceIP != op.legs[1].receipt.SourceIP {
-		p.retirePending(op)
-		return connectorRecoveryWait(nil)
+		if cleanup := p.retirePending(op); cleanup != nil {
+			return connectorRecoveryResult{err: cleanup}
+		}
+		return p.pendingRetry(op, connectorRecoveryWait(nil))
 	}
 	if !op.activated[0] || !op.activated[1] {
 		state, _, err := p.inspectBinding()
 		if err != nil {
-			return err
+			return connectorRecoveryControlResult(err)
 		}
 		if state.Pending == nil || state.Pending.OperationId != op.pair.OperationId {
-			return p.abandonPending(op)
+			return connectorRecoveryControlResult(p.abandonPending(op))
 		}
 		if state.Pending.PublisherPreparedUntil == nil || !state.Pending.PublisherPreparedUntil.After(state.Pending.ObservedAt) {
-			return connectorRecoveryWait(nil)
+			return p.pendingRetry(op, connectorRecoveryWait(nil))
 		}
 		for slot, leg := range op.legs {
 			if op.activated[slot] {
 				continue
 			}
-			call, stop := context.WithDeadline(p.ctx, minConnectorCall(op.until))
+			call, stop := context.WithDeadline(p.ctx, minConnectorCall(callUntil))
 			err := activateConnectorLeg(call, leg, nil, op.initial[slot])
-			stop()
-			if err != nil {
-				_ = leg.Close()
-				op.legs[slot], op.installed[slot] = nil, false
-				if disposition := connectorReconnectError(err); disposition == rebindConnection || disposition == retirePath {
-					p.retirePending(op)
-					return connectorRecoveryWait(err)
-				}
-				return err
+			if err == nil {
+				err = context.Cause(call)
 			}
+			if err != nil {
+				err = connectorActivationFailure(call, leg, err)
+				stop()
+				op.legs[slot], op.installed[slot], op.activated[slot] = nil, false, false
+				failures[slot] = err
+				return p.pendingLegFailures(op, failures)
+			}
+			stop()
 			op.activated[slot] = true
 		}
+	}
+	p.mu.Lock()
+	current = p.ownerCurrentLocked()
+	p.mu.Unlock()
+	if !current {
+		return connectorRecoveryResult{err: errors.Join(ErrServiceConnection, context.Cause(p.ctx), p.retirePending(op))}
+	}
+	if !op.until.After(time.Now()) {
+		return connectorRecoveryControlResult(p.abandonPending(op))
 	}
 	for slot, leg := range op.legs {
 		if op.installed[slot] {
 			continue
 		}
 		if err := p.endpoint.InstallBindingCarrier(connectorBindingRevision(op.pair), slot, connectorLegCarrier{leg}); err != nil {
-			return err
+			err = errors.Join(err, connectorCleanupFailure(leg.Close()))
+			op.legs[slot], op.installed[slot], op.activated[slot] = nil, false, false
+			return connectorRecoveryResult{err: err}
 		}
 		op.installed[slot] = true
 	}
-	return nil
+	return connectorRecoveryResult{}
 }
 
 func (p *connectorConnection) installActiveBinding(op *connectorRebindOperation, state controlv1.ConnectorPeerPairRebindState) error {
@@ -517,11 +638,15 @@ func (p *connectorConnection) installActiveBinding(op *connectorRebindOperation,
 		return err
 	}
 	p.mu.Lock()
+	if !p.ownerCurrentLocked() {
+		p.mu.Unlock()
+		return ErrServiceConnection
+	}
 	p.pair, p.source = *active, *active.SourceIp
 	p.key, _ = connectorPairSecret(active.Key)
 	p.preparedUntil, p.reportedUntil = installedUntil, *active.PublisherPreparedUntil
 	p.run.PairReady = &controlv1.ConnectorPeerPairReady{PublisherIdentityId: active.PublisherIdentityId, Relays: active.Relays}
-	p.bindingCtx, p.bindingCancel = context.WithCancel(p.ctx)
+	p.bindingCtx, p.bindingCancel = context.WithCancel(p.packetCtx)
 	for slot, leg := range op.legs {
 		p.paths[slot].leg, p.paths[slot].inspected, p.paths[slot].needsInspection = leg, false, false
 		p.paths[slot].probeAfter = time.Now().Add(3 * time.Second)

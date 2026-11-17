@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
-	"net/netip"
 	"testing"
 	"time"
 )
@@ -116,28 +115,35 @@ func TestIntegrationNamedOIDCSessions(t *testing.T) {
 }
 
 func TestIntegrationGuestRetrySecret(t *testing.T) {
-	database, _ := newControlStateIntegrationDatabase(t, "guest_retry_secret")
-	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
+	database, now := newControlStateIntegrationDatabase(t, "guest_retry_secret")
+	guest := newGuestTrialForTest(t, database, now)
+	now = guestOperationTime(guest)
+	request := AllocateGuestDemoServiceRequest{Credential: guestCredentialForTest(guest), IdempotencyKey: "lost-response",
+		Target: guestLoopbackTarget(t), Now: now}
+	first, err := database.AllocateGuestDemoService(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", time.Now()); err != nil {
+	request.Now = now.Add(time.Second)
+	second, err := database.AllocateGuestDemoService(t.Context(), request)
+	if err != nil || first.ID != second.ID || !first.ExpiresAt.Equal(*second.ExpiresAt) {
+		t.Fatalf("allocation recovery changed identity or expiry: %+v, %v", second, err)
+	}
+	var noRetryTable, hashedCredential bool
+	var principals, teams, memberships int
+	if err := database.pool.QueryRow(t.Context(), `SELECT
+		to_regclass('control.guest_retry_keys') IS NULL,
+		credential_hash <> convert_to($2,'UTF8'),
+		(SELECT count(*) FROM control.identities),
+		(SELECT count(*) FROM control.teams),
+		(SELECT count(*) FROM control.team_memberships)
+		FROM control.guest_trials WHERE id=$1`, guest.ID, guest.Token.String()).
+		Scan(&noRetryTable, &hashedCredential, &principals, &teams, &memberships); err != nil {
 		t.Fatal(err)
 	}
-	first, err := database.EnsureGuestPrincipal(t.Context(), guest.ID, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := database.EnsureGuestPrincipal(t.Context(), guest.ID, time.Now())
-	if err != nil || first != second || first == ([32]byte{}) {
-		t.Fatalf("external retry master key was not stable: %v", err)
-	}
-	var ciphertext []byte
-	if err := database.pool.QueryRow(t.Context(), `SELECT guest_retry_master_key_ciphertext FROM control.guest_retry_keys WHERE id = 1`).Scan(&ciphertext); err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(ciphertext, first[:]) {
-		t.Fatal("external retry master key persisted as plaintext")
+	if !noRetryTable || !hashedCredential || principals != 0 || teams != 0 || memberships != 0 {
+		t.Fatalf("guest recovery depends on a retry secret or fabricated principal: %t/%t/%d/%d/%d",
+			noRetryTable, hashedCredential, principals, teams, memberships)
 	}
 }
 

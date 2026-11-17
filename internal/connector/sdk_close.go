@@ -28,6 +28,8 @@ func CloseSDK(ctx context.Context, options SDKCloseOptions) error {
 }
 
 func (o sdkOperations) closeSDK(ctx context.Context, options SDKCloseOptions) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	references := 0
 	for _, reference := range []string{options.Handle, options.FailureHandle, options.RequestHandle} {
 		if reference != "" {

@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 )
 
 type recoveryControl interface {
-	ObserveRecovery(context.Context, string, uint64, uint64, time.Time) (ingressv1.PublicURLRecoveryObservation, error)
+	ObserveRecovery(context.Context, ingressv1.ServiceRunReference, string, uint64, time.Time, []byte) (ingressv1.ServiceRecoveryObservation, error)
 }
 
 type RecoveryObserver interface {
@@ -24,6 +25,7 @@ type RecoveryObserver interface {
 // durably completes the corresponding recovery episode.
 type RecoveryReporter struct {
 	ctx     context.Context
+	cancel  context.CancelFunc
 	control recoveryControl
 	retry   time.Duration
 	report  func(error)
@@ -53,13 +55,14 @@ func NewRecoveryReporter(
 	if report == nil {
 		report = func(error) {}
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	return &RecoveryReporter{
-		ctx: ctx, control: control, retry: retry, report: report, pending: make(map[uint64]struct{}),
+		ctx: ctx, cancel: cancel, control: control, retry: retry, report: report, pending: make(map[uint64]struct{}),
 	}, nil
 }
 
-func (r *RecoveryReporter) Observe(publicURLID string, publishRunNumber, recoveryEpisodeID uint64, observedAt time.Time) {
-	if r == nil || r.control == nil || recoveryEpisodeID == 0 {
+func (r *RecoveryReporter) Observe(run ingressv1.ServiceRunReference, visitor string, recoveryEpisodeID uint64, observedAt time.Time, sourceEvidence []byte) {
+	if r == nil || r.control == nil || recoveryEpisodeID == 0 || len(sourceEvidence) > 2048 {
 		return
 	}
 	r.mu.Lock()
@@ -76,6 +79,7 @@ func (r *RecoveryReporter) Observe(publicURLID string, publishRunNumber, recover
 		r.observer.AddRecoveryPending(1)
 	}
 	r.active.Add(1)
+	sourceEvidence = bytes.Clone(sourceEvidence)
 	r.mu.Unlock()
 	go func() {
 		defer r.active.Done()
@@ -88,7 +92,7 @@ func (r *RecoveryReporter) Observe(publicURLID string, publishRunNumber, recover
 			r.mu.Unlock()
 		}()
 		for {
-			if _, err := r.control.ObserveRecovery(r.ctx, publicURLID, publishRunNumber, recoveryEpisodeID, observedAt); err == nil {
+			if _, err := r.control.ObserveRecovery(r.ctx, run, visitor, recoveryEpisodeID, observedAt, sourceEvidence); err == nil {
 				if r.observer != nil {
 					r.observer.ObserveRecoveryAttempt("success")
 				}
@@ -96,7 +100,7 @@ func (r *RecoveryReporter) Observe(publicURLID string, publishRunNumber, recover
 			} else {
 				var problem *ControlProblemError
 				if errors.As(err, &problem) && problem.Status == http.StatusConflict && problem.Problem != nil &&
-					problem.Problem.Code == ingressv1.RecoveryEpisodeStale {
+					(problem.Problem.Code == ingressv1.RecoveryEpisodeStale || problem.Problem.Code == ingressv1.IngressLeaseStale) {
 					if r.observer != nil {
 						r.observer.ObserveRecoveryAttempt("stale")
 					}
@@ -138,8 +142,11 @@ func (r *RecoveryReporter) Close(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
+		r.cancel()
 		return nil
 	case <-ctx.Done():
+		r.cancel()
+		<-done
 		return context.Cause(ctx)
 	}
 }

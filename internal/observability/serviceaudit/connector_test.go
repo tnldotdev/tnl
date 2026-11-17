@@ -24,6 +24,7 @@ func TestNativeObservationRequiresInstalledRunScope(t *testing.T) {
 		"missing run number": func(o *Observation) { o.RunNumber = 0 },
 		"missing source":     func(o *Observation) { o.SourceIP = "" },
 		"wrong kind":         func(o *Observation) { o.ServiceKind = "public_url" },
+		"old run id":         func(o *Observation) { o.RunID = "pr_0123456789ABCDEFGHIJKL" },
 		"wrong pair":         func(o *Observation) { o.PairID = "invalid" },
 		"missing binding":    func(o *Observation) { o.DeliveryGeneration = 0 },
 	} {

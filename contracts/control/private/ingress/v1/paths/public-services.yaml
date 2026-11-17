@@ -1,4 +1,20 @@
 paths:
+  /internal/v1/ingresses/{ingress_id}/public-services/closed-runs:
+    post:
+      operationId: closedServiceRuns
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunClosureLookup" }
+      responses:
+        "200":
+          description: Exact known closed runs from the bounded lookup; unknown or unavailable runs are not closure proof
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunClosures" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /internal/v1/ingresses/{ingress_id}/public-services/admit:
     post:
       operationId: admitPublicServiceVisitor

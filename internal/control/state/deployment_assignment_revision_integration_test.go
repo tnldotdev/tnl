@@ -6,22 +6,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestIntegrationDeploymentPublicURLAssignmentIgnoresRunLifecycle(t *testing.T) {
-	d, now, _, _ := newPublishRunPrerequisites(t)
+func TestIntegrationDeploymentHTTPAssignmentIgnoresRunLifecycle(t *testing.T) {
+	d, now, _, leases := newPublishRunPrerequisites(t)
 	ctx := t.Context()
 	request := appliedProjectRequest(t, d, now)
 	request.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"web": {Target: "http://web.internal:3000", PublicURL: &ProjectServicePublicURL{}},
-		"api": {Target: "http://api.internal:3000", PublicURL: &ProjectServicePublicURL{}},
+		"web": {Target: "http://web.internal:3000"},
+		"api": {Target: "http://api.internal:3000"},
 	}}
 	request = selectedProjectRequest(request, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, request)
@@ -34,7 +36,7 @@ func TestIntegrationDeploymentPublicURLAssignmentIgnoresRunLifecycle(t *testing.
 	}
 	replica := enrollAppliedDeployment(t, d, request, enrollment, now)
 	if len(replica.assignments.Services) != 2 {
-		t.Fatal("missing public URL assignments")
+		t.Fatal("missing HTTP service assignments")
 	}
 	find := func(assignments DeploymentPublisherAssignments, name string) DeploymentPublisherServiceAssignment {
 		t.Helper()
@@ -48,21 +50,17 @@ func TestIntegrationDeploymentPublicURLAssignmentIgnoresRunLifecycle(t *testing.
 	}
 	web := find(replica.assignments, "web")
 	wire, err := json.Marshal(web)
-	if err != nil || bytes.Contains(wire, []byte(`"trust_revision"`)) {
-		t.Fatal("public URL assignment invented a saved-service trust revision", err)
+	if err != nil || !bytes.Contains(wire, []byte(`"trust_revision":"`)) || web.TrustRevision < 1 || bytes.Contains(wire, []byte(`"service_kind"`)) {
+		t.Fatal("HTTP assignment did not use an ordinary service trust revision", err)
 	}
 	access := deploymentAssignmentAccess(t, d, replica, web, now)
-	publicURL, err := d.GetPublicURL(ctx, request.ActorID, web.ServiceID)
+	saved, err := d.GetServiceForPublisher(ctx, web.ServiceID, access.PublisherIdentity, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := d.CreatePublishRun(ctx, reviewRunRequest(t, d, access.PublisherIdentity, replica.private, publicURL, "steady-publication"), now, time.Minute, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	authentication := (publishRunFixture{setup: run}).authentication()
+	run := readyAppliedServiceRun(t, d, access, replica.private, saved, netip.MustParseAddr("127.0.0.1"), leases, now)
 	for poll := range 3 {
-		if _, err := d.HeartbeatPublishRun(ctx, authentication, now.Add(time.Duration(poll)*time.Second), time.Minute, time.Minute); err != nil {
+		if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, now.Add(time.Duration(poll)*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 			t.Fatal(err)
 		}
 		current, err := d.GetDeploymentPublisherAssignments(ctx, replica.lease.AccessToken, now)
@@ -82,7 +80,7 @@ func TestIntegrationDeploymentPublicURLAssignmentIgnoresRunLifecycle(t *testing.
 	if err != nil || !reflect.DeepEqual(find(current, "web"), web) || reflect.DeepEqual(find(current, "api"), find(replica.assignments, "api")) {
 		t.Fatal("changing one binding changed its unchanged sibling or retained old configuration", err)
 	}
-	if _, err := d.HeartbeatPublishRun(ctx, authentication, now, time.Minute, time.Minute); err != nil {
+	if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal("sibling configuration change closed the steady publication", err)
 	}
 	webConfiguration := request.Configuration.Services["web"]
@@ -93,17 +91,17 @@ func TestIntegrationDeploymentPublicURLAssignmentIgnoresRunLifecycle(t *testing.
 		Targets: map[string]DeploymentTarget{"web": {Address: webConfiguration.Target}}, Now: now,
 	})
 	if err != nil || updated.Services["web"].ID != web.ServiceID {
-		t.Fatal("target change lost canonical public URL binding", err)
+		t.Fatal("target change lost the saved HTTP service binding", err)
 	}
 	changed, err := d.GetDeploymentPublisherAssignments(ctx, replica.lease.AccessToken, now)
 	if err != nil || reflect.DeepEqual(find(changed, "web"), web) || !reflect.DeepEqual(find(changed, "api"), find(current, "api")) {
 		t.Fatal("target change did not isolate replacement to the changed binding", err)
 	}
-	closed, err := controlstatedb.New(d.pool).GetPublishRun(ctx, run.PublishRunID)
+	closed, err := controlstatedb.New(d.pool).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: run.RunID, ServiceID: run.ServiceID})
 	if err != nil || !closed.ClosedAt.Valid || closed.State != "closed" {
 		t.Fatal("real configuration change did not close the old run", err)
 	}
-	if _, err := d.HeartbeatPublishRun(ctx, authentication, now, time.Minute, time.Minute); !errors.Is(err, ErrPublishRunStale) && !errors.Is(err, ErrPublisherIdentity) {
+	if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) && !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("real configuration change left its old run open", err)
 	}
 }
@@ -157,14 +155,14 @@ func (c deploymentAssignmentPollControl) Acknowledge(ctx context.Context, token 
 	return nil
 }
 
-func TestIntegrationDeploymentPublicURLWorkerSurvivesAssignmentPolls(t *testing.T) {
-	d, now, _, _ := newPublishRunPrerequisites(t)
+func TestIntegrationDeploymentHTTPWorkerSurvivesAssignmentPolls(t *testing.T) {
+	d, now, _, leases := newPublishRunPrerequisites(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	request := appliedProjectRequest(t, d, now)
 	request.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"web": {Target: "https://web.internal:3000", PublicURL: &ProjectServicePublicURL{}, TargetTLS: &ProjectTargetTLS{Hostname: "web.internal"}},
-		"api": {Target: "http://api.internal:3000", PublicURL: &ProjectServicePublicURL{}},
+		"web": {Target: "https://web.internal:3000", TargetTLS: &ProjectTargetTLS{Hostname: "web.internal"}},
+		"api": {Target: "http://api.internal:3000"},
 	}}
 	request = selectedProjectRequest(request, "production")
 	applied, err := d.ApplyProjectConfiguration(ctx, request)
@@ -188,7 +186,7 @@ func TestIntegrationDeploymentPublicURLWorkerSurvivesAssignmentPolls(t *testing.
 	events, done := make(chan event, 16), make(chan error, 1)
 	go func() {
 		done <- (publisherdeployment.Runtime{Control: poll, Member: initial.Member, Private: replica.private, PollInterval: time.Millisecond,
-			Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+			Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 				health(true)
 				events <- event{true, assignment}
 				<-ctx.Done()
@@ -217,7 +215,7 @@ func TestIntegrationDeploymentPublicURLWorkerSurvivesAssignmentPolls(t *testing.
 	for range 2 {
 		first := next()
 		if !first.start || bindings[first.assignment.Service].ServiceId != "" {
-			t.Fatal("public URL workers did not start independently")
+			t.Fatal("HTTP service workers did not start independently")
 		}
 		bindings[first.assignment.Service] = first.assignment
 	}
@@ -234,19 +232,19 @@ func TestIntegrationDeploymentPublicURLWorkerSurvivesAssignmentPolls(t *testing.
 					polls++
 				}
 			case unexpected := <-events:
-				t.Fatal("healthy public URL worker restarted without a binding change", unexpected)
+				t.Fatal("healthy HTTP service worker restarted without a binding change", unexpected)
 			case <-ctx.Done():
 				t.Fatal("native assignments did not remain healthy", context.Cause(ctx))
 			}
 		}
 		select {
 		case unexpected := <-events:
-			t.Fatal("steady polling replaced a public URL worker", unexpected)
+			t.Fatal("steady polling replaced an HTTP service worker", unexpected)
 		default:
 		}
 	}
 	configuration := request.Configuration.Services["web"]
-	var active PublishRunSetup
+	var active ServiceRunState
 	var activeAccess PublisherAccess
 	for _, change := range []string{"initial", "target", "trust", "policy"} {
 		if change != "initial" {
@@ -257,7 +255,7 @@ func TestIntegrationDeploymentPublicURLWorkerSurvivesAssignmentPolls(t *testing.
 			case "trust":
 				configuration.TargetTLS = &ProjectTargetTLS{Hostname: "replacement.internal"}
 			case "policy":
-				configuration.PublicURL = &ProjectServicePublicURL{Access: &ProjectPublicAccess{Mode: "anonymous"}}
+				configuration.HTTP = &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}
 			}
 			request.ExpectedRevision = applied.Revision
 			request.Now = time.Now()
@@ -266,7 +264,7 @@ func TestIntegrationDeploymentPublicURLWorkerSurvivesAssignmentPolls(t *testing.
 			if err != nil {
 				t.Fatal("binding mutation failed", change, err)
 			}
-			closed, err := controlstatedb.New(d.pool).GetPublishRun(ctx, active.PublishRunID)
+			closed, err := controlstatedb.New(d.pool).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: active.RunID, ServiceID: active.ServiceID})
 			if err != nil || !closed.ClosedAt.Valid || closed.State != "closed" {
 				t.Fatal("binding change did not close the previous run", change, err)
 			}
@@ -282,16 +280,30 @@ func TestIntegrationDeploymentPublicURLWorkerSurvivesAssignmentPolls(t *testing.
 		web := bindings["web"]
 		stateAssignment := DeploymentPublisherServiceAssignment{ServiceID: web.ServiceId, GrantID: web.GrantId}
 		access := deploymentAssignmentAccess(t, d, replica, stateAssignment, time.Now())
-		publicURL, err := d.GetPublicURL(ctx, request.ActorID, web.ServiceId)
+		saved, err := d.GetServiceForPublisher(ctx, web.ServiceId, access.PublisherIdentity, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
-		setup, err := d.CreatePublishRun(ctx, reviewRunRequest(t, d, access.PublisherIdentity, replica.private, publicURL, fmt.Sprintf("native-%s", change)), time.Now(), time.Minute, time.Minute)
+		prepared, err := d.PrepareServiceRun(ctx, web.ServiceId, access.PublisherIdentity, fmt.Sprintf("native-%s", change), time.Now(), ServiceRunRequest{Metadata: saved.ServiceMetadata})
 		if err != nil {
 			t.Fatal("assigned exact grant could not start its run", change, err)
 		}
+		setup, err := d.StartServiceRun(ctx, web.ServiceId, prepared.RunID, prepared.RunNumber, access.PublisherIdentity, time.Now())
+		if err != nil {
+			t.Fatal("assigned exact grant could not start its run", change, err)
+		}
+		installPrivateTestCertificate(t, d, prepared, setup, time.Now())
+		for _, slot := range setup.Connections {
+			lease := leases[slot.RelayServiceID].RelayLeaseIdentity
+			if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, setup.ServiceID, setup.RunID, setup.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("8.8.8.8"), lease, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, setup.RunID, setup.RunNumber, slot.Revision, lease, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+		}
 		steady()
-		if _, err := d.HeartbeatPublishRun(ctx, (publishRunFixture{setup: setup}).authentication(), time.Now(), time.Minute, time.Minute); err != nil {
+		if _, err := d.HeartbeatServiceRun(ctx, setup.ServiceID, setup.RunID, setup.Token, time.Now(), ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 			t.Fatal("steady assignment polling closed its active run", change, err)
 		}
 		active, activeAccess = setup, access

@@ -103,7 +103,6 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		"TNLD_PRIVATE_CONTROL_LISTEN": "127.0.0.2:9443",
 		"TNLD_REFRESH_TOKEN_LIFETIME": "1h",
 		"TNLD_RELAY_LEASE_DURATION":   "5s",
-		"TNLD_ROUTING_TABLE_WAIT":     "1s",
 		"TNLD_SERVER_DOMAIN":          serverDomain,
 		"TNLD_STORAGE_KEY":            testStorageKey,
 	})
@@ -125,7 +124,6 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		"TNLD_METRICS_LISTEN":         ingressMetrics,
 		"TNLD_ROLE":                   "ingress",
 		"TNLD_RELAY_LEASE_DURATION":   "5s",
-		"TNLD_ROUTING_TABLE_WAIT":     "1s",
 	})
 	ingress := owner.start(t, daemonconfig.RoleIngress, repositoryRoot, ingressEnvironment, tnldPath, "serve")
 	waitForIntegrationBinaryReady(t, ingress, ingressMetrics, databaseURL)
@@ -181,7 +179,6 @@ func startIntegrationBinaryRelay(
 		"TNLD_RELAY_TLS_CERTIFICATE_FILE": certificate.certificateFile,
 		"TNLD_RELAY_TLS_PRIVATE_KEY_FILE": certificate.privateKeyFile,
 		"TNLD_RELAY_UDP_LISTEN":           net.JoinHostPort("127.0.0.2", relayPort),
-		"TNLD_ROUTING_TABLE_WAIT":         "1s",
 	})
 	process := owner.start(t, daemonconfig.RoleRelay, repositoryRoot, environment, tnldPath, "serve")
 	return process, metricsAddress

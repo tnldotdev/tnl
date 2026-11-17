@@ -37,3 +37,43 @@ schemas:
     minLength: 1
     maxLength: 256
     pattern: '^\S(?:.*\S)?$'
+  ProblemCode:
+    type: string
+    enum:
+      - invalid_request
+      - invalid_json
+      - unsupported_media_type
+      - unauthenticated
+      - not_found
+      - internal
+      - ingress_already_running
+      - ingress_lease_stale
+      - recovery_episode_stale
+  Problem:
+    type: object
+    additionalProperties: false
+    required: [type, title, status, code, detail, request_id]
+    properties:
+      type:
+        type: string
+        format: uri
+      title:
+        type: string
+      status:
+        type: integer
+        minimum: 400
+        maximum: 599
+      code:
+        $ref: "../openapi.yaml#/components/schemas/ProblemCode"
+      detail:
+        type: string
+        minLength: 1
+      request_id:
+        type: string
+        minLength: 1
+      retry_at:
+        type: string
+        format: date-time
+      details:
+        type: object
+        additionalProperties: true

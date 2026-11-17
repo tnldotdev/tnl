@@ -24,7 +24,7 @@ func runPublicationInstall(ctx context.Context, flags publishCommand, output, di
 		if err != nil {
 			return err
 		}
-		applyTunnelConfiguration(&flags.tunnelFlags, effective.Tunnel)
+		applyServiceConfiguration(&flags.tunnelFlags, effective.Service)
 		applyBuiltInHostname(&flags.tunnelFlags, flags.Service, flags.project.Worktree)
 		if flags.Team == "" {
 			flags.selectedTeam, err = resolve.TeamForServer(flags.ServerURL, effective.Server, effective.Team)
@@ -39,7 +39,7 @@ func runPublicationInstall(ctx context.Context, flags publishCommand, output, di
 	if flags.inspectionModeFromCLI && flags.InspectionMode != config.InspectionNone {
 		return failure.Wrap("select installed inspection", failure.PublisherInstallInspection, errors.New("inspection capture selected"))
 	}
-	if err := validateTCPPublishOptions(flags, controlv1.Http); err != nil {
+	if err := validateTCPPublishOptions(flags, controlv1.ServiceProtocolHTTP); err != nil {
 		return err
 	}
 	options, err := (systemStateFlags{System: flags.System, SystemStateDir: flags.SystemStateDir}).options()
@@ -49,7 +49,7 @@ func runPublicationInstall(ctx context.Context, flags publishCommand, output, di
 	if _, err := installedjobs.ServiceUnit(runtime.GOOS, "/tnl", options.Root); err != nil {
 		return err
 	}
-	settings := invocation.InstallationOptions{PublicOptions: publicOptions(flags), Installation: options, ServiceName: flags.ServiceName, ReadinessPath: flags.publicationReadinessPath(), ServerCAFile: flags.ServerCAFile}
+	settings := invocation.InstallationOptions{PublicOptions: publicOptions(flags), Installation: options, ServiceName: flags.ServiceName, ReadinessPath: flags.publicationReadinessPath(), ServerCAFile: flags.ServerCAFile, Traffic: flags.traffic}
 	settings.Authenticate = publisherAuthentication(diagnostics)
 	return invocation.InstallHTTP(ctx, settings, installationPresentation(output, diagnostics))
 }

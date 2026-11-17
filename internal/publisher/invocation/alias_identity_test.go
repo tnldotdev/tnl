@@ -1,212 +1,175 @@
 package invocation
 
 import (
-	"bytes"
-	"crypto/ed25519"
-	"encoding/base64"
-	"encoding/json"
+	"context"
 	"errors"
-	"io"
 	"net/http"
-	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/auth"
-	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
-	"github.com/tnldotdev/tnl/internal/security/publisherproof"
-	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiver(t *testing.T) {
-	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
-	const server = "https://control.example"
-	store, err := state.Server(t.Context(), server)
-	if err != nil {
-		t.Fatal(err)
-	}
-	newID := func(prefix string) string {
-		t.Helper()
-		id, err := opaqueid.New(prefix)
-		if err != nil {
-			t.Fatal(err)
+	for _, prefixes := range [][]string{nil, {"192.0.2.1/32"}} {
+		name := "no IP policy"
+		if prefixes != nil {
+			name = "explicit IP policy"
 		}
-		return id
-	}
-	project, target := t.TempDir(), "https://127.0.0.1:3000"
-	group := clientstate.IntegrationScope{PrimaryProjectRoot: project, Namespace: "member.example"}
-	parentID := newID(opaqueid.PublicURLPrefix)
-	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Project: project, Service: "web", Target: target, IntegrationScope: group})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tunnel.Finish(t.Context(), nil)
-	if err := tunnel.SetPublicURL(t.Context(), parentID, "web.member.example"); err != nil {
-		t.Fatal(err)
-	}
-	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
-		t.Fatal(err)
-	}
-	prefixes := []string{"192.0.2.1/32"}
-	membership := "membership"
-	publicURL := controlv1.PublicURL{Id: newID(opaqueid.PublicURLPrefix), TeamId: "team", DomainId: "domain", MembershipId: &membership, CanonicalHostname: "review.member.example", ServiceProtocol: controlv1.Http, PublicUrlScope: controlv1.Member, Purpose: controlv1.Alias, LifecycleState: controlv1.Enabled, AccessMode: controlv1.Restricted, AllowedIpPrefixes: &prefixes}
-	identity := authorityv1.PublisherEnrollmentResult{ClientId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), TeamId: publicURL.TeamId, PublicUrlId: &publicURL.Id, Kind: authorityv1.SavedPublicUrl}
-	enrollmentID := newID(opaqueid.PublisherEnrollmentPrefix)
-	enrollmentKey := enrollmentID + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-	requests, creations, enrollments, redemptions, runs := 0, 0, 0, 0, 0
-	var public ed25519.PublicKey
-	transport := publicationHTTPTransport(func(r *http.Request) (*http.Response, error) {
-		requests++
-		status, token := http.StatusOK, r.Header.Get("Authorization")
-		var value any
-		switch r.Method + " " + r.URL.Path {
-		case "GET /v1/public-urls":
-			if token != "Bearer session" {
-				t.Error("saved URL lookup did not use setup authority")
-			}
-			page := controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{}}
-			if creations != 0 {
-				page.PublicUrls = append(page.PublicUrls, publicURL)
-			}
-			value = page
-		case "POST /v1/public-urls":
-			var body controlv1.CreatePublicURLRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				return nil, err
-			}
-			if token != "Bearer session" || body.Target != "" || body.Purpose != controlv1.Alias || body.PublicUrlScope != controlv1.Member || body.MembershipId == nil || *body.MembershipId != membership || body.CanonicalHostname != publicURL.CanonicalHostname {
-				t.Errorf("alias reservation changed target, purpose, or ownership: %+v", body)
-			}
-			creations++
-			status, value = http.StatusCreated, publicURL
-		case "POST /v1/publisher-enrollments":
-			var body controlv1.CreatePublisherEnrollmentRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				return nil, err
-			}
-			if token != "Bearer session" || body.TeamId != publicURL.TeamId || body.PublicUrlId == nil || *body.PublicUrlId != publicURL.Id || body.DomainId != nil {
-				t.Error("alias enrollment widened its grant")
-			}
-			enrollments++
-			status, value = http.StatusCreated, controlv1.PublisherEnrollment{Id: enrollmentID, EnrollmentKey: enrollmentKey, ExpiresAt: time.Now().Add(time.Minute), PublicUrlId: &publicURL.Id, TeamId: publicURL.TeamId, Kind: "saved_public_url"}
-		case "POST /v1/publisher-enrollments/redeem":
-			var body authorityv1.RedeemPublisherEnrollmentRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				return nil, err
-			}
-			if body.EnrollmentKey != enrollmentKey || token != "" {
-				t.Error("alias redemption used another enrollment or a person token")
-			}
-			public, err = base64.RawURLEncoding.DecodeString(body.PublicKey)
+		t.Run(name, func(t *testing.T) {
+			f := newServiceSetupFixture(t, "review.member.example")
+			project, target := t.TempDir(), "https://127.0.0.1:3000"
+			group := clientstate.IntegrationScope{PrimaryProjectRoot: project, Namespace: "member.example"}
+			trust, err := targettrust.NewDeclaration("web.internal", nil)
 			if err != nil {
-				return nil, err
+				t.Fatal(err)
 			}
-			redemptions++
-			value = identity
-		case "POST /v1/publisher-token":
-			var body authorityv1.PublisherTokenRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				return nil, err
+			snapshot, err := trust.Snapshot()
+			if err != nil {
+				t.Fatal(err)
 			}
-			if _, err := publisherproof.Verify(body.ClientAssertion, identity.ClientId, identity.KeyId, identity.GrantId, server+"/v1/publisher-token", public, time.Now()); err != nil {
-				return nil, err
+			f.parent = controlv1.Service{Id: serviceTestID(t, opaqueid.ServicePrefix), TeamId: f.saved.TeamId, DomainId: f.saved.DomainId,
+				Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1, TargetTls: publisheridentity.ServiceTargetTLS(snapshot),
+				RequirePostQuantum: true, HttpLimits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(6)},
+				Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.member.example", Public: true, Port: 443}}
+			tunnel, err := f.state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish,
+				Server: f.services.authenticated.ServerEndpoint, Project: project, Service: "web", ServiceID: f.parent.Id, Target: target, IntegrationScope: group})
+			if err != nil {
+				t.Fatal(err)
 			}
-			if token != "" {
-				t.Error("alias assertion exchange used person credentials")
+			defer tunnel.Finish(context.Background(), nil)
+			if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
+				t.Fatal(err)
 			}
-			value = authorityv1.PublisherTokenResponse{AccessToken: "alias-access", TokenType: "Bearer", ExpiresIn: 60, GrantId: identity.GrantId}
-		case "POST /v1/public-urls/" + publicURL.Id + "/publish-runs":
-			if token != "Bearer alias-access" {
-				t.Error("alias run used the person session")
+			f.services.membershipID, f.services.namespace = "member_fixture", group.Namespace
+			scope := clientstate.AliasScope{Server: f.services.authenticated.ServerEndpoint, ProjectKey: project, TeamID: f.saved.TeamId,
+				MembershipID: f.services.membershipID, Namespace: group.Namespace, Name: "review"}
+			selection, err := f.state.RegisterAlias(t.Context(), clientstate.AliasRegistration{Scope: scope,
+				Hostname: f.saved.Endpoint.Hostname, Service: "web", TunnelID: tunnel.ID(), IntegrationScope: group})
+			if err != nil {
+				t.Fatal(err)
 			}
-			if _, err := publisherproof.VerifyRun(public, r.Header.Get("Publisher-Run-Proof"), publicURL.Id, r.Header.Get("Idempotency-Key")); err != nil {
-				return nil, err
+			admissions, responses, captures := 0, 0, 0
+			until := time.Now().Add(time.Second)
+			fence, expire := context.WithCancelCause(context.Background())
+			defer expire(context.Canceled)
+			base := publisherservice.RunConfig{Control: f.services.routes, Access: func(context.Context) (string, error) { return "parent-access", nil },
+				ShutdownDeadline: func() time.Time { return until }, ShutdownContext: fence,
+				ServiceID: f.parent.Id, Target: "127.0.0.1:3000", Metadata: publisheridentity.ServiceMetadata(f.parent),
+				Mounts: []publisherproxy.Mount{{Prefix: "/api", Target: "http://127.0.0.1:4000"}}, Feedback: true, PreviewID: "parent-preview",
+				ResolveHTTPTarget: func(*http.Request) (string, string, error) { captures++; return target, "app-instance", nil },
+				AdmitRequest: func(r *http.Request) error {
+					admissions++
+					state, err := f.state.SnapshotProject(r.Context(), project)
+					if err != nil {
+						return err
+					}
+					if len(state.Tunnels) != 1 || state.Tunnels[0].ServiceID != f.parent.Id || state.Tunnels[0].PublishRunNumber != 1 {
+						t.Error("alias lost its captured entry-service admission")
+					}
+					return nil
+				},
+				HTTPAdmitRequest: func(*http.Request, publisherservice.HTTPRun) error {
+					t.Error("alias inherited the ordinary app's OAuth return admission")
+					return publisheridentity.ErrScope
+				},
+				HTTPPrepareRequest: func(*http.Request, publisherservice.HTTPRun) (func(context.Context) error, error) {
+					t.Error("alias inherited the ordinary app's OAuth return claim")
+					return nil, publisheridentity.ErrScope
+				},
+				HTTPResponseHooks: func(run publisherservice.HTTPRun) httpstream.ResponseHooks {
+					return httpstream.ResponseHooks{Observe: func(*http.Response) error {
+						responses++
+						if run.ServiceID != f.saved.Id {
+							t.Error("alias response was attributed to the parent's service")
+						}
+						return nil
+					}}
+				}}
+			worker := projectAliasPublisher(f.state, f.services, selection, tunnel.ID(), base, resolvedVisitorAccess{access: controlv1.Restricted, prefixes: prefixes}, nil)
+			if eligible, err := worker.Eligible(t.Context()); err != nil || eligible {
+				t.Fatal("unready alias was eligible", eligible, err)
 			}
-			runs++
-			status, value = http.StatusServiceUnavailable, map[string]string{"code": "unavailable"}
-		default:
-			return nil, errors.New("unexpected alias request: " + r.Method + " " + r.URL.Path)
-		}
-		data, err := json.Marshal(value)
-		if err != nil {
-			return nil, err
-		}
-		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(data)), Request: r}, nil
-	})
-	previous := http.DefaultTransport
-	http.DefaultTransport = transport
-	defer func() { http.DefaultTransport = previous }()
-	control, err := clientcontrol.New(server, &http.Client{Transport: transport}, "session")
-	if err != nil {
-		t.Fatal(err)
-	}
-	authority, err := clientauthority.New(server, &http.Client{Transport: transport}, "session")
-	if err != nil {
-		t.Fatal(err)
-	}
-	services := publisherServices{state: store, hostname: publicURL.CanonicalHostname, teamID: publicURL.TeamId, domainID: publicURL.DomainId, membershipID: membership, namespace: "member.example", publicURLScope: controlv1.Member, routes: control, authenticated: &auth.Client{ServerEndpoint: server, Control: control, Authority: authority}}
-	scope := clientstate.AliasScope{Server: server, ProjectKey: project, TeamID: publicURL.TeamId, MembershipID: membership, Namespace: services.namespace, Name: "review"}
-	selection, err := state.RegisterAlias(t.Context(), clientstate.AliasRegistration{Scope: scope, Hostname: publicURL.CanonicalHostname, Service: "web", TunnelID: tunnel.ID(), IntegrationScope: group})
-	if err != nil {
-		t.Fatal(err)
-	}
-	admissions, responses := 0, 0
-	base := publisher.Config{Target: target, TargetOptions: publisherproxy.TargetOptions{ServerName: "web.internal"}, Mounts: []publisherproxy.Mount{{Prefix: "/api", Target: "http://127.0.0.1:4000"}}, Feedback: true, PreviewID: "parent-preview",
-		AdmitRequest: func(_ *http.Request, run publisher.PublishRunIdentity) error {
-			admissions++
-			if run.PublicURLID != parentID || run.Number != 1 {
-				t.Error("alias lost entry-service admission identity")
+			if _, err := worker.Prepare(t.Context()); !errors.Is(err, clientstate.ErrAliasReceiverUnavailable) || f.requests != 0 {
+				t.Fatal("unready alias acquired remote state", f.requests, err)
 			}
-			return nil
-		},
-		ObserveResponse: func(*http.Response, publisher.PublishRunIdentity) error { responses++; return nil }}
-	worker := projectAliasPublisher(state, services, selection, tunnel.ID(), base, resolvedVisitorAccess{access: controlv1.Restricted, prefixes: prefixes}, nil)
-	if eligible, err := worker.Eligible(t.Context()); err != nil || eligible {
-		t.Fatalf("unready alias eligible=%t err=%v", eligible, err)
-	}
-	if _, err := worker.Prepare(t.Context()); !errors.Is(err, clientstate.ErrAliasReceiverUnavailable) || requests != 0 {
-		t.Fatalf("unready alias acquired remote state: requests=%d err=%v", requests, err)
-	}
-	if err := tunnel.SetReady(t.Context(), "https://web.member.example", 1); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		snapshot, err := worker.Prepare(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		cfg := snapshot.Config
-		if cfg.PublisherIdentityID != identity.ClientId || !cfg.PreserveSavedPublicURLTarget || cfg.Target != target || cfg.Purpose != controlv1.Alias || cfg.Feedback || cfg.PreviewID != "" || cfg.TargetOptions.ServerName != base.TargetOptions.ServerName || len(cfg.Mounts) != 1 || cfg.Mounts[0].Target != base.Mounts[0].Target {
-			t.Fatalf("alias lost its local publication snapshot: %+v", cfg)
-		}
-		request, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+publicURL.CanonicalHostname+"/", nil)
-		if err := cfg.AdmitRequest(request, publisher.PublishRunIdentity{}); err != nil {
-			t.Fatal(err)
-		}
-		if err := cfg.ObserveResponse(&http.Response{}, publisher.PublishRunIdentity{}); err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := cfg.Control.(publisher.PublicURLManagementClient); ok {
-			t.Fatal("alias runtime retained person mutation authority")
-		}
-		if cfg.Management != nil || cfg.AccessManagement != nil {
-			t.Fatal("alias runtime retained explicit management authority")
-		}
-		if _, err := cfg.Control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix)); !errors.Is(err, clientcontrol.ErrUnavailable) {
-			t.Fatalf("signed alias run: %v", err)
-		}
-	}
-	if creations != 1 || enrollments != 1 || redemptions != 1 || runs != 2 || admissions != 2 || responses != 2 {
-		t.Fatalf("alias lifecycle: create=%d enroll=%d redeem=%d runs=%d admit=%d responses=%d", creations, enrollments, redemptions, runs, admissions, responses)
+			if err := tunnel.SetReady(t.Context(), "https://"+f.parent.Endpoint.Hostname, 1); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				attempt, cancelAttempt := context.WithCancel(t.Context())
+				defer cancelAttempt()
+				prepared, err := worker.Prepare(attempt)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if f.declaration.Http == nil || f.declaration.Http.Access == nil || f.declaration.Http.Access.Mode == nil ||
+					*f.declaration.Http.Access.Mode != controlv1.Restricted ||
+					prefixes == nil && f.declaration.Http.Access.Ip != nil ||
+					prefixes != nil && (f.declaration.Http.Access.Ip == nil || !reflect.DeepEqual(*f.declaration.Http.Access.Ip, prefixes)) {
+					t.Fatal("alias changed its selected IP policy or sent an empty filter")
+				}
+				cfg := prepared.Config
+				if cfg.ShutdownContext != fence || cfg.ShutdownDeadline == nil || !cfg.ShutdownDeadline().IsZero() {
+					t.Fatal("alias lost its parent fence or started the parent's terminal budget")
+				}
+				if cfg.ServiceID != f.saved.Id || cfg.PublisherIdentityID != f.identity.ClientId ||
+					cfg.PublisherGrantID != f.identity.GrantId || cfg.PublisherKeyID != f.identity.KeyId ||
+					cfg.Target != base.Target || cfg.Feedback || cfg.PreviewID != "" || cfg.HTTPAdmitRequest != nil || cfg.HTTPPrepareRequest == nil ||
+					!reflect.DeepEqual(cfg.Metadata.TargetTls, base.Metadata.TargetTls) ||
+					len(cfg.Mounts) != 1 || cfg.Mounts[0].Target != base.Mounts[0].Target ||
+					!prepared.Service.RequirePostQuantum || prepared.Service.HttpLimits.Concurrency == nil || *prepared.Service.HttpLimits.Concurrency != 6 {
+					t.Fatal("alias lost its actual grant, captured target/trust, mounts, PQ, or HTTP budget", cfg)
+				}
+				request, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+f.saved.Endpoint.Hostname+"/", nil)
+				if err := cfg.AdmitRequest(request); err != nil {
+					t.Fatal(err)
+				}
+				run := publisherservice.HTTPRun{ServiceID: cfg.ServiceID, RunID: serviceTestID(t, opaqueid.ServiceRunPrefix),
+					Hostname: f.saved.Endpoint.Hostname, Number: 1}
+				if err := cfg.Prepared(controlv1.ServiceRunPreparation{ServiceId: run.ServiceID, ServiceRunId: run.RunID,
+					Hostname: run.Hostname, RunNumber: run.Number}); err != nil {
+					t.Fatal(err)
+				}
+				if commit, err := cfg.HTTPPrepareRequest(request, run); err != nil || commit != nil {
+					t.Fatal("alias inherited the parent's claim or changed unknown app state", err)
+				}
+				if address, identity, err := cfg.ResolveHTTPTarget(request); err != nil || address != target || identity != "app-instance" {
+					t.Fatal("alias lost the captured dynamic target identity", address, identity, err)
+				}
+				if err := cfg.HTTPResponseHooks(publisherservice.HTTPRun{ServiceID: cfg.ServiceID, Hostname: f.saved.Endpoint.Hostname}).Observe(&http.Response{Request: request}); err != nil {
+					t.Fatal(err)
+				}
+				if _, broad := cfg.Control.(interface {
+					ConfigureService(context.Context, string, controlv1.UpdateServiceRequest) (controlv1.Service, error)
+				}); broad {
+					t.Fatal("alias runtime retained management authority")
+				}
+				access, err := cfg.Access(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := cfg.Control.PrepareServiceRun(t.Context(), cfg.ServiceID, serviceTestID(t, opaqueid.IdempotencyPrefix), access,
+					publisheridentity.ServiceDeclaration(prepared.Service)); !errors.Is(err, clientcontrol.ErrUnavailable) {
+					t.Fatal("alias run did not use its signed exact-service authority", err)
+				}
+				cancelAttempt()
+				if got := cfg.ShutdownDeadline(); got != until {
+					t.Fatal("alias replaced its captured parent shutdown deadline", got, until)
+				}
+			}
+			if f.creates != 1 || f.enrollments != 1 || f.redemptions != 1 || f.runs != 2 || admissions != 2 || responses != 2 || captures != 2 {
+				t.Fatal("alias retried with another service/key or lost app callbacks", f.creates, f.enrollments, f.redemptions, f.runs, admissions, responses, captures)
+			}
+		})
 	}
 }

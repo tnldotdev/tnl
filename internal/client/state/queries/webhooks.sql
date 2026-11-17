@@ -24,17 +24,18 @@ WHERE t.server_origin = sqlc.arg(server_origin) AND t.primary_project_root = sql
 ORDER BY e.name, e.tunnel_id;
 
 -- name: ReadyWebhookReceivers :many
-SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.public_url_id, t.publish_run_number, e.fingerprint
+SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.service_id, t.publish_run_number, e.fingerprint
 FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE e.name = sqlc.arg(name) AND t.server_origin = sqlc.arg(server_origin)
   AND t.primary_project_root = sqlc.arg(primary_project_root) AND t.integration_namespace = sqlc.arg(integration_namespace)
   AND e.service = t.service
   AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now)
-  AND t.public_url_id <> '' AND t.publish_run_number > 0
+  AND t.service_id IS NOT NULL AND t.publish_run_number > 0
 ORDER BY t.id;
 
 -- name: WebhookReceiverCurrent :one
 SELECT count(*) FROM local_tunnels
 WHERE id = sqlc.arg(tunnel_id) AND server_origin = sqlc.arg(server_origin) AND target = sqlc.arg(target)
-  AND public_url_id = sqlc.arg(public_url_id) AND publish_run_number = sqlc.arg(publish_run_number)
+  AND primary_project_root = sqlc.arg(primary_project_root) AND integration_namespace = sqlc.arg(integration_namespace)
+  AND service_id = sqlc.arg(service_id) AND publish_run_number = sqlc.arg(publish_run_number)
   AND state = 'ready' AND stopped_at IS NULL AND lease_expires_at > sqlc.arg(now);

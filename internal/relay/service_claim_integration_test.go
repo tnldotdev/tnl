@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -34,7 +35,7 @@ import (
 
 // each dial traverses the real relay acceptor and its claim/readiness/cleanup
 // path. a failed HTTP claim must not require restarting the relay process.
-func dialPrivateClaim(t *testing.T, acceptor *PublisherAcceptor, hello tunnelv1.Message) (*tunnel.Session, <-chan error, error) {
+func dialPrivateClaim(t *testing.T, accept func(context.Context, muxsession.Session) error, hello tunnelv1.Message) (*tunnel.Session, <-chan error, error) {
 	t.Helper()
 	certificate := httptest.NewTLSServer(nil)
 	t.Cleanup(certificate.Close)
@@ -56,7 +57,7 @@ func dialPrivateClaim(t *testing.T, acceptor *PublisherAcceptor, hello tunnelv1.
 		if err != nil {
 			return err
 		}
-		return acceptor.Accept(ctx, transport)
+		return accept(ctx, transport)
 	})
 	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "example.com"})
 	if err != nil {
@@ -69,7 +70,18 @@ func dialPrivateClaim(t *testing.T, acceptor *PublisherAcceptor, hello tunnelv1.
 	return session, done, err
 }
 
-func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
+type privateClaimFixture struct {
+	database *controlstate.Database
+	inspect  *pgx.Conn
+	url      string
+	now      time.Time
+	service  controlstate.ServiceRecord
+	run      controlstate.ServiceRunState
+	leases   map[string]controlstate.RelayLease
+}
+
+func newPrivateClaimFixture(t *testing.T) privateClaimFixture {
+	t.Helper()
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	ctx, now := t.Context(), time.Now().UTC()
 	url := testutil.NewDisposablePostgresDatabaseURL(t, "private-claim-loss")
@@ -91,7 +103,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := owner.Identity.Memberships[0]
-	service, err := d.CreateServiceAt(ctx, member.TeamID, owner.Identity.Identity.ID, "claims", "claims", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(ctx, member.TeamID, owner.Identity.Identity.ID, "claims", "claims", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +133,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		}
 		leases[id] = lease
 	}
-	prep, err := d.PrepareServiceRun(ctx, service.ID, publisher, "claims", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prep, err := d.PrepareServiceRun(ctx, service.ID, publisher, "claims", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +145,13 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 	if _, err = d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 8}); err != nil {
 		t.Fatal(err)
 	}
+	return privateClaimFixture{database: d, inspect: inspect, url: url, now: now, service: service, run: run, leases: leases}
+}
+
+func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
+	fixture := newPrivateClaimFixture(t)
+	d, inspect, now, service, run, leases := fixture.database, fixture.inspect, fixture.now, fixture.service, fixture.run, fixture.leases
+	ctx := t.Context()
 	secret := strings.Repeat("s", 32)
 	secrets, err := serverhttp.NewBearerSecrets(secret, "")
 	if err != nil {
@@ -219,7 +238,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 				{lease.RelayLeaseIdentity, wrongCredential.String(), slot.Revision},
 				{lease.RelayLeaseIdentity, slot.Credential, slot.Revision + 1},
 			} {
-				if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, bad.revision, bad.credential, bad.lease, now); err == nil {
+				if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, bad.revision, bad.credential, netip.MustParseAddr("127.0.0.1"), bad.lease, now); err == nil {
 					t.Fatal("different relay/process/credential/revision stole existing connection")
 				}
 			}
@@ -231,11 +250,11 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 			}
 		}
 		controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
-			RelayLeaseRevision: int64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt, ConnectionCapacity: 1}}
+			RelayLeaseRevision: int64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt, ServingUntil: lease.ServingUntil, ConnectionCapacity: 1}}
 		registry := NewServiceRegistry()
-		acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Control: controller, Registry: NewRegistry(), Private: &ServicePublisherAcceptor{Select: func(string) (ServicePublisherTarget, bool) {
+		acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Select: func(string) (ServicePublisherTarget, bool) {
 			return ServicePublisherTarget{Control: controller, Registry: registry}, true
-		}}})
+		}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -243,7 +262,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 			ConnectionSlot: uint8(slot.ConnectionSlot), ConnectionAssignmentRevision: uint64(slot.Revision), RelayServiceID: slot.RelayServiceID}
 		hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: slot.Credential, ServiceConnection: &ref}
 		for attempt := range 2 {
-			if _, done, err := dialPrivateClaim(t, acceptor, hello); err == nil {
+			if _, done, err := dialPrivateClaim(t, acceptor.Accept, hello); err == nil {
 				t.Fatal("committed claim response was not lost")
 			} else {
 				_ = relayAwait(t, done)
@@ -257,7 +276,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		session, _, err := dialPrivateClaim(t, acceptor, hello)
+		session, _, err := dialPrivateClaim(t, acceptor.Accept, hello)
 		if err != nil {
 			t.Fatalf("exact committed claim could not recover through relay: %v", err)
 		}
@@ -275,7 +294,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 			}
 			time.Sleep(time.Millisecond)
 		}
-		if _, done, err := dialPrivateClaim(t, acceptor, hello); err == nil {
+		if _, done, err := dialPrivateClaim(t, acceptor.Accept, hello); err == nil {
 			t.Fatal("duplicate relay handshake stole the owner")
 		} else {
 			_ = relayAwait(t, done)

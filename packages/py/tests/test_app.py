@@ -58,11 +58,17 @@ def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
                     assert payload["framework"] == "python"
                     native_app_assignment["registration_id"] = active["registration_id"]
                     if service:
-                        native_app_assignment["hostname"] = ""
                         native_app_assignment["public_url"] = ""
                         project = native_app_assignment["project"]
                         assert isinstance(project, dict)
-                        project["services"].pop("web", None)
+                        services = project["services"]
+                        assert isinstance(services, dict)
+                        selected = services["web"]
+                        assert isinstance(selected, dict)
+                        selected["public"] = False
+                        assert selected["protocol"] == "http" and selected["port"] == 443
+                        assert selected["hostname"] == native_app_assignment["hostname"]
+                        assert selected["url"] == "https://" + str(selected["hostname"])
                     body = json.dumps(native_app_assignment).encode()
                     status = 200
                     log({"event": "prepare", "pid": payload["pid"]})

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,117 +15,163 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/libp2p/go-yamux/v5"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/publisher"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
-	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
-	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publisher.PublicURLServerConfig) {
-	t.Helper()
-	c.Hostname = "route.example"
-	c.PublicURLID = f.entry.PublicUrlId
-	c.PublishRunID = f.entry.PublishRunId
-	c.PublishRunNumber = uint64(f.entry.PublishRunNumber)
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: c.PublicURLID}
-	policy, err := visitorlease.New(scope, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(policy.Close)
-	now := time.Now()
-	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
-	if err := policy.Apply(policy.Begin(), visitorlease.Update{Snapshot: true, Enabled: true, Anonymous: true, KeyRevision: 1,
-		View: visitortoken.View{Scope: scope, Issuer: "https://control.example", Hostname: c.Hostname, Port: 443,
-			VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}.WithVerificationKeys(map[string]ed25519.PublicKey{"fixture": key.Public().(ed25519.PublicKey)})}); err != nil {
-		t.Fatal(err)
-	}
-	c.VisitorPolicy = policy
-	c.VisitorSourceKey = [32]byte{1}
-	r, err := publisher.NewPublicURLServer(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = r.Close() })
-	if err := r.Start(); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	ingressWorker(t, func() { cancel(); _ = f.publisher.Close() }, func() error { return r.ServePublisherConnection(ctx, f.publisher, f.ref) })
+type separatedHTTPControl struct {
+	publisherservice.HTTPControl
+	policy       *visitorfixture.PolicyClient
+	service, run string
 }
 
-func startSeparatedIngress(t *testing.T, f *admissionTransportFixture, port uint16, protocol string) (*Server, string) {
-	t.Helper()
-	if port != 443 || protocol != "http" {
-		t.Fatal("public ingress accepts HTTP on 443")
-	}
-	f.entry.AccessMode = ingressv1.Anonymous
-	hashedRoutingPolicyForTest(t, &f.entry, "203.0.113.0/24")
-	lookup := func(string) ([]PublicURL, LookupReason) {
-		candidates, err := f.forwarder.PublicURLs([]ingressv1.IngressRoutingTableEntry{f.entry})
-		if err != nil {
-			return nil, LookupInvalidProjection
-		}
-		return candidates, LookupCurrent
-	}
-	s, address := startIngress(t, Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Lookup: lookup})
-	f.forwarder.SetPromotionHandler(s.PromotePendingAdmission)
-	return s, address
-}
+func (c separatedHTTPControl) ControlURL() string { return "https://control.example.test" }
 
-func separatedVisitor(t *testing.T, address, source string, port uint16) net.Conn {
-	t.Helper()
-	c, err := net.DialTimeout("tcp", address, fixtureTimeout)
-	if err != nil {
-		t.Fatal(err)
+func (c separatedHTTPControl) ReadPublisherVisitorPolicy(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	if request.Resource.Kind != "service" || request.Resource.Id != c.service || request.RunId != c.run || request.RunNumber != 1 {
+		return controlv1.VisitorPolicyUpdate{}, ErrServiceAdmission
 	}
-	ownIngressConn(t, c)
-	header, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort(source), Destination: netip.AddrPortFrom(netip.MustParseAddr("192.0.2.10"), port)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.Write(header); err != nil {
-		t.Fatal(err)
-	}
-	return c
+	update, err := c.policy.ReadPublisherVisitorPolicy(ctx, request, token)
+	update.Policy.Hostname, update.Policy.Anonymous = "route.example", true
+	return update, err
 }
 
 func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
-	f := newAdmissionTransportFixture(t)
-	run := publisher.PublishRunIdentity{Hostname: "route.example", PublicURLID: f.entry.PublicUrlId, PublishRunID: f.entry.PublishRunId, Number: uint64(f.entry.PublishRunNumber)}
-	proof, err := publisher.NewReadinessProof(run, "/health")
+	var transport *serviceTransportFixture
+	var opens, capacityRequests atomic.Int32
+	capacity := make(chan tunnelv1.ServiceForwardingHeader, 2)
+	config := serviceIngressConfig(t, func(ctx context.Context, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
+		opens.Add(1)
+		return transport.open(ctx, header, func(call context.Context) error {
+			err := reserveCapacity(call)
+			if err == nil {
+				capacity <- header
+			}
+			return err
+		})
+	})
+	control := config.Control.(*httpsServiceControl)
+	control.sources = netip.MustParsePrefix("203.0.113.0/24")
+	control.anonymous = true
+	relay := control.relays[0]
+	ref := tunnelv1.ServicePublisherConnectionRef{
+		ServiceID: control.service, ServiceRunID: control.run, RunNumber: 1,
+		PublisherConnectionID: relay.PublisherConnectionId, ConnectionSlot: uint8(relay.ConnectionSlot),
+		ConnectionAssignmentRevision: uint64(relay.ConnectionAssignmentRevision), RelayServiceID: relay.RelayServiceId,
+	}
+	transport = newServiceTransportFixture(t, ref, relay)
+	control.relays[0] = transport.relay
+	denied := make(chan serviceaudit.Observation, 2)
+	config.AuditSink = auditSinkFunc(func(event serviceaudit.Observation) bool {
+		denied <- event
+		return true
+	})
+	httpControl := separatedHTTPControl{
+		policy:  &visitorfixture.PolicyClient{Key: ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))},
+		service: control.service, run: control.run,
+	}
+	subject := visitorscope.Scope{Kind: visitorscope.Service, ID: control.service}
+	proof, err := httpaccess.NewReadinessProof(httpaccess.ReadinessRun{Subject: subject, ID: control.run, Number: 1, Hostname: "route.example"}, "/health")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var application atomic.Int32
-	startSeparatedPublisher(t, f, publisher.PublicURLServerConfig{Certificate: testCertificate(t, "route.example"), ReadinessProof: proof, Purpose: controlv1.Oauth, AccessMode: controlv1.Anonymous, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(publisherproxy.ReadinessProbeHeader) != "" {
-			t.Error("proof reached application")
+	frontend, closeHTTP, err := publisherservice.PrepareHTTP(t.Context(), publisherservice.HTTP{
+		Control: httpControl, Subject: subject, RunID: control.run, Number: 1, Token: "run-secret",
+		Hostname: "route.example", Port: 443, ReadinessProof: proof,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closeHTTP)
+	var applications, probes atomic.Int32
+	target := servicestream.HTTPTarget{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(httpstream.ReadinessProbeHeader) != "" {
+			t.Error("readiness secret reached application")
 		}
-		application.Add(1)
-		w.WriteHeader(204)
-	})})
-	s, address := startSeparatedIngress(t, f, 443, "http")
-	blocked := tls.Client(separatedVisitor(t, address, "198.51.100.1:40001", 443), &tls.Config{ServerName: "route.example", InsecureSkipVerify: true}) // local fixture certificate.
+		if httpstream.IsReadinessProbe(r) {
+			probes.Add(1)
+		} else {
+			applications.Add(1)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	certificate := testCertificate(t, "route.example")
+	publisher := ingressWorker(t, func() { _ = transport.publisher.Close() }, func() error {
+		for range 2 {
+			incoming, err := transport.publisher.AcceptServiceForwardingStream(ingressContext(t))
+			if err != nil {
+				return err
+			}
+			if err := func() error {
+				stream := incoming.Stream()
+				defer stream.Close()
+				header := incoming.Header
+				if header.Validate() != nil || tunnel.ServiceForwardingRef(header) != ref || header.PublicService == nil ||
+					header.PublicService.DestinationPort != 443 || !control.sources.Contains(netip.MustParseAddr(header.SourceIP)) {
+					return errors.New("HTTP stream changed the service, run, or trusted source")
+				}
+				if err := incoming.Accept(); err != nil {
+					return err
+				}
+				if err := stream.SetDeadline(time.Now().Add(fixtureTimeout)); err != nil {
+					return err
+				}
+				metadata, replay, err := proxyproto.Decode(stream)
+				if err != nil {
+					return err
+				}
+				if metadata.Source.Addr().String() != header.SourceIP || metadata.Destination != netip.MustParseAddrPort("203.0.113.10:443") || metadata.VisitorSourceProof == "" {
+					return errors.New("HTTP stream lost trusted PROXY metadata")
+				}
+				secured := tls.Server(&testReaderConn{Conn: stream, reader: replay}, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13})
+				defer secured.Close()
+				connectionHTTP := frontend
+				connectionHTTP.Header = header
+				connectionHTTP.Source = metadata.Source
+				connectionHTTP.ReserveCapacity = func(call context.Context) error {
+					capacityRequests.Add(1)
+					return transport.publisher.RequestServiceCapacity(call, header)
+				}
+				return connectionHTTP.Forward(t.Context(), secured, target)
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	s, address := startIngress(t, config)
+	blocked := ingressClient(t, address, "route.example", "198.51.100.1:40001")
 	if err := blocked.Handshake(); err == nil {
 		t.Fatal("source outside IP filter completed visitor TLS")
 	}
 	_ = blocked.Close()
+	if opens.Load() != 0 {
+		t.Fatal("source rejection opened a relay stream")
+	}
+	if event := ingressAwait(t, denied); event.SourceIP != "198.51.100.1" || event.Reason != "ip_policy" || event.Outcome != "denied" {
+		t.Fatal("source rejection did not use the trusted PROXY address", event)
+	}
 	for _, test := range []struct {
 		source, proof string
 		want          int
 	}{{"203.0.113.1:40002", "", 204}, {"203.0.113.2:40003", proof.HeaderValue(), 204}} {
-		c := tls.Client(separatedVisitor(t, address, test.source, 443), &tls.Config{ServerName: "route.example", InsecureSkipVerify: true}) // local fixture certificate.
+		c := ingressClient(t, address, "route.example", test.source)
 		if err := c.Handshake(); err != nil {
 			t.Fatal(err)
 		}
 		_, err := fmt.Fprintf(c, "GET /health HTTP/1.1\r\nHost: route.example\r\nConnection: close\r\n%s\r\n", func() string {
 			if test.proof != "" {
-				return publisherproxy.ReadinessProbeHeader + ": " + test.proof + "\r\n"
+				return httpstream.ReadinessProbeHeader + ": " + test.proof + "\r\n"
 			}
 			return ""
 		}())
@@ -137,18 +184,78 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 		}
 		_, _ = io.Copy(io.Discard, response.Body)
 		_ = response.Body.Close()
+		if err := c.CloseWrite(); err != nil {
+			t.Fatal("HTTP request did not half-close after its response", err)
+		}
+		if _, err := c.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+			t.Fatal("HTTP response did not finish after its body", err)
+		}
 		_ = c.Close()
 		if response.StatusCode != test.want {
 			t.Fatalf("source %s status %d; want %d", test.source, response.StatusCode, test.want)
 		}
+		if test.proof == "" {
+			reserved := ingressAwait(t, capacity)
+			if reserved.VisitorConnectionID == "" || reserved.SourceIP != netip.MustParseAddrPort(test.source).Addr().String() {
+				t.Fatal("HTTP capacity lost the admitted source or visitor", reserved)
+			}
+		}
+		transfer := ingressAwait(t, transport.transfers)
+		if transfer.LeftToRight <= 0 || transfer.RightToLeft <= 0 || !serviceHTTPStreamClosed(transfer.err) {
+			t.Fatalf("HTTP relay lost bytes or failed before expected stream closure: bytes=%+v error=%v", transfer.Result, transfer.err)
+		}
+		if len(control.claims) != 0 {
+			t.Fatal("prepared HTTP visitor called control for admission")
+		}
+		// the authenticated owner probe uses its separate request budget, not
+		// application admission. inspect after its real forwarding has joined.
+		if capacityRequests.Load() != 1 || len(capacity) != 0 {
+			t.Fatal("readiness proof reserved application visitor capacity", capacityRequests.Load(), len(capacity))
+		}
 	}
-	if application.Load() != 2 {
-		t.Fatal(application.Load())
+	if err := ingressAwait(t, publisher); err != nil {
+		t.Fatal(err)
 	}
-	s.mu.Lock()
-	pending := len(s.pendingVisitors)
-	s.mu.Unlock()
-	if pending > 1 {
-		t.Fatalf("pending visitor state leaked: %d", pending)
+	if applications.Load() != 1 || probes.Load() != 1 || opens.Load() != 2 {
+		t.Fatal("readiness or source filtering changed application delivery", applications.Load(), probes.Load(), opens.Load())
+	}
+	s.active.Wait()
+	if !publicServiceCapacityReleased(s) {
+		t.Fatal("HTTP service retained visitor capacity")
+	}
+}
+
+func serviceHTTPStreamClosed(err error) bool {
+	if err == nil {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !serviceHTTPStreamClosed(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped := errors.Unwrap(err); wrapped != nil {
+		return serviceHTTPStreamClosed(wrapped)
+	}
+	return err == io.ErrUnexpectedEOF || err == yamux.ErrStreamReset || err == yamux.ErrStreamClosed || err == net.ErrClosed
+}
+
+func TestServiceHTTPStreamClosureRetainsIndependentFailures(t *testing.T) {
+	for _, closed := range []error{io.ErrUnexpectedEOF, yamux.ErrStreamReset, yamux.ErrStreamClosed, net.ErrClosed} {
+		if !serviceHTTPStreamClosed(closed) ||
+			serviceHTTPStreamClosed(errors.Join(closed, errors.New("independent copy failure"))) ||
+			serviceHTTPStreamClosed(errors.Join(closed, context.Canceled)) {
+			t.Fatal("expected HTTP stream closure hid an independent failure")
+		}
+	}
+	if serviceHTTPStreamClosed(errors.New("stream closed")) {
+		t.Fatal("HTTP stream closure accepted an unrelated error with the same text")
 	}
 }

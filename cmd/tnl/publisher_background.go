@@ -9,6 +9,7 @@ import (
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type backgroundPublishFlags struct {
@@ -35,7 +36,7 @@ func backgroundOptions(flags publishCommand) invocation.BackgroundOptions {
 				return applicationlimits.Limits{}, err
 			}
 		}
-		if err := validateTCPPublishOptions(flags, protocol); err != nil {
+		if err := validateTCPPublishOptions(flags, controlv1.ServiceProtocol(protocol)); err != nil {
 			return applicationlimits.Limits{}, err
 		}
 		return flags.limits(), nil

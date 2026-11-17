@@ -104,6 +104,7 @@ func (d *Database) ClaimACMEOrderWork(
 	now time.Time,
 	leaseDuration time.Duration,
 ) (work ACMEOrderWork, found bool, retErr error) {
+	clock := newAuthorizationClock(now)
 	if !validStateText(workerID) || leaseDuration <= 0 {
 		return ACMEOrderWork{}, false, ErrCertificateIssuanceInvalid
 	}
@@ -127,6 +128,17 @@ func (d *Database) ClaimACMEOrderWork(
 	}
 	if err != nil {
 		return ACMEOrderWork{}, false, fmt.Errorf("controlstate: claim ACME order work: claim order: %w", err)
+	}
+	// permission can expire before maintenance closes its run. a claimed order
+	// has no other live worker; retire unused issuance before any new CA work.
+	if err := queries.RetireUnusedServiceCertificateOrder(ctx, controlstatedb.RetireUnusedServiceCertificateOrderParams{
+		IssuanceID: order.ID, Now: timestamptz(clock.current()),
+	}); err != nil {
+		return ACMEOrderWork{}, false, err
+	}
+	order, err = queries.GetACMEOrder(ctx, order.ID)
+	if err != nil {
+		return ACMEOrderWork{}, false, err
 	}
 	account, err := d.getACMEAccountByID(ctx, tx, order.AccountID)
 	if err != nil {
@@ -192,7 +204,7 @@ func (d *Database) SaveACMEOrderWork(
 	if err != nil {
 		return ACMEOrderWork{}, fmt.Errorf("controlstate: save ACME order work: update order: %w", err)
 	}
-	subject, err := certificateSubject(order.PublicURLID, order.PublishRunID, order.PublishRunNumber, order.ServiceID, order.ServiceRunID, order.ServiceRunNumber)
+	subject, err := certificateSubject(order.ServiceID, order.ServiceRunID, order.ServiceRunNumber)
 	if err != nil || subject != work.Subject {
 		return ACMEOrderWork{}, ErrCertificateIssuanceInvalid
 	}
@@ -274,7 +286,7 @@ func acmeOrderWork(
 	authorizations []controlstatedb.ControlAcmeAuthorization,
 	requireLease bool,
 ) (ACMEOrderWork, error) {
-	subject, err := certificateSubject(order.PublicURLID, order.PublishRunID, order.PublishRunNumber, order.ServiceID, order.ServiceRunID, order.ServiceRunNumber)
+	subject, err := certificateSubject(order.ServiceID, order.ServiceRunID, order.ServiceRunNumber)
 	if err != nil || order.OrderRevision <= 0 || order.WorkEpoch <= 0 ||
 		requireLease && (!order.WorkOwner.Valid || !order.WorkExpiresAt.Valid) ||
 		order.Attempts <= 0 || !order.AvailableAt.Valid || !order.CreatedAt.Valid || !order.UpdatedAt.Valid ||

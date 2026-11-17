@@ -79,7 +79,7 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if validateClaimRelayLease(current, lease, proof.RelayServiceID, now) != nil ||
+	if validateClaimRelayLeaseUntil(current, lease, proof.RelayServiceID, current.ServingUntil.Time, now) != nil ||
 		len(current.PeerSigningPublicKey) != ed25519.PublicKeySize ||
 		!ed25519.Verify(current.PeerSigningPublicKey, relayMessage, relaySignature) {
 		return result, ErrServiceAccess
@@ -103,12 +103,12 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if pair.ServiceID != run.ServiceID || pair.ServiceRunID != run.ID || pair.RunNumber != run.RunNumber ||
+	if !connectorPeerPairUnretired(pair) || pair.ServiceID != run.ServiceID || pair.ServiceRunID != run.ID || pair.RunNumber != run.RunNumber ||
 		pair.PublisherIdentityID != run.PublisherIdentityID || !pair.ExpiresAt.Time.After(now) {
 		return result, ErrServiceAccess
 	}
 	checked := checkedNow()
-	if validateClaimRelayLease(current, lease, proof.RelayServiceID, checked) != nil ||
+	if validateClaimRelayLeaseUntil(current, lease, proof.RelayServiceID, current.ServingUntil.Time, checked) != nil ||
 		!requestAt.Add(30*time.Second).After(checked) {
 		return result, ErrServiceAccess
 	}
@@ -119,7 +119,7 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, message, proof.Signature) {
 		return result, ErrServiceAccess
 	}
-	if err = d.serviceHTTPSourceAllowed(ctx, q, proof.ServiceID, observedSource); err != nil {
+	if _, err = d.serviceHTTPSourcePolicy(ctx, q, proof.ServiceID, observedSource); err != nil {
 		return result, err
 	}
 	pair, pending, bindingUntil, err := connectorPeerBindingRevision(ctx, tx, pair, proof.DeliveryGeneration, checkedNow())
@@ -135,7 +135,7 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 	if err != nil {
 		return result, err
 	}
-	deadline := minTime(bindingUntil, minTime(until, publisherUntil))
+	deadline := minTime(current.ServingUntil.Time, minTime(now.Add(d.servingTolerance()), minTime(bindingUntil, minTime(until, publisherUntil))))
 	if !deadline.After(checkedNow()) {
 		return result, ErrServiceAccess
 	}
@@ -179,9 +179,9 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	if pending {
-		_, err = tx.Exec(ctx, `UPDATE control.connector_peer_pending_bindings SET
-			publisher_prepared_until=CASE WHEN publisher_prepared_until IS NULL THEN NULL ELSE LEAST(publisher_prepared_until,$2) END,
-			publisher_proved_until=CASE WHEN publisher_proved_until IS NULL THEN NULL ELSE LEAST(publisher_proved_until,$2) END WHERE pair_id=$1`, pair.ID, deadline)
+		err = connectorPeerPairWrite(q.LimitConnectorPeerPendingForClaim(ctx, controlstatedb.LimitConnectorPeerPendingForClaimParams{
+			PairID: pair.ID, ConfirmedUntil: timestamptz(deadline),
+		}))
 	} else {
 		err = q.LimitConnectorPeerPreparedForClaim(ctx, controlstatedb.LimitConnectorPeerPreparedForClaimParams{PairID: pair.ID, ConfirmedUntil: timestamptz(deadline)})
 	}
@@ -210,10 +210,10 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 	if pending {
 		result.BindingState = tunnelv1.ConnectorPeerLegBindingPrepared
 	}
-	if !deadline.After(checkedNow()) || !current.LeaseExpiresAt.Time.After(checkedNow()) || !requestAt.Add(30*time.Second).After(checkedNow()) {
+	if !deadline.After(checkedNow()) || !current.ServingUntil.Time.After(checkedNow()) || !requestAt.Add(30*time.Second).After(checkedNow()) {
 		return ConnectorPeerPairLegClaim{}, ErrServiceAccess
 	}
-	commit, stop := context.WithDeadline(ctx, started.Add(minTime(deadline, minTime(current.LeaseExpiresAt.Time, requestAt.Add(30*time.Second))).Sub(now)))
+	commit, stop := context.WithDeadline(ctx, started.Add(minTime(deadline, minTime(current.ServingUntil.Time, requestAt.Add(30*time.Second))).Sub(now)))
 	defer stop()
 	if err = tx.Commit(commit); err != nil {
 		return ConnectorPeerPairLegClaim{}, err

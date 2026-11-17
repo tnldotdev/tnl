@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 func (d *daemon) shutdown(timeout time.Duration) error {
@@ -24,8 +26,8 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	var result error
 	deadline := time.Now().Add(timeout)
 	for _, runtime := range d.ingresses {
-		if runtime.publicServices != nil {
-			runtime.publicServices.StopAccepting()
+		if runtime.server != nil {
+			runtime.server.StopAccepting()
 		}
 	}
 	// drain ingress visitors before closing recovery and audit reporters.
@@ -35,9 +37,6 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		}
 		if runtime.server != nil {
 			result = errors.Join(result, shutdownStep("ingress_visitors", func() error { return runtime.server.Drain(drainCtx) }))
-		}
-		if runtime.publicServices != nil {
-			result = errors.Join(result, shutdownStep("public_service_streams", func() error { return runtime.publicServices.Drain(drainCtx) }))
 		}
 		if runtime.recovery != nil {
 			result = errors.Join(result, runtime.recovery.Close(drainCtx))
@@ -64,15 +63,12 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 				result = errors.Join(result, fmt.Errorf("close relay QUIC listener: %w", err))
 			}
 		}
-		if runtime.registry != nil {
-			err := shutdownStep("relay_connections", func() error { return runtime.registry.Drain(drainCtx) })
-			if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) &&
-				!errors.Is(err, net.ErrClosed) {
+		if runtime.serviceRegistry != nil {
+			err := shutdownStep("relay_connections", func() error { return runtime.serviceRegistry.Drain(drainCtx) })
+			if err != nil && !failure.Only(err, context.DeadlineExceeded) && !failure.Only(err, context.Canceled) &&
+				!failure.Only(err, net.ErrClosed) {
 				result = errors.Join(result, fmt.Errorf("drain relay publisher connections: %w", err))
 			}
-		}
-		if runtime.serviceRegistry != nil {
-			result = errors.Join(result, shutdownStep("private_relay_connections", func() error { return runtime.serviceRegistry.Drain(drainCtx) }))
 		}
 	}
 	// only cancel component contexts after the bounded drain has finished.
@@ -80,19 +76,13 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		d.cancel()
 	}
 	for _, runtime := range d.ingresses {
-		if runtime.publicServices != nil {
-			result = errors.Join(result, runtime.publicServices.Close())
-		}
 		if runtime.forwarder != nil {
 			result = errors.Join(result, runtime.forwarder.Close())
 		}
 	}
 	for _, runtime := range d.relays {
 		if runtime.serviceRegistry != nil {
-			result = errors.Join(result, runtime.serviceRegistry.Close())
-		}
-		if runtime.registry != nil {
-			if err := runtime.registry.Close(); err != nil {
+			if err := runtime.serviceRegistry.Close(); err != nil {
 				result = errors.Join(result, fmt.Errorf("close relay publisher connections: %w", err))
 			}
 		}

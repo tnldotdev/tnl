@@ -225,6 +225,13 @@ func Call(ctx context.Context, path, operation string, request Request, result a
 	if operation != "status" && operation != "connect" && operation != "prepare" && operation != "prepared" && operation != "stop" && operation != "kube-credential" && operation != "attach" {
 		return ErrInvalid
 	}
+	if operation == "stop" {
+		until := time.Now().Add(10 * time.Second)
+		if outer, ok := ctx.Deadline(); ok && outer.Before(until) {
+			until = outer
+		}
+		request.ShutdownDeadline = &until
+	}
 	data, err := json.Marshal(request)
 	if err != nil {
 		return err

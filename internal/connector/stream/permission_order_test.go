@@ -26,7 +26,7 @@ func TestConnectorPermissionAcknowledgementFencesFollowingApplicationBytes(t *te
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer p.Close()
+			defer p.Close(context.WithoutCancel(t.Context()))
 			use := p.warm
 			application := &preparedConnectorUse{owner: use.prepared, ctx: p.ctx}
 			if _, err := application.Write([]byte("before")); err != nil {
@@ -45,7 +45,9 @@ func TestConnectorPermissionAcknowledgementFencesFollowingApplicationBytes(t *te
 				close(entered)
 				select {
 				case <-release:
-					_ = responder.Respond(update, accepted)
+					ack, stop := context.WithTimeout(p.ctx, time.Second)
+					defer stop()
+					_ = responder.Respond(ack, update, accepted)
 				case <-p.ctx.Done():
 				}
 			}
@@ -101,7 +103,7 @@ func TestConnectorTerminalPermissionControlRetiresOwnerBeforeAnotherArrival(t *t
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer p.Close()
+			defer p.Close(context.WithoutCancel(t.Context()))
 			f.mu.Lock()
 			control := f.peers[p.pair.PairId].control
 			f.mu.Unlock()
@@ -137,7 +139,7 @@ func TestConnectorTerminalPermissionControlRetiresOwnerBeforeAnotherArrival(t *t
 				t.Fatal("arrival entered an owner with a terminal control channel")
 			}
 			joined := make(chan struct{})
-			go func() { p.Close(); close(joined) }()
+			go func() { _ = p.Close(context.WithoutCancel(t.Context())); close(joined) }()
 			select {
 			case <-joined:
 			case <-time.After(time.Second):
@@ -155,11 +157,11 @@ func TestConnectorTerminalPermissionControlPreservesEarlierAuthorizationCause(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	denied := failure.Wrap("renew connector permission", failure.ServerDenied, io.ErrClosedPipe)
 	p.cancel(denied)
 	_ = p.transport.Close()
-	p.Close()
+	p.Close(context.WithoutCancel(t.Context()))
 	if cause := context.Cause(p.ctx); cause != denied || !errors.Is(cause, io.ErrClosedPipe) {
 		t.Fatal("terminal control cleanup replaced the first authorization cause", cause)
 	}
@@ -198,7 +200,7 @@ func TestConnectorTerminalPermissionControlWatchWinsRetirement(t *testing.T) {
 					accepted <- control
 				})
 				defer func() { stop(); workers.Wait() }()
-				writer, err := tunnel.OpenConnectorPermissionControl(ctx, setup, client)
+				writer, err := tunnel.OpenConnectorPermissionControl(ctx, setup, client, connectorTestControlScope())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -214,8 +216,10 @@ func TestConnectorTerminalPermissionControlWatchWinsRetirement(t *testing.T) {
 				defer control.Close()
 				until := time.Now().Add(time.Minute)
 				p := &connectorConnection{ctx: ctx, cancel: cancel, session: client, permissions: writer, until: until, preparedUntil: until, changed: make(chan struct{})}
+				p.packetCtx, p.packetCancel = context.WithCancelCause(context.WithoutCancel(ctx))
+				p.cleanup = newConnectorCleanup(ctx, nil)
 				p.run.ValidUntil, p.permission.ExpiresAt = until, until
-				defer p.Close()
+				defer p.Close(context.WithoutCancel(t.Context()))
 				watched := make(chan struct{})
 				startWatch := func() { p.workers.Go(func() { defer close(watched); p.watch() }) }
 				release := make(chan struct{})

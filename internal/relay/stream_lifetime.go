@@ -11,8 +11,8 @@ import (
 
 var ErrDraining = errors.New("relay: draining")
 
-// streamLifetime owns pending opens and admitted streams for either kind of
-// publisher connection. it must stay pointer-owned through drain and close.
+// streamLifetime owns pending opens and admitted streams for one publisher
+// connection. it must stay pointer-owned through drain and close.
 type streamLifetime struct {
 	session *tunnel.Session
 
@@ -59,8 +59,9 @@ func (c *streamLifetime) finishOpen(connection net.Conn, openErr error) (net.Con
 		return tracked, nil
 	}
 	c.mu.Unlock()
+	var cleanupErr error
 	if connection != nil {
-		_ = connection.Close()
+		cleanupErr = connection.Close()
 	}
 	// retain the pending reservation until a rejected open's stream is closed.
 	// drain and close must not finish while that cleanup is still in flight.
@@ -69,9 +70,9 @@ func (c *streamLifetime) finishOpen(connection net.Conn, openErr error) (net.Con
 	c.notifyLocked()
 	c.mu.Unlock()
 	if openErr != nil {
-		return nil, openErr
+		return nil, errors.Join(openErr, cleanupErr)
 	}
-	return nil, stateErr
+	return nil, errors.Join(stateErr, cleanupErr)
 }
 
 func (c *streamLifetime) Drain(ctx context.Context) error {
@@ -87,8 +88,7 @@ func (c *streamLifetime) Drain(ctx context.Context) error {
 		select {
 		case <-changed:
 		case <-ctx.Done():
-			_ = c.Close()
-			return context.Cause(ctx)
+			return errors.Join(context.Cause(ctx), c.Close())
 		}
 		c.mu.Lock()
 		if c.closed {
@@ -109,9 +109,9 @@ func (c *streamLifetime) Close() error {
 		c.notifyLocked()
 		c.mu.Unlock()
 		for _, stream := range streams {
-			_ = stream.Close()
+			c.closeErr = errors.Join(c.closeErr, stream.Close())
 		}
-		c.closeErr = c.session.Close()
+		c.closeErr = errors.Join(c.closeErr, c.session.Close())
 		c.mu.Lock()
 		for c.opening != 0 || len(c.streams) != 0 {
 			changed := c.changed

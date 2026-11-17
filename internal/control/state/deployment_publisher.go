@@ -50,10 +50,8 @@ type DeploymentPublisherVerification struct {
 type DeploymentPublisherServiceAssignment struct {
 	Service       string                      `json:"service"`
 	ServiceID     string                      `json:"service_id"`
-	Kind          string                      `json:"service_kind"`
 	GrantID       string                      `json:"grant_id"`
-	Hostname      string                      `json:"hostname,omitempty"`
-	TrustRevision int64                       `json:"trust_revision,omitempty,string"`
+	TrustRevision int64                       `json:"trust_revision,string"`
 	Configuration ProjectServiceConfiguration `json:"configuration"`
 }
 type DeploymentPublisherAssignments struct {
@@ -138,7 +136,7 @@ func (d *Database) RedeemDeploymentPublisherEnrollment(ctx context.Context, secr
 	if err != nil {
 		return result, err
 	}
-	if _, err = q.InsertPublisherIdentity(ctx, controlstatedb.InsertPublisherIdentityParams{ID: id, TeamID: team, Name: name, Kind: "installed", CreatedByIdentityID: actor, CreatedAt: timestamptz(now), Ownership: "team"}); err != nil {
+	if _, err = q.InsertPublisherIdentity(ctx, controlstatedb.InsertPublisherIdentityParams{ID: id, TeamID: text(team), Name: name, Kind: "installed", CreatedByIdentityID: text(actor), CreatedAt: timestamptz(now), Ownership: "team"}); err != nil {
 		return result, err
 	}
 	if err = q.InsertPublisherKey(ctx, controlstatedb.InsertPublisherKeyParams{ID: kid, PublisherIdentityID: id, PublicKey: public, Revision: 1, CreatedAt: timestamptz(now)}); err != nil {
@@ -325,7 +323,10 @@ func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token 
 		if configuration.Target == "app" {
 			continue
 		}
-		allowed, err := q.DeploymentPublisherServiceAllowed(ctx, controlstatedb.DeploymentPublisherServiceAllowedParams{PublisherID: m.PublisherIdentityID, DeploymentID: m.DeploymentID, Service: s.Service, ServiceID: s.ServiceID, PublicURLID: s.PublicURLID})
+		if !s.ServiceID.Valid {
+			return result, ErrDeploymentPublisher
+		}
+		allowed, err := q.DeploymentPublisherServiceAllowed(ctx, controlstatedb.DeploymentPublisherServiceAllowedParams{PublisherID: m.PublisherIdentityID, DeploymentID: m.DeploymentID, Service: s.Service, ServiceID: s.ServiceID.String})
 		if err != nil {
 			return result, err
 		}
@@ -339,18 +340,11 @@ func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token 
 			}
 			return result, publisherLookupError(err, ErrDeploymentPublisher)
 		}
-		a := DeploymentPublisherServiceAssignment{Service: s.Service, ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: configuration}
-		if s.ServiceID.Valid {
-			a.ServiceID, a.Kind = s.ServiceID.String, "service"
-			if err = tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL`, a.ServiceID).Scan(&a.TrustRevision); err != nil {
-				return result, err
-			}
-		} else {
-			// public URLs have no service trust revision. their exact grant and
-			// binding configuration change together, not when a run starts.
-			if err = tx.QueryRow(ctx, `SELECT canonical_hostname FROM control.public_urls WHERE id=$1 AND lifecycle_state='enabled'`, s.PublicURLID.String).Scan(&a.Hostname); err != nil {
-				return result, err
-			}
+		// validated endpoint changes do not replace the serving worker.
+		configuration = appliedPublicationConfiguration(configuration)
+		a := DeploymentPublisherServiceAssignment{Service: s.Service, ServiceID: s.ServiceID.String, GrantID: grant, Configuration: configuration}
+		if err = tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>$2)`, a.ServiceID, now).Scan(&a.TrustRevision); err != nil {
+			return result, publisherLookupError(err, ErrDeploymentPublisher)
 		}
 		result.Services = append(result.Services, a)
 	}
@@ -411,7 +405,7 @@ func listDeploymentPublisherStatus(ctx context.Context, tx pgx.Tx, team, project
 }
 
 func (d *Database) removeDeploymentPublisher(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, deployment string, now time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT allocation.public_url_id FROM control.publisher_namespace_allocations allocation JOIN control.public_urls url ON url.id=allocation.public_url_id WHERE allocation.deployment_id=$1 AND url.lifecycle_state<>'deleted' ORDER BY allocation.public_url_id`, deployment)
+	rows, err := tx.Query(ctx, `SELECT allocation.service_id FROM control.publisher_namespace_allocations allocation JOIN control.services service ON service.id=allocation.service_id WHERE allocation.deployment_id=$1 AND service.deleted_at IS NULL ORDER BY allocation.service_id`, deployment)
 	if err != nil {
 		return err
 	}
@@ -430,7 +424,11 @@ func (d *Database) removeDeploymentPublisher(ctx context.Context, tx pgx.Tx, q *
 		return err
 	}
 	for _, id := range ids {
-		if err = d.retireProjectResource(ctx, tx, q, controlstatedb.ControlAppliedProjectService{PublicURLID: text(id)}, now); err != nil {
+		service, err := q.LockService(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err = d.retireProjectResource(ctx, tx, q, controlstatedb.ControlAppliedProjectService{ServiceID: text(id), TeamID: service.TeamID.String}, now); err != nil {
 			return err
 		}
 	}

@@ -33,8 +33,8 @@ type observingServiceForwarder struct {
 	opened chan<- privateObservation
 }
 
-func (f observingServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
-	stream, err := f.ServiceForwarder.OpenPrivate(ctx, relay, header)
+func (f observingServiceForwarder) OpenService(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
+	stream, err := f.ServiceForwarder.OpenService(ctx, relay, header, reserveCapacity)
 	if err == nil && f.opened != nil {
 		select {
 		case f.opened <- privateObservation{f.id, header}:
@@ -48,6 +48,36 @@ func (f observingServiceForwarder) OpenPrivate(ctx context.Context, relay ingres
 
 func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, index int, _ string, opened chan<- privateObservation) *daemon {
 	t.Helper()
+	return startSeparatedPrivateIngressRuntime(t, f, index, opened, false)
+}
+
+func startSeparatedPrivateIngressWithServicePorts(t *testing.T, f *privateSeparatedFixture, index int, opened chan<- privateObservation) *daemon {
+	t.Helper()
+	return startSeparatedPrivateIngressRuntime(t, f, index, opened, true)
+}
+
+func startSeparatedPrivateIngressRuntime(t *testing.T, f *privateSeparatedFixture, index int, opened chan<- privateObservation, serveServicePorts bool) *daemon {
+	t.Helper()
+	var serviceListeners servicePortListeners
+	if serveServicePorts {
+		if f.composed != nil || f.controlConfig.RequireProxyHeader || len(f.serviceListeners) == 0 {
+			t.Fatal("separated ingress service listeners are unavailable or already handed off")
+		}
+		ports, err := f.controlConfig.ServicePortInventory()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(f.serviceListeners) != len(ports.Ports()) {
+			t.Fatal("reserved service listeners do not match the ingress inventory")
+		}
+		for _, listener := range f.serviceListeners {
+			if !ports.Contains(listener.Addr().(*net.TCPAddr).Port) {
+				t.Fatal("reserved service listener is outside the ingress inventory")
+			}
+		}
+		// transfer every still-open reservation once; the topology retains cleanup.
+		serviceListeners, f.serviceListeners = f.serviceListeners, nil
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	metrics := observability.New("ingress")
 	if f.processContext != nil {
@@ -65,15 +95,27 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 		t.Fatal(err)
 	}
 	listener := serviceRuntimeListener(t, f.owner)
+	if f.ingressAddresses == nil {
+		f.ingressAddresses = make(map[int]string)
+	}
+	f.ingressAddresses[index] = listener.Addr().String()
+	if len(serviceListeners) != 0 {
+		listener = combineIngressListeners(append([]net.Listener{listener}, serviceListeners...))
+		f.owner.cleanupResource(t, func() {
+			if err := listener.Close(); err != nil {
+				t.Error("close separated ingress listeners", err)
+			}
+		})
+	}
 	id := fmt.Sprintf("private-ingress-%d", index)
 	if err := d.startIngressRuntime(ctx, ingressSettingsFrom(f.controlConfig), metrics, ingressRuntimeConfig{
 		client: client, ingressID: id, listener: listener, clusterSecret: serviceRuntimeClusterSecret,
-		configurePublicServices: func(config *ingress.PublicServicesConfig) {
+		configure: func(config *ingress.Config) {
 			if !f.defaultTiming {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
 			}
-			if f.configurePublicServices != nil {
-				f.configurePublicServices(config)
+			if f.configureIngress != nil {
+				f.configureIngress(config)
 			}
 			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: id, opened: opened}
 		},
@@ -165,7 +207,7 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			f := newServiceRuntimeFixture(t, standalone, nil)
 			target := startPrivateEchoTarget(t, f.owner)
 			key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native-lifecycle", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native-lifecycle", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -236,9 +278,9 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			if _, err := f.identity.routes.SelectServiceRun(t.Context(), service.Id, device.Subject.DeviceID); !defaultConnectorRevocationDenied(err) {
 				t.Fatalf("control did not deny the exact revoked device: %v", err)
 			}
-			var publicURLs int
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 {
-				t.Fatal("connector created public URL state", publicURLs, err)
+			var publicServices int
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.services WHERE public`).Scan(&publicServices); err != nil || publicServices != 0 {
+				t.Fatal("connector enabled a public endpoint", publicServices, err)
 			}
 		})
 	}

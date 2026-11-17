@@ -177,13 +177,14 @@ func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 			} else {
 				quic = privateDisabledConnector()
 			}
-			config := fixture.identity.publisherConfig(target.URL, quic, tcp)
-			if config.AccessMode != "anonymous" || config.AdmitVisitor != nil || config.PromoteVisitor != nil {
+			saved, config := fixture.identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{})
+			declaration, _, err := fixture.identity.routes.GetServiceConfiguration(t.Context(), saved.Id)
+			if err != nil || declaration == nil || declaration.Http == nil || declaration.Http.Access == nil || declaration.Http.Access.Mode == nil || *declaration.Http.Access.Mode != controlv1.Anonymous || config.AdmitRequest != nil {
 				t.Fatal("public authorization fixture must use default anonymous permission without admission hooks")
 			}
 			handle := startOwnedIntegrationPublisherContext(t, collector.process(t, "publisher"), fixture.owner, config, nil)
 			ready := fixture.waitReady(t, handle)
-			response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/observed", nil)
+			response, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/observed", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -191,11 +192,11 @@ func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 				t.Fatalf("response: %s %q", response.Status, body)
 			}
 			fixture.visitor.transport.CloseIdleConnections()
-			collector.assertChain(t, "ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.visitor_tls")
-			collector.assertChain(t, "ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.http", "publisher.target_connect")
-			chain := []string{"ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.http", "publisher.visitor_authorization", "publisher.authorization"}
+			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_tls")
+			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.http", "publisher.target_connect")
+			chain := []string{"ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.http", "publisher.visitor_authorization", "publisher.authorization"}
 			collector.assertChainState(t, "admitted", chain...)
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ready.PublicURL+"/denied", nil)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, serviceHTTPAddress(ready)+"/denied", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -220,7 +221,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			startSeparatedPrivateIngress(t, f, 1, transport, nil)
 			target := startPrivateEchoTarget(t, f.owner)
 			key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "trace", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "trace", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -228,7 +229,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.authority, enrollment.EnrollmentKey)
+			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{Services: f.identity.routes}, f.identity.authority, enrollment.EnrollmentKey)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -241,7 +242,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			ctx, cancel := context.WithCancel(collector.process(t, "publisher"))
 			ready, done := make(chan struct{}), make(chan error, 1)
 			go func() {
-				done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target.address,
+				done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target.address,
 					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
 					Ready:    func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp,
 				})
@@ -335,8 +336,8 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 				Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"echo": protocol},
 				TeamId: f.identity.teamID, Source: &testProjectSource,
 				Configuration: controlv1.ProjectConfiguration{
-					Settings: &controlv1.DeploymentSettings{Public: &public},
-					Services: map[string]controlv1.ProjectServiceConfiguration{"echo": {Protocol: &protocol, Target: target.address}},
+					Settings: &controlv1.DeploymentSettings{},
+					Services: map[string]controlv1.ProjectServiceConfiguration{"echo": {Protocol: &protocol, Target: target.address, Public: &public}},
 					Webhooks: map[string]controlv1.ProjectWebhook{},
 				},
 			})
@@ -364,7 +365,11 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 			go func() {
 				defer close(done)
 				defer remote.Close()
-				_ = process.ingresses[0].publicServices.AcceptPublic(ctx, remote, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), uint16(service.Endpoint.Port)))
+				hostname := ""
+				if service.Protocol == "http" {
+					hostname = service.Endpoint.Hostname
+				}
+				_ = process.ingresses[0].server.AcceptPublic(ctx, remote, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), uint16(service.Endpoint.Port)), hostname, nil)
 			}()
 			t.Cleanup(func() {
 				_ = local.Close()

@@ -23,14 +23,13 @@ func (f policyClientFunc) ReadPublisherVisitorPolicy(ctx context.Context, body c
 }
 
 func TestPublisherVisitorPolicyConcurrentRefreshUsesCurrentRevision(t *testing.T) {
-	for _, kind := range []visitorscope.Kind{visitorscope.PublicURL, visitorscope.Service} {
-		t.Run(string(kind), func(t *testing.T) {
+	for _, endpoint := range []struct {
+		name string
+		port int
+	}{{"HTTP", 443}, {"non-HTTP", 5432}, {"connector-only", 0}} {
+		t.Run(endpoint.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				prefix := "url_"
-				if kind == visitorscope.Service {
-					prefix = "svc_"
-				}
-				scope := visitorscope.Scope{Kind: kind, ID: prefix + strings.Repeat("A", 22)}
+				scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 				base := &visitorfixture.PolicyClient{Key: ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))}
 				blocked, release := context.WithCancel(t.Context())
 				defer release()
@@ -50,7 +49,9 @@ func TestPublisherVisitorPolicyConcurrentRefreshUsesCurrentRevision(t *testing.T
 						}
 					}
 					base.Revision.Store(n)
-					return base.ReadPublisherVisitorPolicy(ctx, body, token)
+					update, err := base.ReadPublisherVisitorPolicy(ctx, body, token)
+					update.Policy.Port = endpoint.port
+					return update, err
 				})
 				policy, err := PreparePolicy(t.Context(), client, scope, "run", 1, "run-secret", nil)
 				if err != nil {
@@ -85,7 +86,7 @@ func TestPublisherVisitorPolicyWaitingRefreshIsCancelableAndBounded(t *testing.T
 	for _, timeout := range []bool{false, true} {
 		t.Run(map[bool]string{false: "canceled", true: "request budget"}[timeout], func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+				scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 				base := &visitorfixture.PolicyClient{Key: ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))}
 				blocked, release := context.WithCancel(t.Context())
 				defer release()
@@ -163,7 +164,7 @@ func TestPublisherVisitorPolicyAbsoluteDeadlineFencesTimerLag(t *testing.T) {
 					}
 					return base.ReadPublisherVisitorPolicy(ctx, body, token)
 				})
-				scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+				scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 				policy, err := PreparePolicy(t.Context(), client, scope, "run", 1, "run-secret", nil)
 				if err != nil {
 					t.Fatal(err)

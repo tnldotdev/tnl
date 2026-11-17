@@ -88,12 +88,12 @@ func TestConnectorRefreshLateResponseRetainsAuthorityAndApplication(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer p.Close()
+			defer p.Close(context.WithoutCancel(t.Context()))
 			local, app := net.Pipe()
 			defer app.Close()
 			joined := make(chan struct{})
 			go func() { defer close(joined); _ = p.Forward(t.Context(), local) }()
-			defer func() { _ = app.Close(); p.Close(); <-joined }()
+			defer func() { _ = app.Close(); _ = p.Close(context.WithoutCancel(t.Context())); <-joined }()
 			exchange := func(message string) {
 				t.Helper()
 				_ = app.SetDeadline(time.Now().Add(3 * time.Second))

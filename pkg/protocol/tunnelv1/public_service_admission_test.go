@@ -13,14 +13,14 @@ import (
 func testOpaqueID(prefix string) string { return prefix + strings.Repeat("a", 22) }
 
 func publicServiceAdmissionFixture() ServiceForwardingHeader {
-	return ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{ProtocolVersion: Version, Kind: ServiceForwardingStream, ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 1, PublicService: &PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.10", VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2, ExpiresAt: time.Now().Add(time.Minute)}, RelayID: "relay-a", RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayServiceID: "relay", RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
+	return ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{ProtocolVersion: Version, Kind: ServiceForwardingStream, ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 1, PublicService: &PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.10", VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2, ExpiresAt: time.Now().Add(time.Minute)}, RelayID: "relay-a", RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayServiceID: "relay", RelayLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}
 }
 
 func TestManagedAdmissionValidatesExactKindsAndIdentities(t *testing.T) {
 	header := publicServiceAdmissionFixture()
 	for name, mutate := range map[string]func(*ServiceForwardingHeader){
-		"public-service":        func(h *ServiceForwardingHeader) { h.ServiceID = testOpaqueID(opaqueid.PublicURLPrefix) },
-		"public-run":            func(h *ServiceForwardingHeader) { h.ServiceRunID = testOpaqueID(opaqueid.PublishRunPrefix) },
+		"public-service":        func(h *ServiceForwardingHeader) { h.ServiceID = testOpaqueID("url_") },
+		"public-run":            func(h *ServiceForwardingHeader) { h.ServiceRunID = testOpaqueID("pr_") },
 		"missing-run":           func(h *ServiceForwardingHeader) { h.RunNumber = 0 },
 		"source":                func(h *ServiceForwardingHeader) { h.SourceIP = "192.0.2.10%spoof" },
 		"assignment":            func(h *ServiceForwardingHeader) { h.ConnectionAssignmentRevision = 0 },
@@ -85,8 +85,8 @@ func TestRetiredConnectorSessionNeverBecomesApplicationAdmission(t *testing.T) {
 	if err := message.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	message.PublisherConnection = &PublisherConnectionRef{PublicURLID: "url", PublishRunID: "run", PublishRunNumber: 1, PublisherConnectionID: "connection", ConnectionAssignmentRevision: 1, RelayServiceID: "relay"}
-	if message.Validate() == nil {
-		t.Fatal("mixed public/private selectors accepted")
+	if _, err := ReadControl(frame(`{"type":"hello","protocol_version":1,"role":"publisher","credential":"credential","service_connection":` +
+		string(wireJSON(t, ref)) + `,"publisher_connection":null}`)); err == nil {
+		t.Fatal("legacy publisher selector accepted alongside service identity")
 	}
 }

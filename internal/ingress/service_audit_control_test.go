@@ -13,7 +13,7 @@ func TestLeaseAuditBindingPrecedesVisibilityAndDoesNotRepeatOnRenewal(t *testing
 	calls := 0
 	var controller *Controller
 	var err error
-	controller, err = NewController(ControllerConfig{Client: leaseTestClient{}, RoutingTable: new(RoutingTable), Registration: ingressv1.IngressRegistration{IngressId: "ingress", IngressRunId: "run", ProtocolVersion: 1, ConnectionCapacity: 10}, RenewalInterval: time.Second, RetryInterval: time.Second, RoutingWait: time.Second,
+	controller, err = NewController(ControllerConfig{Client: leaseTestClient{}, Registration: ingressv1.IngressRegistration{IngressId: "ingress", IngressRunId: "run", ProtocolVersion: 1, ConnectionCapacity: 10}, RenewalInterval: time.Second, RetryInterval: time.Second,
 		LeaseEstablished: func(lease ingressv1.IngressLease) error {
 			calls++
 			if controller.lease.IngressLeaseRevision != 0 || lease.IngressLeaseRevision != 1 {
@@ -30,7 +30,7 @@ func TestLeaseAuditBindingPrecedesVisibilityAndDoesNotRepeatOnRenewal(t *testing
 		t.Fatal(err)
 	}
 	lease.RenewedAt = now.Add(time.Second)
-	lease.LeaseExpiresAt = lease.LeaseExpiresAt.Add(time.Minute)
+	lease.ServingUntil = lease.ServingUntil.Add(time.Minute)
 	if err = controller.setLease(lease); err != nil || calls != 1 {
 		t.Fatal("renewal rebound audit identity", err)
 	}

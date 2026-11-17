@@ -18,7 +18,6 @@ func TestPeerConnectorHelloRoleSeparation(t *testing.T) {
 	}{
 		{"ingress proof", func(m *Message) { m.Role = Ingress; m.Credential = "secret" }},
 		{"service connection", func(m *Message) { m.ServiceConnection = &ServicePublisherConnectionRef{} }},
-		{"publisher connection", func(m *Message) { m.PublisherConnection = &PublisherConnectionRef{} }},
 		{"credential", func(m *Message) { m.Credential = "secret" }},
 		{"response proof", func(m *Message) { m.Type = HelloAccepted; m.Role = "" }},
 		{"error proof", func(m *Message) { m.Type = Error; m.Role = ""; m.Code = Unauthenticated }},

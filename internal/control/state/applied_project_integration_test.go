@@ -101,7 +101,7 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 		original = v.value
 	}
 	if original.Services[0].Kind != "service" {
-		t.Fatal("HTTP without public_url became public")
+		t.Fatal("HTTP without an explicit public binding became public")
 	}
 	for index := range 2 {
 		workers.Go(func() {
@@ -165,14 +165,14 @@ func TestIntegrationAppliedProjectConcurrencyRollbackAndSource(t *testing.T) {
 	deferred.ExpectedRevision = after.Revision
 	deferred.Deployment = "local"
 	deferred.ServiceDeclarations = map[string]string{"web": "http", "preview": "http"}
-	deferred.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"preview": {Target: "http://localhost:9000", PublicURL: &ProjectServicePublicURL{}}}}
+	deferred.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"preview": {Target: "http://localhost:9000", Public: new(true)}}}
 	status, err := d.ApplyProjectConfiguration(ctx, deferred)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, s := range status.Services {
 		if s.Service == "preview" && (s.Kind != "local" || s.ServiceID != "") {
-			t.Fatalf("local public declaration allocated a shared URL: %#v", s)
+			t.Fatalf("local public declaration allocated a shared service: %#v", s)
 		}
 	}
 }
@@ -278,36 +278,32 @@ func TestIntegrationAppliedProjectDeploymentAssignmentsRunsAndRevocation(t *test
 		for _, assignment := range replica.assignments.Services {
 			access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 			oldAccess = append(oldAccess, access)
-			if assignment.Kind == "service" {
-				trust, err := appliedServiceTargetTrust(assignment.Configuration.TargetTLS)
-				if err != nil {
+			trust, err := appliedServiceTargetTrust(assignment.Configuration.TargetTLS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TLS: trust, PublisherPool: true, TrustRevision: assignment.TrustRevision}
+			prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "deployment", now, ServiceRunRequest{Metadata: metadata})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := d.StartServiceRun(t.Context(), assignment.ServiceID, prepared.RunID, prepared.RunNumber, access.PublisherIdentity, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			serviceRuns = append(serviceRuns, run)
+			installPrivateTestCertificate(t, d, prepared, run, now)
+			for _, slot := range run.Connections {
+				lease := leases[slot.RelayServiceID].RelayLeaseIdentity
+				if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, assignment.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 					t.Fatal(err)
 				}
-				metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TLS: trust, PublisherPool: true, TrustRevision: assignment.TrustRevision}
-				prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "deployment", now, metadata)
-				if err != nil {
+				if _, err = d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
 					t.Fatal(err)
 				}
-				run, err := d.StartServiceRun(t.Context(), assignment.ServiceID, prepared.RunID, prepared.RunNumber, access.PublisherIdentity, now)
-				if err != nil {
-					t.Fatal(err)
-				}
-				serviceRuns = append(serviceRuns, run)
-				installPrivateTestCertificate(t, d, prepared, run, now)
-				for _, slot := range run.Connections {
-					lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-					if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, assignment.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
-						t.Fatal(err)
-					}
-					if _, err = d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if state, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "ready" {
-					t.Fatalf("deployment private run not ready: %+v %v", state, err)
-				}
-			} else {
-				t.Fatal("deployment HTTP selected superseded public URL run")
+			}
+			if state, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || state.State != "ready" {
+				t.Fatalf("deployment service run not ready: %+v %v", state, err)
 			}
 		}
 		if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replica.lease.AccessToken, replica.assignments.Revision, replica.assignments.ConfigurationHash, true, now); err != nil {
@@ -520,7 +516,7 @@ func TestIntegrationAppliedProjectDeploymentReassignmentKeepsSavedService(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.PrepareServiceRun(t.Context(), a.ServiceID, current.PublisherIdentity, "http", now, ServiceMetadata{Protocol: "http", TLS: trust, PublisherPool: true, TrustRevision: a.TrustRevision}); err != nil {
+	if _, err = d.PrepareServiceRun(t.Context(), a.ServiceID, current.PublisherIdentity, "http", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "http", TLS: trust, PublisherPool: true, TrustRevision: a.TrustRevision}}); err != nil {
 		t.Fatal("private HTTP/TLS assignment is not publishable", err)
 	}
 	var teamGrants int
@@ -589,7 +585,7 @@ func TestIntegrationAppliedProjectLocalDeferredTargets(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
 		"app":      {Target: "app"},
-		"preview":  {Target: "app", PublicURL: &ProjectServicePublicURL{Ephemeral: true}},
+		"preview":  {Target: "app", Public: new(true), Ephemeral: true},
 		"database": {Protocol: "postgres", Target: "compose:postgres:5432"},
 		"cache":    {Protocol: "tcp", Target: "docker:cache-1:6379"},
 	}}
@@ -603,12 +599,12 @@ func TestIntegrationAppliedProjectLocalDeferredTargets(t *testing.T) {
 			t.Fatal("control resolved a local discovery descriptor")
 		}
 	}
-	if !status.Configuration.Services["preview"].PublicURL.Ephemeral {
-		t.Fatal("deferred ephemeral URL intent was lost")
+	if !status.Configuration.Services["preview"].Ephemeral {
+		t.Fatal("deferred ephemeral service intent was lost")
 	}
-	var publicURLs int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.public_urls WHERE team_id=$1`, r.TeamID).Scan(&publicURLs); err != nil || publicURLs != 0 {
-		t.Fatal("deferred local target allocated a public URL", err)
+	var services int
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.services WHERE team_id=$1`, r.TeamID).Scan(&services); err != nil || services != 0 {
+		t.Fatal("deferred local target allocated a service", err)
 	}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal("local descriptor retry was not idempotent", err)
@@ -641,10 +637,10 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	checkIP := func(allowed, denied string) {
 		t.Helper()
 		q := controlstatedb.New(d.pool)
-		if err := d.serviceHTTPSourceAllowed(t.Context(), q, id, netip.MustParseAddr(allowed)); err != nil {
+		if _, err := d.serviceHTTPSourcePolicy(t.Context(), q, id, netip.MustParseAddr(allowed)); err != nil {
 			t.Fatal(err)
 		}
-		if err := d.serviceHTTPSourceAllowed(t.Context(), q, id, netip.MustParseAddr(denied)); !errors.Is(err, ErrServiceAccess) {
+		if _, err := d.serviceHTTPSourcePolicy(t.Context(), q, id, netip.MustParseAddr(denied)); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("service HTTP source filter widened", err)
 		}
 	}
@@ -693,18 +689,17 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	if err = d.pool.QueryRow(t.Context(), `SELECT configuration_ciphertext FROM control.applied_projects WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey).Scan(&sealed); err != nil || bytes.Contains(sealed, []byte(trust.Hostname)) || bytes.Contains(sealed, []byte("BEGIN CERTIFICATE")) {
 		t.Fatal("target metadata snapshot was not encrypted", err)
 	}
-	// a true remote ephemeral declaration cannot silently turn into a saved pool.
-	bad := r
-	bad.ExpectedRevision = updated.Revision
-	invalidService := bad.Configuration.Services["web"]
-	invalidService.PublicURL = &ProjectServicePublicURL{Ephemeral: true}
-	bad.Configuration.Services["web"] = invalidService
-	if _, err = d.ApplyProjectConfiguration(t.Context(), bad); !errors.Is(err, ErrProjectConfigurationInvalid) {
-		t.Fatal("unsupported ephemeral pooled URL was silently accepted", err)
+	// a named remote deployment cannot silently turn into an ephemeral service.
+	ephemeral := r
+	ephemeral.ExpectedRevision = updated.Revision
+	ephemeralService := ephemeral.Configuration.Services["web"]
+	ephemeralService.Ephemeral = true
+	ephemeral.Configuration.Services["web"] = ephemeralService
+	if _, err := d.ApplyProjectConfiguration(t.Context(), ephemeral); !errors.Is(err, ErrProjectConfigurationInvalid) {
+		t.Fatal("unsupported ephemeral saved deployment was silently accepted", err)
 	}
 	// a corrupt stored rate must deny admission instead of reaching pointer
 	// conversion in the publisher projection.
-	s.PublicURL = nil
 	period := config.Duration(time.Second)
 	s.HTTP.Limits.Rate = &config.Rate{Per: &period}
 	deployment, err := controlstatedb.New(d.pool).LockDeploymentByID(t.Context(), replica.member.DeploymentID)
@@ -727,7 +722,7 @@ func TestIntegrationAppliedProjectHTTPSettingsAndTargetTrust(t *testing.T) {
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.deployments SET configuration_ciphertext=$2,storage_key_id=$3 WHERE id=$1`, deployment.ID, encrypted, d.storageKey.CurrentID()); err != nil {
 		t.Fatal(err)
 	}
-	if err = d.serviceHTTPSourceAllowed(t.Context(), controlstatedb.New(d.pool), id, netip.MustParseAddr("203.0.113.10")); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.serviceHTTPSourcePolicy(t.Context(), controlstatedb.New(d.pool), id, netip.MustParseAddr("203.0.113.10")); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("malformed stored HTTP limits admitted a visitor", err)
 	}
 }

@@ -13,9 +13,9 @@ import (
 // exact lease query parameters captured for their queue's source, not relabel
 // observations from a previous process run as a newly acquired lease.
 type Destination struct {
-	URL              string
-	Bearer           string
-	PublishRunNumber int64
+	URL       string
+	Bearer    string
+	RunNumber int64
 }
 
 // reportError preserves classification and retry causes without displaying peer
@@ -41,11 +41,11 @@ func HTTPReporter(client *http.Client, destination func(context.Context) (Destin
 			return &reportError{"service audit destination unavailable", err}
 		}
 		var payload any = batch
-		if d.PublishRunNumber > 0 {
+		if d.RunNumber > 0 {
 			payload = struct {
-				Events           []Observation `json:"events"`
-				PublishRunNumber int64         `json:"publish_run_number,string"`
-			}{batch.Events, d.PublishRunNumber}
+				Events    []Observation `json:"events"`
+				RunNumber int64         `json:"run_number,string"`
+			}{batch.Events, d.RunNumber}
 		}
 		encoded, err := json.Marshal(payload)
 		if err != nil || len(encoded) > MaxPayloadBytes {

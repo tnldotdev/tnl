@@ -15,6 +15,7 @@ import { canonicalLoopbackTarget, type CanonicalTarget } from "./target.js";
 import {
   startRuntime,
   runtimeRequest,
+  canceledRuntimeRequest,
   type RuntimeEndpoint,
   type EndpointSelection,
 } from "./local.js";
@@ -58,11 +59,12 @@ const assignmentSchema = z
     const metadata = project.services[service];
     return (
       project.dev &&
-      (hostname === "" && public_url === ""
-        ? metadata === undefined
-        : public_url === `https://${hostname}` &&
-          metadata?.hostname === hostname &&
-          metadata.protocol === "http")
+      (hostname === ""
+        ? public_url === "" && metadata === undefined
+        : metadata?.protocol === "http" &&
+          metadata.hostname === hostname &&
+          metadata.url === `https://${hostname}` &&
+          public_url === (metadata.public ? metadata.url : ""))
     );
   })
   .transform(({ registration_id, service, hostname, public_url, project }) => ({
@@ -183,9 +185,20 @@ async function createPreparedServiceUntraced(
   };
   const endpoint = await dependencies.start(directory, undefined, selection, signal);
   signal?.throwIfAborted();
-  const assignment = parseAssignment(
-    await dependencies.request(endpoint, "prepare", prepareRequest, signal),
-  );
+  let shutdownUntil: string | undefined;
+  const beginShutdown = () => (shutdownUntil ??= new Date(Date.now() + 10_000).toISOString());
+  const captureShutdown = () => {
+    beginShutdown();
+  };
+  signal?.addEventListener("abort", captureShutdown, { once: true });
+  let assignment: Assignment;
+  try {
+    assignment = parsePreparedAssignment(
+      await dependencies.request(endpoint, "prepare", prepareRequest, signal),
+    );
+  } finally {
+    signal?.removeEventListener("abort", captureShutdown);
+  }
   if (signal?.aborted) {
     try {
       await dependencies.request(
@@ -195,8 +208,9 @@ async function createPreparedServiceUntraced(
           version: 1,
           registration_id: assignment.registrationID,
           owner,
+          shutdown_deadline: beginShutdown(),
         },
-        AbortSignal.timeout(3_000),
+        AbortSignal.timeout(Math.max(0, Date.parse(beginShutdown()) - Date.now())),
       );
     } catch (cleanupError) {
       throw new TnlCleanupError(signal.reason, cleanupError);
@@ -233,7 +247,7 @@ async function createPreparedServiceUntraced(
   const reconnect = (signal?: AbortSignal) =>
     operation("sdk.app.recover", async () => {
       const replacementEndpoint = await dependencies.start(directory, undefined, selection, signal);
-      const replacement = parseAssignment(
+      const replacement = parsePreparedAssignment(
         await dependencies.request(replacementEndpoint, "prepare", prepareRequest, signal),
       );
       if (
@@ -242,29 +256,45 @@ async function createPreparedServiceUntraced(
         replacementEndpoint.scope !== "app" ||
         replacement.service !== replacementEndpoint.service
       ) {
-        await dependencies.request(replacementEndpoint, "unregister", {
-          version: 1,
-          registration_id: replacement.registrationID,
-          owner,
-        });
-        throw new TnlError("sdk.response_invalid");
+        const failure = new TnlError("sdk.response_invalid");
+        const until = beginShutdown();
+        try {
+          await dependencies.request(
+            replacementEndpoint,
+            "unregister",
+            {
+              version: 1,
+              registration_id: replacement.registrationID,
+              owner,
+              shutdown_deadline: until,
+            },
+            AbortSignal.timeout(Math.max(0, Date.parse(until) - Date.now())),
+          );
+        } catch (cleanup) {
+          throw new TnlCleanupError(failure, cleanup);
+        }
+        throw failure;
       }
-      if (state.phase !== "closed")
+      if (state.phase !== "closed") {
+        shutdownUntil = undefined;
         state = {
           phase: "prepared",
           registration: { endpoint: replacementEndpoint, assignment: replacement },
         };
+      }
     });
-  const release = async (signal?: AbortSignal) => {
+  const release = async (signal?: AbortSignal, until = beginShutdown()) => {
     detachListener?.();
     detachListener = undefined;
     clearTimeout(timer);
     const current = state.registration;
-    try {
-      await dependencies.request(current.endpoint, "unregister", registration(current), signal);
-    } catch (error) {
-      if (!recoverable(error)) throw error;
-    }
+    const bounded = AbortSignal.timeout(Math.max(0, Date.parse(until) - Date.now()));
+    await dependencies.request(
+      current.endpoint,
+      "unregister",
+      { ...registration(current), shutdown_deadline: until },
+      signal === undefined ? bounded : AbortSignal.any([bounded, signal]),
+    );
     if (state.phase !== "closed") state = { phase: "released", registration: current };
   };
   const schedule = () => {
@@ -278,14 +308,28 @@ async function createPreparedServiceUntraced(
             await release();
             return;
           }
-          await dependencies.request(state.registration.endpoint, "renew", registration());
+          await dependencies.request(
+            state.registration.endpoint,
+            "renew",
+            registration(),
+            lifetime.signal,
+          );
         } catch (error) {
+          if (lifetime.signal.aborted && !canceledRuntimeRequest(error, lifetime.signal))
+            throw error;
           if (recoverable(error)) {
             try {
-              await reconnect();
+              await reconnect(lifetime.signal);
               if (state.phase === "prepared" && target !== undefined)
-                await dependencies.request(state.registration.endpoint, "register", registration());
-            } catch {
+                await dependencies.request(
+                  state.registration.endpoint,
+                  "register",
+                  registration(),
+                  lifetime.signal,
+                );
+            } catch (cause) {
+              if (lifetime.signal.aborted && !canceledRuntimeRequest(cause, lifetime.signal))
+                throw cause;
               /* the next renewal retries a restarting owner. */
             }
           }
@@ -304,6 +348,7 @@ async function createPreparedServiceUntraced(
     listener?: LocalHTTPServer,
     signal?: AbortSignal,
   ) => {
+    signal = signal === undefined ? lifetime.signal : AbortSignal.any([signal, lifetime.signal]);
     signal?.throwIfAborted();
     if (state.phase === "closed") throw new TnlError("sdk.registration_stale");
     if (state.phase === "released") await reconnect(signal);
@@ -336,6 +381,7 @@ async function createPreparedServiceUntraced(
   };
   const close = (signal?: AbortSignal): Promise<void> => {
     if (closing !== undefined) return closing;
+    const until = beginShutdown();
     state = { phase: "closed", registration: state.registration };
     lifetime.abort(new TnlError("sdk.registration_stale"));
     clearTimeout(timer);
@@ -347,7 +393,21 @@ async function createPreparedServiceUntraced(
         : framework === "vite"
           ? "vite.cleanup"
           : "sdk.app.cleanup",
-      () => enqueue(() => release(signal)),
+      async () => {
+        let operationFailure: unknown;
+        try {
+          await pending;
+        } catch (cause) {
+          if (!canceledRuntimeRequest(cause, lifetime.signal)) operationFailure = cause;
+        }
+        try {
+          await release(signal, until);
+        } catch (cleanup) {
+          if (operationFailure !== undefined) throw new TnlCleanupError(operationFailure, cleanup);
+          throw cleanup;
+        }
+        if (operationFailure !== undefined) throw operationFailure;
+      },
     );
     return closing;
   };
@@ -405,4 +465,12 @@ function validateOptions(options: PrepareOptions): void {
 }
 export function parseAssignment(value: unknown): Assignment {
   return parseValue(assignmentSchema, value, "sdk.response_invalid");
+}
+
+// acquisition may precede endpoint allocation, but app/framework preparation
+// promises its selected canonical endpoint before the listener starts.
+function parsePreparedAssignment(value: unknown): Assignment {
+  const assignment = parseAssignment(value);
+  if (assignment.hostname === undefined) throw new TnlError("sdk.response_invalid");
+  return assignment;
 }

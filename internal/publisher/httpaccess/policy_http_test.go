@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
-
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
@@ -159,17 +157,14 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 	}
 }
 
-func TestPublisherVisitorPolicyHTTPMaximumPublicRunSourceKey(t *testing.T) {
+func TestPublisherVisitorPolicyHTTPMaximumSharedIngressService(t *testing.T) {
 	body, _ := policyfixture.Maximum(t, time.Now().UTC())
-	body.Policy.Resource = controlv1.VisitorResourceScope{Kind: "public_url", Id: visitorfixture.PublicURLID}
 	body.Policy.Port = 443
-	body.Policy.RegisteredKeyLeases = []controlv1.VisitorRegisteredKeyLease{}
 	body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
-	body.VisitorSourceKey = visitorfixture.SourceKeyBytes()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request controlv1.PublisherVisitorPolicyRequest
-		if json.NewDecoder(r.Body).Decode(&request) != nil || request.Resource != body.Policy.Resource || request.RunId != "pr_0123456789abcdefghijkl" || request.RunNumber != 1 {
-			t.Error("public publisher sent the wrong policy identity")
+		if json.NewDecoder(r.Body).Decode(&request) != nil || request.Resource != body.Policy.Resource || request.RunId != "srun_0123456789abcdefghijkl" || request.RunNumber != 1 {
+			t.Error("HTTP publisher sent the wrong service run identity")
 			w.WriteHeader(400)
 			return
 		}
@@ -193,17 +188,17 @@ func TestPublisherVisitorPolicyHTTPMaximumPublicRunSourceKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := PreparePolicy(t.Context(), client, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: visitorfixture.PublicURLID}, "pr_0123456789abcdefghijkl", 1, "fixture-run-secret", nil)
+	policy, err := PreparePolicy(t.Context(), client, visitorscope.Scope{Kind: visitorscope.Service, ID: body.Policy.Resource.Id}, "srun_0123456789abcdefghijkl", 1, "fixture-run-secret", nil)
 	if err != nil {
-		t.Fatal("public run source key did not fit the unchanged maximum-policy HTTP budget", err)
+		t.Fatal("HTTP service did not fit the unchanged maximum-policy HTTP budget", err)
 	}
 	defer policy.Close()
 	if err := policy.Refresh(t.Context()); err != nil {
-		t.Fatal("maximum public delta did not fit the original preparation budget", err)
+		t.Fatal("maximum HTTP service delta did not fit the original preparation budget", err)
 	}
 	view, enabled, _ := policy.Lease().Current()
-	if !enabled || view.VisitorPolicyRevision != math.MaxInt64 || policy.SourceKey() != ([32]byte{1}) {
-		t.Fatal("public preparation omitted source authority or policy history")
+	if !enabled || view.Port != 443 || view.VisitorPolicyRevision != math.MaxInt64 {
+		t.Fatal("HTTP service preparation omitted its endpoint or policy history")
 	}
 }
 

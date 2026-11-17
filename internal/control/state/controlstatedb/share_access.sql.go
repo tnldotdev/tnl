@@ -12,24 +12,21 @@ import (
 )
 
 const consumeShareHandoff = `-- name: ConsumeShareHandoff :one
-UPDATE control.share_handoffs AS handoff
-SET consumed_at = $1
-FROM control.shares AS share
-WHERE handoff.token_digest = $2
-  AND handoff.public_url_id = $3
-  AND handoff.consumed_at IS NULL
-  AND handoff.expires_at > $1
-  AND share.id = handoff.share_id
-  AND share.revoked_at IS NULL
-  AND share.expires_at > $1
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, $1))
-RETURNING handoff.share_id, handoff.redirect_url, handoff.bridge
+UPDATE control.share_handoffs handoff SET consumed_at=$1
+FROM control.shares share
+WHERE handoff.token_digest=$2 AND handoff.service_id=$3
+    AND $4::text=ANY(handoff.run_ids)
+    AND handoff.consumed_at IS NULL AND handoff.expires_at>$1
+    AND share.id=handoff.share_id AND share.revoked_at IS NULL AND share.expires_at>$1
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$1))
+RETURNING handoff.share_id,handoff.redirect_url,handoff.bridge
 `
 
 type ConsumeShareHandoffParams struct {
-	Now         pgtype.Timestamptz
-	TokenDigest []byte
-	PublicURLID string
+	Now          pgtype.Timestamptz
+	TokenDigest  []byte
+	ServiceID    string
+	ServiceRunID string
 }
 
 type ConsumeShareHandoffRow struct {
@@ -39,61 +36,59 @@ type ConsumeShareHandoffRow struct {
 }
 
 func (q *Queries) ConsumeShareHandoff(ctx context.Context, arg ConsumeShareHandoffParams) (ConsumeShareHandoffRow, error) {
-	row := q.db.QueryRow(ctx, consumeShareHandoff, arg.Now, arg.TokenDigest, arg.PublicURLID)
+	row := q.db.QueryRow(ctx, consumeShareHandoff,
+		arg.Now,
+		arg.TokenDigest,
+		arg.ServiceID,
+		arg.ServiceRunID,
+	)
 	var i ConsumeShareHandoffRow
 	err := row.Scan(&i.ShareID, &i.RedirectUrl, &i.Bridge)
 	return i, err
 }
 
-const countActiveShareCookiesForPublicURL = `-- name: CountActiveShareCookiesForPublicURL :one
-SELECT count(*)::bigint FROM control.share_cookies AS cookie
-JOIN control.shares AS share ON share.id = cookie.share_id
-WHERE cookie.public_url_id = $1
-  AND cookie.expires_at > $2
-  AND share.revoked_at IS NULL AND share.expires_at > $2
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, $2))
+const countActiveShareCookiesForService = `-- name: CountActiveShareCookiesForService :one
+SELECT count(*)::bigint FROM control.share_cookies cookie
+JOIN control.shares share ON share.id=cookie.share_id
+WHERE cookie.service_id=$1 AND cookie.expires_at>$2
+    AND share.revoked_at IS NULL AND share.expires_at>$2
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$2))
 `
 
-type CountActiveShareCookiesForPublicURLParams struct {
-	PublicURLID string
-	Now         pgtype.Timestamptz
+type CountActiveShareCookiesForServiceParams struct {
+	ServiceID string
+	Now       pgtype.Timestamptz
 }
 
-func (q *Queries) CountActiveShareCookiesForPublicURL(ctx context.Context, arg CountActiveShareCookiesForPublicURLParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveShareCookiesForPublicURL, arg.PublicURLID, arg.Now)
+func (q *Queries) CountActiveShareCookiesForService(ctx context.Context, arg CountActiveShareCookiesForServiceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveShareCookiesForService, arg.ServiceID, arg.Now)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
-const countActiveSharesForPublicURL = `-- name: CountActiveSharesForPublicURL :one
-SELECT count(*)::bigint FROM control.shares AS share
-JOIN control.share_public_urls AS included ON included.share_id = share.id
-WHERE included.public_url_id = $1
-  AND share.revoked_at IS NULL AND share.expires_at > $2
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, $2))
+const countActiveSharesForService = `-- name: CountActiveSharesForService :one
+SELECT count(*)::bigint FROM control.shares share
+JOIN control.share_services included ON included.share_id=share.id
+WHERE included.service_id=$1 AND share.revoked_at IS NULL AND share.expires_at>$2
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$2))
 `
 
-type CountActiveSharesForPublicURLParams struct {
-	PublicURLID string
-	Now         pgtype.Timestamptz
+type CountActiveSharesForServiceParams struct {
+	ServiceID string
+	Now       pgtype.Timestamptz
 }
 
-func (q *Queries) CountActiveSharesForPublicURL(ctx context.Context, arg CountActiveSharesForPublicURLParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveSharesForPublicURL, arg.PublicURLID, arg.Now)
+func (q *Queries) CountActiveSharesForService(ctx context.Context, arg CountActiveSharesForServiceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveSharesForService, arg.ServiceID, arg.Now)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
 const deleteExpiredShareCookies = `-- name: DeleteExpiredShareCookies :exec
-WITH expired AS (
-    SELECT candidate.token_digest FROM control.share_cookies AS candidate
-    WHERE candidate.expires_at <= $1
-    LIMIT 100
-)
-DELETE FROM control.share_cookies AS cookie
-USING expired WHERE cookie.token_digest = expired.token_digest
+DELETE FROM control.share_cookies cookie WHERE cookie.token_digest IN
+    (SELECT expired.token_digest FROM control.share_cookies expired WHERE expired.expires_at<=$1 LIMIT 100)
 `
 
 func (q *Queries) DeleteExpiredShareCookies(ctx context.Context, now pgtype.Timestamptz) error {
@@ -102,13 +97,8 @@ func (q *Queries) DeleteExpiredShareCookies(ctx context.Context, now pgtype.Time
 }
 
 const deleteFinishedShareHandoffs = `-- name: DeleteFinishedShareHandoffs :exec
-WITH finished AS (
-    SELECT candidate.token_digest FROM control.share_handoffs AS candidate
-    WHERE candidate.expires_at <= $1 OR candidate.consumed_at IS NOT NULL
-    LIMIT 100
-)
-DELETE FROM control.share_handoffs AS handoff
-USING finished WHERE handoff.token_digest = finished.token_digest
+DELETE FROM control.share_handoffs handoff WHERE handoff.token_digest IN
+    (SELECT finished.token_digest FROM control.share_handoffs finished WHERE finished.expires_at<=$1 OR finished.consumed_at IS NOT NULL LIMIT 100)
 `
 
 func (q *Queries) DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Timestamptz) error {
@@ -116,129 +106,72 @@ func (q *Queries) DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Ti
 	return err
 }
 
-const enablePublishRunShareAccess = `-- name: EnablePublishRunShareAccess :one
-UPDATE control.publish_runs AS run
-SET share_capable = true
-WHERE run.id = $1
-  AND run.public_url_id = $2
-  AND run.publish_run_number = $3
-  AND run.state = 'starting'
-  AND EXISTS (SELECT 1 FROM control.public_urls AS url WHERE url.id = run.public_url_id
-      AND url.service_protocol = 'http' AND url.purpose IN ('app', 'alias', 'demo')
-      AND ($4::text = '' OR (url.purpose = 'app' AND EXISTS (
-          SELECT 1 FROM control.preview_public_urls AS membership
-          JOIN control.previews AS preview ON preview.id = membership.preview_id
-          WHERE membership.preview_id = $4 AND membership.public_url_id = url.id
-            AND preview.created_by_identity_id = run.acting_identity_id AND preview.demo_publish_run_id IS NULL))))
-RETURNING run.id
+const getActiveShareForService = `-- name: GetActiveShareForService :one
+SELECT share.id, share.schema_version, share.preview_id, share.team_id, share.guest_id, share.scope, share.entry_service_id, share.control_session_id, share.issuer_company_context, share.label, share.created_by_identity_id, share.idempotency_key, share.request_digest, share.secret_digest, share.created_at, share.expires_at, share.revoked_at, share.revoked_by_identity_id, share.revoked_by_guest_id FROM control.shares share
+JOIN control.share_services included ON included.share_id=share.id
+WHERE share.id=$1 AND included.service_id=$2
+    AND share.revoked_at IS NULL AND share.expires_at>$3
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$3))
 `
 
-type EnablePublishRunShareAccessParams struct {
-	PublishRunID     string
-	PublicURLID      string
-	PublishRunNumber int64
-	PreviewID        string
+type GetActiveShareForServiceParams struct {
+	ShareID   string
+	ServiceID string
+	Now       pgtype.Timestamptz
 }
 
-func (q *Queries) EnablePublishRunShareAccess(ctx context.Context, arg EnablePublishRunShareAccessParams) (string, error) {
-	row := q.db.QueryRow(ctx, enablePublishRunShareAccess,
-		arg.PublishRunID,
-		arg.PublicURLID,
-		arg.PublishRunNumber,
-		arg.PreviewID,
+func (q *Queries) GetActiveShareForService(ctx context.Context, arg GetActiveShareForServiceParams) (ControlShare, error) {
+	row := q.db.QueryRow(ctx, getActiveShareForService, arg.ShareID, arg.ServiceID, arg.Now)
+	var i ControlShare
+	err := row.Scan(
+		&i.ID,
+		&i.SchemaVersion,
+		&i.PreviewID,
+		&i.TeamID,
+		&i.GuestID,
+		&i.Scope,
+		&i.EntryServiceID,
+		&i.ControlSessionID,
+		&i.IssuerCompanyContext,
+		&i.Label,
+		&i.CreatedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.SecretDigest,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.RevokedByIdentityID,
+		&i.RevokedByGuestID,
 	)
-	var id string
-	err := row.Scan(&id)
-	return id, err
-}
-
-const getActiveShareForPublicURL = `-- name: GetActiveShareForPublicURL :one
-SELECT share.id, share.secret_digest, share.expires_at
-FROM control.shares AS share
-JOIN control.share_public_urls AS included ON included.share_id = share.id
-WHERE share.id = $1
-  AND included.public_url_id = $2
-  AND share.revoked_at IS NULL
-  AND share.expires_at > $3
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, $3))
-`
-
-type GetActiveShareForPublicURLParams struct {
-	ShareID     string
-	PublicURLID string
-	Now         pgtype.Timestamptz
-}
-
-type GetActiveShareForPublicURLRow struct {
-	ID           string
-	SecretDigest []byte
-	ExpiresAt    pgtype.Timestamptz
-}
-
-func (q *Queries) GetActiveShareForPublicURL(ctx context.Context, arg GetActiveShareForPublicURLParams) (GetActiveShareForPublicURLRow, error) {
-	row := q.db.QueryRow(ctx, getActiveShareForPublicURL, arg.ShareID, arg.PublicURLID, arg.Now)
-	var i GetActiveShareForPublicURLRow
-	err := row.Scan(&i.ID, &i.SecretDigest, &i.ExpiresAt)
 	return i, err
 }
 
-const getShareCapablePublishRun = `-- name: GetShareCapablePublishRun :one
-SELECT run.id
-FROM control.publish_runs AS run
-JOIN control.public_urls AS url ON url.id = run.public_url_id AND url.service_protocol = 'http' AND url.purpose IN ('app', 'alias', 'demo')
-WHERE run.id = $1
-  AND run.public_url_id = $2
-  AND run.publish_run_number = $3
-  AND run.share_capable = true
-  AND run.state IN ('starting', 'ready')
-  AND run.publisher_expires_at > $4
-`
-
-type GetShareCapablePublishRunParams struct {
-	PublishRunID     string
-	PublicURLID      string
-	PublishRunNumber int64
-	Now              pgtype.Timestamptz
-}
-
-func (q *Queries) GetShareCapablePublishRun(ctx context.Context, arg GetShareCapablePublishRunParams) (string, error) {
-	row := q.db.QueryRow(ctx, getShareCapablePublishRun,
-		arg.PublishRunID,
-		arg.PublicURLID,
-		arg.PublishRunNumber,
-		arg.Now,
-	)
-	var id string
-	err := row.Scan(&id)
-	return id, err
-}
-
 const insertShareCookie = `-- name: InsertShareCookie :one
-INSERT INTO control.share_cookies (token_digest, share_id, public_url_id, team_id, created_at, expires_at)
-SELECT $1, share.id, $2, share.team_id,
-       $3, share.expires_at
-FROM control.shares AS share
-JOIN control.share_public_urls AS included
-  ON included.share_id = share.id AND included.public_url_id = $2
-WHERE share.id = $4
-  AND share.revoked_at IS NULL
-  AND share.expires_at > $3
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, $3))
+INSERT INTO control.share_cookies(token_digest,share_id,service_id,created_at,expires_at)
+SELECT $1,share.id,included.service_id,
+    $2,LEAST(share.expires_at,$3::timestamptz)
+FROM control.shares share
+JOIN control.share_services included ON included.share_id=share.id AND included.service_id=$4
+WHERE share.id=$5 AND share.revoked_at IS NULL AND share.expires_at>$2
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$2))
 RETURNING token_digest
 `
 
 type InsertShareCookieParams struct {
 	TokenDigest []byte
-	PublicURLID string
 	CreatedAt   pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
+	ServiceID   string
 	ShareID     string
 }
 
 func (q *Queries) InsertShareCookie(ctx context.Context, arg InsertShareCookieParams) ([]byte, error) {
 	row := q.db.QueryRow(ctx, insertShareCookie,
 		arg.TokenDigest,
-		arg.PublicURLID,
 		arg.CreatedAt,
+		arg.ExpiresAt,
+		arg.ServiceID,
 		arg.ShareID,
 	)
 	var token_digest []byte
@@ -247,37 +180,36 @@ func (q *Queries) InsertShareCookie(ctx context.Context, arg InsertShareCookiePa
 }
 
 const insertShareHandoff = `-- name: InsertShareHandoff :one
-INSERT INTO control.share_handoffs (token_digest, share_id, public_url_id, team_id, redirect_url, bridge, created_at, expires_at)
-SELECT $1, share.id, $2, share.team_id,
-       $3, $4, $5, $6
-FROM control.shares AS share
-JOIN control.share_public_urls AS included
-  ON included.share_id = share.id AND included.public_url_id = $2
-WHERE share.id = $7
-  AND share.revoked_at IS NULL
-  AND share.expires_at > $5
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, $5))
+INSERT INTO control.share_handoffs(token_digest,share_id,service_id,run_ids,redirect_url,bridge,created_at,expires_at)
+SELECT $1,share.id,included.service_id,$2::text[],
+    $3,$4,$5,$6
+FROM control.shares share
+JOIN control.share_services included ON included.share_id=share.id AND included.service_id=$7
+WHERE share.id=$8 AND share.revoked_at IS NULL AND share.expires_at>$5
+    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$5))
 RETURNING token_digest
 `
 
 type InsertShareHandoffParams struct {
 	TokenDigest []byte
-	PublicURLID string
+	RunIds      []string
 	NextUrl     string
 	Bridge      bool
 	CreatedAt   pgtype.Timestamptz
 	ExpiresAt   pgtype.Timestamptz
+	ServiceID   string
 	ShareID     string
 }
 
 func (q *Queries) InsertShareHandoff(ctx context.Context, arg InsertShareHandoffParams) ([]byte, error) {
 	row := q.db.QueryRow(ctx, insertShareHandoff,
 		arg.TokenDigest,
-		arg.PublicURLID,
+		arg.RunIds,
 		arg.NextUrl,
 		arg.Bridge,
 		arg.CreatedAt,
 		arg.ExpiresAt,
+		arg.ServiceID,
 		arg.ShareID,
 	)
 	var token_digest []byte
@@ -285,40 +217,46 @@ func (q *Queries) InsertShareHandoff(ctx context.Context, arg InsertShareHandoff
 	return token_digest, err
 }
 
-const listReadyShareHostnames = `-- name: ListReadyShareHostnames :many
-SELECT url.id AS public_url_id, url.canonical_hostname
-FROM control.share_public_urls AS included
-JOIN control.public_urls AS url ON url.id = included.public_url_id
-JOIN control.publish_runs AS run ON run.public_url_id = url.id
-WHERE included.share_id = $1
-  AND url.lifecycle_state = 'enabled'
-  AND url.service_protocol = 'http' AND url.purpose IN ('app', 'alias', 'demo')
-  AND run.state = 'ready'
-  AND run.publisher_expires_at > $2
-  AND run.share_capable = true
-ORDER BY url.id
+const listReadyShareServices = `-- name: ListReadyShareServices :many
+SELECT service.id AS service_id,service.certificate_hostname,
+    array_agg(run.id ORDER BY run.run_number)::text[] AS run_ids
+FROM control.share_services included
+JOIN control.services service ON service.id=included.service_id
+JOIN control.service_runs run ON run.service_id=service.id
+WHERE included.share_id=$1 AND service.enabled AND service.deleted_at IS NULL
+    AND service.protocol='http' AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
+    AND run.publisher_expires_at>$2 AND run.certificate_expires_at>$2
+    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
+        run.publisher_grant_id,service.id,$2) permission
+        JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
+        JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
+            AND signing.publisher_identity_id=run.publisher_identity_id
+            AND (grant_record.kind='service' OR signing.retired_at IS NULL))
+GROUP BY service.id,service.certificate_hostname ORDER BY service.id
 `
 
-type ListReadyShareHostnamesParams struct {
+type ListReadyShareServicesParams struct {
 	ShareID string
 	Now     pgtype.Timestamptz
 }
 
-type ListReadyShareHostnamesRow struct {
-	PublicURLID       string
-	CanonicalHostname string
+type ListReadyShareServicesRow struct {
+	ServiceID           string
+	CertificateHostname string
+	RunIds              []string
 }
 
-func (q *Queries) ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error) {
-	rows, err := q.db.Query(ctx, listReadyShareHostnames, arg.ShareID, arg.Now)
+// aggregate replica runs before building one redirect per service hostname.
+func (q *Queries) ListReadyShareServices(ctx context.Context, arg ListReadyShareServicesParams) ([]ListReadyShareServicesRow, error) {
+	rows, err := q.db.Query(ctx, listReadyShareServices, arg.ShareID, arg.Now)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListReadyShareHostnamesRow
+	var items []ListReadyShareServicesRow
 	for rows.Next() {
-		var i ListReadyShareHostnamesRow
-		if err := rows.Scan(&i.PublicURLID, &i.CanonicalHostname); err != nil {
+		var i ListReadyShareServicesRow
+		if err := rows.Scan(&i.ServiceID, &i.CertificateHostname, &i.RunIds); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

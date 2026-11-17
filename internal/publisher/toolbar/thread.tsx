@@ -15,7 +15,15 @@ const eventLabels = {
   "thread.reopened": "reopened",
 };
 
-export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
+export function ThreadView({
+  api,
+  id,
+  signedIn,
+}: {
+  api: FeedbackAPI;
+  id: string;
+  signedIn: boolean;
+}) {
   const [text, setText] = useState("");
   const keys = useRef(mutationKey());
   const { query, append, history } = useConversation(api, id);
@@ -23,6 +31,7 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
   const error = append.error ?? history.error ?? query.error;
   const anchor = supportedAnchor(data?.thread.anchor);
   function send(type: BrowserEvent): void {
+    if (!signedIn) return;
     append.mutate(
       { type, text: text.trim(), key: keys.current({ id, type, text: text.trim() }) },
       {
@@ -36,7 +45,11 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
   return (
     <section aria-label="Feedback thread">
       {error && <p role="status">{safeFeedbackMessage(error)}</p>}
-      <FeedbackSignIn error={append.error} path={data?.thread.scope.page_path ?? "/"} />
+      <FeedbackSignIn
+        error={append.error}
+        path={data?.thread.scope.page_path ?? "/"}
+        required={!signedIn}
+      />
       {!data ? (
         <p role="status">{query.isPending ? "Loading feedback…" : "Feedback is unavailable."}</p>
       ) : (
@@ -95,22 +108,20 @@ export function ThreadView({ api, id }: { api: FeedbackAPI; id: string }) {
             }}
           >
             <label>
-              {data.thread.state === "open" ? "Reply" : "Note (optional)"}
+              Reply
               <textarea
-                disabled={append.isPending}
+                disabled={!signedIn || append.isPending}
                 maxLength={4000}
                 value={text}
                 onInput={(event) => setText(event.currentTarget.value)}
               />
             </label>
-            {data.thread.state === "open" && (
-              <button type="submit" disabled={append.isPending || !text.trim()}>
-                Send reply
-              </button>
-            )}
+            <button type="submit" disabled={!signedIn || append.isPending || !text.trim()}>
+              Send reply
+            </button>
             <button
               type="button"
-              disabled={append.isPending}
+              disabled={!signedIn || append.isPending}
               onClick={() =>
                 send(data.thread.state === "open" ? "thread.resolved" : "thread.reopened")
               }

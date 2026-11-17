@@ -23,6 +23,7 @@ func (h *handler) GetWebhookProviderSource(response http.ResponseWriter, request
 	}
 	response.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", result.MaxAge))
 	response.Header().Set("ETag", result.ETag)
+	result.Window.WriteHeaders(response.Header())
 	if request.Header.Get("If-None-Match") == result.ETag {
 		h.config.Metrics.ObserveWebhookProviderSource(name, "not_modified")
 		response.WriteHeader(http.StatusNotModified)

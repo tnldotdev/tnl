@@ -18,13 +18,14 @@ func connectorPeerPublisherAuthority(ctx context.Context, tx pgx.Tx, run control
 	}); err != nil {
 		return time.Time{}, publisherLookupError(err, ErrServiceAccess)
 	}
-	until := run.PublisherExpiresAt.Time
+	until := run.ServingUntil.Time
 	if run.CertificateExpiresAt.Valid {
 		until = minTime(until, run.CertificateExpiresAt.Time)
 	}
-	var grantExpiry, eligibility pgtype.Timestamptz
-	if err := tx.QueryRow(ctx, `SELECT expires_at FROM control.publisher_grants WHERE id=$1 AND publisher_identity_id=$2 AND kind='service' AND service_id=$3 AND revoked_at IS NULL`, run.PublisherGrantID, run.PublisherIdentityID, run.ServiceID).Scan(&grantExpiry); err != nil {
-		return time.Time{}, publisherLookupError(err, ErrServiceAccess)
+	var eligibility pgtype.Timestamptz
+	grantExpiry, err := serviceRunPublisherPermission(ctx, tx, run, now)
+	if err != nil {
+		return time.Time{}, err
 	}
 	if grantExpiry.Valid {
 		until = minTime(until, grantExpiry.Time)

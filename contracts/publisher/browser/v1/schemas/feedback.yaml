@@ -1,5 +1,6 @@
 schemas:
   BrowserFeedbackReportRequest:
+    description: Submit feedback with a current signed-in browser session and preview permission. Control derives the verified author; a share or visitor token alone cannot author feedback.
     type: object
     additionalProperties: false
     required: [schema_version, text, page_path, evidence]
@@ -7,7 +8,6 @@ schemas:
       schema_version:
         $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ReviewSchemaVersion"
       text: { type: string, minLength: 1, maxLength: 4000 }
-      display_name: { type: string, maxLength: 64 }
       page_path: { type: string, minLength: 1, maxLength: 2048, pattern: "^/" }
       page_title: { type: string, maxLength: 256 }
       anchor:

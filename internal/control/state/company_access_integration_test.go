@@ -12,9 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
@@ -166,7 +167,7 @@ func TestIntegrationCompanyApprovalSubjectNeedsCurrentCompanySignIn(t *testing.T
 		t.Fatal(err)
 	}
 	person := personal.Identity.Identity.ID
-	service, err := d.CreateServiceAt(t.Context(), team.ID, owner, "approval-private", "approval-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(t.Context(), team.ID, owner, "approval-private", "approval-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,26 +446,22 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	// services and service-client certificate issuance, not just team API calls.
 	ownerCtx := WithControlPrincipal(t.Context(), p)
 	companyCtx, personalCtx := WithControlPrincipal(t.Context(), companyPrincipal), WithControlPrincipal(t.Context(), personalPrincipal)
-	domains, err := d.ListTeamDomains(ownerCtx, owner, team.ID)
+	httpService, err := d.CreateServiceAt(ownerCtx, team.ID, owner, "company-http", "company-http", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, &ProjectServiceConfiguration{Target: "http://127.0.0.1:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	namespace, _ := naming.PublicURLNamespace(naming.NamespaceFacts{Domain: domains[0].CanonicalDomain, Managed: true, Mode: d.managedURLMode, TeamName: team.DisplayName, MemberSlug: member.MemberSlug, ManagedLabel: member.ManagedLabel})
-	public, err := d.CreatePublicURL(companyCtx, CreatePublicURLRequest{TeamID: team.ID, DomainID: domains[0].ID, MembershipID: member.ID, ActingIdentityID: person.Identity.ID, IdempotencyKey: "company-visitor", CanonicalHostname: "app." + namespace, Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSUnmanaged}, now)
-	if err != nil {
+	if _, err = d.CreateServiceGrant(ownerCtx, httpService.ID, owner, "company-http-grant", "identity", person.Identity.ID, nil, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.CreateIdentityVisitorGrant(companyCtx, public.ID, person.Identity.ID, "company-member", person.Identity.ID, nil, now); err != nil {
-		t.Fatal(err)
-	}
-	q := controlstatedb.New(d.pool)
-	if _, err = identityPermission(personalCtx, q, public.ID, person.Identity.ID, "", now); !errors.Is(err, ErrVisitorSignIn) {
+	httpScope := visitorscope.Scope{Kind: visitorscope.Service, ID: httpService.ID}
+	if _, err = d.IssueVisitorToken(personalCtx, testVisitorIssuer, httpScope, BrowserTokenSource{}, now); !errors.Is(err, ErrVisitorPermission) && !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatal("personal browser provenance bypass", err)
 	}
-	if permission, err := identityPermission(companyCtx, q, public.ID, person.Identity.ID, "", now); err != nil || !permission.VisitAllowed || permission.ExpiresAt == nil || permission.ExpiresAt.After(now.Add(CompanyAuthenticationLifetime)) {
+	permission, err := d.IssueVisitorToken(companyCtx, testVisitorIssuer, httpScope, BrowserTokenSource{}, now)
+	if err != nil || permission.Permission.ExpiresAt.After(now.Add(CompanyAuthenticationLifetime).Truncate(time.Second)) {
 		t.Fatal("company browser permission", permission, err)
 	}
-	service, err := d.CreateServiceAt(ownerCtx, team.ID, owner, "company-private", "company-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(ownerCtx, team.ID, owner, "company-private", "company-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,8 +515,8 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if _, err = d.IssueServiceClientCertificate(companyCtx, service.ID, person.Identity.ID, device.ID, csr, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("offboarded mTLS CSR retry authorized", err)
 	}
-	if permission, err := identityPermission(companyCtx, q, public.ID, person.Identity.ID, "", now); err != nil || permission.VisitAllowed {
-		t.Fatal("explicit public identity grant bypassed suspension", permission, err)
+	if _, err = d.IssueVisitorToken(companyCtx, testVisitorIssuer, httpScope, BrowserTokenSource{}, now); !errors.Is(err, ErrVisitorPermission) && !errors.Is(err, ErrVisitorSignIn) {
+		t.Fatal("explicit service identity grant bypassed suspension", err)
 	}
 	companyTestEligibility(t, d, c, person.Identity.ID, 3, true, now)
 	if err = d.UpdateCompanyMembershipDecision(t.Context(), p, team.ID, member.ID, CompanyMembershipDecision{PersonalAccountException: true}, now); err != nil {
@@ -537,28 +534,27 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	}
 }
 
-func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testing.T) {
-	f := newTransactionAuthorityFixture(t)
-	d, now := f.database, f.now
-	team := f.member.TeamID
-	shared := reviewSharedURL(t, f)
-	registerCertificatePlanRelays(t, d, now)
-	memberPublic, memberKey := reviewPublisher(t, d, f.publicURL, f.member.IdentityID, now)
-	teamPublic, teamKey := reviewPublisher(t, d, shared, f.member.IdentityID, now)
-	if memberPublic.Ownership != "member" || teamPublic.Ownership != "team" {
-		t.Fatal("implicit publisher ownership", memberPublic, teamPublic)
-	}
-	service, err := d.CreateServiceAt(t.Context(), team, f.member.IdentityID, "offboarding", "create", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp", PublisherPool: true})
+func TestIntegrationCompanyOffboardingClosesMemberServiceRuns(t *testing.T) {
+	d, now, owner, team := newAuthorityTeam(t)
+	// create a member who will be managed by company connection.
+	member := addAuthorityMember(t, d, now, owner, team.ID, "managed", TeamRoleAdmin)
+
+	// member-owned and team-owned service runs on a pooled service.
+	poolService, err := d.CreateServiceAt(t.Context(), team.ID, member.IdentityID, "offboarding", "offboarding", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp", PublisherPool: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	servicePublisher := func(ownership string) (PublisherIdentity, ed25519.PrivateKey) {
 		t.Helper()
-		m, err := controlstatedb.New(d.pool).GetActivePublishRunMembership(t.Context(), controlstatedb.GetActivePublishRunMembershipParams{TeamID: team, IdentityID: f.member.IdentityID})
-		if err != nil {
+		var mID string
+		if err := d.pool.QueryRow(t.Context(), `SELECT id FROM control.team_memberships WHERE team_id=$1 AND identity_id=$2 AND removed_at IS NULL`, team.ID, member.IdentityID).Scan(&mID); err != nil {
 			t.Fatal(err)
 		}
-		e, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Ownership: ownership, Scope: PublisherScope{TeamID: team, Kind: "service", ServiceID: service.ID}, Name: ownership, Kind: "installed", EditorID: f.member.IdentityID, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: now})
+		var policyRev int64
+		if err := d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team.ID).Scan(&policyRev); err != nil {
+			t.Fatal(err)
+		}
+		e, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Ownership: ownership, Scope: PublisherScope{TeamID: team.ID, Kind: "service", ServiceID: poolService.ID}, Name: ownership, Kind: "installed", EditorID: member.IdentityID, EditorMembershipID: mID, PolicyRevision: uint64(policyRev), Now: now})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -569,125 +565,113 @@ func TestIntegrationCompanyOffboardingClosesMemberPublicAndServiceRuns(t *testin
 		}
 		return p, key
 	}
-	memberPrivate, memberPrivateKey := servicePublisher("member")
-	teamPrivate, teamPrivateKey := servicePublisher("team")
-	deploymentRequest := ApplyProjectConfigurationRequest{TeamID: team, ActorID: f.member.IdentityID, ProjectKey: "company-publishers", SourceFingerprint: strings.Repeat("a", 64), Configuration: ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"database": {Protocol: "postgres", Target: "localhost:5432"}}}, Now: now}
-	deploymentRequest = selectedProjectRequest(deploymentRequest, "production")
-	if _, err = d.ApplyProjectConfiguration(t.Context(), deploymentRequest); err != nil {
-		t.Fatal(err)
-	}
-	deploymentEnrollment, err := testDeploymentPublisherEnrollment(d, t.Context(), team, deploymentRequest.ProjectKey, "production", f.member.IdentityID, 1, time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ownerSession, err := createTestControlSession(t.Context(), d, "managed.example.test", time.Hour, 24*time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ownerPrincipal, err := d.AuthenticateAccessToken(t.Context(), ownerSession.AccessToken, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := companyTestConnection(t, d, team, ownerPrincipal, "managed", now)
-	companyTestEligibility(t, d, c, f.member.IdentityID, 1, true, now)
-	memberRun, err := d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, memberPublic, memberKey, f.publicURL, "member"), now, time.Hour, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	teamRun, err := d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, teamPublic, teamKey, shared, "team"), now, time.Hour, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
+	memberPub, memberKey := servicePublisher("member")
+	teamPub, _ := servicePublisher("team")
 	leases := map[string]RelayLease{}
 	for i := range 2 {
-		name := fmt.Sprintf("plan-relay-%d", i)
-		leases[name] = RelayLease{RelayLeaseIdentity: RelayLeaseIdentity{RelayServiceID: name, RelayID: name, RelayRunID: name + "-run", RelayLeaseRevision: 1}}
+		reg := relayLifecycleRegistration(fmt.Sprintf("offboard-%d", i))
+		reg.ConnectionCapacity = 100
+		lease, err := d.RegisterRelay(t.Context(), reg, now, 48*time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leases[lease.RelayServiceID] = lease
 	}
-	serviceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: memberPrivate}, memberPrivateKey, service, leases, now)
-	teamServiceRun := readyAppliedServiceRun(t, d, PublisherAccess{PublisherIdentity: teamPrivate}, teamPrivateKey, service, leases, now)
+	startRun := func(p PublisherIdentity, key ed25519.PrivateKey, attempt string) ServiceRunState {
+		t.Helper()
+		prepared, err := d.PrepareServiceRun(t.Context(), poolService.ID, p, attempt, now, ServiceRunRequest{Metadata: poolService.ServiceMetadata})
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := d.StartServiceRun(t.Context(), poolService.ID, prepared.RunID, prepared.RunNumber, p, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	memberRun := startRun(memberPub, memberKey, "member")
+	teamRun := startRun(teamPub, nil, "team")
+
+	ownerPrincipal := companyTestPrincipal(t, d, newOIDCSession(t, d, now), now)
+	c := companyTestConnection(t, d, team.ID, ownerPrincipal, "managed", now)
+	companyTestEligibility(t, d, c, member.IdentityID, 1, true, now)
+
 	var beforeRefresh int64
-	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team).Scan(&beforeRefresh); err != nil {
+	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team.ID).Scan(&beforeRefresh); err != nil {
 		t.Fatal(err)
 	}
-	companyTestEligibility(t, d, c, f.member.IdentityID, 2, true, now)
+	companyTestEligibility(t, d, c, member.IdentityID, 2, true, now)
 	var afterRefresh int64
-	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team).Scan(&afterRefresh); err != nil || beforeRefresh != afterRefresh {
+	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team.ID).Scan(&afterRefresh); err != nil || beforeRefresh != afterRefresh {
 		t.Fatal("healthy directory refresh disconnected visitors", beforeRefresh, afterRefresh, err)
 	}
-	companyTestEligibility(t, d, c, f.member.IdentityID, 3, false, now)
-	for _, id := range []string{memberRun.PublishRunID, serviceRun.RunID} {
-		var closed bool
-		if err = d.pool.QueryRow(t.Context(), `SELECT closed_at IS NOT NULL FROM control.publish_runs WHERE id=$1 UNION ALL SELECT closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`, id).Scan(&closed); err != nil || !closed {
-			t.Fatal("member run remained open", id, closed, err)
-		}
+	companyTestEligibility(t, d, c, member.IdentityID, 3, false, now)
+	// member-owned service run is closed on offboarding.
+	var closed bool
+	if err = d.pool.QueryRow(t.Context(), `SELECT closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`, memberRun.RunID).Scan(&closed); err != nil || !closed {
+		t.Fatal("member run remained open", closed, err)
 	}
-	assertion, err := publisherproof.Sign(memberPublic.ID, memberPublic.KeyID, memberPublic.GrantID, publisherTestAudience, memberKey, now)
+	if err = d.pool.QueryRow(t.Context(), `SELECT closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`, teamRun.RunID).Scan(&closed); err != nil || closed {
+		t.Fatal("team-owned run closed by member offboarding", closed, err)
+	}
+	assertion, err := publisherproof.Sign(memberPub.ID, memberPub.KeyID, memberPub.GrantID, publisherTestAudience, memberKey, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.ExchangePublisherAssertion(t.Context(), memberPublic.ID, memberPublic.GrantID, publisherTestAudience, assertion, "", now); !errors.Is(err, ErrPublisherIdentity) {
+	if _, err = d.ExchangePublisherAssertion(t.Context(), memberPub.ID, memberPub.GrantID, publisherTestAudience, assertion, "", now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("member credential survived", err)
 	}
-	if _, err = d.HeartbeatServiceRun(t.Context(), service.ID, serviceRun.RunID, serviceRun.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.HeartbeatServiceRun(t.Context(), poolService.ID, memberRun.RunID, memberRun.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("offboarded member private run renewed", err)
 	}
-	replica := enrollAppliedDeployment(t, d, deploymentRequest, deploymentEnrollment, now)
-	var deploymentOwnership string
-	if err = d.pool.QueryRow(t.Context(), `SELECT ownership FROM control.publisher_identities WHERE id=$1`, replica.member.PublisherIdentityID).Scan(&deploymentOwnership); err != nil || deploymentOwnership != "team" {
-		t.Fatal("deployment creator remained runtime owner", deploymentOwnership, err)
-	}
-	auth := PublishRunAuthentication{PublishRunID: teamRun.PublishRunID, PublicURLID: shared.ID, PublishRunNumber: teamRun.PublishRunNumber, PublishRunToken: teamRun.PublishRunToken}
-	if _, err = d.HeartbeatPublishRun(t.Context(), auth, now, time.Hour, time.Hour); err != nil {
-		t.Fatal("team-owned public publisher depended on creator", err)
-	}
-	if _, err = d.HeartbeatServiceRun(t.Context(), service.ID, teamServiceRun.RunID, teamServiceRun.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
+	if _, err = d.HeartbeatServiceRun(t.Context(), poolService.ID, teamRun.RunID, teamRun.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal("team-owned private publisher depended on creator", err)
 	}
-	url, err := d.GetPublicURLForAuthorization(t.Context(), f.publicURL.ID)
-	if err != nil || url.LifecycleState != PublicURLLifecycleEnabled {
-		t.Fatal("offboarding destructively suspended saved URL", url, err)
+	var savedEnabled, savedPresent bool
+	if err = d.pool.QueryRow(t.Context(), `SELECT enabled, deleted_at IS NULL FROM control.services WHERE id=$1`, poolService.ID).Scan(&savedEnabled, &savedPresent); err != nil || !savedEnabled || !savedPresent {
+		t.Fatal("offboarding destructively suspended saved service", savedEnabled, savedPresent, err)
 	}
-	companyTestEligibility(t, d, c, f.member.IdentityID, 4, true, now)
-	if !companyTestActive(t, d, f.member.ID, now) {
+	companyTestEligibility(t, d, c, member.IdentityID, 4, true, now)
+	if !companyTestActive(t, d, member.ID, now) {
 		t.Fatal("resumption lost membership")
 	}
-	if _, err = d.CreatePublishRun(t.Context(), reviewRunRequest(t, d, memberPublic, memberKey, url, "resumed"), now, time.Hour, time.Hour); err != nil {
-		t.Fatal("resumption could not republish saved URL", err)
-	}
+	_ = startRun(memberPub, memberKey, "resumed")
+
 	// explicit identity visitor grants cannot bypass company suspension.
-	companyTestEligibility(t, d, c, f.member.IdentityID, 5, false, now)
+	companyTestEligibility(t, d, c, member.IdentityID, 5, false, now)
 	tx, err := d.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	if _, _, err = privateVisitorAccess(context.Background(), tx, service.ID, f.member.IdentityID, now); !errors.Is(err, ErrServiceAccess) {
+	if _, _, err = privateVisitorAccess(context.Background(), tx, poolService.ID, member.IdentityID, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("private identity grant bypassed offboarding", err)
 	}
 	if err = tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	fresh := companyTestEligibility(t, d, c, f.member.IdentityID, 6, true, now)
+
+	fresh := companyTestEligibility(t, d, c, member.IdentityID, 6, true, now)
 	fresh.Revision = 7
 	fresh.ValidUntil = now.Add(time.Second)
 	if err = d.ProvisionCompanyEligibility(t.Context(), c.ProvisioningToken, fresh, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.ExpireSavedPublishRuns(t.Context(), now.Add(2*time.Second)); err != nil {
+	if _, err = d.ExpireServiceRuns(t.Context(), now.Add(2*time.Second)); err != nil {
 		t.Fatal("expire company eligibility", err)
 	}
-	if companyTestActive(t, d, f.member.ID, now.Add(2*time.Second)) {
+	if companyTestActive(t, d, member.ID, now.Add(2*time.Second)) {
 		t.Fatal("expired company eligibility retained authority")
 	}
 	var revision int64
-	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team).Scan(&revision); err != nil {
+	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team.ID).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.ExpireSavedPublishRuns(t.Context(), now.Add(3*time.Second)); err != nil {
+	if _, err = d.ExpireServiceRuns(t.Context(), now.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	var repeated int64
-	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team).Scan(&repeated); err != nil || repeated != revision {
+	if err = d.pool.QueryRow(t.Context(), `SELECT policy_revision FROM control.teams WHERE id=$1`, team.ID).Scan(&repeated); err != nil || repeated != revision {
 		t.Fatal("expiration repeatedly invalidated policy", revision, repeated, err)
 	}
 }

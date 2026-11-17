@@ -11,22 +11,12 @@ import (
 	"time"
 )
 
-func newConnectorPairPrerequisites(t *testing.T) (*Database, time.Time, PublishRunRequest, map[string]RelayLease) {
+func newConnectorPairPrerequisites(t *testing.T) (*Database, time.Time, serviceTestAuthority, map[string]RelayLease) {
 	t.Helper()
 	return publishRunPrerequisitesWithRelayKeys(t, func(run string) []byte {
 		seed := sha256.Sum256([]byte(run))
 		return ed25519.NewKeyFromSeed(seed[:]).Public().(ed25519.PublicKey)
 	})
-}
-
-func newConnectorPairRunFixture(t *testing.T) publishRunFixture {
-	t.Helper()
-	d, now, request, leases := newConnectorPairPrerequisites(t)
-	setup, err := d.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return publishRunFixture{d, now, request, setup, leases}
 }
 
 func nativeOwnerRows(t *testing.T, d *Database, ids []string) []byte {
@@ -62,7 +52,11 @@ func assertNativeStateStableOwners(t *testing.T, d *Database, ctx context.Contex
 	for i, owner := range []string{"regression-owner-a", "regression-owner-b"} {
 		r := template
 		r.IdempotencyKey = owner
-		signConnectorPairRequest(t, &r, key)
+		message, err := r.proof().Message()
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Signature = ed25519.Sign(key, message)
 		pair, err := d.PrepareConnectorPeerPair(ctx, r, now)
 		if err != nil {
 			t.Fatal("valid independent owner", err)
@@ -98,7 +92,11 @@ func assertNativeStateStableOwners(t *testing.T, d *Database, ctx context.Contex
 		if ownerKey == "" {
 			want = ErrServiceAccess
 		} else {
-			signConnectorPairRequest(t, &crossed, key)
+			message, err := crossed.proof().Message()
+			if err != nil {
+				t.Fatal(err)
+			}
+			crossed.Signature = ed25519.Sign(key, message)
 		}
 		successor, err := d.PrepareConnectorPeerPair(ctx, crossed, crossed.RequestedAt)
 		if successor.ID != "" {

@@ -12,14 +12,14 @@ func TestControlHandlersRecordMatchedOperations(t *testing.T) {
 	metrics := observability.New("control")
 	handler := testHandler(t, Config{Metrics: metrics}, nil, nil, nil)
 	observed := metrics.APIRequests("control", handler)
-	for _, path := range []string{"/v1/health", "/v1/public-urls/public_url_private-id"} {
+	for _, path := range []string{"/v1/health", "/v1/services/svc_private-id"} {
 		observed.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", path, nil))
 	}
 	response := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 	text := response.Body.String()
-	if strings.Contains(text, "public_url_private-id") {
-		t.Fatal("metrics exposed a route ID")
+	if strings.Contains(text, "svc_private-id") {
+		t.Fatal("metrics exposed a service ID")
 	}
 	for _, want := range []string{"tnl_api_request_duration_seconds_count", "tnl_api_requests_in_flight", `tnl_outcome="denied"`, `tnl_outcome="success"`} {
 		if !strings.Contains(text, want) {

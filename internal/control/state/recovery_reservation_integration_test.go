@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -11,67 +12,41 @@ import (
 )
 
 func TestIntegrationRecoveryReusesReservationDuringPlacement(t *testing.T) {
-	f := newPublishRunFixture(t)
-	oldClaims := readyTestSession(t, f)
-	database, now := f.database, f.now
-	previous := f.setup.PublisherConnections[0]
-	registration := relayLifecycleRegistration(previous.RelayServiceID)
-	registration.ConnectionCapacity = 1 // the existing reservation fills this service.
-	registration.RelayRunID += "-restart"
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET lease_expires_at = $1 WHERE relay_id = $2`, now.Add(time.Second), registration.RelayID); err != nil {
-		t.Fatal(err)
+	f := newServicePublicationFixture(t)
+	installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
+	f.readyConnections(t, f.now)
+	ready, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+	if err != nil || ready.State != "ready" {
+		t.Fatal("service did not become ready", ready, err)
 	}
-	lease, err := database.RegisterRelay(t.Context(), registration, now.Add(2*time.Second), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.leases[lease.RelayServiceID] = lease
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	gate, err := database.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollbackTestTransaction(t, gate)
-	// an unrelated allocator holds the assignment-total, service, and lease guards.
-	// replacing an already-reserved slot must not join that queue or write totals.
-	if _, _, err := availableRelayServicePlacements(ctx, controlstatedb.New(gate), now.Add(2*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	callCtx, stop := context.WithTimeout(ctx, time.Second)
-	defer stop()
-	recovered, err := database.HeartbeatPublishRun(callCtx, f.authentication(), now.Add(3*time.Second), time.Hour, time.Minute)
-	if err != nil {
-		t.Fatalf("same-service recovery waited for placement: %v", err)
-	}
-	connection := recovered.PublisherConnections[0]
-	if connection.RelayServiceID != previous.RelayServiceID || connection.PublisherConnectionID == previous.PublisherConnectionID || connection.ConnectionAssignmentRevision != previous.ConnectionAssignmentRevision+1 || connection.State != PublisherConnectionAssigned {
-		t.Fatal("recovery did not replace the failed connection in its reserved service")
-	}
-	if recovered.PublisherConnections[1].ConnectionAssignmentIdentity != f.setup.PublisherConnections[1].ConnectionAssignmentIdentity || recovered.PublisherConnections[1].State != PublisherConnectionReady {
-		t.Fatal("recovery changed the surviving connection")
-	}
-	assertAssignmentTotals(t, database.pool, 2)
-	if err := gate.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.MarkPublisherConnectionReady(ctx, oldClaims[0], now.Add(4*time.Second)); !errors.Is(err, ErrPublisherConnectionUnavailable) && !errors.Is(err, ErrConnectionAssignmentStale) {
-		t.Fatalf("old connection readiness was not rejected: %v", err)
-	}
-	f.setup = recovered
-	claimTestConnection(t, f, 0, now.Add(4*time.Second))
-	assertAssignmentTotals(t, database.pool, 2)
-}
+	ready.Token = f.run.Token
+	f.run = ready
+	previous := f.run.Connections[0]
+	surviving := f.run.Connections[1]
 
-func TestIntegrationClaimProgressesDuringReadinessPublication(t *testing.T) {
-	fixtures, _ := relayServiceProgressSessions(t)
-	f := fixtures[0]
-	claims := readyTestSession(t, f)
-	// model an already-routable publish run with a claimed replacement awaiting
-	// readiness. its publisher connection already consumes process capacity.
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.publish_run_connection_slots SET state = 'connected' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
+	// restart the relay process for the reserved service while leaving the stale ready
+	// slot reservation intact, so recovery must reuse that reservation.
+	oldRelayID, oldRelayRunID, oldRevision := "", "", int64(0)
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT relay_id, relay_run_id, relay_lease_revision FROM control.service_connection_slots WHERE publisher_connection_id=$1`, previous.PublisherConnectionID).Scan(&oldRelayID, &oldRelayRunID, &oldRevision); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET lease_expires_at=$2, connection_capacity=1 WHERE relay_service_id=$1`, previous.RelayServiceID, f.now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity=0 WHERE relay_service_id<>$1`, previous.RelayServiceID); err != nil {
+		t.Fatal(err)
+	}
+	reg := relayLifecycleRegistration(previous.RelayServiceID)
+	reg.RelayID = oldRelayID
+	reg.RelayRunID = oldRelayRunID + "-restart"
+	reg.ConnectionCapacity = 1
+	reg.StreamCapacity = 64
+	restarted, err := f.database.RegisterRelay(t.Context(), reg, f.now.Add(2*time.Second), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.leases[restarted.RelayServiceID] = restarted
+
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	gate, err := f.database.pool.Begin(ctx)
@@ -79,128 +54,283 @@ func TestIntegrationClaimProgressesDuringReadinessPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := controlstatedb.New(gate).LockIngressRoutingTableClock(ctx); err != nil {
+	if _, _, err := availableRelayServicePlacements(ctx, controlstatedb.New(gate), f.run.ExpiresAt.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
-	ready := make(chan error, 1)
-	workers.Go(func() {
-		_, err := f.database.MarkPublisherConnectionReady(ctx, claims[0], f.now)
-		ready <- err
-	})
-	waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), ready)
+	type hbResult struct {
+		run ServiceRunState
+		err error
+	}
+	done := make(chan hbResult, 1)
 	callCtx, stop := context.WithTimeout(ctx, time.Second)
 	defer stop()
-	if _, err := f.database.ClaimPublisherConnection(callCtx, sessionClaim(t, fixtures[1]), f.now); err != nil {
-		t.Fatalf("independent claim waited for readiness publication: %v", err)
+	workers.Go(func() {
+		run, err := f.database.HeartbeatServiceRun(callCtx, f.service.ID, f.run.RunID, f.run.Token, f.run.ExpiresAt.Add(-time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+		done <- hbResult{run: run, err: err}
+	})
+	// recovery must return before releasing placement, within its actual caller.
+	res := awaitIntegrationResult(t, callCtx, done)
+	if res.err != nil {
+		t.Fatal(res.err)
 	}
-	// drain can overlap readiness that already validated this lease; a later
-	// readiness request must observe the drain rather than reuse that decision.
-	if _, err := f.database.BeginRelayDrain(callCtx, claims[0].RelayLeaseIdentity, f.now, f.now.Add(time.Minute)); err != nil {
-		t.Fatalf("drain waited for readiness publication: %v", err)
+	recovered := res.run
+	var replaced, unchanged *ServiceRunAssignment
+	for i := range recovered.Connections {
+		s := &recovered.Connections[i]
+		switch s.ConnectionSlot {
+		case previous.ConnectionSlot:
+			replaced = s
+		case surviving.ConnectionSlot:
+			unchanged = s
+		}
 	}
+	if replaced == nil || unchanged == nil {
+		t.Fatalf("recovered slots not found: %+v", recovered.Connections)
+	}
+	if replaced.RelayServiceID != previous.RelayServiceID || replaced.PublisherConnectionID == previous.PublisherConnectionID || replaced.Revision != previous.Revision+1 || replaced.State != "assigned" {
+		t.Fatalf("recovery did not reuse reserved service: replaced=%+v previous=%+v", *replaced, previous)
+	}
+	if unchanged.PublisherConnectionID != surviving.PublisherConnectionID || unchanged.Revision != surviving.Revision || unchanged.RelayServiceID != surviving.RelayServiceID || unchanged.State != "ready" {
+		t.Fatalf("surviving connection changed: unchanged=%+v surviving=%+v", *unchanged, surviving)
+	}
+	assertRestoredAssignmentState(t, ctx, f.database.pool, 2)
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := awaitIntegrationResult(t, ctx, ready); err != nil {
+	if _, err := f.database.ReadyServicePublisherConnection(ctx, previous.PublisherConnectionID, f.run.RunID, f.run.RunNumber, previous.Revision, RelayLeaseIdentity{RelayServiceID: previous.RelayServiceID, RelayID: oldRelayID, RelayRunID: oldRelayRunID, RelayLeaseRevision: uint64(oldRevision)}, f.run.ExpiresAt.Add(-time.Second)); !errors.Is(err, ErrServiceAccess) {
+		t.Fatalf("old readiness after recovery replacement = %v", err)
+	}
+	if _, err := f.database.ClaimServicePublisherConnection(ctx, replaced.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, replaced.Revision, replaced.Credential, netip.MustParseAddr("127.0.0.1"), restarted.RelayLeaseIdentity, f.run.ExpiresAt.Add(-time.Second)); err != nil {
+		t.Fatalf("claim recovered assignment: %v", err)
+	}
+	assertRestoredAssignmentState(t, ctx, f.database.pool, 2)
+}
+
+func TestIntegrationClaimProgressesDuringReadinessPublication(t *testing.T) {
+	f := newServicePublicationFixture(t)
+	installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
+	f.readyConnections(t, f.now)
+	ready, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+	if err != nil || ready.State != "ready" {
 		t.Fatal(err)
 	}
-	if _, err := f.database.MarkPublisherConnectionReady(ctx, claims[0], f.now); !errors.Is(err, ErrRelayDraining) {
-		t.Fatalf("readiness after committed drain = %v", err)
+	ready.Token = f.run.Token
+	f.run = ready
+	// independent claim on a slot needing reconnect must progress (no fake clock/retired routing-table clock gate).
+	slot := f.run.Connections[0]
+	lease := connectedRelayLease(t, f.database, slot.PublisherConnectionID, slot.RelayServiceID)
+	if _, err := f.database.DisconnectServicePublisherConnection(t.Context(), slot.PublisherConnectionID, f.run.RunID, f.run.RunNumber, slot.Revision, lease, f.now, true); err != nil {
+		t.Fatal(err)
 	}
-	assertAssignmentTotals(t, f.database.pool, 10)
+	recovered, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replacement *ServiceRunAssignment
+	for i := range recovered.Connections {
+		if recovered.Connections[i].ConnectionSlot == slot.ConnectionSlot {
+			replacement = &recovered.Connections[i]
+			break
+		}
+	}
+	if replacement == nil {
+		t.Fatalf("recovered slot not found: %+v", recovered.Connections)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
+	claimLease, ok := f.leases[replacement.RelayServiceID]
+	if !ok {
+		t.Fatalf("missing lease for replacement service %q", replacement.RelayServiceID)
+	}
+	done := make(chan error, 1)
+	workers.Go(func() {
+		_, err := f.database.ClaimServicePublisherConnection(t.Context(), replacement.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, replacement.Revision, replacement.Credential, netip.MustParseAddr("127.0.0.1"), claimLease.RelayLeaseIdentity, f.now)
+		done <- err
+	})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("independent claim did not progress: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("independent claim did not progress")
+	}
 }
 
 func TestIntegrationRecoveryReservationFallback(t *testing.T) {
 	for _, reason := range []string{"disabled", "draining", "capacity_reduced", "mixed_closed_slot"} {
 		t.Run(reason, func(t *testing.T) {
-			fixtures, registration := relayServiceProgressSessions(t)
-			f := fixtures[0]
-			claims := readyTestSession(t, f)
-			ctx := t.Context()
-			at := f.now.Add(time.Second)
-			if _, err := f.database.RegisterRelay(ctx, relayLifecycleRegistration("spare"), at, time.Hour); err != nil {
+			f := newServicePublicationFixture(t)
+			installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
+			f.readyConnections(t, f.now)
+			ready, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+			if err != nil || ready.State != "ready" {
 				t.Fatal(err)
 			}
-			// a stale ready assignment still contributes to its service total.
-			if _, err := f.database.pool.Exec(ctx, `UPDATE control.publish_run_connection_slots SET connected_relay_run_id = 'stale-run' WHERE publisher_connection_id = $1`, claims[0].PublisherConnectionID); err != nil {
+			ready.Token = f.run.Token
+			f.run = ready
+			slot := f.run.Connections[0]
+			survivor := f.run.Connections[1]
+			lease := f.leases[slot.RelayServiceID]
+
+			spareReg := relayLifecycleRegistration("spare-" + reason)
+			spareReg.ConnectionCapacity = 10
+			if _, err := f.database.RegisterRelay(t.Context(), spareReg, f.now, time.Hour); err != nil {
 				t.Fatal(err)
 			}
-			var err error
+
+			if reason == "mixed_closed_slot" {
+				survLease := connectedRelayLease(t, f.database, survivor.PublisherConnectionID, survivor.RelayServiceID)
+				if _, err := f.database.DisconnectServicePublisherConnection(t.Context(), survivor.PublisherConnectionID, f.run.RunID, f.run.RunNumber, survivor.Revision, survLease, f.now, true); err != nil {
+					t.Fatal(err)
+				}
+				// close the disconnected slot while the run remains open (session_open must match assignments_open).
+				if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_connection_slots SET state='closed', session_open=true, relay_id=NULL, relay_run_id=NULL, relay_lease_revision=NULL WHERE publisher_connection_id=$1`, survivor.PublisherConnectionID); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			slotLease := connectedRelayLease(t, f.database, slot.PublisherConnectionID, slot.RelayServiceID)
+			if _, err := f.database.DisconnectServicePublisherConnection(t.Context(), slot.PublisherConnectionID, f.run.RunID, f.run.RunNumber, slot.Revision, slotLease, f.now, true); err != nil {
+				t.Fatal(err)
+			}
+
 			switch reason {
 			case "disabled":
-				_, err = f.database.pool.Exec(ctx, `UPDATE control.relay_services SET enabled = false WHERE relay_service_id = $1`, registration.RelayServiceID)
-			case "draining":
-				_, err = f.database.BeginRelayDrain(ctx, claims[0].RelayLeaseIdentity, at, at.Add(time.Minute))
-			case "capacity_reduced":
-				registration.ConnectionCapacity = 4 // five reservations no longer fit.
-				_, err = f.database.RegisterRelay(ctx, registration, at, time.Hour)
-			case "mixed_closed_slot":
-				_, err = f.database.DisconnectPublisherConnection(ctx, claims[1], at, true)
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			recovered, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), at, time.Hour, time.Minute)
-			if err != nil {
-				t.Fatal(err)
-			}
-			wantService := "spare"
-			if reason == "mixed_closed_slot" {
-				wantService = registration.RelayServiceID
-				if recovered.PublisherConnections[1].State != PublisherConnectionAssigned || recovered.PublisherConnections[1].ConnectionAssignmentRevision != 2 {
-					t.Fatal("closed slot was not allocated alongside reservation reuse")
+				if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.relay_services SET enabled=false WHERE relay_service_id=$1`, lease.RelayServiceID); err != nil {
+					t.Fatal(err)
 				}
-			} else if recovered.PublisherConnections[1].State != PublisherConnectionReady {
-				t.Fatal("fallback changed the surviving connection")
+			case "draining":
+				if _, err := f.database.BeginRelayDrain(t.Context(), lease.RelayLeaseIdentity, f.now, f.now.Add(time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+			case "capacity_reduced", "mixed_closed_slot":
+				// preserve original mixed-case reservation reuse + new allocation invariants;
+				// source must handle replacement allocation without uniqueness conflicts.
+				if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity=0 WHERE relay_service_id=$1`, lease.RelayServiceID); err != nil {
+					t.Fatal(err)
+				}
 			}
-			first := recovered.PublisherConnections[0]
-			if first.RelayServiceID != wantService || first.State != PublisherConnectionAssigned || first.ConnectionAssignmentRevision != 2 || first.PublisherConnectionID == claims[0].PublisherConnectionID {
-				t.Fatalf("fallback did not produce the expected assignment: %+v", first.ConnectionAssignmentIdentity)
+
+			recovered, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.run.ExpiresAt.Add(-time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+			if err != nil {
+				t.Fatal(err)
 			}
-			assertAssignmentTotals(t, f.database.pool, 10)
+			var replaced, kept *ServiceRunAssignment
+			for i := range recovered.Connections {
+				c := &recovered.Connections[i]
+				switch c.ConnectionSlot {
+				case slot.ConnectionSlot:
+					replaced = c
+				case survivor.ConnectionSlot:
+					kept = c
+				}
+			}
+			if replaced == nil || kept == nil {
+				t.Fatalf("expected both slots in recovered run: %+v", recovered.Connections)
+			}
+			if replaced.RelayServiceID == slot.RelayServiceID {
+				t.Fatalf("expected fallback placement away from unavailable service, got %+v", *replaced)
+			}
+			if replaced.Revision != slot.Revision+1 {
+				t.Fatalf("expected replacement revision increment: replaced=%+v old=%+v", *replaced, slot)
+			}
+			if reason != "mixed_closed_slot" {
+				if kept.Revision != survivor.Revision || kept.RelayServiceID != survivor.RelayServiceID {
+					t.Fatalf("surviving connection changed: kept=%+v old=%+v", *kept, survivor)
+				}
+			}
+			assertAssignmentTotals(t, f.database.pool, 2)
 		})
 	}
 }
 
 func TestIntegrationRecoveryReservationRollback(t *testing.T) {
-	f := newPublishRunFixture(t)
-	readyTestSession(t, f)
-	ctx := t.Context()
-	if _, err := f.database.pool.Exec(ctx, `UPDATE control.publish_run_connection_slots SET connected_relay_run_id = 'stale-run' WHERE connection_slot = 0`); err != nil {
+	f := newServicePublicationFixture(t)
+	installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
+	f.readyConnections(t, f.now)
+	ready, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+	if err != nil || ready.State != "ready" {
 		t.Fatal(err)
 	}
-	queries := controlstatedb.New(f.database.pool)
-	before, err := queries.ReadIngressRoutingTableClock(ctx)
+	ready.Token = f.run.Token
+	f.run = ready
+	slot := f.run.Connections[0]
+	survivor := f.run.Connections[1]
+
+	// real stale READY reservation setup (restart), preserving reservation/totals.
+	oldRelayID, oldRelayRunID, oldRevision := "", "", int64(0)
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT relay_id, relay_run_id, relay_lease_revision FROM control.service_connection_slots WHERE publisher_connection_id=$1`, slot.PublisherConnectionID).Scan(&oldRelayID, &oldRelayRunID, &oldRevision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET lease_expires_at=$2 WHERE relay_service_id=$1`, slot.RelayServiceID, f.now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	reg := relayLifecycleRegistration(slot.RelayServiceID)
+	reg.RelayID = oldRelayID
+	reg.RelayRunID = oldRelayRunID + "-restart"
+	reg.ConnectionCapacity = 2
+	reg.StreamCapacity = 64
+	if _, err := f.database.RegisterRelay(t.Context(), reg, f.now.Add(2*time.Second), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	// inject an actual failure boundary: reject any replacement write for this slot.
+	constraint := fmt.Sprintf(`ALTER TABLE control.service_connection_slots ADD CONSTRAINT reject_recovery_replacement CHECK (connection_slot <> %d OR connection_assignment_revision = %d)`, slot.ConnectionSlot, slot.Revision)
+	if _, err := f.database.pool.Exec(t.Context(), constraint); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.run.ExpiresAt.Add(-time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err == nil {
+		t.Fatal("heartbeat unexpectedly committed replacement past failure boundary")
+	}
+	slots, err := controlstatedb.New(f.database.pool).ListServiceConnectionSlots(t.Context(), f.run.RunID)
+	if err != nil || len(slots) != 2 {
+		t.Fatalf("read rolled-back assignments: len=%d err=%v", len(slots), err)
+	}
+	for _, row := range slots {
+		switch row.ConnectionSlot {
+		case slot.ConnectionSlot:
+			if row.PublisherConnectionID != slot.PublisherConnectionID || row.ConnectionAssignmentRevision != slot.Revision || row.State != "ready" {
+				t.Fatalf("failed replacement slot committed change: id=%q old=%q state=%q revision=%d old=%d", row.PublisherConnectionID, slot.PublisherConnectionID, row.State, row.ConnectionAssignmentRevision, slot.Revision)
+			}
+		case survivor.ConnectionSlot:
+			if row.PublisherConnectionID != survivor.PublisherConnectionID || row.ConnectionAssignmentRevision != survivor.Revision || row.State != "ready" {
+				t.Fatalf("surviving slot changed on rollback: id=%q old=%q state=%q revision=%d old=%d", row.PublisherConnectionID, survivor.PublisherConnectionID, row.State, row.ConnectionAssignmentRevision, survivor.Revision)
+			}
+		}
+	}
+	assertAssignmentTotals(t, f.database.pool, 2)
+	if _, err := f.database.pool.Exec(t.Context(), `ALTER TABLE control.service_connection_slots DROP CONSTRAINT reject_recovery_replacement`); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.run.ExpiresAt.Add(-time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.database.pool.Exec(ctx, fmt.Sprintf(`ALTER TABLE control.ingress_routing_table_events ADD CONSTRAINT reject_recovery_event CHECK (id <= %d)`, before.CurrentRevision)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Minute); err == nil {
-		t.Fatal("heartbeat unexpectedly committed without its routing event")
-	}
-	rows, err := queries.ListPublishRunConnections(ctx, f.setup.PublishRunID)
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("read rolled-back assignments: %v", err)
-	}
-	for _, row := range rows {
-		if row.State != "ready" || row.PublisherConnectionID != f.setup.PublisherConnections[row.ConnectionSlot].PublisherConnectionID || row.ConnectionAssignmentRevision != 1 {
-			t.Fatal("failed publication retained a replacement assignment")
+	var retried *ServiceRunAssignment
+	for i := range retry.Connections {
+		if retry.Connections[i].ConnectionSlot == slot.ConnectionSlot {
+			retried = &retry.Connections[i]
+			break
 		}
 	}
-	after, err := queries.ReadIngressRoutingTableClock(ctx)
-	if err != nil || after.CurrentRevision != before.CurrentRevision {
-		t.Fatalf("failed publication advanced the clock: %v", err)
+	if retried == nil || retried.PublisherConnectionID == slot.PublisherConnectionID || retried.Revision != slot.Revision+1 {
+		t.Fatalf("retry did not replace slot after boundary removal: retried=%+v old=%+v", retry.Connections, slot)
 	}
 	assertAssignmentTotals(t, f.database.pool, 2)
-	if _, err := f.database.pool.Exec(ctx, `ALTER TABLE control.ingress_routing_table_events DROP CONSTRAINT reject_recovery_event`); err != nil {
+}
+
+func connectedRelayLease(t *testing.T, database *Database, connectionID, relayServiceID string) RelayLeaseIdentity {
+	t.Helper()
+	var relayID, relayRunID string
+	var revision int64
+	err := database.pool.QueryRow(t.Context(), `SELECT relay_id, relay_run_id, relay_lease_revision FROM control.service_connection_slots WHERE publisher_connection_id=$1`, connectionID).Scan(&relayID, &relayRunID, &revision)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	assertAssignmentTotals(t, f.database.pool, 2)
+	return RelayLeaseIdentity{RelayServiceID: relayServiceID, RelayID: relayID, RelayRunID: relayRunID, RelayLeaseRevision: uint64(revision)}
 }

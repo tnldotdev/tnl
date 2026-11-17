@@ -36,11 +36,7 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 		t.Fatal(err)
 	}
 	member := session.Identity.Memberships[0]
-	domains, err := d.ListTeamDomains(t.Context(), session.Identity.Identity.ID, member.TeamID)
-	if err != nil || len(domains) == 0 {
-		t.Fatal("missing managed domain", err)
-	}
-	url, err := d.CreatePublicURL(t.Context(), controlstate.CreatePublicURLRequest{TeamID: member.TeamID, DomainID: domains[0].ID, MembershipID: member.ID, ActingIdentityID: session.Identity.Identity.ID, IdempotencyKey: "token-api", RequestDigest: sha256.Sum256([]byte("token-api")), CanonicalHostname: "token." + member.ManagedLabel + ".example.test", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSUnmanaged}, now)
+	service, err := d.CreateServiceAt(t.Context(), member.TeamID, session.Identity.Identity.ID, "token-api", "token-api", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "http"}, &controlstate.ProjectServiceConfiguration{Target: "http://127.0.0.1:3000", Public: new(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,16 +53,16 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 		mux.ServeHTTP(w, r)
 		return w
 	}
-	body := `{"resource":{"kind":"public_url","id":"` + url.ID + `"},"source":{"kind":"control_session"}}`
+	body := `{"resource":{"kind":"service","id":"` + service.ID + `"},"source":{"kind":"control_session"}}`
 	response := request("/v1/visitor-tokens", body, session.AccessToken.String())
 	var permission controlv1.VisitorTokenResponse
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &permission) != nil || permission.VisitorToken == "" || len(permission.VisitorToken) > 2048 || permission.Resource.Id != url.ID || permission.VisitorPolicyRevision < 1 || response.Header().Get("Cache-Control") != "no-store" {
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &permission) != nil || permission.VisitorToken == "" || len(permission.VisitorToken) > 2048 || permission.Resource.Id != service.ID || permission.VisitorPolicyRevision < 1 || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("visitor token response: status=%d", response.Code)
 	}
 	if _, err := d.AuthenticateAccessToken(t.Context(), credentials.AccessToken(permission.VisitorToken), time.Now()); !errors.Is(err, controlstate.ErrControlAuthentication) {
 		t.Fatal("visitor token authenticated a control session", err)
 	}
-	management := httptest.NewRequest(http.MethodGet, "/v1/public-urls?team_id="+member.TeamID, nil)
+	management := httptest.NewRequest(http.MethodGet, "/v1/services?team_id="+member.TeamID, nil)
 	management.Header.Set("Authorization", "Bearer "+permission.VisitorToken)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, management)
@@ -79,9 +75,9 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 		"wrong-resource": `{"kind":"control_session"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			resource := `{"kind":"public_url","id":"` + url.ID + `"}`
+			resource := `{"kind":"service","id":"` + service.ID + `"}`
 			if name == "wrong-resource" {
-				resource = `{"kind":"service","id":"` + url.ID + `"}`
+				resource = `{"kind":"public_url","id":"url_` + strings.Repeat("A", 22) + `"}`
 			}
 			if response := request("/v1/visitor-tokens", `{"resource":`+resource+`,"source":`+source+`}`, session.AccessToken.String()); response.Code != 400 {
 				t.Fatalf("invalid source returned %d", response.Code)
@@ -89,14 +85,14 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 		})
 	}
 	secret := strings.Repeat("A", 43)
-	response = request("/v1/visitor-tokens", `{"resource":{"kind":"public_url","id":"`+url.ID+`"},"source":{"kind":"browser_session","secret":"`+secret+`"}}`, session.AccessToken.String())
+	response = request("/v1/visitor-tokens", `{"resource":{"kind":"service","id":"`+service.ID+`"},"source":{"kind":"browser_session","secret":"`+secret+`"}}`, session.AccessToken.String())
 	if response.Code != 400 || bytes.Contains(response.Body.Bytes(), []byte(secret)) {
 		t.Fatal("mixed authority sources were accepted or exposed")
 	}
 	invitationBody := `{"email":"visitor@example.test","expires_at":"` + now.Add(time.Hour).UTC().Format(time.RFC3339Nano) + `"}`
-	path := "/v1/public-urls/" + url.ID + "/visitor-invitations"
+	path := "/v1/services/" + service.ID + "/invitations"
 	created := request(path, invitationBody, session.AccessToken.String())
-	var invitation controlv1.VisitorInvitationCreation
+	var invitation controlv1.ServiceInvitationCreation
 	if created.Code != http.StatusCreated || json.Unmarshal(created.Body.Bytes(), &invitation) != nil || invitation.Credential == "" || created.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("invitation did not deliver a complete credential")
 	}
@@ -111,8 +107,8 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted := request("/v1/visitor-invitations/accept", `{"secret":"`+invitation.Credential+`"}`, recipient.AccessToken.String())
+	accepted := request("/v1/service-invitations/accept", `{"secret":"`+invitation.Credential+`"}`, recipient.AccessToken.String())
 	if accepted.Code != http.StatusOK || strings.Contains(accepted.Body.String(), invitation.Credential) {
-		t.Fatal("recipient could not accept the server-issued credential")
+		t.Fatal("recipient could not accept the server-issued credential", accepted.Code, accepted.Body.String())
 	}
 }

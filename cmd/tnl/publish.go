@@ -10,8 +10,8 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/region"
@@ -25,7 +25,7 @@ type publishCommand struct {
 	tunnelFlags             `embed:""`
 	backgroundPublishFlags  `embed:""`
 	Target                  string            `arg:"" name:"service-or-target" optional:"" env:"TNL_TARGET" help:"Configured service name, local port, HTTP origin, or TCP host:port."`
-	Protocol                string            `name:"protocol" env:"TNL_PROTOCOL" help:"Service protocol: http (default), tcp, mysql, or postgres. Configured services need publicURL for public HTTPS."`
+	Protocol                string            `name:"protocol" env:"TNL_PROTOCOL" help:"Service protocol: http (default), tcp, mysql, or postgres. Set public: true on a configured binding for public endpoint access."`
 	TargetTLS               *bool             `name:"target-tls" help:"Verify publisher-to-target TLS using native protocol negotiation. Independent of visitor TLS."`
 	TargetTLSName           string            `name:"target-tls-name" env:"TNL_TARGET_TLS_NAME" help:"Hostname expected in the target's TLS certificate; defaults to the target host."`
 	EnrollmentKey           string            `name:"enroll-key" env:"TNL_ENROLL_KEY" help:"One-use publisher enrollment key; use - to read stdin."`
@@ -67,6 +67,9 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if flags.Install && flags.Detach {
 		return publisherCLIError("--install and --detach cannot be combined")
 	}
+	if !flags.Install && (flags.System || flags.ServiceName != "" || flags.SystemStateDir != "" || flags.ServerCAFile != "") {
+		return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
+	}
 	credentialOwned := flags.EnrollmentKey != "" || flags.PublisherIdentityID != "" || flags.PublisherCredentialFile != ""
 	if len(flags.PreferredRegions) != 0 && flags.Service != "" && !credentialOwned {
 		return publisherCLIError("--prefer-region requires an ad-hoc target or scoped publisher credentials; named publications use the project owner")
@@ -81,18 +84,26 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 		flags.Target = string(*resolved.Target)
 	}
-	if flags.service && !flags.Install && flags.Service != "" && !credentialOwned {
-		selected, err := resolveNamedPrivate(flags)
+	if !flags.Install && flags.Service != "" && !credentialOwned {
+		selected, err := namedInvocation(flags)
 		if err != nil {
 			return err
+		}
+		binding := selected.project.Config.Services[selected.service]
+		publicHTTP := config.Protocol(binding) == "http" && binding.Public != nil && *binding.Public
+		if flags.Open && !publicHTTP {
+			return publisherCLIError("--open requires a public HTTP service")
 		}
 		output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 		if err != nil {
 			return err
 		}
 		output.detachedCtx = ctx
+		if publicHTTP {
+			output.openURL = browserOpener(ctx, flags.Open, true)
+		}
 		defer func() { result = output.finish(ctx, result) }()
-		return runNamedPublish(ctx, selected.resolvedNamedInvocation, flags.StateDir, output)
+		return runNamedPublish(ctx, selected, flags.StateDir, output)
 	}
 	if flags.service || flags.Protocol != "" && flags.Protocol != "http" {
 		return runPrivatePublish(ctx, flags, stdout, stderr)
@@ -105,9 +116,6 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 			return runPublicationInstall(ctx, flags, stdout, stderr)
 		}
 		return runEnrolledBackgroundPublish(ctx, flags, selection, flags.backgroundPublishFlags, stdout, os.Stdin, nil)
-	}
-	if flags.System || flags.ServiceName != "" || flags.SystemStateDir != "" || flags.ServerCAFile != "" {
-		return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
 	}
 	output, err := newPublishOutput(flags.Output, "tnl publish", stdout, stderr, nil)
 	if err != nil {
@@ -122,24 +130,11 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	if err := selectPublishInspection(&flags, protocol); err != nil {
-		return err
-	}
-	if protocol != controlv1.Http && flags.Demo {
+	if protocol != controlv1.ServiceProtocolHTTP && flags.Demo {
 		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags, errors.New("TCP publication cannot run the demo"))
 	}
 	if err := validateTCPPublishOptions(flags, protocol); err != nil {
 		return err
-	}
-	if flags.Service != "" {
-		selected, err := resolveNamedPublic(flags)
-		if err != nil {
-			return err
-		}
-		if protocol == controlv1.Http {
-			output.openURL = browserOpener(ctx, flags.Open, true)
-		}
-		return runNamedPublish(ctx, selected.resolvedNamedInvocation, flags.StateDir, output)
 	}
 	if flags.Demo {
 		flags.projectRoot, err = currentProjectRoot(ctx)
@@ -166,6 +161,7 @@ func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstat
 func publicationPresentation(ctx context.Context, flags publishCommand, output *publishOutput) *invocation.Presentation {
 	return &invocation.Presentation{
 		Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped,
+		ProvisioningStalled: output.provisioningStalled, TransportFallback: output.transportFallback, TargetUnavailable: output.targetUnavailable,
 		Progress: func(p invocation.Progress) error { return output.integrationURLMessage(p.State, p.Hint, p.Details...) },
 		Warning: func(message string) error {
 			output.mu.Lock()
@@ -177,8 +173,5 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 		},
 		ConfigureBrowser: func(automated bool) { output.openURL = browserOpener(ctx, flags.Open, automated) },
 		Demo:             output.setDemo, GuestDemo: output.setGuestDemo, GuestShare: output.setGuestShare, DemoPing: output.demoPing, Logf: output.logf,
-		PublisherEvent: func(ctx context.Context, tunnel *clientstate.Tunnel, server string, event publisher.Event) error {
-			return handlePublisherEvent(ctx, tunnel, output, event)
-		},
 	}
 }

@@ -24,7 +24,7 @@ func (c renewalControl) RenewConnectorPeerPair(ctx context.Context, service stri
 func TestConnectorRefreshRenewsPinnedPairWithoutReselectionOrPermissionRPC(t *testing.T) {
 	f := newConnectorFixture(t, "quic")
 	var selections, permissions, renewals atomic.Int64
-	control, err := NewControlWithConfig(ControlConfig{Signer: f.ConnectorSigner, Pair: f.PrepareConnectorPeerPair, RebindPair: f.RebindConnectorPeerPair,
+	control, err := NewControlWithConfig(ControlConfig{Signer: f.ConnectorSigner, Pair: f.PrepareConnectorPeerPair, RebindPair: f.RebindConnectorPeerPair, RetirePair: f.RetireConnectorPeerPair,
 		Resolve: func(ctx context.Context, service string) (Run, error) {
 			if selections.Add(1) != 1 {
 				return Run{}, ErrServiceConnection
@@ -52,7 +52,7 @@ func TestConnectorRefreshRenewsPinnedPairWithoutReselectionOrPermissionRPC(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer p.Close(context.WithoutCancel(t.Context()))
 	p.mu.Lock()
 	// the same publisher report must not recover time already spent by its
 	// first observation, even when the later control reply has less transit.
@@ -120,6 +120,8 @@ func TestConnectorPairRenewalUsesShiftedAuthorityClock(t *testing.T) {
 	}
 	for _, shift := range []time.Duration{-time.Hour, time.Hour} {
 		t.Run(shift.String(), func(t *testing.T) {
+			previous := pair
+			previous.ObservedAt, previous.ExpiresAt = pair.ObservedAt.Add(shift), pair.ExpiresAt.Add(shift)
 			var reply controlv1.ConnectorPeerPairRenewal
 			control := renewalControl{renew: func(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 				reply, err = f.RenewConnectorPeerPair(ctx, service, body)
@@ -134,7 +136,7 @@ func TestConnectorPairRenewalUsesShiftedAuthorityClock(t *testing.T) {
 				return reply, nil
 			}}
 			before := time.Now()
-			renewed, until, err := renewConnectorPair(t.Context(), control, f.device, f.run, "renewal-owner", pair)
+			renewed, until, err := renewConnectorPair(t.Context(), control, f.device, f.run, "renewal-owner", previous)
 			if err != nil {
 				t.Fatal("live authority interval was compared with the local wall clock", err)
 			}

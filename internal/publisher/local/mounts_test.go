@@ -66,7 +66,7 @@ func TestAppWorkflowStaticMountPreservesTargetAndTLSName(t *testing.T) {
 	}
 	ca = string(material)
 	a.project.Config.Services = config.Services{
-		"web": {Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api", StripPrefix: true}}}},
+		"web": {Public: new(true), HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api", StripPrefix: true}}}},
 		"api": {Target: &config.ServiceTarget{Type: "address", Address: new(config.Target(target)), TLS: &config.TargetTLS{Hostname: new("target.internal"), CA: &ca}}},
 	}
 	mounts, err := a.resolveRuntimeMounts(t.Context(), a.project, "web")
@@ -116,12 +116,20 @@ func TestAppWorkflowEnrolledPreflightPreservesTLSName(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	f := publishingtest.New(t, testutil.PublishingHooks{})
-	publicURL, err := f.SavedPublicURL(ctx, controlv1.App, target)
+	material, err := os.ReadFile(ca)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, _ := f.Owner()
-	enrollment, err := owner.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: publicURL.TeamId, PublicUrlId: &publicURL.Id, Name: "tls", Kind: "installed"})
+	service, err := f.SavedService(ctx, "enrolled-tls", controlv1.ProjectServiceConfiguration{Target: "app", Public: new(true),
+		TargetTls: &controlv1.ProjectTargetTLS{Hostname: "target.internal", CaPem: new(string(material))}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := f.Owner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := owner.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, ServiceId: &service.Id, Name: "tls", Kind: "installed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +139,7 @@ func TestAppWorkflowEnrolledPreflightPreservesTLSName(t *testing.T) {
 	}
 	profile, _ := state.Server(ctx, f.URL)
 	authority, _ := clientauthority.New(f.URL, f.HTTP, "")
-	_, identity, err := publisheridentity.EnrollNative(ctx, profile, publisheridentity.NativeControl{PublicURLControl: owner}, authority, enrollment.EnrollmentKey)
+	_, identity, err := publisheridentity.EnrollNative(ctx, profile, publisheridentity.NativeControl{Services: owner}, authority, enrollment.EnrollmentKey)
 	if err != nil {
 		t.Fatal(err)
 	}

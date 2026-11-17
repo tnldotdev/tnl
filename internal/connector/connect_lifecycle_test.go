@@ -11,14 +11,16 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
-	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type connectServiceReaderFunc func(context.Context) ([]controlv1.Service, error)
+type connectServiceReaderFunc func(context.Context) ([]controlv1.ServiceSummary, error)
 
-func (f connectServiceReaderFunc) ListAvailableServices(ctx context.Context) ([]controlv1.Service, error) {
+func (f connectServiceReaderFunc) ListAvailableServices(ctx context.Context, path controlv1.ServiceAccessPath) ([]controlv1.ServiceSummary, error) {
+	if path != controlv1.ServiceAccessPathConnector {
+		return nil, errors.New("connector refresh requested public endpoint discovery")
+	}
 	return f(ctx)
 }
 
@@ -38,7 +40,7 @@ func TestConnectStartsBeforeAuthorization(t *testing.T) {
 }
 
 func TestConnectMetadataLifecycle(t *testing.T) {
-	for _, scenario := range []string{"tls-on-off", "tls-off-on", "public-to-private", "private-to-public", "wrapped", "joined", "revoked", "protocol-change", "protocol-constraint", "invalid-trust", "ordinary-error"} {
+	for _, scenario := range []string{"tls-on-off", "trust-revision", "public-to-private", "private-to-public", "wrapped", "joined", "joined-reloads", "revoked", "protocol-change", "protocol-constraint", "ordinary-error"} {
 		t.Run(scenario, func(t *testing.T) {
 			trust, err := targettrust.NewCache(nil).Capture(t.Context(), "", "localhost:443", config.TrustSource{CA: "system"})
 			if err != nil {
@@ -50,13 +52,11 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 			}
 			defer listener.Close()
 			job := installedjobs.Job{ServiceID: "exact-approved-id", IdentityID: "identity", Name: "database", Protocol: "tcp", TrustRevision: 1, Target: listener.Addr().String()}
-			service := controlv1.Service{Id: job.ServiceID, Name: job.Name, Protocol: "tcp", TrustRevision: 2}
+			service := controlv1.ServiceSummary{Id: job.ServiceID, Name: job.Name, Protocol: "tcp", TrustRevision: 2}
 			requested := ""
 			switch scenario {
 			case "tls-on-off":
 				job.Trust = &trust
-			case "tls-off-on":
-				service.TargetTls = publisheridentity.ServiceTargetTLS(&trust)
 			case "public-to-private", "private-to-public":
 				job.Endpoint = &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 25443, Public: scenario == "public-to-private"}
 				service.Endpoint = &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 25443, Public: scenario == "private-to-public"}
@@ -65,8 +65,6 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 				if scenario == "protocol-constraint" {
 					requested = "tcp"
 				}
-			case "invalid-trust":
-				service.TargetTls = &controlv1.ServiceTargetTLS{Hostname: "localhost", Digest: "invalid"}
 			}
 			state := ""
 			calls, reads, readyCalls, publicationReadyCalls := 0, 0, 0, 0
@@ -80,15 +78,15 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 					state = "ready"
 					publicationReadyCalls++
 				},
-				services: connectServiceReaderFunc(func(context.Context) ([]controlv1.Service, error) {
+				services: connectServiceReaderFunc(func(context.Context) ([]controlv1.ServiceSummary, error) {
 					reads++
 					if state != "starting" {
 						t.Fatal("refresh retained stale readiness")
 					}
 					if scenario == "revoked" {
-						return []controlv1.Service{{Id: "different-id", Name: job.Name, Protocol: "tcp", TrustRevision: 2}}, nil
+						return []controlv1.ServiceSummary{{Id: "different-id", Name: job.Name, Protocol: "tcp", TrustRevision: 2}}, nil
 					}
-					return []controlv1.Service{service}, nil
+					return []controlv1.ServiceSummary{service}, nil
 				}),
 				listen: func(_ context.Context, next installedjobs.Job) (net.Listener, error) {
 					if next.Target != job.Target || next.ServiceID != job.ServiceID || next.IdentityID != job.IdentityID {
@@ -123,6 +121,8 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 						reload = fmt.Errorf("runner: %w", reload)
 					case "joined":
 						reload = errors.Join(reload, io.ErrClosedPipe)
+					case "joined-reloads":
+						reload = errors.Join(reload, fmt.Errorf("second metadata observation: %w", &connectorstream.MetadataReloadError{ServiceID: job.ServiceID, ApprovedRevision: 1, SelectedRevision: 2}))
 					case "ordinary-error":
 						reload = stop
 					}
@@ -144,6 +144,10 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 			case "ordinary-error":
 				if !errors.Is(err, stop) || calls != 1 || reads != 0 {
 					t.Fatal("ordinary failure restarted the runner")
+				}
+			case "joined":
+				if !errors.Is(err, io.ErrClosedPipe) || !connectorstream.IsMetadataReload(err) || calls != 1 || reads != 0 {
+					t.Fatal("mixed metadata and cleanup failure restarted the runner or lost a cause", err)
 				}
 			default:
 				if !errors.Is(err, stop) || calls != 2 || reads != 1 {

@@ -39,6 +39,9 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Close)
+	if err := d.ConfigureIngressServicePorts(ctx, controlstate.PrimaryIngressPoolID, nil); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
 	session, err := controltest.Session(ctx, d, "example.test", time.Hour, 24*time.Hour, now)
 	if err != nil {
@@ -75,12 +78,12 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	}
 	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, Source: &testProjectSource, ExpectedRevision: 0, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"web": {Target: "http://app.internal:3000"}}}}
 	body.Configuration.Oauth = true
-	body.Configuration.Services["local-app"] = controlv1.ProjectServiceConfiguration{Target: "app", PublicUrl: &controlv1.ProjectServicePublicURL{}}
+	body.Configuration.Services["local-app"] = controlv1.ProjectServiceConfiguration{Target: "app", Public: new(true)}
 	body.Configuration.Services["local-private"] = controlv1.ProjectServiceConfiguration{Target: "app"}
 	body.Configuration.Webhooks = map[string]controlv1.ProjectWebhook{"payments": {Service: "local-app", Path: "/hooks/payments", Provider: controlv1.Custom}}
 	name, hostname, mode := "website", "upstream.internal", controlv1.Restricted
 	digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00" + hostname + "\x00"))
-	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{Name: &name, Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}}
+	body.Configuration.Services["public"] = controlv1.ProjectServiceConfiguration{Name: &name, Public: new(true), Target: "https://192.0.2.5:8443", TargetTls: &controlv1.ProjectTargetTLS{Hostname: hostname, Digest: hex.EncodeToString(digest[:])}, Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}}
 	body.Deployment = deployment
 	body.ServiceDeclarations = controlv1.ProjectServiceDeclarations{"web": "http", "public": "http", "local-app": "http", "local-private": "http"}
 	localBody := body
@@ -107,6 +110,13 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	}
 	if applied.Configuration.Services["public"].TargetTls.Digest != hex.EncodeToString(digest[:]) {
 		t.Fatal("control did not return the derived project trust digest")
+	}
+	for _, service := range applied.Services {
+		wantPublic := service.Service == "public"
+		public := service.Public != nil && *service.Public
+		if public != wantPublic || service.Port == nil || *service.Port != 443 {
+			t.Fatal("wire HTTP identity or exposure depended on an allocated port", service)
+		}
 	}
 	// another session can discover and read the project without any local state.
 	second, err := controltest.Session(ctx, d, "example.test", time.Hour, 24*time.Hour, now)
@@ -293,19 +303,59 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	}
 	_, managedErr := owner.ConfigureService(ctx, web.ServiceId, controlv1.UpdateServiceRequest{Protocol: controlv1.ServiceProtocolHTTP, PublisherPool: true, ExpectedTrustRevision: web.TrustRevision})
 	assertManaged(managedErr)
-	assertManaged(owner.DeleteService(ctx, web.ServiceId))
+	_, managedErr = owner.ConfigureService(ctx, web.ServiceId, controlv1.UpdateServiceRequest{
+		UnconditionalConfiguration: new(true),
+		Protocol:                   controlv1.ServiceProtocolHTTP, PublisherPool: true, ExpectedTrustRevision: web.TrustRevision,
+		Configuration: &controlv1.ProjectServiceConfiguration{Target: "localhost:4000"},
+	})
+	assertManaged(managedErr)
+	managedService, err := owner.GetService(ctx, web.ServiceId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertManaged(owner.DeleteService(ctx, web.ServiceId, controlv1.DeleteServiceParams{ExpectedServiceRevision: &managedService.ServiceRevision}))
 	assertManaged(owner.RevokePublisherGrant(ctx, team, member.PublisherIdentityId, web.GrantId))
 	_, managedErr = owner.CreatePublisherGrant(ctx, member.PublisherIdentityId, controlv1.CreatePublisherGrantRequest{TeamId: team, ServiceId: &web.ServiceId})
 	assertManaged(managedErr)
 	projection, err := owner.GetProjectPublicMetadata(ctx, team, project)
-	if err != nil || len(projection.Services) != 0 {
-		t.Fatal("service leaked into public URL metadata", projection, err)
+	if err != nil || len(projection.Services) != 1 {
+		t.Fatal("public metadata omitted the public binding or leaked private bindings", projection, err)
 	}
-	local, err := owner.RealizeLocalProjectService(ctx, project, "local-app", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-app"]})
-	if err == nil || local.ServiceId != "" {
-		t.Fatal("public realization accepted a missing exact public URL ID")
+	projected := projection.Services[0]
+	if projected.Service != "public" || projected.ServiceId != pub.ServiceId || projected.Port != 443 {
+		t.Fatal("public service projection changed resource identity or port", projected)
 	}
-	local, err = owner.RealizeLocalProjectService(ctx, project, "local-private", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-private"]})
+	publicRequest := controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-app"]}
+	publicLocal, err := owner.RealizeLocalProjectService(ctx, project, "local-app", publicRequest)
+	if err != nil || publicLocal.ServiceId == "" || publicLocal.Metadata == nil || publicLocal.Metadata.Endpoint == nil ||
+		!publicLocal.Metadata.Endpoint.Public || publicLocal.Metadata.Endpoint.Port != 443 || publicLocal.Metadata.Endpoint.Hostname == "" {
+		t.Fatal("public realization lost its server-selected service identity or exact endpoint", err)
+	}
+	retriedPublic, err := owner.RealizeLocalProjectService(ctx, project, "local-app", publicRequest)
+	if err != nil || retriedPublic.ServiceId != publicLocal.ServiceId || retriedPublic.Metadata == nil ||
+		retriedPublic.Metadata.Endpoint == nil || *retriedPublic.Metadata.Endpoint != *publicLocal.Metadata.Endpoint {
+		t.Fatal("public realization retry replaced the saved service or endpoint", err)
+	}
+	for _, field := range []string{"service_id", "public_url_id"} {
+		encoded, err := json.Marshal(publicRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var spoofed map[string]any
+		if err := json.Unmarshal(encoded, &spoofed); err != nil {
+			t.Fatal(err)
+		}
+		spoofed[field] = pub.ServiceId
+		encoded, err = json.Marshal(spoofed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := rawAPI.RealizeLocalProjectServiceWithBodyWithResponse(ctx, project, "local-app", "application/json", bytes.NewReader(encoded), auth)
+		if err != nil || response.StatusCode() != http.StatusBadRequest {
+			t.Fatal("local realization accepted caller-selected resource identity", field, err)
+		}
+	}
+	local, err := owner.RealizeLocalProjectService(ctx, project, "local-private", controlv1.RealizeLocalProjectServiceRequest{TeamId: team, SourceFingerprint: applied.SourceFingerprint, WorktreeKey: "checkout-a", Configuration: localBody.Configuration.Services["local-private"]})
 	if err != nil || local.ServiceId == "" || local.Metadata == nil || local.Metadata.Protocol != controlv1.ServiceProtocolHTTP {
 		t.Fatal("local realization wire lost its approved resource metadata", local, err)
 	}
@@ -335,7 +385,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if len(assignments.Services) != 2 || web.Configuration.Target != "app.internal:3000" || web.GrantId == "" || web.TrustRevision != 1 || web.Configuration.TargetTls != nil {
 		t.Fatalf("wire assignment: %+v", assignments)
 	}
-	if pub.ServiceKind != "service" || pub.Configuration.TargetTls == nil || pub.Configuration.TargetTls.Hostname != hostname || pub.Configuration.PublicUrl != nil || pub.Configuration.Http == nil || pub.Configuration.Http.Access.Mode == nil || *pub.Configuration.Http.Access.Mode != mode {
+	if pub.ServiceId == "" || pub.TrustRevision < 1 || pub.Configuration.TargetTls == nil || pub.Configuration.TargetTls.Hostname != hostname || pub.Configuration.Public != nil || pub.Configuration.Http == nil || pub.Configuration.Http.Access.Mode == nil || *pub.Configuration.Http.Access.Mode != mode {
 		t.Fatal("wire dropped service HTTP scope or target trust")
 	}
 	if pub.Configuration.Target != "192.0.2.5:8443" {

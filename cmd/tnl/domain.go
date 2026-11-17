@@ -10,6 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
@@ -155,14 +156,26 @@ func runDomainStatus(ctx context.Context, command domainStatusCommand, output, d
 	if err != nil {
 		return err
 	}
-	domain, err := current.Domain(command.Domain)
+	domainID := command.Domain
+	if !opaqueid.Valid(domainID, opaqueid.DomainPrefix) {
+		domain, err := current.Domain(command.Domain)
+		if err != nil {
+			return err
+		}
+		domainID = domain.Id
+	}
+	domain, err := session.Authenticated().Authority.GetTeamDomain(ctx, current.Team().Id, domainID)
 	if err != nil {
 		return err
 	}
-	return writeDomainStatus(output, domain, domain.Id == current.Team().DefaultDomainId)
+	return writeDomainObservation(output, "tnl domain status", domain, domain.Id == current.Team().DefaultDomainId, session.Authenticated().ServerEndpoint, current.Team().Id)
 }
 
 func writeDomainStatus(output io.Writer, domain authorityv1.Domain, isDefault bool) error {
+	return writeDomainObservation(output, "tnl domain status", domain, isDefault, "", "")
+}
+
+func writeDomainObservation(output io.Writer, command string, domain authorityv1.Domain, isDefault bool, server, team string) error {
 	marker := "no"
 	if isDefault {
 		marker = "yes"
@@ -174,9 +187,13 @@ func writeDomainStatus(output io.Writer, domain authorityv1.Domain, isDefault bo
 		clioutput.Field{Label: "id", Value: domain.Id},
 		clioutput.Field{Label: "default", Value: marker},
 	)}
-	blocks = append(blocks, domainDNSRecordBlocks(domain.RequiredRecords)...)
+	if domain.State == authorityv1.DomainStateReleasing || domain.State == authorityv1.DomainStateReleased {
+		blocks = append(blocks, domainReleaseBlocks(domain, server, team)...)
+	} else {
+		blocks = append(blocks, domainDNSRecordBlocks(domain.RequiredRecords)...)
+	}
 	state, footer := domainStatusPresentation(domain)
-	return writeHumanFrame(output, "tnl domain status", state, footer, blocks...)
+	return writeHumanFrame(output, command, state, footer, blocks...)
 }
 
 func domainStatusPresentation(domain authorityv1.Domain) (string, string) {
@@ -189,7 +206,16 @@ func domainStatusPresentation(domain authorityv1.Domain) (string, string) {
 	if domain.State == authorityv1.DomainStateFailed {
 		return "failed", "ask your team admin to check DNS setup"
 	}
-	return string(domain.State), "ready for public URLs"
+	if domainReleaseConfirmed(domain) {
+		return "released", "DNS authority release confirmed"
+	}
+	if domain.State == authorityv1.DomainStateReleasing || domain.State == authorityv1.DomainStateReleased {
+		return "releasing", "release is not complete; check status again"
+	}
+	if domain.State == authorityv1.DomainStateReady {
+		return "ready", "ready for public URLs"
+	}
+	return string(domain.State), "check domain status before use"
 }
 
 func domainDNSRecordBlocks(records []authorityv1.DNSRecord) []clioutput.Block {
@@ -245,8 +271,16 @@ func runDomainRelease(ctx context.Context, command domainReleaseCommand, output,
 		if err := session.Authenticated().Authority.ReleaseTeamDomain(ctx, current.Team().Id, domain.Id); err != nil {
 			return err
 		}
-		return writeHumanTransition(output, "tnl domain release", "released", domain.CanonicalDomain, "", "domain released", "",
-			clioutput.Field{Label: "id", Value: domain.Id})
+		observed, readErr := session.Authenticated().Authority.GetTeamDomain(ctx, current.Team().Id, domain.Id)
+		if readErr != nil {
+			// the mutation was acknowledged, but missing status is not completion.
+			domain.State, domain.Release = authorityv1.DomainStateReleasing, nil
+			return errors.Join(readErr, writeDomainObservation(output, "tnl domain release", domain, false, session.Authenticated().ServerEndpoint, current.Team().Id))
+		}
+		if observed.State != authorityv1.DomainStateReleasing && observed.State != authorityv1.DomainStateReleased {
+			return failure.Wrap("read domain release", failure.ServerResponseInvalid, errors.New("domain release acknowledgement was not followed by release state"))
+		}
+		return writeDomainObservation(output, "tnl domain release", observed, false, session.Authenticated().ServerEndpoint, current.Team().Id)
 	})
 }
 

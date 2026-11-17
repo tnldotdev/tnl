@@ -1,56 +1,42 @@
 package state
 
 import (
-	"crypto/sha256"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/config"
 )
 
 func TestIntegrationFeedbackCombinedBrowserShareUsesVerifiedAuthor(t *testing.T) {
-	f := newPublishRunFixture(t)
+	f := newServiceHTTPFixture(t)
 	d, now := f.database, f.now
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, f.setup.PublishRunID, now); err != nil {
-		t.Fatal(err)
-	}
-	preview, err := d.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "combined-feedback", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, TeamID: f.request.TeamID, IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2}, now); err != nil {
-		t.Fatal(err)
-	}
+	f.run = f.publish(t, f.service)
+	preview := f.preview(t, "combined-feedback", f.service)
 	identity := "00000000-0000-4000-8000-000000000002"
 	insertAuthorityIdentity(t, d, identity, "", false, now)
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.identities SET display_name='Verified reviewer' WHERE id=$1`, identity); err != nil {
 		t.Fatal(err)
 	}
-	session := browserTestControlSession(t, d, identity, now)
-	handoff, err := d.IssueBrowserHandoff(t.Context(), BrowserLoginAttempt{PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, ReturnPath: "/"}, BrowserAccessSession{IdentityID: identity, DisplayName: "Verified reviewer", AccessToken: session.AccessToken.String(), RefreshToken: session.RefreshToken.String(), AccessExpiresAt: now.Add(time.Hour), ExpiresAt: now.Add(time.Hour)}, now)
+	handoff, _ := f.browser(t, preview.ID, identity)
+	cookie, err := d.RedeemServiceBrowserHandoff(t.Context(), f.auth(), handoff.Token, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie, _, _, _, _, err := d.RedeemBrowserHandoff(t.Context(), f.authentication(), handoff.Token, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	browser, err := base64.RawURLEncoding.DecodeString(cookie)
+	browser, err := base64.RawURLEncoding.DecodeString(cookie.CookieSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
 	secret := []byte(strings.Repeat("s", 32))
-	share, err := d.CreateShare(t.Context(), CreateShareRequest{PreviewID: preview.ID, TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID, IdempotencyKey: "combined-share", SecretFingerprint: sha256.Sum256(secret), ExpiresAt: now.Add(time.Hour), PolicyRevision: 1, PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: f.setup.PublicURLID, ExpectedMutationRevision: 2}}}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	auth := f.authentication()
-	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", PublishRunAuthentication: &auth, BrowserCookieSecret: browser, ShareID: share.ID, ShareSecret: secret, IdentityID: "forged identity", DisplayName: "forged name", TeamMember: true, VisitAllowed: true}
-	thread, err := d.CreateFeedback(t.Context(), auth, CreateFeedbackRequest{PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "combined access", AuthorDisplayName: "unverified supplied name", Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: "combined-report", Actor: actor}, now)
+	share := f.share(t, preview.ID, "combined-share", secret, f.service)
+	auth := f.auth()
+	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ServiceRun: &auth, BrowserCookieSecret: browser, ShareID: share.ID, ShareSecret: secret, IdentityID: "forged identity", DisplayName: "forged name", TeamMember: true, VisitAllowed: true}
+	thread, err := d.CreateFeedback(t.Context(), auth, CreateFeedbackRequest{PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "combined access", Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: "combined-report", Actor: actor}, now)
 	if err != nil || thread.AuthorIdentityID != identity || thread.AuthorDisplayName != "Verified reviewer" || !thread.AuthorVerified {
 		t.Fatal("combined feedback trusted submitted author facts", thread, err)
 	}
@@ -58,7 +44,7 @@ func TestIntegrationFeedbackCombinedBrowserShareUsesVerifiedAuthor(t *testing.T)
 	if err != nil || event.AuthorIdentityID != identity || event.AuthorDisplayName != "Verified reviewer" || !event.AuthorVerified || event.ActorReference != "identity:"+identity {
 		t.Fatal("combined feedback append lost verified author", event, err)
 	}
-	if _, err := d.RevokeShare(t.Context(), share.ID, f.request.ActingIdentityID, now); err != nil {
+	if _, err := d.RevokeShare(t.Context(), share.ID, f.project.ActorID, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.AppendFeedback(t.Context(), AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply, Text: "revoked", IdempotencyKey: "revoked-combined-reply", Actor: actor}, now); !errors.Is(err, ErrFeedbackAccess) {
@@ -80,71 +66,68 @@ func feedbackTestSource(t *testing.T) json.RawMessage {
 	return source
 }
 
+func feedbackBrowserSecret(t *testing.T, ctx context.Context, f serviceHTTPFixture, preview, identity string) []byte {
+	t.Helper()
+	handoff, _ := f.browser(t, preview, identity)
+	session, err := f.database.RedeemServiceBrowserHandoff(ctx, f.auth(), handoff.Token, f.now)
+	if err != nil {
+		t.Fatal("redeem feedback author handoff", err)
+	}
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(session.CookieSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
-	f := newPublishRunFixture(t)
+	f := newServiceHTTPFixture(t)
 	database, now := f.database, f.now
-	preview, err := database.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "feedback", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, TeamID: f.request.TeamID,
-		IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2,
-	}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := database.EnableShareAccess(t.Context(), f.authentication(), preview.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, f.setup.PublishRunID, now); err != nil {
-		t.Fatal(err)
-	}
+	f.run = f.publish(t, f.service)
+	preview := f.preview(t, "feedback", f.service)
 	secret := []byte("0123456789abcdefghijklmnopqrstuv")
-	share, err := database.CreateShare(t.Context(), CreateShareRequest{
-		PreviewID: preview.ID, TeamID: f.request.TeamID, ActingIdentityID: f.request.ActingIdentityID,
-		IdempotencyKey: "feedback-share", SecretFingerprint: sha256.Sum256(secret), ExpiresAt: now.Add(time.Hour),
-		PolicyRevision: 1, PublicURLs: []AuthorizedSharePublicURL{{PublicURLID: f.setup.PublicURLID, ExpectedMutationRevision: 2}},
-	}, now)
+	share := f.share(t, preview.ID, "feedback-share", secret, f.service)
+	redemption, err := database.RedeemShare(t.Context(), f.auth(), share.ID, secret, nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie := []byte(strings.Repeat("c", 32))
-	hash := sha256.Sum256(cookie)
-	if _, err := controlstatedb.New(database.pool).InsertShareCookie(t.Context(), controlstatedb.InsertShareCookieParams{
-		TokenDigest: hash[:], PublicURLID: f.setup.PublicURLID, CreatedAt: timestamptz(now), ShareID: share.ID,
-	}); err != nil {
+	cookie, err := base64.RawURLEncoding.Strict().DecodeString(redemption.CookieSecret)
+	if err != nil {
 		t.Fatal(err)
 	}
-	auth := f.authentication()
-	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ShareID: share.ID, CookieSecret: cookie, PublishRunAuthentication: &auth, DisplayName: "forged verified author", TeamMember: true, VisitAllowed: true}
+	auth := f.auth()
+	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ShareID: share.ID, CookieSecret: cookie, ServiceRun: &auth, DisplayName: "forged verified author", TeamMember: true, VisitAllowed: true}
+	identity := finalVisitorIdentity(t, database, now, "feedback-author@example.test")
+	actor.BrowserCookieSecret = feedbackBrowserSecret(t, t.Context(), f, preview.ID, identity)
 	source := feedbackTestSource(t)
 	request := CreateFeedbackRequest{
 		PreviewID: preview.ID, Service: "web", PagePath: "/settings/profile", PageTitle: "Profile settings",
-		ReportText: "Save says it worked, but changes disappear after reload.", AuthorDisplayName: "Sam",
+		ReportText:     "Save says it worked, but changes disappear after reload.",
 		Anchor:         json.RawMessage(`{"schema_version":1,"selectors":["[data-testid=save]"],"x":0.5,"y":0.5}`),
 		Evidence:       json.RawMessage(`{"schema_version":1,"element":{"role":"button","label":"Save changes","html":"<button onclick='steal()' data-testid='save'>Save</button><script>steal()</script>"},"actions":[{"type":"click","label":"Save changes"}],"failed_requests":[{"method":"POST","path":"/api/profile","status":500,"duration_ms":184}]}`),
 		SourceAtReport: source, IdempotencyKey: "first-report", Actor: actor,
 	}
-	thread, err := database.CreateFeedback(t.Context(), f.authentication(), request, now)
+	thread, err := database.CreateFeedback(t.Context(), f.auth(), request, now)
 	if err != nil || thread.ID == "" || thread.SchemaVersion != 1 || thread.State != FeedbackOpen || !strings.Contains(string(thread.Evidence), "data-testid") ||
 		strings.Contains(string(thread.Evidence), "onclick") || strings.Contains(string(thread.Evidence), "<script>") {
 		t.Fatalf("submitted report = %+v, %v", thread, err)
 	}
-	firstPage, err := database.ListFeedbackEventsForTeam(t.Context(), f.request.TeamID, 0)
+	firstPage, err := database.ListFeedbackEventsForTeam(t.Context(), f.project.TeamID, 0)
 	if err != nil || len(firstPage.Events) != 1 || firstPage.Events[0].Type != FeedbackCreated || firstPage.Events[0].Cursor == 0 {
 		t.Fatalf("initial event = %+v, %v", firstPage, err)
 	}
-	if thread.AuthorVerified || thread.AuthorIdentityID != "" || firstPage.Events[0].AuthorDisplayName != "" || firstPage.Events[0].AuthorVerified || firstPage.Events[0].ActorReference != share.ID {
+	if !thread.AuthorVerified || thread.AuthorIdentityID != identity || thread.AuthorDisplayName == actor.DisplayName ||
+		firstPage.Events[0].AuthorDisplayName != thread.AuthorDisplayName || !firstPage.Events[0].AuthorVerified ||
+		firstPage.Events[0].ActorReference != "identity:"+identity {
 		t.Fatal("submitted reviewer assertions reached persistence", thread, firstPage.Events[0])
 	}
-	retry, err := database.CreateFeedback(t.Context(), f.authentication(), request, now.Add(time.Second))
+	retry, err := database.CreateFeedback(t.Context(), f.auth(), request, now.Add(time.Second))
 	if err != nil || retry.ID != thread.ID {
 		t.Fatalf("retried report = %+v, %v", retry, err)
 	}
 	altered := request
 	altered.ReportText = "different text"
-	if _, err := database.CreateFeedback(t.Context(), f.authentication(), altered, now); !errors.Is(err, ErrFeedbackIdempotency) {
+	if _, err := database.CreateFeedback(t.Context(), f.auth(), altered, now); !errors.Is(err, ErrFeedbackIdempotency) {
 		t.Fatalf("conflicting report retry = %v", err)
 	}
 	reply := AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply, Text: "Still seeing this?", IdempotencyKey: "reply", Actor: actor}
@@ -156,10 +139,10 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	if err != nil || duplicate.Cursor != answered.Cursor {
 		t.Fatalf("retried reply = %+v, %v", duplicate, err)
 	}
-	implementer := FeedbackActor{Kind: "implementer", IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2, DisplayName: "forged implementer name"}
+	implementer := FeedbackActor{Kind: "implementer", IdentityID: f.project.ActorID, DisplayName: "forged implementer name"}
 	wrongImplementer := AppendFeedbackRequest{
 		FeedbackID: thread.ID, Type: FeedbackUpdate, Text: "Updated the copy", SourceState: source,
-		IdempotencyKey: "wrong-owner", Actor: FeedbackActor{Kind: "implementer", IdentityID: "different-identity", PolicyRevision: 1, ExpectedMutationRevision: 2},
+		IdempotencyKey: "wrong-owner", Actor: FeedbackActor{Kind: "implementer", IdentityID: "different-identity"},
 	}
 	if _, err := database.AppendFeedback(t.Context(), wrongImplementer, now.Add(2*time.Second)); !errors.Is(err, ErrFeedbackAccess) {
 		t.Fatalf("unrelated implementer changed feedback: %v", err)
@@ -176,13 +159,33 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 		t.Fatal("implementer author was not derived from the transaction", updated)
 	}
 	resolve := AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackThreadResolved, Text: "Looks good", IdempotencyKey: "reviewer-resolve", Actor: actor}
-	if _, err := database.AppendFeedback(t.Context(), resolve, now.Add(4*time.Second)); err != nil {
+	resolution, err := database.AppendFeedback(t.Context(), resolve, now.Add(4*time.Second))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.AppendFeedback(t.Context(), AppendFeedbackRequest{
-		FeedbackID: thread.ID, Type: FeedbackReply, Text: "late", IdempotencyKey: "late", Actor: actor,
-	}, now.Add(5*time.Second)); !errors.Is(err, ErrFeedbackState) {
-		t.Fatalf("resolved thread received another reply: %v", err)
+	beforeReply, err := database.GetFeedback(t.Context(), thread.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replyWhileResolved := AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply,
+		Text: "One clarification without reopening", IdempotencyKey: "resolved-reply", Actor: actor}
+	clarification, err := database.AppendFeedback(t.Context(), replyWhileResolved, now.Add(5*time.Second))
+	if err != nil || clarification.Type != FeedbackReply || clarification.Cursor != resolution.Cursor+1 ||
+		!clarification.AuthorVerified || clarification.AuthorIdentityID != identity {
+		t.Fatalf("authorized resolved reply = %+v, %v", clarification, err)
+	}
+	duplicate, err = database.AppendFeedback(t.Context(), replyWhileResolved, now.Add(5*time.Second))
+	if err != nil || duplicate.Cursor != clarification.Cursor {
+		t.Fatalf("resolved reply retry appended another event: %+v, %v", duplicate, err)
+	}
+	afterReply, err := database.GetFeedback(t.Context(), thread.ID)
+	if err != nil || afterReply.State != FeedbackResolved || afterReply.MessageCount != beforeReply.MessageCount+1 ||
+		afterReply.LatestEventCursor != clarification.Cursor {
+		t.Fatalf("resolved reply changed status or lost activity: %+v, %v", afterReply, err)
+	}
+	afterReply.MessageCount, afterReply.LatestEventCursor = beforeReply.MessageCount, beforeReply.LatestEventCursor
+	if !reflect.DeepEqual(afterReply, beforeReply) {
+		t.Fatal("resolved reply rewrote the original report or status timestamp")
 	}
 	reopen := AppendFeedbackRequest{
 		FeedbackID: thread.ID, Type: FeedbackThreadReopened, Text: "One more suggestion",
@@ -212,7 +215,7 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	}, now.Add(6*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.RevokeShare(t.Context(), share.ID, f.request.ActingIdentityID, now.Add(7*time.Second)); err != nil {
+	if _, err := database.RevokeShare(t.Context(), share.ID, f.project.ActorID, now.Add(7*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.AppendFeedback(t.Context(), AppendFeedbackRequest{
@@ -220,67 +223,56 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 	}, now.Add(8*time.Second)); !errors.Is(err, ErrFeedbackAccess) {
 		t.Fatalf("revoked reviewer wrote feedback: %v", err)
 	}
-	events, err := database.ListFeedbackEventsForTeam(t.Context(), f.request.TeamID, firstPage.EventCursor)
-	if err != nil || len(events.Events) != 6 || events.EventCursor != events.Events[len(events.Events)-1].Cursor {
+	events, err := database.ListFeedbackEventsForTeam(t.Context(), f.project.TeamID, firstPage.EventCursor)
+	if err != nil || len(events.Events) != 7 || events.EventCursor != events.Events[len(events.Events)-1].Cursor {
 		t.Fatalf("resumed events = %+v, %v", events, err)
 	}
+	eventTypes := []FeedbackEventType{FeedbackReply, FeedbackUpdate, FeedbackThreadResolved, FeedbackReply,
+		FeedbackThreadReopened, FeedbackThreadResolved, FeedbackThreadReopened}
 	for index, event := range events.Events {
-		if event.Cursor != firstPage.EventCursor+uint64(index)+1 {
-			t.Fatalf("feedback cursor gap at %d: %+v", index, events.Events)
+		if event.Cursor != firstPage.EventCursor+uint64(index)+1 || event.Type != eventTypes[index] {
+			t.Fatalf("feedback cursor gap or reordered history at %d: %+v", index, events.Events)
 		}
 	}
-	listed, err := database.ListFeedbackForPage(t.Context(), preview.ID, f.setup.PublicURLID, "/settings/profile", "")
+	listed, err := database.ListFeedbackForPage(t.Context(), preview.ID, f.service.ID, "/settings/profile", "")
 	if err != nil || len(listed.Threads) != 1 || listed.Threads[0].State != FeedbackOpen {
 		t.Fatalf("page feedback = %+v, %v", listed, err)
 	}
-	if listed.Threads[0].MessageCount != 3 || listed.Threads[0].LatestEventCursor != events.EventCursor || listed.Threads[0].PageTitle != "Profile settings" {
+	if listed.Threads[0].MessageCount != 4 || listed.Threads[0].LatestEventCursor != events.EventCursor || listed.Threads[0].PageTitle != "Profile settings" {
 		t.Fatalf("summary activity = %+v", listed.Threads[0])
 	}
-	all, err := database.ListFeedbackForPublicURL(t.Context(), preview.ID, f.setup.PublicURLID, "", "open", "")
+	all, err := database.ListFeedbackForService(t.Context(), preview.ID, f.service.ID, "", "open", "")
 	if err != nil || len(all.Threads) != 1 {
 		t.Fatalf("all-page filter = %+v, %v", all, err)
 	}
-	closed, err := database.ListFeedbackForPublicURL(t.Context(), preview.ID, f.setup.PublicURLID, "", "resolved", "")
+	closed, err := database.ListFeedbackForService(t.Context(), preview.ID, f.service.ID, "", "resolved", "")
 	if err != nil || len(closed.Threads) != 0 {
 		t.Fatalf("resolved filter = %+v, %v", closed, err)
 	}
-	other, err := database.ListFeedbackForPublicURL(t.Context(), preview.ID, "url_other_host", "", "", "")
+	other, err := database.ListFeedbackForService(t.Context(), preview.ID, "svc_"+strings.Repeat("Z", 22), "", "", "")
 	if err != nil || len(other.Threads) != 0 {
 		t.Fatalf("hostname scope leaked feedback: %+v, %v", other, err)
 	}
 }
 
 func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
-	f := newPublishRunFixture(t)
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, f.setup.PublishRunID, f.now); err != nil {
-		t.Fatal(err)
-	}
-	preview, err := f.database.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "concurrent-reports", f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = f.database.AddPreviewPublicURL(t.Context(), AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: f.setup.PublicURLID, TeamID: f.request.TeamID,
-		IdentityID: f.request.ActingIdentityID, PolicyRevision: 1, ExpectedMutationRevision: 2,
-	}, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.public_urls SET access_mode='anonymous' WHERE id=$1`, f.setup.PublicURLID); err != nil {
-		t.Fatal(err)
-	}
+	f := newServiceHTTPFixture(t)
+	f.service = f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "anonymous"}})
+	f.run = f.publish(t, f.service)
+	preview := f.preview(t, "concurrent-reports", f.service)
+	browser := feedbackBrowserSecret(t, t.Context(), f, preview.ID, f.project.ActorID)
 	started := make(chan struct{})
 	results := make(chan error, 2)
 	source := feedbackTestSource(t)
 	for _, key := range []string{"first", "second"} {
 		go func() {
 			<-started
-			_, err := f.database.CreateFeedback(t.Context(), f.authentication(), CreateFeedbackRequest{
+			_, err := f.database.CreateFeedback(t.Context(), f.auth(), CreateFeedbackRequest{
 				PreviewID: preview.ID, Service: "web", PagePath: "/settings",
 				ReportText:     "The settings save is inconsistent",
 				Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
 				SourceAtReport: source, IdempotencyKey: key,
-				Actor: FeedbackActor{Kind: "reviewer", VisitAllowed: true, SourceIP: "192.0.2.9"},
+				Actor: FeedbackActor{Kind: "reviewer", VisitAllowed: true, SourceIP: "192.0.2.9", BrowserCookieSecret: browser},
 			}, f.now)
 			results <- err
 		}()
@@ -291,8 +283,86 @@ func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := f.database.ListFeedbackEventsForTeam(t.Context(), f.request.TeamID, 0)
+	page, err := f.database.ListFeedbackEventsForTeam(t.Context(), f.project.TeamID, 0)
 	if err != nil || len(page.Events) != 2 || page.Events[0].Cursor != 1 || page.Events[1].Cursor != 2 || page.EventCursor != 2 {
 		t.Fatalf("concurrent creation event cursors = %+v, %v", page, err)
+	}
+}
+
+func TestIntegrationFeedbackResolvedReplyRechecksAuthorAndPreviewAccess(t *testing.T) {
+	for _, change := range []string{"missing author", "no preview access", "share revoked", "share expired",
+		"author session revoked", "author session wrong service", "author policy", "preview removed"} {
+		t.Run(change, func(t *testing.T) {
+			f := newServiceHTTPFixture(t)
+			d, ctx := f.database, t.Context()
+			f.run = f.publish(t, f.service)
+			preview := f.preview(t, "resolved-access", f.service)
+			secret := []byte(strings.Repeat("s", 32))
+			share := f.share(t, preview.ID, "resolved-share", secret, f.service)
+			identity := finalVisitorIdentity(t, d, f.now, "resolved-reviewer@example.test")
+			cookie, session := finalBrowserSession(t, f, preview.ID, identity)
+			browser, err := base64.RawURLEncoding.Strict().DecodeString(cookie)
+			if err != nil {
+				t.Fatal(err)
+			}
+			auth := f.auth()
+			actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ServiceRun: &auth,
+				ShareID: share.ID, ShareSecret: secret, BrowserCookieSecret: browser}
+			thread, err := d.CreateFeedback(ctx, auth, feedbackProofRequest(t, preview.ID, actor, "report"), f.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolution, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackThreadResolved,
+				IdempotencyKey: "resolve", Actor: actor}, f.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := d.GetFeedback(ctx, thread.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			at, want := f.now, ErrFeedbackAccess
+			switch change {
+			case "missing author":
+				actor.BrowserCookieSecret = nil
+				want = ErrVisitorSignIn
+			case "no preview access":
+				actor.ShareID, actor.ShareSecret = "", nil
+			case "share revoked":
+				_, err = d.RevokeShare(ctx, share.ID, f.project.ActorID, f.now)
+			case "share expired":
+				_, err = d.pool.Exec(ctx, `UPDATE control.shares SET expires_at=$2 WHERE id=$1`, share.ID, f.now.Add(time.Second))
+				at = f.now.Add(2 * time.Second)
+			case "author session revoked":
+				err = d.RevokeControlSession(ctx, ControlPrincipal{IdentityID: identity, SessionID: session.SessionID}, f.now)
+				want = ErrVisitorSignIn
+			case "author session wrong service":
+				other := f
+				other.service = f.local(t, "other", nil)
+				other.run = f.publish(t, other.service)
+				otherPreview := other.preview(t, "other-preview", other.service)
+				actor.BrowserCookieSecret = feedbackBrowserSecret(t, ctx, other, otherPreview.ID, identity)
+				want = ErrVisitorSignIn
+			case "author policy":
+				_, err = d.SetTeamFeedbackPolicy(ctx, f.project.ActorID, f.project.TeamID, "team_members", f.now)
+			case "preview removed":
+				_, err = d.pool.Exec(ctx, `DELETE FROM control.preview_services WHERE preview_id=$1 AND service_id=$2`, preview.ID, f.service.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply,
+				Text: "Denied clarification", IdempotencyKey: "denied", Actor: actor}, at); !errors.Is(err, want) {
+				t.Fatal("resolved feedback bypassed current author or preview permission", err)
+			}
+			after, err := d.GetFeedback(ctx, thread.ID)
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatal("denied resolved reply changed the report, state, or activity", err)
+			}
+			history, err := d.ListFeedbackEventsForThread(ctx, thread.ID, 0)
+			if err != nil || len(history.Events) != 2 || history.EventCursor != resolution.Cursor {
+				t.Fatal("denied resolved reply appended history or consumed a cursor", err)
+			}
+		})
 	}
 }

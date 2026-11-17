@@ -53,6 +53,8 @@ type Snapshot struct {
 	System   bool
 	PEM      []byte
 	Digest   string
+	// hostname provenance is configuration intent, not additional trust material.
+	HostnameFromTarget bool `json:",omitempty"`
 }
 
 // CapturePEM validates publisher-discovered CA-only material through the same
@@ -89,6 +91,9 @@ func NewCache(client *http.Client) *Cache {
 		client = http.DefaultClient
 	}
 	copy := *client
+	if copy.Transport == nil {
+		copy.Transport = http.DefaultTransport
+	}
 	if transport, ok := copy.Transport.(*http.Transport); ok {
 		transport = transport.Clone()
 		if transport.TLSClientConfig != nil {
@@ -96,8 +101,6 @@ func NewCache(client *http.Client) *Cache {
 			transport.TLSClientConfig.InsecureSkipVerify = false
 		}
 		copy.Transport = transport
-	} else if copy.Transport == nil {
-		copy.Transport = http.DefaultTransport.(*http.Transport).Clone()
 	}
 	copy.Timeout = 10 * time.Second
 	copy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
@@ -127,7 +130,8 @@ func (c *Cache) Capture(ctx context.Context, root, target string, setting config
 		return Snapshot{}, ErrInvalidBundle
 	}
 	host = canonicalHostname(host)
-	snapshot := Snapshot{Hostname: host, System: setting.CA == "system"}
+	snapshot := Snapshot{Hostname: host, System: setting.CA == "system",
+		HostnameFromTarget: setting.CA == "system" && setting.Hostname == nil}
 	if !snapshot.System {
 		var data []byte
 		if strings.HasPrefix(setting.CA, "https://") {
@@ -361,5 +365,6 @@ func (s Snapshot) CAVerifier() (*tls.Config, error) {
 }
 
 func (s Snapshot) valid() bool {
-	return config.ValidTLSIdentity(s.Hostname) && s.Hostname == canonicalHostname(s.Hostname) && s.Digest == s.digest() && s.System != (len(s.PEM) != 0)
+	return config.ValidTLSIdentity(s.Hostname) && s.Hostname == canonicalHostname(s.Hostname) && s.Digest == s.digest() && s.System != (len(s.PEM) != 0) &&
+		(!s.HostnameFromTarget || s.System)
 }

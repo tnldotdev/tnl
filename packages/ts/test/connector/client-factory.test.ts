@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { TnlError } from "../../src/errors.js";
 import { clientFactory } from "../../src/internal/connector/client_factory.js";
 
 function deferred<Value>() {
@@ -12,6 +13,254 @@ function deferred<Value>() {
 }
 
 describe("ordinary client factories", () => {
+  test.each(["acquire", "create", "close"] as const)(
+    "an independent %s failure with the closure code remains observable",
+    async (phase) => {
+      const entered = deferred<void>();
+      const failed = deferred<number>();
+      const independent = new TnlError("sdk.client_closed");
+      const close = vi.fn(() => {
+        if (phase === "close") {
+          entered.resolve();
+          return failed.promise.then(() => {});
+        }
+        return undefined;
+      });
+      const factory = clientFactory(
+        async () => {
+          if (phase === "acquire") {
+            entered.resolve();
+            await failed.promise;
+          }
+          return { key: "a", connection: 1 };
+        },
+        {
+          create() {
+            if (phase === "create") {
+              entered.resolve();
+              return failed.promise;
+            }
+            return 1;
+          },
+          close,
+        },
+      );
+      const getter = factory().catch((cause: unknown) => cause);
+      if (phase === "close") await getter;
+      else await entered.promise;
+      const stopping = factory.close().catch((cause: unknown) => cause);
+      await entered.promise;
+      failed.reject(independent);
+      expect(await getter).toBe(phase === "close" ? 1 : independent);
+      expect(await stopping).toBe(independent);
+      expect(close).toHaveBeenCalledTimes(phase === "close" ? 1 : 0);
+    },
+  );
+
+  test("slow creation does not delay existing cleanup and late clients are closed once", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const entered = deferred<void>();
+    const created = deferred<string>();
+    const cleaned = deferred<void>();
+    let key = "a";
+    const close = vi.fn((value: string) => {
+      if (value === "b") cleaned.resolve();
+    });
+    const factory = clientFactory(async () => ({ key, connection: key }), {
+      create(value) {
+        if (value === "b") {
+          entered.resolve();
+          return created.promise;
+        }
+        return value;
+      },
+      close,
+    });
+    try {
+      await factory();
+      key = "b";
+      const getter = factory().catch((cause: unknown) => cause);
+      await entered.promise;
+      const closing = factory.close().catch((cause: unknown) => cause);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(close).toHaveBeenCalledExactlyOnceWith("a");
+      expect(await closing).toMatchObject({ name: "TimeoutError" });
+      expect(await getter).toMatchObject({ name: "TimeoutError" });
+      created.resolve("b");
+      await cleaned.promise;
+      await vi.advanceTimersByTimeAsync(0);
+      await factory.close();
+      expect(close.mock.calls).toEqual([["a"], ["b"]]);
+    } finally {
+      created.resolve("b");
+      vi.useRealTimers();
+    }
+  });
+
+  test.each(["create", "close"] as const)(
+    "late %s failures stay observable without duplicating in-flight callbacks",
+    async (phase) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      const entered = deferred<void>();
+      const late = deferred<number>();
+      const failure = new Error(`late ${phase} failure`);
+      const close = vi.fn(() => {
+        if (phase === "close") {
+          entered.resolve();
+          return late.promise.then(() => {});
+        }
+        return undefined;
+      });
+      const factory = clientFactory(async () => ({ key: "a", connection: 1 }), {
+        create() {
+          if (phase === "create") {
+            entered.resolve();
+            return late.promise;
+          }
+          return 1;
+        },
+        close,
+      });
+      try {
+        const getter = factory().catch((cause: unknown) => cause);
+        if (phase === "close") await getter;
+        else await entered.promise;
+        const closing = factory.close().catch((cause: unknown) => cause);
+        await entered.promise;
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(await closing).toMatchObject({ name: "TimeoutError" });
+        await expect(factory.close()).rejects.toMatchObject({ name: "TimeoutError" });
+        expect(close).toHaveBeenCalledTimes(phase === "close" ? 1 : 0);
+        late.reject(failure);
+        await getter;
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(factory.close()).rejects.toBe(failure);
+        expect(close).toHaveBeenCalledTimes(phase === "close" ? 1 : 0);
+      } finally {
+        late.resolve(1);
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test("slow native acquisition cannot delay cleanup of an existing client", async () => {
+    const entered = deferred<void>();
+    const selected = deferred<{ key: string; connection: number }>();
+    const cleaned = deferred<void>();
+    let slow = false;
+    const create = vi.fn((value: number) => value);
+    const close = vi.fn(() => cleaned.resolve());
+    const factory = clientFactory(
+      async () => {
+        if (!slow) return { key: "a", connection: 1 };
+        entered.resolve();
+        return selected.promise;
+      },
+      { create, close },
+    );
+    await factory();
+    slow = true;
+    const getter = factory().catch((cause: unknown) => cause);
+    await entered.promise;
+    const closing = factory.close();
+    await cleaned.promise;
+    expect(close).toHaveBeenCalledExactlyOnceWith(1);
+    selected.resolve({ key: "b", connection: 2 });
+    expect(await getter).toMatchObject({ code: "sdk.client_closed" });
+    await closing;
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test("a timeout retains an independent failure from another client's cleanup", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const entered = deferred<void>();
+    const late = deferred<string>();
+    const failure = new Error("existing client close failed");
+    let key = "a";
+    const close = vi.fn((value: string) => {
+      if (value === "a") throw failure;
+    });
+    const factory = clientFactory(async () => ({ key, connection: key }), {
+      create(value) {
+        if (value === "b") {
+          entered.resolve();
+          return late.promise;
+        }
+        return value;
+      },
+      close,
+    });
+    try {
+      await factory();
+      key = "b";
+      const getter = factory().catch((cause: unknown) => cause);
+      await entered.promise;
+      const closing = factory.close().catch((cause: unknown) => cause);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await closing).toMatchObject({
+        errors: [expect.objectContaining({ name: "TimeoutError" }), failure],
+      });
+      late.resolve("b");
+      await getter;
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(factory.close()).rejects.toBe(failure);
+      expect(close.mock.calls).toEqual([["a"], ["b"]]);
+    } finally {
+      late.resolve("b");
+      vi.useRealTimers();
+    }
+  });
+
+  test.each(["create", "close"])(
+    "one shutdown budget bounds an uncooperative driver %s callback",
+    async (phase) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      const entered = deferred<void>();
+      const release = deferred<number>();
+      const parent = Date.now() + 700;
+      const close = vi.fn(() => (phase === "close" ? release.promise.then(() => {}) : undefined));
+      const factory = clientFactory(
+        async () => ({ key: "a", connection: 1 }),
+        {
+          create: () => {
+            entered.resolve();
+            return phase === "create" ? release.promise : 1;
+          },
+          close,
+        },
+        () => parent,
+      );
+      try {
+        const getter = factory();
+        const observedGetter = getter.catch((cause: unknown) => cause);
+        await entered.promise;
+        if (phase === "close") await getter;
+        const closing = factory.close();
+        const observedClose = closing.catch((cause: unknown) => cause);
+        await vi.advanceTimersByTimeAsync(699);
+        let finished = false;
+        void closing.then(
+          () => {
+            finished = true;
+          },
+          () => {
+            finished = true;
+          },
+        );
+        expect(finished).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await observedClose).toMatchObject({ name: "TimeoutError" });
+        if (phase === "create")
+          expect(await observedGetter).toMatchObject({ name: "TimeoutError" });
+        release.resolve(1);
+        await expect(factory.close()).rejects.toMatchObject({ name: "TimeoutError" });
+      } finally {
+        release.resolve(1);
+        vi.useRealTimers();
+      }
+    },
+  );
   test("selects every getter but creates one ordinary client per exact binding", async () => {
     const acquired = vi.fn(async () => ({ key: "a", connection: { port: 1234 } }));
     const create = vi.fn((connection: { port: number }) => ({ connection, query: () => 42 }));

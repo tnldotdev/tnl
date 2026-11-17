@@ -3,30 +3,24 @@ package state
 import "testing"
 
 func TestPublicURLCreateTargetShape(t *testing.T) {
-	if !PublicURLServiceHTTP.ValidCreateTarget(PublicURLPurposeApp, "", false) {
-		t.Fatal("saved HTTP publisher-local target rejected")
-	}
-	for _, protocol := range []PublicURLServiceProtocol{"ssh", "postgres", "mysql", "redis", "tcp"} {
-		if protocol.Valid() || protocol.ValidCreateTarget(PublicURLPurposeApp, "", false) || protocol.ValidCreateTarget(PublicURLPurposeApp, "http://127.0.0.1:3000", false) {
-			t.Errorf("private protocol %q accepted as a public URL", protocol)
+	for _, protocol := range []string{"http", "tcp", "postgres", "mysql", "kubernetes"} {
+		for _, ephemeral := range []bool{false, true} {
+			for _, target := range []string{"", "localhost:3000", "app"} {
+				declaration := ProjectServiceConfiguration{Protocol: protocol, Target: target, Ephemeral: ephemeral}
+				_, err := normalizeServiceConfiguration("web", &declaration)
+				want := target == "localhost:3000" || protocol == "http" && target == "app"
+				if (err == nil) != want {
+					t.Errorf("%s target=%q ephemeral=%t: %v", protocol, target, ephemeral, err)
+				}
+			}
 		}
 	}
-	if PublicURLServiceHTTP.ValidCreateTarget(PublicURLPurposeApp, "", true) {
-		t.Fatal("ephemeral HTTP empty target accepted")
-	}
-	if !PublicURLServiceHTTP.ValidCreateTarget(PublicURLPurposeApp, "http://127.0.0.1:3000", true) {
-		t.Fatal("ephemeral HTTP target rejected")
-	}
-	for _, purpose := range []PublicURLPurpose{PublicURLPurposeApp, PublicURLPurposeAlias, PublicURLPurposeDemo, PublicURLPurposeOAuth, PublicURLPurposeWebhooks, "", "unknown"} {
-		for _, ephemeral := range []bool{false, true} {
-			integration := purpose == PublicURLPurposeOAuth || purpose == PublicURLPurposeWebhooks
-			want := !ephemeral && (purpose == PublicURLPurposeApp || purpose == PublicURLPurposeAlias || integration)
-			if got := PublicURLServiceHTTP.ValidCreateTarget(purpose, "", ephemeral); got != want {
-				t.Errorf("targetless %q ephemeral=%t: got %t, want %t", purpose, ephemeral, got, want)
-			}
-			if got := PublicURLServiceHTTP.ValidCreateTarget(purpose, "http://127.0.0.1:3000", ephemeral); got != (purpose.ValidForCreation() && !integration) {
-				t.Errorf("HTTP target for %q ephemeral=%t: got %t", purpose, ephemeral, got)
-			}
+	for _, protocol := range []string{"", "ssh", "redis", "unknown"} {
+		if protocol == "" {
+			continue
+		}
+		if _, err := normalizeServiceConfiguration("web", &ProjectServiceConfiguration{Protocol: protocol, Target: "localhost:3000"}); err == nil {
+			t.Errorf("unknown protocol %q accepted", protocol)
 		}
 	}
 }

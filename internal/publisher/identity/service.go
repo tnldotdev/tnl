@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -15,11 +16,13 @@ import (
 )
 
 type ServiceControl interface {
+	ControlURL() string
 	serviceRunControl
 	ServiceCertificateControl
 	serviceHTTPControl
+	serviceAuditControl
 	connectorPeerControl
-	GetPublisherService(context.Context, string) (controlv1.Service, error)
+	GetPublisherService(context.Context, string, string) (controlv1.Service, error)
 }
 
 type serviceRunControl interface {
@@ -44,11 +47,11 @@ func EnsureServiceOwner(ctx context.Context, state *clientstate.Store, control S
 	if _, err := ServiceTrust(service); err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
-	return ensureSelectedEnrollment(ctx, state, control, control, authority, enrollmentSelection{kind: "service", team: service.TeamId, id: service.Id})
+	return ensureSelectedEnrollment(ctx, state, control, NativeControl{Services: control}, authority, enrollmentSelection{kind: "service", team: service.TeamId, id: service.Id})
 }
 
 func (n *Native) serviceControl(serviceID string) (serviceRunControl, error) {
-	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID != serviceID {
+	if n == nil || n.selectedServiceID == "" || n.selectedServiceID != serviceID {
 		return nil, ErrScope
 	}
 	if n.Services == nil {
@@ -62,12 +65,19 @@ func (n *Native) PrepareServiceRun(ctx context.Context, serviceID, key, access s
 	if err != nil || access == "" {
 		return controlv1.ServiceRunPreparation{}, ErrScope
 	}
+	if err := n.renewRuntime(ctx); err != nil {
+		return controlv1.ServiceRunPreparation{}, err
+	}
 	service, err := n.SavedService(ctx)
 	if err != nil {
 		return controlv1.ServiceRunPreparation{}, err
 	}
 	if !sameServiceDeclaration(declaration, ServiceDeclaration(service)) {
 		return controlv1.ServiceRunPreparation{}, ErrScope
+	}
+	declaration.Traffic, err = serviceRunTraffic(n.traffic, declaration.Traffic)
+	if err != nil {
+		return controlv1.ServiceRunPreparation{}, err
 	}
 	return control.PrepareServiceRun(ctx, serviceID, key, access, declaration)
 }
@@ -92,37 +102,60 @@ func (n *Native) CloseServiceRun(ctx context.Context, serviceID, runID string, t
 	return control.CloseServiceRun(ctx, serviceID, runID, token)
 }
 
-// SavedService reads only the exact service selected by this signing
-// identity. a public URL or namespace grant cannot discover services.
+// SavedService reads only the selected service; control checks its current
+// permission using the credential's actual grant and signing key.
 func (n *Native) SavedService(ctx context.Context) (controlv1.Service, error) {
-	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID == "" {
+	if n == nil || n.selectedServiceID == "" {
 		return controlv1.Service{}, ErrScope
 	}
 	access, err := n.Access(ctx)
 	if err != nil {
 		return controlv1.Service{}, err
 	}
-	return n.GetPublisherService(ctx, access)
+	return n.GetPublisherService(ctx, n.selectedServiceID, access)
 }
 
-func (n *Native) GetPublisherService(ctx context.Context, access string) (controlv1.Service, error) {
-	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID == "" || access == "" {
+func (n *Native) GetPublisherService(ctx context.Context, serviceID, access string) (controlv1.Service, error) {
+	if n == nil || n.selectedServiceID == "" || n.selectedServiceID != serviceID || access == "" {
 		return controlv1.Service{}, ErrScope
 	}
 	if n.Services == nil {
 		return controlv1.Service{}, ErrScope
 	}
-	service, err := n.Services.GetPublisherService(ctx, access)
+	service, err := n.Services.GetPublisherService(ctx, serviceID, access)
 	if err != nil {
 		return service, err
 	}
-	if service.Id != n.identity.serviceID || service.TeamId != n.identity.teamID || !service.Enabled {
+	if service.Id != n.selectedServiceID || service.TeamId != n.identity.teamID || service.GuestId != n.identity.guestID || !service.Enabled {
+		return controlv1.Service{}, ErrScope
+	}
+	if n.identity.guestID != "" && (!service.Ephemeral || service.ExpiresAt == nil || !service.ExpiresAt.After(time.Now()) || service.ExpiresAt.After(n.identity.expiresAt)) {
 		return controlv1.Service{}, ErrScope
 	}
 	if _, err := ServiceTrust(service); err != nil {
 		return controlv1.Service{}, err
 	}
 	return service, nil
+}
+
+// ForService makes one independently bound worker. selection changes no grant
+// facts and authorizes nothing until control checks this exact service.
+func (n *Native) ForService(ctx context.Context, serviceID string) (*Native, controlv1.Service, error) {
+	if n == nil || !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) ||
+		n.selectedServiceID != "" && n.selectedServiceID != serviceID ||
+		n.identity.kind != "deployment_credential" && n.identity.kind != "namespace" && (n.identity.kind != "service" || n.identity.serviceID != serviceID) {
+		return nil, controlv1.Service{}, ErrScope
+	}
+	copy, err := n.Fork()
+	if err != nil {
+		return nil, controlv1.Service{}, err
+	}
+	copy.selectedServiceID = serviceID
+	service, err := copy.SavedService(ctx)
+	if err != nil {
+		return nil, controlv1.Service{}, err
+	}
+	return copy, service, nil
 }
 
 // ServiceTrust validates approved publisher-to-target metadata. connectors
@@ -186,8 +219,9 @@ func MatchServiceDeclaration(service controlv1.Service, protocol string, trust *
 }
 
 func sameServiceDeclaration(a, b controlv1.ServiceRunDeclaration) bool {
-	// placement is a run-local preference, not part of the saved target trust.
+	// placement and traffic are run-local choices, not saved target trust.
 	a.PreferredRegions, b.PreferredRegions = nil, nil
+	a.Traffic, b.Traffic = nil, nil
 	x, err := json.Marshal(a)
 	if err != nil {
 		return false

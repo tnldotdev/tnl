@@ -21,9 +21,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
-	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -39,6 +39,14 @@ type BackgroundSettings struct {
 }
 
 func ValidateBackground(flags BackgroundOptions, selection EnrolledSelection, background BackgroundSettings) error {
+	if flags.StreamCapacity < 0 || flags.StreamCapacity > 4096 {
+		return installedjobs.ErrScope
+	}
+	if flags.Traffic != nil {
+		if err := flags.Traffic.Validate(); err != nil {
+			return err
+		}
+	}
 	if flags.TargetTLS != nil && !*flags.TargetTLS && (flags.TargetTLSName != "" || flags.TargetCAFile != "" || strings.HasPrefix(flags.Target, "https://")) {
 		return publisherCLIError("target TLS cannot be disabled while target trust is configured")
 	}
@@ -82,6 +90,33 @@ func InstallEnrolled(ctx context.Context, flags BackgroundOptions, selection Enr
 		}
 		flags.ServerURL = f.ControlURL
 	}
+	// a fully specified fixed target needs no credential or local store to prove
+	// availability. saved service trust is still checked after exact selection.
+	protocol := controlv1.ServiceProtocol(flags.Protocol)
+	fixed := flags.Service == ""
+	if flags.Service != "" {
+		if definition, found := flags.Project.Config.Services[flags.Service]; found {
+			protocol = controlv1.ServiceProtocol(config.Protocol(definition))
+			fixed = config.TargetType(definition) == "address"
+		}
+	}
+	if fixed && protocol.Valid() {
+		selected := flags.ServiceOptions
+		if strings.HasPrefix(flags.Target, "https://") && selected.TargetTLS == nil {
+			selected.TargetTLS = new(true)
+		}
+		trust, err := CaptureServiceTargetTrust(ctx, selected, protocol, flags.Target)
+		if err != nil {
+			return err
+		}
+		plan := targetplan.TargetPlan{Protocol: config.ProtocolName(protocol), Target: flags.Target, Trust: trust}
+		if err := plan.Normalize(); err != nil {
+			return err
+		}
+		if err := targetplan.PreflightPrivate(ctx, plan); err != nil {
+			return err
+		}
+	}
 	if flags.Service != "" && flags.ServerURL == "" && !background.System {
 		server, state, err := resolveServer(ctx, flags.StateDir, "")
 		if err != nil {
@@ -94,19 +129,6 @@ func InstallEnrolled(ctx context.Context, flags BackgroundOptions, selection Enr
 	}
 	if err := ValidateBackground(flags, selection, background); err != nil {
 		return err
-	}
-	if flags.Protocol == "" || flags.Protocol == "http" {
-		target, err := targetplan.NormalizePublicAddress(flags.Target, controlv1.Http)
-		if err != nil {
-			return err
-		}
-		trust, err := publicTargetOptions(ctx, flags.PublicOptions, target)
-		if err != nil {
-			return err
-		}
-		if err := publisherproxy.PreflightWithOptions(ctx, target, trust); err != nil {
-			return err
-		}
 	}
 	root, err := clientStateRoot(flags.StateDir)
 	if err != nil {
@@ -131,7 +153,6 @@ func InstallEnrolled(ctx context.Context, flags BackgroundOptions, selection Enr
 	if err != nil {
 		return err
 	}
-	job.VerifyReadiness = job.Kind == installedjobs.KindPublicURL
 	if executor != nil {
 		options.BinarySource, err = os.Executable()
 		if err != nil {
@@ -146,35 +167,32 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 	if err := ValidateBackground(flags, selection, background); err != nil {
 		return err
 	}
-	job := installedjobs.Job{TelemetryDisabled: flags.TelemetryDisabled, Kind: installedjobs.KindPublicURL, Name: background.ServiceName, Server: flags.ServerURL, Target: flags.Target, Protocol: config.ProtocolName(flags.Protocol), TargetTLSName: flags.TargetTLSName}
+	job := installedjobs.Job{TelemetryDisabled: flags.TelemetryDisabled, Kind: installedjobs.KindService, Name: background.ServiceName, Server: flags.ServerURL, Target: flags.Target, Protocol: config.ProtocolName(flags.Protocol)}
 	job.ReadinessPath = flags.ReadinessPath
-	job.Limits = flags.Limits
+	job.StreamCapacity, job.Traffic = flags.StreamCapacity, flags.Traffic
+	if flags.Service != "" {
+		effective, err := flags.Project.EffectiveService(flags.Service)
+		if err != nil {
+			return err
+		}
+		if job.Traffic == nil {
+			job.Traffic, err = config.ResolveTrafficSelection(effective.Traffic)
+			if err != nil {
+				return err
+			}
+		}
+		if job.ReadinessPath == "" && effective.HTTP != nil && effective.HTTP.Readiness != nil {
+			job.ReadinessPath = effective.HTTP.Readiness.Path
+		}
+	}
 	job.PreferredRegions = slices.Clone(flags.PreferredRegions)
 	var err error
 	job.Server, err = clientstate.CanonicalServer(job.Server)
 	if err != nil {
 		return installedjobs.ErrScope
 	}
-	caPath := flags.TargetCAFile
-	if caPath != "" && !filepath.IsAbs(caPath) && flags.ProjectRoot != "" {
-		caPath = filepath.Join(flags.ProjectRoot, caPath)
-	}
-	job.TargetCAPEM, err = setup.ReadTrust(caPath)
-	if err != nil {
-		return err
-	}
-	trust, err := configuredTargetTrust(ctx, flags.Project, flags.Service, flags.Target)
-	if err != nil {
-		return err
-	}
-	if trust != nil {
-		job.TargetCAPEM, job.TargetTLSName = trust.PEM, trust.Hostname
-	}
 	job.ServerCAPEM, err = setup.ReadTrust(background.ServerCAFile)
 	if err != nil {
-		return err
-	}
-	if err := installedjobs.ValidateTrust(job.TargetCAPEM); err != nil {
 		return err
 	}
 	if err := installedjobs.ValidateTrust(job.ServerCAPEM); err != nil {
@@ -188,7 +206,7 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 	var identity authorityv1.PublisherEnrollmentResult
 	var private ed25519.PrivateKey
 	var profile *clientstate.Store
-	var publicURL controlv1.PublicURL
+	var service controlv1.Service
 	var serviceScope InstallScope
 	if flags.Service != "" && (selection.EnrollmentKey != "" || selection.PublisherIdentityID != "" || selection.PublisherCredentialFile != "") {
 		serviceScope, err = ResolveConfiguredInstallScope(ctx, flags, nil)
@@ -197,13 +215,10 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 		}
 	}
 	if selection.EnrollmentKey == "" && selection.PublisherIdentityID == "" && selection.PublisherCredentialFile == "" {
-		native, identity, private, publicURL, err = selectConfiguredInstalledPublisher(ctx, flags, job.Server, control.NativeControl, authority)
+		native, identity, private, service, err = selectConfiguredInstalledPublisher(ctx, flags, job.Server, control.NativeControl, authority)
 		if err != nil {
 			return err
 		}
-		// implicit selection already matched the resolved hostname, team,
-		// domain and grant before returning this saved URL.
-		serviceScope = InstallScope{Hostname: publicURL.CanonicalHostname, TeamID: identity.TeamId, DomainID: publicURL.DomainId}
 	} else {
 		profile, err = registry.Profile(ctx, job.Server)
 		if err != nil {
@@ -253,91 +268,54 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 			return err
 		}
 	}
-	if identity.Kind == authorityv1.Service {
-		flags.ConfiguredPrivate = true
-		if identity.ServiceId == nil || flags.Service != "" {
-			return installedjobs.ErrScope
-		}
-		job.Kind, job.ServiceID = installedjobs.KindService, *identity.ServiceId
-		job.ReadinessPath = ""
-		job.ID = installedjobs.ServiceJobKey(job.Server, job.ServiceID)
-		service, err := native.SavedService(ctx)
-		if err != nil {
-			return err
-		}
-		if err := validateProfileService(service); err != nil {
-			return failure.Wrap("read service endpoint", failure.ServerResponseInvalid, err)
-		}
-		if job.Protocol != "" && string(job.Protocol) != string(service.Protocol) {
-			return installedjobs.ErrScope
-		}
-		job.Protocol = config.ProtocolName(service.Protocol)
-		if flags.SelectProtocol != nil {
-			job.Limits, err = flags.SelectProtocol(string(job.Protocol), true)
-			if err != nil {
-				return err
-			}
-		}
-		job.Trust, err = publisheridentity.ServiceTrust(service)
-		if err != nil {
-			return err
-		}
-		if flags.TargetTLS != nil || flags.TargetTLSName != "" || flags.TargetCAFile != "" {
-			job.Trust, err = CaptureServiceTargetTrust(ctx, flags.ServiceOptions, service.Protocol, job.Target)
-			if err != nil {
-				return err
-			}
-			if err := publisheridentity.MatchServiceDeclaration(service, string(job.Protocol), job.Trust); err != nil {
-				return err
-			}
-		}
-		job.TargetTLSName, job.TargetCAPEM = "", nil
-		if err := targetplan.PreflightPrivate(ctx, job.TargetPlan()); err != nil {
-			return err
-		}
-		job.TrustRevision, job.PublisherPool = service.TrustRevision, service.PublisherPool
-		if private == nil {
-			_, private, err = SigningIdentity(ctx, profile, identity.ClientId)
-			if err != nil {
-				return err
-			}
-		}
-		job.PublisherIdentityID, job.GrantID = identity.ClientId, identity.GrantId
-		if err := registry.Install(ctx, job, identity, private); err != nil {
-			return err
-		}
-		if installedID != nil {
-			*installedID = job.ID
-		}
-		return nil
-	}
-	if publicURL.Id == "" {
-		publicURL, err = native.SavedPublicURL(ctx)
-		if err != nil {
-			return err
-		}
-	} // namespace enrollment cannot become an installed saved URL job.
-	if flags.RequirePostQuantum != nil && *flags.RequirePostQuantum != publicURL.RequirePostQuantum {
-		return failure.Wrap("select public HTTPS policy", failure.PublisherGrantMismatch, errors.New("public HTTPS requirement differs from the saved public URL; update it with a manager sign-in"))
-	}
-	if publicURL.Ephemeral || publicURL.Purpose != controlv1.App || publicURL.ServiceProtocol != controlv1.Http {
+	if identity.Kind != authorityv1.Service || identity.ServiceId == nil {
 		return installedjobs.ErrScope
 	}
-	if flags.Service != "" && !serviceScope.Matches(publicURL, identity) {
-		return failure.Wrap("select installed service", failure.PublisherGrantMismatch, errors.New("grant differs from configured public URL"))
-	}
-	if flags.Protocol != "" && flags.Protocol != string(publicURL.ServiceProtocol) {
-		return installedjobs.ErrScope
-	}
-	job.Protocol = config.ProtocolHTTP
-	if flags.SelectProtocol != nil {
-		if _, err := flags.SelectProtocol(string(job.Protocol), false); err != nil {
+	job.ServiceID = *identity.ServiceId
+	job.ID = installedjobs.ServiceJobKey(job.Server, job.ServiceID)
+	if service.Id == "" {
+		service, err = native.SavedService(ctx)
+		if err != nil {
 			return err
 		}
 	}
-	job.Target, err = targetplan.EnrolledAddress(publicURL, flags.Target)
+	if err := validateProfileService(service); err != nil {
+		return failure.Wrap("read service endpoint", failure.ServerResponseInvalid, err)
+	}
+	if service.Ephemeral || job.Protocol != "" && string(job.Protocol) != string(service.Protocol) || flags.Service != "" && serviceScope.Service != "" && !serviceScope.Matches(service, identity) {
+		return installedjobs.ErrScope
+	}
+	job.Protocol = config.ProtocolName(service.Protocol)
+	if flags.RequirePostQuantum != nil && *flags.RequirePostQuantum != service.RequirePostQuantum {
+		return failure.Wrap("select visitor TLS policy", failure.PublisherGrantMismatch, errors.New("saved service post-quantum requirement differs; update it with a manager sign-in"))
+	}
+	job.Trust, err = publisheridentity.ServiceTrust(service)
 	if err != nil {
 		return err
+	}
+	if flags.Service != "" || flags.TargetTLS != nil || flags.TargetTLSName != "" || flags.TargetCAFile != "" {
+		job.Trust, err = CaptureServiceTargetTrust(ctx, flags.ServiceOptions, service.Protocol, job.Target)
+		if err != nil {
+			return err
+		}
+		if err := publisheridentity.MatchServiceDeclaration(service, string(job.Protocol), job.Trust); err != nil {
+			return err
+		}
+	}
+	if job.Protocol != config.ProtocolHTTP {
+		if job.ReadinessPath != "" {
+			return installedjobs.ErrScope
+		}
+	} else if job.Trust != nil && !strings.Contains(job.Target, "://") {
+		job.Target = "https://" + job.Target
+	}
+	if err := targetplan.PreflightPrivate(ctx, job.TargetPlan()); err != nil {
+		return err
+	}
+	job.TrustRevision, job.PublisherPool, job.Endpoint = service.TrustRevision, service.PublisherPool, service.Endpoint
+	if flags.Service != "" {
+		project := flags.Project
+		job.Project, job.ProjectService = &project, flags.Service
 	}
 	// load the completed enrollment without exporting native adapter private keys.
 	// the final job-scoped key remains authenticated by its own public binding.
@@ -351,8 +329,7 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 		}
 		private = ed25519.PrivateKey(saved.SigningKey)
 	}
-	job.PublisherIdentityID, job.GrantID, job.PublicURLID = identity.ClientId, identity.GrantId, publicURL.Id
-	job.ID = installedjobs.PublicURLJobKey(job.Server, job.PublicURLID)
+	job.PublisherIdentityID, job.GrantID = identity.ClientId, identity.GrantId
 	if err := registry.Install(ctx, job, identity, private); err != nil {
 		return err
 	}
@@ -362,113 +339,117 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 	return nil
 }
 
-// this never creates or edits a public URL. the project inventory only narrows
+// this never creates or edits a service. the project inventory only narrows
 // candidates; the saved scoped identity must sign a current read of its exact
-// public URL before its key can be copied into user service state.
-func selectConfiguredInstalledPublisher(ctx context.Context, flags BackgroundOptions, server string, control publisheridentity.NativeControl, authority publisheridentity.EnrollmentAuthority) (*publisheridentity.Native, authorityv1.PublisherEnrollmentResult, ed25519.PrivateKey, controlv1.PublicURL, error) {
+// service before its key can be copied into user service state.
+func selectConfiguredInstalledPublisher(ctx context.Context, flags BackgroundOptions, server string, control publisheridentity.NativeControl, authority publisheridentity.EnrollmentAuthority) (*publisheridentity.Native, authorityv1.PublisherEnrollmentResult, ed25519.PrivateKey, controlv1.Service, error) {
 	root, err := clientStateRoot(flags.StateDir)
 	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, nil, controlv1.PublicURL{}, err
+		return nil, authorityv1.PublisherEnrollmentResult{}, nil, controlv1.Service{}, err
 	}
 	database, err := clientstate.Open(ctx, root)
 	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, nil, controlv1.PublicURL{}, err
+		return nil, authorityv1.PublisherEnrollmentResult{}, nil, controlv1.Service{}, err
 	}
 	defer database.Close()
-	ids, err := database.KnownProjectURLs(ctx, flags.ProjectRoot, server)
+	ids, err := database.KnownProjectServices(ctx, flags.ProjectRoot, server)
 	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, nil, controlv1.PublicURL{}, err
+		return nil, authorityv1.PublisherEnrollmentResult{}, nil, controlv1.Service{}, err
 	}
 	profile, err := database.Server(ctx, server)
 	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, nil, controlv1.PublicURL{}, err
+		return nil, authorityv1.PublisherEnrollmentResult{}, nil, controlv1.Service{}, err
 	}
 	scope, err := ResolveConfiguredInstallScope(ctx, flags, database)
 	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, nil, controlv1.PublicURL{}, err
+		return nil, authorityv1.PublisherEnrollmentResult{}, nil, controlv1.Service{}, err
 	}
 	return SelectConfiguredPublisherCandidates(ctx, server, profile, ids, scope, control, authority)
 }
 
-func SelectConfiguredPublisherCandidates(ctx context.Context, server string, profile *clientstate.Store, ids []string, scope InstallScope, control publisheridentity.NativeControl, authority publisheridentity.EnrollmentAuthority) (*publisheridentity.Native, authorityv1.PublisherEnrollmentResult, ed25519.PrivateKey, controlv1.PublicURL, error) {
+func SelectConfiguredPublisherCandidates(ctx context.Context, server string, profile *clientstate.Store, ids []string, scope InstallScope, control publisheridentity.NativeControl, authority publisheridentity.EnrollmentAuthority) (*publisheridentity.Native, authorityv1.PublisherEnrollmentResult, ed25519.PrivateKey, controlv1.Service, error) {
 	missing := failure.Wrap("select installed publisher", failure.InstalledPublisherSelectionMissing, errors.New("no saved scoped grant matches this configured service"))
 	var found *publisheridentity.Native
 	var selected authorityv1.PublisherEnrollmentResult
 	var key ed25519.PrivateKey
-	var savedURL controlv1.PublicURL
+	var savedService controlv1.Service
+	if profile == nil || len(ids) > 1024 {
+		return nil, selected, nil, savedService, installedjobs.ErrScope
+	}
+	seen := make(map[string]bool, len(ids))
 	for _, id := range ids {
-		selection := ProjectPublisherScope(server, id)
+		if !opaqueid.Valid(id, opaqueid.ServicePrefix) {
+			return nil, selected, nil, savedService, installedjobs.ErrScope
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		selection := "project-publisher:service:" + id
 		saved, exists, err := profile.SelectedPublisherIdentity(ctx, "project", selection)
 		if err != nil {
-			return nil, selected, nil, savedURL, err
+			return nil, selected, nil, savedService, err
 		}
 		if !exists {
 			continue
 		}
 		var identity authorityv1.PublisherEnrollmentResult
-		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID || identity.PublicUrlId == nil || *identity.PublicUrlId != id || identity.Kind != authorityv1.SavedPublicUrl {
-			return nil, selected, nil, savedURL, installedjobs.ErrScope
+		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID || identity.ServiceId == nil || *identity.ServiceId != id || identity.Kind != authorityv1.Service {
+			return nil, selected, nil, savedService, installedjobs.ErrScope
 		}
 		native, err := publisheridentity.NewNative(control, authority, identity, saved.SigningKey)
 		if err != nil {
-			return nil, selected, nil, savedURL, err
+			return nil, selected, nil, savedService, err
 		}
-		item, err := native.SavedPublicURL(ctx)
+		item, err := native.SavedService(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, selected, nil, savedURL, ctx.Err()
+				return nil, selected, nil, savedService, ctx.Err()
 			}
 			// another configured service may have an expired or revoked grant.
-			// it must not prevent selecting a different, live saved URL.
+			// it must not prevent selecting a different, live saved service.
 			continue
 		}
 		if item.Id != id {
-			return nil, selected, nil, savedURL, installedjobs.ErrScope
+			return nil, selected, nil, savedService, installedjobs.ErrScope
 		}
-		if !scope.Matches(item, identity) {
+		if item.Ephemeral || !scope.Matches(item, identity) {
 			continue
 		}
 		if found != nil {
-			return nil, selected, nil, savedURL, publisherCLIError("more than one saved scoped grant matches this service; select --publisher-identity explicitly")
+			return nil, selected, nil, savedService, publisherCLIError("more than one saved scoped grant matches this service; select --publisher-identity explicitly")
 		}
-		found, selected, key, savedURL = native, identity, ed25519.PrivateKey(saved.SigningKey), item
+		found, selected, key, savedService = native, identity, ed25519.PrivateKey(saved.SigningKey), item
 	}
 	if found == nil {
-		return nil, selected, nil, savedURL, missing
+		return nil, selected, nil, savedService, missing
 	}
-	return found, selected, key, savedURL, nil
+	return found, selected, key, savedService, nil
 }
 
 type InstallScope struct {
-	Hostname string
-	TeamID   string
-	DomainID string
+	Hostname                                            string
+	TeamID                                              string
+	DomainID                                            string
+	ProjectKey, SourceFingerprint, WorktreeKey, Service string
+	Protocol                                            string
 }
 
-func (scope InstallScope) Matches(item controlv1.PublicURL, identity authorityv1.PublisherEnrollmentResult) bool {
-	return scope.Hostname != "" && item.CanonicalHostname == scope.Hostname &&
-		identity.PublicUrlId != nil && *identity.PublicUrlId == item.Id && identity.TeamId == item.TeamId &&
-		(scope.TeamID == "" || scope.TeamID == item.TeamId) && (scope.DomainID == "" || scope.DomainID == item.DomainId)
+func (scope InstallScope) Matches(item controlv1.Service, identity authorityv1.PublisherEnrollmentResult) bool {
+	return item.Endpoint != nil && item.Source != nil && scope.ProjectKey != "" && scope.SourceFingerprint != "" && scope.WorktreeKey != "" && scope.Service != "" &&
+		item.Source.ProjectKey == scope.ProjectKey && item.Source.SourceFingerprint == scope.SourceFingerprint && item.Source.WorktreeKey == scope.WorktreeKey && item.Source.Service == scope.Service &&
+		(scope.Hostname == "" || item.Endpoint.Hostname == scope.Hostname) && string(item.Protocol) == scope.Protocol &&
+		identity.Kind == authorityv1.Service && identity.ServiceId != nil && *identity.ServiceId == item.Id && identity.TeamId == item.TeamId &&
+		(scope.TeamID == "" || scope.TeamID == item.TeamId) && (scope.DomainID == "" || item.DomainId != nil && scope.DomainID == *item.DomainId)
 }
 
-// a full configured public URL selects one hostname without a login session.
-// generated names require the current selected team and ready domain so a
-// different team's or worktree's same-label URL cannot be installed.
+// configured selection binds the source and worktree as well as the current
+// team and domain. a matching label alone cannot select another saved service.
 func ResolveConfiguredInstallScope(ctx context.Context, flags BackgroundOptions, state *clientstate.Database) (InstallScope, error) {
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	effective, err := project.EffectiveService(flags.Service)
 	if err != nil || flags.Service == "" {
 		return InstallScope{}, installedjobs.ErrScope
-	}
-	if effective.Tunnel != nil && effective.Tunnel.PublicURL != nil && effective.Team == nil {
-		hostname, err := naming.ParseExactPublicURL(*effective.Tunnel.PublicURL)
-		if err != nil {
-			return InstallScope{}, installedjobs.ErrScope
-		}
-		if effective.Tunnel.Domain != nil && hostname != *effective.Tunnel.Domain && !strings.HasSuffix(hostname, "."+*effective.Tunnel.Domain) {
-			return InstallScope{}, installedjobs.ErrScope
-		}
-		return InstallScope{Hostname: hostname}, nil
 	}
 	if state == nil {
 		root, err := clientStateRoot(flags.StateDir)
@@ -496,22 +477,24 @@ func ConfiguredInstallScopeForTeam(project clientproject.Project, name string, c
 	if err != nil {
 		return InstallScope{}, err
 	}
-	service, err := resolve.ConfiguredService(name, project.Worktree, effective, current.Context())
-	if err != nil {
-		return InstallScope{}, failure.Wrap("select configured service", failure.InstalledServiceIdentityUnavailable, err)
-	}
 	var domain authorityv1.Domain
-	if effective.Tunnel != nil && effective.Tunnel.PublicURL != nil {
-		domain, err = team.ReadyDomainForHostname(current.domains, service.Hostname)
+	hostname := ""
+	if effective.Hostname != nil {
+		hostname = *effective.Hostname
+		domain, err = team.ReadyDomainForHostname(current.domains, hostname)
 	} else {
 		selected := ""
-		if effective.Tunnel != nil && effective.Tunnel.Domain != nil {
-			selected = *effective.Tunnel.Domain
+		if effective.Domain != nil {
+			selected = *effective.Domain
 		}
 		domain, err = current.Context().ReadyDomain(selected)
 	}
 	if err != nil {
 		return InstallScope{}, failure.Wrap("select configured service", failure.InstalledServiceIdentityUnavailable, err)
 	}
-	return InstallScope{Hostname: service.Hostname, TeamID: current.team.Id, DomainID: domain.Id}, nil
+	source := project.LocalPublicationIdentity()
+	// generated hostnames come from the signed saved service, not a local
+	// reconstruction of control's endpoint placement rules.
+	return InstallScope{Hostname: hostname, TeamID: current.team.Id, DomainID: domain.Id, ProjectKey: source.Key, SourceFingerprint: source.Fingerprint,
+		WorktreeKey: project.LocalWorktreeKey(), Service: name, Protocol: config.Protocol(effective.Service)}, nil
 }

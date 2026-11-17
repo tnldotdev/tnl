@@ -39,16 +39,6 @@ schemas:
         maxItems: 256
         items: { type: string, pattern: "^[0-9]+$" }
       snapshot_required: { type: boolean }
-      visitor_source_key:
-        type: string
-        format: byte
-        maxLength: 44
-        description: Private public-run source key. Publishers receive the run master; ingress receives only the child key bound by visitor_source_authority. Never expose this value to a browser or relay.
-      visitor_source_authority:
-        type: string
-        format: byte
-        maxLength: 1368
-        description: Opaque tunnelv1 source authority for the exact ingress process and public run. Present only in ingress preparation responses; it supplies neither visitor permission nor capacity.
   VisitorPolicySnapshot:
     type: object
     additionalProperties: false
@@ -72,7 +62,11 @@ schemas:
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       hostname: { type: string, maxLength: 253 }
-      port: { type: integer, minimum: 1, maximum: 65535 }
+      port:
+        type: integer
+        minimum: 0
+        maximum: 65535
+        description: Exact resource port binding. Zero is permitted only for a service without a public reservation and is never a wildcard.
       issuer: { type: string, format: uri, maxLength: 256 }
       visitor_policy_revision:
         {
@@ -104,6 +98,9 @@ schemas:
         description: "Latest allowed lifetime for guest visitor connections, including idle connections. Ingress forwards visitors only after the run is ready; ingress and publisher keep connections within this deadline. An enabled policy's valid_until cannot exceed it. Installing preparation policy does not grant visitor access."
       enabled: { type: boolean }
       anonymous: { type: boolean }
+      public_endpoint:
+        $ref: "../openapi.yaml#/components/schemas/VisitorPublicEndpoint"
+        description: Current public endpoint only. Its removal does not revoke connector access or change the run's captured TLS hostname.
       verification_keys:
         type: array
         maxItems: 64
@@ -117,6 +114,14 @@ schemas:
         maxItems: 4096
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorRegisteredKeyLease" }
       ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
+  VisitorPublicEndpoint:
+    type: object
+    additionalProperties: false
+    required: [hostname, port, endpoint_revision]
+    properties:
+      hostname: { type: string, minLength: 1, maxLength: 253 }
+      port: { type: integer, minimum: 1, maximum: 65535 }
+      endpoint_revision: { type: integer, format: int64, minimum: 1 }
   VisitorVerificationKey:
     type: object
     additionalProperties: false

@@ -107,13 +107,13 @@ func TestServerOperationObserversRetainCallerContext(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	m.tracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	ctx, parent := Start(WithMetrics(t.Context(), m), "parent")
-	child, finish := ControlOperation(ctx, OpCreatePublishRun)
+	child, finish := ControlOperation(ctx, OpCreateServiceRun)
 	m.ObserveOperationContext(child, OpIngressBackendAttempt, nil, time.Millisecond)
 	finish(nil)
 	finish(context.Canceled)
 	parent(nil)
 	spans := exporter.GetSpans()
-	if len(spans) != 3 || spans[0].Name != "IngressBackendAttempt" || spans[1].Name != "CreatePublishRun" || spans[0].Parent.SpanID() != spans[1].SpanContext.SpanID() || spans[1].Parent.SpanID() != spans[2].SpanContext.SpanID() {
+	if len(spans) != 3 || spans[0].Name != "IngressBackendAttempt" || spans[1].Name != "CreateServiceRun" || spans[0].Parent.SpanID() != spans[1].SpanContext.SpanID() || spans[1].Parent.SpanID() != spans[2].SpanContext.SpanID() {
 		t.Fatal("operation context or single completion lost", spans)
 	}
 	for _, invalid := range []ServerOperation{0, 255} {

@@ -13,7 +13,6 @@ import (
 
 type serviceAuditStore interface {
 	ListServiceAudit(context.Context, string, string, controlstate.ServiceAuditFilter, time.Time) (controlstate.ServiceAuditPage, error)
-	IngestPublisherServiceObservations(context.Context, controlstate.PublishRunAuthentication, serviceaudit.Batch, time.Time) (controlstate.ServiceObservationResult, error)
 }
 
 func serviceAuditError(ctx context.Context, w http.ResponseWriter, err error) {
@@ -22,6 +21,8 @@ func serviceAuditError(ctx context.Context, w http.ResponseWriter, err error) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service audit request")
 	case errors.Is(err, controlstate.ErrServiceAuditAccess):
 		writeProblem(w, 403, controlv1.Forbidden, "service audit access denied")
+	case errors.Is(err, controlstate.ErrServiceAccess):
+		writeBearerProblem(w)
 	default:
 		writeControlStateProblem(ctx, w, "service audit", err)
 	}
@@ -61,41 +62,6 @@ func (h *handler) ListServiceAudit(w http.ResponseWriter, r *http.Request, team 
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, page)
-}
-
-func (h *handler) ReportPublishRunServiceObservations(w http.ResponseWriter, r *http.Request, runID string) {
-	var body struct {
-		PublishRunNumber int64                      `json:"publish_run_number,string"`
-		Events           []serviceaudit.Observation `json:"events"`
-	}
-	if decodeJSONLimited(w, r, &body, serviceaudit.MaxPayloadBytes) != nil || body.PublishRunNumber < 1 {
-		serviceAuditError(r.Context(), w, serviceaudit.ErrInvalid)
-		return
-	}
-	auth, ok := h.authenticatePublishRunRequest(w, r, runID, uint64(body.PublishRunNumber))
-	if !ok {
-		return
-	}
-	store, ok := h.dependencies.ServiceAudit, h.dependencies.ServiceAudit != nil
-	if !ok {
-		writeProblem(w, 503, controlv1.Unavailable, "service audit is unavailable")
-		return
-	}
-	for i := range body.Events {
-		if body.Events[i].RunNumber == 0 {
-			body.Events[i].RunNumber = body.PublishRunNumber
-		}
-		if body.Events[i].PairID != "" {
-			serviceAuditError(r.Context(), w, serviceaudit.ErrInvalid)
-			return
-		}
-	}
-	result, err := store.IngestPublisherServiceObservations(r.Context(), auth, serviceaudit.Batch{Events: body.Events}, time.Now().UTC())
-	if err != nil {
-		serviceAuditError(r.Context(), w, err)
-		return
-	}
-	writeJSON(w, 200, result)
 }
 
 func (h *handler) ReportServiceRunObservations(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID) {

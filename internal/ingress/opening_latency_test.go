@@ -6,17 +6,18 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 // a small real TLS/yamux workload shared by the serial and pipelined opening
 // implementations. run with -v through go:test:focused to retain the samples.
 func TestPublicOpeningLatency(t *testing.T) {
 	f := newAdmissionTransportFixture(t)
-	b := mustOnlyBackend(t, f.forwarder, f.entry).(forwardingBackend)
 	const samples = 32
 	worker := ingressWorker(t, func() { _ = f.publisher.Close() }, func() error {
 		for range samples + 1 {
-			incoming, err := f.publisher.AcceptVisitorStream(ingressContext(t))
+			incoming, err := f.publisher.AcceptServiceForwardingStream(ingressContext(t))
 			if err != nil {
 				return err
 			}
@@ -24,30 +25,35 @@ func TestPublicOpeningLatency(t *testing.T) {
 				return err
 			}
 			var request [6]byte
-			if _, err := io.ReadFull(incoming.Stream, request[:]); err != nil {
+			if _, err := io.ReadFull(incoming.Stream(), request[:]); err != nil {
 				return err
 			}
 			if string(request[:]) != "proxy!" {
 				return fmt.Errorf("changed initial bytes: %q", request)
 			}
-			if _, err := incoming.Stream.Write([]byte("!")); err != nil {
+			if _, err := incoming.Stream().Write([]byte("!")); err != nil {
 				return err
 			}
-			if err := incoming.Stream.CloseWrite(); err != nil {
+			if err := incoming.CloseWrite(ingressContext(t)); err != nil {
 				return err
 			}
-			if _, err := io.Copy(io.Discard, incoming.Stream); err != nil {
+			if _, err := io.Copy(io.Discard, incoming.Stream()); err != nil {
 				return err
 			}
-			_ = incoming.Stream.Close()
+			_ = incoming.Stream().Close()
 		}
 		return nil
 	})
 	durations := make([]time.Duration, 0, samples)
 	for i := range samples + 1 {
 		start := time.Now()
-		stream, err := b.Start(ingressContext(t), fmt.Sprintf("visitor_latency_%d", i), false, []byte("proxy"), []byte("!"))
+		header := f.header
+		header.VisitorConnectionID, _ = opaqueid.New(opaqueid.VisitorConnectionPrefix)
+		stream, err := f.forwarder.OpenService(ingressContext(t), f.relay, header, nil)
 		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(stream, "proxy!"); err != nil {
 			t.Fatal(err)
 		}
 		var response [1]byte
@@ -62,6 +68,7 @@ func TestPublicOpeningLatency(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = stream.Close()
+		ingressAwait(t, f.released)
 		if i != 0 {
 			durations = append(durations, elapsed)
 		}

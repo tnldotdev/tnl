@@ -1,0 +1,550 @@
+package ingress
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+	"strings"
+	"sync"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+)
+
+func selectionRunKey(run ingressv1.PublicServiceVisitorAdmission) trafficKey {
+	return trafficKey{service: run.ServiceId, id: run.ServiceRunId, run: uint64(run.RunNumber)}
+}
+
+func exhaustSelectionRun(t *testing.T, server *Server, run ingressv1.PublicServiceVisitorAdmission, reason string) {
+	t.Helper()
+	key := selectionRunKey(run)
+	limits, err := routingTraffic(run.Traffic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch reason {
+	case "service_connections":
+		server.traffic.runs[key] = &runTraffic{limits: limits, active: limits.Connections}
+	case "service_connection_total":
+		server.traffic.runs[key] = &runTraffic{limits: limits, connections: *run.Traffic.TotalConnections}
+	case "service_connection_rate":
+		server.traffic.runs[key] = &runTraffic{limits: limits, newConnections: tokenBucket{last: time.Now()}}
+	case "pending_service_connections":
+		server.traffic.pendingRuns[key] = &pendingTraffic{active: server.config.Pending.ServiceConnections}
+	case "pending_service_rate":
+		server.traffic.pendingRuns[key] = &pendingTraffic{seen: time.Now(), attempts: tokenBucket{last: time.Now()}}
+	default:
+		t.Fatal("unknown selection exhaustion", reason)
+	}
+}
+
+func TestPublicServiceSelectionSkipsOnlyLocallyExhaustedRun(t *testing.T) {
+	for _, reason := range []string{"service_connections", "service_connection_total", "service_connection_rate", "pending_service_connections", "pending_service_rate"} {
+		t.Run(reason, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				config, control, forwarder := serviceSelectionConfig(t, 2, !strings.HasPrefix(reason, "pending_"))
+				total := int64(1)
+				control.runs[0].Traffic.TotalConnections = &total
+				server := serviceSelectionHTTPServer(t, config)
+				forwarder.before = func(tunnelv1.ServiceForwardingHeader) {
+					if server.Load() != 1 || server.admitted[serviceConnection] != 0 ||
+						server.admitted[pendingConnection]+server.admitted[visitorConnection] != 1 {
+						t.Error("candidate search duplicated physical or process admission")
+					}
+				}
+				exhaustSelectionRun(t, server, control.runs[0], reason)
+				if err := rejectServiceSelection(t, t.Context(), server); err == nil {
+					t.Fatal("fixture without an open relay completed forwarding")
+				}
+				if len(control.claims) != 0 || len(forwarder.observed) != 1 || forwarder.observed[0].ServiceRunID != control.runs[1].ServiceRunId ||
+					forwarder.observed[0].RunNumber != uint64(control.runs[1].RunNumber) {
+					t.Fatal("new visitor did not select the exact healthy sibling", control.claims, forwarder.observed)
+				}
+				if len(control.actions) != 0 || len(control.live) != 0 || forwarder.observed[0].VisitorConnectionID == "" {
+					t.Fatal("prepared selection created a control reservation or omitted its visitor ID")
+				}
+				if server.Load() != 0 {
+					t.Fatal("sibling selection retained its physical visitor")
+				}
+				source := server.traffic.sources[trafficlimits.SourceNetwork(netip.MustParseAddr("192.0.2.4"))]
+				if source == nil || source.connections != 0 || source.attempts.tokens != float64(server.config.Traffic.SourceBurst-1) {
+					t.Fatal("candidate search charged source admission more than once", source)
+				}
+			})
+		})
+	}
+}
+
+func TestPublicServiceSelectionDoesNotSearchOnNonRunRejection(t *testing.T) {
+	for _, mode := range []string{"pending source connections", "pending source rate", "ordinary process connections", "invalid traffic", "changed traffic", "source connections", "expired lease"} {
+		t.Run(mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				config, control, forwarder := serviceSelectionConfig(t, 2, mode == "ordinary process connections" || mode == "changed traffic")
+				config.MaxConnections = 1
+				config.Pending.SourceConnections, config.Pending.SourceRate, config.Pending.SourceBurst = 1, 1, 1
+				config.Traffic.SourceConnections = 1
+				if mode == "expired lease" {
+					lease := config.CurrentLease()
+					lease.ServingUntil = time.Now()
+					config.CurrentLease = func() ingressv1.IngressLease { return lease }
+				}
+				server := serviceSelectionServer(t, config)
+				source := server.traffic.sourceLocked(netip.MustParseAddr("192.0.2.4"))
+				source.seen = time.Now()
+				switch mode {
+				case "pending source connections":
+					source.active = 1
+				case "pending source rate":
+					source.pending.last = time.Now()
+				case "ordinary process connections":
+					release, reason := server.admitClass(visitorConnection)
+					if release == nil {
+						t.Fatal(reason)
+					}
+					defer release()
+				case "invalid traffic":
+					control.runs[0].Traffic.Connections = server.config.Traffic.Ceiling.Connections + 1
+				case "changed traffic":
+					limits := server.config.Traffic.Default
+					limits.Connections--
+					server.traffic.runs[selectionRunKey(control.runs[0])] = &runTraffic{limits: limits, seen: time.Now()}
+				case "source connections":
+					source.connections = 1
+				case "expired lease":
+				}
+				applyServiceRoutingFixture(t, server)
+				if err := rejectServiceSelection(t, t.Context(), server); err == nil || len(control.claims) != 0 || len(forwarder.observed) != 0 ||
+					server.Load() != 0 || len(control.live) != 0 {
+					t.Fatal("non-run rejection searched another candidate", err, control.claims, forwarder.observed)
+				}
+			})
+		})
+	}
+}
+
+func TestPublicServiceSelectionFindsHealthyNinth(t *testing.T) {
+	config, control, forwarder := nativeServiceSelectionConfig(t, 9)
+	server := serviceSelectionServer(t, config)
+	for _, run := range control.runs[:8] {
+		exhaustSelectionRun(t, server, run, "pending_service_connections")
+	}
+	err := rejectNativeServiceSelection(t, t.Context(), server)
+	if err == nil || len(control.claims) != 9 || len(forwarder.observed) != 1 ||
+		forwarder.observed[0].ServiceRunID != control.runs[8].ServiceRunId || len(control.live) != 0 || server.Load() != 0 {
+		t.Fatal("eight exhausted runs hid the healthy ninth or retained capacity", err, len(control.claims), forwarder.observed)
+	}
+	visitors := make(map[string]bool)
+	for i, claim := range control.claims {
+		if visitors[claim.VisitorConnectionId] || !control.deadlines[i].Equal(control.deadlines[0]) ||
+			control.actions[2*i] != "admit "+claim.VisitorConnectionId || control.actions[2*i+1] != "close "+claim.VisitorConnectionId {
+			t.Fatal("selection changed visitor IDs, closure order, or deadline", control.claims, control.actions)
+		}
+		if i == 0 && claim.RunCursor != nil || i > 0 && (claim.RunCursor == nil ||
+			claim.RunCursor.Start.ServiceRunId != control.runs[0].ServiceRunId ||
+			claim.RunCursor.After.ServiceRunId != control.runs[i-1].ServiceRunId) {
+			t.Fatal("selection lost its constant-size exact cursor", claim.RunCursor)
+		}
+		visitors[claim.VisitorConnectionId] = true
+	}
+}
+
+func TestPublicServiceSelectionExhaustsOnePassAndReleasesAllReservations(t *testing.T) {
+	config, control, forwarder := nativeServiceSelectionConfig(t, 9)
+	server := serviceSelectionServer(t, config)
+	for _, run := range control.runs {
+		exhaustSelectionRun(t, server, run, "pending_service_connections")
+	}
+	err := rejectNativeServiceSelection(t, t.Context(), server)
+	if err == nil || len(control.claims) != 10 || len(forwarder.observed) != 0 || len(control.live) != 0 || server.Load() != 0 {
+		t.Fatal("exhausted selection repeated runs, forwarded, or leaked reservations", err, len(control.claims), control.live)
+	}
+	for i, claim := range control.claims {
+		if !control.deadlines[i].Equal(control.deadlines[0]) ||
+			control.actions[2*i] != "admit "+claim.VisitorConnectionId || control.actions[2*i+1] != "close "+claim.VisitorConnectionId {
+			t.Fatal("exhausted selection changed the close order or original deadline", control.actions)
+		}
+	}
+	pending, active := publicServiceAdmissionCounts(server)
+	if pending != 0 || active != 0 {
+		t.Fatal("exhausted selection retained process admission", pending, active)
+	}
+}
+
+func TestPublicServiceSelectionWrapsOnceAfterTheLoadSelectedRun(t *testing.T) {
+	config, control, forwarder := nativeServiceSelectionConfig(t, 9)
+	server := serviceSelectionServer(t, config)
+	healthy := control.runs[2]
+	for _, run := range control.runs {
+		if run.ServiceRunId != healthy.ServiceRunId {
+			exhaustSelectionRun(t, server, run, "pending_service_connections")
+		}
+	}
+	// the first response represents control's least-loaded choice, not run 1.
+	control.runs = append(control.runs[4:], control.runs[:4]...)
+	if err := rejectNativeServiceSelection(t, t.Context(), server); err == nil || len(control.claims) != 8 ||
+		len(forwarder.observed) != 1 || forwarder.observed[0].ServiceRunID != healthy.ServiceRunId || len(control.live) != 0 {
+		t.Fatal("continuation skipped the eligible run before its initial choice", err, len(control.claims), forwarder.observed)
+	}
+}
+
+func TestPublicServiceSelectionHealthyNinthRetainsEarlierGrantExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config, control, forwarder := nativeServiceSelectionConfig(t, 9)
+		config.OpenTimeout = time.Second
+		grantExpiry := time.Now().Add(20 * time.Millisecond)
+		control.runs[8].ExpiresAt = grantExpiry
+		server := serviceSelectionServer(t, config)
+		for _, run := range control.runs[:8] {
+			exhaustSelectionRun(t, server, run, "pending_service_connections")
+		}
+		forwarder.openings[control.runs[8].ServiceRunId] = func(ctx context.Context, _ tunnelv1.ServiceForwardingHeader, _ func(context.Context) error) (net.Conn, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok || !deadline.Equal(grantExpiry) || !deadline.Before(control.deadlines[0]) {
+				t.Error("ninth-run opening did not retain the earlier grant expiry", deadline)
+			}
+			<-ctx.Done()
+			return nil, context.Cause(ctx)
+		}
+		started := time.Now()
+		if err := rejectNativeServiceSelection(t, t.Context(), server); err == nil ||
+			time.Since(started) != 20*time.Millisecond || len(control.live) != 0 || server.Load() != 0 {
+			t.Fatal("selection extended the earlier grant or retained cleanup", err, time.Since(started))
+		}
+		if run := server.traffic.runs[selectionRunKey(control.runs[8])]; run != nil {
+			t.Fatal("expired opening spent ordinary quota before capacity admission", run)
+		}
+	})
+}
+
+func TestPublicServiceSelectionDeadlineBoundsContinuationBeyondEight(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config, control, forwarder := nativeServiceSelectionConfig(t, 20)
+		config.OpenTimeout = 20 * time.Millisecond
+		control.before = func(ctx context.Context, _ *ingressv1.PublicServiceVisitorAdmission) error {
+			if len(control.claims) == 9 {
+				<-ctx.Done()
+			}
+			return nil
+		}
+		server := serviceSelectionServer(t, config)
+		for _, run := range control.runs {
+			exhaustSelectionRun(t, server, run, "pending_service_connections")
+		}
+		started := time.Now()
+		if err := rejectNativeServiceSelection(t, t.Context(), server); err == nil ||
+			time.Since(started) != config.OpenTimeout || len(control.claims) != 9 || len(forwarder.observed) != 0 ||
+			len(control.live) != 0 || server.Load() != 0 {
+			t.Fatal("continuation exceeded its original deadline or leaked a late reservation", err, time.Since(started), len(control.claims))
+		}
+		for _, deadline := range control.deadlines {
+			if !deadline.Equal(control.deadlines[0]) {
+				t.Fatal("continuation restarted the setup deadline")
+			}
+		}
+	})
+}
+
+func TestPublicServiceSelectionDoesNotRetryAmbiguousFailures(t *testing.T) {
+	for _, operation := range []string{"admit", "close"} {
+		t.Run(operation, func(t *testing.T) {
+			config, control, forwarder := nativeServiceSelectionConfig(t, 2)
+			problem := errors.New("response lost after control accepted the operation")
+			if operation == "admit" {
+				control.before = func(context.Context, *ingressv1.PublicServiceVisitorAdmission) error { return problem }
+			} else {
+				control.close = func(context.Context, ingressv1.PublicServiceVisitorLookup) error { return problem }
+			}
+			server := serviceSelectionServer(t, config)
+			exhaustSelectionRun(t, server, control.runs[0], "pending_service_connections")
+			err := rejectNativeServiceSelection(t, t.Context(), server)
+			if !errors.Is(err, problem) || len(control.claims) != 1 || len(forwarder.observed) != 0 {
+				t.Fatal("ambiguous failure selected another run", err, control.claims, forwarder.observed)
+			}
+			for _, action := range control.actions[1:] {
+				if action != "close "+control.claims[0].VisitorConnectionId {
+					t.Fatal("cleanup changed the uncertain reservation's visitor ID", control.actions)
+				}
+			}
+		})
+	}
+}
+
+func TestPublicServiceSelectionDenialUsesLastValidatedCandidateWithoutSelectingItsRun(t *testing.T) {
+	config, control, _ := nativeServiceSelectionConfig(t, 2)
+	problem := errors.New("second admission response lost")
+	control.before = func(context.Context, *ingressv1.PublicServiceVisitorAdmission) error {
+		if len(control.claims) == 2 {
+			return problem
+		}
+		return nil
+	}
+	events := make(chan serviceaudit.Observation, 1)
+	config.AuditSink = auditSinkFunc(func(event serviceaudit.Observation) bool { events <- event; return true })
+	server := serviceSelectionServer(t, config)
+	exhaustSelectionRun(t, server, control.runs[0], "pending_service_connections")
+	if err := rejectNativeServiceSelection(t, t.Context(), server); !errors.Is(err, problem) {
+		t.Fatal(err)
+	}
+	event := ingressAwait(t, events)
+	if event.ServiceID != control.service || event.VisitorConnectionID != control.claims[0].VisitorConnectionId ||
+		event.RunID != "" || event.RunNumber != 0 || event.Outcome != "denied" || event.Reason != "unavailable" || len(events) != 0 {
+		t.Fatal("failed selection invented a run or used an unconfirmed reservation for its audit", event)
+	}
+}
+
+func TestPublicServiceSelectionRejectsChangedOrRepeatedRunIdentity(t *testing.T) {
+	for _, mode := range []string{"service", "run ID", "run number", "visitor"} {
+		t.Run(mode, func(t *testing.T) {
+			config, control, forwarder := nativeServiceSelectionConfig(t, 2)
+			original := control.runs[0]
+			control.before = func(_ context.Context, run *ingressv1.PublicServiceVisitorAdmission) error {
+				if len(control.claims) == 2 {
+					switch mode {
+					case "service":
+						run.ServiceId = publicServiceTestID(t, "svc_")
+					case "run ID":
+						run.ServiceRunId = original.ServiceRunId
+					case "run number":
+						run.RunNumber = original.RunNumber
+					case "visitor":
+						run.VisitorConnectionId = control.claims[0].VisitorConnectionId
+					}
+				}
+				return nil
+			}
+			server := serviceSelectionServer(t, config)
+			exhaustSelectionRun(t, server, original, "pending_service_connections")
+			err := rejectNativeServiceSelection(t, t.Context(), server)
+			if !errors.Is(err, ErrServiceAdmission) || len(control.claims) != 2 || len(forwarder.observed) != 0 || len(control.live) != 0 {
+				t.Fatal("invalid sibling identity was selected or retried", err, control.claims, forwarder.observed)
+			}
+		})
+	}
+}
+
+func TestPublicServiceSelectionKeepsOneDeadlineAndRejectsLateAdmission(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config, control, forwarder := nativeServiceSelectionConfig(t, 2)
+		config.OpenTimeout = 50 * time.Millisecond
+		control.before = func(ctx context.Context, run *ingressv1.PublicServiceVisitorAdmission) error {
+			if len(control.claims) == 2 {
+				// a client ignoring cancellation cannot extend this connection.
+				<-ctx.Done()
+				run.ExpiresAt = time.Now().Add(time.Minute)
+			}
+			return nil
+		}
+		server := serviceSelectionServer(t, config)
+		exhaustSelectionRun(t, server, control.runs[0], "pending_service_connections")
+		started := time.Now()
+		if err := rejectNativeServiceSelection(t, t.Context(), server); err == nil || time.Since(started) != config.OpenTimeout ||
+			len(control.claims) != 2 || !control.deadlines[0].Equal(control.deadlines[1]) || len(forwarder.observed) != 0 {
+			t.Fatal("late response revived selection or extended its deadline", err, control.deadlines, time.Since(started))
+		}
+		if _, exists := server.traffic.runs[selectionRunKey(control.runs[1])]; exists {
+			t.Fatal("late response spent another run's quota")
+		}
+	})
+}
+
+func TestPublicServiceSelectionCloseCannotRestartSetupDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config, control, forwarder := nativeServiceSelectionConfig(t, 2)
+		config.OpenTimeout = 50 * time.Millisecond
+		control.close = func(ctx context.Context, lookup ingressv1.PublicServiceVisitorLookup) error {
+			deadline, bounded := ctx.Deadline()
+			if !bounded {
+				t.Fatal("reservation cleanup has no deadline")
+			}
+			if len(control.actions) == 2 {
+				if !deadline.Equal(control.deadlines[0]) {
+					t.Fatal("rejected reservation close restarted the setup deadline")
+				}
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			if deadline.After(time.Now().Add(5*time.Second)) || lookup.VisitorConnectionId != control.claims[0].VisitorConnectionId {
+				t.Fatal("final cleanup changed the uncertain reservation or exceeded its cleanup bound")
+			}
+			return nil
+		}
+		server := serviceSelectionServer(t, config)
+		exhaustSelectionRun(t, server, control.runs[0], "pending_service_connections")
+		started := time.Now()
+		if err := rejectNativeServiceSelection(t, t.Context(), server); !errors.Is(err, context.DeadlineExceeded) ||
+			time.Since(started) != config.OpenTimeout || len(control.claims) != 1 || len(forwarder.observed) != 0 ||
+			len(control.actions) != 3 || len(control.live) != 0 {
+			t.Fatal("blocked close selected another run or lost final cleanup", err, control.actions)
+		}
+	})
+}
+
+func TestPublicServiceSelectionStopsWhenLeaseChangesBetweenCandidates(t *testing.T) {
+	for _, mode := range []string{"expired", "draining", "replacement", "canceled"} {
+		t.Run(mode, func(t *testing.T) {
+			config, control, forwarder := nativeServiceSelectionConfig(t, 2)
+			lease := config.CurrentLease()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			control.close = func(context.Context, ingressv1.PublicServiceVisitorLookup) error {
+				switch mode {
+				case "expired":
+					lease.ServingUntil = time.Now()
+				case "draining":
+					lease.Draining = true
+				case "replacement":
+					lease.IngressLeaseRevision++
+				case "canceled":
+					cancel()
+				}
+				return nil
+			}
+			config.CurrentLease = func() ingressv1.IngressLease { return lease }
+			server := serviceSelectionServer(t, config)
+			exhaustSelectionRun(t, server, control.runs[0], "pending_service_connections")
+			if err := rejectNativeServiceSelection(t, ctx, server); err == nil || len(control.claims) != 1 || len(forwarder.observed) != 0 {
+				t.Fatal("selection continued after losing the connection's authority", err, control.claims)
+			}
+		})
+	}
+}
+
+func TestFailedServiceSelectionLeavesAdmissionUnselectedAndPendingRatesAtomic(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config, control, _ := serviceSelectionConfig(t, 3, false)
+		config.Pending.SourceBurst, config.Pending.SourceRate = 1, 1
+		config.Pending.SourceConnections = 16
+		config.Pending.ServiceBurst, config.Pending.ServiceRate = 1, 1
+		server := serviceSelectionServer(t, config)
+		first, reason := server.admitPendingService()
+		if first == nil {
+			t.Fatal(reason)
+		}
+		defer first.close()
+		deadline := first.deadline
+		exhaustSelectionRun(t, server, control.runs[0], "pending_service_rate")
+		limits := server.config.Traffic.Default
+		source := netip.MustParseAddr("192.0.2.4")
+		if reason := first.selectRun(selectionRunKey(control.runs[0]), limits, source, false); reason != "pending_service_rate" ||
+			first.key != (trafficKey{}) || first.limits != (TrafficLimits{}) || first.source.IsValid() || first.state != pendingCapacity || first.metered ||
+			!first.deadline.Equal(deadline) {
+			t.Fatal("failed selection retained its run or changed pending accounting", reason, first)
+		}
+		if reason := first.selectRun(selectionRunKey(control.runs[1]), limits, source, false); reason != "" {
+			t.Fatal("rejected run consumed the visitor's only source token", reason)
+		}
+		second, reason := server.admitPendingService()
+		if second == nil {
+			t.Fatal(reason)
+		}
+		defer second.close()
+		if reason := second.selectRun(selectionRunKey(control.runs[2]), limits, source, false); reason != "pending_source_rate" {
+			t.Fatal("source exhaustion was bypassed", reason)
+		}
+		other := netip.MustParseAddr("198.51.100.4")
+		if reason := second.selectRun(selectionRunKey(control.runs[2]), limits, other, false); reason != "" {
+			t.Fatal("source rejection consumed the run's only token", reason)
+		}
+	})
+}
+
+func TestPublicServiceConcurrentSelectionReservesRunOnce(t *testing.T) {
+	config, control, _ := serviceSelectionConfig(t, 1, true)
+	server := serviceSelectionServer(t, config)
+	limits := server.config.Traffic.Default
+	limits.Connections, limits.TotalConnections = 1, 1
+	var visitors [2]*visitorAdmission
+	for i := range visitors {
+		var reason string
+		visitors[i], reason = server.admitPendingService()
+		if visitors[i] == nil {
+			t.Fatal(reason)
+		}
+		defer visitors[i].close()
+	}
+	var group sync.WaitGroup
+	var results [2]string
+	key := selectionRunKey(control.runs[0])
+	for i, visitor := range visitors {
+		group.Go(func() { results[i] = visitor.selectRun(key, limits, netip.MustParseAddr("192.0.2.4"), true) })
+	}
+	group.Wait()
+	winner := 0
+	if results[0] != "" {
+		winner = 1
+	}
+	if results[winner] != "" || results[1-winner] != "service_connections" {
+		t.Fatal("concurrent selection admitted more than one run slot", results)
+	}
+	visitors[winner].close()
+	if reason := visitors[1-winner].selectRun(key, limits, netip.MustParseAddr("192.0.2.4"), true); reason != "service_connection_total" {
+		t.Fatal("close refunded the winning connection's lifetime debit", reason)
+	}
+}
+
+func TestPublicServiceFailedOpenKeepsLifetimeDebitAndDoesNotReselect(t *testing.T) {
+	for _, committed := range []int{0, 1} {
+		t.Run(fmt.Sprintf("visitor_bytes=%d", committed), func(t *testing.T) {
+			config, control, forwarder := serviceSelectionConfig(t, 2, true)
+			total := int64(1)
+			control.runs[0].Traffic.TotalConnections = &total
+			failed := newServiceFailureRelay(t, committed)
+			sibling := newServiceTLSRelay(t)
+			forwarder.openings[control.runs[0].ServiceRunId] = failed.open
+			forwarder.openings[control.runs[1].ServiceRunId] = sibling.open
+			metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
+			config.Metrics = metrics
+			server, address := startIngress(t, config)
+			startServiceRoutingFixture(t, server)
+			first := ingressClient(t, address, "route.example", "192.0.2.4:40001")
+			if err := first.Handshake(); err == nil {
+				t.Fatal("failed service run completed TLS")
+			}
+			_ = first.Close()
+			outcome := ingressAwait(t, metrics.visitorOutcomes)
+			if outcome != "open_failed" && committed == 0 || outcome != "committed_failed" && committed != 0 {
+				t.Fatal("failed opening changed its byte commitment", outcome)
+			}
+			key := selectionRunKey(control.runs[0])
+			snapshot := func() (runTraffic, bool) {
+				server.traffic.mu.Lock()
+				defer server.traffic.mu.Unlock()
+				run := server.traffic.runs[key]
+				if run == nil {
+					return runTraffic{}, false
+				}
+				return *run, true
+			}
+			// the outcome follows admission cleanup. snapshot its counters under
+			// their owner lock rather than joining a reusable worker group while
+			// the listener still accepts the next physical visitor.
+			run, found := snapshot()
+			if len(control.claims) != 0 || sibling.opens.Load() != 0 || failed.opens.Load() != 1 || !found || run.active != 0 || run.connections != 1 {
+				t.Fatal("failed open reselected a sibling or refunded its lifetime debit", control.claims, run, sibling.opens.Load())
+			}
+			server.nextServiceRun.Store(0)
+			next := ingressClient(t, address, "route.example", "192.0.2.4:40002")
+			exchangePing(t, next)
+			if result := ingressAwait(t, sibling.result); result.err != nil || result.request != "ping" {
+				t.Fatal("new physical visitor could not use the healthy sibling", result)
+			}
+			ingressAwait(t, metrics.visitorOutcomes)
+			run, found = snapshot()
+			if failed.opens.Load() != 1 || sibling.opens.Load() != 1 || len(control.claims) != 0 || run.connections != 1 ||
+				!found || run.active != 0 || metrics.visitorOpenFailures.Load() != 1 || metrics.visitorOpenSuccesses.Load() != 1 {
+				t.Fatal("new visitor reopened the exhausted run or duplicated an opening charge")
+			}
+			if len(forwarder.observed) != 2 || forwarder.observed[0].ServiceRunID != control.runs[0].ServiceRunId ||
+				forwarder.observed[1].ServiceRunID != control.runs[1].ServiceRunId || forwarder.observed[0].VisitorConnectionID == forwarder.observed[1].VisitorConnectionID {
+				t.Fatal("failed and new physical visitors shared a run or visitor identity", forwarder.observed)
+			}
+		})
+	}
+}

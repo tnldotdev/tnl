@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -14,26 +15,33 @@ type connectorPolicyControl interface {
 	ReadPublisherVisitorPolicy(context.Context, controlv1.PublisherVisitorPolicyRequest, string) (controlv1.VisitorPolicyUpdate, error)
 }
 
-// PrepareConnectorPolicy installs the run-owned background policy before any peer
-// can be bound. arrivals cannot fetch policy or extend a failed refresh bound.
+// PrepareConnectorPolicy binds peers to the run's policy. HTTP shares the owner
+// already prepared for browser access; other protocols prepare it here.
+// arrivals cannot fetch policy or extend a failed refresh bound.
 func (b *Bound) PrepareConnectorPolicy(ctx context.Context, control connectorPolicyControl, token credentials.ServiceRunToken) error {
 	if b == nil || b.boundState == nil {
 		return ErrPrivateStream
 	}
-	owner, err := httpaccess.PreparePolicy(ctx, control, visitorscope.Scope{Kind: visitorscope.Service, ID: b.prepared.Preparation.ServiceId}, b.prepared.Preparation.ServiceRunId, b.prepared.Preparation.RunNumber, token.String(), nil)
-	if err != nil {
-		return err
+	lease := b.prepared.policy
+	closePolicy := func() {}
+	if lease == nil {
+		owner, err := httpaccess.PreparePolicy(ctx, control, visitorscope.Scope{Kind: visitorscope.Service, ID: b.prepared.Preparation.ServiceId}, b.prepared.Preparation.ServiceRunId, b.prepared.Preparation.RunNumber, token.String(), nil)
+		if err != nil {
+			return err
+		}
+		lease, closePolicy = owner.Lease(), owner.Close
 	}
-	lease := owner.Lease()
 	view, enabled, _ := lease.Current()
 	b.mu.Lock()
-	if b.closed || b.prepared.policy != nil || !enabled || view.MetadataRevision != b.prepared.metadataRevision || view.Hostname != b.prepared.managedHostname || view.Port != b.prepared.servicePort {
+	if b.closed || !enabled || view.MetadataRevision != b.prepared.metadataRevision || view.Hostname != b.prepared.managedHostname || view.Port != serviceendpoint.PermissionPort(string(b.prepared.managedProtocol)) {
 		b.mu.Unlock()
-		owner.Close()
+		closePolicy()
 		return ErrPrivateStream
 	}
 	b.prepared.policy = lease
-	b.closePolicy = sync.OnceFunc(owner.Close)
+	if b.closePolicy == nil {
+		b.closePolicy = sync.OnceFunc(closePolicy)
+	}
 	b.mu.Unlock()
 	return nil
 }

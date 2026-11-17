@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
+	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -49,9 +50,10 @@ type BeginTunnelOptions struct {
 	Command          TunnelCommand
 	Server           string
 	Target           string
-	ServiceProtocol  controlv1.PublicURLServiceProtocol
+	ServiceProtocol  controlv1.ServiceProtocol
 	Project          string
 	Service          string
+	ServiceID        string
 	IntegrationScope IntegrationScope
 }
 
@@ -86,26 +88,26 @@ type TunnelSummary struct {
 }
 
 type TunnelInfo struct {
-	ID               string                             `json:"tunnel_id"`
-	Command          TunnelCommand                      `json:"command"`
-	State            TunnelState                        `json:"state"`
-	ProcessID        int                                `json:"process_id"`
-	Server           string                             `json:"server"`
-	Project          string                             `json:"project"`
-	Service          string                             `json:"service,omitempty"`
-	ServiceProtocol  controlv1.PublicURLServiceProtocol `json:"service_protocol,omitempty"`
-	PublicURLID      string                             `json:"public_url_id,omitempty"`
-	PublishRunNumber uint64                             `json:"publish_run_number,omitempty"`
-	Hostname         string                             `json:"hostname,omitempty"`
-	PublicURL        string                             `json:"public_url,omitempty"`
-	Target           string                             `json:"target,omitempty"`
-	Framework        string                             `json:"framework,omitempty"`
-	IntegrationScope IntegrationScope                   `json:"-"`
-	StartedAt        time.Time                          `json:"started_at"`
-	UpdatedAt        time.Time                          `json:"updated_at"`
-	HeartbeatAt      time.Time                          `json:"heartbeat_at"`
-	LeaseExpiresAt   time.Time                          `json:"lease_expires_at"`
-	Failure          string                             `json:"failure,omitempty"`
+	ID               string                    `json:"tunnel_id"`
+	Command          TunnelCommand             `json:"command"`
+	State            TunnelState               `json:"state"`
+	ProcessID        int                       `json:"process_id"`
+	Server           string                    `json:"server"`
+	Project          string                    `json:"project"`
+	Service          string                    `json:"service,omitempty"`
+	ServiceProtocol  controlv1.ServiceProtocol `json:"service_protocol,omitempty"`
+	ServiceID        string                    `json:"service_id,omitempty"`
+	PublishRunNumber uint64                    `json:"publish_run_number,omitempty"`
+	Hostname         string                    `json:"hostname,omitempty"`
+	PublicURL        string                    `json:"public_url,omitempty"`
+	Target           string                    `json:"target,omitempty"`
+	Framework        string                    `json:"framework,omitempty"`
+	IntegrationScope IntegrationScope          `json:"-"`
+	StartedAt        time.Time                 `json:"started_at"`
+	UpdatedAt        time.Time                 `json:"updated_at"`
+	HeartbeatAt      time.Time                 `json:"heartbeat_at"`
+	LeaseExpiresAt   time.Time                 `json:"lease_expires_at"`
+	Failure          string                    `json:"failure,omitempty"`
 }
 
 // BeginTunnel registers a local tunnel and maintains its liveness lease until
@@ -120,14 +122,21 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	}
 	protocol := options.ServiceProtocol
 	if protocol == "" {
-		protocol = controlv1.Http
+		protocol = controlv1.ServiceProtocolHTTP
 	}
-	if protocol != controlv1.Http {
+	if !protocol.Valid() {
 		return nil, errors.New("clientstate: invalid tunnel service protocol")
+	}
+	if options.ServiceID != "" && !opaqueid.Valid(options.ServiceID, opaqueid.ServicePrefix) {
+		return nil, errors.New("clientstate: invalid publication service ID")
 	}
 	options.ServiceProtocol = protocol
 	if options.Target != "" {
-		options.Target, err = targetsyntax.NormalizeTarget(options.Target)
+		if protocol == controlv1.ServiceProtocolHTTP || protocol == controlv1.Kubernetes {
+			options.Target, err = targetsyntax.NormalizeTarget(options.Target)
+		} else {
+			options.Target, err = tcptarget.Normalize(options.Target)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -163,7 +172,8 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if err := d.queries.InsertTunnel(ctx, clientstatedb.InsertTunnelParams{
 		ID: id, Command: string(options.Command), ProcessID: int64(os.Getpid()), ServerOrigin: server,
 		ProjectRoot: options.Project, Service: options.Service, ServiceProtocol: string(options.ServiceProtocol), Target: options.Target,
-		Now: now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(),
+		ServiceID: sql.NullString{String: options.ServiceID, Valid: options.ServiceID != ""},
+		Now:       now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(),
 		PrimaryProjectRoot: options.IntegrationScope.primaryProjectRoot(), IntegrationNamespace: options.IntegrationScope.namespace(),
 	}); err != nil {
 		return nil, fmt.Errorf("clientstate: begin tunnel: %w", err)
@@ -201,18 +211,6 @@ func (t *Tunnel) Context() context.Context { return t.ctx }
 // Finish records the original cause after joining lease maintenance.
 func (t *Tunnel) CancelWithCause(err error) { t.cancel(err) }
 
-func (t *Tunnel) SetPublicURL(ctx context.Context, publicURLID, hostname string) error {
-	hostname, err := naming.CanonicalizeHostname(hostname)
-	if err != nil || !validPublicURLID(publicURLID) {
-		return errors.New("clientstate: invalid tunnel route")
-	}
-	rows, err := t.database.queries.SetTunnelPublicURL(ctx, clientstatedb.SetTunnelPublicURLParams{
-		PublicURLID: sql.NullString{String: publicURLID, Valid: true}, Hostname: sql.NullString{String: hostname, Valid: true},
-		Now: t.database.now().UTC().UnixNano(), ID: t.id,
-	})
-	return tunnelUpdateResult(rows, err)
-}
-
 func (t *Tunnel) SetProvisioning(ctx context.Context, publishRunNumber uint64) error {
 	versionValue, err := databaseVersion(publishRunNumber)
 	if err != nil || publishRunNumber == 0 {
@@ -225,16 +223,20 @@ func (t *Tunnel) SetProvisioning(ctx context.Context, publishRunNumber uint64) e
 }
 
 func (t *Tunnel) SetReady(ctx context.Context, publicURL string, publishRunNumber uint64) error {
-	hostname, err := parsePublicTunnelAddress(publicURL)
-	if err != nil {
-		return err
+	hostname := ""
+	if publicURL != "" {
+		var err error
+		hostname, err = parsePublicTunnelAddress(publicURL)
+		if err != nil {
+			return err
+		}
 	}
 	versionValue, err := databaseVersion(publishRunNumber)
 	if err != nil || publishRunNumber == 0 {
 		return errors.New("clientstate: invalid tunnel publish run number")
 	}
 	rows, err := t.database.queries.SetTunnelReady(ctx, clientstatedb.SetTunnelReadyParams{
-		Hostname:         sql.NullString{String: hostname, Valid: true},
+		Hostname:         sql.NullString{String: hostname, Valid: hostname != ""},
 		PublishRunNumber: sql.NullInt64{Int64: versionValue, Valid: true},
 		Now:              t.database.now().UTC().UnixNano(), ID: t.id,
 	})
@@ -272,7 +274,7 @@ func (t *Tunnel) Finish(ctx context.Context, runErr error) error {
 		t.cancel(nil)
 		<-t.done
 		state, message := TunnelStateStopped, ""
-		if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		if runErr != nil && !failure.Only(runErr, context.Canceled) {
 			state, message = TunnelStateFailed, string(failure.Unexpected)
 			if reason, _, ok := failure.Describe(runErr); ok {
 				message = string(reason)
@@ -385,8 +387,9 @@ func tunnelInfo(row clientstatedb.LocalTunnel, observedAt time.Time) TunnelInfo 
 	info := TunnelInfo{
 		ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
 		Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service.String,
-		PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
-		Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String,
+		ServiceProtocol: controlv1.ServiceProtocol(row.ServiceProtocol), ServiceID: row.ServiceID.String,
+		PublishRunNumber: uint64(row.PublishRunNumber.Int64),
+		Hostname:         row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String,
 		IntegrationScope: IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot.String, Namespace: row.IntegrationNamespace.String},
 		StartedAt:        unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
 		HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),

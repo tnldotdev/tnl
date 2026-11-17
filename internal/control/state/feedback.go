@@ -28,22 +28,6 @@ var (
 
 type FeedbackThreadState string
 
-// feedback authorization includes retained public URL tombstones, without
-// exposing them through ordinary public URL reads or publishing operations.
-func (d *Database) GetPublicURLForFeedbackAuthorization(ctx context.Context, id string) (PublicURL, error) {
-	if err := d.requireOpen(); err != nil {
-		return PublicURL{}, err
-	}
-	row, err := controlstatedb.New(d.pool).GetFeedbackPublicURL(ctx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return PublicURL{}, ErrPublicURLNotFound
-	}
-	if err != nil {
-		return PublicURL{}, err
-	}
-	return publicURLFromModel(row, ""), nil
-}
-
 const (
 	FeedbackOpen     FeedbackThreadState = "open"
 	FeedbackResolved FeedbackThreadState = "resolved"
@@ -60,19 +44,18 @@ const (
 )
 
 type FeedbackActor struct {
-	SourceIP                 string
-	PublishRunAuthentication *PublishRunAuthentication
-	Kind                     string
-	IdentityID               string
-	DisplayName              string
-	BrowserCookieSecret      []byte
-	TeamMember               bool
-	ShareID                  string
-	CookieSecret             []byte
-	ShareSecret              []byte
-	VisitAllowed             bool
-	PolicyRevision           uint64
-	ExpectedMutationRevision uint64
+	SourceIP            string
+	ServiceRun          *ServiceHTTPRun
+	Kind                string
+	IdentityID          string
+	DisplayName         string
+	BrowserCookieSecret []byte
+	TeamMember          bool
+	ShareID             string
+	CookieSecret        []byte
+	ShareSecret         []byte
+	VisitAllowed        bool
+	VisitProof          FeedbackVisitProof
 }
 
 type feedbackActorKind string
@@ -100,6 +83,7 @@ type authorizedFeedbackActor struct {
 	kind                               feedbackActorKind
 	identityID, displayName, reference string
 	permissions                        feedbackPermissions
+	expiresAt                          time.Time
 }
 
 func (a authorizedFeedbackActor) permits(event FeedbackEventType) bool {
@@ -126,9 +110,10 @@ type FeedbackThread struct {
 	ID                string
 	PreviewID         string
 	TeamID            string
-	PublicURLID       string
-	PublishRunID      string
-	PublishRunNumber  uint64
+	GuestID           string
+	ServiceID         string
+	ServiceRunID      string
+	RunNumber         int64
 	Service           string
 	PagePath          string
 	PageTitle         string
@@ -151,6 +136,7 @@ type FeedbackEvent struct {
 	Cursor            uint64
 	FeedbackID        string
 	TeamID            string
+	GuestID           string
 	Type              FeedbackEventType
 	ActorKind         string
 	ActorReference    string
@@ -176,17 +162,16 @@ type FeedbackEventPage struct {
 }
 
 type CreateFeedbackRequest struct {
-	PreviewID         string
-	Service           string
-	PagePath          string
-	PageTitle         string
-	ReportText        string
-	AuthorDisplayName string
-	Anchor            json.RawMessage
-	Evidence          json.RawMessage
-	SourceAtReport    json.RawMessage
-	IdempotencyKey    string
-	Actor             FeedbackActor
+	PreviewID      string
+	Service        string
+	PagePath       string
+	PageTitle      string
+	ReportText     string
+	Anchor         json.RawMessage
+	Evidence       json.RawMessage
+	SourceAtReport json.RawMessage
+	IdempotencyKey string
+	Actor          FeedbackActor
 }
 
 type AppendFeedbackRequest struct {
@@ -199,13 +184,13 @@ type AppendFeedbackRequest struct {
 	Actor          FeedbackActor
 }
 
-func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentication, request CreateFeedbackRequest, now time.Time) (result FeedbackThread, retErr error) {
-	if err := validatePublishRunAuthentication(auth); err != nil {
-		return FeedbackThread{}, err
+func (d *Database) CreateFeedback(ctx context.Context, auth ServiceHTTPRun, request CreateFeedbackRequest, now time.Time) (result FeedbackThread, retErr error) {
+	clock := newAuthorizationClock(now)
+	if !auth.valid() {
+		return FeedbackThread{}, ErrServiceAccess
 	}
 	if !opaqueid.Valid(request.PreviewID, opaqueid.PreviewPrefix) || !naming.ValidServiceName(request.Service) ||
 		!validFeedbackPath(request.PagePath) || len([]rune(request.PageTitle)) > 256 || !validFeedbackText(request.ReportText, 4000) ||
-		request.AuthorDisplayName != "" && !validFeedbackText(request.AuthorDisplayName, 64) ||
 		!validFeedbackKey(request.IdempotencyKey) ||
 		request.Actor.Kind != "reviewer" {
 		return FeedbackThread{}, ErrFeedbackInvalid
@@ -232,40 +217,38 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	}
 	defer rollback(ctx, tx, "create feedback", &retErr)()
 	queries := controlstatedb.New(tx)
-	publicURL, err := lockVisitorURL(ctx, queries, auth.PublicURLID)
-	if err != nil {
-		return FeedbackThread{}, err
-	}
-	if _, err = d.lockAuthenticatedRun(ctx, queries, auth, now); err != nil {
+	if err = d.lockServiceHTTPRun(ctx, tx, auth, clock.current()); err != nil {
 		return FeedbackThread{}, err
 	}
 	scope, err := queries.FeedbackRunScope(ctx, controlstatedb.FeedbackRunScopeParams{
-		PublishRunID: auth.PublishRunID, PreviewID: request.PreviewID,
-		PublishRunNumber: int64(auth.PublishRunNumber), Now: timestamptz(now),
+		ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID, PreviewID: request.PreviewID,
+		RunNumber: auth.Number, Now: timestamptz(clock.current()),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FeedbackThread{}, ErrFeedbackAccess
 	}
 	if err != nil {
-		return FeedbackThread{}, fmt.Errorf("controlstate: resolve report publish run: %w", err)
+		return FeedbackThread{}, fmt.Errorf("controlstate: resolve report service run: %w", err)
 	}
-	actor, err := d.currentReviewer(ctx, queries, publicURL, scope.PreviewID, request.Actor, now)
+	service, err := queries.GetService(ctx, auth.Subject.ID)
+	if err != nil {
+		return FeedbackThread{}, err
+	}
+	request.Actor.ServiceRun = &auth
+	actor, err := d.currentReviewer(ctx, tx, service, request.Actor, clock)
 	if err != nil {
 		return FeedbackThread{}, err
 	}
 	if !actor.permits(FeedbackCreated) {
 		return FeedbackThread{}, ErrFeedbackAccess
 	}
-	if err := requireFeedbackAuthorForURL(ctx, queries, scope.TeamID, scope.PublicURLID, actor); err != nil {
+	if err := requireFeedbackAuthor(ctx, queries, scope.TeamID.String, scope.GuestID.String, actor); err != nil {
 		return FeedbackThread{}, err
-	}
-	if actor.identityID != "" {
-		request.AuthorDisplayName = actor.displayName
 	}
 	digestInput, err := json.Marshal(struct {
 		PreviewID, Service, PagePath, PageTitle, ReportText, AuthorDisplayName, AuthorIdentityID string
 		Anchor, Evidence, SourceAtReport                                                         json.RawMessage
-	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, request.AuthorDisplayName,
+	}{request.PreviewID, request.Service, request.PagePath, request.PageTitle, request.ReportText, actor.displayName,
 		actor.identityID, request.Anchor, request.Evidence, request.SourceAtReport})
 	if err != nil {
 		return FeedbackThread{}, ErrFeedbackInvalid
@@ -277,9 +260,9 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 	}
 	stored, err := queries.CreateFeedbackThread(ctx, controlstatedb.CreateFeedbackThreadParams{
 		ID: id, PreviewID: request.PreviewID, TeamID: scope.TeamID,
-		PublicURLID: scope.PublicURLID, PublishRunID: auth.PublishRunID,
-		PublishRunNumber: int64(auth.PublishRunNumber), Service: request.Service, PagePath: request.PagePath, PageTitle: request.PageTitle,
-		ReportText: request.ReportText, AuthorDisplayName: nullableText(request.AuthorDisplayName),
+		ServiceID: scope.ServiceID, ServiceRunID: auth.RunID,
+		RunNumber: auth.Number, Service: request.Service, PagePath: request.PagePath, PageTitle: request.PageTitle,
+		ReportText: request.ReportText, AuthorDisplayName: nullableText(actor.displayName),
 		AuthorIdentityID: nullableText(actor.identityID), AuthorVerified: actor.identityID != "",
 		Anchor: request.Anchor, Evidence: request.Evidence, SourceAtReport: request.SourceAtReport,
 		CreatedAt: timestamptz(now), StateUpdatedAt: timestamptz(now),
@@ -310,13 +293,14 @@ func (d *Database) CreateFeedback(ctx context.Context, auth PublishRunAuthentica
 		}
 		stored.LatestEventCursor = cursor
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := commitFeedback(ctx, tx, clock, actor.expiresAt); err != nil {
 		return FeedbackThread{}, fmt.Errorf("controlstate: commit feedback report: %w", err)
 	}
 	return feedbackThreadFromRow(stored), nil
 }
 
 func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackRequest, now time.Time) (result FeedbackEvent, retErr error) {
+	clock := newAuthorizationClock(now)
 	if !opaqueid.Valid(request.FeedbackID, opaqueid.FeedbackPrefix) || !validFeedbackKey(request.IdempotencyKey) ||
 		!validFeedbackEventPayload(request) {
 		return FeedbackEvent{}, ErrFeedbackInvalid
@@ -362,27 +346,33 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 	}
 	var actor authorizedFeedbackActor
 	if request.Actor.Kind == "reviewer" {
-		publicURL, err := lockVisitorURL(ctx, queries, candidate.PublicURLID)
+		if request.Actor.ServiceRun == nil || request.Actor.ServiceRun.Subject.ID != candidate.ServiceID {
+			return FeedbackEvent{}, ErrFeedbackAccess
+		}
+		if err = d.lockServiceHTTPRun(ctx, tx, *request.Actor.ServiceRun, clock.current()); err != nil {
+			return FeedbackEvent{}, err
+		}
+		if _, err := queries.FeedbackRunScope(ctx, controlstatedb.FeedbackRunScopeParams{
+			ServiceID: candidate.ServiceID, ServiceRunID: request.Actor.ServiceRun.RunID, PreviewID: candidate.PreviewID,
+			RunNumber: request.Actor.ServiceRun.Number, Now: timestamptz(clock.current()),
+		}); err != nil {
+			return FeedbackEvent{}, publisherLookupError(err, ErrFeedbackAccess)
+		}
+		service, err := queries.GetService(ctx, candidate.ServiceID)
 		if err != nil {
 			return FeedbackEvent{}, err
 		}
-		if request.Actor.PublishRunAuthentication == nil || request.Actor.PublishRunAuthentication.PublicURLID != candidate.PublicURLID {
-			return FeedbackEvent{}, ErrFeedbackAccess
-		}
-		if _, err = d.lockAuthenticatedRun(ctx, queries, *request.Actor.PublishRunAuthentication, now); err != nil {
-			return FeedbackEvent{}, err
-		}
-		actor, err = d.currentReviewer(ctx, queries, publicURL, candidate.PreviewID, request.Actor, now)
+		actor, err = d.currentReviewer(ctx, tx, service, request.Actor, clock)
 		if err != nil {
 			return FeedbackEvent{}, err
 		}
 	} else {
-		actor, err = d.authorizeImplementerFeedbackActor(ctx, queries, candidate, request.Actor, now)
+		actor, err = d.authorizeImplementerFeedbackActor(ctx, tx, candidate, request.Actor, clock.current())
 		if err != nil {
 			return FeedbackEvent{}, err
 		}
 	}
-	if err := requireFeedbackAuthorForURL(ctx, queries, candidate.TeamID, candidate.PublicURLID, actor); err != nil {
+	if err := requireFeedbackAuthor(ctx, queries, candidate.TeamID.String, candidate.GuestID.String, actor); err != nil {
 		return FeedbackEvent{}, err
 	}
 	thread, err := queries.LockFeedbackThread(ctx, request.FeedbackID)
@@ -397,6 +387,9 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 		IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
+		if !actor.expiresAt.IsZero() && !actor.expiresAt.After(clock.current()) {
+			return FeedbackEvent{}, ErrFeedbackAccess
+		}
 		if subtle.ConstantTimeCompare(existing.RequestDigest, digest[:]) != 1 {
 			return FeedbackEvent{}, ErrFeedbackIdempotency
 		}
@@ -440,7 +433,7 @@ func (d *Database) AppendFeedback(ctx context.Context, request AppendFeedbackReq
 			return FeedbackEvent{}, fmt.Errorf("controlstate: update feedback state: %w", err)
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := commitFeedback(ctx, tx, clock, actor.expiresAt); err != nil {
 		return FeedbackEvent{}, fmt.Errorf("controlstate: commit feedback event: %w", err)
 	}
 	return feedbackEventFromRow(stored), nil
@@ -453,31 +446,57 @@ func verifiedFeedbackAuthorID(actor authorizedFeedbackActor) string {
 	return actor.identityID
 }
 
-func (d *Database) authorizeImplementerFeedbackActor(ctx context.Context, queries *controlstatedb.Queries, thread controlstatedb.ControlFeedbackThread, actor FeedbackActor, now time.Time) (authorizedFeedbackActor, error) {
-	if actor.Kind != "implementer" || actor.IdentityID == "" || actor.PolicyRevision == 0 || actor.ExpectedMutationRevision == 0 {
+// management reads include retained service tombstones. the same stored
+// membership and ownership predicate used by service mutations authorizes them.
+func (d *Database) AuthorizeFeedbackService(ctx context.Context, service, identity string, now time.Time) (retErr error) {
+	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer rollback(ctx, tx, "authorize feedback management", &retErr)()
+	if err := authorizeFeedbackService(ctx, tx, service, identity, now); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func authorizeFeedbackService(ctx context.Context, tx pgx.Tx, service, identity string, now time.Time) error {
+	q := controlstatedb.New(tx)
+	candidate, err := q.GetFeedbackService(ctx, service)
+	if err != nil {
+		return publisherLookupError(err, ErrFeedbackAccess)
+	}
+	if candidate.GuestID.Valid || !candidate.TeamID.Valid {
+		return ErrFeedbackAccess
+	}
+	if _, err = q.LockLocalTeamForMutation(ctx, candidate.TeamID.String); err != nil {
+		return publisherLookupError(err, ErrFeedbackAccess)
+	}
+	member, err := serviceMembershipForActor(ctx, tx, candidate.TeamID.String, identity, now)
+	if err != nil {
+		return err
+	}
+	row, err := q.LockService(ctx, service)
+	if err != nil {
+		return publisherLookupError(err, ErrFeedbackAccess)
+	}
+	if row.TeamID != candidate.TeamID {
+		return ErrFeedbackAccess
+	}
+	return requireStoredServiceManagement(ctx, tx, row, member, true)
+}
+
+func (d *Database) authorizeImplementerFeedbackActor(ctx context.Context, tx pgx.Tx, thread controlstatedb.ControlFeedbackThread, actor FeedbackActor, now time.Time) (authorizedFeedbackActor, error) {
+	if actor.Kind != "implementer" || actor.IdentityID == "" {
 		return authorizedFeedbackActor{}, ErrFeedbackAccess
 	}
-	revision := positive(actor.PolicyRevision)
-	{
-		if _, err := queries.LockLocalTeamForMutation(ctx, thread.TeamID); err != nil {
-			return authorizedFeedbackActor{}, ErrFeedbackAccess
+	if err := authorizeFeedbackService(ctx, tx, thread.ServiceID, actor.IdentityID, now); err != nil {
+		if errors.Is(err, ErrServiceAccess) || errors.Is(err, ErrAuthorityAccess) {
+			err = errors.Join(ErrFeedbackAccess, err)
 		}
+		return authorizedFeedbackActor{}, err
 	}
-	route, err := queries.LockPublicURLForRun(ctx, thread.PublicURLID)
-	if err != nil || route.TeamID != thread.TeamID ||
-		route.MutationRevision != int64(actor.ExpectedMutationRevision) || route.PolicyRevision > revision {
-		return authorizedFeedbackActor{}, ErrFeedbackAccess
-	}
-	{
-		membership, err := queries.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{
-			TeamID: thread.TeamID, IdentityID: actor.IdentityID,
-		})
-		if err != nil || membership.PolicyRevision != revision ||
-			route.PublicURLScope == string(PublicURLScopeMember) && (!route.MembershipID.Valid || membership.ID != route.MembershipID.String) ||
-			route.PublicURLScope == string(PublicURLScopeShared) && membership.Role != "admin" && membership.Role != "owner" {
-			return authorizedFeedbackActor{}, ErrFeedbackAccess
-		}
-	}
+	queries := controlstatedb.New(tx)
 	identity, err := queries.LockVisitorIdentity(ctx, actor.IdentityID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return authorizedFeedbackActor{}, ErrVisitorSignIn
@@ -488,9 +507,10 @@ func (d *Database) authorizeImplementerFeedbackActor(ctx context.Context, querie
 	return authorizedFeedbackActor{kind: feedbackImplementer, identityID: identity.ID, displayName: identity.DisplayName, reference: actor.IdentityID, permissions: implementerFeedbackPermissions}, nil
 }
 
-func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAuthentication, previewID string, actor FeedbackActor, now time.Time) (teamID, publicURLID string, retErr error) {
-	if err := validatePublishRunAuthentication(auth); err != nil {
-		return "", "", err
+func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth ServiceHTTPRun, previewID string, actor FeedbackActor, now time.Time) (teamID, serviceID string, retErr error) {
+	clock := newAuthorizationClock(now)
+	if !auth.valid() {
+		return "", "", ErrServiceAccess
 	}
 	if !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) {
 		return "", "", ErrFeedbackInvalid
@@ -504,16 +524,12 @@ func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAut
 	}
 	defer rollback(ctx, tx, "read current reviewer scope", &retErr)()
 	queries := controlstatedb.New(tx)
-	publicURL, err := lockVisitorURL(ctx, queries, auth.PublicURLID)
-	if err != nil {
-		return "", "", err
-	}
-	if _, err = d.lockAuthenticatedRun(ctx, queries, auth, now); err != nil {
+	if err = d.lockServiceHTTPRun(ctx, tx, auth, clock.current()); err != nil {
 		return "", "", err
 	}
 	scope, err := queries.FeedbackRunScope(ctx, controlstatedb.FeedbackRunScopeParams{
-		PublishRunID: auth.PublishRunID, PreviewID: previewID,
-		PublishRunNumber: int64(auth.PublishRunNumber), Now: timestamptz(now),
+		ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID, PreviewID: previewID,
+		RunNumber: auth.Number, Now: timestamptz(clock.current()),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", ErrFeedbackAccess
@@ -521,18 +537,31 @@ func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth PublishRunAut
 	if err != nil {
 		return "", "", fmt.Errorf("controlstate: read reviewer preview: %w", err)
 	}
-	if scope.PublicURLID != publicURL.ID {
+	if scope.ServiceID != auth.Subject.ID {
 		return "", "", ErrFeedbackAccess
 	}
-	if _, err := d.currentReviewer(ctx, queries, publicURL, previewID, actor, now); err != nil {
+	service, err := queries.GetService(ctx, auth.Subject.ID)
+	if err != nil {
 		return "", "", err
 	}
-	return scope.TeamID, scope.PublicURLID, tx.Commit(ctx)
+	actor.ServiceRun = &auth
+	checked, err := d.currentReviewer(ctx, tx, service, actor, clock)
+	if err != nil {
+		return "", "", err
+	}
+	if err := commitFeedback(ctx, tx, clock, checked.expiresAt); err != nil {
+		return "", "", err
+	}
+	return scope.TeamID.String, scope.ServiceID, nil
 }
 
 func (state FeedbackThreadState) transition(event FeedbackEventType) (FeedbackThreadState, error) {
 	switch event {
-	case FeedbackReply, FeedbackUpdate:
+	case FeedbackReply:
+		if state == FeedbackOpen || state == FeedbackResolved {
+			return state, nil
+		}
+	case FeedbackUpdate:
 		if state == FeedbackOpen {
 			return state, nil
 		}
@@ -590,8 +619,8 @@ func validFeedbackJSON(value json.RawMessage, maxBytes int) bool {
 func feedbackThreadFromRow(row controlstatedb.ControlFeedbackThread) FeedbackThread {
 	return FeedbackThread{
 		PageTitle: row.PageTitle, MessageCount: uint64(row.MessageCount), LatestEventCursor: uint64(row.LatestEventCursor),
-		ID: row.ID, PreviewID: row.PreviewID, TeamID: row.TeamID, PublicURLID: row.PublicURLID,
-		PublishRunID: row.PublishRunID, PublishRunNumber: uint64(row.PublishRunNumber),
+		ID: row.ID, PreviewID: row.PreviewID, TeamID: row.TeamID.String, GuestID: row.GuestID.String, ServiceID: row.ServiceID,
+		ServiceRunID: row.ServiceRunID, RunNumber: row.RunNumber,
 		Service: row.ServiceName, PagePath: row.PagePath, State: FeedbackThreadState(row.State),
 		ReportText: row.ReportText, AuthorDisplayName: row.AuthorDisplayName.String,
 		AuthorIdentityID: row.AuthorIdentityID.String, AuthorVerified: row.AuthorVerified,
@@ -604,7 +633,7 @@ func feedbackThreadFromRow(row controlstatedb.ControlFeedbackThread) FeedbackThr
 func feedbackEventFromRow(row controlstatedb.ControlFeedbackEvent) FeedbackEvent {
 	return FeedbackEvent{
 		SchemaVersion: int(row.SchemaVersion),
-		Cursor:        uint64(row.Cursor), FeedbackID: row.FeedbackID, TeamID: row.TeamID,
+		Cursor:        uint64(row.Cursor), FeedbackID: row.FeedbackID, TeamID: row.TeamID.String, GuestID: row.GuestID.String,
 		Type: FeedbackEventType(row.EventType), ActorKind: row.ActorKind, ActorReference: row.ActorReference,
 		AuthorIdentityID: row.AuthorIdentityID.String, AuthorDisplayName: row.AuthorDisplayName.String, AuthorVerified: row.AuthorVerified,
 		Text: row.Text.String, Evidence: slices.Clone(row.Evidence), SourceState: slices.Clone(row.SourceState),

@@ -2,6 +2,8 @@ package ingress
 
 import (
 	"errors"
+	"io"
+	"net"
 	"net/netip"
 	"testing"
 	"time"
@@ -11,64 +13,115 @@ import (
 
 func TestPublicServicePendingSourceAndServiceCapacity(t *testing.T) {
 	p, _, _, _ := publicServiceTestSetup(t)
-	p.config.MaxPending, p.config.MaxServiceStreams, p.config.MaxSourceStreams = 3, 2, 1
-	first, ok := p.pendingStream("a", netip.MustParseAddr("192.0.2.1"))
-	if !ok {
-		t.Fatal("first pending visitor rejected")
+	s := p
+	s.config.Pending.Connections = 3
+	s.traffic.pending.ServiceConnections, s.traffic.pending.SourceConnections = 2, 1
+	limits := s.config.Traffic.Default
+	pending := func(service, source string) (*visitorAdmission, string) {
+		v, reason := s.admitPendingService()
+		if v != nil {
+			reason = v.selectRun(trafficKey{service: service, id: "run", run: 1}, limits, netip.MustParseAddr(source), false)
+			if reason != "" {
+				v.close()
+				v = nil
+			}
+		}
+		return v, reason
 	}
-	if a, ok := p.pendingStream("b", netip.MustParseAddr("192.0.2.1")); ok {
+	first, reason := pending("a", "192.0.2.1")
+	if first == nil {
+		t.Fatal("first pending visitor rejected", reason)
+	}
+	if a, _ := pending("b", "192.0.2.1"); a != nil {
 		a.close()
 		t.Fatal("source bound ignored across services")
 	}
-	second, ok := p.pendingStream("a", netip.MustParseAddr("192.0.2.2"))
-	if !ok {
-		t.Fatal("second source rejected")
+	second, reason := pending("a", "192.0.2.2")
+	if second == nil {
+		t.Fatal("second source rejected", reason)
 	}
-	if a, ok := p.pendingStream("a", netip.MustParseAddr("192.0.2.3")); ok {
+	if a, _ := pending("a", "192.0.2.3"); a != nil {
 		a.close()
 		t.Fatal("service bound ignored across sources")
 	}
-	third, ok := p.pendingStream("b", netip.MustParseAddr("192.0.2.3"))
-	if !ok {
-		t.Fatal("independent service rejected")
+	third, reason := pending("b", "192.0.2.3")
+	if third == nil {
+		t.Fatal("independent service rejected", reason)
 	}
-	if a, ok := p.pendingStream("c", netip.MustParseAddr("192.0.2.4")); ok {
+	if a, _ := pending("c", "192.0.2.4"); a != nil {
 		a.close()
 		t.Fatal("pending bound ignored")
 	}
-	if first.selectService("b") != true || first.selectService("missing") != true {
-		t.Fatal("pending service selection failed")
+	if first.selectRun(trafficKey{service: "b", id: "run", run: 1}, limits, first.source, false) == "" {
+		t.Fatal("selected run was replaceable")
 	}
-	if !first.promote() || first.promote() || first.selectService("c") {
+	if first.reserve(limits) != "" || first.reserve(limits) == "" || first.selectRun(trafficKey{service: "c", id: "run", run: 1}, limits, first.source, false) == "" {
 		t.Fatal("promotion was not exactly once and service-bound")
 	}
-	if p.pending != 2 || p.active != 1 {
+	if pending, active := publicServiceAdmissionCounts(p); pending != 2 || active != 1 {
 		t.Fatal("promotion did not release pending capacity")
 	}
-	fourth, ok := p.pendingStream("c", netip.MustParseAddr("192.0.2.4"))
-	if !ok {
-		t.Fatal("promoted visitor retained pending capacity")
+	fourth, reason := pending("c", "192.0.2.4")
+	if fourth == nil {
+		t.Fatal("promoted visitor retained pending capacity", reason)
 	}
-	for _, a := range []*privateStreamAdmission{first, second, third, fourth} {
+	for _, a := range []*visitorAdmission{first, second, third, fourth} {
 		a.close()
 		a.close()
 	}
-	if p.pending != 0 || p.active != 0 || len(p.services) != 0 || len(p.sources) != 0 {
+	if !publicServiceCapacityReleased(p) {
 		t.Fatal("joined visitors retained capacity")
 	}
 	p.StopAccepting()
-	if a, ok := p.pendingStream("a", netip.MustParseAddr("192.0.2.1")); ok {
-		a.close()
+	connection, peer := net.Pipe()
+	defer connection.Close()
+	defer peer.Close()
+	if err := p.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.1:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "", nil); err == nil {
 		t.Fatal("stopped owner admitted work")
 	}
 }
 
+func publicServiceAdmissionCounts(p *Server) (pending, active int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.admitted[pendingConnection], p.admitted[visitorConnection]
+}
+
+func publicServiceCapacityReleased(p *Server) bool {
+	pending, active := publicServiceAdmissionCounts(p)
+	if pending != 0 || active != 0 {
+		return false
+	}
+	p.traffic.mu.Lock()
+	defer p.traffic.mu.Unlock()
+	for _, run := range p.traffic.runs {
+		if run.active != 0 {
+			return false
+		}
+	}
+	for _, run := range p.traffic.pendingRuns {
+		if run.active != 0 {
+			return false
+		}
+	}
+	for _, source := range p.traffic.sources {
+		if source.active != 0 || source.connections != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func TestPublicServicePromotionWaitsForControlAcknowledgment(t *testing.T) {
-	p, c, f, _ := publicServiceTestSetup(t)
+	p, c, _, _ := publicServiceTestSetup(t)
 	c.authenticated, c.promoteErr, c.promoteStarted = true, errors.New("promotion unavailable"), make(chan struct{}, 1)
 	events := make(chan serviceaudit.Observation, 2)
 	p.config.AuditSink = auditSinkFunc(func(o serviceaudit.Observation) bool { events <- o; return true })
-	_, stop := publicServiceActiveStream(t, p, f)
+	visitor, _, stop := publicServiceTestConnect(t, p)
+	defer stop()
+	if _, err := visitor.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-c.promoteStarted:
 	case <-time.After(time.Second):
@@ -82,6 +135,11 @@ func TestPublicServicePromotionWaitsForControlAcknowledgment(t *testing.T) {
 	c.mu.Lock()
 	c.promoteErr = nil
 	c.mu.Unlock()
+	_ = visitor.SetReadDeadline(time.Now().Add(time.Second))
+	var response [4]byte
+	if _, err := io.ReadFull(visitor, response[:]); err != nil || string(response[:]) != "pong" {
+		t.Fatal("acknowledged capacity did not release the same visitor", err)
+	}
 	select {
 	case event := <-events:
 		if event.Validate() != nil || event.EventType != "connection.open" || event.Outcome != "allowed" {

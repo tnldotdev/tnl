@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -25,11 +26,11 @@ type publisherCommand struct {
 	Current   publisherCurrentCommand   `cmd:"" help:"Show the selected local or file-backed publisher without exposing its key."`
 	Setup     publisherSetupCommand     `cmd:"" help:"Approve scoped deployment publisher enrollment or set up a local publisher."`
 	Provision publisherProvisionCommand `cmd:"" help:"Write a portable scoped publisher file for deployment."`
-	Enroll    publisherEnrollCommand    `cmd:"" help:"Issue one-use enrollment for a public URL, HTTP namespace, or service."`
+	Enroll    publisherEnrollCommand    `cmd:"" help:"Issue one-use enrollment for an exact service or HTTP namespace."`
 	List      publisherListCommand      `cmd:"" help:"List publisher identities and grants."`
 	Revoke    publisherRevokeCommand    `cmd:"" help:"Revoke a publisher identity."`
 	Grant     struct {
-		Add    publisherGrantAddCommand    `cmd:"" help:"Add a public URL, HTTP namespace, or service grant."`
+		Add    publisherGrantAddCommand    `cmd:"" help:"Add an exact service or HTTP namespace grant."`
 		Revoke publisherGrantRevokeCommand `cmd:"" help:"Revoke one publisher grant."`
 	} `cmd:"" help:"Manage publisher grants."`
 }
@@ -43,7 +44,7 @@ type publisherSetupCommand struct {
 	IdempotencyKey  string           `name:"idempotency-key" help:"Original deployment setup request key for lost-response recovery."`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"With --deployment, print a raw enrollment key with human diagnostics, or JSON containing the key."`
 	Namespace       bool             `help:"Set up this team's HTTP namespace for local application publication."`
-	URL             string           `name:"url" help:"Set up one saved development public URL by ID."`
+	URL             string           `name:"url" help:"Set up one exact service by ID or public address."`
 	Domain          string           `help:"Ready team domain; defaults to the team's default domain."`
 }
 type publisherProvisionCommand struct {
@@ -52,7 +53,7 @@ type publisherProvisionCommand struct {
 	ProjectKey      string   `name:"project-key" help:"Applied project key for a deployment identity; defaults to this Git configuration source."`
 	Instance        string   `name:"instance" help:"Replica identity name; required with --deployment and bound into the private file."`
 	Namespace       bool     `help:"Grant temporary HTTP URLs in your namespace."`
-	URL             string   `name:"url" help:"Saved public URL ID for an exact grant."`
+	URL             string   `name:"url" help:"Service ID or public address for an exact grant."`
 	ServiceID       string   `name:"service-id" help:"Saved service ID for an exact grant without --deployment."`
 	Services        []string `name:"service" help:"Exact binding name to approve with --deployment; repeat for multiple bindings."`
 	Domain          string   `help:"Ready team domain for a namespace grant."`
@@ -74,16 +75,16 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, project pro
 		return publisherCLIError("--project-key, --idempotency-key, --output json, --members, and --expires-in require --deployment")
 	}
 	if len(f.Services) > 0 {
-		if len(f.Services) != 1 {
+		if len(f.Services) != 1 || !opaqueid.Valid(f.Services[0], opaqueid.ServicePrefix) {
 			return publisherCLIError("select one exact saved service ID without --deployment")
 		}
 		if f.Namespace || f.URL != "" || f.Domain != "" {
 			return publisherCLIError("select --namespace, --url, or --service")
 		}
-		return runPrivatePublisherSetup(ctx, f, output, diagnostics)
+		f.URL = f.Services[0]
 	}
 	if f.Namespace == (f.URL != "") || !f.Namespace && f.Domain != "" {
-		return publisherCLIError("select --namespace or --url <public-url-id> for local setup")
+		return publisherCLIError("select --namespace or --url <service-id-or-address> for local setup")
 	}
 	session, err := openTeamSession(ctx, f.selection(), "tnl publisher setup", diagnostics)
 	if err != nil {
@@ -91,29 +92,19 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, project pro
 	}
 	defer session.Close()
 	if f.URL != "" {
-		if !opaqueid.Valid(f.URL, opaqueid.PublicURLPrefix) {
-			return publisherCLIError("pass a saved public URL ID with --url")
-		}
-		current, err := session.Current(ctx)
+		service, err := managedService(ctx, session, f.URL)
 		if err != nil {
 			return err
 		}
-		publicURL, err := session.Authenticated().Control.GetPublicURL(ctx, f.URL)
+		n, identity, err := publisheridentity.EnsureServiceOwner(ctx, session.Store(), session.Authenticated().Control, session.Authenticated().Authority, service)
 		if err != nil {
 			return err
 		}
-		if publicURL.TeamId != current.Team().Id || publicURL.Purpose != controlv1.App || publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled {
-			return publisheridentity.ErrScope
-		}
-		n, identity, err := publisheridentity.EnsureOwner(ctx, session.Store(), session.Authenticated().Control, session.Authenticated().Authority, publicURL)
-		if err != nil {
+		if _, err := n.SavedService(ctx); err != nil {
 			return err
 		}
-		if _, err := n.Access(ctx); err != nil {
-			return err
-		}
-		return writeHumanFrame(output, "tnl publisher setup", "ready", "saved public URL publisher is set up", clioutput.Fields(
-			clioutput.Field{Label: "public URL", Value: publicURL.CanonicalHostname}, clioutput.Field{Label: "publisher", Value: identity.ClientId}, clioutput.Field{Label: "grant", Value: identity.GrantId},
+		return writeHumanFrame(output, "tnl publisher setup", "ready", "service publisher is set up", clioutput.Fields(
+			clioutput.Field{Label: "service ID", Value: service.Id}, clioutput.Field{Label: "publisher", Value: identity.ClientId}, clioutput.Field{Label: "grant", Value: identity.GrantId},
 		))
 	}
 	current, err := session.CurrentWithDomains(ctx)
@@ -159,24 +150,24 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 		return credentialfile.ErrInvalid
 	}
 	if f.ServiceID != "" {
-		if f.Namespace || f.URL != "" || f.Domain != "" {
+		if f.Namespace || f.URL != "" || f.Domain != "" || !opaqueid.Valid(f.ServiceID, opaqueid.ServicePrefix) {
 			return publisherCLIError("select --namespace, --url, or --service")
 		}
-		return runPrivatePublisherProvision(ctx, f, output, diagnostics)
+		f.URL = f.ServiceID
 	}
 	if f.Namespace == (f.URL != "") || !f.Namespace && f.Domain != "" {
-		return publisherCLIError("select --namespace or --url <public-url-id>")
+		return publisherCLIError("select --namespace or --url <service-id-or-address>")
 	}
 	session, err := openTeamSession(ctx, f.selection(), "tnl publisher provision", diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	current, err := session.CurrentWithDomains(ctx)
+	current, err := publisherScopeTeam(ctx, session, f.Namespace)
 	if err != nil {
 		return err
 	}
-	url, domain, err := publisherCLIScope(current, f.URL, f.Namespace, f.Domain)
+	service, domain, err := publisherCLIGrantScope(ctx, session, current, f.URL, "", f.Namespace, f.Domain)
 	if err != nil {
 		return err
 	}
@@ -192,31 +183,37 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 			return publisherCLIError("selected domain has no HTTP namespace")
 		}
 	}
-	e, err := session.Authenticated().Control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: current.Team().Id, PublicUrlId: url, DomainId: domain, Name: "deployment", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
+	e, err := session.Authenticated().Control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: current.Team().Id, ServiceId: service, DomainId: domain, Name: "deployment", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
 	if err != nil {
 		return err
 	}
-	if !opaqueid.Valid(e.Id, opaqueid.PublisherEnrollmentPrefix) || !strings.HasPrefix(e.EnrollmentKey, e.Id+".") || e.TeamId != current.Team().Id || !e.ExpiresAt.After(time.Now()) || url != nil && (e.Kind != "saved_public_url" || e.PublicUrlId == nil || *e.PublicUrlId != *url || e.DomainId != nil || e.Namespace != nil) || domain != nil && (e.Kind != "namespace" || e.PublicUrlId != nil || e.DomainId == nil || *e.DomainId != *domain || e.Namespace == nil || *e.Namespace != namespace) {
+	if !opaqueid.Valid(e.Id, opaqueid.PublisherEnrollmentPrefix) || !strings.HasPrefix(e.EnrollmentKey, e.Id+".") || e.TeamId != current.Team().Id || !e.ExpiresAt.After(time.Now()) || service != nil && (e.Kind != "service" || e.ServiceId == nil || *e.ServiceId != *service || e.DomainId != nil || e.Namespace != nil) || domain != nil && (e.Kind != "namespace" || e.ServiceId != nil || e.DomainId == nil || *e.DomainId != *domain || e.Namespace == nil || *e.Namespace != namespace) {
 		return failure.Wrap("read publisher enrollment", failure.ServerResponseInvalid, errors.New("control returned a different publisher scope"))
 	}
-	n, identity, err := publisheridentity.EnrollNative(ctx, session.Store(), publisheridentity.NativeControl{PublicURLControl: session.Authenticated().Control, Services: session.Authenticated().Control}, session.Authenticated().Authority, e.EnrollmentKey)
+	capabilities := publisheridentity.NativeControl{Services: session.Authenticated().Control}
+	if domain != nil {
+		capabilities.Allocations = session.Authenticated().Control
+	}
+	n, identity, err := publisheridentity.EnrollNative(ctx, session.Store(), capabilities, session.Authenticated().Authority, e.EnrollmentKey)
 	if err != nil {
 		return err
 	}
-	if identity.TeamId != current.Team().Id || url != nil && (identity.Kind != "saved_public_url" || identity.PublicUrlId == nil || *identity.PublicUrlId != *url || identity.DomainId != nil || identity.Namespace != nil) || domain != nil && (identity.Kind != "namespace" || identity.PublicUrlId != nil || identity.DomainId == nil || *identity.DomainId != *domain || identity.Namespace == nil || *identity.Namespace != namespace) {
+	if identity.TeamId != current.Team().Id || service != nil && (identity.Kind != "service" || identity.ServiceId == nil || *identity.ServiceId != *service || identity.DomainId != nil || identity.Namespace != nil) || domain != nil && (identity.Kind != "namespace" || identity.ServiceId != nil || identity.DomainId == nil || *identity.DomainId != *domain || identity.Namespace == nil || *identity.Namespace != namespace) {
 		return publisheridentity.ErrScope
 	}
-	if _, err := n.Access(ctx); err != nil {
-		return err
+	if service != nil {
+		_, err = n.SavedService(ctx)
+	} else {
+		_, err = n.Access(ctx)
 	}
-	saved, found, err := session.Store().PublisherIdentity(ctx, identity.ClientId)
 	if err != nil {
 		return err
 	}
-	if !found {
-		return publisheridentity.ErrScope
+	_, signing, err := invocation.SigningIdentity(ctx, session.Store(), identity.ClientId)
+	if err != nil {
+		return err
 	}
-	fCred, err := credentialfile.New(session.Authenticated().ServerEndpoint, identity, saved.SigningKey)
+	fCred, err := credentialfile.New(session.Authenticated().ServerEndpoint, identity, signing)
 	if err != nil {
 		return err
 	}
@@ -230,7 +227,7 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 
 type publisherEnrollCommand struct {
 	scopedTeamFlags `embed:""`
-	PublicURLID     string `arg:"" optional:"" name:"public-url-id" help:"Enabled saved public URL ID."`
+	Address         string `arg:"" optional:"" name:"service-or-address" help:"Enabled service ID or public address."`
 	ServiceID       string `name:"service" help:"Exact saved service ID."`
 	Name            string `default:"publisher" help:"Lowercase publisher name."`
 	Namespace       bool   `help:"Grant temporary HTTP URLs in your authorized namespace."`
@@ -255,7 +252,7 @@ type publisherRevokeCommand struct {
 type publisherGrantAddCommand struct {
 	scopedTeamFlags     `embed:""`
 	PublisherIdentityID string `arg:"" name:"publisher-identity-id"`
-	PublicURLID         string `name:"public-url-id" help:"Saved URL to grant."`
+	URL                 string `name:"url" help:"Public hostname or HTTPS origin of the service to grant."`
 	ServiceID           string `name:"service" help:"Exact saved service ID to grant."`
 	Namespace           bool   `help:"Grant temporary HTTP URLs in your namespace."`
 	Domain              string `help:"Ready team domain for a namespace grant."`
@@ -268,23 +265,6 @@ type publisherGrantRevokeCommand struct {
 
 func publisherCLIError(message string) error {
 	return failure.Wrap("select publisher identity", failure.InvalidTunnelFlags, errors.New(message))
-}
-
-func publisherCLIScope(current clientteam.Context, urlID string, namespace bool, domain string) (*string, *string, error) {
-	if namespace == (urlID != "") || !namespace && domain != "" {
-		return nil, nil, publisherCLIError("select a saved public URL ID or --namespace")
-	}
-	if !namespace {
-		if !opaqueid.Valid(urlID, opaqueid.PublicURLPrefix) {
-			return nil, nil, publisherCLIError("pass a saved public URL ID")
-		}
-		return &urlID, nil, nil
-	}
-	d, err := current.ReadyDomain(domain)
-	if err != nil {
-		return nil, nil, err
-	}
-	return nil, &d.Id, nil
 }
 
 func runPublisherEnroll(ctx context.Context, f publisherEnrollCommand, output, diagnostics io.Writer) error {
@@ -300,7 +280,7 @@ func runPublisherEnroll(ctx context.Context, f publisherEnrollCommand, output, d
 	if err != nil {
 		return err
 	}
-	url, domain, private, err := publisherCLIGrantScope(current, f.PublicURLID, f.ServiceID, f.Namespace, f.Domain)
+	service, domain, err := publisherCLIGrantScope(ctx, session, current, f.Address, f.ServiceID, f.Namespace, f.Domain)
 	if err != nil {
 		return err
 	}
@@ -308,11 +288,11 @@ func runPublisherEnroll(ctx context.Context, f publisherEnrollCommand, output, d
 	if f.Automation {
 		kind = controlv1.CreatePublisherEnrollmentRequestKindAutomation
 	}
-	e, err := session.Authenticated().Control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: current.Team().Id, PublicUrlId: url, DomainId: domain, ServiceId: private, Name: f.Name, Kind: kind})
+	e, err := session.Authenticated().Control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: current.Team().Id, DomainId: domain, ServiceId: service, Name: f.Name, Kind: kind})
 	if err != nil {
 		return err
 	}
-	if !opaqueid.Valid(e.Id, opaqueid.PublisherEnrollmentPrefix) || e.EnrollmentKey == "" || !e.ExpiresAt.After(time.Now()) || e.TeamId != current.Team().Id || url != nil && (e.PublicUrlId == nil || *e.PublicUrlId != *url) || private != nil && (e.Kind != "service" || e.ServiceId == nil || *e.ServiceId != *private || e.PublicUrlId != nil || e.DomainId != nil || e.Namespace != nil) {
+	if !opaqueid.Valid(e.Id, opaqueid.PublisherEnrollmentPrefix) || !strings.HasPrefix(e.EnrollmentKey, e.Id+".") || !e.ExpiresAt.After(time.Now()) || e.TeamId != current.Team().Id || service != nil && (e.Kind != "service" || e.ServiceId == nil || *e.ServiceId != *service || e.DomainId != nil || e.Namespace != nil) || domain != nil && (e.Kind != "namespace" || e.DomainId == nil || *e.DomainId != *domain || e.ServiceId != nil || !publisherNamespaceMatches(current, *domain, e.Namespace)) {
 		return failure.Wrap("read publisher enrollment", failure.ServerResponseInvalid, errors.New("control returned a different enrollment"))
 	}
 	// one-use enrollment secrets remain exact raw values on stdout.
@@ -356,9 +336,6 @@ func runPublisherList(ctx context.Context, f publisherListCommand, project proje
 		fields = append(fields, publisherRuntimeFields(p.Runtime)...)
 		for _, g := range p.Grants {
 			value := g.Id
-			if g.PublicUrlId != nil {
-				value += " " + *g.PublicUrlId
-			}
 			if g.Namespace != nil {
 				value += " " + *g.Namespace
 			}
@@ -422,15 +399,15 @@ func runPublisherGrantAdd(ctx context.Context, f publisherGrantAddCommand, outpu
 	if err != nil {
 		return err
 	}
-	url, domain, private, err := publisherCLIGrantScope(current, f.PublicURLID, f.ServiceID, f.Namespace, f.Domain)
+	service, domain, err := publisherCLIGrantScope(ctx, session, current, f.URL, f.ServiceID, f.Namespace, f.Domain)
 	if err != nil {
 		return err
 	}
-	g, err := session.Authenticated().Control.CreatePublisherGrant(ctx, f.PublisherIdentityID, controlv1.CreatePublisherGrantRequest{TeamId: current.Team().Id, PublicUrlId: url, DomainId: domain, ServiceId: private})
+	g, err := session.Authenticated().Control.CreatePublisherGrant(ctx, f.PublisherIdentityID, controlv1.CreatePublisherGrantRequest{TeamId: current.Team().Id, DomainId: domain, ServiceId: service})
 	if err != nil {
 		return err
 	}
-	if private != nil && (g.Kind != "service" || g.ServiceId == nil || *g.ServiceId != *private || g.PublicUrlId != nil || g.DomainId != nil || g.Namespace != nil) {
+	if g.TeamId != current.Team().Id || service != nil && (g.Kind != "service" || g.ServiceId == nil || *g.ServiceId != *service || g.DomainId != nil || g.Namespace != nil) || domain != nil && (g.Kind != "namespace" || g.DomainId == nil || *g.DomainId != *domain || g.ServiceId != nil || !publisherNamespaceMatches(current, *domain, g.Namespace)) {
 		return publisheridentity.ErrScope
 	}
 	return writeHumanFrame(output, "tnl publisher grant add", "created", "", clioutput.Fields(clioutput.Field{Label: "publisher", Value: f.PublisherIdentityID}, clioutput.Field{Label: "grant", Value: g.Id}))
@@ -443,15 +420,70 @@ func publisherScopeTeam(ctx context.Context, session *clientteam.Session, namesp
 	return session.Current(ctx)
 }
 
-func publisherCLIGrantScope(current clientteam.Context, url, service string, namespace bool, domain string) (*string, *string, *string, error) {
-	if service != "" {
-		if url != "" || namespace || domain != "" || !opaqueid.Valid(service, opaqueid.ServicePrefix) {
-			return nil, nil, nil, publisherCLIError("select one saved public URL, --namespace, or --service ID")
+func publisherCLIGrantScope(ctx context.Context, session *clientteam.Session, current clientteam.Context, address, serviceID string, namespace bool, domain string) (*string, *string, error) {
+	selections := 0
+	for _, selected := range []bool{address != "", serviceID != "", namespace} {
+		if selected {
+			selections++
 		}
-		return nil, nil, &service, nil
 	}
-	u, d, err := publisherCLIScope(current, url, namespace, domain)
-	return u, d, nil, err
+	if selections != 1 || !namespace && domain != "" || serviceID != "" && !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) {
+		return nil, nil, publisherCLIError("select an exact service ID or public address, or --namespace")
+	}
+	if namespace {
+		d, err := current.ReadyDomain(domain)
+		if err != nil {
+			return nil, nil, err
+		}
+		if expected, valid := current.Namespace(d); !valid || expected == "" {
+			return nil, nil, publisherCLIError("selected domain has no HTTP namespace")
+		}
+		return nil, &d.Id, nil
+	}
+	if serviceID == "" {
+		serviceID = address
+	}
+	service, err := managedService(ctx, session, serviceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !service.Enabled || service.TeamId != current.Team().Id {
+		return nil, nil, publisheridentity.ErrScope
+	}
+	return &service.Id, nil, nil
+}
+
+func managedService(ctx context.Context, session *clientteam.Session, selector string) (controlv1.Service, error) {
+	id := selector
+	if !opaqueid.Valid(id, opaqueid.ServicePrefix) {
+		selected, err := resolveManagedService(ctx, session, selector)
+		if err != nil {
+			return controlv1.Service{}, err
+		}
+		id = selected.Id
+	}
+	current, err := session.Current(ctx)
+	if err != nil {
+		return controlv1.Service{}, err
+	}
+	service, err := session.Authenticated().Control.GetService(ctx, id)
+	if err != nil {
+		return service, err
+	}
+	if service.Id != id || service.TeamId != current.Team().Id || !service.Enabled {
+		return service, publisheridentity.ErrScope
+	}
+	_, err = publisheridentity.ServiceTrust(service)
+	return service, err
+}
+
+func publisherNamespaceMatches(current clientteam.Context, domainID string, namespace *string) bool {
+	domain, err := current.ReadyDomain(domainID)
+	if err != nil || namespace == nil {
+		return false
+	}
+	expected, valid := current.Namespace(domain)
+	return valid && expected != "" && *namespace == expected
 }
 
 func runPublisherGrantRevoke(ctx context.Context, f publisherGrantRevokeCommand, output, diagnostics io.Writer) error {

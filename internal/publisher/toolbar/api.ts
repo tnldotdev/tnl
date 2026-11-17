@@ -29,7 +29,7 @@ export interface FeedbackAPI {
     signal: AbortSignal,
     state?: "open" | "resolved",
   ): Promise<ThreadPage>;
-  /** immutable report and current state, scoped to this public URL and preview. */
+  /** immutable report and current state, scoped to this service and preview. */
   inspect(id: string, signal: AbortSignal): Promise<Thread>;
   /** ordered events after a decimal cursor; follow next_cursor until caught up. */
   events(id: string, cursor: string | undefined, signal: AbortSignal): Promise<EventPage>;

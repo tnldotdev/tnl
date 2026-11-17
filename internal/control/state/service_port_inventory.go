@@ -33,6 +33,13 @@ func (d *Database) ConfigureIngressServicePorts(ctx context.Context, pool string
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('managed-ports/'||$1,0))`, pool); err != nil {
 		return err
 	}
+	var exists bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.ingress_pools WHERE id=$1)`, pool).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return tcpport.ErrInventory
+	}
 	var excluded bool
 	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_port_claims claim WHERE claim.ingress_pool_id=$1 AND claim.state<>'released' AND NOT EXISTS(SELECT 1 FROM unnest($2::int[],$3::int[]) inventory(first_port,last_port) WHERE claim.port BETWEEN inventory.first_port AND inventory.last_port))`, pool, first, last).Scan(&excluded); err != nil {
 		return err

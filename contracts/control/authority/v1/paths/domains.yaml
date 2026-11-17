@@ -58,9 +58,27 @@ paths:
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
   /v1/teams/{team_id}/domains/{domain_id}:
+    get:
+      operationId: getTeamDomain
+      summary: Read one team domain and its current release observations
+      description: Requires current team access. Includes a released custom domain's final owner confirmation without making it available for domain selection. A missing domain is not proof of completed release.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/TeamID"
+        - $ref: "../openapi.yaml#/components/parameters/DomainID"
+      responses:
+        "200":
+          description: Current domain and owner observations
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/Domain"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
     delete:
       operationId: releaseTeamDomain
-      summary: Release one custom domain
+      summary: Begin releasing one custom domain
       security:
         - bearerAuth: []
       parameters:
@@ -68,6 +86,6 @@ paths:
         - $ref: "../openapi.yaml#/components/parameters/DomainID"
       responses:
         "204":
-          description: Domain release started
+          description: Domain release requested, not completed. Read the domain by its exact ID for blockers and final owner confirmation. The default domain must be switched first.
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"

@@ -5,13 +5,19 @@ paths:
       tags: [browser-access]
       summary: Start browser sign-in for one HTTP service
       security: []
-      description: "Start browser sign-in for one HTTP service. Navigate to this URL rather than fetching JSON. The common callback preserves the allocated service port and checks current visitor access before issuing a credential."
+      description: "Start browser sign-in for one HTTP service, optionally within a preview. Navigate to this URL rather than fetching JSON. Sign-in verifies browser identity independently of current visit permission; it does not create a visitor grant."
       parameters:
         - {
             name: service_id,
             in: query,
             required: true,
             schema: { $ref: "../openapi.yaml#/components/schemas/ServiceID" },
+          }
+        - {
+            name: preview_id,
+            in: query,
+            required: false,
+            schema: { $ref: "../openapi.yaml#/components/schemas/PreviewID" },
           }
         - {
             name: return_path,
@@ -43,7 +49,7 @@ paths:
     post:
       operationId: createServiceHTTPGrant
       tags: [visitor-access]
-      summary: Create a service-scoped HTTP visitor token or share
+      summary: Create a service-scoped HTTP visitor token
       security: [{ bearerAuth: [] }]
       description: "Create an HTTP visitor credential for this service. Requires both current management and visitor permission. Each call creates a new credential, returned once; it grants neither management nor feedback permission."
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
@@ -64,7 +70,7 @@ paths:
       operationId: revokeServiceHTTPGrant
       tags: [visitor-access]
       summary: Revoke one service-scoped HTTP visitor credential
-      description: Revoke the named token or share using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
+      description: Revoke the named token using current service management permission. The credential no longer authorizes new visitor permission; retained summaries remain visible without their secrets.
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
@@ -77,7 +83,7 @@ paths:
       operationId: redeemServiceBrowserHandoff
       tags: [browser-access]
       summary: Exchange a service browser handoff through its publisher run
-      description: Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a host-bound browser credential. A visitor's control session cannot substitute for the publisher run token.
+      description: Authenticate the publisher with the exact service run token and exchange the body's one-time handoff secret for a browser identity cookie bound to captured service runs. Visitor permission is optional and checked independently, including any supplied share cookie pair. A visitor's control session cannot substitute for the publisher run token.
       security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
@@ -104,7 +110,7 @@ paths:
       operationId: checkServiceBrowserSession
       tags: [browser-access]
       summary: Check a browser session through its service publisher run
-      description: Authenticate the publisher with the exact service run token and recheck the host-bound browser secret in the body against current service access. The result grants visitor access, not service management permission.
+      description: Authenticate the publisher with the exact service run token and recheck the body's browser identity cookie for that captured service run. Identity remains authenticated when current visit permission is denied; neither identity nor this check creates a visitor or management grant.
       security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
@@ -130,7 +136,7 @@ paths:
       operationId: revokeServiceBrowserSession
       tags: [browser-access]
       summary: Revoke a browser session through its service publisher run
-      description: Authenticate the publisher with the exact service run token and revoke the body's host-bound browser session. This does not revoke the person's control session or sessions on unrelated hosts.
+      description: Authenticate the publisher with the exact service run token and prove the body's browser session was installed for that captured service run. Revoke the shared browser session across its hostname handoff chain, including pending handoffs. Other browser sessions and the person's control session remain unchanged.
       security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
@@ -146,232 +152,8 @@ paths:
           application/json:
             schema: { $ref: "../openapi.yaml#/components/schemas/ServiceBrowserRequest" }
       responses:
-        "204": { description: Host-bound browser session revoked }
+        "204": { description: Shared browser session revoked }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/visitor/public-urls:
-    get:
-      operationId: listAvailablePublicURLs
-      tags: [visitor-access]
-      summary: List public URLs available to the signed-in visitor
-      description: Read a cursor-paginated visitor inventory across the identity's current grants, optionally selecting one team. The response omits management policy, targets, and secrets and does not itself grant a visitor token.
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { name: team_id, in: query, schema: { type: string } }
-        - { name: cursor, in: query, schema: { type: string } }
-      responses:
-        "200":
-          description: Identity-wide visitor inventory without targets, policies or secrets
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/AvailablePublicURLPage" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/public-urls/{public_url_id}/visitor-grants:
-    parameters:
-      - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
-    get:
-      operationId: listVisitorGrants
-      tags: [visitor-access]
-      summary: List visitor grants for one manageable public URL
-      description: Read exact-public-URL team and identity visitor grants under current management authorization. Listing a grant is not a substitute for checking the visitor's current access.
-      security: [{ bearerAuth: [] }]
-      responses:
-        "200":
-          description: Grants for an owned public URL
-          content:
-            application/json:
-              schema:
-                { type: array, items: { $ref: "../openapi.yaml#/components/schemas/VisitorGrant" } }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-    post:
-      operationId: createTeamVisitorGrant
-      tags: [visitor-access]
-      summary: Grant current members of a team access to one public URL
-      description: Create an exact-public-URL grant for current members of the selected team using management authorization and an idempotency key. This grants visitor access, not public URL management or publisher authority.
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/CreateTeamVisitorGrantRequest" }
-      responses:
-        "201":
-          description: Exact URL grant for current team members
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorGrant" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/public-urls/{public_url_id}/visitor-identity-grants:
-    post:
-      operationId: createIdentityVisitorGrant
-      tags: [visitor-access]
-      description: Create an exact-public-URL identity grant under current management authorization. Use an explicit identity grant even for the current identity when access must not depend on team membership.
-      summary: Create an explicit identity grant, including for the current identity
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
-        - { $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              { $ref: "../openapi.yaml#/components/schemas/CreateIdentityVisitorGrantRequest" }
-      responses:
-        "201":
-          description: Exact URL and identity grant
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorGrant" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/public-urls/{public_url_id}/visitor-grants/{grant_id}:
-    delete:
-      operationId: revokeVisitorGrant
-      tags: [visitor-access]
-      summary: Revoke one public URL visitor grant
-      description: Revoke the exact grant under current public URL management authorization. Current visitor policy determines access after revocation; other grants for the URL remain separate.
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
-        - { name: grant_id, in: path, required: true, schema: { type: string } }
-      responses:
-        "204": { description: Grant revoked }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/public-urls/{public_url_id}/visitor-invitations:
-    parameters:
-      - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
-    get:
-      operationId: listVisitorInvitations
-      tags: [visitor-access]
-      summary: List named visitor invitations for one public URL
-      description: Read invitation records using current public URL management authorization. Invitation inventory does not reveal a reusable visitor credential or grant management permission to its recipients.
-      security: [{ bearerAuth: [] }]
-      responses:
-        "200":
-          description: Named visitor invitations
-          content:
-            application/json:
-              schema:
-                {
-                  type: array,
-                  items: { $ref: "../openapi.yaml#/components/schemas/VisitorInvitation" },
-                }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-    post:
-      operationId: createVisitorInvitation
-      tags: [visitor-access]
-      summary: Invite a verified email identity to one public URL
-      description: "Invite the verified email identity to this public URL. Control returns the credential once. An identical authorized retry returns credential_delivery_unavailable with the invitation ID; revoke and reissue if delivery was lost. Acceptance creates visitor access, not team membership or management permission."
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/IdempotencyKey" }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/CreateVisitorInvitationRequest" }
-      responses:
-        "201":
-          description: One-use verified-email invitation without team membership
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorInvitationCreation" }
-        "409":
-          description: Exact retry cannot redeliver the credential, or changed input conflicts
-          content:
-            application/problem+json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/Problem" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/public-urls/{public_url_id}/visitor-invitations/{invitation_id}:
-    delete:
-      operationId: revokeVisitorInvitation
-      tags: [visitor-access]
-      summary: Revoke a public URL invitation and its accepted identity grant
-      description: Revoke the named invitation using current public URL management authorization. If it was accepted, revoke the identity grant created by that invitation as well.
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
-        - { name: invitation_id, in: path, required: true, schema: { type: string } }
-      responses:
-        "204": { description: Invitation and accepted grant revoked }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/visitor-invitations/accept:
-    post:
-      operationId: acceptVisitorInvitation
-      tags: [visitor-access]
-      summary: Accept a public URL invitation for the signed-in identity
-      description: Exchange the body's one-use secret using the current signed-in identity and matching verified email. Acceptance grants exact-URL visitor access, not management permission or team membership.
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [secret]
-              properties:
-                secret: { type: string, maxLength: 128 }
-      responses:
-        "200":
-          description: Exact identity grant
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorGrant" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/public-urls/{public_url_id}/access:
-    parameters:
-      - { $ref: "../openapi.yaml#/components/parameters/PublicURLID" }
-    put:
-      operationId: replaceVisitorAccess
-      tags: [visitor-access]
-      description: "Replace the access mode and complete IP filter using the current mutation revision. An empty IP list removes the filter. Existing grants, shares, and invitations are unchanged; this operation does not revoke every source of visitor access."
-      summary: Replace the complete live visitor access policy
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/ReplaceVisitorAccessRequest" }
-      responses:
-        "200":
-          description: Saved policy for this public URL, active for new visitor work
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/PublicURL" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/browser/login:
-    get:
-      operationId: beginPreviewBrowserLogin
-      tags: [browser-access]
-      description: "Start browser sign-in for a public URL, optionally within a preview. Navigate to this URL rather than fetching JSON. Current visitor permission is checked before issuing a browser credential."
-      summary: Start sign-in for a preview visitor
-      security: []
-      parameters:
-        - name: preview_id
-          in: query
-          required: false
-          schema:
-            $ref: "../openapi.yaml#/components/schemas/PreviewID"
-        - name: public_url_id
-          in: query
-          required: true
-          schema:
-            $ref: "../openapi.yaml#/components/schemas/PublicURLID"
-        - name: return_path
-          in: query
-          required: true
-          schema:
-            type: string
-            pattern: "^/"
-            maxLength: 2048
-        - { name: switch_account, in: query, schema: { type: boolean } }
-      responses:
-        "302":
-          description: Redirect to the configured identity provider
-        default:
-          $ref: "../openapi.yaml#/components/responses/Problem"
   /v1/browser/callback:
     get:
       operationId: completePreviewBrowserLogin
@@ -392,77 +174,6 @@ paths:
             type: string
       responses:
         "303":
-          description: Redirect to a one-time handoff on the public URL
-        default:
-          $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/browser/handoff:
-    post:
-      operationId: redeemPreviewBrowserHandoff
-      tags: [browser-access]
-      description: Authenticate the publisher with the exact publish run token and exchange the body's one-time handoff for a host-bound browser cookie secret. A visitor's control session does not replace the publisher credential.
-      summary: Redeem a one-time browser handoff on the publisher
-      security:
-        - publishRunAuth: []
-      parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "../openapi.yaml#/components/schemas/BrowserHandoffRequest"
-      responses:
-        "200":
-          description: Browser cookie and safe return path
-          content:
-            application/json:
-              schema:
-                $ref: "../openapi.yaml#/components/schemas/BrowserHandoffResponse"
-        default:
-          $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/browser/access:
-    post:
-      operationId: checkPreviewBrowserAccess
-      tags: [browser-access]
-      description: Authenticate the publisher with the exact publish run token and check the body's browser cookie secret against current public URL and preview access. A previously issued cookie alone is not proof of current permission.
-      summary: Check a browser cookie against current preview access
-      security:
-        - publishRunAuth: []
-      parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "../openapi.yaml#/components/schemas/BrowserAccessRequest"
-      responses:
-        "200":
-          description: Browser identity and current team access
-          content:
-            application/json:
-              schema:
-                $ref: "../openapi.yaml#/components/schemas/BrowserAccessResponse"
-        default:
-          $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/browser/logout:
-    post:
-      operationId: revokePreviewBrowserAccess
-      tags: [browser-access]
-      description: Authenticate the publisher with the exact publish run token and revoke the host-bound browser session named in the body. Other hosts and the person's control session remain separate.
-      summary: Revoke the current browser session
-      security:
-        - publishRunAuth: []
-      parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "../openapi.yaml#/components/schemas/BrowserAccessRequest"
-      responses:
-        "204":
-          description: Browser session revoked
+          description: Redirect to a one-time handoff on the service endpoint
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"

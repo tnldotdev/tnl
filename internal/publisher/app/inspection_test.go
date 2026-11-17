@@ -28,10 +28,15 @@ func TestAppSummaryObservationStoresHTTPAndSQL(t *testing.T) {
 	recorder := tunnel.NewInspectionRecorder(root, root, root, "web", inspection.Policy{Mode: inspection.SummaryMode, Retention: time.Hour, MaxBytes: 1 << 20})
 	observe := SummaryObservation(recorder)
 	now := time.Now()
-	observe(inspection.Summary{Protocol: inspection.HTTP, ReceivedAt: now, Method: "GET", Path: "/health", Status: 503, Duration: 2500 * time.Microsecond, Origin: "local_service"})
-	observe(inspection.Summary{Protocol: inspection.HTTP, ReceivedAt: now.Add(500 * time.Microsecond), Method: "GET", Path: "/unchanged-result", Status: 503, Result: inspection.ResultError, Origin: "local_service"})
+	observe(inspection.Summary{Protocol: inspection.HTTP, ReceivedAt: now, Method: "GET", Path: "/health", Status: 503, Result: inspection.ResultError, Duration: 2500 * time.Microsecond, Origin: "local_service"})
+	observe(inspection.Summary{Protocol: inspection.HTTP, ReceivedAt: now.Add(500 * time.Microsecond), Method: "GET", Path: "/interrupted-response", Status: 200, Result: inspection.ResultError, Origin: "local_service"})
 	observe(inspection.Summary{Protocol: inspection.MySQL, ReceivedAt: now.Add(time.Second), Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "HY000", MySQLErrorCode: 1045, Rows: 1, ResultSets: 2, Duration: 3 * time.Millisecond, Origin: "tnl"})
-	recorder.Close()
+	if err := recorder.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// a late application response must not reopen the recorder or panic after
+	// its owner's forced shutdown has already joined inspection persistence.
+	observe(inspection.Summary{Protocol: inspection.HTTP, ReceivedAt: now, Method: "GET", Path: "/late", Status: 200, Result: inspection.ResultOK, Origin: "local_service"})
 	items, err := database.ListInspections(t.Context(), clientstate.InspectionFilter{Project: root, SharedProject: root, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -43,10 +48,10 @@ func TestAppSummaryObservationStoresHTTPAndSQL(t *testing.T) {
 	if sql.Protocol != inspection.MySQL || sql.Operation != inspection.OperationExecute || sql.Result != inspection.ResultError || sql.SQLState != "HY000" || sql.MySQLErrorCode != 1045 || sql.Rows != 1 || sql.ResultSets != 2 || sql.DurationMS != 3 {
 		t.Fatalf("database summary lost its outcome: %+v", sql)
 	}
-	if http.Protocol != inspection.HTTP || http.Result != "" || http.Path != "/health" || http.Status != 503 || http.DurationMS != 2 || http.Service != "web" || http.TunnelID != tunnel.ID() {
+	if http.Protocol != inspection.HTTP || http.Result != inspection.ResultError || http.Path != "/health" || http.Status != 503 || http.DurationMS != 2 || http.Service != "web" || http.TunnelID != tunnel.ID() {
 		t.Fatalf("HTTP summary changed storage policy or scope: %+v", http)
 	}
-	if appHTTP.Protocol != inspection.HTTP || appHTTP.Result != "" || appHTTP.Path != "/unchanged-result" || appHTTP.Status != 503 {
-		t.Fatalf("app HTTP summary was dropped or stored an outcome: %+v", appHTTP)
+	if appHTTP.Protocol != inspection.HTTP || appHTTP.Result != inspection.ResultError || appHTTP.Path != "/interrupted-response" || appHTTP.Status != 200 {
+		t.Fatalf("app HTTP summary lost its completion outcome: %+v", appHTTP)
 	}
 }

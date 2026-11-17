@@ -12,11 +12,12 @@ tasks:
     desc: Check APIs, database bindings, certificates, DNS, and relay claims with disposable PostgreSQL
     vars:
       RUN: '{{default "^TestIntegration" .RUN}}'
+      PACKAGES: '{{default "./internal/client/control ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/relay ./internal/publisher/deployment ./internal/publisher/local" .PACKAGES}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/client/control ./internal/control/api/authority ./internal/control/api/public ./internal/control/state/controlstatedb ./internal/control/certificates ./internal/control/dns ./internal/relay ./internal/publisher/deployment ./internal/publisher/local -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   state:shard:
-    desc: Check control state with disposable PostgreSQL (optional SHARD=1/4)
+    desc: Check control state with disposable PostgreSQL (optional SHARD=1/8)
     vars:
       SHARD: '{{default "1/1" .SHARD}}'
       RUN: '{{default "^TestIntegration" .RUN}}'
@@ -33,13 +34,13 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
 
   runtime:shard:
-    desc: Run a runtime shard, excluding separately scheduled lease, direct UDP, and rebinding proofs
+    desc: Run a runtime shard (SHARD=1/8), excluding separately scheduled lease, workload, direct UDP, and rebinding proofs
     requires:
       vars: [SHARD]
     cmds:
       - task: :js:build
       - task: :py:sync
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(ConnectorDirect|WorkloadTransport(Lifecycle|Closure)$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=12m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(ConnectorDirect|WorkloadTransport(Lifecycle|Closure)$|WorkloadHTTPPublicStreamRenewal$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=12m -args -tnl-test-tier=integration
 
   runtime:leases:
     desc: Cross production private visitor lease cycles and outage deadlines on real sockets
@@ -55,6 +56,11 @@ tasks:
     desc: Close workload TCP, HTTP, and PostgreSQL streams after revocation or an unrenewed lease
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransportClosure$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  runtime:workload:public:
+    desc: Retain original public workload HTTP responses across renewal, proof turnover, and control outage
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadHTTPPublicStreamRenewal$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   connector-direct:
     desc: Check relay-first ICE upgrades, repeated direct fallback, and retained application sessions with disposable PostgreSQL
@@ -126,6 +132,11 @@ tasks:
     desc: Check deployment-scoped CLI sharing against real control without granting visitor access
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationServiceShareManagerLookup$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  preview-access:
+    desc: Check connector-only preview attachment, independent access preparation, and public-link exclusion
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationConnectorOnlyPreviewAttachmentAndPresentation$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   local-database:
     desc: Check the explicit local deployment SDK against disposable PostgreSQL without sign-in

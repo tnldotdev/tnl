@@ -1,8 +1,17 @@
 import { FeedbackError } from "./errors.ts";
 
 /** a separate tab keeps the current report, evidence, reply and mutation key intact. */
-export function FeedbackSignIn({ error, path }: { error: unknown; path: string }) {
-  if (!(error instanceof FeedbackError) || error.code !== "sign_in_required") return null;
+export function FeedbackSignIn({
+  error,
+  path,
+  required = false,
+}: {
+  error: unknown;
+  path: string;
+  required?: boolean;
+}) {
+  if (!required && (!(error instanceof FeedbackError) || error.code !== "sign_in_required"))
+    return null;
   return (
     <p>
       <a

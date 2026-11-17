@@ -24,9 +24,9 @@ WITH relay_lease AS (
       AND leases.relay_lease_revision = $5
       AND leases.lease_expires_at > $2
       AND NOT leases.draining
-    RETURNING leases.region, leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
+    RETURNING leases.region, leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, leases.serving_until
 )
-SELECT relay_lease.region, relay_lease.peer_signing_public_key, relay_lease.id, relay_lease.relay_id, relay_lease.relay_service_id, relay_lease.relay_run_id, relay_lease.relay_lease_revision, relay_lease.protocol_version, relay_lease.internal_relay_address, relay_lease.observed_address, relay_lease.internal_networks, relay_lease.connection_capacity, relay_lease.stream_capacity, relay_lease.reported_connections, relay_lease.reported_streams, relay_lease.draining, relay_lease.drain_deadline, relay_lease.registered_at, relay_lease.renewed_at, relay_lease.lease_expires_at, services.relay_address, services.tls_server_name
+SELECT relay_lease.region, relay_lease.peer_signing_public_key, relay_lease.id, relay_lease.relay_id, relay_lease.relay_service_id, relay_lease.relay_run_id, relay_lease.relay_lease_revision, relay_lease.protocol_version, relay_lease.internal_relay_address, relay_lease.observed_address, relay_lease.internal_networks, relay_lease.connection_capacity, relay_lease.stream_capacity, relay_lease.reported_connections, relay_lease.reported_streams, relay_lease.draining, relay_lease.drain_deadline, relay_lease.registered_at, relay_lease.renewed_at, relay_lease.lease_expires_at, relay_lease.serving_until, services.relay_address, services.tls_server_name
 FROM relay_lease
 JOIN control.relay_services AS services USING (relay_service_id)
 `
@@ -60,6 +60,7 @@ type BeginAdminRelayDrainRow struct {
 	RegisteredAt         pgtype.Timestamptz
 	RenewedAt            pgtype.Timestamptz
 	LeaseExpiresAt       pgtype.Timestamptz
+	ServingUntil         pgtype.Timestamptz
 	RelayAddress         string
 	TlsServerName        string
 }
@@ -94,6 +95,7 @@ func (q *Queries) BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayD
 		&i.RegisteredAt,
 		&i.RenewedAt,
 		&i.LeaseExpiresAt,
+		&i.ServingUntil,
 		&i.RelayAddress,
 		&i.TlsServerName,
 	)
@@ -101,22 +103,40 @@ func (q *Queries) BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayD
 }
 
 const getAdminRuntimeCounts = `-- name: GetAdminRuntimeCounts :one
+WITH live_services AS (
+    SELECT id,guest_id,enabled FROM control.services
+    WHERE deleted_at IS NULL AND (expires_at IS NULL OR expires_at>$1)
+), current_runs AS (
+    SELECT run.state,run.healthy,run.certificate_expires_at
+    FROM control.service_runs run
+    JOIN live_services service ON service.id=run.service_id AND service.enabled
+    WHERE run.state IN ('starting','ready') AND run.closed_at IS NULL
+        AND run.publisher_expires_at>$1
+        AND EXISTS(SELECT 1 FROM control.publisher_service_permission(
+            run.publisher_identity_id,run.publisher_grant_id,run.service_id,$1) permission
+            JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
+            JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
+                AND signing.publisher_identity_id=run.publisher_identity_id
+                AND (grant_record.kind='service' OR signing.retired_at IS NULL))
+        AND (service.guest_id IS NULL OR EXISTS(SELECT 1 FROM control.guest_trials guest
+            WHERE guest.id=service.guest_id AND guest.active_service_run_id=run.id
+                AND control.guest_serving_deadline(guest.id,$1)>$1))
+)
 SELECT
-    (SELECT count(*) FROM control.public_urls AS routes WHERE routes.lifecycle_state = 'enabled') AS enabled_public_urls,
-    (SELECT count(*) FROM control.public_urls AS routes WHERE routes.lifecycle_state = 'suspended') AS suspended_public_urls,
-    (SELECT count(*) FROM control.publish_runs AS sessions
-        WHERE sessions.state = 'starting' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > $1) AS starting_publish_runs,
-    (SELECT count(*) FROM control.publish_runs AS sessions
-        WHERE sessions.state = 'ready' AND sessions.closed_at IS NULL AND sessions.publisher_expires_at > $1) AS ready_publish_runs,
+    (SELECT count(*) FROM live_services WHERE enabled) AS enabled_services,
+    (SELECT count(*) FROM live_services WHERE NOT enabled) AS suspended_services,
+    (SELECT count(*) FROM current_runs WHERE state='starting') AS starting_service_runs,
+    (SELECT count(*) FROM current_runs WHERE state='ready' AND healthy
+        AND certificate_expires_at>$1) AS ready_service_runs,
     (SELECT count(*) FROM control.ingress_leases AS ingresses WHERE ingresses.lease_expires_at > $1) AS ingress_leases,
     (SELECT count(*) FROM control.relay_leases AS relays WHERE relays.lease_expires_at > $1) AS relay_leases
 `
 
 type GetAdminRuntimeCountsRow struct {
-	EnabledPublicURLs   int64
-	SuspendedPublicURLs int64
-	StartingPublishRuns int64
-	ReadyPublishRuns    int64
+	EnabledServices     int64
+	SuspendedServices   int64
+	StartingServiceRuns int64
+	ReadyServiceRuns    int64
 	IngressLeases       int64
 	RelayLeases         int64
 }
@@ -125,10 +145,10 @@ func (q *Queries) GetAdminRuntimeCounts(ctx context.Context, now pgtype.Timestam
 	row := q.db.QueryRow(ctx, getAdminRuntimeCounts, now)
 	var i GetAdminRuntimeCountsRow
 	err := row.Scan(
-		&i.EnabledPublicURLs,
-		&i.SuspendedPublicURLs,
-		&i.StartingPublishRuns,
-		&i.ReadyPublishRuns,
+		&i.EnabledServices,
+		&i.SuspendedServices,
+		&i.StartingServiceRuns,
+		&i.ReadyServiceRuns,
 		&i.IngressLeases,
 		&i.RelayLeases,
 	)
@@ -183,7 +203,7 @@ func (q *Queries) InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAudi
 }
 
 const listAdminRelayLeases = `-- name: ListAdminRelayLeases :many
-SELECT leases.region, leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
+SELECT leases.region, leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, leases.serving_until, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
 JOIN control.relay_services AS services USING (relay_service_id)
 WHERE leases.lease_expires_at > $1
@@ -219,6 +239,7 @@ type ListAdminRelayLeasesRow struct {
 	RegisteredAt         pgtype.Timestamptz
 	RenewedAt            pgtype.Timestamptz
 	LeaseExpiresAt       pgtype.Timestamptz
+	ServingUntil         pgtype.Timestamptz
 	RelayAddress         string
 	TlsServerName        string
 }
@@ -253,6 +274,7 @@ func (q *Queries) ListAdminRelayLeases(ctx context.Context, arg ListAdminRelayLe
 			&i.RegisteredAt,
 			&i.RenewedAt,
 			&i.LeaseExpiresAt,
+			&i.ServingUntil,
 			&i.RelayAddress,
 			&i.TlsServerName,
 		); err != nil {
@@ -297,6 +319,19 @@ func (q *Queries) ListMaintenanceControls(ctx context.Context) ([]ControlMainten
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockMaintenanceControl = `-- name: LockMaintenanceControl :one
+SELECT allowed FROM control.maintenance_controls
+WHERE operation=$1
+FOR SHARE
+`
+
+func (q *Queries) LockMaintenanceControl(ctx context.Context, operation string) (bool, error) {
+	row := q.db.QueryRow(ctx, lockMaintenanceControl, operation)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
 }
 
 const setMaintenanceControl = `-- name: SetMaintenanceControl :one

@@ -8,7 +8,7 @@ import { TnlCleanupError, TnlError } from "../../errors.js";
 import type { TnlConnectionRegistry, TnlFetch } from "../../project.js";
 import { ownerIPC, type OwnerIPC } from "./connection_ipc.js";
 import type { NativeScope } from "./context.js";
-import { cancellable } from "./cancellation.js";
+import { cancellable, shutdownBudget } from "./cancellation.js";
 import type { ConnectionSnapshot } from "./snapshot.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
@@ -75,6 +75,7 @@ async function machineUntraced(
   signal?: AbortSignal,
   input?: unknown,
 ): Promise<unknown> {
+  let exited: Promise<void> | undefined;
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
       const child = execFile(
@@ -86,12 +87,16 @@ async function machineUntraced(
           encoding: "utf8",
           env: { ...launchEnvironment(), ...scope.environment },
           ...(signal === undefined ? {} : { signal }),
+          killSignal: "SIGKILL",
         },
         (error, stdout, stderr) =>
           error === null
             ? resolve(stdout)
             : reject(Object.assign(error, stderr === undefined ? {} : { stderr })),
       );
+      exited = new Promise<void>((resolve) => {
+        child.once("close", () => resolve());
+      });
       child.stdin?.on?.("error", () => {
         /* execFile reports the process failure without exposing pipe data. */
       });
@@ -100,8 +105,19 @@ async function machineUntraced(
     const value: unknown = JSON.parse(stdout);
     return value;
   } catch (cause) {
-    if (signal?.aborted) throw signal.reason;
+    if (
+      signal?.aborted &&
+      (cause === signal.reason ||
+        (cause instanceof Error &&
+          cause.name === "AbortError" &&
+          "code" in cause &&
+          cause.code === "ABORT_ERR" &&
+          cause.cause === signal.reason))
+    )
+      throw signal.reason;
     throw machineError(cause, args[0]);
+  } finally {
+    await exited;
   }
 }
 
@@ -110,28 +126,63 @@ async function nativeScope(captured: {
   directory: string;
   environment: NativeScope["environment"];
 }): Promise<NativeScope> {
+  const lifetime = new AbortController();
   const scope: NativeScope = {
     ...captured,
     registry: await mkdtemp(path.join(await realpath(tmpdir()), "tnl-sdk-")),
     open: ownerIPC,
+    signal: lifetime.signal,
     // keep native error classification with the copy that owns this IPC.
     select: (...args) => requestSelection(scope, ...args),
     workload: (name, request) => requestWorkload(scope, name, request),
   };
+  let shutdownUntil: number | undefined;
+  let stopReason = new TnlError("sdk.client_closed");
   const cleanup = independent("sdk.app.cleanup", async () => {
-    await machine(scope, [
-      "sdk-stop",
-      "--registry",
-      scope.registry,
-      "--parent-pid",
-      String(process.pid),
-    ]);
-    if (scope.entry !== undefined) (await scope.entry.ipc).close();
+    const budget = shutdownBudget(shutdownUntil);
+    shutdownUntil = budget.until;
+    lifetime.abort(stopReason);
+    const failures: unknown[] = [];
+    let closedEntry: NativeScope["entry"];
+    const closeIPC = async () => {
+      if (scope.entry === undefined || scope.entry === closedEntry) return;
+      closedEntry = scope.entry;
+      try {
+        (await closedEntry.ipc).close(stopReason);
+      } catch (cause) {
+        failures.push(cause);
+      }
+    };
+    try {
+      await closeIPC();
+      await machine(
+        scope,
+        [
+          "sdk-stop",
+          "--registry",
+          scope.registry,
+          "--parent-pid",
+          String(process.pid),
+          "--shutdown-deadline",
+          new Date(budget.until).toISOString(),
+        ],
+        budget.signal,
+      );
+    } catch (cause) {
+      failures.push(cause);
+    } finally {
+      budget.finish();
+      await closeIPC();
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "native and IPC cleanup failed");
   });
   const beforeExit = () => {
     void cleanup().catch(() => {});
   };
-  scope.close = async () => {
+  scope.close = async (until, reason) => {
+    if (reason !== undefined) stopReason = reason;
+    shutdownUntil = Math.min(shutdownUntil ?? Infinity, until ?? Infinity);
     await cleanup();
     process.removeListener("beforeExit", beforeExit);
   };
@@ -149,7 +200,7 @@ async function requestSelection(
 ): Promise<unknown> {
   const entry = scope.entry;
   let raw: unknown;
-  if (entry === undefined) raw = await machine(scope, args, undefined, input);
+  if (entry === undefined) raw = await machine(scope, args, scope.signal, input);
   else {
     try {
       raw = await (await entry.ipc).prepare(name, assertion, selectionOptions);
@@ -157,7 +208,7 @@ async function requestSelection(
       // native recovery checks the kernel lock before doing any selection or
       // network work. a timeout or service denial cannot authorize replacement.
       try {
-        raw = await machine(scope, [...args, "--recover-handle", entry.file], undefined, input);
+        raw = await machine(scope, [...args, "--recover-handle", entry.file], scope.signal, input);
       } catch (recovery) {
         if (recovery instanceof TnlError && recovery.code === "sdk.authentication_required")
           throw recovery;
@@ -190,7 +241,7 @@ async function requestWorkload(
     raw = await machine(
       scope,
       ["sdk-workload", "--directory", scope.directory, "--service", name],
-      undefined,
+      scope.signal,
       { schema: 1, sdk_workload: request },
     );
   }
@@ -211,7 +262,7 @@ function parsePrepared(value: unknown, name: string, file: string) {
     metadata.protocol !== snapshot.protocol ||
     (snapshot.protocol !== "tcp" && metadata.hostname !== snapshot.ssl.servername) ||
     ((snapshot.protocol === "http" || snapshot.protocol === "kubernetes") &&
-      (!("url" in metadata) || metadata.url !== snapshot.url))
+      snapshot.url !== `https://${metadata.hostname}`)
   )
     throw new TnlError("sdk.response_invalid");
   return Object.freeze({
@@ -234,6 +285,7 @@ type LocalHTTPTransport = Readonly<{
 export function managedFetch(
   url: `${"http" | "https"}://${string}`,
   current: (signal?: AbortSignal) => Promise<ConnectionSnapshot | LocalHTTPTransport>,
+  parent?: () => number | undefined,
 ): TnlFetch & { close(): Promise<void> } {
   let active = 0;
   let closed = false;
@@ -242,6 +294,15 @@ export function managedFetch(
   let poolKey: string | undefined;
   const retired = new Set<Pool>();
   const uploads = new Set<(reason?: unknown) => Promise<void>>();
+  const copies = new Set<Promise<void>>();
+  const uploadLifetime = new AbortController();
+  let shutdownUntil: number | undefined;
+  const joinCancellation = async (callback: Promise<void>) => {
+    // observe late application failures even when the shutdown fence wins.
+    const settled = Promise.allSettled([callback]);
+    const [result] = await cancellable(uploadLifetime.signal, () => settled);
+    if (result.status === "rejected") throw result.reason;
+  };
   const run: TnlFetch = async (input, init) => {
     if (closed) throw new TnlError("sdk.client_closed");
     const running = [...retired, ...(pool === undefined ? [] : [pool])].reduce(
@@ -264,9 +325,37 @@ export function managedFetch(
         input instanceof Request ? input : new URL(String(input), `${url}/`),
         requestOptions,
       );
+      const lifetime = request.signal;
+      const body = request.body;
+      const reader = body?.getReader();
+      if (reader !== undefined) {
+        let canceling: Promise<void> | undefined;
+        const cancel = (reason?: unknown) => {
+          if (canceling === undefined) {
+            uploadStopped = true;
+            // interrupt a pending read directly: returning the generator cannot do it.
+            canceling = joinCancellation(reader.cancel(reason)).finally(() => {
+              lifetime.removeEventListener("abort", aborted);
+              reader.releaseLock();
+            });
+            // retain a failed cleanup until the request or transport owner observes it.
+            void canceling.then(
+              () => uploads.delete(cancel),
+              () => {},
+            );
+          }
+          return canceling;
+        };
+        const aborted = () => {
+          void cancel(lifetime.reason).catch(() => {});
+        };
+        cancelUpload = cancel;
+        uploads.add(cancel);
+        lifetime.addEventListener("abort", aborted, { once: true });
+        if (lifetime.aborted) aborted();
+      }
       if (new URL(request.url).origin !== url) throw new TnlError("sdk.configuration_invalid");
       request.headers.set("host", new URL(url).host);
-      const lifetime = request.signal;
       lifetime.throwIfAborted();
       const snapshot = await cancellable(lifetime, () => current(lifetime));
       lifetime.throwIfAborted();
@@ -337,38 +426,10 @@ export function managedFetch(
       };
       // bun's global fetch ignores undici dispatchers. own the same transport on
       // both runtimes so the managed origin can never fall back to a direct dial.
-      const body = request.body;
-      const reader = body?.getReader();
-      if (reader !== undefined) {
-        let canceling: Promise<void> | undefined;
-        const cancel = (reason?: unknown) => {
-          if (canceling === undefined) {
-            uploadStopped = true;
-            // interrupt a pending read directly: returning the generator cannot do it.
-            canceling = Promise.resolve()
-              .then(() => reader.cancel(reason))
-              .finally(() => {
-                lifetime.removeEventListener("abort", aborted);
-                reader.releaseLock();
-              });
-            // retain a failed cleanup until the request or transport owner observes it.
-            void canceling.then(
-              () => uploads.delete(cancel),
-              () => {},
-            );
-          }
-          return canceling;
-        };
-        const aborted = () => {
-          void cancel(lifetime.reason).catch(() => {});
-        };
-        cancelUpload = cancel;
-        uploads.add(cancel);
-        lifetime.addEventListener("abort", aborted, { once: true });
-        if (lifetime.aborted) aborted();
-      }
       async function* upload() {
         if (reader === undefined) return;
+        const copied = Promise.withResolvers<void>();
+        copies.add(copied.promise);
         try {
           for (;;) {
             if (uploadStopped) return;
@@ -381,7 +442,12 @@ export function managedFetch(
           uploadFailure = { value: error };
           throw error;
         } finally {
-          await cancelUpload?.();
+          try {
+            await cancelUpload?.();
+          } finally {
+            copies.delete(copied.promise);
+            copied.resolve();
+          }
         }
       }
       dispatched = true;
@@ -434,7 +500,7 @@ export function managedFetch(
       try {
         if (cancelUpload !== undefined) await cancelUpload(failure);
         else if (!dispatched && request?.body !== null && request?.body !== undefined)
-          await request.body.cancel(failure);
+          await joinCancellation(request.body.cancel(failure));
       } catch (cleanup) {
         if (cleanup !== failure) throw new TnlCleanupError(failure, cleanup);
       } finally {
@@ -448,14 +514,31 @@ export function managedFetch(
   return Object.assign(run, {
     async close() {
       closed = true;
-      const results = await Promise.allSettled([
-        ...[...uploads].map((cancel) => cancel(new TnlError("sdk.client_closed"))),
-        ...[...retired, ...(pool === undefined ? [] : [pool])].map((value) => value.destroy()),
-      ]);
-      const failures = results.flatMap((result) =>
-        result.status === "rejected" ? [result.reason as unknown] : [],
-      );
-      if (failures.length) throw new AggregateError(failures, "HTTP transport cleanup failed");
+      const budget = shutdownBudget(shutdownUntil ?? parent?.());
+      shutdownUntil = budget.until;
+      const stopUploads = () =>
+        uploadLifetime.abort(
+          new DOMException(
+            "upload cancellation timed out; application cleanup did not finish",
+            "TimeoutError",
+          ),
+        );
+      budget.signal.addEventListener("abort", stopUploads, { once: true });
+      if (budget.signal.aborted) stopUploads();
+      try {
+        const results = await Promise.allSettled([
+          ...[...uploads].map((cancel) => cancel(new TnlError("sdk.client_closed"))),
+          ...[...retired, ...(pool === undefined ? [] : [pool])].map((value) => value.destroy()),
+        ]);
+        await Promise.all(copies);
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason as unknown] : [],
+        );
+        if (failures.length) throw new AggregateError(failures, "HTTP transport cleanup failed");
+      } finally {
+        budget.signal.removeEventListener("abort", stopUploads);
+        budget.finish();
+      }
     },
   });
 }
@@ -567,7 +650,8 @@ export function deploymentConnector(
   let borrowed: Promise<OwnerIPC> | undefined;
   let closed = false;
   let closing: Promise<void> | undefined;
-  const closedError = new TnlError("sdk.client_closed");
+  let closedError = new TnlError("sdk.client_closed");
+  let shutdownUntil: number | undefined;
   const pending = new Set<Promise<unknown>>();
   const http = new Map<string, ReturnType<typeof managedFetch>>();
   const prepareRemoteWork = async (name: string) => {
@@ -677,6 +761,7 @@ export function deploymentConnector(
             transport = managedFetch(
               url,
               async (signal) => (await waitForPreparation(prepareRemote(name), signal)).snapshot,
+              () => shutdownUntil,
             );
             http.set(url, transport);
           }
@@ -696,21 +781,23 @@ export function deploymentConnector(
       );
       return work;
     },
-    close(): Promise<void> {
+    close(until?: number, reason?: TnlError): Promise<void> {
       closed = true;
+      shutdownUntil ??= until ?? Date.now() + 10_000;
+      if (reason !== undefined) closedError = reason;
       closing ??= (async () => {
-        const operations = await Promise.allSettled(pending);
         const cleanup = async () => {
-          if (borrowed !== undefined) (await borrowed).close();
+          if (borrowed !== undefined) (await borrowed).close(closedError);
           if (loading !== undefined) {
             const scope = await loading;
             if (scope.close === undefined) throw new TnlError("sdk.response_invalid");
-            await scope.close();
+            await scope.close(shutdownUntil, closedError);
           }
         };
         const results = await Promise.allSettled(
           [...http.values()].map((value) => value.close()).concat(cleanup()),
         );
+        const operations = await Promise.allSettled(pending);
         const failures = [...operations, ...results].flatMap((result) =>
           result.status === "rejected" && result.reason !== closedError
             ? [result.reason as unknown]

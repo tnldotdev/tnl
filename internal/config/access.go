@@ -24,19 +24,19 @@ func (a Access) VisitorMode() string {
 	return a.Mode
 }
 
-func (a Access) Validate() error {
+// Validate replaces IP with its canonical value only after validation succeeds.
+func (a *Access) Validate() error {
 	if a.VisitorMode() != "restricted" && a.VisitorMode() != "anonymous" {
 		return errors.New("access mode must be restricted or anonymous")
 	}
-	_, err := authorization.CanonicalizeIPPrefixes(a.IP)
-	if err != nil || a.IP != nil && len(a.IP) == 0 || len(a.IP) > 256 {
-		return errors.New("access IP list must contain distinct canonical addresses or prefixes")
+	if a.IP != nil && len(a.IP) == 0 {
+		return errors.New("access.ip must not be empty")
 	}
-	for _, value := range a.IP {
-		if !canonicalIPText(value) {
-			return errors.New("access IP list must contain distinct canonical addresses or prefixes")
-		}
+	prefixes, err := authorization.CanonicalizeVisitorIPPrefixes(a.IP)
+	if err != nil {
+		return fmt.Errorf("access.ip: %w", err)
 	}
+	a.IP = prefixes
 	return nil
 }
 

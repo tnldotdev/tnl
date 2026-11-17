@@ -18,8 +18,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -30,15 +31,18 @@ func prepareAliasServices(ctx context.Context, state *clientstate.Database, proj
 		return publisherServices{}, err
 	}
 	domain := aliasDomainName(alias, effective)
+	if domain == "" {
+		domain = valueOrEmpty(project.Config.DeploymentSettings.Domain)
+	}
 	publicURL, relative := "", name
-	if alias.PublicURL != nil {
-		publicURL, relative = *alias.PublicURL, ""
+	if alias.Hostname != nil {
+		publicURL, relative = "https://"+*alias.Hostname, ""
 	}
 	services, err := preparePublisherServices(ctx, state, server, publicURL, relative, domain, team, false, authenticated)
 	if err != nil {
 		return publisherServices{}, err
 	}
-	if alias.PublicURL == nil {
+	if alias.Hostname == nil {
 		services.hostname = alias.RelativeName(name) + "." + services.namespace
 		canonical, err := naming.CanonicalizeHostname(services.hostname)
 		if err != nil || canonical != services.hostname {
@@ -52,21 +56,21 @@ func aliasDomainName(alias config.Alias, effective clientproject.ResolvedService
 	if alias.Domain != nil {
 		return *alias.Domain
 	}
-	if effective.Tunnel != nil && effective.Tunnel.Domain != nil {
-		return *effective.Tunnel.Domain
+	if effective.Domain != nil {
+		return *effective.Domain
 	}
 	return ""
 }
 
 func checkAliasHostnamePolicy(services publisherServices) error {
-	return CheckAliasHostnamePolicy(AliasHostnamePolicy{Hostname: services.hostname, Namespace: services.namespace, DomainKind: services.domainKind, Scope: services.publicURLScope, MaxMemberChildLabels: services.authenticated.Discovery.ManagedDomainMaxMemberChildLabels, CustomDomainAvailable: services.customDomainAvailable})
+	return CheckAliasHostnamePolicy(AliasHostnamePolicy{Hostname: services.hostname, Namespace: services.namespace, DomainKind: services.domainKind, MemberNamespace: services.memberNamespace, MaxMemberChildLabels: services.authenticated.Discovery.ManagedDomainMaxMemberChildLabels, CustomDomainAvailable: services.customDomainAvailable})
 }
 
 type AliasHostnamePolicy struct {
 	Hostname              string
 	Namespace             string
 	DomainKind            authorityv1.DomainKind
-	Scope                 controlv1.PublicURLScope
+	MemberNamespace       bool
 	MaxMemberChildLabels  int
 	CustomDomainAvailable bool
 }
@@ -77,7 +81,7 @@ func CheckAliasHostnamePolicy(policy AliasHostnamePolicy) error {
 		return failure.Wrap("read alias hostname policy", failure.ServerResponseInvalid, errors.New("negative member hostname depth limit"))
 	}
 	depth, member := naming.ChildDepth(policy.Hostname, policy.Namespace)
-	if !member || policy.Scope != controlv1.Member || policy.DomainKind != authorityv1.Managed || limit == 0 || depth <= limit {
+	if !member || !policy.MemberNamespace || policy.DomainKind != authorityv1.Managed || limit == 0 || depth <= limit {
 		return nil
 	}
 	name := strings.TrimSuffix(policy.Hostname, "."+policy.Namespace)
@@ -184,9 +188,8 @@ func aliasChoiceError(err error) error {
 	return failure.Wrap("update alias selection", reason, err)
 }
 
-func startProjectAliases(ctx context.Context, state *clientstate.Database, project projectConfiguration, service, team string, parent publisherServices, base publisher.Config, group clientstate.IntegrationScope, tunnel *clientstate.Tunnel, output *Presentation) func() {
-	ctx, cancel := context.WithCancel(ctx)
-	var workers sync.WaitGroup
+func startProjectAliases(ctx context.Context, state *clientstate.Database, project projectConfiguration, service, team string, parent publisherServices, base publisherservice.RunConfig, group clientstate.IntegrationScope, tunnel *clientstate.Tunnel, output *Presentation) func() error {
+	var workers []func(context.Context) error
 	for _, name := range slices.Sorted(maps.Keys(project.Config.Aliases)) {
 		definition := project.Config.Aliases[name]
 		if definition.Service != service {
@@ -197,7 +200,7 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 			reportIntegrationURL(tunnel, output, "alias unavailable", "app tunnel continues", clioutput.Text("alias "+name+" could not resolve its domain"))
 			continue
 		}
-		if services.hostname == base.Hostname {
+		if services.hostname == parent.hostname {
 			reportIntegrationURL(tunnel, output, "alias name conflict", "choose a distinct alias name", clioutput.Text("alias "+name+" uses the entry service's hostname"))
 			continue
 		}
@@ -223,7 +226,7 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 		}
 		var mu sync.Mutex
 		lastReport := time.Time{}
-		worker := projectAliasPublisher(state, services, selection, tunnel.ID(), base, policy, func(event publisher.Event, err error) {
+		worker := projectAliasPublisher(state, services, selection, tunnel.ID(), base, policy, func(ready bool, err error) {
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -240,41 +243,55 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 					_ = state.RecordAliasFailure(ctx, current, reason)
 				}
 				reportIntegrationURL(tunnel, output, "alias unavailable", "app tunnel continues; check tnl status", clioutput.Fields(clioutput.Field{Label: "alias", Value: name}))
-			} else if event.Type == publisher.EventReady {
-				reportIntegrationURL(tunnel, output, "alias ready", "", clioutput.Fields(clioutput.Field{Label: "alias", Value: name}, clioutput.Field{Label: "public URL", Value: event.PublicURL}))
+			} else if ready {
+				reportIntegrationURL(tunnel, output, "alias ready", "", clioutput.Fields(clioutput.Field{Label: "alias", Value: name}, clioutput.Field{Label: "public URL", Value: "https://" + services.hostname}))
 			}
 		})
-		workers.Go(func() { worker.Maintain(ctx) })
+		workers = append(workers, worker.Maintain)
 	}
-	return func() { cancel(); workers.Wait() }
+	return startIntegrationWorkers(ctx, workers...)
 }
 
-func projectAliasPublisher(state *clientstate.Database, services publisherServices, selection clientstate.AliasSelection, tunnelID string, base publisher.Config, policy resolvedVisitorAccess, report func(publisher.Event, error)) integrations.Publisher {
-	cfg := services.config(base.Target, slices.Clone(policy.prefixes), base.Limits)
-	cfg.Telemetry = base.Telemetry
-	cfg.AccessMode, cfg.Purpose, cfg.ServiceProtocol = policy.access, controlv1.Alias, controlv1.Http
-	cfg.ControlURL = services.authenticated.ServerEndpoint
-	cfg.BrowserLoginAvailable = services.authenticated.Discovery.BrowserLoginAvailable != nil && *services.authenticated.Discovery.BrowserLoginAvailable
-	cfg.TargetOptions, cfg.TargetTLSName, cfg.ResolveTarget = base.TargetOptions, base.TargetTLSName, base.ResolveTarget
-	cfg.Mounts, cfg.ObserveResponse, cfg.AdmitRequest = base.Mounts, base.ObserveResponse, base.AdmitRequest
-	worker := integrations.AliasPublisher(state, services.state, selection, tunnelID, cfg, report)
-	prepare := worker.Prepare
-	worker.Prepare = func(ctx context.Context) (integrations.Snapshot, error) {
-		snapshot, err := prepare(ctx)
+func projectAliasPublisher(state *clientstate.Database, services publisherServices, selection clientstate.AliasSelection, tunnelID string, base publisherservice.RunConfig, policy resolvedVisitorAccess, report func(bool, error)) integrations.Publisher {
+	return integrations.AliasPublisher(state, services.state, selection, tunnelID, func(ctx context.Context) (integrations.Snapshot, error) {
+		access, err := base.Access(ctx)
 		if err != nil {
 			return integrations.Snapshot{}, err
 		}
-		// the elected, selected worker prepares saved state before handing the
-		// run to an exact grant. targets and app hooks remain local to this run.
-		native, err := selectNativeProjectPublisher(ctx, services, snapshot.Config)
+		parent, err := base.Control.GetPublisherService(ctx, base.ServiceID, access)
 		if err != nil {
 			return integrations.Snapshot{}, err
 		}
-		snapshot.Config.Control = native
-		snapshot.Config.PublisherIdentityID = native.PublisherIdentityID()
-		configureNativePublication(&snapshot.Config, native, services.routes)
-		snapshot.Config.PreserveSavedPublicURLTarget = true
-		return snapshot, nil
-	}
-	return worker
+		accessPolicy := &controlv1.ProjectHTTPAccess{Mode: &policy.access}
+		if len(policy.prefixes) != 0 {
+			prefixes := slices.Clone(policy.prefixes)
+			accessPolicy.Ip = &prefixes
+		}
+		declaration := controlv1.ProjectServiceConfiguration{Target: "app", RequirePostQuantum: new(parent.RequirePostQuantum),
+			Http: &controlv1.ProjectServiceHTTP{Access: accessPolicy, Limits: parent.HttpLimits}}
+		trust, err := publisheridentity.ServiceTrust(parent)
+		if err != nil {
+			return integrations.Snapshot{}, err
+		}
+		declaration.TargetTls, err = foregroundTargetTLS(trust)
+		if err != nil {
+			return integrations.Snapshot{}, err
+		}
+		// election and receiver selection precede all remote setup. each alias
+		// obtains its own exact service grant; the app's grant is never broadened.
+		native, saved, err := selectNativeProjectPublisher(ctx, services, declaration)
+		if err != nil {
+			return integrations.Snapshot{}, err
+		}
+		// the alias owns OAuth return admission for its own run; do not copy
+		// the ordinary app's HTTP request hooks and consume a return twice.
+		cfg := publisherservice.RunConfig{Telemetry: base.Telemetry, Control: native, State: services.state, Access: native.Access,
+			PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
+			ServiceID: saved.Id, Metadata: publisheridentity.ServiceMetadata(saved), Target: base.Target, Handler: base.Handler,
+			InspectionMode: base.InspectionMode, PreferredRegions: slices.Clone(base.PreferredRegions),
+			Mounts: slices.Clone(base.Mounts), ResolveHTTPTarget: base.ResolveHTTPTarget, TargetResolver: base.TargetResolver,
+			HTTPResponseHooks: base.HTTPResponseHooks, AdmitRequest: base.AdmitRequest, TransportTLS: base.TransportTLS}
+		(integrationShutdown{deadline: base.ShutdownDeadline, fence: base.ShutdownContext}).bind(ctx, &cfg)
+		return integrations.Snapshot{Config: cfg, Service: saved}, nil
+	}, report)
 }

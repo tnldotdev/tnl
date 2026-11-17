@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
@@ -24,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 	"golang.org/x/term"
@@ -46,6 +48,7 @@ type cli struct {
 	Connect     connectCommand    `cmd:"" help:"Make an approved service available locally using the current identity." group:"start"`
 	Publisher   publisherCommand  `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
 	Service     serviceCommand    `cmd:"" help:"Manage installed publications." group:"operate"`
+	Endpoint    endpointCommand   `cmd:"" help:"Manage saved services' public endpoint reservations." group:"manage"`
 	Detached    detachedCommand   `cmd:"" help:"Inspect and stop detached publications." group:"operate"`
 	Status      statusCommand     `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
 	Ping        pingCommand       `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
@@ -89,7 +92,8 @@ type tunnelFlags struct {
 	domainFromCLI            bool
 	inspectionModeFromCLI    bool
 	inspectionModeFromConfig bool
-	workLimits               *config.Limits
+	httpLimits               *config.WorkLimits
+	traffic                  *trafficlimits.Selection
 	inspection               *config.Inspection
 	access                   *config.Access
 }
@@ -149,19 +153,12 @@ type aliasChoiceCommand struct {
 
 func main() {
 	received := make(chan os.Signal, 1)
-	signal.Notify(received, os.Interrupt, syscall.SIGTERM)
-	ctx, stop := processSignalContext(context.Background(), received, func() { signal.Stop(received) })
+	signal.Notify(received, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	ctx, stop := processSignalContext((&nativeProcess{}).context(context.Background()), received, func() { signal.Stop(received) })
 	defer stop()
-	var telemetry *clienttelemetry.Collector
 	launchCtx := observability.ExtractLaunch(ctx, os.Getenv(observability.LaunchTraceparent))
 	_ = os.Unsetenv(observability.LaunchTraceparent)
-	err := run(context.WithValue(launchCtx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(config clienttelemetry.Config) *clienttelemetry.Collector {
-		telemetry, _ = clienttelemetry.New(context.WithoutCancel(launchCtx), config)
-		return telemetry
-	})
-	if telemetry != nil {
-		closeTelemetry(telemetry)
-	}
+	err := runNativeProcess(launchCtx, os.Args[1:], os.Stdout, os.Stderr)
 	stop() // command observation and the final telemetry flush have already joined.
 	if err != nil {
 		code, render := terminalResult(err)
@@ -174,7 +171,96 @@ func main() {
 	}
 }
 
-// only this registered signal producer turns SIGINT/SIGTERM into ordinary
+type nativeProcess struct {
+	shutdownMetrics func(context.Context) error
+	metricsTimeout  time.Duration
+	closeTelemetry  func(context.Context)
+	shutdownMu      sync.Mutex
+	shutdownUntil   time.Time
+}
+
+func (p *nativeProcess) context(ctx context.Context) context.Context {
+	ctx = context.WithValue(ctx, nativeProcessKey{}, p)
+	return observability.WithShutdownDeadline(ctx, p.limitShutdown)
+}
+
+// this is only the deadline handoff between existing owners, not another
+// lifetime: command drain, forced I/O closure, and export joins stay with them.
+func (p *nativeProcess) limitShutdown(until time.Time) time.Time {
+	p.shutdownMu.Lock()
+	defer p.shutdownMu.Unlock()
+	if p.shutdownUntil.IsZero() || until.Before(p.shutdownUntil) {
+		p.shutdownUntil = until
+	}
+	return p.shutdownUntil
+}
+
+func runNativeProcess(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	return runNativeCommand(ctx, func(ctx context.Context, factory telemetryFactory) error {
+		return run(ctx, args, stdout, stderr, factory)
+	})
+}
+
+// the process joins the command before closing either optional export owner.
+func runNativeCommand(ctx context.Context, command func(context.Context, telemetryFactory) error) error {
+	process, ok := ctx.Value(nativeProcessKey{}).(*nativeProcess)
+	if !ok {
+		process = &nativeProcess{}
+		ctx = process.context(ctx)
+	}
+	stopped := make(chan struct{})
+	stopDeadline := context.AfterFunc(ctx, func() {
+		defer close(stopped)
+		observability.ShutdownDeadline(ctx, time.Now().Add(10*time.Second))
+	})
+	defer func() {
+		if !stopDeadline() {
+			<-stopped
+		}
+	}()
+	result := command(ctx, func(config clienttelemetry.Config) *clienttelemetry.Collector {
+		collector, _ := clienttelemetry.New(context.WithoutCancel(ctx), config)
+		if collector != nil {
+			process.closeTelemetry = collector.Close
+		}
+		return collector
+	})
+	if process.shutdownMetrics != nil {
+		closeProcessMetrics(ctx, process.metricsTimeout, process.shutdownMetrics)
+	}
+	if process.closeTelemetry != nil {
+		closeTelemetry(ctx, process.closeTelemetry)
+	}
+	return result
+}
+
+func closeProcessMetrics(ctx context.Context, budget time.Duration, shutdown func(context.Context) error) {
+	ctx, cancel := processFlushContext(ctx, budget)
+	defer cancel()
+	_ = shutdown(ctx)
+}
+
+func processFlushContext(ctx context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	until := time.Now().Add(budget)
+	if parent, ok := ctx.Deadline(); ok && parent.Before(until) {
+		until = parent
+	}
+	if process, ok := ctx.Value(nativeProcessKey{}).(*nativeProcess); ok {
+		process.shutdownMu.Lock()
+		// a finite command with no earlier stop starts its bounded final flush
+		// here. an export-specific cap must not replace an existing stop limit.
+		if process.shutdownUntil.IsZero() {
+			process.shutdownUntil = until
+		}
+		if process.shutdownUntil.Before(until) {
+			until = process.shutdownUntil
+		}
+		process.shutdownMu.Unlock()
+	}
+	return context.WithDeadline(context.WithoutCancel(ctx), until)
+}
+
+// only this registered signal producer turns SIGINT/SIGTERM/SIGHUP into ordinary
 // cancellation. parent causes are inherited unchanged; consumers never infer
 // signal origin from an opaque error's text, type name or Is method.
 func processSignalContext(parent context.Context, received <-chan os.Signal, unregister func()) (context.Context, context.CancelFunc) {
@@ -191,12 +277,13 @@ func processSignalContext(parent context.Context, received <-chan os.Signal, unr
 				if !ok {
 					return
 				}
-				if value != os.Interrupt && value != syscall.SIGTERM {
+				if value != os.Interrupt && value != syscall.SIGTERM && value != syscall.SIGHUP {
 					continue
 				}
 				// restore default handling before publishing cancellation, so a
 				// second signal can terminate a command that stalls during cleanup.
 				stopNotifications()
+				observability.ShutdownDeadline(parent, time.Now().Add(10*time.Second))
 				stopContext()
 				return
 			case <-ctx.Done():
@@ -267,7 +354,7 @@ func writeCommandError(output io.Writer, err error) {
 		_, _ = io.WriteString(output, text+"\n")
 		return
 	}
-	presented := presentFailure(err)
+	presented := presentHumanFailure(err)
 	blocks := []clioutput.Block{clioutput.Text(presented.message)}
 	if typed, ok := failure.Of(err); ok && typed.Reason() == failure.ObservabilityConfigInvalid && typed.Setting() != "" {
 		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "setting", Value: string(typed.Setting())}))
@@ -382,21 +469,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		}
 		return runCheck(project, stdout)
 	}
-	if native, _ := ctx.Value(nativeProcessKey{}).(bool); native && parsedCommand != "version" {
+	process, native := ctx.Value(nativeProcessKey{}).(*nativeProcess)
+	if native && parsedCommand != "version" {
 		var metrics *observability.Metrics
 		ctx, metrics, err = observability.StartProcess(ctx, commandObservabilityRole(parsedCommand, flags).String())
 		if err != nil {
 			return err
 		}
-		defer func() {
-			budget := observability.CLIShutdownTimeout
-			if persistentObservabilityOwner(parsedCommand, flags) {
-				budget = observability.ShutdownTimeout
-			}
-			shutdown, cancel := context.WithTimeout(context.Background(), budget)
-			defer cancel()
-			_ = metrics.Shutdown(shutdown)
-		}()
+		budget := observability.CLIShutdownTimeout
+		if persistentObservabilityOwner(parsedCommand, flags) {
+			budget = observability.ShutdownTimeout
+		}
+		process.shutdownMetrics, process.metricsTimeout = metrics.Shutdown, budget
 	}
 	ctx, finishCommand := observability.ClientCommand(ctx, parsedCommand)
 	defer func() { finishCommand(result) }()
@@ -694,7 +778,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runConnectJobs(ctx, flags.Connect.Stop.connectListCommand, flags.Connect.Stop.Name, "stop", stdout)
 	case "connect remove <name>":
 		return runConnectJobs(ctx, flags.Connect.Remove.connectListCommand, flags.Connect.Remove.Name, "remove", stdout)
-	case "publisher enroll <public-url-id>", "publisher enroll":
+	case "publisher enroll <service-or-address>", "publisher enroll":
 		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
 	case "publisher current":
 		return runPublisherCurrent(ctx, flags.Publisher.Current, stdout)
@@ -817,10 +901,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runURLAccessShow(ctx, flags.URL.Access.Show, stdout, stderr)
 	case "url access set <url> <mode>":
 		return runURLAccessSet(ctx, flags.URL.Access.Set, stdout, stderr)
-	case "url update <public-url-id>":
+	case "url update <service-or-address>":
 		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
-	case "url delete <public-url-id>":
+	case "url delete <service-or-address>":
 		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
+	case "endpoint release <service-id>":
+		return runEndpointRelease(ctx, flags.Endpoint.Release, stdout, stderr)
 	case "share":
 		return runShareCheckout(ctx, flags.Share.Create, project, stdout, stderr)
 	case "share link create <url>":
@@ -852,9 +938,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 	case "share service revoke <name> <access-id>":
 		return runServiceShareRevoke(ctx, flags.Share.Service.Revoke, project, stdout, stderr)
 	case "share service link create <name>":
-		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Link.Create, project, "share", stdout, stderr)
+		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Link.Create, project, false, stdout, stderr)
 	case "share service token create <name>":
-		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Token.Create, project, "token", stdout, stderr)
+		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Token.Create, project, true, stdout, stderr)
 	case "feedback list":
 		return runFeedbackList(ctx, flags.Feedback.List, project, stdout, stderr)
 	case "feedback inspect <feedback-id>":
@@ -959,9 +1045,7 @@ func canonicalParsedCommand(command string) string {
 	case "publish":
 		return "publish <service-or-target>"
 	case "publisher enroll":
-		return "publisher enroll <public-url-id>"
-	case "url ip set <url>":
-		return "url ip set <url> <prefixes>"
+		return "publisher enroll <service-or-address>"
 	case "share link create":
 		return "share link create <url>"
 	case "share team create":

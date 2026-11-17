@@ -16,13 +16,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type VisitorSubject = tunnelv1.VisitorSubject
 
-const WorkloadLease = 90 * time.Second
+const WorkloadLease = visitortoken.WorkloadLeaseLifetime
 const WorkloadRenewAfter = 30 * time.Second
 
 type WorkloadSession struct {

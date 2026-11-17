@@ -6,7 +6,9 @@ import asyncio
 import json
 import os
 import stat
+import time
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -22,6 +24,36 @@ from ._protocol import (
 )
 
 _REQUEST_TIMEOUT = 30.0
+
+
+def _shutdown_deadline() -> float:
+    return asyncio.get_running_loop().time() + 10
+
+
+def _shutdown_timestamp(until: float) -> str:
+    remaining = max(0, until - asyncio.get_running_loop().time())
+    return datetime.fromtimestamp(time.time() + remaining, UTC).isoformat()
+
+
+async def _join_cleanup[T](task: asyncio.Task[T]) -> T:
+    """defer caller cancellation until the owned cleanup task has finished."""
+    canceled: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as cause:
+            canceled = cause
+        except BaseException:
+            break
+    try:
+        result = task.result()
+    except BaseException as cause:
+        if canceled is not None and not isinstance(cause, asyncio.CancelledError):
+            raise BaseExceptionGroup("cleanup and cancellation failed", [canceled, cause]) from None
+        raise
+    if canceled is not None:
+        raise canceled
+    return result
 
 
 def native_binary() -> Path:
@@ -164,9 +196,9 @@ class NativeRuntime:
             headers["Content-Type"] = "application/json"
         try:
             async with (
-                asyncio.timeout(75 if operation == "unregister" else _REQUEST_TIMEOUT),
+                asyncio.timeout(10 if operation == "unregister" else _REQUEST_TIMEOUT),
                 httpx.AsyncClient(
-                    timeout=75 if operation == "unregister" else _REQUEST_TIMEOUT,
+                    timeout=10 if operation == "unregister" else _REQUEST_TIMEOUT,
                     follow_redirects=False,
                     trust_env=False,
                 ) as client,

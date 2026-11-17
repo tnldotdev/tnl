@@ -92,7 +92,7 @@ func TestComposeIntegrationHostTargets(t *testing.T) {
 	compose("up", "--detach", "--wait")
 	web, db, protocol, relativeFile, webPort, dbPort := "web", "db", "tcp", "compose.yaml", 3000, 6379
 	project := clientproject.Project{Root: root, Worktree: clientproject.Worktree{Label: clientproject.WorktreeLabel{FullLabel: label}}, Config: config.TNL{Services: config.Services{
-		"web": {Target: &config.ServiceTarget{Type: "compose", Project: &projectName, File: &relativeFile, Service: &web, Port: &webPort}, Tunnel: &config.Tunnel{}},
+		"web": {Target: &config.ServiceTarget{Type: "compose", Project: &projectName, File: &relativeFile, Service: &web, Port: &webPort}, Public: new(true)},
 		"db":  {Protocol: &protocol, Target: &config.ServiceTarget{Type: "compose", Project: &projectName, File: &relativeFile, Service: &db, Port: &dbPort}},
 	}}}
 	resolver := Resolver{}

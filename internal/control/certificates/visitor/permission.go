@@ -13,10 +13,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
-// IssuePermission certifies the proven CSR key and a control-signed permission.
+// IssueBoundCredential certifies the proven CSR key and a control-signed credential.
 // control's state owner authorizes and signs against this exact serial, public
 // key and deadline. this issuer owns only certificate construction and trust.
-func (i *Issuer) IssuePermission(der []byte, expires, now time.Time, bind func(string, any, time.Time) (visitortoken.Token, error)) ([]byte, error) {
+func (i *Issuer) IssueBoundCredential(der []byte, expires, now time.Time, bind func(string, any, time.Time) (visitortoken.Token, error)) ([]byte, error) {
 	if i == nil || bind == nil || !expires.After(now) || expires.After(now.Add(visitorcert.MaxWorkloadLifetime)) {
 		return nil, visitorcert.ErrInvalidCertificate
 	}

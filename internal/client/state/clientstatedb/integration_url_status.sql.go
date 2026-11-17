@@ -61,7 +61,7 @@ func (q *Queries) StatusIntegrationURLs(ctx context.Context) ([]StatusIntegratio
 const statusWebhookDeclarations = `-- name: StatusWebhookDeclarations :many
 SELECT t.server_origin, t.primary_project_root, t.integration_namespace, e.name, e.service, e.path, e.definition, e.fingerprint,
   t.id AS tunnel_id, t.project_root, t.service AS tunnel_service, t.hostname AS app_hostname, t.state,
-  t.public_url_id, t.publish_run_number
+  t.service_id, t.publish_run_number
 FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE t.stopped_at IS NULL AND t.lease_expires_at > ?1
   AND t.state IN ('starting', 'provisioning', 'ready')
@@ -82,7 +82,7 @@ type StatusWebhookDeclarationsRow struct {
 	TunnelService        sql.NullString
 	AppHostname          sql.NullString
 	State                string
-	PublicURLID          sql.NullString
+	ServiceID            sql.NullString
 	PublishRunNumber     sql.NullInt64
 }
 
@@ -109,7 +109,7 @@ func (q *Queries) StatusWebhookDeclarations(ctx context.Context, now int64) ([]S
 			&i.TunnelService,
 			&i.AppHostname,
 			&i.State,
-			&i.PublicURLID,
+			&i.ServiceID,
 			&i.PublishRunNumber,
 		); err != nil {
 			return nil, err
@@ -127,8 +127,10 @@ func (q *Queries) StatusWebhookDeclarations(ctx context.Context, now int64) ([]S
 
 const statusWebhookOwners = `-- name: StatusWebhookOwners :many
 SELECT owner.server_origin, owner.primary_project_root, owner.integration_namespace, owner.name, t.id AS tunnel_id,
-  t.project_root, t.service, t.hostname AS app_hostname, t.state, t.public_url_id, t.publish_run_number
+  t.project_root, t.service, t.hostname AS app_hostname, t.state, t.service_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
+  AND t.server_origin = owner.server_origin AND t.primary_project_root = owner.primary_project_root
+  AND t.integration_namespace = owner.integration_namespace
 WHERE t.stopped_at IS NULL AND t.lease_expires_at > ?1
 ORDER BY owner.server_origin, owner.primary_project_root, owner.integration_namespace, owner.name
 `
@@ -143,7 +145,7 @@ type StatusWebhookOwnersRow struct {
 	Service              sql.NullString
 	AppHostname          sql.NullString
 	State                string
-	PublicURLID          sql.NullString
+	ServiceID            sql.NullString
 	PublishRunNumber     sql.NullInt64
 }
 
@@ -166,7 +168,7 @@ func (q *Queries) StatusWebhookOwners(ctx context.Context, now int64) ([]StatusW
 			&i.Service,
 			&i.AppHostname,
 			&i.State,
-			&i.PublicURLID,
+			&i.ServiceID,
 			&i.PublishRunNumber,
 		); err != nil {
 			return nil, err

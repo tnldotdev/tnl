@@ -5,14 +5,16 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
@@ -20,26 +22,24 @@ const publisherTestAudience = "https://control.example/v1/publisher-token"
 
 func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_resolved_scope")
-	r := oidcRouteRequest(t, d, now)
-	u := createTestPublicURL(t, d, r, now)
-	service, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "publisher-private", "publisher-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	actor := oidcRouteRequest(t, d, now)
+	service, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "publisher-private", "publisher-private", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := controlstatedb.New(d.pool).GetActivePublishRunMembership(t.Context(), controlstatedb.GetActivePublishRunMembershipParams{TeamID: r.TeamID, IdentityID: r.ActingIdentityID})
+	m, err := controlstatedb.New(d.pool).GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{TeamID: actor.TeamID, IdentityID: actor.ActingIdentityID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, submitted := range []PublisherScope{
-		{TeamID: r.TeamID, Kind: "saved_public_url", PublicURLID: u.ID, MembershipID: "forged", PublicURLScope: PublicURLScopeShared},
-		{TeamID: r.TeamID, Kind: "namespace", DomainID: r.DomainID, MembershipID: "forged", PublicURLScope: PublicURLScopeShared},
-		{TeamID: r.TeamID, Kind: "service", ServiceID: service.ID},
+		{TeamID: actor.TeamID, Kind: "namespace", DomainID: actor.DomainID, MembershipID: "forged", NamespaceScope: NamespaceScope("shared")},
+		{TeamID: actor.TeamID, Kind: "service", ServiceID: service.ID},
 	} {
-		e := publisherEnrollment(t, d, r, submitted, now)
-		if e.Scope.Kind == "saved_public_url" && (e.Scope.MembershipID != "" || e.Scope.PublicURLScope != "") {
-			t.Fatal("saved URL grant retained submitted namespace ownership", e.Scope)
+		e := publisherEnrollment(t, d, actor, submitted, now)
+		if e.Scope.Kind == "service" && e.Scope != (PublisherScope{TeamID: actor.TeamID, Kind: "service", ServiceID: service.ID}) {
+			t.Fatal("exact service grant retained unrelated scope facts", e.Scope)
 		}
-		if e.Scope.Kind == "namespace" && (e.Scope.MembershipID != m.ID || e.Scope.PublicURLScope != PublicURLScopeMember || e.Scope.Namespace == "") {
+		if e.Scope.Kind == "namespace" && (e.Scope.MembershipID != m.ActorMembershipID || e.Scope.NamespaceScope != NamespaceScopeMember || e.Scope.Namespace == "") {
 			t.Fatal("namespace grant trusted submitted ownership", e.Scope)
 		}
 		public, _, err := ed25519.GenerateKey(rand.Reader)
@@ -51,16 +51,17 @@ func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 			t.Fatal("enrollment redemption changed resolved scope", identity.Scope, e.Scope, err)
 		}
 		stored, err := controlstatedb.New(d.pool).GetPublisherGrant(t.Context(), controlstatedb.GetPublisherGrantParams{ID: identity.GrantID, PublisherIdentityID: identity.ID})
-		if err != nil || scopeFromGrant(r.TeamID, stored) != e.Scope {
+		if err != nil || scopeFromGrant(actor.TeamID, stored) != e.Scope {
 			t.Fatal("grant persistence lost the authorized target", stored, err)
 		}
 	}
 	for _, submitted := range []PublisherScope{
-		{TeamID: r.TeamID, Kind: "saved_public_url", PublicURLID: u.ID, ServiceID: service.ID},
-		{TeamID: r.TeamID, Kind: "namespace", DomainID: r.DomainID, PublicURLID: u.ID},
-		{TeamID: r.TeamID, Kind: "service", ServiceID: service.ID, Namespace: "forged.example"},
+		{TeamID: actor.TeamID, Kind: "namespace", DomainID: actor.DomainID, ServiceID: service.ID},
+		{TeamID: actor.TeamID, Kind: "service", ServiceID: service.ID, Namespace: "forged.example"},
+		{TeamID: actor.TeamID, Kind: "service", ServiceID: service.ID, DomainID: actor.DomainID},
+		{TeamID: actor.TeamID, Kind: "service", ServiceID: service.ID, MembershipID: m.ActorMembershipID, NamespaceScope: NamespaceScopeShared},
 	} {
-		if _, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Scope: submitted, Name: "test", Kind: "installed", EditorID: r.ActingIdentityID, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: now}); !errors.Is(err, ErrPublisherIdentity) {
+		if _, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Scope: submitted, Name: "test", Kind: "installed", EditorID: actor.ActingIdentityID, EditorMembershipID: m.ActorMembershipID, PolicyRevision: uint64(m.PolicyRevision), Now: now}); !errors.Is(err, ErrPublisherIdentity) {
 			t.Fatal("mixed submitted scope was authorized", submitted, err)
 		}
 	}
@@ -68,33 +69,33 @@ func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 
 func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	d, _ := newControlStateIntegrationDatabase(t, "publisher_baseline")
-	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "service_tickets", "publish_run_publisher_grants"} {
+	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "service_tickets", "publish_run_publisher_grants", "browser_access_sessions", "browser_access_handoffs", "browser_login_attempts", "publisher_service_runs", "publisher_service_connection_slots"} {
 		var absent bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NULL`, name).Scan(&absent); err != nil || !absent {
 			t.Fatalf("legacy table %s exists: %v", name, err)
 		}
 	}
-	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publisher_certificate_checkpoints", "previews", "shares", "feedback_threads", "browser_access_sessions", "publisher_service_runs", "publisher_service_connection_slots", "visitor_devices", "connector_peer_pairs"} {
+	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publisher_certificate_checkpoints", "previews", "shares", "feedback_threads", "service_http_browser_sessions", "service_http_browser_logins", "service_http_browser_handoffs", "service_runs", "service_connection_slots", "visitor_devices", "connector_peer_pairs"} {
 		var present bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NOT NULL`, name).Scan(&present); err != nil || !present {
 			t.Fatalf("final table %s missing: %v", name, err)
 		}
 	}
 	files, err := migrationFiles.ReadDir("migrations")
-	if err != nil || len(files) != 1 || files[0].Name() != "00001_baseline.sql" || schemaVersion != 1 {
+	if err != nil || len(files) != 1 || files[0].Name() != "00001_baseline.sql" || schemaVersion != 1 || baselineID != "v1" {
 		t.Fatalf("baseline = %v, %v", files, err)
 	}
 	var actualVersion int64
 	var actualBaseline string
-	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != 1 {
-		t.Fatal("fresh database did not initialize schema 1", actualVersion, err)
+	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != schemaVersion {
+		t.Fatal("fresh database did not initialize the current schema", actualVersion, err)
 	}
 	if err := d.pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&actualBaseline); err != nil || actualBaseline != baselineID {
 		t.Fatal("fresh baseline identity changed", actualBaseline, err)
 	}
 	// an older database's larger migration counter cannot pass this baseline's
 	// readiness check just because its numeric version is greater than one.
-	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES (2, true)`); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES ($1, true)`, schemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.Readiness(t.Context()); err == nil {
@@ -102,13 +103,13 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	}
 }
 
-func publisherEnrollment(t *testing.T, d *Database, r CreatePublicURLRequest, scope PublisherScope, now time.Time) PublisherEnrollment {
+func publisherEnrollment(t *testing.T, d *Database, actor serviceTestAuthority, scope PublisherScope, now time.Time) PublisherEnrollment {
 	t.Helper()
-	m, err := controlstatedb.New(d.pool).GetActivePublishRunMembership(t.Context(), controlstatedb.GetActivePublishRunMembershipParams{TeamID: r.TeamID, IdentityID: r.ActingIdentityID})
+	m, err := controlstatedb.New(d.pool).GetTeamActorContext(t.Context(), controlstatedb.GetTeamActorContextParams{TeamID: actor.TeamID, IdentityID: actor.ActingIdentityID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Scope: scope, Name: "test", Kind: "installed", EditorID: r.ActingIdentityID, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: now})
+	e, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{Scope: scope, Name: "test", Kind: "installed", EditorID: actor.ActingIdentityID, EditorMembershipID: m.ActorMembershipID, PolicyRevision: uint64(m.PolicyRevision), Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,9 +131,12 @@ func publisherAccess(t *testing.T, d *Database, p PublisherIdentity, private ed2
 
 func TestIntegrationPublisherEnrollmentConcurrency(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_enrollment")
-	request := oidcRouteRequest(t, d, now)
-	u := createTestPublicURL(t, d, request, now)
-	e := publisherEnrollment(t, d, request, PublisherScope{TeamID: u.TeamID, Kind: "saved_public_url", PublicURLID: u.ID}, now)
+	actor := seedControlServiceAuthority(t, d, now, "enroll")
+	service, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "enroll", "enroll", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := publisherEnrollment(t, d, actor, PublisherScope{TeamID: actor.TeamID, Kind: "service", ServiceID: service.ID}, now)
 	keys := make([]ed25519.PublicKey, 2)
 	for i := range keys {
 		keys[i], _, _ = ed25519.GenerateKey(rand.Reader)
@@ -181,9 +185,12 @@ func TestIntegrationPublisherEnrollmentConcurrency(t *testing.T) {
 
 func TestIntegrationPublisherReplayRotationAndIndependentRevocation(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_replay")
-	request := oidcRouteRequest(t, d, now)
-	u := createTestPublicURL(t, d, request, now)
-	e := publisherEnrollment(t, d, request, PublisherScope{TeamID: u.TeamID, Kind: "saved_public_url", PublicURLID: u.ID}, now)
+	actor := seedControlServiceAuthority(t, d, now, "replay")
+	first, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "first", "first", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := publisherEnrollment(t, d, actor, PublisherScope{TeamID: actor.TeamID, Kind: "service", ServiceID: first.ID}, now)
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	p, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
 	if err != nil {
@@ -237,18 +244,19 @@ func TestIntegrationPublisherReplayRotationAndIndependentRevocation(t *testing.T
 	}
 	p.KeyID = replacement
 	fresh := publisherAccess(t, d, p, newPrivate, "", now)
-	secondRequest := request
-	secondRequest.CanonicalHostname = "second." + u.CanonicalHostname
-	secondRequest.IdempotencyKey = "second"
-	second := createTestPublicURL(t, d, secondRequest, now)
-	grant, err := d.CreatePublisherGrant(ctx, CreatePublisherGrantRequest{PublisherIdentityID: p.ID, Scope: PublisherScope{TeamID: u.TeamID, Kind: "saved_public_url", PublicURLID: second.ID}, EditorID: request.ActingIdentityID, EditorMembershipID: request.MembershipID, PolicyRevision: 1, Now: now})
+	second, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "second", "second", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := d.CreatePublisherGrant(ctx, CreatePublisherGrantRequest{PublisherIdentityID: p.ID, Scope: PublisherScope{TeamID: actor.TeamID, Kind: "service", ServiceID: second.ID}, EditorID: actor.ActingIdentityID, EditorMembershipID: actor.MembershipID, PolicyRevision: 1, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
 	p2 := p
-	p2.GrantID, p2.Scope.PublicURLID = grant, second.ID
+	p2.GrantID = grant
+	p2.Scope.ServiceID = second.ID
 	otherAccess := publisherAccess(t, d, p2, newPrivate, "", now)
-	if err := d.RevokePublisherGrant(ctx, u.TeamID, p.ID, p.GrantID, request.ActingIdentityID, now); err != nil {
+	if err := d.RevokePublisherGrant(ctx, actor.TeamID, p.ID, p.GrantID, actor.ActingIdentityID, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.AuthenticatePublisherAccess(ctx, fresh.Token, "", now); !errors.Is(err, ErrPublisherIdentity) {
@@ -257,7 +265,7 @@ func TestIntegrationPublisherReplayRotationAndIndependentRevocation(t *testing.T
 	if _, err := d.AuthenticatePublisherAccess(ctx, otherAccess.Token, "", now); err != nil {
 		t.Fatal("independent grant revoked")
 	}
-	if err := d.RevokePublisherIdentity(ctx, u.TeamID, p.ID, request.ActingIdentityID, now); err != nil {
+	if err := d.RevokePublisherIdentity(ctx, actor.TeamID, p.ID, actor.ActingIdentityID, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.AuthenticatePublisherAccess(ctx, otherAccess.Token, "", now); !errors.Is(err, ErrPublisherIdentity) {
@@ -267,50 +275,52 @@ func TestIntegrationPublisherReplayRotationAndIndependentRevocation(t *testing.T
 
 func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_namespace")
-	r := oidcRouteRequest(t, d, now)
-	e := publisherEnrollment(t, d, r, PublisherScope{TeamID: r.TeamID, Kind: "namespace", DomainID: r.DomainID}, now)
+	actor := oidcRouteRequest(t, d, now)
+	e := publisherEnrollment(t, d, actor, PublisherScope{TeamID: actor.TeamID, Kind: "namespace", DomainID: actor.DomainID}, now)
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	p, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	invocation, _ := opaqueid.New(opaqueid.InvocationPrefix)
-	options := PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted, RequirePostQuantum: true}
-	u, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now, options)
+	request := AllocateServiceRequest{Invocation: invocation, Configuration: ProjectServiceConfiguration{Target: "http://app.internal:3000", RequirePostQuantum: new(true)}}
+	u, err := d.AllocatePublisherService(t.Context(), p, request, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now, options)
+	retry, err := d.AllocatePublisherService(t.Context(), p, request, now)
 	if err != nil || retry.ID != u.ID || !retry.RequirePostQuantum {
 		t.Fatalf("allocation retry = %+v, %v", retry, err)
 	}
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://other.internal:3000", []string{}, []byte("null"), now, options); !errors.Is(err, ErrPublicURLIdempotency) {
+	changed := request
+	changed.Configuration.Target = "http://other.internal:3000"
+	if _, err := d.AllocatePublisherService(t.Context(), p, changed, now); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("changed retry target = %v", err)
 	}
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublicURLIdempotency) {
+	changed = request
+	changed.Configuration.RequirePostQuantum = nil
+	if _, err := d.AllocatePublisherService(t.Context(), p, changed, now); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("retry changed the post-quantum requirement: %v", err)
 	}
-	if !strings.HasSuffix(u.CanonicalHostname, "."+p.Scope.Namespace) || !u.Ephemeral {
+	if u.Endpoint == nil || !strings.HasSuffix(u.Endpoint.Hostname, "."+p.Scope.Namespace) || !u.Ephemeral || u.ExpiresAt != nil {
 		t.Fatal("allocation escaped its namespace")
 	}
-	e2 := publisherEnrollment(t, d, r, p.Scope, now)
+	e2 := publisherEnrollment(t, d, actor, p.Scope, now)
 	otherPublic, _, _ := ed25519.GenerateKey(rand.Reader)
 	other, err := d.RedeemPublisherEnrollment(t.Context(), e2.Key, otherPublic, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owns, err := d.PublisherMayStartRun(t.Context(), other, u.ID); err != nil || owns {
-		t.Fatalf("foreign allocation ownership = %t, %v", owns, err)
+	if _, err := d.GetServiceForPublisher(t.Context(), u.ID, other, now); !failure.Only(err, ErrServiceAccess) {
+		t.Fatal("foreign credential did not receive only the access denial", err)
 	}
-	wrong := AuthorizedPublicURLDeleteRequest{PublicURLID: u.ID, TeamID: u.TeamID, ActingIdentityID: p.CreatorID, PublisherIdentityID: other.ID, PublisherGrantID: other.GrantID}
-	if err := d.DeleteAuthorizedPublicURL(t.Context(), wrong, now); !errors.Is(err, ErrPublisherIdentity) {
+	if err := d.DeletePublisherService(t.Context(), other, u.ID, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("foreign allocation cleanup = %v", err)
 	}
-	wrong.PublisherIdentityID, wrong.PublisherGrantID = p.ID, p.GrantID
-	if err := d.DeleteAuthorizedPublicURL(t.Context(), wrong, now); err != nil {
+	if err := d.DeletePublisherService(t.Context(), p, u.ID, now); err != nil {
 		t.Fatalf("exact allocation cleanup = %v", err)
 	}
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET removed_at=$2, removed_by_identity_id=identity_id WHERE id=$1`, r.MembershipID, now); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET removed_at=$2, removed_by_identity_id=identity_id WHERE id=$1`, actor.MembershipID, now); err != nil {
 		t.Fatal(err)
 	}
 	assertion, err := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
@@ -321,79 +331,80 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 		t.Fatalf("member-owned credential survived removal: %v", err)
 	}
 	invocation2, _ := opaqueid.New(opaqueid.InvocationPrefix)
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation2, "http://app.internal:3000", []string{}, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatalf("removed member allocated another URL: %v", err)
+	request.Invocation = invocation2
+	if _, err := d.AllocatePublisherService(t.Context(), p, request, now); !errors.Is(err, ErrPublisherIdentity) {
+		t.Fatalf("removed member allocated another service: %v", err)
 	}
 }
 
 func TestIntegrationPublisherRunRetryAndHeartbeatRevocation(t *testing.T) {
-	d, now, r, _ := newPublishRunPrerequisites(t)
-	url, err := d.GetPublicURLForAuthorization(t.Context(), r.PublicURLID)
+	f := newServicePublicationFixture(t)
+	d, now := f.database, f.now
+	if err := d.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, now); err != nil {
+		t.Fatal(err)
+	}
+	request := ServiceRunRequest{Metadata: f.service.ServiceMetadata}
+	prepared, err := d.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "retry", now, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActingIdentityID}
-	e := publisherEnrollment(t, d, base, PublisherScope{TeamID: r.TeamID, Kind: "saved_public_url", PublicURLID: r.PublicURLID}, now)
-	public, private, _ := ed25519.GenerateKey(rand.Reader)
-	p, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
+	repeated, err := d.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "retry", now, request)
+	if err != nil || !reflect.DeepEqual(repeated, prepared) {
+		t.Fatal("prepare retry changed the run", err)
+	}
+	changed := request
+	changed.PreferredRegions = []string{"aws:us-east-1"}
+	if _, err := d.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "retry", now, changed); !errors.Is(err, ErrServiceConflict) {
+		t.Fatalf("prepare retry changed the request binding: %v", err)
+	}
+	if _, err := d.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "another-attempt", now, request); !errors.Is(err, ErrServiceConflict) {
+		t.Fatalf("another attempt adopted the prepared run: %v", err)
+	}
+	f.prepared = prepared
+	f.run, err = d.StartServiceRun(t.Context(), f.service.ID, prepared.RunID, prepared.RunNumber, f.publisher, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := d.PublisherRunPlan(t.Context(), p, url, false)
+	started, err := d.StartServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.RunNumber, f.publisher, now)
+	if err != nil || started.RunID != f.run.RunID || started.Token != f.run.Token {
+		t.Fatal("start retry changed the run or token", err)
+	}
+	enrollment := publisherEnrollment(t, d, serviceTestAuthority{TeamID: f.service.TeamID, ActingIdentityID: f.actor(t)}, f.publisher.Scope, now)
+	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.CertificateCacheKey, r.CertificateScope, r.CertificateIdentifiers, r.CertificateChallenge = plan.CacheKey, plan.Scope, plan.Identifiers, plan.ChallengeMethod
-	r.PublisherIdentityID, r.PublisherGrantID, r.PublisherKeyID = p.ID, p.GrantID, p.KeyID
-	r.PublisherRunProof, _ = publisherproof.SignRun(private, r.PublicURLID, r.IdempotencyKey)
-	r.RetrySecret = nil
-	setup, err := d.CreatePublishRun(t.Context(), r, now, time.Minute, time.Minute)
+	foreign, err := d.RedeemPublisherEnrollment(t.Context(), enrollment.Key, public, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// retries, live authority, and revocation use the binding stored on each run.
-	repeated, err := d.CreatePublishRun(t.Context(), r, now, time.Minute, time.Minute)
-	if err != nil || repeated.PublishRunToken != setup.PublishRunToken || repeated.PublishRunID != setup.PublishRunID {
-		t.Fatalf("identity run retry = %+v, %v", repeated, err)
+	if _, err := d.StartServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.RunNumber, foreign, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatalf("foreign identity recovered the run: %v", err)
 	}
-	bad := r
-	bad.IdempotencyKey = "changed"
-	if _, err := d.CreatePublishRun(t.Context(), bad, now, time.Minute, time.Minute); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatalf("proof reused for another attempt = %v", err)
-	}
-	e2 := publisherEnrollment(t, d, base, p.Scope, now)
-	pk2, sk2, _ := ed25519.GenerateKey(rand.Reader)
-	p2, err := d.RedeemPublisherEnrollment(t.Context(), e2.Key, pk2, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bad = r
-	bad.PublisherIdentityID, bad.PublisherGrantID, bad.PublisherKeyID = p2.ID, p2.GrantID, p2.KeyID
-	bad.PublisherRunProof, _ = publisherproof.SignRun(sk2, r.PublicURLID, r.IdempotencyKey)
-	if _, err := d.CreatePublishRun(t.Context(), bad, now, time.Minute, time.Minute); !errors.Is(err, ErrPublishRunIdempotency) {
-		t.Fatalf("foreign identity recovered run = %v", err)
-	}
-	auth := PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: r.PublicURLID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
-	if _, err := d.HeartbeatPublishRun(t.Context(), auth, now.Add(time.Second), time.Minute, time.Minute); err != nil {
+	health := ServiceRunHealth{Healthy: true, StreamCapacity: 64}
+	if _, err := d.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, now.Add(time.Second), health); err != nil {
 		t.Fatalf("live publisher heartbeat: %v", err)
 	}
-	if err := d.RevokePublisherGrant(t.Context(), r.TeamID, p.ID, p.GrantID, r.ActingIdentityID, now.Add(2*time.Second)); err != nil {
+	if err := d.RevokePublisherGrant(t.Context(), f.service.TeamID, f.publisher.ID, f.publisher.GrantID, f.publisher.CreatorID, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.HeartbeatPublishRun(t.Context(), auth, now.Add(3*time.Second), time.Minute, time.Minute); !errors.Is(err, ErrPublisherIdentity) && !errors.Is(err, ErrPublishRunStale) {
+	if _, err := d.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, now.Add(3*time.Second), health); !errors.Is(err, ErrPublisherIdentity) && !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("revoked heartbeat = %v", err)
 	}
 	var closed bool
-	if err := d.pool.QueryRow(t.Context(), `SELECT closed_at IS NOT NULL FROM control.publish_runs WHERE id=$1`, setup.PublishRunID).Scan(&closed); err != nil || !closed {
+	if err := d.pool.QueryRow(t.Context(), `SELECT state='closed' FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&closed); err != nil || !closed {
 		t.Fatalf("revoked run left open: %t, %v", closed, err)
 	}
 }
 
 func TestIntegrationPublisherReplayRecordsAreBounded(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_replay_bound")
-	r := oidcRouteRequest(t, d, now)
-	u := createTestPublicURL(t, d, r, now)
-	e := publisherEnrollment(t, d, r, PublisherScope{TeamID: u.TeamID, Kind: "saved_public_url", PublicURLID: u.ID}, now)
+	actor := seedControlServiceAuthority(t, d, now, "replaybound")
+	service, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "replay", "replay", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := publisherEnrollment(t, d, actor, PublisherScope{TeamID: actor.TeamID, Kind: "service", ServiceID: service.ID}, now)
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	p, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
 	if err != nil {
@@ -416,53 +427,69 @@ func TestIntegrationPublisherReplayRecordsAreBounded(t *testing.T) {
 
 func TestIntegrationGuestPublisherScopeSourceAndExpiry(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "guest_publisher")
-	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
+	guest := newGuestTrialForTest(t, d, now)
+	now = guestOperationTime(guest)
+	u, err := d.AllocateGuestDemoService(t.Context(), AllocateGuestDemoServiceRequest{
+		Credential: guestCredentialForTest(guest), IdempotencyKey: "demo", Target: guestLoopbackTarget(t), Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	domain, err := d.CreateGuestTrial(t.Context(), guest, "example.test", now)
+	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.AllocateGuestDemoNumber(t.Context(), guest.ID, now); err != nil {
-		t.Fatal(err)
+	for _, source := range []netip.Addr{{}, netip.IPv4Unspecified(), netip.IPv6Unspecified(), netip.MustParseAddr("fe80::1%en0"), netip.MustParseAddr("192.0.2.8")} {
+		credential := GuestCredential{Token: guest.Token, SourceIP: source}
+		want := ErrGuestUnknown
+		if source == netip.MustParseAddr("192.0.2.8") {
+			want = authorization.ErrGuestIPChanged
+		}
+		if _, err := d.EnrollGuestPublisher(t.Context(), credential, u.ID, public, now); !errors.Is(err, want) {
+			t.Fatalf("source %s enrolled publisher: %v", source, err)
+		}
 	}
-	if _, err := d.EnsureGuestPrincipal(t.Context(), guest.ID, now); err != nil {
-		t.Fatal(err)
-	}
-	u := createTestPublicURL(t, d, CreatePublicURLRequest{GuestID: guest.ID, TeamID: guest.TeamID, DomainID: domain, MembershipID: guest.MembershipID, ActingIdentityID: guest.ID, IdempotencyKey: "demo", CanonicalHostname: "demo-1." + guest.NamespaceLabel + ".example.test", Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeMember, Purpose: PublicURLPurposeDemo, AllowedIPPrefixes: []string{"192.0.2.7/32"}, DNSState: PublicURLDNSUnmanaged, PolicyRevision: 1, Ephemeral: true}, now)
-	public, private, _ := ed25519.GenerateKey(rand.Reader)
-	if _, err := d.EnrollGuestPublisher(t.Context(), guest.ID, u.ID, "192.0.2.8/32", public, now); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatalf("foreign source enrollment = %v", err)
-	}
-	p, err := d.EnrollGuestPublisher(t.Context(), guest.ID, u.ID, "192.0.2.7/32", public, now)
+	p, err := d.EnrollGuestPublisher(t.Context(), guestCredentialForTest(guest), u.ID, public, now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if p.Kind != "guest" || p.GuestID != guest.ID || p.Scope.GuestID != guest.ID || p.Scope.TeamID != "" ||
+		p.CreatorID != "" || p.OwnerMembershipID != "" || p.Scope.Kind != "service" || p.Scope.ServiceID != u.ID {
+		t.Fatalf("guest enrollment invented authority: %+v", p)
+	}
+	recovered, err := d.EnrollGuestPublisher(t.Context(), guestCredentialForTest(guest), u.ID, public, now.Add(time.Second))
+	if err != nil || !reflect.DeepEqual(recovered, p) {
+		t.Fatalf("enrollment retry changed publisher: %+v, %v", recovered, err)
+	}
+	wrongPublic, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.EnrollGuestPublisher(t.Context(), guestCredentialForTest(guest), u.ID, wrongPublic, now); !errors.Is(err, ErrPublisherIdentity) {
+		t.Fatalf("different key replaced guest publisher: %v", err)
 	}
 	a := publisherAccess(t, d, p, private, "192.0.2.7/32", now)
-	if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "192.0.2.8/32", now); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatal("guest token moved to another IP")
+	if p.ExpiresAt == nil || !p.ExpiresAt.Equal(guest.ExpiresAt) || a.ExpiresAt == nil ||
+		!a.ExpiresAt.Equal(*p.ExpiresAt) || !a.Until.Equal(now.Add(PublisherAccessLifetime)) || a.Until.Equal(*a.ExpiresAt) {
+		t.Fatalf("guest grant expiry was replaced by token expiry: %+v, %+v", p, a)
 	}
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, "invocation", "http://127.0.0.1:3000", []string{}, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublisherIdentity) {
+	for _, source := range []string{"", "192.0.2.8/32", "192.0.2.0/24", "0.0.0.0/32", "::/128"} {
+		if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, source, now); !errors.Is(err, ErrPublisherIdentity) {
+			t.Fatalf("source %q authenticated guest publisher: %v", source, err)
+		}
+	}
+	if _, err := d.AllocatePublisherService(t.Context(), p, AllocateServiceRequest{}, now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("guest received namespace allocation")
 	}
-	if owns, err := d.PublisherMayStartRun(t.Context(), p, "some-other-demo"); err != nil || owns {
-		t.Fatal("guest can publish an unassigned URL")
+	if _, err := d.PrepareServiceRun(t.Context(), "svc_0000000000000000000000", p, "unassigned", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "tcp", TrustRevision: 1}}); err == nil {
+		t.Fatal("guest can publish an unassigned service")
 	}
-	for _, reason := range []string{"expires_at=$2", "used_ready_ns=1200000000000"} {
-		query := fmt.Sprintf(`UPDATE control.guest_trials SET %s WHERE id=$1`, reason)
-		args := []any{guest.ID}
-		if strings.Contains(reason, "$2") {
-			args = append(args, now.Add(time.Second))
-		}
-		if _, err := d.pool.Exec(t.Context(), query, args...); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "192.0.2.7/32", now.Add(2*time.Second)); !errors.Is(err, ErrPublisherIdentity) {
-			t.Fatalf("guest exhaustion accepted: %s", reason)
-		}
-		if _, err := d.pool.Exec(t.Context(), `UPDATE control.guest_trials SET expires_at=$2, used_ready_ns=0 WHERE id=$1`, guest.ID, now.Add(GuestLifetime)); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.guest_trials SET used_ready_ns=$2 WHERE id=$1`, guest.ID, int64(GuestReadyAllowance)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "192.0.2.7/32", now.Add(2*time.Second)); !errors.Is(err, ErrPublisherIdentity) {
+		t.Fatalf("READY exhaustion authenticated publisher: %v", err)
+	}
+	if _, err := d.EnrollGuestPublisher(t.Context(), guestCredentialForTest(guest), u.ID, public, guest.ExpiresAt); !errors.Is(err, ErrGuestTrialSpent) {
+		t.Fatalf("absolute trial expiry enrolled publisher: %v", err)
 	}
 }

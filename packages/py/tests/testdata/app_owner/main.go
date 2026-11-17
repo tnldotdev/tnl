@@ -33,7 +33,7 @@ func run() error {
 	metadataOnly := flag.Bool("tnl-metadata", false, "emit the native assignment and exit")
 	invocations := flag.Bool("tnl-invocations", false, "serve invocation reply-loss and drain gates")
 	cleanupReplyLoss := flag.String("tnl-cleanup-reply-loss", "", "drop the first terminal, transient, or successful unregister reply")
-	port := flag.Int("tnl-port", 25443, "allocated HTTP port")
+	port := flag.Int("tnl-port", 443, "shared HTTP port")
 	public := flag.Bool("tnl-public", true, "HTTP endpoint exposure")
 	omit := flag.Bool("tnl-omit-service", false, "omit the selected service's metadata")
 	flag.Parse()
@@ -70,7 +70,11 @@ func run() error {
 		return err
 	}
 	selected := metadata.Services["web"]
-	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Service: "web", Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
+	publicURL := ""
+	if selected.Public {
+		publicURL = selected.URL
+	}
+	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: "reg_0123456789abcdef0123456789abcdef", Service: "web", Hostname: selected.Hostname, PublicURL: publicURL, Project: metadata.Public(true)}
 	if *metadataOnly {
 		return json.NewEncoder(os.Stdout).Encode(assignment)
 	}
@@ -88,7 +92,7 @@ func run() error {
 		return err
 	}
 	defer database.Close()
-	manager, err := publisherapp.New(ctx, root, database, []publisherapp.Service{{Name: "web", Directory: root, ServiceProtocol: "http"}}, func(ctx context.Context, _ publisherapp.Service, _ func(uint64, bool) error) error {
+	manager, err := publisherapp.New(ctx, root, database, []publisherapp.Service{{Name: "web", Directory: root, ServiceProtocol: "http"}}, func(ctx context.Context, _ publisherapp.Service, _ func(publisherapp.PublicationUpdate) error) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
@@ -115,7 +119,7 @@ func run() error {
 			return publisherprotocol.Assignment{}, errors.New("unexpected fixture preparation")
 		}
 		value := assignment
-		id, err := manager.Reserve(name, request.Owner, request.PID, selected.URL)
+		id, err := manager.Reserve(name, request.Owner, request.PID, publicURL)
 		value.RegistrationID = id
 		return value, err
 	}}

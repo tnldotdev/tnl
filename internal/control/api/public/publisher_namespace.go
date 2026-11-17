@@ -1,40 +1,17 @@
 package public
 
 import (
-	"context"
-	"encoding/json"
-	"net"
 	"net/http"
-	"net/netip"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
-	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
-
-type PublisherRunStore interface {
-	AuthenticatePublisherAccess(context.Context, string, string, time.Time) (controlstate.PublisherIdentity, error)
-	PublisherMayStartRun(context.Context, controlstate.PublisherIdentity, string) (bool, error)
-	PublisherRunPlan(context.Context, controlstate.PublisherIdentity, controlstate.PublicURL, bool) (authorization.CertificatePlan, error)
-}
-
-func publisherRequestSource(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return ""
-	}
-	ip, err := netip.ParseAddr(host)
-	if err != nil || ip.Zone() != "" {
-		return ""
-	}
-	ip = ip.Unmap()
-	return netip.PrefixFrom(ip, ip.BitLen()).String()
-}
 
 func (h *handler) authenticatePublisher(w http.ResponseWriter, r *http.Request) (PublisherIdentityStore, controlstate.PublisherIdentity, bool) {
 	store, ok := h.dependencies.PublisherIdentities, h.dependencies.PublisherIdentities != nil
@@ -49,80 +26,39 @@ func (h *handler) authenticatePublisher(w http.ResponseWriter, r *http.Request) 
 	}
 	p, err := store.AuthenticatePublisherAccess(r.Context(), token, publisherRequestSource(r), time.Now())
 	if err != nil {
-		publisherProblem(r.Context(), w, "authenticate publisher", err)
+		switch {
+		case failure.Only(err, controlstate.ErrPublisherIdentity), failure.Only(err, pgx.ErrNoRows):
+			writeBearerProblem(w)
+		case failure.Only(err, controlstate.ErrServiceAccess):
+			writeProblem(w, http.StatusForbidden, controlv1.Forbidden, "publisher permission denied")
+		case controlstate.IsUnavailable(err):
+			writeUnavailableProblem(r.Context(), w, "authenticate publisher", "publisher authentication is unavailable", failure.ServerUnavailable, err)
+		default:
+			writeInternalStateProblem(r.Context(), w, "authenticate publisher", err)
+		}
 		return nil, controlstate.PublisherIdentity{}, false
 	}
-	fields := observability.Fields{Component: "control"}
-	if p.Scope.PublicURLID != "" {
-		fields.ServiceProtocol = observability.ProtocolHTTP
-	}
-	*r = *r.WithContext(observability.AuthenticatedServerScope(r.Context(), observability.Identity{TeamID: p.Scope.TeamID, PublisherIdentityID: p.ID, PublicURLID: p.Scope.PublicURLID, ServiceID: p.Scope.ServiceID}, fields))
+	*r = *r.WithContext(observability.AuthenticatedServerScope(r.Context(), observability.Identity{
+		TeamID: p.Scope.TeamID, PublisherIdentityID: p.ID, ServiceID: p.Scope.ServiceID,
+	}, observability.Fields{Component: "control"}))
 	return store, p, true
 }
 
-func (h *handler) GetPublisherPublicURL(w http.ResponseWriter, r *http.Request) {
-	_, p, ok := h.authenticatePublisher(w, r)
-	if !ok {
-		return
+func publisherAllocationInput(w http.ResponseWriter, r *http.Request) (controlstate.AllocateServiceRequest, bool) {
+	var b struct {
+		Invocation    string                                    `json:"invocation_id"`
+		Configuration *controlstate.ProjectServiceConfiguration `json:"configuration"`
+		ExpiresAt     *time.Time                                `json:"expires_at"`
 	}
-	if p.Scope.Kind != "saved_public_url" {
-		writeProblem(w, 404, controlv1.NotFound, "resource not found")
-		return
+	if decodeJSONLimited(w, r, &b, 2<<20) != nil || b.Configuration == nil || !opaqueid.Valid(b.Invocation, opaqueid.InvocationPrefix) {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid temporary service declaration")
+		return controlstate.AllocateServiceRequest{}, false
 	}
-	u, err := h.store.GetPublicURLForAuthorization(r.Context(), p.Scope.PublicURLID)
-	if err != nil {
-		publisherProblem(r.Context(), w, "read publisher URL", err)
-		return
-	}
-	if u.TeamID != p.Scope.TeamID || u.LifecycleState != controlstate.PublicURLLifecycleEnabled {
-		writeProblem(w, 404, controlv1.NotFound, "resource not found")
-		return
-	}
-	writeJSON(w, 200, publicURLResponse(u))
+	return controlstate.AllocateServiceRequest{Invocation: b.Invocation, Configuration: *b.Configuration, ExpiresAt: b.ExpiresAt}, true
 }
 
-func validAllocationLimits(l *controlv1.PublisherApplicationLimits) bool {
-	if l == nil {
-		return true
-	}
-	requests, concurrency, rate := 0, 0, 0
-	period := time.Duration(0)
-	if l.Requests != nil {
-		requests = *l.Requests
-		if requests < 1 {
-			return false
-		}
-	}
-	if l.Concurrency != nil {
-		concurrency = *l.Concurrency
-		if concurrency < 1 {
-			return false
-		}
-	}
-	if l.Rate != nil {
-		var err error
-		period, err = time.ParseDuration(l.Rate.Per)
-		if err != nil || period <= 0 || l.Rate.Requests < 1 {
-			return false
-		}
-		rate = l.Rate.Requests
-	}
-	return applicationlimits.Valid(requests, rate, concurrency, period)
-}
-
-func allocationIPPolicy(b controlv1.AllocateEphemeralPublicURLRequest) ([]string, error) {
-	values := []string{}
-	if b.Ip != nil {
-		values = *b.Ip
-	}
-	p, err := authorization.CanonicalizeIPPrefixes(values)
-	if err != nil || len(p) > 32 {
-		return nil, authorization.ErrInvalid
-	}
-	return p, nil
-}
-
-func (h *handler) AllocatePublisherPublicURL(w http.ResponseWriter, r *http.Request) {
+func (h *handler) AllocatePublisherService(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if !h.config.DNSAutomation {
 		writeProblem(w, 409, controlv1.Conflict, "namespace allocation requires automated DNS")
 		return
@@ -131,72 +67,26 @@ func (h *handler) AllocatePublisherPublicURL(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	b, prefixes, mode, binding, ok := publisherAllocationInput(w, r)
+	b, ok := publisherAllocationInput(w, r)
 	if !ok {
 		return
 	}
-	u, err := store.AllocatePublisherPublicURL(r.Context(), p, b.InvocationId, b.Target, prefixes, binding, time.Now(), controlstate.PublisherPublicURLOptions{AccessMode: mode, RequirePostQuantum: b.RequirePostQuantum != nil && *b.RequirePostQuantum})
+	service, err := store.AllocatePublisherService(r.Context(), p, b, time.Now())
 	if err != nil {
-		publisherProblem(r.Context(), w, "allocate publisher URL", err)
+		writeControlStateProblem(r.Context(), w, "allocate publisher service", err)
 		return
 	}
-	writeJSON(w, 201, publicURLResponse(u))
+	writeJSON(w, 201, serviceaccess.Service(service))
 }
 
-func publisherAllocationInput(w http.ResponseWriter, r *http.Request) (b controlv1.AllocateEphemeralPublicURLRequest, prefixes []string, mode controlstate.VisitorAccessMode, binding []byte, ok bool) {
-	if decodeJSON(w, r, &b) != nil || !opaqueid.Valid(b.InvocationId, opaqueid.InvocationPrefix) || !validAllocationLimits(b.Limits) {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid namespace allocation")
-		return b, nil, mode, nil, false
-	}
-	if _, err := targetsyntax.ParseCanonicalTarget(b.Target); err != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "target must be an HTTP or HTTPS origin")
-		return b, nil, mode, nil, false
-	}
-	var err error
-	prefixes, err = allocationIPPolicy(b)
-	if err != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor IP policy")
-		return b, nil, mode, nil, false
-	}
-	mode = controlstate.VisitorAccessRestricted
-	if b.AccessMode != nil {
-		mode = controlstate.VisitorAccessMode(*b.AccessMode)
-	}
-	if !mode.Valid() {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor access mode")
-		return b, nil, mode, nil, false
-	}
-	// retain a canonical limits binding in retries even though limits are
-	// applied by the publisher rather than stored as URL policy.
-	binding, err = json.Marshal(b.Limits)
-	if err != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher limits")
-		return b, nil, mode, nil, false
-	}
-	return b, prefixes, mode, binding, true
-}
-
-func (h *handler) DeletePublisherPublicURL(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
+func (h *handler) DeletePublisherService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
+	w.Header().Set("Cache-Control", "no-store")
 	store, p, ok := h.authenticatePublisher(w, r)
 	if !ok {
 		return
 	}
-	if p.Scope.Kind != "namespace" && p.Scope.Kind != controlstate.DeploymentCredentialGrant || p.GuestID != "" {
-		writeProblem(w, 404, controlv1.NotFound, "resource not found")
-		return
-	}
-	owns, err := store.PublisherMayStartRun(r.Context(), p, id)
-	if err != nil || !owns {
-		writeProblem(w, 404, controlv1.NotFound, "resource not found")
-		return
-	}
-	u, err := h.store.GetPublicURLForAuthorization(r.Context(), id)
-	if err != nil {
-		publisherProblem(r.Context(), w, "read allocated URL", err)
-		return
-	}
-	if err := h.store.DeleteAuthorizedPublicURL(r.Context(), controlstate.AuthorizedPublicURLDeleteRequest{PublicURLID: id, TeamID: p.Scope.TeamID, ActingIdentityID: p.CreatorID, PolicyRevision: uint64(u.PolicyRevision), ExpectedMutationRevision: u.MutationRevision, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID}, time.Now()); err != nil {
-		publisherProblem(r.Context(), w, "delete allocated URL", err)
+	if err := store.DeletePublisherService(r.Context(), p, id, time.Now()); err != nil {
+		writeControlStateProblem(r.Context(), w, "delete allocated service", err)
 		return
 	}
 	w.WriteHeader(204)

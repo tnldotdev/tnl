@@ -3,12 +3,13 @@ package invocation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -16,6 +17,22 @@ type testClientIPLookup struct {
 	response controlv1.ClientIPResponse
 	err      error
 	calls    int
+}
+
+func TestResolveVisitorAccessCountsNormalizedPrefixes(t *testing.T) {
+	lookup := &testClientIPLookup{err: errors.New("unexpected IP lookup")}
+	prefixes := make([]string, 257)
+	for index := range prefixes {
+		prefixes[index] = fmt.Sprintf("2001:db8::%x", index)
+	}
+	withAliases := append(slices.Clone(prefixes[:256]), prefixes[0], prefixes[0]+"/128")
+	value, err := resolveVisitorAccess(t.Context(), lookup, nil, false, withAliases)
+	if err != nil || len(value.prefixes) != 256 || value.access != controlv1.Restricted || lookup.calls != 0 {
+		t.Fatal("CLI aliases consumed the limit or granted access", value, err)
+	}
+	if _, err := resolveVisitorAccess(t.Context(), lookup, nil, false, prefixes); !errors.Is(err, authorization.ErrIPPrefixLimit) {
+		t.Fatal("CLI prefix limit lost its owned diagnostic", err)
+	}
 }
 
 func (l *testClientIPLookup) ClientIP(context.Context) (controlv1.ClientIPResponse, error) {
@@ -48,22 +65,12 @@ func TestResolveVisitorAccessNeverAddsAnImplicitIP(t *testing.T) {
 
 func TestResolveVisitorAccessUsesCurrentIPOnlyWhenExplicit(t *testing.T) {
 	lookup := &testClientIPLookup{response: controlv1.ClientIPResponse{Ip: "192.0.2.4"}}
-	policy, err := resolveVisitorAccess(t.Context(), lookup, nil, false, []string{"current", "198.51.100.8/24"})
+	policy, err := resolveVisitorAccess(t.Context(), lookup, nil, false, []string{"current", "::ffff:192.0.2.4", "198.51.100.8/24"})
 	if err != nil || policy.access != controlv1.Restricted || !reflect.DeepEqual(policy.prefixes, []string{"192.0.2.4/32", "198.51.100.0/24"}) || lookup.calls != 1 {
 		t.Fatalf("policy=%+v, calls=%d, error=%v", policy, lookup.calls, err)
 	}
 	lookup.err = errors.New("unavailable")
 	if _, err := resolveVisitorAccess(t.Context(), lookup, nil, false, []string{"current"}); err == nil {
 		t.Fatal("explicit current-IP lookup failure was accepted")
-	}
-}
-
-func TestPublisherConfigPreservesEphemeralRouteChoice(t *testing.T) {
-	configured := (publisherServices{ephemeral: true}).config("http://127.0.0.1:3000", nil, applicationlimits.Limits{Concurrency: 750})
-	if !configured.Ephemeral {
-		t.Fatal("ephemeral route choice was not passed to the publisher")
-	}
-	if configured.Limits.Concurrency != 750 {
-		t.Fatalf("concurrency = %d", configured.Limits.Concurrency)
 	}
 }

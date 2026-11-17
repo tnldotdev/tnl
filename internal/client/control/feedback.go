@@ -68,40 +68,40 @@ func (c *Client) AppendFeedbackEvent(ctx context.Context, id, key string, body c
 	})
 }
 
-func (c *Client) CreatePublishRunPreview(ctx context.Context, runID string, version uint64, token credentials.PublishRunToken) (controlv1.Preview, error) {
+func (c *Client) CreateServiceRunPreview(ctx context.Context, serviceID, runID string, number int64, token credentials.ServiceRunToken) (controlv1.Preview, error) {
 	return request[controlv1.Preview](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreatePublishRunPreview(ctx, runID, controlv1.PublishRunVersionRequest{PublishRunNumber: int64(version)}, editors...)
+		return c.api.CreateServiceRunPreview(ctx, serviceID, runID, controlv1.ServiceRunPreviewRequest{RunNumber: number}, editors...)
 	})
 }
 
-func (c *Client) CreateFeedbackReport(ctx context.Context, runID, key string, body controlv1.CreateFeedbackReportRequest, token credentials.PublishRunToken) (controlv1.FeedbackThread, error) {
+func (c *Client) CreateFeedbackReport(ctx context.Context, serviceID, runID, key string, body controlv1.CreateFeedbackReportRequest, token credentials.ServiceRunToken) (controlv1.FeedbackThread, error) {
 	params := &controlv1.CreateFeedbackReportParams{IdempotencyKey: key}
 	return request[controlv1.FeedbackThread](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateFeedbackReport(ctx, runID, params, body, editors...)
+		return c.api.CreateFeedbackReport(ctx, serviceID, runID, params, body, editors...)
 	})
 }
 
-func (c *Client) ListPreviewPageFeedback(ctx context.Context, runID string, body controlv1.PreviewPageFeedbackRequest, token credentials.PublishRunToken) (controlv1.FeedbackThreadPage, error) {
+func (c *Client) ListPreviewPageFeedback(ctx context.Context, serviceID, runID string, body controlv1.PreviewPageFeedbackRequest, token credentials.ServiceRunToken) (controlv1.FeedbackThreadPage, error) {
 	return request[controlv1.FeedbackThreadPage](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ListPreviewPageFeedback(ctx, runID, body, editors...)
+		return c.api.ListPreviewPageFeedback(ctx, serviceID, runID, body, editors...)
 	})
 }
 
-func (c *Client) AppendReviewerFeedbackEvent(ctx context.Context, runID, id, key string, body controlv1.AppendReviewerFeedbackEventRequest, token credentials.PublishRunToken) (controlv1.FeedbackEvent, error) {
+func (c *Client) AppendReviewerFeedbackEvent(ctx context.Context, serviceID, runID, id, key string, body controlv1.AppendReviewerFeedbackEventRequest, token credentials.ServiceRunToken) (controlv1.FeedbackEvent, error) {
 	params := &controlv1.AppendReviewerFeedbackEventParams{IdempotencyKey: key}
 	return request[controlv1.FeedbackEvent](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.AppendReviewerFeedbackEvent(ctx, runID, id, params, body, editors...)
+		return c.api.AppendReviewerFeedbackEvent(ctx, serviceID, runID, id, params, body, editors...)
 	})
 }
 
-func (c *Client) GetReviewerFeedbackThread(ctx context.Context, runID, id string, body controlv1.ReviewerFeedbackReadRequest, token credentials.PublishRunToken) (controlv1.FeedbackThread, error) {
+func (c *Client) GetReviewerFeedbackThread(ctx context.Context, serviceID, runID, id string, body controlv1.ReviewerFeedbackReadRequest, token credentials.ServiceRunToken) (controlv1.FeedbackThread, error) {
 	return request[controlv1.FeedbackThread](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetReviewerFeedbackThread(ctx, runID, id, body, editors...)
+		return c.api.GetReviewerFeedbackThread(ctx, serviceID, runID, id, body, editors...)
 	})
 }
 
-func (c *Client) ListReviewerFeedbackEvents(ctx context.Context, runID, id string, body controlv1.ReviewerFeedbackReadRequest, token credentials.PublishRunToken) (controlv1.FeedbackEventPage, error) {
+func (c *Client) ListReviewerFeedbackEvents(ctx context.Context, serviceID, runID, id string, body controlv1.ReviewerFeedbackReadRequest, token credentials.ServiceRunToken) (controlv1.FeedbackEventPage, error) {
 	return request[controlv1.FeedbackEventPage](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ListReviewerFeedbackEvents(ctx, runID, id, body, editors...)
+		return c.api.ListReviewerFeedbackEvents(ctx, serviceID, runID, id, body, editors...)
 	})
 }

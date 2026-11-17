@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
@@ -12,23 +11,12 @@ import (
 )
 
 func TestIntegrationRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
-	database, now := newCertificatePlanDatabase(t)
+	f := newServicePublicationFixture(t)
+	database, now := f.database, f.now
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	const identity = "identity_concurrent_creator"
-	seedControlPublicURL(t, database, now, "concurrent_creator")
-	if _, err := database.pool.Exec(ctx, `UPDATE control.domains SET canonical_domain='concurrent-creator.example.test' WHERE id='domain_concurrent_creator'`); err != nil {
-		t.Fatal(err)
-	}
-	secret := sha256.Sum256([]byte("concurrent-retry"))
-	request := CreatePublicURLRequest{
-		TeamID: "team_concurrent_creator", DomainID: "domain_concurrent_creator", ActingIdentityID: identity,
-		IdempotencyKey: "first", RequestDigest: sha256.Sum256([]byte("first")), CanonicalHostname: "first.concurrent-creator.example.test",
-		Target: "http://127.0.0.1:3000", PublicURLScope: PublicURLScopeShared, Purpose: PublicURLPurposeApp, DNSState: PublicURLDNSUnmanaged,
-		PolicyRevision: 1,
-	}
-	first, err := database.CreatePublicURL(ctx, request, now)
-	if err != nil {
+	identity := f.actor(t)
+	if err := database.CloseServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, now); err != nil {
 		t.Fatal(err)
 	}
 	gate, err := database.pool.Begin(ctx)
@@ -36,38 +24,30 @@ func TestIntegrationRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT operation FROM control.maintenance_controls WHERE operation = 'publish_run_creation' FOR UPDATE`); err != nil {
+	if _, err := gate.Exec(ctx, `SELECT operation FROM control.maintenance_controls WHERE operation = 'service_run_creation' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
-	var session PublishRunSetup
+	var session ServiceRunPreparation
 	sessionDone := make(chan error, 1)
 	workers.Go(func() {
 		var err error
-		session, err = database.CreatePublishRun(ctx, PublishRunRequest{
-			PublicURLID: first.ID, TeamID: first.TeamID, MembershipID: "membership_concurrent_creator", ActingIdentityID: identity,
-			RetrySecret: secret[:], IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
-			PolicyRevision: 1, ExpectedMutationRevision: first.MutationRevision,
-			CertificateCacheKey: first.CanonicalHostname, CertificateScope: first.CanonicalHostname,
-			CertificateIdentifiers: []string{first.CanonicalHostname}, CertificateChallenge: "dns-01",
-		}, now, time.Minute, time.Minute)
+		session, err = database.PrepareServiceRun(ctx, f.service.ID, f.publisher, "concurrent", now,
+			ServiceRunRequest{Metadata: f.service.ServiceMetadata})
 		sessionDone <- err
 	})
-	// the publish run holds the authority revision while waiting for the maintenance gate.
+	// preparation owns admission while waiting for maintenance.
 	sessionPID := waitForPostgresBlock(t, ctx, database, int32(gate.Conn().PgConn().PID()), sessionDone)
-	siblingRequest := request
-	siblingRequest.IdempotencyKey, siblingRequest.CanonicalHostname = "sibling", "sibling.concurrent-creator.example.test"
-	siblingRequest.RequestDigest = sha256.Sum256([]byte("sibling"))
-	var sibling PublicURL
+	var sibling ServiceRecord
 	creatorDone := make(chan error, 1)
 	workers.Go(func() {
 		var err error
-		sibling, err = database.CreatePublicURL(ctx, siblingRequest, now)
+		sibling, err = database.CreateServiceAt(ctx, f.service.TeamID, identity, "sibling", "sibling",
+			ServicePlacement{}, now, ServiceMetadata{}, &ProjectServiceConfiguration{Target: "localhost:3000"})
 		creatorDone <- err
 	})
-	// the creator holds the identity lock and waits for the publish run's authority revision.
-	// releasing the gate makes the publish run INSERT check its identity foreign key.
+	// the same team guard serializes creation without an identity FK cycle.
 	waitForPostgresBlock(t, ctx, database, sessionPID, creatorDone)
 	if err := gate.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -85,70 +65,22 @@ func TestIntegrationRouteCreationDoesNotDeadlockSessionCreation(t *testing.T) {
 	if t.Failed() {
 		return
 	}
-	if session.PublicURLID != first.ID || session.PublishRunNumber != 1 || sibling.ID == first.ID || sibling.CanonicalHostname != siblingRequest.CanonicalHostname {
-		t.Fatal("concurrent operations did not preserve their separate route identities")
+	if session.ServiceID != f.service.ID || session.RunNumber != 2 || sibling.ID == f.service.ID || sibling.Name != "sibling" {
+		t.Fatal("concurrent operations did not preserve separate service identities")
 	}
 	var routes, sessions int
 	if err := database.pool.QueryRow(ctx, `
-		SELECT (SELECT count(*) FROM control.public_urls WHERE team_id = $1),
-		       (SELECT count(*) FROM control.publish_runs WHERE team_id = $1)
-	`, request.TeamID).Scan(&routes, &sessions); err != nil || routes != 3 || sessions != 1 {
-		t.Fatalf("persisted routes/sessions = %d/%d, error %v; want 2/1", routes, sessions, err)
+		SELECT (SELECT count(*) FROM control.services WHERE team_id = $1),
+		       (SELECT count(*) FROM control.service_runs WHERE team_id = $1)
+	`, f.service.TeamID).Scan(&routes, &sessions); err != nil || routes != 2 || sessions != 2 {
+		t.Fatalf("persisted services/runs = %d/%d, error %v; want 2/2", routes, sessions, err)
 	}
 	if _, err := database.pool.Exec(ctx, `UPDATE control.identities SET disabled_at = $2 WHERE id = $1`, identity, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreatePublicURL(ctx, siblingRequest, now); !errors.Is(err, ErrPublicURLAccess) {
+	if _, err := database.CreateServiceAt(ctx, f.service.TeamID, identity, "sibling", "sibling",
+		ServicePlacement{}, now, ServiceMetadata{}, &ProjectServiceConfiguration{Target: "localhost:3000"}); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("disabled creator was not rejected before idempotent reuse: %v", err)
-	}
-}
-
-func TestIntegrationRouteCreatorLockPreservesIdentityProtection(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "creator_lock")
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	const identity = "identity_creator_lock"
-	insertAuthorityIdentity(t, database, identity, "", false, now)
-	owner, err := database.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollbackTestTransaction(t, owner)
-	if _, err := controlstatedb.New(owner).LockPublicURLCreator(ctx, identity); err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		name, statement string
-		blocked         bool
-	}{
-		{"foreign_key_check", `SELECT id FROM control.identities WHERE id = $1 FOR KEY SHARE`, false},
-		{"another_creator", "", true},
-		{"disable", `UPDATE control.identities SET disabled_at = now() WHERE id = $1`, true},
-		{"delete", `DELETE FROM control.identities WHERE id = $1`, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			other, err := database.pool.Begin(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer rollbackTestTransaction(t, other)
-			if _, err := other.Exec(ctx, `SET LOCAL lock_timeout = '100ms'`); err != nil {
-				t.Fatal(err)
-			}
-			if test.statement == "" {
-				_, err = controlstatedb.New(other).LockPublicURLCreator(ctx, identity)
-			} else {
-				_, err = other.Exec(ctx, test.statement, identity)
-			}
-			var postgresError *pgconn.PgError
-			if test.blocked {
-				if !errors.As(err, &postgresError) || postgresError.Code != "55P03" {
-					t.Fatalf("identity mutation was not blocked by the creator: %v", err)
-				}
-			} else if err != nil {
-				t.Fatalf("identity foreign-key check was blocked: %v", err)
-			}
-		})
 	}
 }
 

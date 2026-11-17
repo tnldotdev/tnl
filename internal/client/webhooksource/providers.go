@@ -17,18 +17,27 @@ import (
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const maxCatalogBytes = 16384
-const staleLimit = 24 * time.Hour
-const maxFreshness = 15 * time.Minute
+const staleLimit = ippolicy.ProviderLastGoodFor
+const maxFreshness = ippolicy.ProviderFreshFor
+const refreshRetry = 30 * time.Second
 
 type Source struct {
-	Name     string
-	Any      bool
-	Prefixes []string
-	Stale    bool
+	Name                  string
+	Any                   bool
+	Prefixes              []string
+	Stale                 bool
+	Revision              string
+	RefreshAt, ValidUntil time.Time
+}
+
+type cachedCatalog struct {
+	Body      json.RawMessage `json:"body"`
+	CheckedAt time.Time       `json:"provider_checked_at"`
 }
 
 type CacheEntry struct {
@@ -55,6 +64,7 @@ func Resolve(ctx context.Context, cache Cache, server, name string) (Source, err
 }
 
 func resolve(ctx context.Context, client *http.Client, cache Cache, server, name string, now time.Time) (Source, error) {
+	started := time.Now()
 	if !controlv1.WebhookProvider(name).Valid() {
 		return Source{}, fmt.Errorf("unknown webhook provider %q", name)
 	}
@@ -71,8 +81,27 @@ func resolve(ctx context.Context, client *http.Client, cache Cache, server, name
 			return Source{}, fmt.Errorf("read webhook policy cache: %w", err)
 		}
 	}
-	cachedSource, cachedErr := parseCatalog(entry.JSON, name)
-	if cachedErr == nil && now.Before(entry.ExpiresAt) {
+	var catalog cachedCatalog
+	cachedErr := json.Unmarshal(entry.JSON, &catalog)
+	cachedSource, sourceErr := parseCatalog(catalog.Body, name)
+	if cachedErr == nil {
+		cachedErr = sourceErr
+	}
+	if cachedErr == nil && (catalog.CheckedAt.IsZero() || entry.CheckedAt.IsZero() || entry.CheckedAt.After(now) || entry.ETag == "" ||
+		!entry.ExpiresAt.After(entry.CheckedAt) || entry.ExpiresAt.After(entry.CheckedAt.Add(maxFreshness))) {
+		cachedErr = errors.New("invalid webhook policy cache window")
+	}
+	bind := func(source Source, checked, refresh time.Time, revision string, at time.Time) Source {
+		source.Revision, source.ValidUntil = revision, checked.Add(staleLimit)
+		source.Stale = !at.Before(checked.Add(maxFreshness))
+		source.RefreshAt = refresh
+		if !at.Before(refresh) {
+			source.RefreshAt = minTime(at.Add(refreshRetry), source.ValidUntil)
+		}
+		return source
+	}
+	if cachedErr == nil && now.Before(entry.ExpiresAt) && now.Before(entry.CheckedAt.Add(staleLimit)) {
+		cachedSource = bind(cachedSource, entry.CheckedAt, entry.ExpiresAt, entry.ETag, now)
 		return cachedSource, nil
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server+"/v1/webhook-providers/"+name+"/source", nil)
@@ -87,31 +116,58 @@ func resolve(ctx context.Context, client *http.Client, cache Cache, server, name
 	response, err := client.Do(request)
 	if err == nil {
 		var body []byte
-		body, err = readCatalog(response, entry, cachedErr == nil)
+		bodyCache := entry
+		bodyCache.JSON = catalog.Body
+		body, err = readCatalog(response, bodyCache, cachedErr == nil)
 		if err == nil {
 			var source Source
 			source, err = parseCatalog(body, name)
 			if err == nil {
-				fresh := cacheAge(response.Header.Get("Cache-Control"))
-				updated := CacheEntry{JSON: body, ETag: response.Header.Get("ETag"), CheckedAt: now, ExpiresAt: now.Add(fresh)}
-				if response.StatusCode == http.StatusNotModified {
-					updated.ETag = entry.ETag
+				window, windowErr := ippolicy.ReadProviderWindow(response.Header)
+				completed := now.Add(time.Since(started))
+				age, ageErr := catalogAge(response.Header.Get("Age"))
+				checked, freshUntil, _, localErr := window.Local(now.Add(-age), completed)
+				revision := response.Header.Get("ETag")
+				if windowErr != nil || ageErr != nil || localErr != nil || revision == "" || len(revision) > 128 ||
+					response.StatusCode == http.StatusNotModified && revision != entry.ETag {
+					err = errors.New("catalog returned invalid freshness or revision")
+				} else if cachedErr == nil && window.CheckedAt.Before(catalog.CheckedAt) {
+					err = errors.New("catalog returned an older provider check")
+				} else {
+					if cachedErr == nil && window.CheckedAt.Equal(catalog.CheckedAt) {
+						checked = minTime(checked, entry.CheckedAt)
+						freshUntil = checked.Add(maxFreshness)
+					}
+					expires := minTime(freshUntil, now.Add(max(0, cacheAge(response.Header.Get("Cache-Control"))-age)))
+					encoded, encodeErr := json.Marshal(cachedCatalog{Body: body, CheckedAt: window.CheckedAt})
+					updated := CacheEntry{JSON: encoded, ETag: revision, CheckedAt: checked, ExpiresAt: expires}
+					if encodeErr == nil && len(encoded) <= maxCatalogBytes && updated.ExpiresAt.After(checked) &&
+						completed.Before(checked.Add(staleLimit)) &&
+						(cache == nil || cache.SaveWebhookPolicy(ctx, server, name, updated) == nil) {
+						return bind(source, checked, expires, revision, completed), nil
+					}
+					err = errors.New("could not save or use webhook policy cache")
 				}
-				if cache == nil || cache.SaveWebhookPolicy(ctx, server, name, updated) == nil {
-					return source, nil
-				}
-				err = errors.New("could not save webhook policy cache")
 			}
 		}
 	}
 	if ctx.Err() != nil {
-		return Source{}, ctx.Err()
+		return Source{}, errors.Join(err, ctx.Err())
 	}
-	if cachedErr == nil && now.Sub(entry.CheckedAt) < staleLimit {
+	completed := now.Add(time.Since(started))
+	if cachedErr == nil && completed.Before(entry.CheckedAt.Add(staleLimit)) {
+		cachedSource = bind(cachedSource, entry.CheckedAt, completed.Add(refreshRetry), entry.ETag, completed)
 		cachedSource.Stale = true
 		return cachedSource, nil
 	}
 	return Source{}, fmt.Errorf("webhook source for %s unavailable: %w", name, err)
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 func readCatalog(response *http.Response, cached CacheEntry, validCache bool) ([]byte, error) {
@@ -133,13 +189,29 @@ func cacheAge(value string) time.Duration {
 	for _, directive := range strings.Split(value, ",") {
 		directive = strings.TrimSpace(directive)
 		if text, ok := strings.CutPrefix(directive, "max-age="); ok {
-			seconds, err := strconv.Atoi(text)
-			if err == nil && seconds > 0 {
-				return min(time.Duration(seconds)*time.Second, maxFreshness)
+			seconds, err := strconv.ParseUint(text, 10, 64)
+			if err == nil {
+				if seconds >= uint64(maxFreshness/time.Second) {
+					return maxFreshness
+				}
+				return time.Duration(seconds) * time.Second
 			}
 		}
 	}
 	return time.Minute
+}
+
+// http caches may reuse a response whose observation headers are unchanged.
+// spend their age too; integer Age values can omit a fraction of a second.
+func catalogAge(value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil
+	}
+	seconds, err := strconv.ParseUint(value, 10, 32)
+	if err != nil || seconds >= uint64(staleLimit/time.Second) {
+		return 0, errors.New("invalid catalog response age")
+	}
+	return (time.Duration(seconds) + 1) * time.Second, nil
 }
 
 func parseCatalog(body []byte, name string) (Source, error) {

@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,6 +54,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -100,10 +102,10 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	configuration := filepath.Join(root, "tnl.json")
 	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "oauth": true, "webhooks": map[string]any{"review": map[string]any{"service": "web", "path": "/hooks/review", "provider": "custom", "source_ips": []string{"127.0.0.1"}}}, "services": map[string]any{"api": map[string]any{}, "publicapi": map[string]any{}, "internal": map[string]any{}, "web": map[string]any{}}, "deployments": map[string]any{
 		"cluster":  map[string]any{"description": "CLI workflow", "targets": map[string]any{"api": map[string]any{"address": target.URL, "access": map[string]any{"team": true}}}},
-		"external": map[string]any{"public": true, "targets": map[string]any{"publicapi": map[string]any{"address": target.URL, "http": map[string]any{}, "access": map[string]any{"team": true}}}},
+		"external": map[string]any{"targets": map[string]any{"publicapi": map[string]any{"address": target.URL, "public": true, "http": map[string]any{}, "access": map[string]any{"team": true}}}},
 		"local": map[string]any{"targets": map[string]any{
 			"internal": map[string]any{"name": "local-internal", "access": map[string]any{"team": true}},
-			"web":      map[string]any{"public_url": map[string]any{"access": "anonymous"}},
+			"web":      map[string]any{"public": true, "http": map[string]any{"access": "anonymous"}},
 		}},
 	}}})
 	if err != nil {
@@ -175,7 +177,8 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	}
 	public, err := meta.Parse(metadata)
 	if err != nil || len(public.Services) != 1 || public.Services["web"].URL == "" || bytes.Contains(metadata, []byte(target.URL)) {
-		t.Fatalf("browser metadata lost endpoint scope or leaked a target: %v", err)
+		t.Fatalf("browser metadata lost endpoint scope or leaked a target: services=%+v target_leaked=%t parse=%v",
+			public.Services, bytes.Contains(metadata, []byte(target.URL)), err)
 	}
 	if _, found := public.Services["internal"]; found {
 		t.Fatal("private app listener received browser metadata")
@@ -203,24 +206,40 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	}()
 	defer func() { stopRegistration(); <-registrationDone }()
 	visitor := &http.Client{Transport: http.DefaultTransport, Timeout: 2 * time.Second}
+	var readinessSnapshot publisherapp.Snapshot
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("last public readiness snapshot: %+v", readinessSnapshot)
+			for _, service := range readinessSnapshot.Services {
+				t.Logf("last public readiness observation: %+v", service.Observation)
+			}
+		}
+	})
+	// ingress can deliver bytes before the publisher's next heartbeat confirms
+	// public endpoint readiness. require both in one bounded startup window.
+	readinessCtx, stopReadiness := context.WithTimeout(t.Context(), 25*time.Second)
+	defer stopReadiness()
 	workflowWait(t, 25*time.Second, func() bool {
-		response, err := visitor.Get(assignment.PublicURL)
+		request, err := http.NewRequestWithContext(readinessCtx, http.MethodGet, assignment.PublicURL, nil)
+		if err != nil {
+			return false
+		}
+		response, err := visitor.Do(request)
 		if err != nil {
 			return false
 		}
 		defer response.Body.Close()
 		body, _ := io.ReadAll(response.Body)
-		return response.StatusCode == 200 && string(body) == "local application"
-	})
-	workflowWait(t, 5*time.Second, func() bool {
-		var snapshot publisherapp.Snapshot
-		services := []string{"web"}
-		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &services}, &snapshot); err != nil {
+		if response.StatusCode != http.StatusOK || string(body) != "local application" {
 			return false
 		}
-		for _, s := range snapshot.Services {
+		services := []string{"web"}
+		if err := publisherprotocol.Call(readinessCtx, endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &services}, &readinessSnapshot); err != nil {
+			return false
+		}
+		for _, s := range readinessSnapshot.Services {
 			if s.Name == "web" {
-				return s.Ready
+				return s.Registered && s.Routable && s.Ready && s.RunNumber > 0 && s.Observation != nil && s.Observation.Ready
 			}
 		}
 		return false
@@ -229,6 +248,29 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		t.Fatal("local webhook metadata was not generated")
 	}
 	webhookURL := assignment.Project.Webhooks["review"].URL
+	logWebhookState := func() {
+		if snapshot, err := session.Database().SnapshotProject(t.Context(), root); err == nil {
+			for _, integration := range snapshot.IntegrationURLs {
+				t.Logf("integration %s: %s %s", integration.Kind, integration.State, integration.Reason)
+				for _, endpoint := range integration.Endpoints {
+					t.Logf("endpoint %s: %s %s, receivers=%d", endpoint.Name, endpoint.State, endpoint.Reason, len(endpoint.ReadyReceivers))
+				}
+			}
+		}
+		inspect, err := pgx.Connect(t.Context(), f.databaseURL)
+		if err != nil {
+			t.Logf("webhook control diagnostic: %v", err)
+			return
+		}
+		defer inspect.Close(t.Context())
+		var runs string
+		err = inspect.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(jsonb_build_object(
+			'hostname',service.certificate_hostname,'public',service.public,'run',run.id,
+			'state',run.state,'number',run.run_number,'ready_at',run.ready_at)),'[]')::text
+			FROM control.services service LEFT JOIN control.service_runs run ON run.service_id=service.id
+			WHERE service.certificate_hostname LIKE 'hooks-%'`).Scan(&runs)
+		t.Logf("webhook control runs=%s error=%v routing_ready=%t", runs, err, f.publicIngress.RoutingReady(time.Now()))
+	}
 	lastWebhookState := ""
 	workflowWait(t, 25*time.Second, func() bool {
 		response, err := visitor.Post(webhookURL, "application/octet-stream", strings.NewReader("public webhook delivery"))
@@ -237,6 +279,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 			if state != lastWebhookState {
 				t.Log(state)
 				lastWebhookState = state
+				logWebhookState()
 			}
 			return false
 		}
@@ -246,14 +289,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		if state != lastWebhookState {
 			t.Log(state)
 			lastWebhookState = state
-			if snapshot, err := session.Database().SnapshotProject(t.Context(), root); err == nil {
-				for _, integration := range snapshot.IntegrationURLs {
-					t.Logf("integration %s: %s %s", integration.Kind, integration.State, integration.Reason)
-					for _, endpoint := range integration.Endpoints {
-						t.Logf("endpoint %s: %s %s, receivers=%d", endpoint.Name, endpoint.State, endpoint.Reason, len(endpoint.ReadyReceivers))
-					}
-				}
-			}
+			logWebhookState()
 		}
 		return response.StatusCode == 200 && len(body) == 0 && webhookBody.Load() == "public webhook delivery"
 	})
@@ -272,8 +308,8 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	if err := publisherprotocol.Call(t.Context(), privateAppEndpoint, "POST", "/v1/prepare", publisherprotocol.Prepare{Version: 1, Service: internal, Directory: root, Framework: "node", Owner: privateOwner, PID: os.Getpid()}, &privateAssignment); err != nil {
 		t.Fatal(err)
 	}
-	if privateAssignment.PublicURL != "" || privateAssignment.Hostname != "" {
-		t.Fatal("private app was assigned a public hostname")
+	if privateAssignment.PublicURL != "" || privateAssignment.Hostname == "" {
+		t.Fatal("connector-only app lost its TLS hostname or received a public URL")
 	}
 	privateRegistration := publisherprotocol.Registration{Version: 1, RegistrationID: privateAssignment.RegistrationID, Owner: privateOwner, Target: target.URL}
 	if err := publisherprotocol.Call(t.Context(), privateAppEndpoint, "POST", "/v1/register", privateRegistration, nil); err != nil {
@@ -324,6 +360,9 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	localService, err := connector.Select(t.Context(), control, project.Project, internal, team)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if localService.Endpoint == nil || localService.Endpoint.Public || localService.Endpoint.Hostname != privateAssignment.Hostname || localService.Endpoint.Port != 443 {
+		t.Fatal("connector-only app changed its prepared TLS identity or enabled ingress")
 	}
 	localClient := workflowNativeHTTPClient(t, f, localService.Endpoint.Hostname)
 	workflowWait(t, 10*time.Second, func() bool {
@@ -427,10 +466,11 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 			}
 		}
 	}
-	if publicService.Endpoint == nil || !publicService.Endpoint.Public {
+	if publicService.Endpoint == nil || !publicService.Endpoint.Public || publicService.Endpoint.Port != 443 {
 		t.Fatal("public deployment lost service HTTP endpoint")
 	}
-	f.connectDirectListener(t, publicService.Endpoint)
+	// shared HTTPS already uses the fixture's ingress listener and trusted
+	// destination metadata; only allocated native ports need another listener.
 	grant, err := control.CreateServiceHTTPGrant(t.Context(), publicService.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
@@ -578,12 +618,13 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	if err := json.Unmarshal(audit, &page); err != nil || len(page.Events) == 0 {
 		t.Fatalf("real control audit was not readable: %v", err)
 	}
-	t.Log("CLI apply -> real local public app/webhook and private app readiness/traffic -> two signed deployment tasks running public.Run and privatepublisher.Publish -> authenticated connect -> private HTTP bytes; portable generation, runtime endpoint metadata, and audit read passed")
+	t.Log("CLI apply -> local public app/webhook and connector-only app readiness/traffic -> two signed deployment publishers -> authenticated connect -> HTTP bytes; portable generation, runtime endpoint metadata, and audit read passed")
 }
 
 type cliWorkflow struct {
-	publicServices               *ingress.PublicServices
+	publicIngress                *ingress.Server
 	url                          string
+	identityIssuer               string
 	publicAddress                string
 	databaseURL                  string
 	issuer                       *x509.Certificate
@@ -650,6 +691,7 @@ func newCLIWorkflow(t *testing.T, additionalRoots ...[]byte) *cliWorkflow {
 	provider.TLS = f.tls.Clone()
 	provider.StartTLS()
 	t.Cleanup(provider.Close)
+	f.identityIssuer = provider.URL
 	identityProvider, err := oidc.New(oidc.Config{Issuer: provider.URL, ClientID: "server", ClientSecret: "fixture-secret", Subject: "developer", RedirectURLs: []string{f.url + "/v1/auth/device/callback", f.url + "/v1/browser/callback"}})
 	if err != nil {
 		t.Fatal(err)
@@ -662,14 +704,28 @@ func newCLIWorkflow(t *testing.T, additionalRoots ...[]byte) *cliWorkflow {
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, _ := net.SplitHostPort(address)
+		publicHTTPS := false
 		if strings.HasSuffix(host, ".apps.integration.test") && f.publicAddress != "" {
 			if port == "443" {
 				address = f.publicAddress
+				publicHTTPS = true
 			} else {
 				address = net.JoinHostPort("127.0.0.1", port)
 			}
 		}
-		return (&net.Dialer{}).DialContext(ctx, network, address)
+		connection, err := (&net.Dialer{}).DialContext(ctx, network, address)
+		if err != nil || !publicHTTPS {
+			return connection, err
+		}
+		header, err := proxyproto.Encode(proxyproto.Header{Source: connection.LocalAddr().(*net.TCPAddr).AddrPort(), Destination: netip.MustParseAddrPort("203.0.113.10:443")})
+		if err == nil {
+			_, err = connection.Write(header)
+		}
+		if err != nil {
+			_ = connection.Close()
+			return nil, err
+		}
+		return connection, nil
 	}
 	original := http.DefaultTransport
 	http.DefaultTransport = transport
@@ -728,31 +784,17 @@ func newCLIWorkflow(t *testing.T, additionalRoots ...[]byte) *cliWorkflow {
 func (f *cliWorkflow) dnsWork(t *testing.T, database *controlstate.Database) {
 	for f.ctx.Err() == nil {
 		now := time.Now()
-		public, found, err := database.ClaimDNSPublicURLWork(f.ctx, "cli-dns", now, time.Minute)
-		if err == nil && found {
-			if public.State == controlstate.PublicURLDNSRemoving {
-				public.State = controlstate.PublicURLDNSRemoved
-			} else {
-				public.State = controlstate.PublicURLDNSPublished
-			}
-			public.AvailableAt = time.Time{}
-			_, err = database.SaveDNSPublicURLWork(f.ctx, public, time.Now())
-		}
-		if err != nil && !errors.Is(err, controlstate.ErrDNSPublicURLWorkStale) && f.ctx.Err() == nil {
-			t.Error("local DNS public URL exchange", err)
-			return
-		}
 		managed, found, err := database.ClaimServiceEndpointDNSWork(f.ctx, "cli-dns", now, time.Minute)
 		if err == nil && found {
-			if managed.State == controlstate.PublicURLDNSRemoving {
-				managed.State = controlstate.PublicURLDNSRemoved
+			if managed.State == controlstate.ServiceEndpointDNSRemoving {
+				managed.State = controlstate.ServiceEndpointDNSRemoved
 			} else {
-				managed.State = controlstate.PublicURLDNSPublished
+				managed.State = controlstate.ServiceEndpointDNSPublished
 			}
 			managed.AvailableAt = time.Time{}
 			_, err = database.SaveServiceEndpointDNSWork(f.ctx, managed, time.Now())
 		}
-		if err != nil && !errors.Is(err, controlstate.ErrDNSPublicURLWorkStale) && f.ctx.Err() == nil {
+		if err != nil && !errors.Is(err, controlstate.ErrServiceEndpointDNSWorkStale) && f.ctx.Err() == nil {
 			t.Error("local DNS service exchange", err)
 			return
 		}
@@ -773,7 +815,7 @@ func (f *cliWorkflow) logRuns(t *testing.T) {
 		return
 	}
 	defer connection.Close(ctx)
-	rows, err := connection.Query(ctx, `SELECT u.canonical_hostname,coalesce(r.publisher_identity_id,''),r.state,r.certificate_installed_at IS NOT NULL FROM control.publish_runs r JOIN control.public_urls u ON u.id=r.public_url_id WHERE r.closed_at IS NULL ORDER BY u.canonical_hostname,r.publish_run_number`)
+	rows, err := connection.Query(ctx, `SELECT r.certificate_hostname,r.publisher_identity_id,r.state,r.certificate_expires_at IS NOT NULL FROM control.service_runs r WHERE r.closed_at IS NULL ORDER BY r.certificate_hostname,r.run_number`)
 	if err != nil {
 		t.Logf("inspect active runs: %v", err)
 		return
@@ -783,7 +825,7 @@ func (f *cliWorkflow) logRuns(t *testing.T) {
 		var host, id, state string
 		var certificate bool
 		if err := rows.Scan(&host, &id, &state, &certificate); err == nil {
-			t.Logf("active public run %s publisher=%s state=%s certificate=%t", host, id, state, certificate)
+			t.Logf("active service run %s publisher=%s state=%s certificate=%t", host, id, state, certificate)
 		}
 	}
 }
@@ -959,14 +1001,12 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	}
 	f.workers.Go(func() { _ = controller.Run(f.ctx) })
 	workflowWait(t, 5*time.Second, func() bool { return controller.Lease().RelayLeaseRevision > 0 })
-	registry, private := relay.NewRegistry(), relay.NewServiceRegistry()
-	t.Cleanup(func() { _ = registry.Close(); _ = private.Close() })
-	native := &relay.ConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: signingKey, Claim: client, Publishers: private}
-	acceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{Select: func(service string) (relay.PublisherConnectionController, *relay.Registry, bool) {
-		return controller, registry, service == id
-	}, Connector: func(service string) (*relay.ConnectorAcceptor, bool) { return native, service == id }, Private: &relay.ServicePublisherAcceptor{Select: func(service string) (relay.ServicePublisherTarget, bool) {
-		return relay.ServicePublisherTarget{Control: controller, Registry: private}, service == id
-	}}})
+	registry := relay.NewServiceRegistry()
+	t.Cleanup(func() { _ = registry.Close() })
+	native := &relay.ConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: signingKey, Claim: client, Publishers: registry}
+	acceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{Select: func(service string) (relay.ServicePublisherTarget, bool) {
+		return relay.ServicePublisherTarget{Control: controller, Registry: registry}, service == id
+	}, Connector: func(service string) (*relay.ConnectorAcceptor, bool) { return native, service == id }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -974,7 +1014,10 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	if err != nil {
 		t.Fatal(err)
 	}
-	forward, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{Registry: registry, ServiceRegistry: private, CurrentLease: controller.Lease, ClusterSecrets: secrets, StreamCapacity: 128})
+	forward, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
+		ServiceRegistry: registry, CurrentLease: controller.Lease, ClusterSecrets: secrets, StreamCapacity: 128,
+		Report: func(err error) { t.Logf("workflow relay forwarding: %v", err) },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -996,7 +1039,7 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 
 func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id string) {
 	t.Helper()
-	client, err := controlingress.NewDirectClient(controlingress.DirectConfig{Store: database, LeaseDuration: 30 * time.Second, RoutingPollInterval: 25 * time.Millisecond})
+	client, err := controlingress.NewDirectClient(controlingress.DirectConfig{Store: database, LeaseDuration: 30 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1004,47 +1047,34 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	if err != nil {
 		t.Fatal(err)
 	}
-	routing := &ingress.RoutingTable{}
 	ports := make([]int, 16)
 	for index := range ports {
 		ports[index] = 20000 + index
 	}
-	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{Region: "local", ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
+	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, Registration: ingressv1.IngressRegistration{Region: "local", ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", Https: true, ServicePorts: ports, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.workers.Go(func() { _ = controller.Run(f.ctx) })
 	workflowWait(t, 5*time.Second, func() bool { return controller.Ready(time.Now()) })
-	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{SignVisitorSource: controller.SignVisitorSource, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ClusterSecret: cliWorkflowClusterSecret})
+	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{Context: f.ctx, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ClusterSecret: cliWorkflowClusterSecret})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = forwarder.Close() })
-	direct, err := ingress.NewPublicServices(ingress.PublicServicesConfig{Control: client, Forwarder: forwarder, CurrentLease: controller.Lease})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.publicServices == nil {
-		f.publicServices = direct
-	}
-	t.Cleanup(func() { _ = direct.Close() })
 	publicListener := workflowListen(t)
 	if f.publicAddress == "" {
 		f.publicAddress = publicListener.Addr().String()
 	}
-	publicServer, err := ingress.New(publicListener, ingress.Config{MaxConnections: 128, Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
-		entries, reason := controller.Lookup(host, time.Now())
-		if reason != ingress.LookupCurrent {
-			return nil, reason
-		}
-		result, err := forwarder.PublicURLs(entries)
-		if err != nil {
-			return nil, ingress.LookupInvalidProjection
-		}
-		return result, ingress.LookupCurrent
-	}})
+	publicServer, err := ingress.New(publicListener, ingress.Config{Control: client, Forwarder: forwarder, CurrentLease: controller.Lease,
+		IngressPoolID:      "ingress-a",
+		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+		MaxConnections: 128, OnError: func(err error) { t.Logf("workflow ingress visitor: %v", err) }})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if f.publicIngress == nil {
+		f.publicIngress = publicServer
 	}
 	context.AfterFunc(f.ctx, func() { _ = publicListener.Close() })
 	t.Cleanup(func() {
@@ -1054,6 +1084,11 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		_ = publicServer.Drain(ctx)
 	})
 	f.workers.Go(func() { _ = publicServer.Serve() })
+	f.workers.Go(func() {
+		if err := publicServer.RefreshServices(f.ctx); err != nil && f.ctx.Err() == nil {
+			t.Errorf("workflow ingress routing: %v", err)
+		}
+	})
 }
 
 // the local CA and DNS boundary are test infrastructure. control still owns

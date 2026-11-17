@@ -4,32 +4,42 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
+	"net/netip"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 // a database-state model of one relay restart, not a process-crash or visitor
-// recovery test. drain to a short logical deadline, then register a new run.
-// the other leases remain valid for one hour; no real network calls are made.
+// recovery test. two ingress observers admit visitors through the surviving
+// relay before replacement, then verify current ready assignments after joining.
 func TestLoadRelayRecovery(t *testing.T) {
 	f := newControlLoadFixture(t)
 	if f.routes < 2 {
-		t.Fatal("relay recovery requires at least two routes for affected and healthy work")
+		t.Fatal("relay recovery requires at least two services for affected and healthy work")
 	}
 	sessions := readySteadyLoadSessions(t, f)
-	historyRevision := seedLoadRoutingHistory(t, f, 2, f.history)
-	failed := sessions[0].leases[sessions[0].setup.PublisherConnections[0].RelayServiceID]
-	var affected, unaffected []int
-	byID := make(map[string]int, f.routes)
-	current := make([]PublishRunSetup, f.routes)
+	// readiness includes elapsed authorization time. preserve each recorded
+	// first-readiness instant rather than assuming it equals the fixture clock.
+	readyAt := make([]time.Time, len(sessions))
 	for index, session := range sessions {
-		byID[session.setup.PublicURLID], current[index] = index, session.setup
+		err := f.database.pool.QueryRow(t.Context(), `SELECT ready_at FROM control.service_runs
+			WHERE id=$1 AND service_id=$2 AND run_number=$3 AND state='ready' AND healthy
+			AND closed_at IS NULL`, session.run.RunID, session.service.ID, session.run.RunNumber).Scan(&readyAt[index])
+		if err != nil {
+			t.Fatalf("initial durable run readiness service=%s: %v", session.service.ID, err)
+		}
+	}
+	t.Logf("initial_ready_at=%s fixture_now=%s", readyAt[0].Format(time.RFC3339Nano), f.now.Format(time.RFC3339Nano))
+	failed := sessions[0].leases[sessions[0].run.Connections[0].RelayServiceID]
+	var affected, unaffected []int
+	current := make([]ServiceRunState, f.routes)
+	for index, session := range sessions {
+		current[index] = session.run
 		if session.leases[failed.RelayServiceID].RelayLeaseIdentity == failed.RelayLeaseIdentity {
 			affected = append(affected, index)
 		} else {
@@ -42,34 +52,27 @@ func TestLoadRelayRecovery(t *testing.T) {
 	var ingresses [2]IngressLease
 	for index := range ingresses {
 		lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
-			IngressID: fmt.Sprintf("recovery-ingress-%d", index), IngressRunID: "load-run", ProtocolVersion: 1,
-			ConnectionCapacity: uint64(f.routes),
+			IngressID: fmt.Sprintf("recovery-ingress-%d", index), IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
+			HTTPS: true, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: uint64(max(64, f.routes)),
 		}, f.now, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
 		ingresses[index] = lease
-	}
-	initial, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingresses[0].IngressLeaseIdentity, f.now)
-	if err != nil || len(initial.Entries) != f.routes || initial.RoutingTableRevision != uint64(historyRevision) {
-		t.Fatalf("initial snapshot: routes=%d want=%d: %v", len(initial.Entries), f.routes, err)
-	}
-	entries := make(map[string]uint64, f.routes)
-	for _, event := range initial.Entries {
-		index, ok := byID[event.PublicURLID]
-		if !ok || entries[event.PublicURLID] != 0 || event.EntryRevision != uint64(f.history) {
-			t.Fatalf("unexpected initial route %s", event.PublicURLID)
+		runs, err := readLoadServiceRuns(t.Context(), f.database, lease.IngressLeaseIdentity, f.now)
+		if err != nil {
+			t.Fatal("initial routing snapshot", err)
 		}
-		if err := checkRecoveryLoadProjection(event, sessions[index], current[index], RelayLease{}, f.now, true); err != nil {
-			t.Fatal(err)
+		for _, session := range sessions {
+			if err := observeLoadService(runs, session, f.now); err != nil {
+				t.Fatal("initial admission", err)
+			}
 		}
-		entries[event.PublicURLID] = event.EntryRevision
 	}
-
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
-	var recovered, healthyPublicURLs, heartbeats atomic.Int64
+	var recovered, healthyServices, heartbeats atomic.Int64
 	recoveryTimes := make([]time.Duration, f.routes)
 	f.startMetrics(t)
 	started := time.Now()
@@ -80,7 +83,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 			maximum = max(maximum, elapsed)
 		}
 		t.Logf("affected=%d recovered=%d unaffected_verified=%d/%d healthy_heartbeats=%d workflows=64 elapsed=%s",
-			len(affected), recovered.Load(), healthyPublicURLs.Load(), len(unaffected), heartbeats.Load(), time.Since(started))
+			len(affected), recovered.Load(), healthyServices.Load(), len(unaffected), heartbeats.Load(), time.Since(started))
 		t.Logf("successful_slot_recovery_mean=%s max=%s (heartbeat through readiness)", total/time.Duration(max(1, recovered.Load())), maximum)
 		f.logStats(t)
 	}()
@@ -95,15 +98,11 @@ func TestLoadRelayRecovery(t *testing.T) {
 	if err != nil || drained.RelayLeaseIdentity != failed.RelayLeaseIdentity || !drained.Draining || !drained.LeaseExpiresAt.Before(now) {
 		t.Fatalf("expire relay=%s: %v", failed.RelayID, err)
 	}
-
-	// 32 recovery workflows and 32 healthy workflows share the same two pools.
-	// healthy heartbeats finish their current sweep only after every affected
-	// slot has actually been marked ready.
 	restartReady := make(chan struct{})
 	backgroundReady := make(chan struct{}, 1+len(ingresses))
 	var work sync.WaitGroup
 	work.Add(64)
-	var restarted RelayLease // published to recovery workflows by restartReady.
+	var restarted RelayLease // restartReady publishes this value.
 	for worker := range 32 {
 		workers.Go(func() {
 			defer work.Done()
@@ -115,12 +114,12 @@ func TestLoadRelayRecovery(t *testing.T) {
 			for offset := worker; offset < len(affected) && ctx.Err() == nil; offset += 32 {
 				index := affected[offset]
 				began := time.Now()
-				setup, err := recoverLoadRelaySlot(ctx, f.controls[worker%2], sessions[index], failed, restarted, now)
+				run, err := recoverLoadRelaySlot(ctx, f.controls[worker%2], sessions[index], failed, restarted, now)
 				if err != nil {
-					fail(fmt.Errorf("recover route=%s: %w", sessions[index].setup.PublicURLID, err))
+					fail(fmt.Errorf("recover service=%s: %w", sessions[index].service.ID, err))
 					return
 				}
-				current[index], recoveryTimes[index] = setup, time.Since(began)
+				current[index], recoveryTimes[index] = run, time.Since(began)
 				if recovered.Add(1) == int64(len(affected)) {
 					t.Logf("all_slots_ready_elapsed=%s healthy_heartbeats=%d", time.Since(started), heartbeats.Load())
 				}
@@ -136,30 +135,32 @@ func TestLoadRelayRecovery(t *testing.T) {
 					index := unaffected[offset]
 					session := sessions[index]
 					callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-					// one owner per public URL advances its logical heartbeats monotonically.
 					at := now.Add(time.Since(started))
-					setup, err := f.controls[worker%2].HeartbeatPublishRun(callCtx, session.authentication(), at, time.Hour, time.Hour)
+					run, err := f.controls[worker%2].HeartbeatServiceRun(callCtx, session.service.ID, session.run.RunID,
+						session.run.Token, at, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 					stop()
-					if err != nil {
-						fail(fmt.Errorf("healthy heartbeat route=%s: %w", session.setup.PublicURLID, err))
-						return
-					}
-					if setup.PublicURLID != session.setup.PublicURLID || setup.PublishRunID != session.setup.PublishRunID ||
-						setup.PublishRunNumber != session.setup.PublishRunNumber || setup.PublishRunToken != session.setup.PublishRunToken ||
-						setup.State != PublishRunReady || setup.ReadyAt == nil || !setup.ReadyAt.Equal(f.now) || setup.ClosedAt != nil || !setup.ExpiresAt.After(at) {
-						fail(fmt.Errorf("healthy heartbeat changed session route=%s", session.setup.PublicURLID))
-						return
-					}
-					for slot, connection := range setup.PublisherConnections {
-						expected := session.setup.PublisherConnections[slot]
-						expected.State = PublisherConnectionReady
-						if connection != expected {
-							fail(fmt.Errorf("healthy heartbeat changed assignment route=%s slot=%d", setup.PublicURLID, slot))
-							return
+					if err != nil || run.ServiceID != session.service.ID || run.RunID != session.run.RunID ||
+						run.RunNumber != session.run.RunNumber || run.State != "ready" || !run.Healthy || !run.ExpiresAt.After(at) ||
+						!slices.EqualFunc(run.Connections, session.run.Connections, sameLoadAssignment) {
+						for slot, connection := range run.Connections {
+							if slot >= len(session.run.Connections) {
+								break
+							}
+							expected := session.run.Connections[slot]
+							t.Logf("healthy heartbeat slot=%d connection=%s/%s revision=%d/%d state=%s/%s credential_matches=%t expiry=%s/%s expiry_equal=%t location=%s/%s",
+								slot, connection.PublisherConnectionID, expected.PublisherConnectionID, connection.Revision, expected.Revision,
+								connection.State, expected.State, connection.Credential == expected.Credential,
+								connection.CredentialExpiresAt.Format(time.RFC3339Nano), expected.CredentialExpiresAt.Format(time.RFC3339Nano),
+								connection.CredentialExpiresAt.Equal(expected.CredentialExpiresAt), connection.CredentialExpiresAt.Location(), expected.CredentialExpiresAt.Location())
 						}
+						fail(fmt.Errorf("healthy heartbeat changed service=%s returned_service=%s run=%s/%s number=%d/%d state=%s healthy=%t capacity=%d active=%d expiry=%s connections=%d/%d: %v",
+							session.service.ID, run.ServiceID, run.RunID, session.run.RunID, run.RunNumber, session.run.RunNumber,
+							run.State, run.Healthy, run.StreamCapacity, run.ReportedStreams, run.ExpiresAt.Format(time.RFC3339Nano),
+							len(run.Connections), len(session.run.Connections), err))
+						return
 					}
 					if sweep == 0 {
-						healthyPublicURLs.Add(1)
+						healthyServices.Add(1)
 					}
 					heartbeats.Add(1)
 					healthyStarted.Do(func() { backgroundReady <- struct{}{} })
@@ -174,13 +175,13 @@ func TestLoadRelayRecovery(t *testing.T) {
 	workers.Go(func() { work.Wait(); close(workDone) })
 	for index, ingress := range ingresses {
 		workers.Go(func() {
-			if err := observeRecoveryLoad(t, ctx, f.controls[index], ingress.IngressLeaseIdentity, initial, failed.RelayID, now, workDone, backgroundReady); err != nil {
-				fail(fmt.Errorf("snapshot/renewal ingress=%d: %w", index, err))
+			if err := observeRecoveryLoad(t, ctx, f.controls[index], ingress.IngressLeaseIdentity, sessions, failed, now, workDone, backgroundReady); err != nil {
+				fail(fmt.Errorf("admission/renewal ingress=%d: %w", index, err))
 			}
 		})
 	}
-	// require successful background work after the failure before releasing the
-	// recovery workflows, rather than counting goroutine starts as progress.
+	// each observer must see every affected service on its surviving relay
+	// before recovery can begin; goroutine startup alone is not progress.
 	for range 1 + len(ingresses) {
 		select {
 		case <-backgroundReady:
@@ -214,115 +215,55 @@ func TestLoadRelayRecovery(t *testing.T) {
 	t.Logf("relay_restarted_elapsed=%s healthy_heartbeats=%d", time.Since(started), heartbeats.Load())
 	close(restartReady)
 	workers.Wait()
-	if firstErr != nil {
-		t.Fatal(firstErr)
+	if firstErr != nil || ctx.Err() != nil || recovered.Load() != int64(len(affected)) || healthyServices.Load() != int64(len(unaffected)) {
+		t.Fatalf("incomplete recovery workload: %v context=%v", firstErr, ctx.Err())
 	}
-	if ctx.Err() != nil || recovered.Load() != int64(len(affected)) || healthyPublicURLs.Load() != int64(len(unaffected)) {
-		t.Fatalf("incomplete recovery workload: %v", ctx.Err())
-	}
-
-	// verification uses the undelayed setup pool. walk the bounded event history
-	// once against one final snapshot to check every intermediate survivor
-	// projection; never take a full snapshot for each small delta page.
 	verificationStarted := time.Now()
 	verifyAt := now.Add(time.Since(started))
-	var events, degraded, verified int
-	defer func() {
-		t.Logf("verified_routing_events=%d degraded_routes=%d/%d final_routes=%d/%d verification_elapsed=%s", events, degraded, len(affected), verified, f.routes, time.Since(verificationStarted))
-	}()
-	callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-	final, err := f.database.ReadIngressRoutingTableSnapshot(callCtx, ingresses[0].IngressLeaseIdentity, verifyAt)
-	stop()
-	if err != nil || len(final.Entries) != f.routes {
-		t.Fatalf("final snapshot: routes=%d want=%d: %v", len(final.Entries), f.routes, err)
-	}
-	cursor := initial.RoutingTableRevision
-	sawDegraded := make(map[string]bool, len(affected))
-	for cursor < final.RoutingTableRevision {
-		callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-		page, err := f.database.ReadIngressRoutingTableEvents(callCtx, ingresses[0].IngressLeaseIdentity, cursor, MaximumIngressRoutingTablePageSize, verifyAt)
-		stop()
-		if err != nil || page.ResnapshotRequired || page.ThroughRevision != final.RoutingTableRevision || len(page.Events) == 0 {
-			t.Fatalf("recovery events after=%d: %v", cursor, err)
+	var routes [2]map[string]IngressServiceRun
+	for index, ingress := range ingresses {
+		var err error
+		routes[index], err = readLoadServiceRuns(ctx, f.database, ingress.IngressLeaseIdentity, verifyAt)
+		if err != nil {
+			t.Fatal("final recovery routing snapshot", err)
 		}
-		for _, event := range page.Events {
-			index, ok := byID[event.PublicURLID]
-			if !ok || event.RoutingTableRevision != cursor+1 || event.EntryRevision != entries[event.PublicURLID]+1 {
-				t.Fatalf("missing or unordered recovery event after=%d route=%s", cursor, event.PublicURLID)
+	}
+	for index, session := range sessions {
+		session.run = current[index]
+		if session.leases[failed.RelayServiceID].RelayID == failed.RelayID {
+			session.leases = cloneLoadLeases(session.leases)
+			session.leases[failed.RelayServiceID] = restarted
+		}
+		for _, runs := range routes {
+			if err := observeLoadService(runs, session, verifyAt); err != nil {
+				t.Fatal("final current assignment admission", err)
 			}
-			if err := checkRecoveryLoadProjection(event, sessions[index], current[index], restarted, verifyAt, false); err != nil {
-				t.Fatal(err)
-			}
-			if len(event.Projection.PublisherConnections) == 1 && !sawDegraded[event.PublicURLID] {
-				sawDegraded[event.PublicURLID] = true
-				degraded++
-			}
-			cursor, entries[event.PublicURLID] = event.RoutingTableRevision, event.EntryRevision
-			events++
 		}
-		if page.NextRevision != cursor || page.More != (cursor < final.RoutingTableRevision) {
-			t.Fatal("inconsistent recovery event cursor")
-		}
-	}
-	if degraded != len(affected) {
-		t.Fatalf("missing intermediate survivor projections: got=%d want=%d", degraded, len(affected))
-	}
-	seen := make(map[string]bool, f.routes)
-	for _, event := range final.Entries {
-		index, ok := byID[event.PublicURLID]
-		if !ok || seen[event.PublicURLID] || event.EntryRevision != entries[event.PublicURLID] {
-			t.Fatalf("unexpected final snapshot route=%s", event.PublicURLID)
-		}
-		if err := checkRecoveryLoadProjection(event, sessions[index], current[index], restarted, verifyAt, true); err != nil {
-			t.Fatal(err)
-		}
-		seen[event.PublicURLID] = true
-		verified++
-	}
-	// verify durable run identities after all recovery workers have joined.
-	callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-	defer stop()
-	rows, err := f.database.pool.Query(callCtx, `
-		SELECT public_url_id, publish_run_number, id,
-		    (state='ready' AND closed_at IS NULL AND publisher_expires_at > $1) IS TRUE
-		FROM control.publish_runs`, verifyAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var publicURLID, sessionID string
-		var version uint64
 		var matches bool
-		if err := rows.Scan(&publicURLID, &version, &sessionID, &matches); err != nil {
-			t.Fatal(err)
+		err := f.database.pool.QueryRow(ctx, `SELECT service_id=$2 AND run_number=$3 AND state='ready' AND healthy
+			AND closed_at IS NULL AND publisher_expires_at>$4 AND ready_at=$5
+			FROM control.service_runs WHERE id=$1`, session.run.RunID, session.service.ID, session.run.RunNumber, verifyAt, readyAt[index]).Scan(&matches)
+		if err != nil || !matches {
+			t.Fatalf("recovery changed durable run identity/readiness service=%s: %v", session.service.ID, err)
 		}
-		index, ok := byID[publicURLID]
-		if !ok || !matches || version != sessions[index].setup.PublishRunNumber || sessionID != sessions[index].setup.PublishRunID {
-			t.Fatalf("unexpected recovered run public_url_id=%s", publicURLID)
-		}
-		delete(byID, publicURLID)
-	}
-	if err := rows.Err(); err != nil || len(byID) != 0 || ctx.Err() != nil {
-		t.Fatalf("recovery run verification: missing=%d err=%v context=%v", len(byID), err, ctx.Err())
 	}
 	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
+	t.Logf("verified_service_runs=%d final_admissions=%d verification_elapsed=%s", f.routes, 2*f.routes, time.Since(verificationStarted))
 }
 
-// readers use immutable initial projections while recovery workers change their
-// assignments. check identity, monotonic revisions, and surviving connections
-// live; the post-join event walk verifies every final replacement and stale run.
-func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, ingress IngressLeaseIdentity, initial IngressRoutingTableSnapshot, failedRelayID string, now time.Time, workDone <-chan struct{}, backgroundReady chan<- struct{}) error {
-	expected := make(map[string]IngressRoutingTableEvent, len(initial.Entries))
-	entries := make(map[string]uint64, len(initial.Entries))
-	for _, event := range initial.Entries {
-		expected[event.PublicURLID], entries[event.PublicURLID] = event, event.EntryRevision
+func cloneLoadLeases(before map[string]RelayLease) map[string]RelayLease {
+	after := make(map[string]RelayLease, len(before))
+	for id, lease := range before {
+		after[id] = lease
 	}
-	cursor := initial.RoutingTableRevision
-	var snapshots, renewals int
-	started := time.Now()
+	return after
+}
+
+func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, ingress IngressLeaseIdentity, sessions []servicePublicationFixture, failed RelayLease, now time.Time, workDone <-chan struct{}, backgroundReady chan<- struct{}) error {
+	previous := make([][2]int64, len(sessions))
+	var sweeps, admissions, degraded, renewals int
 	defer func() {
-		t.Logf("ingress=%s snapshots=%d renewals=%d cursor=%d elapsed=%s", ingress.IngressID, snapshots, renewals, cursor, time.Since(started))
+		t.Logf("ingress=%s sweeps=%d admissions=%d degraded_observations=%d renewals=%d", ingress.IngressID, sweeps, admissions, degraded, renewals)
 	}()
 	for ctx.Err() == nil {
 		finished := false
@@ -332,57 +273,58 @@ func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, i
 		default:
 		}
 		callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-		snapshot, err := control.ReadIngressRoutingTableSnapshot(callCtx, ingress, now)
+		runs, err := readLoadServiceRuns(callCtx, control, ingress, now)
 		stop()
 		if err != nil {
-			return fmt.Errorf("snapshot: %w", err)
+			return err
 		}
-		if snapshot.RoutingTableRevision < cursor || len(snapshot.Entries) != len(expected) {
-			return fmt.Errorf("snapshot routes=%d want=%d revision=%d previous=%d", len(snapshot.Entries), len(expected), snapshot.RoutingTableRevision, cursor)
-		}
-		seen := make(map[string]bool, len(expected))
-		for _, event := range snapshot.Entries {
-			before, ok := expected[event.PublicURLID]
-			if !ok || seen[event.PublicURLID] || event.Kind != IngressPublicURLUpsert || event.PublishRunNumber != before.PublishRunNumber ||
-				event.CanonicalHostname != before.CanonicalHostname || event.Projection.PublishRunID != before.Projection.PublishRunID ||
-				event.EntryRevision < entries[event.PublicURLID] || event.RoutingTableRevision > snapshot.RoutingTableRevision ||
-				!event.Projection.PublicUrlExpiresAt.After(now) {
-				return fmt.Errorf("snapshot lost current session or revision route=%s", event.PublicURLID)
+		for index, session := range sessions {
+			admission, err := loadServiceRun(runs, session, now)
+			if err != nil {
+				return err
 			}
-			connections := event.Projection.PublisherConnections
-			if len(connections) < 1 || len(connections) > 2 {
-				return fmt.Errorf("snapshot connection count=%d route=%s", len(connections), event.PublicURLID)
+			affected := session.leases[failed.RelayServiceID].RelayID == failed.RelayID
+			if sweeps == 0 && affected && len(admission.Relays) != 1 {
+				return fmt.Errorf("first failure observation did not retain exactly one survivor: %s", session.service.ID)
 			}
 			var slots [2]bool
-			for _, connection := range connections {
-				slot := connection.ConnectionSlot
-				if slot < 0 || slot >= len(slots) || slots[slot] {
-					return fmt.Errorf("snapshot invalid or duplicate slot=%d route=%s", slot, event.PublicURLID)
+			for _, relay := range admission.Relays {
+				slot := relay.ConnectionSlot
+				if slot < 0 || slot >= 2 || slots[slot] || relay.ConnectionAssignmentRevision < previous[index][slot] ||
+					!relay.LeaseExpiresAt.After(now) || relay.RelayID == failed.RelayID && relay.RelayRunID == failed.RelayRunID {
+					return fmt.Errorf("admission used duplicate, stale, or expired relay for %s", session.service.ID)
 				}
 				slots[slot] = true
+				before := session.run.Connections[slot]
+				lease := session.leases[before.RelayServiceID]
+				if lease.RelayID != failed.RelayID {
+					if relay.PublisherConnectionID != before.PublisherConnectionID || relay.ConnectionAssignmentRevision != before.Revision ||
+						relay.RelayServiceID != before.RelayServiceID || relay.RelayID != lease.RelayID || relay.RelayRunID != lease.RelayRunID || relay.RelayLeaseRevision != int64(lease.RelayLeaseRevision) {
+						return fmt.Errorf("admission changed surviving slot service=%s slot=%d", session.service.ID, slot)
+					}
+				} else if relay.ConnectionAssignmentRevision <= before.Revision || relay.PublisherConnectionID == before.PublisherConnectionID ||
+					relay.RelayServiceID != before.RelayServiceID || relay.RelayID != failed.RelayID || relay.RelayLeaseRevision <= int64(failed.RelayLeaseRevision) {
+					return fmt.Errorf("admission used stale replacement service=%s", session.service.ID)
+				}
+				previous[index][slot] = relay.ConnectionAssignmentRevision
 			}
-			for _, connection := range before.Projection.PublisherConnections {
-				if connection.RelayID != failedRelayID && !slices.ContainsFunc(connections, func(current IngressRoutingTablePublisherConnection) bool {
-					return reflect.DeepEqual(current, connection)
-				}) {
-					return fmt.Errorf("snapshot lost surviving connection route=%s slot=%d", event.PublicURLID, connection.ConnectionSlot)
+			for _, slot := range session.run.Connections {
+				if session.leases[slot.RelayServiceID].RelayID != failed.RelayID && !slots[slot.ConnectionSlot] {
+					return fmt.Errorf("admission lost surviving slot service=%s", session.service.ID)
 				}
 			}
-			seen[event.PublicURLID], entries[event.PublicURLID] = true, event.EntryRevision
+			if len(admission.Relays) == 1 {
+				degraded++
+			}
+			admissions++
 		}
-		cursor = snapshot.RoutingTableRevision
-		snapshots++
-		callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-		lease, err := control.RenewIngress(callCtx, IngressRenewal{IngressLeaseIdentity: ingress, RoutingTableRevision: cursor}, now, time.Hour)
-		stop()
-		if err != nil {
-			return fmt.Errorf("renew: %w", err)
-		}
-		if lease.IngressLeaseIdentity != ingress || !lease.LeaseExpiresAt.After(now) {
-			return errors.New("renew changed ingress identity or expired its lease")
+		lease, err := control.RenewIngress(ctx, IngressRenewal{IngressLeaseIdentity: ingress}, now, time.Hour)
+		if err != nil || lease.IngressLeaseIdentity != ingress || !lease.LeaseExpiresAt.After(now) {
+			return fmt.Errorf("ingress renewal changed identity/deadline: %v", err)
 		}
 		renewals++
-		if snapshots == 1 {
+		sweeps++
+		if sweeps == 1 {
 			backgroundReady <- struct{}{}
 		}
 		if finished {
@@ -399,110 +341,60 @@ func observeRecoveryLoad(t *testing.T, ctx context.Context, control *Database, i
 	return ctx.Err()
 }
 
-func recoverLoadRelaySlot(ctx context.Context, control *Database, session publishRunFixture, failed, restarted RelayLease, now time.Time) (PublishRunSetup, error) {
+func recoverLoadRelaySlot(ctx context.Context, control *Database, session servicePublicationFixture, failed, restarted RelayLease, now time.Time) (ServiceRunState, error) {
 	callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-	setup, err := control.HeartbeatPublishRun(callCtx, session.authentication(), now, time.Hour, time.Hour)
+	run, err := control.HeartbeatServiceRun(callCtx, session.service.ID, session.run.RunID, session.run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 	stop()
 	if err != nil {
-		return setup, fmt.Errorf("replenish: %w", err)
+		return run, fmt.Errorf("replenish: %w", err)
 	}
-	if setup.PublicURLID != session.setup.PublicURLID || setup.PublishRunID != session.setup.PublishRunID ||
-		setup.PublishRunNumber != session.setup.PublishRunNumber || setup.PublishRunToken != session.setup.PublishRunToken ||
-		setup.State != PublishRunReady || setup.ReadyAt == nil || !setup.ReadyAt.Equal(session.now) || setup.ClosedAt != nil || !setup.ExpiresAt.After(now) {
-		return setup, errors.New("replenishment changed the ready session")
+	run.Token = session.run.Token
+	if run.ServiceID != session.service.ID || run.RunID != session.run.RunID || run.RunNumber != session.run.RunNumber ||
+		run.State != "ready" || !run.Healthy || !run.ExpiresAt.After(now) || len(run.Connections) != 2 {
+		return run, errors.New("replenishment changed the ready service run")
 	}
-	for slot, connection := range setup.PublisherConnections {
-		previous := session.setup.PublisherConnections[slot]
-		if session.leases[previous.RelayServiceID].RelayLeaseIdentity != failed.RelayLeaseIdentity {
-			previous.State = PublisherConnectionReady
-			if connection != previous {
-				return setup, fmt.Errorf("replenishment changed surviving slot=%d", slot)
+	for slot, connection := range run.Connections {
+		before := session.run.Connections[slot]
+		if session.leases[before.RelayServiceID].RelayLeaseIdentity != failed.RelayLeaseIdentity {
+			if !sameLoadAssignment(connection, before) {
+				return run, fmt.Errorf("replenishment changed surviving slot=%d", slot)
 			}
 			continue
 		}
-		if connection.ConnectionSlot != slot || connection.PublishRunID != setup.PublishRunID ||
-			connection.PublicURLID != setup.PublicURLID || connection.PublishRunNumber != setup.PublishRunNumber || connection.RelayServiceID != previous.RelayServiceID ||
-			connection.ConnectionAssignmentRevision <= previous.ConnectionAssignmentRevision || connection.PublisherConnectionID == previous.PublisherConnectionID ||
-			connection.PublisherConnectionCredential == previous.PublisherConnectionCredential || connection.State != PublisherConnectionAssigned ||
-			!connection.PublisherConnectionCredentialExpiresAt.After(now) {
-			return setup, fmt.Errorf("missing fresh replacement slot=%d", slot)
+		if connection.ConnectionSlot != int16(slot) || connection.RelayServiceID != before.RelayServiceID ||
+			connection.Revision <= before.Revision || connection.PublisherConnectionID == before.PublisherConnectionID ||
+			connection.Credential == before.Credential || connection.State != "assigned" || !connection.CredentialExpiresAt.After(now) {
+			return run, fmt.Errorf("missing fresh replacement slot=%d", slot)
 		}
-		digest, err := credentials.ParsePublisherConnectionCredential(connection.PublisherConnectionCredential)
-		if err != nil {
-			return setup, err
-		}
-		claim := PublisherConnectionClaimRequest{ConnectionAssignmentIdentity: connection.ConnectionAssignmentIdentity,
-			RelayLeaseIdentity: restarted.RelayLeaseIdentity, ClaimID: "recovery", CredentialDigest: [32]byte(digest)}
-		stale := claim
-		stale.RelayLeaseIdentity = failed.RelayLeaseIdentity
-		callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-		_, err = control.ClaimPublisherConnection(callCtx, stale, now)
-		stop()
-		if !errors.Is(err, ErrRelayLeaseStale) {
-			return setup, fmt.Errorf("old run claim: got %v, want stale lease", err)
-		}
-		oldDigest, err := credentials.ParsePublisherConnectionCredential(previous.PublisherConnectionCredential)
-		if err != nil {
-			return setup, err
-		}
-		stale = claim
-		stale.ConnectionAssignmentIdentity, stale.CredentialDigest = previous.ConnectionAssignmentIdentity, [32]byte(oldDigest)
-		callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-		_, err = control.ClaimPublisherConnection(callCtx, stale, now)
-		stop()
-		if !errors.Is(err, ErrPublisherConnectionUnavailable) {
-			return setup, fmt.Errorf("old assignment claim: got %v, want unavailable connection", err)
+		for _, stale := range []struct {
+			slot  ServiceRunAssignment
+			lease RelayLeaseIdentity
+		}{{connection, failed.RelayLeaseIdentity}, {before, restarted.RelayLeaseIdentity}} {
+			callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
+			_, err = control.ClaimServicePublisherConnection(callCtx, stale.slot.PublisherConnectionID, session.service.ID, run.RunID, run.RunNumber,
+				stale.slot.Revision, stale.slot.Credential, netip.MustParseAddr("127.0.0.1"), stale.lease, now)
+			stop()
+			if !errors.Is(err, ErrServiceAccess) {
+				return run, fmt.Errorf("stale relay/assignment claim was not rejected: %v", err)
+			}
 		}
 		callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-		claimed, err := control.ClaimPublisherConnection(callCtx, claim, now)
+		claimed, err := control.ClaimServicePublisherConnection(callCtx, connection.PublisherConnectionID, session.service.ID, run.RunID, run.RunNumber,
+			connection.Revision, connection.Credential, netip.MustParseAddr("127.0.0.1"), restarted.RelayLeaseIdentity, now)
 		stop()
-		if err != nil || claimed.ConnectionAssignmentIdentity != claim.ConnectionAssignmentIdentity ||
-			claimed.RelayLeaseIdentity != claim.RelayLeaseIdentity || claimed.State != PublisherConnectionConnected {
-			return setup, fmt.Errorf("replacement claim identity/state: %v", err)
+		expected := ServicePublisherConnection{ServiceID: session.service.ID, RunID: run.RunID, RunNumber: run.RunNumber,
+			ConnectionID: connection.PublisherConnectionID, Revision: connection.Revision, RelayServiceID: connection.RelayServiceID}
+		if err != nil || claimed != expected {
+			return run, fmt.Errorf("replacement claim changed identity: %v", err)
 		}
 		callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-		ready, err := control.MarkPublisherConnectionReady(callCtx, claim, now)
+		ready, err := control.ReadyServicePublisherConnection(callCtx, connection.PublisherConnectionID, run.RunID, run.RunNumber,
+			connection.Revision, restarted.RelayLeaseIdentity, now)
 		stop()
-		if err != nil || ready.ConnectionAssignmentIdentity != claim.ConnectionAssignmentIdentity ||
-			ready.RelayLeaseIdentity != claim.RelayLeaseIdentity || ready.State != PublisherConnectionReady || ready.ReadyAt == nil {
-			return setup, fmt.Errorf("replacement readiness identity/state: %v", err)
+		if err != nil || ready != expected {
+			return run, fmt.Errorf("replacement readiness changed identity: %v", err)
 		}
+		run.Connections[slot].State = "ready"
 	}
-	return setup, nil
-}
-
-func checkRecoveryLoadProjection(event IngressRoutingTableEvent, session publishRunFixture, current PublishRunSetup, restarted RelayLease, now time.Time, complete bool) error {
-	if event.Kind != IngressPublicURLUpsert || event.PublicURLID != session.setup.PublicURLID || event.PublishRunNumber != session.setup.PublishRunNumber ||
-		event.CanonicalHostname != session.request.CertificateIdentifiers[0] || event.Projection.PublishRunID != session.setup.PublishRunID ||
-		!event.Projection.PublicUrlExpiresAt.After(now) {
-		return fmt.Errorf("projection lost ready session route=%s", event.PublicURLID)
-	}
-	connections := event.Projection.PublisherConnections
-	if len(connections) < 1 || len(connections) > 2 || (complete && len(connections) != 2) {
-		return fmt.Errorf("projection connection count=%d route=%s complete=%t", len(connections), event.PublicURLID, complete)
-	}
-	var seen [2]bool
-	for _, connection := range connections {
-		slot := connection.ConnectionSlot
-		if slot < 0 || slot >= len(seen) || seen[slot] {
-			return fmt.Errorf("duplicate or invalid projection slot=%d route=%s", slot, event.PublicURLID)
-		}
-		seen[slot] = true
-		expected := current.PublisherConnections[slot]
-		lease := session.leases[expected.RelayServiceID]
-		if lease.RelayID == restarted.RelayID {
-			lease = restarted
-		}
-		if connection.PublisherConnectionID != expected.PublisherConnectionID || connection.ConnectionAssignmentRevision != expected.ConnectionAssignmentRevision ||
-			connection.RelayServiceID != expected.RelayServiceID || connection.RelayID != lease.RelayID || connection.RelayRunID != lease.RelayRunID ||
-			connection.RelayLeaseRevision != lease.RelayLeaseRevision || !connection.LeaseExpiresAt.After(now) {
-			return fmt.Errorf("projection lost current assignment/relay run route=%s slot=%d", event.PublicURLID, slot)
-		}
-	}
-	for slot, connection := range session.setup.PublisherConnections {
-		if session.leases[connection.RelayServiceID].RelayID != restarted.RelayID && !seen[slot] {
-			return fmt.Errorf("projection lost surviving connection route=%s slot=%d", event.PublicURLID, slot)
-		}
-	}
-	return nil
+	return run, nil
 }

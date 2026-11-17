@@ -101,8 +101,8 @@ func hasEnvironment(environments []string, name string) bool {
 	return false
 }
 
-func closeTelemetry(c *clienttelemetry.Collector) {
-	ctx, stop := context.WithTimeout(context.Background(), clienttelemetry.RequestTimeout)
+func closeTelemetry(ctx context.Context, close func(context.Context)) {
+	ctx, stop := processFlushContext(ctx, clienttelemetry.RequestTimeout)
 	defer stop()
-	c.Close(ctx)
+	close(ctx)
 }

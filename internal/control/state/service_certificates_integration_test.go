@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/netip"
 	"slices"
 	"testing"
 	"time"
@@ -22,11 +23,22 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.ProjectLabel = "storefront"
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
-		"orders": {Protocol: "postgres", Target: "orders.internal:5432"},
-		"api":    {Target: "api.internal:3000"},
+		"orders": {Protocol: "postgres", Target: "orders.internal:5432", Public: new(true)},
+		"api":    {Target: "api.internal:3000", Public: new(true)},
 	}}
 	r = selectedProjectRequest(r, "production")
 	applied, err := d.ApplyProjectConfiguration(t.Context(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// retain the allocated ports while testing private certificate authority;
+	// the direct-admission subtest later re-enables these exact bindings.
+	r.ExpectedRevision = applied.Revision
+	for name, binding := range r.Configuration.Services {
+		binding.Public = new(false)
+		r.Configuration.Services[name] = binding
+	}
+	applied, err = d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +61,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		}
 		access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 		attempt++
-		prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, fmt.Sprintf("managed-test-%d", attempt), now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision})
+		prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, fmt.Sprintf("managed-test-%d", attempt), now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +76,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Helper()
 		for _, slot := range active.Connections {
 			lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-			if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, active.ServiceID, active.RunID, active.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+			if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, active.ServiceID, active.RunID, active.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 				t.Fatal(err)
 			}
 			if _, err = d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, active.RunID, active.RunNumber, slot.Revision, lease, now); err != nil {
@@ -95,7 +107,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	issue, err := d.CreateServiceCertificateIssuance(t.Context(), run.ServiceID, run.RunID, run.Token, directory, "csr", run.RunNumber, csr, now)
-	if err != nil || issue.PublicURLID != "" || issue.PublishRunID != "" || issue.ServiceRunID != run.RunID {
+	if err != nil || issue.ServiceID != run.ServiceID || issue.ServiceRunID != run.RunID {
 		t.Fatal("private issuance required a public subject", issue, err)
 	}
 	checkpointBoundary, err := d.GetDeploymentPublisherAssignments(t.Context(), a.lease.AccessToken, now)
@@ -180,7 +192,7 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	challenge, err := d.GetDNSChallengeContextForSubject(t.Context(), work.Subject, work.Authorizations[0].ID)
-	if err != nil || challenge.ServiceID != run.ServiceID || challenge.PublicURLID != "" || challenge.Identifier != plan.Identifiers[0] {
+	if err != nil || challenge.ServiceID != run.ServiceID || challenge.Identifier != plan.Identifiers[0] {
 		t.Fatal("DNS-01 lost private namespace authority", challenge, err)
 	}
 	assertDNSChallengeSubjectBinding(t, d, work.Subject, challenge)
@@ -218,8 +230,8 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Fatal("a different replica adopted the certificate", err)
 	}
 	var publicRows int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.public_urls WHERE team_id=$1`, r.TeamID).Scan(&publicRows); err != nil || publicRows != 0 {
-		t.Fatal("private certificate work created public URLs", publicRows, err)
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_endpoints WHERE service_id=ANY($1) AND public AND retired_at IS NULL`, []string{run.ServiceID, sibling.ServiceID}).Scan(&publicRows); err != nil || publicRows != 0 {
+		t.Fatal("connector certificate work enabled public endpoints", publicRows, err)
 	}
 	t.Run("cached-install-after-restart", func(t *testing.T) {
 		if err = d.CloseServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now); err != nil {
@@ -281,10 +293,10 @@ func testServiceNamespaceCertificateRetirement(t *testing.T, d *Database, r Appl
 		if !found {
 			break
 		}
-		if work.State != PublicURLDNSRemoving {
+		if work.State != ServiceEndpointDNSRemoving {
 			t.Fatal("retired endpoint did not request DNS removal", work.State)
 		}
-		work.State, work.AvailableAt = PublicURLDNSRemoved, time.Time{}
+		work.State, work.AvailableAt = ServiceEndpointDNSRemoved, time.Time{}
 		if _, err := d.SaveServiceEndpointDNSWork(t.Context(), work, now.Add(2*time.Second)); err != nil {
 			t.Fatal(err)
 		}

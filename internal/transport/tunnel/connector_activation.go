@@ -5,8 +5,17 @@ import (
 	"errors"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+// ConnectorActivationStopped reports this exact activation result's locally
+// interrupted i/o or pre-entry stop. independent operation and cleanup failures
+// never gain this fact through a later context cancellation.
+func ConnectorActivationStopped(err, cause error) bool {
+	return connectorControlStopped(err, cause, connectorStopActivation)
+}
 
 // ActivateConnectorLeg selects only this authenticated hello's carrier. racing
 // candidates remain passive until their owner joins the losers and chooses one.
@@ -66,22 +75,40 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ac
 	if s.connectorActivated {
 		return &ProtocolError{Code: tunnelv1.InvalidMessage}
 	}
-	finish, err := setupDeadline(ctx, s.control)
+	interrupted := new(controlDeadlineStop)
+	finish, err := setupDeadlineObserved(ctx, s.control, interrupted)
 	if err != nil {
-		return errors.Join(err, &ProtocolError{Code: tunnelv1.Unavailable})
+		err = errors.Join(err, &ProtocolError{Code: tunnelv1.Unavailable})
+		if interrupted.entry != nil {
+			return &connectorControlInterruption{err: err, cause: interrupted.entry, phase: connectorStopActivation}
+		}
+		return err
 	}
+	replyEndedNormally := false
+	var stoppedBy error
 	defer func() {
-		err = errors.Join(err, finish(err == nil))
+		finishErr := finish(err == nil)
+		err = errors.Join(err, finishErr)
+		stopped := stoppedBy != nil && failure.Only(finishErr, stoppedBy)
 		// a socket deadline can fire before the context's timer goroutine runs.
 		// its absolute deadline still fences the result and remains the cause.
 		if deadline, ok := ctx.Deadline(); ok && !deadline.After(time.Now()) {
 			err = errors.Join(err, context.DeadlineExceeded)
+			stopped = false
 		}
+		// the local unavailable diagnostic is not the failed read. first check
+		// the complete operation and finish result, without promoting a received
+		// rejection, a live-stream reset, or a later locally-created session end.
+		replyEndedNormally = replyEndedNormally && muxsession.NormalSessionCloseOnly(err)
 		if err != nil {
 			var classified *ProtocolError
 			if !errors.As(err, &classified) || classified == nil {
 				err = errors.Join(&ProtocolError{Code: tunnelv1.Unavailable}, err)
 			}
+		}
+		err = connectorReplyResult(err, replyEndedNormally)
+		if stopped {
+			err = &connectorControlInterruption{err: err, cause: stoppedBy, phase: connectorStopActivation}
 		}
 	}()
 	// an ambiguous response cannot be retried on this control stream. the role
@@ -90,10 +117,13 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ac
 	binding := activation.Binding()
 	if err := tunnelv1.WriteControl(s.control, tunnelv1.Message{Type: tunnelv1.ConnectorLegActivate, ProtocolVersion: tunnelv1.Version,
 		RequestID: requestID, Role: tunnelv1.Connector, ConnectorLegBinding: &binding}); err != nil {
+		stoppedBy = interrupted.operationCause(err)
 		return err
 	}
 	response, err := tunnelv1.ReadControl(s.control)
 	if err != nil {
+		replyEndedNormally = connectorReplySessionEnded(s.transport, err)
+		stoppedBy = interrupted.operationCause(err)
 		return err
 	}
 	if response.RequestID != requestID {
@@ -111,6 +141,7 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ac
 		return &ProtocolError{Code: tunnelv1.InvalidMessage}
 	}
 	if cause := context.Cause(ctx); cause != nil {
+		stoppedBy = cause
 		return cause
 	}
 	if deadline, ok := ctx.Deadline(); ok && !deadline.After(time.Now()) {

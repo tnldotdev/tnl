@@ -16,15 +16,15 @@ func (f serverDiscoveryFunc) Discovery(ctx context.Context) (controlv1.ControlDi
 	return f(ctx)
 }
 
-func TestPublicURLAssignmentRequiresServerDiscovery(t *testing.T) {
+func TestPublicHTTPAssignmentRequiresServerDiscovery(t *testing.T) {
 	failure := errors.New("discovery unavailable")
 	p := AssignmentPublisher{Member: controlv1.DeploymentPublisherIdentity{DeploymentId: "deployment-one", DeploymentName: "production"}}
 	a := controlv1.DeploymentPublisherServiceAssignment{
-		ServiceKind: "public_url", Hostname: new("web.example.test"),
-		Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http")), Target: "http://127.0.0.1:3000", PublicUrl: &controlv1.ProjectServicePublicURL{}},
+		TrustRevision: 1,
+		Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocolHTTP), Target: "http://127.0.0.1:3000", Public: new(true)},
 	}
-	if err := p.Publish(t.Context(), a, nil); !errors.Is(err, ErrAssignment) {
-		t.Fatal("public URL assignment accepted missing discovery", err)
+	if err := p.Publish(t.Context(), a, nil, nil); !errors.Is(err, ErrAssignment) {
+		t.Fatal("public HTTP assignment accepted missing discovery", err)
 	}
 	p.ServerDiscovery = serverDiscoveryFunc(func(ctx context.Context) (controlv1.ControlDiscovery, error) {
 		if ctx != t.Context() {
@@ -32,8 +32,30 @@ func TestPublicURLAssignmentRequiresServerDiscovery(t *testing.T) {
 		}
 		return controlv1.ControlDiscovery{}, failure
 	})
-	if err := p.Publish(t.Context(), a, nil); !errors.Is(err, failure) {
-		t.Fatal("public URL assignment hid discovery failure", err)
+	if err := p.Publish(t.Context(), a, nil, nil); !errors.Is(err, failure) {
+		t.Fatal("public HTTP assignment hid discovery failure", err)
+	}
+}
+
+func TestAssignmentBrowserDiscoveryDoesNotGateOtherServices(t *testing.T) {
+	for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, "postgres", "mysql", "tcp", "kubernetes"} {
+		t.Run(string(protocol), func(t *testing.T) {
+			for _, public := range []bool{false, true} {
+				if protocol == controlv1.ServiceProtocolHTTP && public {
+					continue
+				}
+				p := AssignmentPublisher{Member: controlv1.DeploymentPublisherIdentity{DeploymentId: "deployment-one", DeploymentName: "production"},
+					ServerDiscovery: serverDiscoveryFunc(func(context.Context) (controlv1.ControlDiscovery, error) {
+						t.Fatal("unrelated service queried browser discovery")
+						return controlv1.ControlDiscovery{}, nil
+					})}
+				assignment := controlv1.DeploymentPublisherServiceAssignment{TrustRevision: 1,
+					Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, Target: "127.0.0.1:3000", Public: &public}}
+				if err := p.Publish(t.Context(), assignment, nil, nil); err == nil || errors.Is(err, ErrAssignment) {
+					t.Fatal("unrelated service did not reach its independent identity validation", err)
+				}
+			}
+		})
 	}
 }
 
@@ -42,9 +64,11 @@ func TestAssignmentPublisherRejectsInvalidAssignmentBeforeIdentityPreparation(t 
 		name   string
 		change func(*AssignmentPublisher, *controlv1.DeploymentPublisherServiceAssignment)
 	}{
-		{"missing service kind", func(_ *AssignmentPublisher, a *controlv1.DeploymentPublisherServiceAssignment) { a.ServiceKind = "" }},
-		{"public URL", func(_ *AssignmentPublisher, a *controlv1.DeploymentPublisherServiceAssignment) {
-			a.ServiceKind = "public_url"
+		{"app-owned target", func(_ *AssignmentPublisher, a *controlv1.DeploymentPublisherServiceAssignment) {
+			a.Configuration.Target = "app"
+		}},
+		{"invalid protocol", func(_ *AssignmentPublisher, a *controlv1.DeploymentPublisherServiceAssignment) {
+			a.Configuration.Protocol = new(controlv1.ServiceProtocol("invalid"))
 		}},
 		{"missing protocol", func(_ *AssignmentPublisher, a *controlv1.DeploymentPublisherServiceAssignment) {
 			a.Configuration.Protocol = nil
@@ -62,13 +86,13 @@ func TestAssignmentPublisherRejectsInvalidAssignmentBeforeIdentityPreparation(t 
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assignment := controlv1.DeploymentPublisherServiceAssignment{ServiceKind: "service", TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http"))}}
+			assignment := controlv1.DeploymentPublisherServiceAssignment{TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocol("http"))}}
 			publisher := AssignmentPublisher{Member: controlv1.DeploymentPublisherIdentity{DeploymentId: "deployment-one", DeploymentName: "application"}}
 			test.change(&publisher, &assignment)
 			healthCalls := 0
 			// no identity capabilities are supplied: validation must reject the
 			// assignment before attempting native identity or target preparation.
-			err := publisher.Publish(t.Context(), assignment, func(bool) { healthCalls++ })
+			err := publisher.Publish(t.Context(), assignment, func(bool) { healthCalls++ }, nil)
 			if !errors.Is(err, ErrAssignment) || healthCalls != 0 {
 				t.Fatal("invalid assignment reached identity or health preparation", err, healthCalls)
 			}

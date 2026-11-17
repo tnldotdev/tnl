@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"context"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -78,7 +79,7 @@ func TestBackgroundLabelsAreClosed(t *testing.T) {
 func TestOperationDurationsUseFixedRoleLabels(t *testing.T) {
 	metrics := New("standalone")
 	for _, operation := range []ServerOperation{
-		OpCreatePublishRun, OpIngressRegister, OpRelayDisconnectPublisherConnection,
+		OpCreateServiceRun, OpIngressRegister, OpRelayDisconnectPublisherConnection,
 	} {
 		metrics.ObserveOperationContext(t.Context(), operation, nil, time.Millisecond)
 	}
@@ -87,7 +88,7 @@ func TestOperationDurationsUseFixedRoleLabels(t *testing.T) {
 		name      string
 		operation string
 	}{
-		{"tnl_control_operation_duration_seconds", "CreatePublishRun"},
+		{"tnl_control_operation_duration_seconds", "CreateServiceRun"},
 		{"tnl_ingress_operation_duration_seconds", "IngressRegister"},
 		{"tnl_relay_operation_duration_seconds", "RelayDisconnectPublisherConnection"},
 	} {
@@ -103,6 +104,77 @@ func TestOperationDurationsUseFixedRoleLabels(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s did not record %s", test.name, test.operation)
+		}
+	}
+}
+
+func TestServiceRunAndRelayMetricsHaveNoRetiredFamiliesOrKindLabels(t *testing.T) {
+	metrics := New("standalone")
+	metrics.ObserveServiceRunReady()
+	metrics.ObserveServiceRunReadiness("ready", time.Millisecond, time.Second)
+	metrics.ObserveRecoveryDuration(time.Second)
+	metrics.ObserveRelayTransfer(7, 11, nil)
+	metrics.ObserveCleanup("service_runs", 2, false, nil)
+	metrics.ObserveCleanup("expired_publish_runs", 1, false, nil)
+
+	families, err := metrics.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if strings.Contains(family.GetName(), "public_url") || strings.Contains(family.GetName(), "publish_run") {
+			t.Fatalf("retired metric family %s", family.GetName())
+		}
+		for _, point := range family.Metric {
+			for _, label := range point.Label {
+				if label.GetName() == "tnl_service_kind" || strings.Contains(label.GetValue(), "public_url") ||
+					label.GetValue() == "expired_publish_runs" {
+					t.Fatalf("retired metric dimension: %s %v", family.GetName(), label)
+				}
+			}
+		}
+	}
+	if got := metricFamily(t, metrics, "tnl_control_service_runs_ready_total").Metric[0].GetCounter().GetValue(); got != 1 {
+		t.Fatalf("service run first-ready count=%g", got)
+	}
+	if got := metricFamily(t, metrics, "tnl_control_service_recovery_duration_seconds").Metric[0].GetHistogram().GetSampleCount(); got != 1 {
+		t.Fatalf("service recovery observations=%d", got)
+	}
+	if got := metricFamily(t, metrics, "tnl_relay_forwarded_bytes_total").Metric; len(got) != 2 {
+		t.Fatalf("relay byte directions=%d", len(got))
+	}
+	if got := metricFamily(t, metrics, "tnl_control_cleanup_items_total").Metric[0].GetCounter().GetValue(); got != 2 {
+		t.Fatalf("service run cleanup items=%g", got)
+	}
+}
+
+func TestCertificateAndDNSKindsRejectRetiredPublicURLWork(t *testing.T) {
+	metrics := New("control")
+	ctx := WithCertificateKind(t.Context(), "public_url")
+	if ctx != t.Context() || CertificateDNSKind(ctx) != "" {
+		t.Fatal("retired certificate work acquired a DNS challenge kind")
+	}
+	if got := CertificateDNSKind(WithCertificateKind(context.Background(), "service")); got != "service_challenge" {
+		t.Fatal("service certificate lost its DNS challenge kind", got)
+	}
+	metrics.ObserveCertificateClaim("public_url", CertificateClaimed)
+	metrics.ObserveCertificateOrder("public_url", "managed", "exact")
+	metrics.ObserveCertificateTransition("public_url", "available")
+	metrics.ObserveDNSTransition("public_url", "published")
+	metrics.ObserveDNSWork("public_url_challenge", "provider", DNSWorkSuccess, time.Second)
+	for _, name := range []string{
+		"tnl_control_certificate_claims_total", "tnl_control_certificate_orders_total",
+		"tnl_control_certificate_transitions_total", "tnl_control_dns_transitions_total",
+		"tnl_control_dns_work_duration_seconds",
+	} {
+		families, err := metrics.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, family := range families {
+			if family.GetName() == name && len(family.Metric) != 0 {
+				t.Fatalf("retired work recorded %s", name)
+			}
 		}
 	}
 }

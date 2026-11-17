@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -38,43 +39,6 @@ func TestIntegrationManagementMutations(t *testing.T) {
 	client, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken(session.AccessToken))
 	if err != nil {
 		t.Fatal(err)
-	}
-	member := session.Identity.Memberships[0]
-	domains, err := f.d.ListTeamDomains(ctx, session.Identity.Identity.Id, member.TeamId)
-	if err != nil || len(domains) == 0 {
-		t.Fatal("team domains", err)
-	}
-	url, err := f.d.CreatePublicURL(ctx, controlstate.CreatePublicURLRequest{
-		TeamID: member.TeamId, DomainID: domains[0].ID, MembershipID: member.Id, ActingIdentityID: session.Identity.Identity.Id,
-		IdempotencyKey: "management", RequestDigest: sha256.Sum256([]byte("management")),
-		CanonicalHostname: "management." + member.ManagedLabel + ".example.test", Target: "http://127.0.0.1:3000",
-		PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSUnmanaged,
-		AllowedIPPrefixes: []string{"192.0.2.0/24"},
-	}, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, err := client.GetPublicURL(ctx, url.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second := first
-	updated, err := client.UpdatePublicURL(ctx, first.Id, controlv1.UpdatePublicURLRequest{
-		ExpectedMutationRevision: first.MutationRevision, Target: new("http://127.0.0.1:4000"),
-	})
-	if err != nil || updated.AllowedIpPrefixes == nil || len(*updated.AllowedIpPrefixes) != 1 || updated.MutationRevision <= first.MutationRevision {
-		t.Fatalf("target-only edit lost IP policy: %+v %v", updated, err)
-	}
-	if _, err := client.UpdatePublicURL(ctx, second.Id, controlv1.UpdatePublicURLRequest{
-		ExpectedMutationRevision: second.MutationRevision, AllowedIpPrefixes: new([]string{}),
-	}); !errors.Is(err, clientcontrol.ErrStatusConflict) {
-		t.Fatalf("stale editor overwrote current URL: %v", err)
-	}
-	cleared, err := client.UpdatePublicURL(ctx, first.Id, controlv1.UpdatePublicURLRequest{
-		ExpectedMutationRevision: updated.MutationRevision, AllowedIpPrefixes: new([]string{}),
-	})
-	if err != nil || cleared.Target != "http://127.0.0.1:4000" || cleared.AllowedIpPrefixes != nil && len(*cleared.AllowedIpPrefixes) != 0 {
-		t.Fatalf("IP clear lost target or retained policy: %+v %v", cleared, err)
 	}
 	configuration := controlv1.UpdateServiceRequest{Protocol: controlv1.Tcp, PublisherPool: false, ExpectedTrustRevision: service.TrustRevision}
 	if _, err := client.ConfigureService(ctx, service.ID, configuration); err != nil {
@@ -116,7 +80,7 @@ func TestIntegrationPrivateInventoryLargeTrust(t *testing.T) {
 	metadata := controlstate.ServiceMetadata{Protocol: "postgres", TLS: &controlstate.ServiceTargetTLS{Hostname: "database.internal", PEM: bundle, Digest: hex.EncodeToString(digest[:])}}
 	var exact string
 	for i := range 101 {
-		s, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, fmt.Sprintf("db-%03d", i), fmt.Sprintf("db-%03d", i), controlstate.ServicePlacement{}, f.now, metadata)
+		s, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, fmt.Sprintf("db-%03d", i), fmt.Sprintf("db-%03d", i), controlstate.ServicePlacement{}, f.now, metadata, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,21 +101,19 @@ func TestIntegrationPrivateInventoryLargeTrust(t *testing.T) {
 		if err != nil || len(services) != 102 {
 			t.Fatalf("management inventory with 101 valid CA bundles: count=%d err=%v", len(services), err)
 		}
-		for _, s := range services {
-			if s.TargetTls != nil {
-				t.Fatal("management inventory exposed publisher target trust")
-			}
+		data, err := json.Marshal(services)
+		if err != nil || strings.Contains(string(data), `"target_tls"`) || strings.Contains(string(data), "BEGIN CERTIFICATE") {
+			t.Fatal("management summary inventory exposed publisher target trust", err)
 		}
 	})
 	t.Run("visitor real bounded client", func(t *testing.T) {
-		services, err := client.ListAvailableServices(t.Context())
+		services, err := client.ListAvailableServices(t.Context(), "connector")
 		if err != nil || len(services) != 102 {
 			t.Fatalf("visitor inventory: count=%d err=%v", len(services), err)
 		}
-		for _, s := range services {
-			if s.TargetTls != nil {
-				t.Fatal("visitor inventory exposed publisher target trust")
-			}
+		data, err := json.Marshal(services)
+		if err != nil || strings.Contains(string(data), `"target_tls"`) || strings.Contains(string(data), "BEGIN CERTIFICATE") {
+			t.Fatal("visitor summary inventory exposed publisher target trust", err)
 		}
 	})
 	t.Run("signed authority inventory", func(t *testing.T) {

@@ -114,7 +114,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 		t.Fatal(err)
 	}
 	team := owner.Identity.Memberships[0].TeamID
-	service, err := client.CreateService(ctx, team, "database", "database", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+	service, err := client.CreateService(ctx, team, "database", "database", controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	if len(setup.PublisherConnections) != 2 || prep.CertificatePlan == nil || prep.Hostname != service.Endpoint.Hostname || prep.ServicePort != service.Endpoint.Port {
+	if len(setup.PublisherConnections) != 2 || prep.CertificatePlan == nil || prep.Hostname != service.Endpoint.Hostname {
 		t.Fatal("recovery changed endpoint or assignments")
 	}
 	var runs, number int
@@ -192,6 +192,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 	if err := json.Unmarshal(bodies[0], &bound); err != nil || bound.RunNumber != prep.RunNumber {
 		t.Fatal("PostgreSQL did not retain the recovered run", err)
 	}
+	assertServiceEndpointRetryRestoration(t, ctx, client, service)
 	// another invocation is a permanent conflict, not ambiguous response loss.
 	conflict, stop := context.WithTimeout(ctx, time.Second)
 	defer stop()

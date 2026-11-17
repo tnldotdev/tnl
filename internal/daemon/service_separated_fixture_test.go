@@ -24,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -52,19 +53,21 @@ type privateSeparatedFixture struct {
 	inspect                     *sql.DB
 	roots                       *tls.Config
 	controlConfig               daemonconfig.Config
+	serviceListeners            servicePortListeners
 	serviceHTTP                 *http.Client
 	identity                    serviceRuntimeIdentity
 	tcpAddresses, quicAddresses map[string]string
 	composed                    *daemon
 	sharedTCP, sharedQUIC       string
 	defaultTiming               bool
-	configurePublicServices     func(*ingress.PublicServicesConfig)
+	configureIngress            func(*ingress.Config)
 	visitorRoots                *tls.Config
 	visitorRootPEM              []byte
 	processContext              func(string) context.Context
 	publisherConnections        chan<- *publisherservice.Claimed
 	publisherTCPOnly            bool
 	relayProcesses              map[string]*privateRelayFixture
+	ingressAddresses            map[int]string
 }
 
 type privateRelayFixture struct {
@@ -106,9 +109,9 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	ca := newTestCertificateAuthority(t)
 	const hostname = "control.private.integration.test"
 	controlTLS := serviceRuntimeTLS(t, ca, hostname)
-	config := daemonconfig.Config{Role: daemonconfig.RoleControl, ServerDomain: "private.integration.test", ManagedDomain: "apps.private.integration.test", ManagedURLMode: naming.ManagedURLModeSimple,
+	config := daemonconfig.Config{Role: daemonconfig.RoleControl, ServerDomain: "private.integration.test", ManagedDomain: "apps.private.integration.test", ManagedURLMode: naming.ManagedURLModeSimple, ControlOutageTolerance: controloutage.DefaultTolerance,
 		OIDCIssuer: testOIDCIssuer, OIDCClientID: "server", StorageKey: serviceRuntimeStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
-		IngressLeaseDuration: 5 * time.Second, RelayLeaseDuration: 5 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond, ControlRetryInterval: 50 * time.Millisecond, RoutingTableWait: time.Second,
+		IngressLeaseDuration: 5 * time.Second, RelayLeaseDuration: 5 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond, ControlRetryInterval: 50 * time.Millisecond,
 		VisitorConnectionLimit: 128, PublisherConnectionLimit: 64, RelayStreamCapacity: 128, QUICMaxIncomingStreams: 128, QUICIdleTimeout: time.Minute, DrainTimeout: time.Second,
 		ClientHelloConnectionLimit: 128}
 	controlListener, privateControlListener := serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner)
@@ -173,7 +176,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		}
 		owner.cleanupResource(t, func() { _ = settings.publicListener.Close() })
 		settings.relayTransportTLS = serviceRuntimeTLS(t, ca, settings.relayHostname)
-		settings.configurePublicServices = func(config *ingress.PublicServicesConfig) {
+		settings.configureIngress = func(config *ingress.Config) {
 			if !defaults {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
 			}
@@ -236,6 +239,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		f.tcpAddresses[address], f.quicAddresses[address] = f.sharedTCP, f.sharedQUIC
 		return f
 	}
+	f.serviceListeners = serviceListeners
 	for index := 0; index < 2; index++ {
 		f.startFixtureRelay(t, fmt.Sprintf("private-relay-%d", index))
 	}
@@ -308,9 +312,22 @@ func (f *privateSeparatedFixture) connectors() (muxsession.Connector, muxsession
 }
 
 func privateDisabledConnector() muxsession.Connector {
-	return muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
-		return nil, errors.New("transport disabled by private runtime workload")
-	})
+	return muxsession.DisabledConnector{}
+}
+
+func TestPrivateDisabledConnectorRetainsConfigurationAndStop(t *testing.T) {
+	disabled := privateDisabledConnector()
+	session, err := disabled.Connect(t.Context(), muxsession.Endpoint{})
+	if session != nil || err != muxsession.ErrConnectorDisabled {
+		t.Fatal("omitted runtime transport became a failed dial", err)
+	}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cause := errors.New("runtime owner stopped before dialing")
+	cancel(cause)
+	session, err = disabled.Connect(ctx, muxsession.Endpoint{})
+	if session != nil || err != cause {
+		t.Fatal("omitted runtime transport replaced its exact entry stop", err)
+	}
 }
 
 func serviceRuntimeTLS(t *testing.T, ca *testCertificateAuthority, hostname string) *tls.Config {

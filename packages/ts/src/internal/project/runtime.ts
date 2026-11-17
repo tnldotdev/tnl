@@ -59,7 +59,8 @@ const pathMetadataSchema = z
 const address = {
   namespace: hostnameSchema,
   hostname: hostnameSchema,
-  port: portSchema,
+  // non-HTTP zero means no ingress reservation, never a local socket or wildcard.
+  port: z.union([z.literal(0), portSchema]),
   public: z.boolean(),
 };
 const httpServiceMetadataSchema = z.strictObject({
@@ -78,9 +79,12 @@ const serviceMetadataSchema = z
   ])
   .refine(
     (service) =>
-      !("url" in service) ||
-      service.url ===
-        `https://${service.hostname}${service.port === 443 ? "" : `:${service.port}`}`,
+      (service.protocol === "http"
+        ? service.port === 443
+        : service.port >= 1024 || (service.port === 0 && !service.public)) &&
+      (!("url" in service) ||
+        service.url ===
+          `https://${service.hostname}${service.port === 0 || service.port === 443 ? "" : `:${service.port}`}`),
   )
   .readonly();
 
@@ -187,7 +191,7 @@ export function parseProjectRuntime(value: unknown): ProjectRuntime {
   return parseValue(projectRuntimeSchema, value, "sdk.runtime_invalid");
 }
 
-/** returns the public hostnames that can reach this service. */
+/** returns the canonical hostnames that can reach this service. */
 export function serviceHostnames(assignment: {
   readonly hostname: string | undefined;
   readonly service: string;

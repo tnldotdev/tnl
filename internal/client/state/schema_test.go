@@ -29,37 +29,42 @@ func TestV1ProjectJournalAndHandoffState(t *testing.T) {
 	}
 	if _, err := database.db.ExecContext(ctx, `INSERT INTO local_tunnels
 		(id, command, process_id, server_origin, project_root, hostname, target, framework,
-		 public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, failure_code)
-		VALUES (?, 'publish', 1, ?, ?, NULL, 'http://127.0.0.1:3000', NULL, NULL, NULL, 'starting', ?, ?, ?, ?, NULL)`,
+		 publish_run_number, service_id, state, started_at, updated_at, heartbeat_at, lease_expires_at, failure_code)
+		VALUES (?, 'publish', 1, ?, ?, NULL, 'http://127.0.0.1:3000', NULL, NULL, 'svc_0123456789abcdefghijkl', 'starting', ?, ?, ?, ?, NULL)`,
 		"tun_0123456789abcdefghijkl", server, root, now, now, now, now+int64(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	var unknownURL, unknownHost sql.NullString
+	var service string
+	var unknownHost sql.NullString
 	var unknownRun sql.NullInt64
-	if err := database.db.QueryRowContext(ctx, `SELECT public_url_id, hostname, publish_run_number
-		FROM local_tunnels WHERE id = ?`, "tun_0123456789abcdefghijkl").Scan(&unknownURL, &unknownHost, &unknownRun); err != nil ||
-		unknownURL.Valid || unknownHost.Valid || unknownRun.Valid {
-		t.Fatalf("unallocated public address was not NULL: url=%v host=%v run=%v: %v",
-			unknownURL, unknownHost, unknownRun, err)
+	if err := database.db.QueryRowContext(ctx, `SELECT service_id, hostname, publish_run_number
+		FROM local_tunnels WHERE id = ?`, "tun_0123456789abcdefghijkl").Scan(&service, &unknownHost, &unknownRun); err != nil ||
+		service != testServiceID || unknownHost.Valid || unknownRun.Valid {
+		t.Fatalf("service binding lost its identity or invented a public address: service=%v host=%v run=%v: %v",
+			service, unknownHost, unknownRun, err)
 	}
-	if _, err := database.db.ExecContext(ctx, `UPDATE local_tunnels SET public_url_id = ?, hostname = ?, state = 'provisioning', updated_at = ? WHERE id = ?`,
-		"url_example", "app.example.test", now+1, "tun_0123456789abcdefghijkl"); err != nil {
+	if _, err := database.db.ExecContext(ctx, `UPDATE local_tunnels SET hostname = ?, state = 'provisioning', updated_at = ? WHERE id = ?`,
+		"app.example.test", now+1, "tun_0123456789abcdefghijkl"); err != nil {
 		t.Fatal(err)
 	}
-	var journalEvents, knownURLs int
+	var retiredFields int
+	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_xinfo('local_tunnels') WHERE name = 'public_url_id'`).Scan(&retiredFields); err != nil || retiredFields != 0 {
+		t.Fatalf("journal retained retired public URL identity storage: %d, %v", retiredFields, err)
+	}
+	var journalEvents, knownServices int
 	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM project_events WHERE project_root = ?`, root).Scan(&journalEvents); err != nil || journalEvents != 2 {
 		t.Fatalf("project journal events = %d, %v; want 2", journalEvents, err)
 	}
-	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM project_url_inventory WHERE project_root = ? AND server_origin = ?`, root, server).Scan(&knownURLs); err != nil || knownURLs != 1 {
-		t.Fatalf("known project URLs = %d, %v; want 1", knownURLs, err)
+	if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM project_service_inventory WHERE project_root = ? AND server_origin = ?`, root, server).Scan(&knownServices); err != nil || knownServices != 1 {
+		t.Fatalf("known project services = %d, %v; want 1", knownServices, err)
 	}
-	urls, err := database.KnownProjectURLs(ctx, root, server+"/")
-	if err != nil || len(urls) != 1 || urls[0] != "url_example" {
-		t.Fatalf("read-only project URL selection: %v %v", urls, err)
+	services, err := database.KnownProjectServices(ctx, root, server+"/")
+	if err != nil || len(services) != 1 || services[0] != "svc_0123456789abcdefghijkl" {
+		t.Fatalf("read-only project service selection: %v %v", services, err)
 	}
-	other, err := database.KnownProjectURLs(ctx, root, "https://other.example.test")
+	other, err := database.KnownProjectServices(ctx, root, "https://other.example.test")
 	if err != nil || len(other) != 0 {
-		t.Fatalf("project URL selection crossed servers: %v %v", other, err)
+		t.Fatalf("project service selection crossed servers: %v %v", other, err)
 	}
 	if _, err := database.db.ExecContext(ctx, `UPDATE local_tunnels SET primary_project_root = ?, integration_namespace = ? WHERE id = ?`,
 		root, "member.example.test", "tun_0123456789abcdefghijkl"); err != nil {
@@ -86,13 +91,13 @@ func TestV1ProjectJournalAndHandoffState(t *testing.T) {
 			t.Fatalf("%s retained an encoded integration projection: %v", table, err)
 		}
 	}
-	if _, err := database.db.ExecContext(ctx, `INSERT INTO oauth_alias_handoffs
-		(server_origin, hostname, state_digest, callback_path, public_url_id, publish_run_number, created_at, expires_at)
-		VALUES (?, 'alias.example.test', ?, '/callback', 'url_example', 1, ?, ?)`, server, bytes.Repeat([]byte{1}, 32), now, now+int64(time.Minute)); err != nil {
+	if _, err := database.db.ExecContext(ctx, `INSERT INTO oauth_callback_handoffs
+		(server_origin, hostname, state_digest, tunnel_id, primary_project_root, integration_namespace, callback_path, service_id, run_number, created_at, expires_at)
+		VALUES (?, 'alias.example.test', ?, 'tun_0123456789abcdefghijkl', ?, 'member.example.test', '/callback', 'svc_0123456789abcdefghijkl', 1, ?, ?)`, server, bytes.Repeat([]byte{1}, 32), root, now, now+int64(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	for attempt := 1; attempt <= 2; attempt++ {
-		result, err := database.db.ExecContext(ctx, `UPDATE oauth_alias_handoffs SET consumed_at = ?
+		result, err := database.db.ExecContext(ctx, `UPDATE oauth_callback_handoffs SET consumed_at = ?
 			WHERE server_origin = ? AND hostname = 'alias.example.test' AND consumed_at IS NULL AND expires_at > ?`, now+1, server, now+1)
 		if err != nil {
 			t.Fatal(err)

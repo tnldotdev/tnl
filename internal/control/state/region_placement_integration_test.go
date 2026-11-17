@@ -28,28 +28,40 @@ func regionalRelays(t *testing.T, d *Database, now time.Time) {
 }
 
 func TestIntegrationProviderRegionPlacementAndRecovery(t *testing.T) {
-	d, now, request, _ := newPublishRunPrerequisites(t)
+	f := newServicePublicationFixture(t)
+	d, now := f.database, f.now
+	if err := d.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, now); err != nil {
+		t.Fatal(err)
+	}
 	regionalRelays(t, d, now)
-	request.PreferredRegions = []string{"FLY:SJC", "aws:us-west-1"}
-	setup, err := d.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute)
+	request := ServiceRunRequest{Metadata: f.service.ServiceMetadata, PreferredRegions: []string{"FLY:SJC", "aws:us-west-1"}}
+	prepared, err := d.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "regional", now, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if setup.PublisherConnections[0].RelayServiceID != "fly" || setup.PublisherConnections[1].RelayServiceID != "aws-a" {
-		t.Fatal("provider identity was collapsed or preference order was lost")
-	}
 	request.PreferredRegions[0] = "fly:sjc"
-	retry, err := d.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute)
-	if err != nil || !reflect.DeepEqual(setup, retry) {
-		t.Fatal("canonical retry changed assignments or credentials", err)
+	retry, err := d.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "regional", now, request)
+	if err != nil || !reflect.DeepEqual(prepared, retry) {
+		t.Fatal("canonical retry changed the prepared run or certificate plan", err)
 	}
 	request.PreferredRegions = []string{"aws:us-west-1", "fly:sjc"}
-	if _, err := d.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute); !errors.Is(err, ErrPublishRunIdempotency) {
+	if _, err := d.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "regional", now, request); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("changed preferences reused an idempotency key", err)
 	}
 	request.PreferredRegions = []string{"sjc"}
-	if _, err := d.CreatePublishRun(t.Context(), request, now, time.Hour, time.Minute); !errors.Is(err, region.ErrPreference) {
+	if _, err := d.PrepareServiceRun(t.Context(), f.service.ID, f.publisher, "regional", now, request); !errors.Is(err, region.ErrPreference) {
 		t.Fatal("generic location was accepted", err)
+	}
+	setup, err := d.StartServiceRun(t.Context(), f.service.ID, prepared.RunID, prepared.RunNumber, f.publisher, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if setup.Connections[0].RelayServiceID != "fly" || setup.Connections[1].RelayServiceID != "aws-a" {
+		t.Fatal("provider identity was collapsed or preference order was lost")
+	}
+	started, err := d.StartServiceRun(t.Context(), f.service.ID, retry.RunID, retry.RunNumber, f.publisher, now)
+	if err != nil || !reflect.DeepEqual(setup, started) {
+		t.Fatal("canonical start retry changed assignment credentials", err)
 	}
 	// both preferred services are full; the remaining AWS service must precede
 	// geographic fallback, then nearby GCP capacity precedes distant or local.
@@ -68,12 +80,14 @@ func TestIntegrationProviderRegionPlacementAndRecovery(t *testing.T) {
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.relay_leases SET draining=true,drain_deadline=$1 WHERE relay_service_id='fly'`, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	auth := PublishRunAuthentication{PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
-	recovered, err := d.HeartbeatPublishRun(t.Context(), auth, now.Add(time.Second), time.Hour, time.Minute)
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.service_connection_slots SET credential_expires_at=$2 WHERE publisher_connection_id=$1`, setup.Connections[0].PublisherConnectionID, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := d.HeartbeatServiceRun(t.Context(), f.service.ID, setup.RunID, setup.Token, now.Add(time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recovered.PublisherConnections[0].RelayServiceID != "aws-b" || recovered.PublisherConnections[0].ConnectionAssignmentRevision != 2 || recovered.PublisherConnections[1] != setup.PublisherConnections[1] {
+	if recovered.Connections[0].RelayServiceID != "aws-b" || recovered.Connections[0].Revision != 2 || recovered.Connections[1] != setup.Connections[1] {
 		t.Fatal("recovery lost stored preferences or replaced the surviving assignment")
 	}
 }
@@ -129,11 +143,11 @@ func TestIntegrationProviderRegionServiceRun(t *testing.T) {
 	access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 	metadata := ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}
 	preferences := []string{"fly:sjc", "aws:us-west-1"}
-	prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, metadata, preferences...)
+	prep, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, ServiceRunRequest{Metadata: metadata, PreferredRegions: preferences})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, metadata, "aws:us-west-1"); !errors.Is(err, ErrServiceConflict) {
+	if _, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "regional", now, ServiceRunRequest{Metadata: metadata, PreferredRegions: []string{"aws:us-west-1"}}); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("preparation retry changed preferences", err)
 	}
 	run, err := d.StartServiceRun(t.Context(), assignment.ServiceID, prep.RunID, prep.RunNumber, access.PublisherIdentity, now)

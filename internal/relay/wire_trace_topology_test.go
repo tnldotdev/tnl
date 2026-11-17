@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,208 +84,158 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 	roots.AddCert(receiver.Certificate())
 	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
 	for _, transport := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportTLSTCP} {
-		for _, private := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/private=%t", transport, private), func(t *testing.T) {
-				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-				defer cancel()
-				owners := make([]*observability.Metrics, 0, 3)
-				newOwner := func(role string) context.Context {
-					owner, m, err := observability.StartProcess(ctx, role)
-					if err != nil {
-						t.Fatal(err)
-					}
-					owners = append(owners, m)
-					t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
-					return owner
+		t.Run(string(transport), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			owners := make([]*observability.Metrics, 0, 3)
+			newOwner := func(role string) context.Context {
+				owner, m, err := observability.StartProcess(ctx, role)
+				if err != nil {
+					t.Fatal(err)
 				}
-				ingressCtx, relayCtx, publisherCtx := newOwner("ingress"), newOwner("relay"), newOwner("publisher")
-				lease := relayv1.RelayLease{RelayServiceId: "relay-service", RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute), ConnectionCapacity: 4}
-				ref := tunnelv1.PublisherConnectionRef{PublicURLID: "public-url", PublishRunID: "publish-run", PublishRunNumber: 3, PublisherConnectionID: "publisher-connection", ConnectionAssignmentRevision: 2, RelayServiceID: lease.RelayServiceId}
-				privateRef := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 3, PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2, RelayServiceID: lease.RelayServiceId}
-				hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: "publisher-secret", PublisherConnection: &ref}
-				if private {
-					hello.PublisherConnection = nil
-					hello.ServiceConnection = &privateRef
-				}
-				registry, serviceRegistry := NewRegistry(), NewServiceRegistry()
-				defer registry.Close()
-				defer serviceRegistry.Close()
-				registered := make(chan struct{})
-				publisherAddress := traceMuxServer(t, relayCtx, transport, serverTLS, func(owner context.Context, mux muxsession.Session) error {
-					session, _, err := tunnel.Accept(owner, mux, func(_ context.Context, h tunnelv1.Message) error {
-						if h.Credential != hello.Credential {
-							return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
-						}
-						return nil
-					})
-					if err != nil {
-						return err
-					}
-					defer session.Close()
-					if private {
-						paths := newStreamLifetime(session)
-						if err := serviceRegistry.insert(&serviceConnection{ref: privateRef, lease: lease, paths: paths}); err != nil {
-							return err
-						}
-					} else {
-						claimed := relayv1.ClaimedPublisherConnection{PublicUrlId: ref.PublicURLID, PublishRunId: ref.PublishRunID, PublishRunNumber: 3, PublisherConnectionId: ref.PublisherConnectionID, ConnectionAssignmentRevision: 2, RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: 4}
-						c, err := NewPublisherConnection(ref, claimed, session)
-						if err != nil {
-							return err
-						}
-						if err = registry.Insert(c); err != nil {
-							return err
-						}
-					}
-					close(registered)
-					select {
-					case <-owner.Done():
-					case <-session.Done():
+				owners = append(owners, m)
+				t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
+				return owner
+			}
+			ingressCtx, relayCtx, publisherCtx := newOwner("ingress"), newOwner("relay"), newOwner("publisher")
+			lease := relayv1.RelayLease{RelayServiceId: "relay-service", RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, ServingUntil: time.Now().Add(time.Minute), ConnectionCapacity: 4}
+			privateRef := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 3, PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2, RelayServiceID: lease.RelayServiceId}
+			hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: "publisher-secret", ServiceConnection: &privateRef}
+			serviceRegistry := NewServiceRegistry()
+			defer serviceRegistry.Close()
+			registered := make(chan struct{})
+			publisherAddress := traceMuxServer(t, relayCtx, transport, serverTLS, func(owner context.Context, mux muxsession.Session) error {
+				session, _, err := tunnel.Accept(owner, mux, func(_ context.Context, h tunnelv1.Message) error {
+					if h.Credential != hello.Credential {
+						return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 					}
 					return nil
 				})
-				var connector muxsession.Connector = muxsession.TLSYamuxConnector{TLSConfig: clientTLS}
-				if transport == tunnel.TransportQUIC {
-					connector = muxsession.QUICConnector{TLSConfig: clientTLS, Dialer: transporttest.QUICTransport(t)}
-				}
-				mux, err := connector.Connect(ctx, muxsession.Endpoint{Address: publisherAddress, ServerName: "127.0.0.1"})
 				if err != nil {
-					t.Fatal(err)
+					return err
 				}
-				publisher, err := tunnel.Dial(ctx, mux, hello)
-				if err != nil {
-					t.Fatal(err)
+				defer session.Close()
+				paths := newStreamLifetime(session)
+				if err := serviceRegistry.insert(&serviceConnection{ref: privateRef, lease: lease, paths: paths}); err != nil {
+					return err
 				}
-				defer publisher.Close()
+				close(registered)
 				select {
-				case <-registered:
-				case <-ctx.Done():
-					t.Fatal(ctx.Err())
+				case <-owner.Done():
+				case <-session.Done():
 				}
-				secret := strings.Repeat("s", 32)
-				secrets, err := serverhttp.NewBearerSecrets(secret, "")
-				if err != nil {
-					t.Fatal(err)
-				}
-				acceptor, err := NewForwardingAcceptor(ForwardingAcceptorConfig{Registry: registry, ServiceRegistry: serviceRegistry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets, StreamCapacity: 4})
-				if err != nil {
-					t.Fatal(err)
-				}
-				// internal ingress forwarding is TLS/yamux for both publisher transports.
-				address := traceMuxServer(t, relayCtx, tunnel.TransportTLSTCP, serverTLS, acceptor.Accept)
-				forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{Context: ingressCtx, TLSConfig: clientTLS, ClusterSecret: secret,
-					SignVisitorSource: func(ingressv1.IngressRoutingTableEntry, string, netip.AddrPort, netip.AddrPort) (string, error) {
-						panic("transport fixture does not attest visitor metadata")
-					},
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer forwarder.Close()
-				var traceIDs []trace.TraceID
-				// two visitors reuse one relay session but must never inherit each other.
-				for visitor := range 2 {
-					setup, finishSetup := observability.Start(ingressCtx, "fixture.ingress_setup")
-					traceIDs = append(traceIDs, trace.SpanContextFromContext(setup).TraceID())
-					publisherDone := make(chan error, 1)
-					go func() {
-						var stream muxsession.Stream
-						var received context.Context
-						if private {
-							v, e := publisher.AcceptServiceForwardingStream(publisherCtx)
-							if e != nil {
-								publisherDone <- e
-								return
-							}
-							stream = v.Stream()
-							received = v.Context()
-							if e = v.Accept(); e != nil {
-								publisherDone <- e
-								return
-							}
-						} else {
-							v, e := publisher.AcceptVisitorStream(publisherCtx)
-							if e != nil {
-								publisherDone <- e
-								return
-							}
-							stream = v.Stream
-							received = v.Context()
-							if e = v.Accept(); e != nil {
-								publisherDone <- e
-								return
-							}
-						}
-						defer stream.Close()
-						_, finish := observability.Start(received, "fixture.publisher_receive")
-						payload := make([]byte, 8)
-						_, e := io.ReadFull(stream, payload)
-						if e == nil && string(payload) != "\x16\x03opaque" {
-							e = fmt.Errorf("visitor payload changed")
-						}
-						if e == nil {
-							_, e = stream.Write(payload)
-						}
-						finish(e)
-						publisherDone <- e
-					}()
-					var stream net.Conn
-					if private {
-						visitorID, e := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-						if e != nil {
-							t.Fatal(e)
-						}
-						header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.ServiceForwardingStream, ServiceID: privateRef.ServiceID, ServiceRunID: privateRef.ServiceRunID, RunNumber: 3, PublisherConnectionID: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.1", VisitorConnectionID: visitorID, ExpiresAt: lease.LeaseExpiresAt}, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt}
-						relay := ingressv1.ServiceRelay{PublisherConnectionId: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt, InternalRelayAddress: address, TlsServerName: "127.0.0.1"}
-						stream, err = forwarder.OpenPrivate(setup, relay, header)
-					} else {
-						entry := ingressv1.IngressRoutingTableEntry{PublicUrlId: ref.PublicURLID, PublishRunId: ref.PublishRunID, PublishRunNumber: 3, PublicUrlExpiresAt: lease.LeaseExpiresAt, PublisherConnections: []ingressv1.IngressRoutingPublisherConnection{{PublisherConnectionId: ref.PublisherConnectionID, ConnectionAssignmentRevision: 2, RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt, InternalRelayAddress: address, TlsServerName: "127.0.0.1"}}}
-						backends, e := forwarder.Backends(entry)
-						if e != nil {
-							t.Fatal(e)
-						}
-						stream, err = backends[0].Start(setup, fmt.Sprintf("visitor-%d", visitor), false, nil, nil)
-					}
-					if err != nil {
-						t.Fatal(err)
-					}
-					payload := []byte("\x16\x03opaque")
-					if _, err = stream.Write(payload); err != nil {
-						t.Fatal(err)
-					}
-					response := make([]byte, len(payload))
-					if _, err = io.ReadFull(stream, response); err != nil || !bytes.Equal(payload, response) {
-						t.Fatalf("changed bytes: %x %v", response, err)
-					}
-					_ = stream.Close()
-					if err = <-publisherDone; err != nil {
-						t.Fatal(err)
-					}
-					finishSetup(nil)
-				}
-				if traceIDs[0] == traceIDs[1] {
-					t.Fatal("visitor trace leaked through pool")
-				}
-				// closing drains the forwarding spans before the exporter flush.
-				_ = forwarder.Close()
-				_ = publisher.Close()
-				for _, owner := range owners {
-					if err := owner.ForceFlush(ctx); err != nil {
-						t.Fatal(err)
-					}
-				}
-				mu.Lock()
-				spans := append([]*tracepb.Span{}, exported...)
-				mu.Unlock()
-				for _, id := range traceIDs {
-					assertInfrastructureTrace(t, spans, id, private)
-				}
+				return nil
 			})
-		}
+			var connector muxsession.Connector = muxsession.TLSYamuxConnector{TLSConfig: clientTLS}
+			if transport == tunnel.TransportQUIC {
+				connector = muxsession.QUICConnector{TLSConfig: clientTLS, Dialer: transporttest.QUICTransport(t)}
+			}
+			mux, err := connector.Connect(ctx, muxsession.Endpoint{Address: publisherAddress, ServerName: "127.0.0.1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			publisher, err := tunnel.Dial(ctx, mux, hello)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer publisher.Close()
+			select {
+			case <-registered:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			secret := strings.Repeat("s", 32)
+			secrets, err := serverhttp.NewBearerSecrets(secret, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			acceptor, err := NewForwardingAcceptor(ForwardingAcceptorConfig{ServiceRegistry: serviceRegistry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets, StreamCapacity: 4})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// internal ingress forwarding is TLS/yamux for both publisher transports.
+			address := traceMuxServer(t, relayCtx, tunnel.TransportTLSTCP, serverTLS, acceptor.Accept)
+			forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{Context: ingressCtx, TLSConfig: clientTLS, ClusterSecret: secret})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer forwarder.Close()
+			var traceIDs []trace.TraceID
+			// two visitors reuse one relay session but must never inherit each other.
+			for range 2 {
+				setup, finishSetup := observability.Start(ingressCtx, "fixture.ingress_setup")
+				traceIDs = append(traceIDs, trace.SpanContextFromContext(setup).TraceID())
+				publisherDone := make(chan error, 1)
+				go func() {
+					v, e := publisher.AcceptServiceForwardingStream(publisherCtx)
+					if e != nil {
+						publisherDone <- e
+						return
+					}
+					stream, received := v.Stream(), v.Context()
+					if e = v.Accept(); e != nil {
+						publisherDone <- e
+						return
+					}
+					defer stream.Close()
+					_, finish := observability.Start(received, "fixture.publisher_receive")
+					payload := make([]byte, 8)
+					_, e = io.ReadFull(stream, payload)
+					if e == nil && string(payload) != "\x16\x03opaque" {
+						e = fmt.Errorf("visitor payload changed")
+					}
+					if e == nil {
+						_, e = stream.Write(payload)
+					}
+					finish(e)
+					publisherDone <- e
+				}()
+				visitorID, e := opaqueid.New(opaqueid.VisitorConnectionPrefix)
+				if e != nil {
+					t.Fatal(e)
+				}
+				header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.ServiceForwardingStream, ServiceID: privateRef.ServiceID, ServiceRunID: privateRef.ServiceRunID, RunNumber: 3, PublisherConnectionID: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.1", VisitorConnectionID: visitorID, ExpiresAt: lease.ServingUntil}, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, ServingUntil: lease.ServingUntil}
+				relay := ingressv1.ServiceRelay{PublisherConnectionId: privateRef.PublisherConnectionID, ConnectionAssignmentRevision: 2, RelayServiceId: lease.RelayServiceId, RelayId: lease.RelayId, RelayRunId: lease.RelayRunId, RelayLeaseRevision: 4, ServingUntil: lease.ServingUntil, InternalRelayAddress: address, TlsServerName: "127.0.0.1"}
+				stream, err := forwarder.OpenService(setup, relay, header, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				payload := []byte("\x16\x03opaque")
+				if _, err = stream.Write(payload); err != nil {
+					t.Fatal(err)
+				}
+				response := make([]byte, len(payload))
+				if _, err = io.ReadFull(stream, response); err != nil || !bytes.Equal(payload, response) {
+					t.Fatalf("changed bytes: %x %v", response, err)
+				}
+				_ = stream.Close()
+				if err = <-publisherDone; err != nil {
+					t.Fatal(err)
+				}
+				finishSetup(nil)
+			}
+			if traceIDs[0] == traceIDs[1] {
+				t.Fatal("visitor trace leaked through pool")
+			}
+			// closing drains the forwarding spans before the exporter flush.
+			_ = forwarder.Close()
+			_ = publisher.Close()
+			for _, owner := range owners {
+				if err := owner.ForceFlush(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mu.Lock()
+			spans := append([]*tracepb.Span{}, exported...)
+			mu.Unlock()
+			for _, id := range traceIDs {
+				assertInfrastructureTrace(t, spans, id)
+			}
+		})
 	}
 }
 
-func assertInfrastructureTrace(t *testing.T, spans []*tracepb.Span, id trace.TraceID, private bool) {
+func assertInfrastructureTrace(t *testing.T, spans []*tracepb.Span, id trace.TraceID) {
 	t.Helper()
 	byName := map[string]*tracepb.Span{}
 	for _, span := range spans {
@@ -294,10 +243,7 @@ func assertInfrastructureTrace(t *testing.T, spans []*tracepb.Span, id trace.Tra
 			byName[span.Name] = span
 		}
 	}
-	attempt, relayOpen := "ingress.relay_attempt", "relay.open_visitor_stream"
-	if private {
-		attempt, relayOpen = "ingress.private_relay_attempt", "relay.open_connector_visitor_stream"
-	}
+	attempt, relayOpen := "ingress.private_relay_attempt", "relay.open_connector_visitor_stream"
 	chain := []string{"fixture.ingress_setup", attempt, relayOpen, "fixture.publisher_receive"}
 	for i, name := range chain {
 		span := byName[name]
@@ -317,7 +263,9 @@ func traceMuxServer(t *testing.T, ctx context.Context, transport tunnel.Transpor
 	var accept func() (muxsession.Session, error)
 	var closeListener func() error
 	if transport == tunnel.TransportQUIC {
-		listener, err := muxsession.ListenQUIC("127.0.0.1:0", config, muxsession.QUICConfig{})
+		// real publisher and connector admission requires transport-layer source
+		// pinning; an address snapshot cannot attest that a quic peer is bound.
+		listener, err := muxsession.ListenQUIC("127.0.0.1:0", config, muxsession.QUICConfig{PinnedRemoteIPLimit: 4})
 		if err != nil {
 			t.Fatal(err)
 		}

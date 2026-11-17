@@ -33,23 +33,6 @@ var (
 type DeploymentSettings struct {
 	Description string `json:"description,omitempty"`
 	DomainID    string `json:"domain_id,omitempty"`
-	Public      bool   `json:"public,omitempty"`
-}
-type ProjectServicePublicURL struct {
-	RequirePostQuantum *bool                `json:"require_post_quantum,omitempty"`
-	DomainID           string               `json:"domain_id,omitempty"`
-	Hostname           string               `json:"hostname,omitempty"`
-	Access             *ProjectPublicAccess `json:"access,omitempty"`
-	Limits             *ProjectPublicLimits `json:"limits,omitempty"`
-	Ephemeral          bool                 `json:"ephemeral,omitempty"`
-}
-type ProjectPublicAccess struct {
-	Mode string   `json:"mode,omitempty"`
-	IP   []string `json:"ip,omitempty"`
-}
-type ProjectPublicLimits struct {
-	HTTP    *ProjectHTTPApplicationLimits `json:"http,omitempty"`
-	Traffic *trafficlimits.Selection      `json:"traffic,omitempty"`
 }
 type ProjectHTTPApplicationLimits struct {
 	Total       *int                    `json:"total,omitempty"`
@@ -62,22 +45,28 @@ type ProjectApplicationRate struct {
 	Burst *int   `json:"burst,omitempty"`
 }
 type ProjectTargetTLS struct {
-	Hostname string `json:"hostname"`
-	CAPEM    string `json:"ca_pem,omitempty"`
-	Digest   string `json:"digest"`
+	Hostname           string `json:"hostname"`
+	CAPEM              string `json:"ca_pem,omitempty"`
+	Digest             string `json:"digest"`
+	HostnameFromTarget bool   `json:"hostname_from_target,omitempty"`
 }
 type ProjectServiceAccess struct {
 	Team bool `json:"team"`
 }
 type ProjectServiceConfiguration struct {
-	TargetDiscovery *ProjectTargetDiscovery  `json:"target_discovery,omitempty"`
-	Name            string                   `json:"name,omitempty"`
-	Protocol        string                   `json:"protocol,omitempty"`
-	Target          string                   `json:"target"`
-	PublicURL       *ProjectServicePublicURL `json:"public_url,omitempty"`
-	TargetTLS       *ProjectTargetTLS        `json:"target_tls,omitempty"`
-	Access          *ProjectServiceAccess    `json:"access,omitempty"`
-	HTTP            *config.HTTPService      `json:"http,omitempty"`
+	TargetDiscovery    *ProjectTargetDiscovery  `json:"target_discovery,omitempty"`
+	Name               string                   `json:"name,omitempty"`
+	Protocol           string                   `json:"protocol,omitempty"`
+	Target             string                   `json:"target"`
+	Hostname           string                   `json:"hostname,omitempty"`
+	DomainID           string                   `json:"domain_id,omitempty"`
+	Ephemeral          bool                     `json:"ephemeral,omitempty"`
+	RequirePostQuantum *bool                    `json:"require_post_quantum,omitempty"`
+	Traffic            *trafficlimits.Selection `json:"traffic,omitempty"`
+	Public             *bool                    `json:"public,omitempty"`
+	TargetTLS          *ProjectTargetTLS        `json:"target_tls,omitempty"`
+	Access             *ProjectServiceAccess    `json:"access,omitempty"`
+	HTTP               *config.HTTPService      `json:"http,omitempty"`
 }
 type ProjectConfiguration struct {
 	Workloads map[string]ProjectWorkload `json:"workloads,omitempty"`
@@ -150,7 +139,7 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 		}
 	}
 	for _, s := range input.Services {
-		if s.PublicURL != nil && s.PublicURL.Access != nil && s.PublicURL.Access.IP != nil && len(s.PublicURL.Access.IP) == 0 {
+		if s.HTTP != nil && s.HTTP.Access != nil && s.HTTP.Access.IP != nil && len(s.HTTP.Access.IP) == 0 {
 			return ProjectConfiguration{}, "", ErrProjectConfigurationInvalid
 		}
 	}
@@ -174,22 +163,7 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 		}
 	}
 	for key, s := range c.Services {
-		if !serviceName.MatchString(key) {
-			return c, "", ErrProjectConfigurationInvalid
-		}
-		if s.Name == "" {
-			s.Name = key
-		}
-		if !serviceName.MatchString(s.Name) {
-			return c, "", ErrProjectConfigurationInvalid
-		}
-		if s.Protocol == "" {
-			s.Protocol = "http"
-		}
-		if (ServiceMetadata{Protocol: s.Protocol}).Validate() != nil || s.Access != nil && !s.Access.Team || (len(s.Target) == 0 && s.TargetDiscovery == nil) || len(s.Target) > 8192 || strings.ContainsAny(s.Target, "\x00\r\n") {
-			return c, "", ErrProjectConfigurationInvalid
-		}
-		if err := normalizeAppliedProjectService(&s, c.Settings == nil); err != nil {
+		if err := normalizeAppliedProjectService(key, &s, c.Settings == nil); err != nil {
 			return c, "", err
 		}
 		c.Services[key] = s
@@ -302,8 +276,8 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		ceiling = trafficlimits.Ceiling()
 	}
 	for _, s := range c.Services {
-		if s.PublicURL != nil && s.PublicURL.Limits != nil && s.PublicURL.Limits.Traffic != nil {
-			if _, err = s.PublicURL.Limits.Traffic.Resolve(defaults, ceiling); err != nil {
+		if s.Traffic != nil {
+			if _, err = s.Traffic.Resolve(defaults, ceiling); err != nil {
 				return result, ErrProjectConfigurationInvalid
 			}
 		}
@@ -492,12 +466,12 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if s.DeploymentID.Valid {
 			previous = serving[s.Service]
 		}
-		if !ok || !sameAppliedResource(previous, declared, r.Deployment == "local") {
+		if !ok {
 			if err = d.removeAppliedService(ctx, tx, q, s, r.Now); err != nil {
 				return result, err
 			}
 			delete(saved, s.Service)
-		} else if !reflect.DeepEqual(previous, declared) {
+		} else if !sameAppliedPublication(previous, declared) {
 			if err = d.revokeAppliedServicePublishers(ctx, tx, q, s, r.Now); err != nil {
 				return result, err
 			}
@@ -510,7 +484,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if entry.DeploymentID.Valid {
 			previous = serving[key]
 		}
-		changed := !found || !reflect.DeepEqual(previous, s)
+		definitionChanged := !found || !reflect.DeepEqual(previous, s)
 		if !found {
 			entry = controlstatedb.ControlAppliedProjectService{TeamID: r.TeamID, ProjectKey: r.ProjectKey, Service: key}
 			if r.Deployment != "local" {
@@ -518,36 +492,21 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			}
 			// local resources are created by the normal per-worktree runtime.
 			if r.Deployment != "local" {
-				var id string
-				var e error
-				if s.PublicURL != nil {
-					id, e = d.createDeploymentPublicURL(ctx, tx, r, entry.DeploymentID.String, key, s)
-				} else {
-					id, e = d.createAppliedService(ctx, tx, q, r, key, entry.DeploymentID.String, s, true)
-				}
+				id, e := d.createAppliedService(ctx, tx, q, r, key, entry.DeploymentID.String, s, true)
 				if e != nil {
 					return result, e
 				}
-				if s.PublicURL != nil {
-					entry.PublicURLID = text(id)
-				} else {
-					entry.ServiceID = text(id)
-				}
+				entry.ServiceID = text(id)
 			}
-			_, err = tx.Exec(ctx, `INSERT INTO control.applied_project_services(team_id,project_key,service,deployment_id,service_id,public_url_id,desired_revision) VALUES($1,$2,$3,$4,$5,$6,$7)`, r.TeamID, r.ProjectKey, key, entry.DeploymentID, entry.ServiceID, entry.PublicURLID, next)
+			_, err = tx.Exec(ctx, `INSERT INTO control.applied_project_services(team_id,project_key,service,deployment_id,service_id,desired_revision) VALUES($1,$2,$3,$4,$5,$6)`, r.TeamID, r.ProjectKey, key, entry.DeploymentID, entry.ServiceID, next)
 			if err != nil {
 				return result, err
 			}
 		} else {
 			previousDeployment := entry.DeploymentID
 			entry.DeploymentID = nullableText(deploymentID)
-			if entry.ServiceID.Valid && changed {
+			if entry.ServiceID.Valid && definitionChanged {
 				if err = d.updateAppliedService(ctx, tx, q, entry.ServiceID.String, entry.DeploymentID.String, s, entry.DeploymentID.Valid, r.Now); err != nil {
-					return result, err
-				}
-			}
-			if entry.PublicURLID.Valid && changed {
-				if err = updateDeploymentPublicURLTarget(ctx, tx, entry.PublicURLID.String, s, r.Now); err != nil {
 					return result, err
 				}
 			}
@@ -560,12 +519,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			return result, err
 		}
 		if entry.ServiceID.Valid && entry.DeploymentID.Valid {
-			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.DeploymentID.String, r.DNSAutomation, r.Now); err != nil {
-				return result, err
-			}
-		}
-		if entry.PublicURLID.Valid && changed {
-			if err = d.reconcileAppliedPublicSettings(ctx, tx, q, entry.PublicURLID.String, s.PublicURL, r.Now); err != nil {
+			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.DeploymentID.String, r.ActorID, ServicePlacement{DomainID: s.DomainID, Hostname: s.Hostname}, projectServicePublic(s), r.DNSAutomation, r.Now); err != nil {
 				return result, err
 			}
 		}
@@ -574,12 +528,8 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 				return result, err
 			}
 		}
-		if entry.ServiceID.Valid || entry.PublicURLID.Valid {
-			id, kind := entry.PublicURLID.String, "public_url"
-			if entry.ServiceID.Valid {
-				id, kind = entry.ServiceID.String, "service"
-			}
-			if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: r.TeamID, ServiceID: id, ServiceKind: kind, EventType: "apply", OccurredAt: r.Now, ActorIdentityID: r.ActorID, ConfigurationRevision: next}, fmt.Sprintf("%s/%d", r.ProjectKey, next)); err != nil {
+		if entry.ServiceID.Valid {
+			if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: r.TeamID, ServiceID: entry.ServiceID.String, ServiceKind: "service", EventType: "apply", OccurredAt: r.Now, ActorIdentityID: r.ActorID, ConfigurationRevision: next}, fmt.Sprintf("%s/%d", r.ProjectKey, next)); err != nil {
 				return result, err
 			}
 		}
@@ -596,7 +546,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		}
 	}
 	if r.Deployment == "local" {
-		if err = d.reconcileProjectLocalRealizations(ctx, tx, q, r, old, c); err != nil {
+		if err = d.reconcileProjectLocalRealizations(ctx, tx, q, r, c); err != nil {
 			return result, err
 		}
 	}
@@ -667,20 +617,6 @@ func sortedProjectKeys[V any](m map[string]V) []string {
 	}
 	slices.Sort(keys)
 	return keys
-}
-
-func sameAppliedResource(a, b ProjectServiceConfiguration, local bool) bool {
-	// target changes preserve a saved deployment binding's service ID.
-	if !local && a.PublicURL == nil && b.PublicURL == nil {
-		return true
-	}
-	if (a.PublicURL == nil) != (b.PublicURL == nil) {
-		return false
-	}
-	if a.PublicURL == nil {
-		return true
-	}
-	return a.Name == b.Name && a.PublicURL.DomainID == b.PublicURL.DomainID && a.PublicURL.Hostname == b.PublicURL.Hostname
 }
 
 func projectConstraintError(err error) error {
@@ -771,11 +707,6 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 			if err = tx.QueryRow(ctx, `SELECT trust_revision,certificate_hostname,COALESCE(service_port,0),public FROM control.services WHERE id=$1`, v.ServiceID).Scan(&v.TrustRevision, &v.Hostname, &v.Port, &v.Public); err != nil {
 				return result, err
 			}
-		} else if s.PublicURLID.Valid {
-			v.Kind, v.ServiceID = "public_url", s.PublicURLID.String
-			if err = tx.QueryRow(ctx, `SELECT canonical_hostname,mutation_revision FROM control.public_urls WHERE id=$1`, s.PublicURLID.String).Scan(&v.Hostname, &v.TrustRevision); err != nil {
-				return result, err
-			}
 		}
 		result.Services = append(result.Services, v)
 	}
@@ -792,7 +723,11 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 		if err := tx.QueryRow(ctx, `SELECT array_agg(name ORDER BY name) FROM control.deployment_names WHERE deployment_id=$1`, deployment.ID).Scan(&names); err != nil {
 			return result, err
 		}
-		result.Deployments = append(result.Deployments, AppliedDeployment{ID: deployment.ID, Name: deployment.Name, DeploymentNames: names, Namespace: deployment.Namespace, DomainID: deployment.DomainID.String, Public: deployment.Public})
+		public := false
+		for _, service := range result.Services {
+			public = public || service.Public
+		}
+		result.Deployments = append(result.Deployments, AppliedDeployment{ID: deployment.ID, Name: deployment.Name, DeploymentNames: names, Namespace: deployment.Namespace, DomainID: deployment.DomainID.String, Public: public})
 	}
 	return result, err
 }

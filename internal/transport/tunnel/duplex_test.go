@@ -45,6 +45,11 @@ func realTunnelTLS(t *testing.T) (*tls.Config, *tls.Config) {
 
 func realTunnelPair(t *testing.T, transport string) (*Session, *Session) {
 	t.Helper()
+	return realTunnelPairWithHello(t, transport, publisherHello())
+}
+
+func realTunnelPairWithHello(t *testing.T, transport string, hello tunnelv1.Message) (*Session, *Session) {
+	t.Helper()
 	serverTLS, clientTLS := realTunnelTLS(t)
 	ctx := tunnelContext(t)
 	var accept func() (muxsession.Session, error)
@@ -97,7 +102,7 @@ func realTunnelPair(t *testing.T, transport string) (*Session, *Session) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := Dial(ctx, connection, publisherHello())
+	client, err := Dial(ctx, connection, hello)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +117,8 @@ func realTunnelPair(t *testing.T, transport string) (*Session, *Session) {
 
 func realVisitorPair(t *testing.T, client, server *Session) (muxsession.Stream, muxsession.Stream) {
 	t.Helper()
-	accepted := tunnelWorker(t, func() { _ = server.Close() }, func() *IncomingVisitorStream {
-		incoming, err := server.AcceptVisitorStream(tunnelContext(t))
+	accepted := tunnelWorker(t, func() { _ = server.Close() }, func() *IncomingServiceForwardingStream {
+		incoming, err := server.AcceptServiceForwardingStream(tunnelContext(t))
 		if err != nil {
 			t.Error(err)
 			return nil
@@ -124,9 +129,7 @@ func realVisitorPair(t *testing.T, client, server *Session) (muxsession.Stream, 
 		}
 		return incoming
 	})
-	h := visitorStreamHeader()
-	h.ConfirmBeforeBytes = true
-	stream, err := client.OpenVisitorStream(tunnelContext(t), h, nil, ReturnEvents{})
+	stream, err := client.OpenServiceForwardingStream(tunnelContext(t), serviceStreamHeader())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,11 +138,11 @@ func realVisitorPair(t *testing.T, client, server *Session) (muxsession.Stream, 
 	if incoming == nil {
 		t.Fatal("missing stream")
 	}
-	t.Cleanup(func() { _ = incoming.Stream.Close() })
-	for _, c := range []net.Conn{stream, incoming.Stream} {
+	t.Cleanup(func() { _ = incoming.Stream().Close() })
+	for _, c := range []net.Conn{stream, incoming.Stream()} {
 		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 	}
-	return stream, incoming.Stream
+	return stream, incoming.Stream()
 }
 
 func tunnelTCPPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {

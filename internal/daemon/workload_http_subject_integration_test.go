@@ -50,7 +50,7 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 		policy.Deployment = group
 		policies[name] = policy
 	}
-	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{Public: new(true)}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: target.URL}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: controlv1.ProjectConfiguration{Workloads: &policies, Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: target.URL, Public: new(true)}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 		verification := f.visitorRoots.Clone()
 		verification.ServerName = service.Endpoint.Hostname
 		verification.Certificates = []tls.Certificate{certificate}
-		transport := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, service.Endpoint.Port)}
+		transport := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].server, service.Endpoint.Port)}
 		t.Cleanup(transport.CloseIdleConnections)
 		request, err := http.NewRequestWithContext(t.Context(), "GET", "https://"+net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port))+"/stream", nil)
 		if err != nil {

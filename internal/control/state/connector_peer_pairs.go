@@ -166,7 +166,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	}
 	retainedRun := r.Action == "renew" && run.State == "starting" && run.ReadyAt.Valid
 	if run.RunNumber != r.RunNumber || run.PublisherIdentityID != r.PublisherIdentityID || (run.State != "ready" && !retainedRun) || !run.Healthy ||
-		run.ClosedAt.Valid || !run.PublisherExpiresAt.Time.After(now) || !run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now) {
+		run.ClosedAt.Valid || !run.ServingUntil.Time.After(now) || !run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now) {
 		return result, ErrServiceAccess
 	}
 	publisherUntil, err := connectorPeerPublisherAuthority(ctx, tx, run, now)
@@ -182,9 +182,15 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	if err != nil {
 		return result, err
 	}
+	if metadata.Endpoint == nil {
+		return result, ErrServiceMetadata
+	}
+	metadata.Endpoint.Hostname = run.CertificateHostname
+	permission.Hostname = run.CertificateHostname
 	// retain the entry-time serving cap. elapsed time only narrows the time left
 	// to authorize; a slow database must not mint a later deadline.
-	recheckUntil := minTime(deadline, requestAt.Add(5*time.Minute))
+	recheckUntil := minTime(deadline, minTime(now, requestAt).Add(d.servingTolerance()))
+	deadline = minTime(deadline, recheckUntil)
 	if r.Action != "renew" {
 		slots, err := q.ListServiceConnectionSlots(ctx, run.ID)
 		if err != nil {
@@ -236,6 +242,9 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	}
 	if err == nil {
 		checked := checkedNow()
+		if !connectorPeerPairUnretired(row) || !bytes.Equal(row.OwnerPublicKey, key) {
+			return ConnectorPeerPair{}, ErrServiceAccess
+		}
 		var previous [2]ConnectorPeerPairRelay
 		if row.ServiceID != r.ServiceID || row.ServiceRunID != r.ServiceRunID || row.RunNumber != r.RunNumber || row.PublisherIdentityID != r.PublisherIdentityID ||
 			json.Unmarshal(row.Slots, &previous) != nil || row.SubjectKind != subject.Kind || row.SubjectID != connectorPairSubjectID(subject) {
@@ -349,7 +358,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 			row, err = q.InsertConnectorPeerPair(ctx, controlstatedb.InsertConnectorPeerPairParams{
 				ID: id, ServiceID: r.ServiceID, ServiceRunID: run.ID, RunNumber: run.RunNumber, PublisherIdentityID: run.PublisherIdentityID,
 				SubjectKind: string(subject.Kind), SubjectID: connectorPairSubjectID(subject), IdempotencyKey: r.IdempotencyKey,
-				ParentControlSessionID: parentSession, OwnerKey: ownerKey,
+				ParentControlSessionID: parentSession, OwnerKey: ownerKey, OwnerPublicKey: bytes.Clone(key),
 				RequestDigest: requestDigest[:], KeyDigest: digest[:], KeyCiphertext: sealed, DeliveryID: deliveryID[:], StorageKeyID: d.storageKey.CurrentID(),
 				Slots: encoded, Now: timestamptz(now), RequestAt: timestamptz(requestAt), ExpiresAt: timestamptz(deadline),
 			})
@@ -414,17 +423,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 		// sign the permission already authenticated under these admission locks,
 		// not a second source read or a later transaction. key retention rolls
 		// back with pair renewal if any final authority deadline is spent.
-		service, err := q.GetService(ctx, r.ServiceID)
-		if err != nil {
-			return ConnectorPeerPair{}, err
-		}
-		result.Metadata, err = checkedServiceMetadata(service)
-		if err != nil {
-			return ConnectorPeerPair{}, err
-		}
-		if result.Metadata.Endpoint == nil {
-			return ConnectorPeerPair{}, ErrServiceMetadata
-		}
+		result.Metadata = metadata
 		result.RunValidUntil = publisherUntil
 		permission.ExpiresAt = minTime(permission.ExpiresAt, result.ExpiresAt).Truncate(time.Second)
 		if !permission.ExpiresAt.After(checkedNow()) {

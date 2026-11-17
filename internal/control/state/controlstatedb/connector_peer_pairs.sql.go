@@ -12,6 +12,70 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const abortConnectorPeerRebind = `-- name: AbortConnectorPeerRebind :execrows
+UPDATE control.connector_peer_pairs SET rebind_status='aborted',rebind_abort_digest=$1
+WHERE id=$2 AND retired_at IS NULL
+`
+
+type AbortConnectorPeerRebindParams struct {
+	RequestDigest []byte
+	PairID        string
+}
+
+func (q *Queries) AbortConnectorPeerRebind(ctx context.Context, arg AbortConnectorPeerRebindParams) (int64, error) {
+	result, err := q.db.Exec(ctx, abortConnectorPeerRebind, arg.RequestDigest, arg.PairID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const activateConnectorPeerBinding = `-- name: ActivateConnectorPeerBinding :execrows
+UPDATE control.connector_peer_pairs
+SET slots=convert_from($1::bytea,'UTF8')::jsonb,delivery_generation=$2,
+    key_ciphertext=$3,key_digest=$4,storage_key_id=$5,
+    binding_operation_id=$6,binding_challenge=$7,
+    publisher_prepared_until=$8,publisher_proved_until=$9,
+    publisher_proof_digest=$10,rebind_status='active',rebind_activate_digest=$11
+WHERE id=$12 AND retired_at IS NULL
+`
+
+type ActivateConnectorPeerBindingParams struct {
+	Slots                  []byte
+	DeliveryGeneration     int64
+	KeyCiphertext          []byte
+	KeyDigest              []byte
+	StorageKeyID           string
+	OperationID            string
+	Challenge              []byte
+	PublisherPreparedUntil pgtype.Timestamptz
+	PublisherProvedUntil   pgtype.Timestamptz
+	PublisherProofDigest   []byte
+	RequestDigest          []byte
+	PairID                 string
+}
+
+func (q *Queries) ActivateConnectorPeerBinding(ctx context.Context, arg ActivateConnectorPeerBindingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, activateConnectorPeerBinding,
+		arg.Slots,
+		arg.DeliveryGeneration,
+		arg.KeyCiphertext,
+		arg.KeyDigest,
+		arg.StorageKeyID,
+		arg.OperationID,
+		arg.Challenge,
+		arg.PublisherPreparedUntil,
+		arg.PublisherProvedUntil,
+		arg.PublisherProofDigest,
+		arg.RequestDigest,
+		arg.PairID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cleanupExpiredConnectorPeerPairs = `-- name: CleanupExpiredConnectorPeerPairs :execrows
 DELETE FROM control.connector_peer_pairs victim WHERE victim.id IN (
     SELECT candidate.id FROM control.connector_peer_pairs candidate WHERE candidate.expires_at<=$1
@@ -36,7 +100,7 @@ func (q *Queries) CleanupExpiredConnectorPeerPairs(ctx context.Context, arg Clea
 const confirmConnectorPeerPairPrepared = `-- name: ConfirmConnectorPeerPairPrepared :execrows
 UPDATE control.connector_peer_pairs
 SET publisher_prepared_until=LEAST($1,GREATEST(publisher_prepared_until,$2))
-WHERE id=$3 AND delivery_generation=$4
+WHERE id=$3 AND retired_at IS NULL AND delivery_generation=$4
     AND expires_at>$5
 `
 
@@ -64,6 +128,27 @@ func (q *Queries) ConfirmConnectorPeerPairPrepared(ctx context.Context, arg Conf
 	return result.RowsAffected(), nil
 }
 
+const confirmConnectorPeerPendingPrepared = `-- name: ConfirmConnectorPeerPendingPrepared :execrows
+UPDATE control.connector_peer_pending_bindings
+SET publisher_prepared_until=LEAST($1,GREATEST(publisher_prepared_until,$2))
+WHERE pair_id=$3
+    AND EXISTS(SELECT 1 FROM control.connector_peer_pairs pair WHERE pair.id=$3 AND pair.retired_at IS NULL)
+`
+
+type ConfirmConnectorPeerPendingPreparedParams struct {
+	AuthorityExpiresAt pgtype.Timestamptz
+	BindingExpiresAt   pgtype.Timestamptz
+	PairID             string
+}
+
+func (q *Queries) ConfirmConnectorPeerPendingPrepared(ctx context.Context, arg ConfirmConnectorPeerPendingPreparedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, confirmConnectorPeerPendingPrepared, arg.AuthorityExpiresAt, arg.BindingExpiresAt, arg.PairID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countConnectorPeerPairOwners = `-- name: CountConnectorPeerPairOwners :one
 SELECT count(*) FROM (
     SELECT id FROM control.connector_peer_pairs WHERE service_run_id=$1
@@ -85,8 +170,44 @@ func (q *Queries) CountConnectorPeerPairOwners(ctx context.Context, arg CountCon
 	return count, err
 }
 
+const deleteConnectorPeerPairLegClaims = `-- name: DeleteConnectorPeerPairLegClaims :execrows
+DELETE FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1
+`
+
+func (q *Queries) DeleteConnectorPeerPairLegClaims(ctx context.Context, pairID string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteConnectorPeerPairLegClaims, pairID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteConnectorPeerPendingBinding = `-- name: DeleteConnectorPeerPendingBinding :execrows
+DELETE FROM control.connector_peer_pending_bindings WHERE pair_id=$1
+`
+
+func (q *Queries) DeleteConnectorPeerPendingBinding(ctx context.Context, pairID string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteConnectorPeerPendingBinding, pairID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const expireConnectorPeerRebind = `-- name: ExpireConnectorPeerRebind :execrows
+UPDATE control.connector_peer_pairs SET rebind_status='expired' WHERE id=$1 AND retired_at IS NULL
+`
+
+func (q *Queries) ExpireConnectorPeerRebind(ctx context.Context, pairID string) (int64, error) {
+	result, err := q.db.Exec(ctx, expireConnectorPeerRebind, pairID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getConnectorPeerPairForOwner = `-- name: GetConnectorPeerPairForOwner :one
-SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest FROM control.connector_peer_pairs WHERE subject_kind=$1
+SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, owner_public_key, owner_revision, retired_at, retire_request_digest, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest FROM control.connector_peer_pairs WHERE subject_kind=$1
     AND subject_id=$2 AND service_run_id=$3
     AND owner_key=$4 FOR UPDATE
 `
@@ -117,6 +238,10 @@ func (q *Queries) GetConnectorPeerPairForOwner(ctx context.Context, arg GetConne
 		&i.ParentControlSessionID,
 		&i.OwnerKey,
 		&i.IdempotencyKey,
+		&i.OwnerPublicKey,
+		&i.OwnerRevision,
+		&i.RetiredAt,
+		&i.RetireRequestDigest,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
 		&i.PublisherPreparedUntil,
@@ -152,6 +277,7 @@ func (q *Queries) GetConnectorPeerPairForOwner(ctx context.Context, arg GetConne
 
 const getConnectorPeerPendingBinding = `-- name: GetConnectorPeerPendingBinding :one
 SELECT pair_id, delivery_generation, operation_id, challenge, slots, key_ciphertext, key_digest, storage_key_id, created_at, pending_until, publisher_prepared_until, publisher_proved_until, publisher_proof_digest FROM control.connector_peer_pending_bindings WHERE pair_id=$1
+    AND EXISTS(SELECT 1 FROM control.connector_peer_pairs pair WHERE pair.id=$1 AND pair.retired_at IS NULL)
 `
 
 func (q *Queries) GetConnectorPeerPendingBinding(ctx context.Context, pairID string) (ControlConnectorPeerPendingBinding, error) {
@@ -175,10 +301,39 @@ func (q *Queries) GetConnectorPeerPendingBinding(ctx context.Context, pairID str
 	return i, err
 }
 
+const hasRetainedConnectorPeerPair = `-- name: HasRetainedConnectorPeerPair :one
+SELECT EXISTS(SELECT 1 FROM control.connector_peer_pairs
+    WHERE service_id=$1 AND service_run_id=$2
+        AND run_number=$3 AND publisher_identity_id=$4
+        AND GREATEST(expires_at,replay_fence_until)>$5)::boolean
+`
+
+type HasRetainedConnectorPeerPairParams struct {
+	ServiceID           string
+	ServiceRunID        string
+	RunNumber           int64
+	PublisherIdentityID string
+	Now                 pgtype.Timestamptz
+}
+
+// the exact run token grants negative reads only while an existing window remains.
+func (q *Queries) HasRetainedConnectorPeerPair(ctx context.Context, arg HasRetainedConnectorPeerPairParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasRetainedConnectorPeerPair,
+		arg.ServiceID,
+		arg.ServiceRunID,
+		arg.RunNumber,
+		arg.PublisherIdentityID,
+		arg.Now,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const initializeConnectorPeerSession = `-- name: InitializeConnectorPeerSession :one
 UPDATE control.connector_peer_pairs SET session_key_ciphertext=$1,session_key_digest=$2,
     session_key_storage_key_id=$3,trust_revision=$4
-WHERE id=$5 AND session_key_ciphertext IS NULL RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
+WHERE id=$5 AND retired_at IS NULL AND session_key_ciphertext IS NULL RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, owner_public_key, owner_revision, retired_at, retire_request_digest, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
 `
 
 type InitializeConnectorPeerSessionParams struct {
@@ -209,6 +364,10 @@ func (q *Queries) InitializeConnectorPeerSession(ctx context.Context, arg Initia
 		&i.ParentControlSessionID,
 		&i.OwnerKey,
 		&i.IdempotencyKey,
+		&i.OwnerPublicKey,
+		&i.OwnerRevision,
+		&i.RetiredAt,
+		&i.RetireRequestDigest,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
 		&i.PublisherPreparedUntil,
@@ -244,13 +403,13 @@ func (q *Queries) InitializeConnectorPeerSession(ctx context.Context, arg Initia
 
 const insertConnectorPeerPair = `-- name: InsertConnectorPeerPair :one
 INSERT INTO control.connector_peer_pairs(id,service_id,service_run_id,run_number,publisher_identity_id,
-    subject_kind,subject_id,parent_control_session_id,owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,
+    subject_kind,subject_id,parent_control_session_id,owner_key,idempotency_key,owner_public_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,
     delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
 VALUES ($1,$2,$3,$4,$5,
-    $6,$7,$8,$9,$10,$11,$12,$13,$14,
-    $15,convert_from($16::bytea,'UTF8')::jsonb,nextval('control.connector_peer_delivery_generation'),
-    $17,$17,$18,$18::timestamptz+interval '5 minutes',$19)
-ON CONFLICT ON CONSTRAINT connector_peer_pairs_delivery_id_key DO NOTHING RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
+    $6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+    $16,convert_from($17::bytea,'UTF8')::jsonb,nextval('control.connector_peer_delivery_generation'),
+    $18,$18,$19,$19::timestamptz+interval '5 minutes',$20)
+ON CONFLICT ON CONSTRAINT connector_peer_pairs_delivery_id_key DO NOTHING RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, owner_public_key, owner_revision, retired_at, retire_request_digest, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
 `
 
 type InsertConnectorPeerPairParams struct {
@@ -264,6 +423,7 @@ type InsertConnectorPeerPairParams struct {
 	ParentControlSessionID pgtype.Text
 	OwnerKey               string
 	IdempotencyKey         string
+	OwnerPublicKey         []byte
 	RequestDigest          []byte
 	KeyDigest              []byte
 	KeyCiphertext          []byte
@@ -287,6 +447,7 @@ func (q *Queries) InsertConnectorPeerPair(ctx context.Context, arg InsertConnect
 		arg.ParentControlSessionID,
 		arg.OwnerKey,
 		arg.IdempotencyKey,
+		arg.OwnerPublicKey,
 		arg.RequestDigest,
 		arg.KeyDigest,
 		arg.KeyCiphertext,
@@ -309,6 +470,10 @@ func (q *Queries) InsertConnectorPeerPair(ctx context.Context, arg InsertConnect
 		&i.ParentControlSessionID,
 		&i.OwnerKey,
 		&i.IdempotencyKey,
+		&i.OwnerPublicKey,
+		&i.OwnerRevision,
+		&i.RetiredAt,
+		&i.RetireRequestDigest,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
 		&i.PublisherPreparedUntil,
@@ -342,12 +507,70 @@ func (q *Queries) InsertConnectorPeerPair(ctx context.Context, arg InsertConnect
 	return i, err
 }
 
+const insertConnectorPeerPendingBinding = `-- name: InsertConnectorPeerPendingBinding :one
+
+INSERT INTO control.connector_peer_pending_bindings(pair_id,delivery_generation,operation_id,challenge,slots,
+    key_ciphertext,key_digest,storage_key_id,created_at,pending_until)
+SELECT $1,$2,$3,$4,
+    convert_from($5::bytea,'UTF8')::jsonb,$6,$7,
+    $8,$9,$10
+FROM control.connector_peer_pairs pair WHERE pair.id=$1 AND pair.retired_at IS NULL
+RETURNING pair_id, delivery_generation, operation_id, challenge, slots, key_ciphertext, key_digest, storage_key_id, created_at, pending_until, publisher_prepared_until, publisher_proved_until, publisher_proof_digest
+`
+
+type InsertConnectorPeerPendingBindingParams struct {
+	PairID             string
+	DeliveryGeneration int64
+	OperationID        string
+	Challenge          []byte
+	Slots              []byte
+	KeyCiphertext      []byte
+	KeyDigest          []byte
+	StorageKeyID       string
+	Now                pgtype.Timestamptz
+	PendingUntil       pgtype.Timestamptz
+}
+
+// the following positive statements replace the operation owners' inline SQL
+// after normal generation. storage guards fence those inline writers meanwhile.
+func (q *Queries) InsertConnectorPeerPendingBinding(ctx context.Context, arg InsertConnectorPeerPendingBindingParams) (ControlConnectorPeerPendingBinding, error) {
+	row := q.db.QueryRow(ctx, insertConnectorPeerPendingBinding,
+		arg.PairID,
+		arg.DeliveryGeneration,
+		arg.OperationID,
+		arg.Challenge,
+		arg.Slots,
+		arg.KeyCiphertext,
+		arg.KeyDigest,
+		arg.StorageKeyID,
+		arg.Now,
+		arg.PendingUntil,
+	)
+	var i ControlConnectorPeerPendingBinding
+	err := row.Scan(
+		&i.PairID,
+		&i.DeliveryGeneration,
+		&i.OperationID,
+		&i.Challenge,
+		&i.Slots,
+		&i.KeyCiphertext,
+		&i.KeyDigest,
+		&i.StorageKeyID,
+		&i.CreatedAt,
+		&i.PendingUntil,
+		&i.PublisherPreparedUntil,
+		&i.PublisherProvedUntil,
+		&i.PublisherProofDigest,
+	)
+	return i, err
+}
+
 const limitConnectorPeerPair = `-- name: LimitConnectorPeerPair :one
 UPDATE control.connector_peer_pairs SET expires_at=LEAST(expires_at,$1),
     publisher_prepared_until=CASE WHEN publisher_prepared_until IS NOT NULL
         THEN LEAST(publisher_prepared_until,expires_at,$1) END
-WHERE id=$2 AND expires_at>$3 AND last_authorized_at<=$3
-    AND $1::timestamptz>$3 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
+WHERE id=$2 AND retired_at IS NULL AND expires_at>$3 AND last_authorized_at<=$3
+    AND $1::timestamptz>$3 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, owner_public_key, owner_revision, retired_at, retire_request_digest, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
 `
 
 type LimitConnectorPeerPairParams struct {
@@ -371,6 +594,10 @@ func (q *Queries) LimitConnectorPeerPair(ctx context.Context, arg LimitConnector
 		&i.ParentControlSessionID,
 		&i.OwnerKey,
 		&i.IdempotencyKey,
+		&i.OwnerPublicKey,
+		&i.OwnerRevision,
+		&i.RetiredAt,
+		&i.RetireRequestDigest,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
 		&i.PublisherPreparedUntil,
@@ -404,9 +631,30 @@ func (q *Queries) LimitConnectorPeerPair(ctx context.Context, arg LimitConnector
 	return i, err
 }
 
+const limitConnectorPeerPendingForClaim = `-- name: LimitConnectorPeerPendingForClaim :execrows
+UPDATE control.connector_peer_pending_bindings
+SET publisher_prepared_until=CASE WHEN publisher_prepared_until IS NULL THEN NULL ELSE LEAST(publisher_prepared_until,$1) END,
+    publisher_proved_until=CASE WHEN publisher_proved_until IS NULL THEN NULL ELSE LEAST(publisher_proved_until,$1) END
+WHERE pair_id=$2
+    AND EXISTS(SELECT 1 FROM control.connector_peer_pairs pair WHERE pair.id=$2 AND pair.retired_at IS NULL)
+`
+
+type LimitConnectorPeerPendingForClaimParams struct {
+	ConfirmedUntil pgtype.Timestamptz
+	PairID         string
+}
+
+func (q *Queries) LimitConnectorPeerPendingForClaim(ctx context.Context, arg LimitConnectorPeerPendingForClaimParams) (int64, error) {
+	result, err := q.db.Exec(ctx, limitConnectorPeerPendingForClaim, arg.ConfirmedUntil, arg.PairID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const limitConnectorPeerPreparedForClaim = `-- name: LimitConnectorPeerPreparedForClaim :exec
 UPDATE control.connector_peer_pairs SET publisher_prepared_until=$1
-WHERE id=$2 AND publisher_prepared_until>$1
+WHERE id=$2 AND retired_at IS NULL AND publisher_prepared_until>$1
 `
 
 type LimitConnectorPeerPreparedForClaimParams struct {
@@ -421,11 +669,17 @@ func (q *Queries) LimitConnectorPeerPreparedForClaim(ctx context.Context, arg Li
 }
 
 const listConnectorPeerPairCandidates = `-- name: ListConnectorPeerPairCandidates :many
-SELECT id,COALESCE((SELECT pending.delivery_generation FROM control.connector_peer_pending_bindings pending
-    WHERE pending.pair_id=connector_peer_pairs.id AND pending.pending_until>$1),delivery_generation)::bigint AS delivery_generation FROM control.connector_peer_pairs
+SELECT id,CASE WHEN retired_at IS NOT NULL THEN high_water_generation ELSE
+    COALESCE((SELECT pending.delivery_generation FROM control.connector_peer_pending_bindings pending
+        WHERE pending.pair_id=connector_peer_pairs.id AND pending.pending_until>$1),delivery_generation)
+    END::bigint AS delivery_generation,owner_revision,retired_at,
+    GREATEST(expires_at,replay_fence_until)::timestamptz AS retained_until
+FROM control.connector_peer_pairs
 WHERE service_id=$2 AND service_run_id=$3
     AND run_number=$4 AND publisher_identity_id=$5
-    AND expires_at>$1 AND id COLLATE "C">$6 COLLATE "C"
+    AND (($6::boolean AND retired_at IS NULL AND expires_at>$1)
+        OR (retired_at IS NOT NULL AND GREATEST(expires_at,replay_fence_until)>$1))
+    AND id COLLATE "C">$7 COLLATE "C"
 ORDER BY id COLLATE "C" LIMIT 65
 `
 
@@ -435,12 +689,16 @@ type ListConnectorPeerPairCandidatesParams struct {
 	ServiceRunID        string
 	RunNumber           int64
 	PublisherIdentityID string
+	IncludeCandidates   bool
 	AfterID             string
 }
 
 type ListConnectorPeerPairCandidatesRow struct {
 	ID                 string
 	DeliveryGeneration int64
+	OwnerRevision      int64
+	RetiredAt          pgtype.Timestamptz
+	RetainedUntil      pgtype.Timestamptz
 }
 
 // candidates convey no delivery authority. the publisher checks each delivery
@@ -452,6 +710,7 @@ func (q *Queries) ListConnectorPeerPairCandidates(ctx context.Context, arg ListC
 		arg.ServiceRunID,
 		arg.RunNumber,
 		arg.PublisherIdentityID,
+		arg.IncludeCandidates,
 		arg.AfterID,
 	)
 	if err != nil {
@@ -461,7 +720,13 @@ func (q *Queries) ListConnectorPeerPairCandidates(ctx context.Context, arg ListC
 	var items []ListConnectorPeerPairCandidatesRow
 	for rows.Next() {
 		var i ListConnectorPeerPairCandidatesRow
-		if err := rows.Scan(&i.ID, &i.DeliveryGeneration); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeliveryGeneration,
+			&i.OwnerRevision,
+			&i.RetiredAt,
+			&i.RetainedUntil,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -473,7 +738,7 @@ func (q *Queries) ListConnectorPeerPairCandidates(ctx context.Context, arg ListC
 }
 
 const lockConnectorPeerPairForLegClaim = `-- name: LockConnectorPeerPairForLegClaim :one
-SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest FROM control.connector_peer_pairs WHERE id=$1 FOR UPDATE
+SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, owner_public_key, owner_revision, retired_at, retire_request_digest, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest FROM control.connector_peer_pairs WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockConnectorPeerPairForLegClaim(ctx context.Context, id string) (ControlConnectorPeerPair, error) {
@@ -490,6 +755,10 @@ func (q *Queries) LockConnectorPeerPairForLegClaim(ctx context.Context, id strin
 		&i.ParentControlSessionID,
 		&i.OwnerKey,
 		&i.IdempotencyKey,
+		&i.OwnerPublicKey,
+		&i.OwnerRevision,
+		&i.RetiredAt,
+		&i.RetireRequestDigest,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
 		&i.PublisherPreparedUntil,
@@ -523,9 +792,66 @@ func (q *Queries) LockConnectorPeerPairForLegClaim(ctx context.Context, id strin
 	return i, err
 }
 
+const lockConnectorPeerRetirementGuest = `-- name: LockConnectorPeerRetirementGuest :one
+SELECT id FROM control.guest_trials WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockConnectorPeerRetirementGuest(ctx context.Context, guestID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockConnectorPeerRetirementGuest, guestID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockConnectorPeerRetirementTeam = `-- name: LockConnectorPeerRetirementTeam :one
+WITH guard AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock_shared(hashtextextended('tnl:local-team:' || $1::text, 0))
+)
+SELECT teams.id FROM control.teams AS teams CROSS JOIN guard
+WHERE teams.id=$1 FOR SHARE OF teams
+`
+
+// use the existing owner guard without requiring current team authority.
+func (q *Queries) LockConnectorPeerRetirementTeam(ctx context.Context, teamID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockConnectorPeerRetirementTeam, teamID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const prepareConnectorPeerRebind = `-- name: PrepareConnectorPeerRebind :execrows
+UPDATE control.connector_peer_pairs
+SET high_water_generation=$1,rebind_operation_id=$2,
+    rebind_generation=$1,rebind_status='pending',
+    rebind_prepare_digest=$3,rebind_activate_digest=NULL,rebind_abort_digest=NULL
+WHERE id=$4 AND retired_at IS NULL
+`
+
+type PrepareConnectorPeerRebindParams struct {
+	DeliveryGeneration int64
+	OperationID        string
+	RequestDigest      []byte
+	PairID             string
+}
+
+func (q *Queries) PrepareConnectorPeerRebind(ctx context.Context, arg PrepareConnectorPeerRebindParams) (int64, error) {
+	result, err := q.db.Exec(ctx, prepareConnectorPeerRebind,
+		arg.DeliveryGeneration,
+		arg.OperationID,
+		arg.RequestDigest,
+		arg.PairID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const readConnectorPeerBindingClaims = `-- name: ReadConnectorPeerBindingClaims :many
-SELECT pair_id, connection_slot, requested_at, checked_at, confirmed_until, nonce_digest, source_ip, relay_id, relay_run_id, relay_lease_revision, delivery_generation FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1
-    AND delivery_generation=$2 ORDER BY connection_slot LIMIT 2
+SELECT claims.pair_id, claims.connection_slot, claims.requested_at, claims.checked_at, claims.confirmed_until, claims.nonce_digest, claims.source_ip, claims.relay_id, claims.relay_run_id, claims.relay_lease_revision, claims.delivery_generation FROM control.connector_peer_pair_leg_claims claims WHERE claims.pair_id=$1
+    AND claims.delivery_generation=$2
+    AND EXISTS(SELECT 1 FROM control.connector_peer_pairs pair WHERE pair.id=$1 AND pair.retired_at IS NULL)
+ORDER BY claims.connection_slot LIMIT 2
 `
 
 type ReadConnectorPeerBindingClaimsParams struct {
@@ -568,7 +894,7 @@ func (q *Queries) ReadConnectorPeerBindingClaims(ctx context.Context, arg ReadCo
 const readConnectorPeerClaimBounds = `-- name: ReadConnectorPeerClaimBounds :many
 SELECT connection_slot,checked_at,confirmed_until,source_ip,relay_id,relay_run_id,relay_lease_revision
 FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1
-    AND delivery_generation=(SELECT delivery_generation FROM control.connector_peer_pairs WHERE id=$1)
+    AND delivery_generation=(SELECT delivery_generation FROM control.connector_peer_pairs WHERE id=$1 AND retired_at IS NULL)
 ORDER BY connection_slot LIMIT 2
 `
 
@@ -611,14 +937,14 @@ func (q *Queries) ReadConnectorPeerClaimBounds(ctx context.Context, pairID strin
 }
 
 const readConnectorPeerObservationRelayBounds = `-- name: ReadConnectorPeerObservationRelayBounds :many
-SELECT slot.connection_slot,lease.lease_expires_at,relay.relay_address,relay.tls_server_name
+SELECT slot.connection_slot,lease.serving_until,relay.relay_address,relay.tls_server_name
 FROM control.service_connection_slots slot
 JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id AND lease.relay_run_id=slot.relay_run_id
     AND lease.relay_lease_revision=slot.relay_lease_revision AND lease.relay_service_id=slot.relay_service_id
 JOIN control.relay_services relay ON relay.relay_service_id=lease.relay_service_id
 WHERE slot.service_run_id=$1 AND slot.service_id=$2
     AND slot.state='ready' AND slot.session_open AND NOT lease.draining AND relay.enabled
-    AND lease.lease_expires_at>$3
+    AND lease.serving_until>$3
 ORDER BY slot.connection_slot LIMIT 2 FOR SHARE OF lease,relay
 `
 
@@ -630,7 +956,7 @@ type ReadConnectorPeerObservationRelayBoundsParams struct {
 
 type ReadConnectorPeerObservationRelayBoundsRow struct {
 	ConnectionSlot int16
-	LeaseExpiresAt pgtype.Timestamptz
+	ServingUntil   pgtype.Timestamptz
 	RelayAddress   string
 	TlsServerName  string
 }
@@ -647,7 +973,7 @@ func (q *Queries) ReadConnectorPeerObservationRelayBounds(ctx context.Context, a
 		var i ReadConnectorPeerObservationRelayBoundsRow
 		if err := rows.Scan(
 			&i.ConnectionSlot,
-			&i.LeaseExpiresAt,
+			&i.ServingUntil,
 			&i.RelayAddress,
 			&i.TlsServerName,
 		); err != nil {
@@ -667,8 +993,8 @@ UPDATE control.connector_peer_pairs SET expires_at=$1,last_authorized_at=$2,
         THEN LEAST(publisher_prepared_until,expires_at,$1) END,
     last_request_at=$3,replay_fence_until=$3::timestamptz+interval '5 minutes',
     last_renewal_digest=$4
-WHERE id=$5 AND expires_at>$2 AND last_authorized_at<$2
-    AND last_request_at<$3 AND $1::timestamptz>$2 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
+WHERE id=$5 AND retired_at IS NULL AND expires_at>$2 AND last_authorized_at<$2
+    AND last_request_at<$3 AND $1::timestamptz>$2 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, owner_public_key, owner_revision, retired_at, retire_request_digest, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
 `
 
 type RenewConnectorPeerPairParams struct {
@@ -701,6 +1027,10 @@ func (q *Queries) RenewConnectorPeerPair(ctx context.Context, arg RenewConnector
 		&i.ParentControlSessionID,
 		&i.OwnerKey,
 		&i.IdempotencyKey,
+		&i.OwnerPublicKey,
+		&i.OwnerRevision,
+		&i.RetiredAt,
+		&i.RetireRequestDigest,
 		&i.RequestDigest,
 		&i.LastRenewalDigest,
 		&i.PublisherPreparedUntil,
@@ -735,7 +1065,7 @@ func (q *Queries) RenewConnectorPeerPair(ctx context.Context, arg RenewConnector
 }
 
 const replaceConnectorPeerPair = `-- name: ReplaceConnectorPeerPair :execrows
-DELETE FROM control.connector_peer_pairs WHERE id=$1
+DELETE FROM control.connector_peer_pairs WHERE id=$1 AND retired_at IS NULL
 `
 
 func (q *Queries) ReplaceConnectorPeerPair(ctx context.Context, id string) (int64, error) {
@@ -746,15 +1076,175 @@ func (q *Queries) ReplaceConnectorPeerPair(ctx context.Context, id string) (int6
 	return result.RowsAffected(), nil
 }
 
+const retireConnectorPeerAuditBindings = `-- name: RetireConnectorPeerAuditBindings :execrows
+UPDATE control.connector_peer_audit_bindings SET retired_at=COALESCE(retired_at,$1)
+WHERE pair_id=$2
+`
+
+type RetireConnectorPeerAuditBindingsParams struct {
+	Now    pgtype.Timestamptz
+	PairID string
+}
+
+func (q *Queries) RetireConnectorPeerAuditBindings(ctx context.Context, arg RetireConnectorPeerAuditBindingsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, retireConnectorPeerAuditBindings, arg.Now, arg.PairID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retireConnectorPeerPair = `-- name: RetireConnectorPeerPair :one
+UPDATE control.connector_peer_pairs
+SET owner_revision=2,retired_at=$1,retire_request_digest=$2,
+    publisher_prepared_until=NULL,publisher_proved_until=NULL,publisher_proof_digest=NULL
+WHERE id=$3 AND service_id=$4 AND service_run_id=$5
+    AND run_number=$6 AND publisher_identity_id=$7
+    AND delivery_id=$8 AND owner_key=$9
+    AND owner_revision=1 AND retired_at IS NULL AND last_authorized_at<=$1
+    AND GREATEST(expires_at,replay_fence_until)>$1
+    AND session_key_digest IS NOT NULL
+RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, owner_public_key, owner_revision, retired_at, retire_request_digest, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at, session_key_ciphertext, session_key_digest, session_key_storage_key_id, trust_revision, high_water_generation, binding_operation_id, binding_challenge, publisher_proved_until, publisher_proof_digest, rebind_operation_id, rebind_generation, rebind_status, rebind_prepare_digest, rebind_activate_digest, rebind_abort_digest
+`
+
+type RetireConnectorPeerPairParams struct {
+	Now                 pgtype.Timestamptz
+	RetireRequestDigest []byte
+	ID                  string
+	ServiceID           string
+	ServiceRunID        string
+	RunNumber           int64
+	PublisherIdentityID string
+	DeliveryID          []byte
+	OwnerKey            string
+}
+
+// the caller holds owner -> service -> run -> exact pair and verifies both proofs.
+// terminal retries compare the stored digest; no upsert or deadline advance exists.
+func (q *Queries) RetireConnectorPeerPair(ctx context.Context, arg RetireConnectorPeerPairParams) (ControlConnectorPeerPair, error) {
+	row := q.db.QueryRow(ctx, retireConnectorPeerPair,
+		arg.Now,
+		arg.RetireRequestDigest,
+		arg.ID,
+		arg.ServiceID,
+		arg.ServiceRunID,
+		arg.RunNumber,
+		arg.PublisherIdentityID,
+		arg.DeliveryID,
+		arg.OwnerKey,
+	)
+	var i ControlConnectorPeerPair
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.ServiceRunID,
+		&i.RunNumber,
+		&i.PublisherIdentityID,
+		&i.SubjectKind,
+		&i.SubjectID,
+		&i.ParentControlSessionID,
+		&i.OwnerKey,
+		&i.IdempotencyKey,
+		&i.OwnerPublicKey,
+		&i.OwnerRevision,
+		&i.RetiredAt,
+		&i.RetireRequestDigest,
+		&i.RequestDigest,
+		&i.LastRenewalDigest,
+		&i.PublisherPreparedUntil,
+		&i.KeyDigest,
+		&i.KeyCiphertext,
+		&i.DeliveryID,
+		&i.StorageKeyID,
+		&i.Slots,
+		&i.DeliveryGeneration,
+		&i.CreatedAt,
+		&i.LastAuthorizedAt,
+		&i.LastRequestAt,
+		&i.ReplayFenceUntil,
+		&i.ExpiresAt,
+		&i.SessionKeyCiphertext,
+		&i.SessionKeyDigest,
+		&i.SessionKeyStorageKeyID,
+		&i.TrustRevision,
+		&i.HighWaterGeneration,
+		&i.BindingOperationID,
+		&i.BindingChallenge,
+		&i.PublisherProvedUntil,
+		&i.PublisherProofDigest,
+		&i.RebindOperationID,
+		&i.RebindGeneration,
+		&i.RebindStatus,
+		&i.RebindPrepareDigest,
+		&i.RebindActivateDigest,
+		&i.RebindAbortDigest,
+	)
+	return i, err
+}
+
+const saveConnectorPeerAuditBinding = `-- name: SaveConnectorPeerAuditBinding :execrows
+INSERT INTO control.connector_peer_audit_bindings
+    (pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_ip,created_at,expires_at,delivery_generation)
+SELECT $1,$2,$3,$4,$5,
+    $6,$7,$8,$9,$10,$11
+FROM control.connector_peer_pairs pair WHERE pair.id=$1 AND pair.retired_at IS NULL
+ON CONFLICT (pair_id,delivery_generation) DO UPDATE SET expires_at=GREATEST(control.connector_peer_audit_bindings.expires_at,EXCLUDED.expires_at)
+WHERE control.connector_peer_audit_bindings.retired_at IS NULL
+    AND control.connector_peer_audit_bindings.service_id=EXCLUDED.service_id
+    AND control.connector_peer_audit_bindings.service_run_id=EXCLUDED.service_run_id
+    AND control.connector_peer_audit_bindings.run_number=EXCLUDED.run_number
+    AND control.connector_peer_audit_bindings.publisher_identity_id=EXCLUDED.publisher_identity_id
+    AND control.connector_peer_audit_bindings.identity_id IS NOT DISTINCT FROM EXCLUDED.identity_id
+    AND control.connector_peer_audit_bindings.device_id IS NOT DISTINCT FROM EXCLUDED.device_id
+    AND control.connector_peer_audit_bindings.source_ip=EXCLUDED.source_ip
+    AND control.connector_peer_audit_bindings.created_at=EXCLUDED.created_at
+`
+
+type SaveConnectorPeerAuditBindingParams struct {
+	PairID              string
+	ServiceID           string
+	ServiceRunID        string
+	RunNumber           int64
+	PublisherIdentityID string
+	IdentityID          pgtype.Text
+	DeviceID            pgtype.Text
+	SourceIp            netip.Addr
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	DeliveryGeneration  int64
+}
+
+func (q *Queries) SaveConnectorPeerAuditBinding(ctx context.Context, arg SaveConnectorPeerAuditBindingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, saveConnectorPeerAuditBinding,
+		arg.PairID,
+		arg.ServiceID,
+		arg.ServiceRunID,
+		arg.RunNumber,
+		arg.PublisherIdentityID,
+		arg.IdentityID,
+		arg.DeviceID,
+		arg.SourceIp,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+		arg.DeliveryGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const saveConnectorPeerPairLegClaim = `-- name: SaveConnectorPeerPairLegClaim :one
 INSERT INTO control.connector_peer_pair_leg_claims(pair_id,connection_slot,requested_at,nonce_digest,source_ip,
     relay_id,relay_run_id,relay_lease_revision,checked_at,confirmed_until,delivery_generation)
-VALUES ($1,$2,$3,$4,
-    $5,$6,$7,$8,$9,$10,$11)
+SELECT $1,$2,$3,$4,
+    $5,$6,$7,$8,$9,$10,$11
+FROM control.connector_peer_pairs pair WHERE pair.id=$1 AND pair.retired_at IS NULL
 ON CONFLICT (pair_id,delivery_generation,connection_slot) DO UPDATE SET
     requested_at=EXCLUDED.requested_at,nonce_digest=EXCLUDED.nonce_digest,
     checked_at=EXCLUDED.checked_at,confirmed_until=EXCLUDED.confirmed_until
-WHERE control.connector_peer_pair_leg_claims.requested_at<EXCLUDED.requested_at
+WHERE EXISTS(SELECT 1 FROM control.connector_peer_pairs pair WHERE pair.id=EXCLUDED.pair_id AND pair.retired_at IS NULL)
+    AND control.connector_peer_pair_leg_claims.requested_at<EXCLUDED.requested_at
     AND control.connector_peer_pair_leg_claims.nonce_digest<>EXCLUDED.nonce_digest
     AND control.connector_peer_pair_leg_claims.source_ip=EXCLUDED.source_ip
     AND control.connector_peer_pair_leg_claims.relay_id=EXCLUDED.relay_id
@@ -796,4 +1286,43 @@ func (q *Queries) SaveConnectorPeerPairLegClaim(ctx context.Context, arg SaveCon
 	var pair_id string
 	err := row.Scan(&pair_id)
 	return pair_id, err
+}
+
+const saveConnectorPeerPendingPublisherProof = `-- name: SaveConnectorPeerPendingPublisherProof :execrows
+UPDATE control.connector_peer_pending_bindings SET publisher_proved_until=$1,publisher_proof_digest=$2
+WHERE pair_id=$3
+    AND EXISTS(SELECT 1 FROM control.connector_peer_pairs pair WHERE pair.id=$3 AND pair.retired_at IS NULL)
+`
+
+type SaveConnectorPeerPendingPublisherProofParams struct {
+	ProvedUntil pgtype.Timestamptz
+	ProofDigest []byte
+	PairID      string
+}
+
+func (q *Queries) SaveConnectorPeerPendingPublisherProof(ctx context.Context, arg SaveConnectorPeerPendingPublisherProofParams) (int64, error) {
+	result, err := q.db.Exec(ctx, saveConnectorPeerPendingPublisherProof, arg.ProvedUntil, arg.ProofDigest, arg.PairID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const saveConnectorPeerPublisherProof = `-- name: SaveConnectorPeerPublisherProof :execrows
+UPDATE control.connector_peer_pairs SET publisher_proved_until=$1,publisher_proof_digest=$2
+WHERE id=$3 AND retired_at IS NULL
+`
+
+type SaveConnectorPeerPublisherProofParams struct {
+	ProvedUntil pgtype.Timestamptz
+	ProofDigest []byte
+	PairID      string
+}
+
+func (q *Queries) SaveConnectorPeerPublisherProof(ctx context.Context, arg SaveConnectorPeerPublisherProofParams) (int64, error) {
+	result, err := q.db.Exec(ctx, saveConnectorPeerPublisherProof, arg.ProvedUntil, arg.ProofDigest, arg.PairID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

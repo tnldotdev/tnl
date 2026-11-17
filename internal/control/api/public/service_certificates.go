@@ -2,11 +2,12 @@ package public
 
 import (
 	"context"
-	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -17,8 +18,16 @@ type managedCertificateStore interface {
 }
 
 func writeManagedCertificateProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
-	if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrServiceConflict) {
+	if failure.Only(err, controlstate.ErrVisitorPermission) {
+		writeProblem(w, http.StatusForbidden, controlv1.Forbidden, "visitor permission denied")
+		return
+	}
+	if failure.Only(err, controlstate.ErrServiceAccess) || failure.Only(err, controlstate.ErrServiceConflict) {
 		serviceVisitorError(ctx, w, operation, err)
+		return
+	}
+	if controlstate.IsUnavailable(err) {
+		writeUnavailableProblem(ctx, w, failure.Operation(operation), "certificate authorization is unavailable", failure.ServerUnavailable, err)
 		return
 	}
 	writeControlStateProblem(ctx, w, operation, err)
@@ -29,9 +38,12 @@ func managedCertificatePlan(plan controlstate.CertificatePlan) controlv1.Certifi
 }
 
 func serviceCertificateResponse(value controlstate.CertificateIssuance) controlv1.ServiceCertificateIssuance {
-	result := controlv1.ServiceCertificateIssuance{Id: value.ID, ServiceId: value.ServiceID, ServiceRunId: value.ServiceRunID, RunNumber: int64(value.ServiceRunNumber), PublisherIdentityId: value.PublisherIdentityID, CertificatePlan: managedCertificatePlan(value.CertificatePlan), State: controlv1.CertificateIssuanceState(value.State), NotBefore: value.NotBefore, NotAfter: value.NotAfter, RetryAt: value.RetryAt}
-	if value.CertificatePEM != "" {
-		result.CertificatePem = &value.CertificatePEM
+	result := controlv1.ServiceCertificateIssuance{Id: value.ID, ServiceId: value.ServiceID, ServiceRunId: value.ServiceRunID, RunNumber: int64(value.ServiceRunNumber), PublisherIdentityId: value.PublisherIdentityID, CertificatePlan: managedCertificatePlan(value.CertificatePlan), State: controlv1.CertificateIssuanceState(value.State), RetryAt: value.RetryAt}
+	if value.State == controlstate.ACMEOrderWaitingForInstall || value.State == controlstate.ACMEOrderInstalled {
+		result.NotBefore, result.NotAfter = value.NotBefore, value.NotAfter
+		if value.CertificatePEM != "" {
+			result.CertificatePem = &value.CertificatePEM
+		}
 	}
 	return result
 }
@@ -70,7 +82,14 @@ func (h *handler) CreateServiceCertificateIssuance(w http.ResponseWriter, r *htt
 		return
 	}
 	if value.NewOrder {
-		h.config.Metrics.ObserveCertificateOrder("service", string(value.DomainKind), "exact")
+		plan := "exact"
+		for _, identifier := range value.CertificatePlan.Identifiers {
+			if strings.HasPrefix(identifier, "*.") {
+				plan = "wildcard"
+				break
+			}
+		}
+		h.config.Metrics.ObserveCertificateOrder("service", string(value.DomainKind), plan)
 	}
 	writeJSON(w, http.StatusCreated, serviceCertificateResponse(value))
 }

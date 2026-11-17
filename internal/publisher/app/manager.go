@@ -30,7 +30,7 @@ const maxStoppedOutcomes = 64
 var ErrCleanupPermanent = errors.New("publication cleanup cannot be retried")
 var ErrRegistrationStopped = errors.New("publication stopped with a cleanup failure")
 
-type Run func(context.Context, Service, func(uint64, bool) error) error
+type Run func(context.Context, Service, func(PublicationUpdate) error) error
 
 type registration struct {
 	owner   string
@@ -41,7 +41,16 @@ type registration struct {
 	err     error
 	// an unbound preparation can be released with the application's target.
 	// retain that exact cleanup request without claiming a bound listener.
-	cleanupTarget *string
+	cleanupTarget  *string
+	shutdownUntil  time.Time
+	shutdown       context.Context
+	stopShutdown   context.CancelCauseFunc
+	shutdownTimer  *time.Timer
+	shutdownDone   chan struct{}
+	cleanupPending bool
+	cleanup        *cleanupAttempt
+	cleanupFailure error
+	retryUntil     time.Time
 }
 
 // stopped outcomes contain no worker, key, or cleanup callback. they only let an
@@ -63,15 +72,19 @@ type Manager struct {
 	Alive         func(int) bool
 	// cleanup runs only after the worker joins. a failure retains the
 	// registration and its exact resources for a later unregister attempt unless
-	// the resource owner marks the failure as permanent.
-	Cleanup       func(Service) error
-	idleSince     time.Time
-	preparing     int
-	closed        bool
-	closeOnce     sync.Once
-	writeErr      error
-	retirementErr error
-	stopped       map[string]stoppedOutcome
+	// the resource owner marks the failure as permanent. callbacks borrow their
+	// bounded operation context through PublicationCleanupContext.
+	Cleanup func(Service) error
+	// the process owner supplies one deadline for all registrations on exit.
+	ShutdownDeadline func() time.Time
+	idleSince        time.Time
+	preparing        int
+	closed           bool
+	closeOnce        sync.Once
+	writeErr         error
+	retirementErr    error
+	stopped          map[string]stoppedOutcome
+	targetChanges    map[string]chan struct{}
 }
 
 func New(ctx context.Context, project string, database *clientstate.Database, services []Service, run Run) (*Manager, error) {
@@ -82,7 +95,8 @@ func New(ctx context.Context, project string, database *clientstate.Database, se
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{ctx: ctx, database: database, run: run, registrations: map[string]*registration{}, idleSince: time.Now(), snapshot: previous}
+	m := &Manager{ctx: ctx, database: database, run: run, registrations: map[string]*registration{}, idleSince: time.Now(), snapshot: previous,
+		ShutdownDeadline: sync.OnceValue(func() time.Time { return time.Now().Add(10 * time.Second) })}
 	m.snapshot.Services = slices.Clone(services)
 	slices.SortFunc(m.snapshot.Services, func(a, b Service) int {
 		if a.Name < b.Name {
@@ -115,7 +129,28 @@ func New(ctx context.Context, project string, database *clientstate.Database, se
 }
 
 func (m *Manager) emitLocked(kind string, service *Service) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(m.ctx), 5*time.Second)
+	base := context.WithoutCancel(m.ctx)
+	until := time.Now().Add(5 * time.Second)
+	if (m.closed || m.ctx.Err() != nil) && m.ShutdownDeadline != nil {
+		if parent := m.ShutdownDeadline(); parent.Before(until) {
+			until = parent
+		}
+	}
+	if service != nil {
+		if reg := m.registrations[service.Name]; reg != nil {
+			if reg.cleanup != nil {
+				base = reg.cleanup.ctx
+			} else {
+				if !reg.shutdownUntil.IsZero() && reg.shutdownUntil.Before(until) {
+					until = reg.shutdownUntil
+				}
+				if reg.shutdown != nil {
+					base = reg.shutdown
+				}
+			}
+		}
+	}
+	ctx, cancel := context.WithDeadline(base, until)
 	defer cancel()
 	if err := CommitSnapshot(ctx, m.database, &m.snapshot, kind, service); err != nil {
 		m.writeErr = err
@@ -192,7 +227,7 @@ func (m *Manager) Configure(services []Service) error {
 	}
 	m.mu.Unlock()
 	for _, entry := range removed {
-		if err := m.unregister(entry.id, entry.owner); err != nil {
+		if err := m.unregister(entry.id, entry.owner, false); err != nil {
 			return err
 		}
 	}
@@ -250,7 +285,7 @@ func (m *Manager) Reserve(name, owner string, pid int, publicURL string) (string
 		if time.Now().After(current.expires) || m.Alive != nil && !m.Alive(current.pid) {
 			id, previousOwner := service.RegistrationID, current.owner
 			m.mu.Unlock()
-			err := m.unregister(id, previousOwner)
+			err := m.unregister(id, previousOwner, false)
 			m.mu.Lock()
 			if err != nil {
 				return "", err
@@ -287,7 +322,7 @@ func (m *Manager) findLocked(id, owner string) (*Service, *registration) {
 	for index := range m.snapshot.Services {
 		service := &m.snapshot.Services[index]
 		if service.RegistrationID == id {
-			if reg := m.registrations[service.Name]; reg != nil && reg.owner == owner && time.Now().Before(reg.expires) && (m.Alive == nil || m.Alive(reg.pid)) {
+			if reg := m.registrations[service.Name]; reg != nil && !reg.cleanupPending && reg.owner == owner && time.Now().Before(reg.expires) && (m.Alive == nil || m.Alive(reg.pid)) {
 				return service, reg
 			}
 		}
@@ -356,6 +391,7 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 		return nil
 	}
 	if reg.cancel != nil {
+		m.shutdownLocked(reg)
 		service.invalidateRegistration()
 		m.emitLocked("service.replacing", service)
 		reg.cancel()
@@ -364,11 +400,31 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 		<-done
 		m.mu.Lock()
 	}
+	if reg.err != nil {
+		m.retirementErr = errors.Join(m.retirementErr, reg.err)
+		// joining proves the old worker stopped, not that its cleanup succeeded.
+		// retain its exact stopped capability for unregister rather than clearing
+		// the failure and starting another publisher over unconfirmed resources.
+		if !service.Registered || service.Target != target {
+			service.Failure = "runtime.publication_cleanup_failed"
+			m.emitLocked("service.failed", service)
+			m.retirementErr = errors.Join(m.retirementErr, m.writeErr)
+			err := errors.Join(reg.err, m.writeErr)
+			m.mu.Unlock()
+			return err
+		}
+		// a failed publication can retry its still-registered listener without
+		// replacing app ownership. retain that previous failure in retirement.
+	}
 	if err := service.bindListener(boundListener{target: target, framework: framework}); err != nil {
 		m.mu.Unlock()
 		return err
 	}
 	reg.expires = time.Now().Add(LeaseDuration)
+	if !reg.shutdownUntil.IsZero() {
+		reg.finishShutdown()
+	}
+	reg.shutdownUntil = time.Time{}
 	ctx, cancel := context.WithCancel(observability.LinkContext(m.ctx, scheduling))
 	reg.cancel, reg.done = cancel, make(chan struct{})
 	reg.err = nil
@@ -386,14 +442,14 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 	m.mu.Unlock()
 	go func() {
 		defer close(done)
-		err := m.run(ctx, copy, func(run uint64, routable bool) error {
+		err := m.run(ctx, copy, func(update PublicationUpdate) error {
 			m.mu.Lock()
 			defer m.mu.Unlock()
 			current, active := m.findLocked(id, owner)
 			if active == nil || active.done != done || current.Target != copy.Target || ctx.Err() != nil {
 				return ErrRegistrationStale
 			}
-			return m.publishedLocked(id, run, routable)
+			return m.publishedLocked(id, update)
 		})
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -417,13 +473,13 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 	return nil
 }
 
-func (m *Manager) Published(id string, run uint64, routable bool) error {
+func (m *Manager) Published(id string, update PublicationUpdate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.publishedLocked(id, run, routable)
+	return m.publishedLocked(id, update)
 }
 
-func (m *Manager) publishedLocked(id string, run uint64, routable bool) error {
+func (m *Manager) publishedLocked(id string, update PublicationUpdate) error {
 	if m.closed {
 		return ErrRegistrationStale
 	}
@@ -436,7 +492,7 @@ func (m *Manager) publishedLocked(id string, run uint64, routable bool) error {
 		if m.Alive != nil && !m.Alive(reg.pid) {
 			return ErrRegistrationStale
 		}
-		becameRoutable, err := service.publish(publicationUpdate{runNumber: run, routable: routable})
+		becameRoutable, err := service.publish(update)
 		if err != nil {
 			return err
 		}
@@ -598,7 +654,7 @@ func (m *Manager) ServiceForRegistration(id string) (Service, bool) {
 func (m *Manager) Unregister(id, owner string) error {
 	m.op.Lock()
 	defer m.op.Unlock()
-	return m.unregister(id, owner)
+	return m.unregister(id, owner, false)
 }
 
 func (m *Manager) UnregisterTarget(id, owner, target string) error {
@@ -609,7 +665,7 @@ func (m *Manager) UnregisterTarget(id, owner, target string) error {
 		m.mu.Unlock()
 		return outcome.err
 	}
-	service, reg := m.findLocked(id, owner)
+	service, reg := m.findUnregisterLocked(id, owner)
 	if reg == nil || service.Target != "" && service.Target != target ||
 		reg.cleanupTarget != nil && *reg.cleanupTarget != target {
 		m.mu.Unlock()
@@ -619,10 +675,23 @@ func (m *Manager) UnregisterTarget(id, owner, target string) error {
 		reg.cleanupTarget = &target
 	}
 	m.mu.Unlock()
-	return m.unregister(id, owner)
+	return m.unregister(id, owner, true)
 }
 
-func (m *Manager) unregister(id, owner string) error {
+// a stopped allocation retains its exact cleanup capability after SDK lease
+// expiry. this does not make the registration renewable or publication current.
+func (m *Manager) findUnregisterLocked(id, owner string) (*Service, *registration) {
+	if !m.closed {
+		for name, reg := range m.registrations {
+			if service := m.serviceLocked(name); service != nil && service.RegistrationID == id && reg.owner == owner && reg.cleanupPending {
+				return service, reg
+			}
+		}
+	}
+	return m.findLocked(id, owner)
+}
+
+func (m *Manager) unregister(id, owner string, explicit bool) (result error) {
 	m.mu.Lock()
 	var service *Service
 	var reg *registration
@@ -639,11 +708,22 @@ func (m *Manager) unregister(id, owner string) error {
 		m.mu.Unlock()
 		return ErrRegistrationStale
 	}
-	service.invalidateRegistration()
-	service.endPublication()
-	m.emitLocked("service.unregistered", service)
-	if reg.cancel != nil {
-		reg.cancel()
+	retry := reg.cleanupPending
+	if retry && (!explicit || m.closed || m.ctx.Err() != nil) && !time.Now().Before(reg.shutdownUntil) {
+		// automatic cleanup exhausted its one budget. retain the exact failure
+		// and allocation without appending another identical failure per sweep.
+		err := reg.cleanupFailure
+		m.mu.Unlock()
+		return err
+	}
+	if !retry {
+		m.shutdownLocked(reg)
+		service.invalidateRegistration()
+		service.endPublication()
+		m.emitLocked("service.unregistered", service)
+		if reg.cancel != nil {
+			reg.cancel()
+		}
 	}
 	done := reg.done
 	stopped := *service
@@ -653,29 +733,68 @@ func (m *Manager) unregister(id, owner string) error {
 	}
 	m.mu.Lock()
 	runErr := reg.err
+	if !retry && !time.Now().Before(reg.shutdownUntil) {
+		reg.stopShutdown(context.DeadlineExceeded)
+	}
+	if cause := context.Cause(reg.shutdown); !retry && errors.Is(cause, context.DeadlineExceeded) {
+		runErr = errors.Join(runErr, cause)
+	}
 	reg.err = nil
 	m.retirementErr = errors.Join(m.retirementErr, runErr)
+	base, until := reg.shutdown, reg.shutdownUntil
+	detached := retry && explicit && !m.closed && m.ctx.Err() == nil
+	if detached {
+		// an explicit retry joins a new cleanup operation, not another turn of
+		// the automatic shutdown loop. never change the original worker fence.
+		base, until = context.WithoutCancel(m.ctx), time.Now().Add(10*time.Second)
+		if !reg.retryUntil.IsZero() && reg.retryUntil.Before(until) {
+			until = reg.retryUntil
+		}
+		reg.retryUntil = time.Time{}
+	}
+	cleanup := m.beginCleanupLocked(reg, base, until, detached)
 	m.mu.Unlock()
+	defer func() {
+		if cause := m.finishCleanup(reg, cleanup); cause != nil {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			m.retirementErr = errors.Join(m.retirementErr, cause)
+			result = errors.Join(result, cause)
+			if outcome, stopped := m.stopped[id]; stopped {
+				if !errors.Is(result, ErrRegistrationStopped) {
+					result = errors.Join(ErrRegistrationStopped, result)
+				}
+				outcome.err = result
+				m.stopped[id] = outcome
+			}
+		}
+	}()
 	var cleanupErr error
 	if m.Cleanup != nil {
-		cleanupErr = m.Cleanup(stopped)
+		cleanupErr = errors.Join(m.Cleanup(stopped), context.Cause(cleanup.ctx))
 		if cleanupErr != nil && !errors.Is(cleanupErr, ErrCleanupPermanent) {
+			m.mu.Lock()
+			reg.cleanupPending = true
+			reg.cleanupFailure = errors.Join(runErr, cleanupErr)
+			m.retirementErr = errors.Join(m.retirementErr, cleanupErr)
+			m.mu.Unlock()
 			return errors.Join(runErr, cleanupErr)
 		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.registrations, service.Name)
 	service.releaseRegistration()
-	if len(m.registrations) == 0 {
-		m.idleSince = time.Now()
-	}
 	if cleanupErr != nil {
 		service.Failure = "runtime.publication_cleanup_failed"
 	}
 	m.emitLocked("service.stopped", service)
+	reg.finishShutdown()
+	delete(m.registrations, service.Name)
+	if len(m.registrations) == 0 {
+		m.idleSince = time.Now()
+	}
 	m.retirementErr = errors.Join(m.retirementErr, cleanupErr, m.writeErr)
-	result := errors.Join(runErr, cleanupErr, m.writeErr)
+	result = errors.Join(runErr, cleanupErr, m.writeErr)
 	if result != nil {
 		result = errors.Join(ErrRegistrationStopped, result)
 	}
@@ -788,6 +907,31 @@ func (m *Manager) TargetChanged(name, id, target string) {
 	}
 	if service.invalidateTarget(time.Now().UTC()) {
 		m.emitLocked("service.readiness", service)
+		if changed := m.targetChanges[id]; changed != nil {
+			select {
+			case changed <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+// the run owner joins its current probe before acting on a replacement event.
+// a coalesced event means check the latest target, not replay each old identity.
+func (m *Manager) watchTargetChanges(id string) (<-chan struct{}, func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.targetChanges == nil {
+		m.targetChanges = map[string]chan struct{}{}
+	}
+	changed := make(chan struct{}, 1)
+	m.targetChanges[id] = changed
+	return changed, func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.targetChanges[id] == changed {
+			delete(m.targetChanges, id)
+		}
 	}
 }
 
@@ -826,6 +970,13 @@ func (m *Manager) close() {
 	type entry struct{ id, owner string }
 	var entries []entry
 	for name, reg := range m.registrations {
+		m.shutdownLocked(reg)
+		if reg.cleanup != nil && m.ShutdownDeadline != nil {
+			reg.cleanup.limit(m.ShutdownDeadline())
+		}
+		if reg.cancel != nil {
+			reg.cancel()
+		}
 		entries = append(entries, entry{m.serviceLocked(name).RegistrationID, reg.owner})
 	}
 	m.mu.Unlock()
@@ -839,4 +990,150 @@ func (m *Manager) close() {
 	m.mu.Lock()
 	m.emitLocked("runtime.stopped", nil)
 	m.mu.Unlock()
+}
+
+// shutdownLocked records the first stop's deadline before canceling its worker.
+func (m *Manager) shutdownLocked(reg *registration) time.Time {
+	var parent time.Time
+	if (m.closed || m.ctx.Err() != nil) && m.ShutdownDeadline != nil {
+		parent = m.ShutdownDeadline()
+	}
+	until := reg.shutdownUntil
+	if until.IsZero() {
+		until = time.Now().Add(10 * time.Second)
+	}
+	if !parent.IsZero() && parent.Before(until) {
+		until = parent
+	}
+	m.limitShutdownLocked(reg, until)
+	return reg.shutdownUntil
+}
+
+// the registration owns this fence before its first stop. a tighter limit
+// interrupts contexts already handed to service drain and allocation cleanup.
+func (m *Manager) shutdownContextLocked(reg *registration) context.Context {
+	if reg.shutdown == nil {
+		reg.shutdown, reg.stopShutdown = context.WithCancelCause(context.WithoutCancel(m.ctx))
+	}
+	return reg.shutdown
+}
+
+func (m *Manager) limitShutdownLocked(reg *registration, until time.Time) {
+	m.shutdownContextLocked(reg)
+	if !reg.shutdownUntil.IsZero() && !until.Before(reg.shutdownUntil) {
+		return
+	}
+	reg.stopShutdownTimer()
+	reg.shutdownUntil = until
+	done, cancel := make(chan struct{}), reg.stopShutdown
+	reg.shutdownDone = done
+	reg.shutdownTimer = time.AfterFunc(time.Until(until), func() {
+		defer close(done)
+		cancel(context.DeadlineExceeded)
+	})
+	if !time.Now().Before(until) {
+		cancel(context.DeadlineExceeded)
+	}
+}
+
+func (reg *registration) stopShutdownTimer() {
+	if reg.shutdownTimer != nil {
+		if reg.shutdownTimer.Stop() {
+			close(reg.shutdownDone)
+		}
+		<-reg.shutdownDone
+		reg.shutdownTimer, reg.shutdownDone = nil, nil
+	}
+}
+
+func (reg *registration) finishShutdown() {
+	reg.stopShutdownTimer()
+	if reg.stopShutdown != nil {
+		reg.stopShutdown(context.Canceled)
+	}
+	reg.shutdown, reg.stopShutdown = nil, nil
+}
+
+// PublicationShutdownContext does not start a budget. its exact registration's
+// owner cancels it with DeadlineExceeded when the current stop limit expires.
+func (m *Manager) PublicationShutdownContext(id string) context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for name, reg := range m.registrations {
+		if service := m.serviceLocked(name); service != nil && service.RegistrationID == id {
+			return m.shutdownContextLocked(reg)
+		}
+	}
+	return context.WithoutCancel(m.ctx)
+}
+
+// PublicationCleanupContext is borrowed only by the manager's joined Cleanup
+// callback. explicit retries can own a new bound without reviving the worker or
+// extending its original automatic shutdown fence.
+func (m *Manager) PublicationCleanupContext(id string) context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for name, reg := range m.registrations {
+		if service := m.serviceLocked(name); service != nil && service.RegistrationID == id && reg.cleanup != nil {
+			return reg.cleanup.ctx
+		}
+	}
+	ctx, cancel := context.WithCancel(context.WithoutCancel(m.ctx))
+	cancel()
+	return ctx
+}
+
+// PublicationShutdownDeadline keeps worker drain, automatic cleanup, and its terminal
+// journal on the registration's original budget. an unbound local journal still
+// needs a cleanup budget; this value grants no registration or serving authority.
+func (m *Manager) PublicationShutdownDeadline(id string) time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for name, reg := range m.registrations {
+		if service := m.serviceLocked(name); service != nil && service.RegistrationID == id {
+			return m.shutdownLocked(reg)
+		}
+	}
+	until := time.Now().Add(10 * time.Second)
+	if (m.closed || m.ctx.Err() != nil) && m.ShutdownDeadline != nil {
+		if parent := m.ShutdownDeadline(); parent.Before(until) {
+			until = parent
+		}
+	}
+	return until
+}
+
+// LimitShutdown narrows an exact registration's stop deadline at the private API.
+// retained cleanup selects a separate explicit retry budget instead. neither
+// operation extends the original automatic stop or changes its target.
+func (m *Manager) LimitShutdown(id, owner, target string, until time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, found := m.stoppedOutcomeLocked(id, owner, target); found {
+		return nil
+	}
+	service, reg := m.findUnregisterLocked(id, owner)
+	if reg == nil || service.Target != "" && service.Target != target || reg.cleanupTarget != nil && *reg.cleanupTarget != target {
+		return ErrRegistrationStale
+	}
+	if reg.cleanupPending {
+		if reg.cleanup != nil {
+			reg.cleanup.limit(until)
+			if !reg.cleanup.detached && until.Before(reg.shutdownUntil) {
+				m.limitShutdownLocked(reg, until)
+			}
+			return nil
+		}
+		// this only selects the next explicit retry's bound. sweeps and process
+		// shutdown continue using the original automatic deadline.
+		if reg.retryUntil.IsZero() || until.Before(reg.retryUntil) {
+			reg.retryUntil = until
+		}
+		return nil
+	}
+	current := m.shutdownLocked(reg)
+	if until.Before(current) {
+		m.limitShutdownLocked(reg, until)
+	}
+	return nil
 }

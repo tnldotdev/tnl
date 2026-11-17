@@ -19,21 +19,18 @@ func aliasTestScope(t *testing.T) AliasScope {
 
 func aliasTestTunnel(t *testing.T, state *Database, scope AliasScope, project, label string, ready bool) (*Tunnel, AliasSelection) {
 	t.Helper()
+	id, err := opaqueid.New(opaqueid.ServicePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tunnel, err := state.BeginTunnel(t.Context(), BeginTunnelOptions{
-		Command: TunnelCommandPublish, Server: scope.Server, Project: project, Service: "api", Target: "3000",
+		Command: TunnelCommandPublish, Server: scope.Server, Project: project, Service: "api", ServiceID: id, Target: "3000",
 		IntegrationScope: IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: scope.Namespace},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
-	id, err := opaqueid.New(opaqueid.PublicURLPrefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tunnel.SetPublicURL(t.Context(), id, label+"."+scope.Namespace); err != nil {
-		t.Fatal(err)
-	}
 	if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +120,7 @@ func TestAliasSelectionPersistsAcrossServiceRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, receiver, err := other.AliasCandidate(t.Context(), initial.ID)
-	if err != nil || current.Project != project || receiver.ID != restarted.ID() {
+	if err != nil || current.Project != project || receiver.ID != restarted.ID() || receiver.ServiceID == "" {
 		t.Fatalf("restarted selected receiver = %q, %v", receiver.ID, err)
 	}
 }
@@ -173,6 +170,14 @@ func TestAliasRegistrationMatchesExplicitIntegrationScope(t *testing.T) {
 	unchanged, err := state.AliasSelection(t.Context(), scope)
 	if err != nil || unchanged != initial {
 		t.Fatalf("rejected registration changed the original selection: %#v, %v", unchanged, err)
+	}
+	if err := tunnel.SetIntegrationScope(t.Context(), IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: "reassigned." + scope.Namespace}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{initial.ID, selected.ID} {
+		if _, _, err := state.AliasCandidate(t.Context(), id); !errors.Is(err, ErrAliasReceiverUnavailable) {
+			t.Fatalf("alias retained a receiver reassigned to another integration scope: %v", err)
+		}
 	}
 }
 

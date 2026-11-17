@@ -4,8 +4,6 @@ import (
 	"context"
 
 	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // RemoteRuntime is called only by an actual deployed runtime owner, never while
@@ -25,12 +23,4 @@ func (n *Native) renewRuntime(ctx context.Context) error {
 	}
 	_, err := n.runtime.Renew(ctx)
 	return err
-}
-
-func (n *Native) HeartbeatPublishRun(ctx context.Context, id string, number uint64, token credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
-	r, err := n.NativeControl.HeartbeatPublishRun(ctx, id, number, token)
-	if err == nil {
-		err = n.renewRuntime(ctx)
-	}
-	return r, err
 }

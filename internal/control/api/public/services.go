@@ -8,19 +8,29 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type serviceVisitorStore interface {
-	CreateServiceAt(context.Context, string, string, string, string, controlstate.ServicePlacement, time.Time, controlstate.ServiceMetadata) (controlstate.ServiceRecord, error)
-	ConfigureService(context.Context, string, string, controlstate.ServiceMetadata, time.Time) (controlstate.ServiceRecord, error)
+	CreateServiceAt(context.Context, string, string, string, string, controlstate.ServicePlacement, time.Time, controlstate.ServiceMetadata, *controlstate.ProjectServiceConfiguration) (controlstate.ServiceRecord, error)
+	ConfigureService(context.Context, string, string, controlstate.ServiceMetadata, *controlstate.ProjectServiceConfiguration, controlstate.ServiceUpdateConditions, time.Time) (controlstate.ServiceRecord, error)
 	GetService(context.Context, string, string) (controlstate.ServiceRecord, error)
-	DeleteService(context.Context, string, string, time.Time) error
+	GetServiceConfiguration(context.Context, string, string) (*controlstate.ProjectServiceConfiguration, string, error)
+	DeleteService(context.Context, string, string, controlstate.ServiceDeleteConditions, time.Time) error
+	DeleteGuestService(context.Context, string, controlstate.GuestCredential, time.Time) error
+	SetServiceEnabled(context.Context, string, string, bool, time.Time) (controlstate.ServiceRecord, error)
+	ReleaseServiceEndpoint(context.Context, string, string, int64, int, time.Time) (controlstate.ServiceRecord, error)
 	CreateServiceGrant(context.Context, string, string, string, string, string, *time.Time, time.Time) (controlstate.ServiceGrant, error)
 	ListServiceGrants(context.Context, string, string, string) ([]controlstate.ServiceGrant, string, error)
 	RevokeServiceGrant(context.Context, string, string, string, time.Time) error
@@ -29,7 +39,7 @@ type serviceVisitorStore interface {
 	AcceptServiceInvitation(context.Context, string, string, time.Time) (controlstate.ServiceGrant, error)
 	RevokeServiceInvitation(context.Context, string, string, string, time.Time) error
 	ListServices(context.Context, string, string, string) ([]controlstate.ServiceRecord, string, error)
-	ListAvailableServices(context.Context, string, string, time.Time) ([]controlstate.ServiceInventory, string, error)
+	ListAvailableServices(context.Context, string, string, controlv1.ServiceAccessPath, time.Time) ([]controlstate.ServiceInventory, string, error)
 	EnrollVisitorDevice(context.Context, string, ed25519.PublicKey, time.Time) (controlstate.VisitorDevice, error)
 	RevokeVisitorDevice(context.Context, string, string, time.Time) error
 	SelectServiceRun(context.Context, string, string, string, time.Time) (controlstate.ServiceSelection, error)
@@ -49,11 +59,27 @@ func (h *handler) serviceVisitor(w http.ResponseWriter, r *http.Request) (servic
 }
 
 func serviceVisitorError(ctx context.Context, w http.ResponseWriter, operation string, err error) {
+	var hostname *controlstate.ServiceHostnameError
+	if errors.As(err, &hostname) && hostname != nil {
+		namespace, validation := naming.CanonicalizeHostname(hostname.Namespace)
+		if failure.Only(err, hostname) && validation == nil && namespace == hostname.Namespace {
+			title := hostname.Error()
+			failureproblem.WriteWithDetails(w, http.StatusNotFound, string(controlv1.NotFound), title, title, "",
+				map[string]any{"allowed_namespace": namespace})
+		} else {
+			writeInternalStateProblem(ctx, w, operation, err)
+		}
+		return
+	}
 	switch {
 	case errors.Is(err, controlstate.ErrProjectConfigurationInvalid):
-		writeProblem(w, 400, controlv1.InvalidRequest, "select a ready team domain and a valid source-bound worktree placement")
-	case errors.Is(err, controlstate.ErrServiceAccess):
+		writeProblem(w, 400, controlv1.InvalidRequest, "provide a valid service declaration and select a ready team domain")
+	case failure.Only(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 404, controlv1.NotFound, "service not found or unavailable")
+	case errors.Is(err, controlstate.ErrServiceEndpointPublic):
+		writeProblem(w, 409, controlv1.Conflict, "disable public access in the service binding and apply before releasing its reservation")
+	case errors.Is(err, controlstate.ErrServiceEndpointDNSPending):
+		writeProblem(w, 409, controlv1.Conflict, "managed endpoint DNS cleanup is incomplete; wait for cleanup and retry")
 	case errors.Is(err, controlstate.ErrServiceConflict):
 		writeProblem(w, 409, controlv1.Conflict, "service state or idempotency key conflicts with this request; read the current service and retry")
 	default:
@@ -75,12 +101,51 @@ func targetTLSInput(t *controlv1.ServiceTargetTLS) *controlstate.ServiceTargetTL
 	return &controlstate.ServiceTargetTLS{Hostname: t.Hostname, System: t.System, Digest: t.Digest, PEM: optionalFeedbackString(t.Pem)}
 }
 
+func decodeServiceConfiguration(raw json.RawMessage) (*controlstate.ProjectServiceConfiguration, error) {
+	// check presence before optional generated pointers can erase supplied nulls.
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := httpjson.Decode(decoder, &value); err != nil {
+		return nil, err
+	}
+	if err := config.RejectNullValues(value); err != nil {
+		return nil, err
+	}
+	var declaration controlv1.ProjectServiceConfiguration
+	if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), &declaration); err != nil {
+		return nil, err
+	}
+	// config.Access owns the same normalized value for api and project input.
+	encoded, err := json.Marshal(declaration)
+	if err != nil {
+		return nil, err
+	}
+	var configuration controlstate.ProjectServiceConfiguration
+	if err := json.Unmarshal(encoded, &configuration); err != nil {
+		return nil, err
+	}
+	return &configuration, nil
+}
+
+func writeServiceDeclarationProblem(w http.ResponseWriter, err error) {
+	title := "invalid service declaration"
+	if errors.Is(err, authorization.ErrIPPrefixLimit) {
+		title = "configuration.http.access.ip: " + authorization.ErrIPPrefixLimit.Error()
+	}
+	writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, title)
+}
+
 func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
 	var body struct {
-		ExpectedTrustRevision int64                     `json:"expected_trust_revision,string"`
-		Protocol              controlv1.ServiceProtocol `json:"protocol"`
-		PublisherPool         *bool                     `json:"publisher_pool"`
-		TargetTLS             json.RawMessage           `json:"target_tls"`
+		ExpectedTrustRevision       int64                     `json:"expected_trust_revision,string"`
+		Protocol                    controlv1.ServiceProtocol `json:"protocol"`
+		PublisherPool               *bool                     `json:"publisher_pool"`
+		TargetTLS                   json.RawMessage           `json:"target_tls"`
+		Configuration               json.RawMessage           `json:"configuration"`
+		ExpectedConfigurationDigest json.RawMessage           `json:"expected_configuration_digest"`
+		UnconditionalConfiguration  json.RawMessage           `json:"unconditional_configuration"`
+		ExpectedPublisherPool       json.RawMessage           `json:"expected_publisher_pool"`
 	}
 	if decodeJSONLimited(w, r, &body, 2<<20) != nil ||
 		body.ExpectedTrustRevision < 1 ||
@@ -105,7 +170,44 @@ func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id co
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service protocol or TLS trust")
 		return
 	}
-	record, err := store.ConfigureService(r.Context(), id, identity, metadata, time.Now())
+	var configuration *controlstate.ProjectServiceConfiguration
+	if len(body.Configuration) > 0 {
+		decoded, err := decodeServiceConfiguration(body.Configuration)
+		if err != nil {
+			writeServiceDeclarationProblem(w, err)
+			return
+		}
+		configuration = decoded
+	}
+	conditions := controlstate.ServiceUpdateConditions{}
+	if len(body.ExpectedConfigurationDigest) > 0 {
+		if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(body.ExpectedConfigurationDigest)), &conditions.ConfigurationDigest); err != nil ||
+			configuration == nil || !controlstate.ValidServiceConfigurationDigest(conditions.ConfigurationDigest) {
+			writeProblem(w, 400, controlv1.InvalidRequest, "send a valid expected_configuration_digest only with configuration")
+			return
+		}
+	}
+	if len(body.UnconditionalConfiguration) > 0 {
+		var unconditional *bool
+		if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(body.UnconditionalConfiguration)), &unconditional); err != nil ||
+			unconditional == nil || !*unconditional {
+			writeProblem(w, 400, controlv1.InvalidRequest, "send unconditional_configuration: true or omit it")
+			return
+		}
+		conditions.UnconditionalConfiguration = true
+	}
+	if conditions.ValidateConfiguration(configuration != nil) != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "configuration requires exactly one of expected_configuration_digest or unconditional_configuration: true")
+		return
+	}
+	if len(body.ExpectedPublisherPool) > 0 {
+		if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(body.ExpectedPublisherPool)), &conditions.PublisherPool); err != nil ||
+			conditions.PublisherPool == nil {
+			writeProblem(w, 400, controlv1.InvalidRequest, "send a boolean expected_publisher_pool or omit it")
+			return
+		}
+	}
+	record, err := store.ConfigureService(r.Context(), id, identity, metadata, configuration, conditions, time.Now())
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "update service", err)
 		return
@@ -115,7 +217,14 @@ func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id co
 
 func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ controlv1.CreateServiceParams) {
 	var body controlv1.CreateServiceRequest
-	if decodeJSONLimited(w, r, &body, 2<<20) != nil || r.Header.Get("Idempotency-Key") == "" {
+	var raw json.RawMessage
+	if decodeJSONLimited(w, r, &raw, 2<<20) != nil ||
+		httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), &body) != nil || r.Header.Get("Idempotency-Key") == "" {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service request")
+		return
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || fields == nil || bytes.Equal(bytes.TrimSpace(fields["reserve"]), []byte("null")) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service request")
 		return
 	}
@@ -123,29 +232,47 @@ func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ contro
 	if !ok {
 		return
 	}
-	metadata := controlstate.ServiceMetadata{Protocol: "tcp", TLS: targetTLSInput(body.TargetTls)}
+	var configuration *controlstate.ProjectServiceConfiguration
+	if rawConfiguration, present := fields["configuration"]; present {
+		decoded, err := decodeServiceConfiguration(rawConfiguration)
+		if err != nil {
+			writeServiceDeclarationProblem(w, err)
+			return
+		}
+		configuration = decoded
+	}
+	metadata := controlstate.ServiceMetadata{TLS: targetTLSInput(body.TargetTls)}
+	if configuration == nil {
+		metadata.Protocol = "tcp"
+	}
 	if body.Protocol != nil {
 		metadata.Protocol = string(*body.Protocol)
 	}
 	if body.PublisherPool != nil {
 		metadata.PublisherPool = *body.PublisherPool
 	}
-	if metadata.Validate() != nil {
+	if configuration == nil && metadata.Validate() != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service protocol or TLS trust")
 		return
 	}
 	placement := controlstate.ServicePlacement{DNSAutomation: h.config.DNSAutomation}
+	placement.Reserve = body.Reserve != nil && *body.Reserve
 	if body.Placement != nil {
 		placement.DomainID = optionalFeedbackString(body.Placement.DomainId)
+		placement.Hostname = optionalFeedbackString(body.Placement.Hostname)
 		placement.WorktreeKey = optionalFeedbackString(body.Placement.WorktreeKey)
 		placement.WorktreeLabel = optionalFeedbackString(body.Placement.WorktreeLabel)
 	}
-	record, err := store.CreateServiceAt(r.Context(), body.TeamId, identity, body.Name, r.Header.Get("Idempotency-Key"), placement, time.Now(), metadata)
+	record, err := store.CreateServiceAt(r.Context(), body.TeamId, identity, body.Name, r.Header.Get("Idempotency-Key"), placement, time.Now(), metadata, configuration)
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "create service", err)
 		return
 	}
-	writeJSON(w, 201, serviceaccess.Service(record))
+	status := http.StatusCreated
+	if record.Recovered {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, serviceaccess.Service(record))
 }
 
 func (h *handler) ListServices(w http.ResponseWriter, r *http.Request, params controlv1.ListServicesParams) {
@@ -173,6 +300,7 @@ func (h *handler) ListServices(w http.ResponseWriter, r *http.Request, params co
 }
 
 func (h *handler) GetService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
+	w.Header().Set("Cache-Control", "no-store")
 	store, identity, ok := h.serviceVisitor(w, r)
 	if !ok {
 		return
@@ -185,13 +313,32 @@ func (h *handler) GetService(w http.ResponseWriter, r *http.Request, id controlv
 	writeJSON(w, 200, serviceaccess.Service(record))
 }
 
-func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request) {
-	_, publisher, ok := h.authenticatePublisher(w, r)
+func (h *handler) GetServiceConfiguration(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
+	w.Header().Set("Cache-Control", "no-store")
+	store, identity, ok := h.serviceVisitor(w, r)
 	if !ok {
 		return
 	}
-	if publisher.Scope.Kind != "service" {
-		writeProblem(w, 404, controlv1.NotFound, "service not found")
+	declaration, digest, err := store.GetServiceConfiguration(r.Context(), id, identity)
+	if err != nil {
+		serviceVisitorError(r.Context(), w, "get service configuration", err)
+		return
+	}
+	if !controlstate.ValidServiceConfigurationDigest(digest) {
+		writeProblem(w, 503, controlv1.Unavailable, "service configuration is unavailable")
+		return
+	}
+	w.Header().Set("ETag", strconv.Quote(digest))
+	if declaration == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, declaration)
+}
+
+func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID) {
+	_, publisher, ok := h.authenticatePublisher(w, r)
+	if !ok {
 		return
 	}
 	store, ok := h.dependencies.Services, h.dependencies.Services != nil
@@ -199,7 +346,7 @@ func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 503, controlv1.Unavailable, "service state is unavailable")
 		return
 	}
-	record, err := store.GetServiceForPublisher(r.Context(), publisher.Scope.ServiceID, publisher, time.Now())
+	record, err := store.GetServiceForPublisher(r.Context(), serviceID, publisher, time.Now())
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "read publisher service", err)
 		return
@@ -208,16 +355,71 @@ func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, serviceaccess.Service(record))
 }
 
-func (h *handler) DeleteService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
+func (h *handler) DeleteService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, params controlv1.DeleteServiceParams) {
+	credential, guest, proceed := h.guestServiceCredential(w, r)
+	if !proceed {
+		return
+	}
+	if guest {
+		store := h.dependencies.Services
+		if store == nil {
+			writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "services are unavailable")
+			return
+		}
+		if params.ExpectedServiceRevision != nil || params.UnconditionalDelete != nil {
+			writeProblem(w, 400, controlv1.InvalidRequest, "guest cleanup uses its exact trial credential, not management deletion conditions")
+			return
+		}
+		if err := store.DeleteGuestService(r.Context(), id, credential, time.Now()); err != nil {
+			guestProblem(r.Context(), w, "delete guest service", err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	store, identity, ok := h.serviceVisitor(w, r)
 	if !ok {
 		return
 	}
-	if err := store.DeleteService(r.Context(), id, identity, time.Now()); err != nil {
+	conditions := controlstate.ServiceDeleteConditions{}
+	if params.ExpectedServiceRevision != nil {
+		conditions.Revision = *params.ExpectedServiceRevision
+	}
+	if params.UnconditionalDelete != nil {
+		conditions.Unconditional = *params.UnconditionalDelete
+	}
+	if (params.ExpectedServiceRevision != nil) == (params.UnconditionalDelete != nil) ||
+		conditions.Validate() != nil ||
+		params.UnconditionalDelete != nil && (!*params.UnconditionalDelete || r.URL.Query().Get("unconditional_delete") != "true") ||
+		params.ExpectedServiceRevision != nil && strconv.FormatInt(*params.ExpectedServiceRevision, 10) != r.URL.Query().Get("expected_service_revision") ||
+		len(r.URL.Query()["expected_service_revision"]) > 1 || len(r.URL.Query()["unconditional_delete"]) > 1 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "send exactly one of expected_service_revision or unconditional_delete=true")
+		return
+	}
+	if err := store.DeleteService(r.Context(), id, identity, conditions, time.Now()); err != nil {
 		serviceVisitorError(r.Context(), w, "delete service", err)
 		return
 	}
 	w.WriteHeader(204)
+}
+
+func (h *handler) ReleaseServiceEndpoint(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
+	var body controlv1.ReleaseServiceEndpointRequest
+	if decodeJSON(w, r, &body) != nil || body.ExpectedEndpointRevision < 1 || body.ExpectedPort < 1024 || body.ExpectedPort > 65535 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "send the current endpoint revision and exact reserved port")
+		return
+	}
+	store, identity, ok := h.serviceVisitor(w, r)
+	if !ok {
+		return
+	}
+	record, err := store.ReleaseServiceEndpoint(r.Context(), id, identity, body.ExpectedEndpointRevision, body.ExpectedPort, time.Now())
+	if err != nil {
+		serviceVisitorError(r.Context(), w, "release service endpoint", err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, serviceaccess.Service(record))
 }
 
 func (h *handler) CreateServiceGrant(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, _ controlv1.CreateServiceGrantParams) {
@@ -348,6 +550,14 @@ func (h *handler) RevokeServiceInvitation(w http.ResponseWriter, r *http.Request
 }
 
 func (h *handler) ListAvailableServices(w http.ResponseWriter, r *http.Request, params controlv1.ListAvailableServicesParams) {
+	path := controlv1.ServiceAccessPathConnector
+	if params.AccessPath != nil {
+		path = *params.AccessPath
+	}
+	if !path.Valid() {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service access path")
+		return
+	}
 	store, identity, ok := h.serviceVisitor(w, r)
 	if !ok {
 		return
@@ -356,15 +566,21 @@ func (h *handler) ListAvailableServices(w http.ResponseWriter, r *http.Request, 
 	if params.Cursor != nil {
 		cursor = *params.Cursor
 	}
-	rows, next, err := store.ListAvailableServices(r.Context(), identity, cursor, time.Now())
+	rows, next, err := store.ListAvailableServices(r.Context(), identity, cursor, path, time.Now())
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "list available services", err)
 		return
 	}
 	page := controlv1.ServicePage{Services: make([]controlv1.ServiceSummary, 0, len(rows))}
 	for _, row := range rows {
-		entry := serviceaccess.Summary(controlstate.ServiceRecord{ID: row.ID, TeamID: row.TeamID, Name: row.Name, Enabled: true, CreatedAt: row.CreatedAt, ServiceMetadata: row.ServiceMetadata})
-		entry.KubernetesAuth = row.KubernetesAuth
+		entry := controlv1.ServiceSummary{Id: row.ID, TeamId: row.TeamID, TeamName: row.TeamName, Name: row.Name,
+			Enabled: true, CreatedAt: row.CreatedAt, Protocol: controlv1.ServiceProtocol(row.Protocol),
+			PublisherPool: row.PublisherPool, TrustRevision: row.TrustRevision, KubernetesAuth: row.KubernetesAuth,
+			RequirePostQuantum: row.RequirePostQuantum,
+			VisitorAccess:      controlv1.ServiceSummaryVisitorAccess(row.VisitorAccess)}
+		if endpoint := row.Endpoint; endpoint != nil {
+			entry.Endpoint = &controlv1.ServiceEndpoint{Hostname: endpoint.Hostname, Port: endpoint.Port, Public: endpoint.Public}
+		}
 		if row.ServiceRunID != "" {
 			entry.ServiceRunId, entry.RunNumber = &row.ServiceRunID, &row.RunNumber
 		}

@@ -111,16 +111,12 @@ export type UpdateDeploymentRequest = {
 
 export type DeploymentService = {
   /**
-   * The bound saved service or public URL ID.
+   * The bound service ID.
    */
   id: ResourceId;
   protocol: ServiceProtocol;
   trust_revision: number;
   endpoint?: ServiceEndpoint;
-  /**
-   * The saved HTTP public URL when this binding uses one rather than a private service endpoint.
-   */
-  public_url?: string;
 };
 
 export type Deployment = {
@@ -207,7 +203,7 @@ export type PublisherRuntimeStatus = {
 export type ServiceProtocol = "http" | "tcp" | "mysql" | "postgres" | "kubernetes";
 
 /**
- * Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+ * Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
  */
 export type ServiceEndpoint = {
   hostname: string;
@@ -235,7 +231,6 @@ export type ProblemCode =
   | "unavailable"
   | "internal"
   | "name_unavailable"
-  | "publish_run_open"
   | "policy_revision_stale"
   | "dns_setup_pending"
   | "placement_unavailable"
@@ -250,6 +245,9 @@ export type Problem = {
   request_id: string;
   detail: string;
   retry_at?: string;
+  /**
+   * Optional code-specific diagnostic fields. A not_found problem with HTTP status 404 may include allowed_namespace, a canonical ASCII hostname of at most 253 bytes from the current actor's authorized namespace. It is omitted after membership loss and when the namespace denial includes an independent fault. It never identifies the rejected hostname's owner or whether a foreign service exists. Clients must validate this field before displaying it and ignore unknown detail keys.
+   */
   details?: {
     [key: string]: unknown;
   };

@@ -33,20 +33,20 @@ var standaloneRelays = [...]struct {
 }
 
 type standaloneSettings struct {
-	control                 controlSettings
-	publicListen            string
-	publicListener          net.Listener
-	relayUDPListen          string
-	relayUDPPacket          net.PacketConn
-	quic                    muxsession.QUICConfig
-	serverHostname          string
-	relayHostname           string
-	relayTransportTLS       *tls.Config
-	ingressLeaseDuration    time.Duration
-	relayLeaseDuration      time.Duration
-	ingress                 ingressSettings
-	relay                   relaySettings
-	configurePublicServices func(*ingress.PublicServicesConfig)
+	control              controlSettings
+	publicListen         string
+	publicListener       net.Listener
+	relayUDPListen       string
+	relayUDPPacket       net.PacketConn
+	quic                 muxsession.QUICConfig
+	serverHostname       string
+	relayHostname        string
+	relayTransportTLS    *tls.Config
+	ingressLeaseDuration time.Duration
+	relayLeaseDuration   time.Duration
+	ingress              ingressSettings
+	relay                relaySettings
+	configureIngress     func(*ingress.Config)
 }
 
 func standaloneSettingsFrom(cfg daemonconfig.Config) standaloneSettings {
@@ -141,19 +141,12 @@ func (d *daemon) startStandalone(
 			}
 			return runtime.connector, true
 		},
-		Private: &relay.ServicePublisherAcceptor{Select: func(id string) (relay.ServicePublisherTarget, bool) {
+		Select: func(id string) (relay.ServicePublisherTarget, bool) {
 			runtime, ok := targets[id]
 			if !ok {
 				return relay.ServicePublisherTarget{}, false
 			}
 			return relay.ServicePublisherTarget{Control: runtime.controller, Registry: runtime.serviceRegistry}, true
-		}},
-		Select: func(relayServiceID string) (relay.PublisherConnectionController, *relay.Registry, bool) {
-			runtime, ok := targets[relayServiceID]
-			if !ok {
-				return nil, nil, false
-			}
-			return runtime.controller, runtime.registry, true
 		},
 		ReadyConnectionsDelta: func(delta int) { metrics.AddReadyPublisherConnections(delta) },
 		ConnectionExited:      func(unexpected bool) { metrics.ObservePublisherExit(unexpected) },
@@ -179,11 +172,14 @@ func (d *daemon) startStandalone(
 	}
 	if err := d.startIngressRuntime(ctx, settings.ingress, metrics, ingressRuntimeConfig{
 		client: ingressClient, ingressID: standaloneIngressID, listener: publicListener,
-		clusterSecret: d.clusterSecret, configurePublicServices: settings.configurePublicServices,
+		clusterSecret: d.clusterSecret,
 		configure: func(ingressConfig *ingress.Config) {
 			// only publisher transport is handed off from raw visitor ingress.
 			ingressConfig.RelayHostname = settings.relayHostname
 			ingressConfig.HandleRelay = relayListener.Enqueue
+			if settings.configureIngress != nil {
+				settings.configureIngress(ingressConfig)
+			}
 		},
 	}); err != nil {
 		return err

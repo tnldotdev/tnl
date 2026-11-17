@@ -83,13 +83,36 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeResponse" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publisher/service:
+  /v1/publisher/services/{service_id}:
+    delete:
+      operationId: deletePublisherService
+      tags: [services]
+      summary: Delete this credential's exact temporary service allocation
+      description: Requires the durable allocation owner and current publication permission. Named or sibling services cannot be deleted through this operation.
+      security: [{ publisherAuth: [] }]
+      parameters:
+        - {
+            name: service_id,
+            in: path,
+            required: true,
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceID" },
+          }
+      responses:
+        "204": { description: Temporary service removed }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     get:
       operationId: getPublisherService
       tags: [publisher-identities]
-      summary: Read the saved service selected by the current publisher grant
+      summary: Read one service covered by the current publisher grant
       security: [{ publisherAuth: [] }]
-      description: Read the exact granted service's approved protocol and public TLS trust metadata. The publisher must declare its own matching configuration when preparing a run.
+      description: Read the selected service's approved protocol and target TLS trust metadata. Control checks current publication permission for this exact service without changing the credential's grant. The publisher must declare its own matching configuration when preparing a run.
+      parameters:
+        - {
+            name: service_id,
+            in: path,
+            required: true,
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceID" },
+          }
       responses:
         "200":
           description: Exact granted service, without target addresses or credentials
@@ -101,8 +124,8 @@ paths:
     post:
       operationId: enrollGuestPublisher
       tags: [guest-demos]
-      summary: Enroll a publisher key for the guest trial's assigned demo URL
-      description: Authenticate with the guest trial credential and bind an Ed25519 key to the trial's assigned public URL. Control checks the trial and validated request source; the resulting identity grants no general control session or service management permission.
+      summary: Enroll a publisher key for this trial's exact demo service
+      description: Authenticate with the trial credential and bind an Ed25519 key to its actual saved service. Control checks current trial ownership, publication eligibility, and server-observed source. The same enrolled current key recovers its facts; another key cannot take over or revive revoked authority. The exact-service grant carries the real guest_id and fixed expiry, with no team_id, namespace allocation, service management, or connector permission.
       security: [{ guestAuth: [] }]
       requestBody:
         required: true
@@ -111,28 +134,11 @@ paths:
             schema: { $ref: "../openapi.yaml#/components/schemas/EnrollGuestPublisherRequest" }
       responses:
         "200":
-          description: Trial-bound publisher for the assigned demo URL
+          description: Ordinary enrollment facts for the trial's exact service
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/GuestPublisherIdentity" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherEnrollmentResult" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publisher/public-url:
-    get:
-      operationId: getPublisherPublicURL
-      tags: [publisher-identities]
-      description: Read the single saved public URL selected by the publisher access token's exact grant. Namespace allocation grants and control sessions do not substitute for an exact public URL publisher grant.
-      summary: Read the saved URL selected by the current grant
-      security:
-        - publisherAuth: []
-      responses:
-        "200":
-          description: Bound public URL
-          content:
-            application/json:
-              schema:
-                $ref: "../openapi.yaml#/components/schemas/PublicURL"
-        default:
-          $ref: "../openapi.yaml#/components/responses/Problem"
   /v1/publisher-enrollments:
     post:
       operationId: createPublisherEnrollment

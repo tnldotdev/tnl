@@ -7,8 +7,8 @@ import (
 )
 
 func TestIntegrationDNSWorkClaimsWithoutIngressAndRejectsReplacedWorker(t *testing.T) {
-	f := newPublishRunFixture(t)
-	prepared := createPlanIssuanceWork(t, f.database, f.now, f.authentication(), f.certificatePlan(), false, nil)
+	f := newServicePublicationFixture(t)
+	prepared := createPlanIssuanceWork(t, f.database, f.now, f.run, f.prepared.CertificatePlan, false, nil)
 	original, found, err := f.database.ClaimACMEOrderWork(t.Context(), "original", f.now, time.Second)
 	if err != nil || !found || original.ID != prepared.ID || original.ChallengeMethod != "dns-01" {
 		t.Fatalf("DNS claim without ingress: found=%t method=%s error=%v", found, original.ChallengeMethod, err)

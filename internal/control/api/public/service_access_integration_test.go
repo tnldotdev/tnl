@@ -64,11 +64,11 @@ func TestIntegrationServiceAccessClient(t *testing.T) {
 	wrongEmail, _ := person("other", "other@example.test")
 	unverified, _ := person("unverified", "")
 	team := ownerSession.Identity.Memberships[0].TeamID
-	a, err := owner.CreateService(ctx, team, "orders", "orders", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+	a, err := owner.CreateService(ctx, team, "orders", "orders", controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := owner.CreateService(ctx, team, "another", "another", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+	b, err := owner.CreateService(ctx, team, "another", "another", controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,11 +129,11 @@ func TestIntegrationServiceAccessClient(t *testing.T) {
 	if !found {
 		t.Fatal("accepted invitation grant missing from manager list")
 	}
-	available, err := visitor.ListAvailableServices(ctx)
+	available, err := visitor.ListAvailableServices(ctx, "connector")
 	if err != nil || len(available) != 1 || available[0].Id != a.Id {
 		t.Fatalf("invitation widened visitor inventory: %+v %v", available, err)
 	}
-	expired, _, err := d.ListAvailableServices(ctx, visitorID, "", deadline.Add(time.Second))
+	expired, _, err := d.ListAvailableServices(ctx, visitorID, "", "connector", deadline.Add(time.Second))
 	if err != nil || len(expired) != 0 {
 		t.Fatalf("invitation grant outlived its original deadline: %+v %v", expired, err)
 	}
@@ -167,7 +167,7 @@ func TestIntegrationServiceAccessClient(t *testing.T) {
 			t.Fatal("revoking the accepted invitation retained its derived grant")
 		}
 	}
-	available, err = visitor.ListAvailableServices(ctx)
+	available, err = visitor.ListAvailableServices(ctx, "connector")
 	if err != nil || len(available) != 0 {
 		t.Fatalf("revoked invitation retained visitor access: %+v %v", available, err)
 	}
@@ -182,7 +182,7 @@ func TestIntegrationServiceAccessClient(t *testing.T) {
 	if err := owner.RevokeServiceGrant(ctx, a.Id, grant.Id); err != nil {
 		t.Fatal(err)
 	}
-	available, err = visitor.ListAvailableServices(ctx)
+	available, err = visitor.ListAvailableServices(ctx, "connector")
 	if err != nil || len(available) != 0 {
 		t.Fatalf("revoked identity grant retained visitor access: %+v %v", available, err)
 	}

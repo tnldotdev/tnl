@@ -44,3 +44,23 @@ func TestProblemHelpContextKeepsCanonicalType(t *testing.T) {
 		t.Fatalf("untrusted help context = %q", got)
 	}
 }
+
+func TestWriteWithDetailsKeepsEnvelopeCorrelationAndHelp(t *testing.T) {
+	response := httptest.NewRecorder()
+	requestID := WriteWithDetails(response, http.StatusNotFound, "not_found", "service hostname is not permitted",
+		"use a hostname below current-actor.example.test", "", map[string]any{"allowed_namespace": "current-actor.example.test"})
+	var body map[string]any
+	if json.Unmarshal(response.Body.Bytes(), &body) != nil || response.Code != http.StatusNotFound ||
+		response.Header().Get("Content-Type") != "application/problem+json" ||
+		response.Header().Get("Link") != `<https://tnl.dev/p/not-found>; rel="help"` ||
+		!opaqueid.Valid(requestID, opaqueid.RequestPrefix) || len(body) != 7 {
+		t.Fatal("structured details changed the problem envelope or HTTP headers", response.Body.String())
+	}
+	details, ok := body["details"].(map[string]any)
+	if !ok || len(details) != 1 || details["allowed_namespace"] != "current-actor.example.test" ||
+		body["type"] != URL("not_found") || body["code"] != "not_found" || body["status"] != float64(404) ||
+		body["request_id"] != requestID || body["title"] != "service hostname is not permitted" ||
+		body["detail"] != "use a hostname below current-actor.example.test" {
+		t.Fatal("structured details lost authored content or request correlation", response.Body.String())
+	}
+}

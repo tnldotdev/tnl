@@ -34,6 +34,10 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	enabled, err := state.TelemetryEnabled(t.Context())
+	if err != nil || !enabled {
+		t.Fatalf("new client state telemetry = %t, error = %v; want enabled", enabled, err)
+	}
 	if err := state.SetTelemetryEnabled(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +50,7 @@ func TestTelemetryPreferenceIsPersistentAndDoesNotCreateStateOnRead(t *testing.T
 		t.Fatal(err)
 	}
 	defer state.Close()
-	enabled, err := state.TelemetryEnabled(t.Context())
+	enabled, err = state.TelemetryEnabled(t.Context())
 	if err != nil || enabled {
 		t.Fatalf("reopened telemetry preference = %t, error = %v", enabled, err)
 	}

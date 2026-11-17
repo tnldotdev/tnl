@@ -10,6 +10,7 @@ schemas:
         protocol_version,
         connection_capacity,
         ingress_pool_id,
+        https,
         service_ports,
       ]
     properties:
@@ -17,11 +18,14 @@ schemas:
         $ref: "../../../../public/v1/schemas/common.yaml#/schemas/RegionID"
       ingress_pool_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
+      https:
+        type: boolean
+        description: This process serves the shared HTTPS listener on public port 443, independently of allocated non-HTTP service ports.
       service_ports:
         type: array
         maxItems: 256
         uniqueItems: true
-        description: Sorted managed ports bound before registration or exposed by the trusted destination-metadata proxy.
+        description: Sorted allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Shared HTTPS 443 is advertised separately.
         items:
           type: integer
           minimum: 1024
@@ -56,40 +60,12 @@ schemas:
     allOf:
       - $ref: "../openapi.yaml#/components/schemas/IngressLeaseIdentity"
       - type: object
-        required: [reported_connections, routing_table_revision]
+        required: [reported_connections]
         properties:
           reported_connections:
             type: integer
             format: int64
             minimum: 0
-          routing_table_revision:
-            type: integer
-            format: int64
-            minimum: 0
-          prepared_public_runs:
-            type: array
-            maxItems: 1000
-            description: Installed routing and policy, bounded by their current deadlines; never a promise to install the response.
-            items:
-              $ref: "../openapi.yaml#/components/schemas/IngressPublicRunObservation"
-  IngressPublicRunObservation:
-    type: object
-    additionalProperties: false
-    required: [publish_run_id, publish_run_number, entry_revision, valid_until]
-    properties:
-      publish_run_id:
-        $ref: "../openapi.yaml#/components/schemas/Identifier"
-      publish_run_number:
-        type: integer
-        format: int64
-        minimum: 1
-      entry_revision:
-        type: integer
-        format: int64
-        minimum: 1
-      valid_until:
-        type: string
-        format: date-time
   IngressDrainRequest:
     unevaluatedProperties: false
     allOf:
@@ -111,11 +87,11 @@ schemas:
       - protocol_version
       - connection_capacity
       - reported_connections
-      - routing_table_revision
       - draining
       - registered_at
       - renewed_at
       - lease_expires_at
+      - serving_until
     properties:
       region:
         $ref: "../../../../public/v1/schemas/common.yaml#/schemas/RegionID"
@@ -139,10 +115,6 @@ schemas:
         type: integer
         format: int64
         minimum: 0
-      routing_table_revision:
-        type: integer
-        format: int64
-        minimum: 0
       draining:
         type: boolean
       drain_deadline:
@@ -157,48 +129,10 @@ schemas:
       lease_expires_at:
         type: string
         format: date-time
+        description: Control's deadline for process availability and replacement.
+      serving_until:
+        type: string
+        format: date-time
+        description: Serving authorization issued at renewed_at; response latency spends this allowance.
   IngressTrafficLimits:
-    type: object
-    additionalProperties: false
-    description: Resolved per-public-URL publish-run budgets, enforced independently on each ingress process. Byte rates count encrypted visitor bytes per second. Omitted totals are unlimited.
-    required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
-    properties:
-      connections:
-        type: integer
-        minimum: 1
-        maximum: 1048576
-      rate:
-        type: integer
-        minimum: 1
-        maximum: 2147483648
-      rate_per_ns:
-        type: integer
-        format: int64
-        minimum: 1000000
-        maximum: 86400000000000
-      burst:
-        type: integer
-        minimum: 1
-        maximum: 2147483648
-      upload_bytes:
-        type: integer
-        format: int64
-        minimum: 65536
-        maximum: 1099511627776
-      download_bytes:
-        type: integer
-        format: int64
-        minimum: 65536
-        maximum: 1099511627776
-      total_connections:
-        type: integer
-        format: int64
-        minimum: 1
-      total_upload_bytes:
-        type: integer
-        format: int64
-        minimum: 1
-      total_download_bytes:
-        type: integer
-        format: int64
-        minimum: 1
+    $ref: "../../../../public/v1/openapi.yaml#/components/schemas/TrafficLimits"

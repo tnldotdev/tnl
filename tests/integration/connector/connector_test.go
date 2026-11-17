@@ -38,6 +38,7 @@ import (
 	connectorworkload "github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
@@ -260,23 +261,26 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	application.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.NoClientCert, Certificates: []tls.Certificate{pair}}
 	application.StartTLS()
 	defer application.Close()
-	_, portString, _ := net.SplitHostPort(application.Listener.Addr().String())
-	port, _ := strconv.Atoi(portString)
 	providerAddress := application.Listener.Addr().String()
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
 	service, _ := opaqueid.New(opaqueid.ServicePrefix)
 	trustRevision := int64(1)
 	sessionID, _ := opaqueid.New("wls_")
 	serviceRun, _ := opaqueid.New(opaqueid.ServiceRunPrefix)
-	allocated, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	publicPort := 443
+	if protocol != "http" {
+		publicReservation, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// non-HTTP ingress ports stay reserved, independently of local listeners.
+		publicPort = publicReservation.Addr().(*net.TCPAddr).Port
+		defer publicReservation.Close()
 	}
-	port = allocated.Addr().(*net.TCPAddr).Port
-	defer allocated.Close()
-	var releasePort sync.Once
+	permissionPort := int(serviceendpoint.PermissionPort(protocol))
 	native := connectorfixture.NewConnector(t, ca, caKey, service, serviceRun, sessionID, managedHostname, providerAddress)
 	var revoked atomic.Bool
+	var retirements atomic.Int32
 	renewed := make(chan struct{})
 	var renewedOnce sync.Once
 	var certificateRequests atomic.Int64
@@ -588,14 +592,27 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 			}
 			_ = json.NewEncoder(w).Encode(current)
 		case r.URL.Path == "/v1/workload/services":
-			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": true}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": publicPort, "public": true}}}})
 		case strings.HasSuffix(r.URL.Path, "/run"):
-			// retain the managed port through fixture and owner IPC startup.
-			// the native owner binds it immediately after resolving this run.
-			releasePort.Do(func() { _ = allocated.Close() })
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceSelection{ServiceId: service, ServiceRunId: serviceRun, RunNumber: 1,
 				Protocol: controlv1.ServiceProtocol(protocol), TrustRevision: trustRevision, ExpiresAt: time.Now().Add(time.Minute), Subject: current.Subject,
-				Endpoint: &controlv1.ServiceEndpoint{Hostname: managedHostname, Port: port, Public: true}, PairReady: &native.Ready})
+				Endpoint: &controlv1.ServiceEndpoint{Hostname: managedHostname, Port: publicPort, Public: true}, PairReady: &native.Ready})
+		case strings.HasPrefix(r.URL.Path, "/v1/services/"+service+"/connector-peer-pairs/") && strings.HasSuffix(r.URL.Path, "/retire"):
+			parts := strings.Split(r.URL.Path, "/")
+			var requested controlv1.ConnectorPeerPairRetireRequest
+			if r.Method != http.MethodPost || len(parts) != 7 || len(r.Header.Values("Authorization")) != 0 || json.NewDecoder(r.Body).Decode(&requested) != nil {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			// retirement authenticates the exact retained pair, independently of
+			// workload revocation racing the owner's joined cleanup.
+			receipt, err := native.Retire(r.Context(), parts[5], requested)
+			if err != nil {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			retirements.Add(1)
+			_ = json.NewEncoder(w).Encode(receipt)
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			var requested controlv1.ConnectorPeerPairRequest
 			var source controlv1.VisitorTokenWorkloadSource
@@ -620,9 +637,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 			if requested.Action == "renew" {
 				_ = json.NewEncoder(w).Encode(controlv1.ConnectorPeerPairRenewal{Pair: pair, RunValidUntil: pair.ExpiresAt,
 					Protocol: controlv1.ServiceProtocol(protocol), TrustRevision: trustRevision,
-					Endpoint: controlv1.ServiceEndpoint{Hostname: managedHostname, Port: port, Public: true},
+					Endpoint: controlv1.ServiceEndpoint{Hostname: managedHostname, Port: publicPort, Public: true},
 					VisitorPermission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: service},
-						Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
+						Hostname: managedHostname, Port: permissionPort, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
 				renewedOnce.Do(func() { close(renewed) })
 				return
 			}
@@ -639,7 +656,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: minTimeForFixture(time.Now().Add(time.Minute), current.LeaseExpiresAt)})
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: permissionPort, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: minTimeForFixture(time.Now().Add(time.Minute), current.LeaseExpiresAt)})
 		case strings.HasSuffix(r.URL.Path, "/client-certificate"):
 			certificateRequests.Add(1)
 			w.WriteHeader(403)
@@ -702,7 +719,8 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 			workloadPolicy["token"] = map[string]any{"env": "FIXTURE_GOOGLE_ASSERTION"}
 		}
 	}
-	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "services": map[string]any{serviceName: map[string]any{"protocol": protocol}}, "deployments": map[string]any{"remote": map[string]any{"public": true, "targets": map[string]any{serviceName: targetDefinition}}}, "workloads": map[string]any{"test": workloadPolicy}}}
+	targetDefinition["public"] = true
+	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "services": map[string]any{serviceName: map[string]any{"protocol": protocol}}, "deployments": map[string]any{"remote": map[string]any{"targets": map[string]any{serviceName: targetDefinition}}}, "workloads": map[string]any{"test": workloadPolicy}}}
 	if startup == "action-wrong-provider" {
 		configuration["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"deployment": "remote", "fly": map[string]any{"app": "fixture", "org": "example"}, "services": []string{serviceName}}}
 	}
@@ -1343,7 +1361,18 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	if data, err := os.ReadFile(state.ConnectionHandle); err != nil || bytes.Contains(data, []byte("traceparent")) || bytes.Contains(data, []byte("1111111111111111")) {
 		t.Fatal("launch parent persisted in handle")
 	}
-	if probe, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port))); err == nil {
+	var prepared connectorruntime.Prepared
+	if err := connectorruntime.ReadJSON(bytes.NewReader(call(nil, "read", "--handle", state.ConnectionHandle, "--service", serviceName)), &prepared); err != nil {
+		t.Fatal(err)
+	}
+	if err := connectorruntime.ValidatePrepared(prepared, serviceName); err != nil {
+		t.Fatal(err)
+	}
+	localPort := prepared.Connection.Port
+	if localPort == publicPort {
+		t.Fatal("connector listener reused the public endpoint port")
+	}
+	if probe, err := net.Listen("tcp4", net.JoinHostPort(prepared.Connection.Host, strconv.Itoa(localPort))); err == nil {
 		_ = probe.Close()
 		t.Fatal("caller-prepared CLI readiness left its selected service listener unbound")
 	}
@@ -1359,9 +1388,11 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	if err := os.RemoveAll(filepath.Join(root, ".git")); err != nil {
 		t.Fatal(err)
 	}
-	var prepared connectorruntime.Prepared
 	if err := connectorruntime.ReadJSON(bytes.NewReader(call(nil, "read", "--handle", state.ConnectionHandle, "--service", serviceName)), &prepared); err != nil {
 		t.Fatal(err)
+	}
+	if prepared.Connection.Port != localPort {
+		t.Fatal("prepared read replaced the owner's local listener")
 	}
 	if strings.HasPrefix(startup, "action-") {
 		qualifyActionBackgroundRefresh(t, actionRefreshFixture{
@@ -1420,10 +1451,10 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		time.Sleep(10 * time.Millisecond)
 	}
 	snapshot := prepared.Connection
-	if prepared.Schema != 1 || prepared.ProjectRuntime.Services[serviceName].Hostname != managedHostname || !prepared.ProjectRuntime.Services[serviceName].Public {
+	if prepared.Schema != 1 || prepared.ProjectRuntime.Services[serviceName].Hostname != managedHostname || prepared.ProjectRuntime.Services[serviceName].Port != publicPort || !prepared.ProjectRuntime.Services[serviceName].Public {
 		t.Fatal("prepared read did not preserve the owner's public metadata")
 	}
-	if snapshot.Schema != 1 || snapshot.Host != "127.0.0.1" || snapshot.Port != port || snapshot.SSL == nil || snapshot.SSL.ServerName != managedHostname || !snapshot.SSL.RejectUnauthorized {
+	if snapshot.Schema != 1 || snapshot.Host != "127.0.0.1" || snapshot.Port != localPort || snapshot.SSL == nil || snapshot.SSL.ServerName != managedHostname || !snapshot.SSL.RejectUnauthorized {
 		t.Fatal("prepared snapshot lost local dialing, managed TLS identity, or credential-free admission")
 	}
 	preparedJSON, _ := json.Marshal(snapshot)
@@ -1469,7 +1500,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		if err != nil || bytes.Contains(data, []byte("PRIVATE KEY")) || bytes.Contains(data, []byte("fixture-cluster-token")) {
 			t.Fatal("session kubeconfig persisted credential material")
 		}
-		if !bytes.Contains(data, []byte("https://127.0.0.1:"+strconv.Itoa(port))) || !bytes.Contains(data, []byte("tls-server-name: "+managedHostname)) {
+		if !bytes.Contains(data, []byte("https://127.0.0.1:"+strconv.Itoa(localPort))) || !bytes.Contains(data, []byte("tls-server-name: "+managedHostname)) {
 			t.Fatal("kubeconfig lost separate dial host and TLS identity", string(data))
 		}
 	}
@@ -1495,6 +1526,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	}
 	if !revoked.Load() {
 		t.Fatal("owner stop did not revoke workload")
+	}
+	if retirements.Load() != 1 {
+		t.Fatal("owner stop did not authenticate retirement of its exact connector pair")
 	}
 	if exchangeAttempts.Load() != 2 {
 		t.Fatal("lost exchange response was not recovered by the same owner")

@@ -2,354 +2,230 @@ package state
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-type retentionEvent struct {
-	kind    IngressRoutingTableEventKind
-	version int64
-	age     time.Duration
-	ttl     time.Duration
-}
-
-func seedRetentionEvents(t *testing.T, f publishRunFixture, events []retentionEvent) []int64 {
-	t.Helper()
-	var revisions []int64
-	for index, event := range events {
-		projection := IngressRoutingTableProjection{PublishRunID: f.setup.PublishRunID, PublicURLID: f.setup.PublicURLID, PublishRunNumber: uint64(event.version), CanonicalHostname: f.request.CertificateIdentifiers[0], PolicyRevision: 1, PublicUrlExpiresAt: f.now.Add(event.ttl)}
-		payload, err := json.Marshal(projection)
-		if err != nil {
-			t.Fatal(err)
-		}
-		revision, err := controlstatedb.New(f.database.pool).InsertIngressRoutingTableEvent(t.Context(), controlstatedb.InsertIngressRoutingTableEventParams{
-			EventKind: string(event.kind), PublicURLID: f.setup.PublicURLID, PublishRunNumber: event.version, CanonicalHostname: projection.CanonicalHostname,
-			EntryRevision: int64(index + 1), Projection: payload, PublicUrlExpiresAt: timestamptz(projection.PublicUrlExpiresAt), CreatedAt: timestamptz(f.now.Add(-event.age)),
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		revisions = append(revisions, revision)
-	}
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_clock SET current_revision = $1`, revisions[len(revisions)-1]); err != nil {
-		t.Fatal(err)
-	}
-	return revisions
-}
-
+// routing history no longer serves authority. these selectors retain the
+// underlying expiry, committed-read, cancellation, bounds, and replacement proofs
+// against durable service-run tuples.
 func TestIntegrationRoutingRetentionAnchorsAndBoundary(t *testing.T) {
-	f := newPublishRunFixture(t)
-	old := time.Hour
-	revisions := seedRetentionEvents(t, f, []retentionEvent{
-		{IngressPublicURLUpsert, 1, old, time.Hour},
-		{IngressPublicURLUpsert, 1, old, time.Hour},
-		{IngressPublicURLUpsert, 1, old, -time.Second},
-		{IngressPublicURLTombstone, 2, old, -time.Second},
-		{IngressPublicURLTombstone, 2, old, -time.Second},
-		{IngressPublicURLUpsert, 3, time.Minute, time.Hour},
-		{IngressPublicURLUpsert, 3, old, time.Hour}, // old timestamp after a recent revision.
-		{IngressPublicURLUpsert, 3, time.Minute, time.Hour},
-	})
+	f := newServicePublicationFixture(t)
 	ingress := registerTestIngress(t, f.database, f.now)
-	before, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, f.now)
-	if err != nil {
+	old := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
 		t.Fatal(err)
 	}
-	floor, err := f.database.AdvanceIngressRoutingRetention(t.Context(), f.now.Add(-10*time.Minute))
-	if err != nil || floor != uint64(revisions[5]-1) {
-		t.Fatalf("floor=%d: %v", floor, err)
+	f.start(t, "next", f.now.Add(time.Second))
+	current := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
+	boundary := f.now.Add(2 * time.Second)
+	// serving authority ends at this boundary even though publisher liveness
+	// remains current. neither deadline alone is a committed terminal tuple.
+	if !f.run.ExpiresAt.After(boundary) {
+		t.Fatal("expiry contrast requires live publisher liveness at the serving boundary")
 	}
-	batch, err := f.database.PruneIngressRoutingHistory(t.Context(), 0)
-	if err != nil || batch.Scanned != 5 || batch.Deleted != 3 || batch.More {
-		t.Fatalf("batch=%+v: %v", batch, err)
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET serving_until=$2 WHERE id=$1`, current.RunID, boundary); err != nil {
+		t.Fatal(err)
 	}
-	after, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, f.now)
-	if err != nil || !reflect.DeepEqual(before.Entries, after.Entries) || before.RoutingTableRevision != after.RoutingTableRevision {
-		t.Fatalf("snapshot changed after pruning: %v", err)
+	if count, err := f.database.ExpireServiceRuns(t.Context(), boundary.Add(-time.Second)); err != nil || count != 0 {
+		t.Fatal("cleanup closed a run before its serving boundary", count, err)
 	}
-	for _, version := range []int64{1, 2, 3} {
-		revision, err := controlstatedb.New(f.database.pool).LatestIngressRoutingEntryRevision(t.Context(), controlstatedb.LatestIngressRoutingEntryRevisionParams{PublicURLID: f.setup.PublicURLID, PublishRunNumber: version})
-		want := map[int64]int64{1: 3, 2: 5, 3: 8}[version]
-		if err != nil || revision != want {
-			t.Fatalf("version %d latest=%d want=%d: %v", version, revision, want, err)
+	refs := []ServiceRunReference{old, current}
+	before, err := f.database.ClosedServiceRuns(t.Context(), ingress.IngressLeaseIdentity, refs, boundary)
+	if err != nil || !reflect.DeepEqual(before, []ServiceRunReference{old}) {
+		t.Fatal("expiration alone was mistaken for committed closure", before, err)
+	}
+	if count, err := f.database.ExpireServiceRuns(t.Context(), boundary); err != nil || count != 1 {
+		t.Fatalf("expiry boundary closed %d runs, want one: %v", count, err)
+	}
+	after, err := f.database.ClosedServiceRuns(t.Context(), ingress.IngressLeaseIdentity, refs, boundary)
+	if err != nil || len(after) != 2 {
+		t.Fatal("cleanup lost a durable terminal tuple", after, err)
+	}
+	for _, ref := range after {
+		if ref != old && ref != current {
+			t.Fatal("cleanup invented another terminal tuple", ref)
 		}
 	}
-	for _, cursor := range []uint64{floor - 1, floor, floor + 1} {
-		page, err := f.database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, cursor, 100, f.now)
-		if err != nil || page.ResnapshotRequired != (cursor < floor) {
-			t.Fatalf("cursor=%d page=%+v: %v", cursor, page, err)
-		}
-		if cursor >= floor && len(page.Events) != int(uint64(revisions[7])-cursor) {
-			t.Fatalf("incomplete retained suffix: %+v", page)
-		}
-	}
-	// an older policy cutoff must not move the published floor backward.
-	if again, err := f.database.AdvanceIngressRoutingRetention(t.Context(), f.now.Add(-2*time.Hour)); err != nil || again != floor {
-		t.Fatalf("floor regressed: %d %v", again, err)
+	if count, err := f.database.ExpireServiceRuns(t.Context(), boundary.Add(time.Second)); err != nil || count != 0 {
+		t.Fatalf("repeated cleanup settled a run twice: %d %v", count, err)
 	}
 }
 
 func TestIntegrationRoutingRetentionReaderSnapshotsAndClock(t *testing.T) {
-	f := newPublishRunFixture(t)
-	seedRetentionEvents(t, f, []retentionEvent{{IngressPublicURLUpsert, 1, time.Hour, time.Hour}, {IngressPublicURLTombstone, 1, time.Hour, 0}, {IngressPublicURLUpsert, 1, time.Hour, -time.Second}})
+	f := newServicePublicationFixture(t)
+	ingress := registerTestIngress(t, f.database, f.now)
 	ctx := t.Context()
 	reader, err := f.database.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rollbackTestTransaction(t, reader)
-	oldClock, err := controlstatedb.New(reader).ReadIngressRoutingTableClock(ctx)
-	if err != nil {
+	defer reader.Rollback(ctx)
+	var open bool
+	if err := reader.QueryRow(ctx, `SELECT closed_at IS NULL FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&open); err != nil || !open {
+		t.Fatal("reader did not capture the live run", err)
+	}
+	if err := f.database.CloseServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
 		t.Fatal(err)
 	}
-	floor, err := f.database.AdvanceIngressRoutingRetention(ctx, f.now)
-	if err != nil || floor != uint64(oldClock.CurrentRevision) {
-		t.Fatalf("floor %d: %v", floor, err)
+	if err := reader.QueryRow(ctx, `SELECT closed_at IS NULL FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&open); err != nil || !open {
+		t.Fatal("a committed close changed an existing reader snapshot", err)
 	}
-	between, err := f.database.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollbackTestTransaction(t, between)
-	newClock, err := controlstatedb.New(between).ReadIngressRoutingTableClock(ctx)
-	if err != nil || newClock.RetainedAfterRevision != int64(floor) {
-		t.Fatalf("floor not committed before delete: %v", err)
-	}
-	gate, err := f.database.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollbackTestTransaction(t, gate)
-	if _, err := controlstatedb.New(gate).LockIngressRoutingTableClock(ctx); err != nil {
-		t.Fatal(err)
-	}
-	callCtx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	batch, err := f.database.PruneIngressRoutingHistory(callCtx, 0)
-	if err != nil || batch.Deleted != 2 {
-		t.Fatalf("pruning waited for the publication clock: %+v %v", batch, err)
-	}
-	for _, tx := range []pgx.Tx{reader, between} {
-		var count int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM control.ingress_routing_table_events`).Scan(&count); err != nil || count != 3 {
-			t.Fatalf("reader lost repeatable history: %d %v", count, err)
-		}
-		entries, err := controlstatedb.New(tx).ListIngressRoutingTableSnapshot(ctx, controlstatedb.ListIngressRoutingTableSnapshotParams{Now: timestamptz(f.now), ThroughRevision: int64(floor)})
-		if err != nil || len(entries) != 0 {
-			t.Fatalf("tombstone/expiration resurrected an entry: %v", err)
-		}
-	}
-	entries, err := controlstatedb.New(f.database.pool).ListIngressRoutingTableSnapshot(ctx, controlstatedb.ListIngressRoutingTableSnapshotParams{Now: timestamptz(f.now), ThroughRevision: int64(floor)})
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("pruned snapshot resurrected an entry: %v", err)
+	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
+	closed, err := f.database.ClosedServiceRuns(ctx, ingress.IngressLeaseIdentity, []ServiceRunReference{ref}, f.now)
+	if err != nil || !reflect.DeepEqual(closed, []ServiceRunReference{ref}) {
+		t.Fatal("a fresh reader missed committed terminal state", closed, err)
 	}
 }
 
 func TestIntegrationRoutingRetentionCancellationAndGuard(t *testing.T) {
-	f := newPublishRunFixture(t)
-	revisions := seedRetentionEvents(t, f, []retentionEvent{{IngressPublicURLUpsert, 1, time.Hour, time.Hour}, {IngressPublicURLUpsert, 1, time.Hour, time.Hour}})
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if _, err := f.database.AdvanceIngressRoutingRetention(ctx, f.now); err != nil {
+	f := newServicePublicationFixture(t)
+	ingress := registerTestIngress(t, f.database, f.now)
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
 		t.Fatal(err)
 	}
+	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
+	ctx, finish := context.WithTimeout(t.Context(), 5*time.Second)
+	defer finish()
 	gate, err := f.database.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rollbackTestTransaction(t, gate)
-	if locked, err := controlstatedb.New(gate).TryLockIngressRoutingHistoryCleanup(ctx); err != nil || !locked {
+	defer gate.Rollback(ctx)
+	if _, err := gate.Exec(ctx, `SELECT ingress_id FROM control.ingress_leases WHERE ingress_id=$1 FOR UPDATE`, ingress.IngressID); err != nil {
 		t.Fatal(err)
 	}
-	if batch, err := f.database.PruneIngressRoutingHistory(ctx, 0); err != nil || !batch.Busy || batch.Deleted != 0 {
-		t.Fatalf("second cleanup did not skip: %+v %v", batch, err)
-	}
-	if err := gate.Rollback(ctx); err != nil {
-		t.Fatal(err)
-	}
-	gate, err = f.database.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT id FROM control.ingress_routing_table_events WHERE id = $1 FOR UPDATE`, revisions[0]); err != nil {
-		t.Fatal(err)
-	}
-	operation, stop := context.WithCancel(ctx)
-	workers := newIntegrationWorkers(t, stop)
+	operation, cancel := context.WithCancel(ctx)
+	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
 	done := make(chan error, 1)
-	workers.Go(func() { _, err := f.database.PruneIngressRoutingHistory(operation, 0); done <- err })
+	workers.Go(func() {
+		_, err := f.database.ClosedServiceRuns(operation, ingress.IngressLeaseIdentity, []ServiceRunReference{ref}, f.now)
+		done <- err
+	})
 	waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), done)
-	stop()
+	cancel()
 	if err := awaitIntegrationResult(t, ctx, done); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancel=%v", err)
-	}
-	var count int
-	if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.ingress_routing_table_events`).Scan(&count); err != nil || count != 2 {
-		t.Fatalf("canceled deletion persisted: %d %v", count, err)
+		t.Fatal("blocked terminal-state read ignored cancellation", err)
 	}
 	if err := gate.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for {
-		batch, err := f.database.PruneIngressRoutingHistory(ctx, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !batch.Busy {
-			if batch.Deleted != 1 {
-				t.Fatalf("retry: %+v", batch)
-			}
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("cleanup remained busy: %v", ctx.Err())
-		case <-time.After(time.Millisecond):
-		}
+	closed, err := f.database.ClosedServiceRuns(ctx, ingress.IngressLeaseIdentity, []ServiceRunReference{ref}, f.now)
+	if err != nil || !reflect.DeepEqual(closed, []ServiceRunReference{ref}) {
+		t.Fatal("canceled read damaged terminal state or retained its lock", closed, err)
+	}
+	stale := ingress.IngressLeaseIdentity
+	stale.IngressLeaseRevision++
+	if _, err := f.database.ClosedServiceRuns(ctx, stale, []ServiceRunReference{ref}, f.now); !errors.Is(err, ErrIngressLeaseStale) {
+		t.Fatal("stale ingress received terminal-state authority", err)
 	}
 }
 
 func TestIntegrationRoutingRetentionBoundsScannedAnchors(t *testing.T) {
-	f := newPublishRunFixture(t)
-	// different publish run numbers each need their own latest entry-revision anchor.
-	if _, err := f.database.pool.Exec(t.Context(), `INSERT INTO control.ingress_routing_table_events
-		(event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision, projection, created_at)
-		SELECT 'public_url_tombstone', $1, n, $2, 1, '{}'::bytea, $3 FROM generate_series(1, 2001) AS n`, f.setup.PublicURLID, f.request.CertificateIdentifiers[0], f.now.Add(-time.Hour)); err != nil {
+	f := newServicePublicationFixture(t)
+	ingress := registerTestIngress(t, f.database, f.now)
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_clock SET current_revision = (SELECT max(id) FROM control.ingress_routing_table_events)`); err != nil {
-		t.Fatal(err)
+	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
+	refs := []ServiceRunReference{ref}
+	for index := 1; index < 128; index++ {
+		refs = append(refs, ServiceRunReference{ServiceID: f.service.ID,
+			RunID: mustOpaqueID(t, opaqueid.ServiceRunPrefix), RunNumber: int64(index + 1)})
 	}
-	if _, err := f.database.AdvanceIngressRoutingRetention(t.Context(), f.now); err != nil {
-		t.Fatal(err)
+	closed, err := f.database.ClosedServiceRuns(t.Context(), ingress.IngressLeaseIdentity, refs, f.now)
+	if err != nil || !reflect.DeepEqual(closed, []ServiceRunReference{ref}) {
+		t.Fatal("the maximum bounded request lost its terminal tuple", closed, err)
 	}
-	var cursor uint64
-	for index, want := range []int64{1000, 1000, 1} {
-		batch, err := f.database.PruneIngressRoutingHistory(t.Context(), cursor)
-		if err != nil || batch.Scanned != want || batch.Deleted != 0 || batch.More != (index < 2) || batch.NextRevision <= cursor {
-			t.Fatalf("batch=%+v: %v", batch, err)
+	for _, invalid := range [][]ServiceRunReference{
+		nil, {ref, ref}, append(refs, ServiceRunReference{ServiceID: f.service.ID,
+			RunID: mustOpaqueID(t, opaqueid.ServiceRunPrefix), RunNumber: 129}),
+		{{ServiceID: ref.ServiceID, RunID: ref.RunID, RunNumber: 0}},
+	} {
+		if _, err := f.database.ClosedServiceRuns(t.Context(), ingress.IngressLeaseIdentity, invalid, f.now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("unbounded, repeated, or invalid terminal-state request was accepted", err)
 		}
-		cursor = batch.NextRevision
 	}
 }
 
 func TestIntegrationRoutingRetentionRevisionGap(t *testing.T) {
-	f := newPublishRunFixture(t)
-	seedRetentionEvents(t, f, []retentionEvent{{IngressPublicURLUpsert, 1, time.Hour, time.Hour}})
+	f := newServicePublicationFixture(t)
+	ingress := registerTestIngress(t, f.database, f.now)
+	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
 	tx, err := f.database.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rollbackTestTransaction(t, tx)
-	if _, err := tx.Exec(t.Context(), `INSERT INTO control.ingress_routing_table_events (event_kind,public_url_id,publish_run_number,canonical_hostname,entry_revision,projection,public_url_expires_at,created_at)
-		SELECT event_kind,public_url_id,publish_run_number,canonical_hostname,entry_revision+1,projection,public_url_expires_at,created_at FROM control.ingress_routing_table_events`); err != nil {
+	defer tx.Rollback(t.Context())
+	if _, err := tx.Exec(t.Context(), `UPDATE control.service_runs SET state='closed',closed_at=$2 WHERE id=$1`, ref.RunID, f.now); err != nil {
 		t.Fatal(err)
+	}
+	closed, err := f.database.ClosedServiceRuns(t.Context(), ingress.IngressLeaseIdentity, []ServiceRunReference{ref}, f.now)
+	if err != nil || len(closed) != 0 {
+		t.Fatal("an uncommitted closure became terminal evidence", closed, err)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	recent := seedRetentionEvents(t, f, []retentionEvent{{IngressPublicURLUpsert, 2, time.Minute, time.Hour}})
-	if recent[0] != 3 {
-		t.Fatalf("missing rollback gap: %v", recent)
-	}
-	floor, err := f.database.AdvanceIngressRoutingRetention(t.Context(), f.now.Add(-10*time.Minute))
-	if err != nil || floor != 2 {
-		t.Fatalf("floor at gap=%d: %v", floor, err)
-	}
-	if _, err := f.database.PruneIngressRoutingHistory(t.Context(), 0); err != nil {
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
 		t.Fatal(err)
 	}
-	ingress := registerTestIngress(t, f.database, f.now)
-	page, err := f.database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, floor, 10, f.now)
-	if err != nil || page.ResnapshotRequired || len(page.Events) != 1 || page.NextRevision != 3 || page.More {
-		t.Fatalf("gap boundary page=%+v: %v", page, err)
+	wrong := ref
+	wrong.RunNumber++
+	missing := ref
+	missing.RunID = mustOpaqueID(t, opaqueid.ServiceRunPrefix)
+	closed, err = f.database.ClosedServiceRuns(t.Context(), ingress.IngressLeaseIdentity, []ServiceRunReference{ref, wrong, missing}, f.now)
+	if err != nil || !reflect.DeepEqual(closed, []ServiceRunReference{ref}) {
+		t.Fatal("terminal proof was inferred from a missing or mismatched tuple", closed, err)
 	}
 }
 
 func TestIntegrationRoutingRetentionContinuesPublishing(t *testing.T) {
-	f := newPublishRunFixture(t)
-	database, now := f.database, f.now
-	ingress := registerTestIngress(t, database, now)
-	readyTestSession(t, f)
-	for step := 1; step <= 2; step++ {
-		if _, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), now.Add(time.Duration(step)*time.Second), time.Minute, time.Minute); err != nil {
-			t.Fatal(err)
+	f := newServicePublicationFixture(t)
+	ingress := registerTestIngress(t, f.database, f.now)
+	old := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
+	installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
+	f.readyConnections(t, f.now)
+	for step := range 3 {
+		ready, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token,
+			f.now.Add(time.Duration(step)*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+		if err != nil || ready.State != "ready" || ready.RunID != old.RunID || ready.RunNumber != old.RunNumber ||
+			step != 0 && !reflect.DeepEqual(ready.Connections, f.run.Connections) {
+			t.Fatal("heartbeat changed the current run or its slots", ready, err)
 		}
+		f.run.Connections = ready.Connections
 	}
-	queries := controlstatedb.New(database.pool)
-	key := controlstatedb.LatestIngressRoutingEntryRevisionParams{PublicURLID: f.setup.PublicURLID, PublishRunNumber: int64(f.setup.PublishRunNumber)}
-	previous, err := queries.LatestIngressRoutingEntryRevision(t.Context(), key)
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	at := f.now.Add(4 * time.Second)
+	f.start(t, "republished", at)
+	installPrivateTestCertificate(t, f.database, f.prepared, f.run, at)
+	f.readyConnections(t, at)
+	if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, at, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
+		t.Fatal(err)
+	}
+	current := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
+	if current.RunID == old.RunID || current.RunNumber <= old.RunNumber {
+		t.Fatal("republishing reused the terminal tuple")
+	}
+	closed, err := f.database.ClosedServiceRuns(t.Context(), ingress.IngressLeaseIdentity, []ServiceRunReference{old, current}, at)
+	if err != nil || !reflect.DeepEqual(closed, []ServiceRunReference{old}) {
+		t.Fatal("a new run erased old closure or inherited its terminal state", closed, err)
+	}
+	tx, err := f.database.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	// age genuine projections without expiring the publish run or its connections.
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_events SET created_at = $1`, now.Add(-time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	floor, err := database.AdvanceIngressRoutingRetention(t.Context(), now.Add(-10*time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if batch, err := database.PruneIngressRoutingHistory(t.Context(), 0); err != nil || batch.Deleted < 2 {
-		t.Fatalf("prune genuine heartbeat history: %+v, %v", batch, err)
-	}
-	if _, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), now.Add(3*time.Second), time.Minute, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if revision, err := queries.LatestIngressRoutingEntryRevision(t.Context(), key); err != nil || revision != previous+1 {
-		t.Fatalf("post-pruning heartbeat entry revision = %d, want %d: %v", revision, previous+1, err)
-	}
-	if err := database.ClosePublishRun(t.Context(), f.setup.PublishRunID, f.setup.PublishRunToken, now.Add(4*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	page, err := database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, floor, 10, now.Add(4*time.Second))
-	if err != nil || page.ResnapshotRequired || len(page.Events) != 2 || page.Events[1].Kind != IngressPublicURLTombstone {
-		t.Fatalf("post-pruning publication suffix: %+v, %v", page, err)
-	}
-	if _, err := database.AdvanceIngressRoutingRetention(t.Context(), now.Add(5*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.PruneIngressRoutingHistory(t.Context(), 0); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := database.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, now.Add(5*time.Second))
-	if err != nil || len(snapshot.Entries) != 0 {
-		t.Fatalf("closed route resurrected after pruning: %v", err)
-	}
-	f.now = now.Add(6 * time.Second)
-	f.request.IdempotencyKey = "retention-republish"
-	var issuanceID string
-	var notAfter time.Time
-	if err := database.pool.QueryRow(t.Context(), `SELECT id, not_after FROM control.acme_orders WHERE publish_run_id = $1 AND state = 'installed'`, f.setup.PublishRunID).Scan(&issuanceID, &notAfter); err != nil {
-		t.Fatal(err)
-	}
-	if err := database.pool.QueryRow(t.Context(), `SELECT mutation_revision FROM control.public_urls WHERE id = $1`, f.request.PublicURLID).Scan(&f.request.ExpectedMutationRevision); err != nil {
-		t.Fatal(err)
-	}
-	f.setup, err = database.CreatePublishRun(t.Context(), f.request, f.now, time.Minute, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), f.authentication(), issuanceID, notAfter, f.now); err != nil {
-		t.Fatal(err)
-	}
-	for slot := range f.setup.PublisherConnections {
-		claimTestConnection(t, f, slot, f.now)
-	}
-	readyTestServingRun(t, f, f.now)
-	snapshot, err = database.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, f.now)
-	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].PublishRunNumber != f.setup.PublishRunNumber || f.setup.PublishRunNumber <= uint64(key.PublishRunNumber) {
-		t.Fatalf("republished hostname did not select the new publish run number: %v", err)
-	}
-	if revision, err := queries.LatestIngressRoutingEntryRevision(t.Context(), key); err != nil || revision != previous+2 {
-		t.Fatalf("old version lost its tombstone anchor: revision %d, want %d: %v", revision, previous+2, err)
+	defer tx.Rollback(t.Context())
+	id, number, _, err := selectRoutableServiceRun(t.Context(), tx, f.service.ID, f.prepared.Hostname, at)
+	if err != nil || id != current.RunID || number != current.RunNumber {
+		t.Fatal("republishing selected the old closed run", id, number, err)
 	}
 }

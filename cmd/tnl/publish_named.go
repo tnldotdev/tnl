@@ -18,11 +18,6 @@ type resolvedNamedInvocation struct {
 	project           projectConfiguration
 	service           string
 }
-type resolvedPublicInvocation struct{ resolvedNamedInvocation }
-type resolvedPrivateInvocation struct {
-	resolvedNamedInvocation
-	protocol controlv1.ServiceProtocol
-}
 
 func namedInvocation(flags publishCommand) (resolvedNamedInvocation, error) {
 	if flags.namedOverrides {
@@ -32,6 +27,10 @@ func namedInvocation(flags publishCommand) (resolvedNamedInvocation, error) {
 		return resolvedNamedInvocation{}, failure.Wrap("select named publication", failure.NamedPublishSession, errors.New("access token supplied"))
 	}
 	project := flags.project
+	binding, found := project.Config.Services[flags.Service]
+	if !found || !controlv1.ServiceProtocol(config.Protocol(binding)).Valid() || flags.Protocol != "" && flags.Protocol != config.Protocol(binding) {
+		return resolvedNamedInvocation{}, failure.Wrap("select named service", failure.PublisherGrantMismatch, errors.New("select a configured service with its declared protocol"))
+	}
 	if project.Config.Team != nil && flags.selectedTeam == "" {
 		return resolvedNamedInvocation{}, failure.Wrap("select named team", failure.NamedPublishTeam, errors.New("explicit team required"))
 	}
@@ -48,23 +47,6 @@ func namedInvocation(flags publishCommand) (resolvedNamedInvocation, error) {
 		project.Config.Team = &team
 	}
 	return resolvedNamedInvocation{project: project, service: flags.Service, telemetryDisabled: flags.TelemetryDisabled}, nil
-}
-
-func resolveNamedPublic(flags publishCommand) (resolvedPublicInvocation, error) {
-	selected, err := namedInvocation(flags)
-	if err == nil && !config.IsPublicService(selected.project.Config.Services[selected.service]) {
-		err = failure.Wrap("select public service", failure.PublisherGrantMismatch, errors.New("configured service is private"))
-	}
-	return resolvedPublicInvocation{selected}, err
-}
-
-func resolveNamedPrivate(flags publishCommand) (resolvedPrivateInvocation, error) {
-	selected, err := namedInvocation(flags)
-	protocol := controlv1.ServiceProtocol(flags.Protocol)
-	if err == nil && (!protocol.Valid() || config.IsPublicService(selected.project.Config.Services[selected.service])) {
-		err = failure.Wrap("select service", failure.PublisherGrantMismatch, errors.New("configured service is not private"))
-	}
-	return resolvedPrivateInvocation{selected, protocol}, err
 }
 
 func runNamedPublish(ctx context.Context, selected resolvedNamedInvocation, stateDir string, output *publishOutput) error {

@@ -1,21 +1,21 @@
 package state
 
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"net/netip"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 func TestIntegrationRelayLifecycleCapacityOneReplenishment(t *testing.T) {
@@ -26,23 +26,22 @@ func TestIntegrationRelayLifecycleCapacityOneReplenishment(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			database, now := newRelayLifecycleDatabase(t)
-			setup, registrations := newRelayLifecycleSession(t, database, now)
-			authentication := PublishRunAuthentication{
-				PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID,
-				PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
-			}
-			heartbeat := func(at time.Time) PublishRunSetup {
+			f, registrations := newRelayLifecycleServiceFixture(t, database, now)
+			initial := f.run.Connections
+			heartbeat := func(at time.Time) ServiceRunState {
 				t.Helper()
-				result, err := database.HeartbeatPublishRun(t.Context(), authentication, at, time.Hour, time.Minute)
+				result, err := database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, at, ServiceRunHealth{StreamCapacity: 64})
 				if err != nil {
 					t.Fatal(err)
 				}
 				return result
 			}
 			good := heartbeat(now.Add(30 * time.Second))
-			if good.PublisherConnections != setup.PublisherConnections {
+			if !reflect.DeepEqual(good.Connections, initial) {
 				t.Fatal("full services invalidated good assignments")
 			}
+			heartbeat(now.Add(time.Minute))
+			heartbeat(now.Add(90 * time.Second))
 			at := now.Add(2 * time.Minute)
 			if onlySecondReturns {
 				if _, err := database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET lease_expires_at = $1`, now.Add(time.Minute)); err != nil {
@@ -54,31 +53,23 @@ func TestIntegrationRelayLifecycleCapacityOneReplenishment(t *testing.T) {
 				}
 			}
 			replaced := heartbeat(at)
-			for slot, connection := range replaced.PublisherConnections {
-				previous := setup.PublisherConnections[slot]
-				if connection.RelayServiceID != previous.RelayServiceID {
-					t.Fatalf("slot %d stole another slot's stored service", slot)
-				}
-				if onlySecondReturns && slot == 0 {
-					if connection.State != PublisherConnectionExpired || connection.PublisherConnectionID != previous.PublisherConnectionID {
-						t.Fatalf("unavailable slot was not retired: %#v", connection.ConnectionAssignmentIdentity)
-					}
-					continue
-				}
-				if connection.State != PublisherConnectionAssigned || connection.ConnectionAssignmentRevision != 2 ||
-					connection.PublisherConnectionID == previous.PublisherConnectionID {
-					t.Fatalf("capacity-one slot %d did not replace its expired reservation", slot)
-				}
-			}
 			if onlySecondReturns {
+				// replacement reserves two distinct services atomically. one
+				// returned service cannot steal the other slot's reservation.
+				if !reflect.DeepEqual(replaced.Connections, initial) {
+					t.Fatal("insufficient placement partially replaced assignments")
+				}
 				registrations[0].RelayRunID += "-returned"
 				if _, err := database.RegisterRelay(t.Context(), registrations[0], at, time.Hour); err != nil {
 					t.Fatal(err)
 				}
-				recovered := heartbeat(at.Add(time.Second))
-				if recovered.PublisherConnections[0].ConnectionAssignmentRevision != 2 ||
-					recovered.PublisherConnections[1] != replaced.PublisherConnections[1] {
-					t.Fatal("second recovery changed the good slot or failed to replenish the expired slot")
+				replaced = heartbeat(at.Add(time.Second))
+			}
+			for slot, connection := range replaced.Connections {
+				previous := initial[slot]
+				if connection.RelayServiceID != previous.RelayServiceID || connection.State != "assigned" ||
+					connection.Revision != 2 || connection.PublisherConnectionID == previous.PublisherConnectionID {
+					t.Fatalf("capacity-one slot %d lost its distinct service or replacement identity", slot)
 				}
 			}
 			tx, err := database.pool.Begin(t.Context())
@@ -97,10 +88,13 @@ func TestIntegrationRelayLifecycleServiceBeforeLeaseLocks(t *testing.T) {
 	for _, operation := range []string{"claim", "placement"} {
 		t.Run(operation, func(t *testing.T) {
 			database, now := newRelayLifecycleDatabase(t)
-			setup, registrations := newRelayLifecycleSession(t, database, now)
+			f, registrations := newRelayLifecycleServiceFixture(t, database, now)
 			heartbeatAt := now
 			if operation == "placement" {
-				heartbeatAt = now.Add(2 * time.Minute)
+				heartbeatAt = now.Add(2 * time.Second)
+				if _, err := database.pool.Exec(t.Context(), `UPDATE control.service_connection_slots SET credential_expires_at=$2 WHERE service_run_id=$1`, f.run.RunID, heartbeatAt); err != nil {
+					t.Fatal(err)
+				}
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
@@ -128,28 +122,13 @@ func TestIntegrationRelayLifecycleServiceBeforeLeaseLocks(t *testing.T) {
 			workers.Go(func() {
 				var err error
 				if operation == "claim" {
-					plan := setup.PublisherConnections[slot]
-					digest, parseErr := credentials.ParsePublisherConnectionCredential(plan.PublisherConnectionCredential)
-					if parseErr != nil {
-						completed <- parseErr
-						return
-					}
-					_, err = database.ClaimPublisherConnection(ctx, PublisherConnectionClaimRequest{
-						ConnectionAssignmentIdentity: plan.ConnectionAssignmentIdentity,
-						RelayLeaseIdentity: RelayLeaseIdentity{RelayServiceID: registrations[slot].RelayServiceID,
-							RelayID: registrations[slot].RelayID, RelayRunID: registrations[slot].RelayRunID, RelayLeaseRevision: 1},
-						ClaimID: "claim-lock-order", CredentialDigest: [32]byte(digest),
-					}, now)
+					plan := f.run.Connections[slot]
+					_, err = database.ClaimServicePublisherConnection(ctx, plan.PublisherConnectionID, f.service.ID, f.run.RunID, f.run.RunNumber, plan.Revision, plan.Credential, netip.MustParseAddr("127.0.0.1"), f.leases[plan.RelayServiceID].RelayLeaseIdentity, now)
 				} else {
-					_, err = database.HeartbeatPublishRun(ctx, PublishRunAuthentication{
-						PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID,
-						PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
-					}, heartbeatAt, time.Hour, time.Minute)
+					_, err = database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, heartbeatAt, ServiceRunHealth{StreamCapacity: 64})
 				}
 				completed <- err
 			})
-			// registration holds the service and waits for the lease. the other
-			// operation must wait on registration, not take a lease first.
 			waitForPostgresBlock(t, ctx, database, registrationPID, completed)
 			if operation == "placement" {
 				if _, err := gate.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_id = $1 FOR UPDATE NOWAIT`, registrations[0].RelayID); err != nil {
@@ -252,26 +231,43 @@ func relayLifecycleRegistration(name string) RelayRegistration {
 	}
 }
 
-func newRelayLifecycleSession(t *testing.T, database *Database, now time.Time) (PublishRunSetup, [2]RelayRegistration) {
+func newRelayLifecycleServiceFixture(t *testing.T, database *Database, now time.Time) (servicePublicationFixture, [2]RelayRegistration) {
 	t.Helper()
 	registrations := [2]RelayRegistration{relayLifecycleRegistration("relay-a"), relayLifecycleRegistration("relay-b")}
+	leases := make(map[string]RelayLease)
 	for _, registration := range registrations {
-		if _, err := database.RegisterRelay(t.Context(), registration, now, time.Hour); err != nil {
+		lease, err := database.RegisterRelay(t.Context(), registration, now, time.Hour)
+		if err != nil {
 			t.Fatal(err)
 		}
+		leases[lease.RelayServiceID] = lease
 	}
-	seedControlPublicURL(t, database, now, "relaylifecycle")
-	setup, err := database.CreatePublishRun(t.Context(), PublishRunRequest{
-		PublicURLID: "public_url_relaylifecycle", TeamID: "team_relaylifecycle", ActingIdentityID: "identity_relaylifecycle",
-		MembershipID: "membership_relaylifecycle",
-		RetrySecret:  bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
-		PolicyRevision: 1, ExpectedMutationRevision: 1, CertificateCacheKey: "relay_lifecycle", CertificateScope: "route",
-		CertificateIdentifiers: []string{"route-relaylifecycle.example.test"}, CertificateChallenge: "dns-01",
-	}, now, time.Hour, time.Minute)
+	session := newOIDCSession(t, database, now)
+	member := session.Identity.Memberships[0]
+	actor := session.Identity.Identity.ID
+	service, err := database.CreateServiceAt(t.Context(), member.TeamID, actor, "web", "web", ServicePlacement{}, now, ServiceMetadata{}, &ProjectServiceConfiguration{Target: "http://127.0.0.1:3000"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return setup, registrations
+	enrollment, err := database.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{
+		Scope: PublisherScope{TeamID: service.TeamID, Kind: "service", ServiceID: service.ID},
+		Name:  "test", Kind: "installed", EditorID: actor, EditorMembershipID: member.ID,
+		PolicyRevision: uint64(member.PolicyRevision), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := database.RedeemPublisherEnrollment(t.Context(), enrollment.Key, public, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := servicePublicationFixture{database: database, now: now, service: service, publisher: publisher, leases: leases}
+	f.start(t, "first", now)
+	return f, registrations
 }
 
 func newRelayLifecycleCertificateWork(t *testing.T, database *Database, now time.Time) RelayCertificateOrderWork {

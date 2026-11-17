@@ -202,12 +202,27 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 		cfg.TrafficSourceRate, cfg.TrafficSourceBurst = 200, 400
 		cfg.TrafficProcessRate, cfg.TrafficProcessBurst = 500, 1000
 	}
-	cfg.PublicURLCertificateWorkers = *runtimeLoadCertificateWorkers
+	cfg.ServiceCertificateWorkers = *runtimeLoadCertificateWorkers
 	cfg.QUICIdleTimeout = 45 * time.Second
 	cfg.ClusterSecret = testClusterSecret
 	if *runtimeLoadWorkload == "connect" || *runtimeLoadWorkload == "postgres" {
 		// the echo target is private; these ports only allocate its managed TLS identity.
 		cfg.ServicePortRanges = []string{"20000-20127"}
+	}
+	var ingressAddress string
+	if role == daemonconfig.RoleControl || role == daemonconfig.RoleIngress {
+		// the pool publishes the load balancer's one address, not its backends.
+		// compose creates the alias alongside control and ingress.
+		var addresses []net.IP
+		waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
+			var err error
+			addresses, err = net.DefaultResolver.LookupIP(ctx, "ip4", "ingress")
+			return len(addresses) > 0 && err == nil, err
+		})
+		if len(addresses) != 1 || addresses[0].To4() == nil {
+			t.Fatalf("ingress address must resolve to one IPv4 load balancer: %v", addresses)
+		}
+		ingressAddress = addresses[0].String()
 	}
 	switch role {
 	case daemonconfig.RoleControl:
@@ -220,21 +235,11 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 		cfg.OIDCIssuer, cfg.OIDCClientID, cfg.StorageKey = testOIDCIssuer, "server", testStorageKey
 		cfg.AccessTokenLifetime, cfg.RefreshTokenLifetime = 5*time.Minute, time.Hour
 		cfg.Route53ManagedZoneID, cfg.Route53Region, cfg.DNSServer = "local", "us-east-1", "dns:53"
-		// compose starts control and ingress together; aliases appear at startup.
-		var addresses []net.IP
-		waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
-			var err error
-			addresses, err = net.DefaultResolver.LookupIP(ctx, "ip4", "ingress")
-			return len(addresses) > 0 && err == nil, err
-		})
-		for _, address := range addresses {
-			if address.To4() != nil {
-				cfg.IngressIPv4Addresses = append(cfg.IngressIPv4Addresses, address.String())
-			}
-		}
+		cfg.IngressIPv4Addresses = []string{ingressAddress}
 	case daemonconfig.RoleIngress:
 		cfg.ControlHostname, cfg.IngressID = "control."+separatedDomain, component+"-separated"
 		cfg.IngressListen = "0.0.0.0:443"
+		cfg.RequireProxyHeader, cfg.IngressTrustedProxies = true, []string{ingressAddress + "/32"}
 	case daemonconfig.RoleRelay:
 		cfg.ControlHostname = "control." + separatedDomain
 		serviceID := separatedPlan(t)["relay-service."+component][0]

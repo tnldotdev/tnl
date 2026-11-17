@@ -1,9 +1,9 @@
 -- +goose Up
 CREATE TABLE baseline_identity (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-telemetry')
+    identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-service-integrations')
 ) STRICT;
-INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-telemetry');
+INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-service-integrations');
 
 -- provisioning journals are append-only and protected by the client wrapping
 -- key. no expiration may discard a key after a remote enrollment committed.
@@ -95,13 +95,13 @@ CREATE TABLE local_tunnels (
     server_origin TEXT NOT NULL REFERENCES server_profiles (origin) ON DELETE RESTRICT,
     project_root TEXT NOT NULL,
     service TEXT CHECK (service IS NULL OR service <> ''),
-    service_protocol TEXT NOT NULL DEFAULT 'http' CHECK (service_protocol = 'http'),
+    service_protocol TEXT NOT NULL DEFAULT 'http' CHECK (service_protocol IN ('http','tcp','mysql','postgres','kubernetes')),
+    service_id TEXT CHECK (service_id IS NULL OR (length(service_id)=26 AND substr(service_id,1,4)='svc_')),
     primary_project_root TEXT,
     integration_namespace TEXT,
     hostname TEXT CHECK (hostname IS NULL OR hostname <> ''),
     target TEXT CHECK (target IS NULL OR target <> ''),
     framework TEXT CHECK (framework IS NULL OR framework <> ''),
-    public_url_id TEXT CHECK (public_url_id IS NULL OR public_url_id <> ''),
     publish_run_number INTEGER CHECK (publish_run_number IS NULL OR publish_run_number > 0),
     state TEXT NOT NULL CHECK (state IN ('starting', 'provisioning', 'ready', 'draining', 'stopped', 'failed')),
     started_at INTEGER NOT NULL,
@@ -111,8 +111,7 @@ CREATE TABLE local_tunnels (
     stopped_at INTEGER,
     failure_code TEXT CHECK (failure_code IS NULL OR failure_code <> ''),
     CHECK ((state IN ('stopped', 'failed')) = (stopped_at IS NOT NULL)),
-    CHECK (state NOT IN ('ready', 'draining') OR
-           (public_url_id IS NOT NULL AND hostname IS NOT NULL AND publish_run_number IS NOT NULL)),
+    CHECK (state NOT IN ('ready', 'draining') OR publish_run_number IS NOT NULL),
     CHECK (failure_code IS NULL OR state = 'failed'),
     CHECK ((primary_project_root IS NULL AND integration_namespace IS NULL) OR
            (primary_project_root IS NOT NULL AND primary_project_root <> '' AND instr(primary_project_root, char(0)) = 0 AND
@@ -133,32 +132,32 @@ CREATE INDEX local_tunnels_cleanup_idx
 CREATE INDEX local_tunnels_integration_scope_idx ON local_tunnels (server_origin, primary_project_root, integration_namespace, lease_expires_at)
     WHERE stopped_at IS NULL;
 
--- locally observed public URL IDs let status read server state after a tunnel
+-- locally observed service IDs let status read server state after a tunnel
 -- stops. the cache contains no credentials or targets and is bounded per
--- project/server, including projects that create many temporary URLs.
-CREATE TABLE project_url_inventory (
+-- project/server, including projects that create many temporary services.
+CREATE TABLE project_service_inventory (
     project_root TEXT NOT NULL,
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
-    public_url_id TEXT NOT NULL,
+    service_id TEXT NOT NULL,
     last_seen_at INTEGER NOT NULL,
-    PRIMARY KEY (project_root, server_origin, public_url_id)
+    PRIMARY KEY (project_root, server_origin, service_id)
 ) STRICT;
 
 -- +goose StatementBegin
-CREATE TRIGGER local_project_url_seen AFTER UPDATE OF public_url_id ON local_tunnels
-WHEN NEW.public_url_id IS NOT NULL BEGIN
-    INSERT INTO project_url_inventory (project_root, server_origin, public_url_id, last_seen_at)
-    VALUES (NEW.project_root, NEW.server_origin, NEW.public_url_id, NEW.updated_at)
-    ON CONFLICT (project_root, server_origin, public_url_id)
+CREATE TRIGGER local_project_service_seen AFTER INSERT ON local_tunnels
+WHEN NEW.service_id IS NOT NULL BEGIN
+    INSERT INTO project_service_inventory (project_root, server_origin, service_id, last_seen_at)
+    VALUES (NEW.project_root, NEW.server_origin, NEW.service_id, NEW.updated_at)
+    ON CONFLICT (project_root, server_origin, service_id)
     DO UPDATE SET last_seen_at = excluded.last_seen_at;
-    DELETE FROM project_url_inventory
+    DELETE FROM project_service_inventory
     WHERE project_root = NEW.project_root AND server_origin = NEW.server_origin
       AND last_seen_at < NEW.updated_at - 2592000000000000;
-    DELETE FROM project_url_inventory
+    DELETE FROM project_service_inventory
     WHERE rowid IN (
-        SELECT rowid FROM project_url_inventory
+        SELECT rowid FROM project_service_inventory
         WHERE project_root = NEW.project_root AND server_origin = NEW.server_origin
-        ORDER BY last_seen_at DESC, public_url_id LIMIT -1 OFFSET 256
+        ORDER BY last_seen_at DESC, service_id LIMIT -1 OFFSET 256
     );
 END;
 -- +goose StatementEnd
@@ -167,10 +166,6 @@ CREATE TABLE guest_demo_sessions (
     server_origin TEXT PRIMARY KEY REFERENCES server_profiles (origin) ON DELETE CASCADE,
     guest_id TEXT NOT NULL,
     access_token_ciphertext BLOB NOT NULL,
-    team_id TEXT NOT NULL,
-    membership_id TEXT NOT NULL,
-    domain_id TEXT NOT NULL,
-    namespace TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
     created_at INTEGER NOT NULL
 ) STRICT;
@@ -196,6 +191,8 @@ CREATE TABLE integration_url_leases (
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
     hostname TEXT NOT NULL,
     publisher_instance_id TEXT NOT NULL,
+    service_id TEXT NOT NULL CHECK (length(service_id) = 26 AND substr(service_id, 1, 4) = 'svc_'),
+    run_number INTEGER NOT NULL CHECK (run_number > 0),
     expires_at INTEGER NOT NULL,
     PRIMARY KEY (server_origin, hostname)
 ) STRICT;
@@ -214,14 +211,16 @@ CREATE TABLE oauth_pending_callbacks (
     hostname TEXT NOT NULL,
     state_digest BLOB NOT NULL,
     tunnel_id TEXT NOT NULL REFERENCES local_tunnels(id) ON DELETE CASCADE,
+    primary_project_root TEXT NOT NULL CHECK (primary_project_root <> ''),
+    integration_namespace TEXT NOT NULL CHECK (integration_namespace <> ''),
     callback_path TEXT NOT NULL,
     callback_query TEXT NOT NULL,
-    public_url_id TEXT NOT NULL,
-    publish_run_number INTEGER NOT NULL CHECK (publish_run_number > 0),
+    service_id TEXT NOT NULL CHECK (length(service_id) = 26 AND substr(service_id, 1, 4) = 'svc_'),
+    run_number INTEGER NOT NULL CHECK (run_number > 0),
     expires_at INTEGER NOT NULL,
     origin_hostname TEXT NOT NULL DEFAULT '',
-    origin_public_url_id TEXT NOT NULL DEFAULT '',
-    origin_publish_run_number INTEGER NOT NULL DEFAULT 0,
+    origin_service_id TEXT NOT NULL CHECK (length(origin_service_id) = 26 AND substr(origin_service_id, 1, 4) = 'svc_'),
+    origin_run_number INTEGER NOT NULL CHECK (origin_run_number > 0),
     PRIMARY KEY (server_origin, hostname, state_digest)
 ) STRICT;
 CREATE INDEX oauth_pending_callbacks_expiry_idx ON oauth_pending_callbacks (expires_at);
@@ -269,6 +268,7 @@ CREATE TABLE alias_declarations (
     alias_id TEXT NOT NULL REFERENCES project_aliases(id) ON DELETE CASCADE,
     tunnel_id TEXT NOT NULL REFERENCES local_tunnels(id) ON DELETE CASCADE,
     fingerprint BLOB NOT NULL CHECK (length(fingerprint) = 32),
+    integration_namespace TEXT NOT NULL CHECK (integration_namespace <> ''),
     PRIMARY KEY (alias_id, tunnel_id)
 ) STRICT;
 
@@ -277,19 +277,23 @@ CREATE TABLE alias_publish_runs (
     owner TEXT NOT NULL,
     tunnel_id TEXT NOT NULL REFERENCES local_tunnels(id) ON DELETE CASCADE,
     selection_revision INTEGER NOT NULL CHECK (selection_revision > 0),
-    public_url_id TEXT NOT NULL,
-    publish_run_number INTEGER NOT NULL CHECK (publish_run_number > 0),
-    target_public_url_id TEXT NOT NULL,
-    target_publish_run_number INTEGER NOT NULL CHECK (target_publish_run_number > 0)
+    service_id TEXT NOT NULL CHECK (length(service_id) = 26 AND substr(service_id, 1, 4) = 'svc_'),
+    run_number INTEGER NOT NULL CHECK (run_number > 0),
+    target_service_id TEXT NOT NULL CHECK (length(target_service_id) = 26 AND substr(target_service_id, 1, 4) = 'svc_'),
+    target_run_number INTEGER NOT NULL CHECK (target_run_number > 0)
 ) STRICT;
 
-CREATE TABLE oauth_alias_handoffs (
+CREATE TABLE oauth_callback_handoffs (
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
     hostname TEXT NOT NULL,
     state_digest BLOB NOT NULL CHECK (length(state_digest) = 32),
+    -- retain known returns after tunnel removal so they cannot fall through.
+    tunnel_id TEXT NOT NULL,
+    primary_project_root TEXT NOT NULL CHECK (primary_project_root <> ''),
+    integration_namespace TEXT NOT NULL CHECK (integration_namespace <> ''),
     callback_path TEXT NOT NULL,
-    public_url_id TEXT NOT NULL,
-    publish_run_number INTEGER NOT NULL CHECK (publish_run_number > 0),
+    service_id TEXT NOT NULL CHECK (length(service_id) = 26 AND substr(service_id, 1, 4) = 'svc_'),
+    run_number INTEGER NOT NULL CHECK (run_number > 0),
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL CHECK (expires_at > created_at),
     consumed_at INTEGER CHECK (consumed_at IS NULL OR consumed_at >= created_at),
@@ -342,7 +346,8 @@ CREATE TABLE inspections (
     mysql_result_sets INTEGER NOT NULL DEFAULT 0 CHECK (mysql_result_sets >= 0),
     mysql_error_code INTEGER NOT NULL DEFAULT 0 CHECK (mysql_error_code BETWEEN 0 AND 65535),
     CHECK (
-      (service_protocol = 'http' AND method != '' AND status BETWEEN 100 AND 599 AND sql_operation = '' AND result = '' AND redis_command = '')
+      (service_protocol = 'http' AND method != '' AND status BETWEEN 100 AND 599 AND sql_operation = ''
+          AND result IN ('ok','error') AND (status < 400 OR result = 'error') AND redis_command = '')
       OR (service_protocol IN ('postgres', 'mysql') AND method = '' AND path = '' AND status = 0
           AND sql_operation != '' AND result != '' AND redis_command = '')
       OR (service_protocol = 'redis' AND method = '' AND path = '' AND status = 0
@@ -504,8 +509,9 @@ SELECT id,
     json_object('publication', json_object(
         'tunnel_id', id, 'command', command, 'state', state, 'process_id', process_id,
         'server', server_origin, 'project', project_root, 'service', coalesce(service, ''),
-        'service_protocol', CASE WHEN service_protocol = 'http' THEN '' ELSE service_protocol END,
-        'public_url_id', coalesce(public_url_id, ''), 'publish_run_number', coalesce(publish_run_number, 0),
+        'service_protocol', service_protocol,
+        'service_id', coalesce(service_id, ''),
+        'publish_run_number', coalesce(publish_run_number, 0),
         'hostname', coalesce(hostname, ''),
         'public_url', CASE WHEN hostname IS NULL THEN '' ELSE 'https://' || hostname END,
         'target', coalesce(target, ''), 'framework', coalesce(framework, ''), 'failure', coalesce(failure_code, ''),
@@ -543,7 +549,7 @@ END;
 CREATE TRIGGER project_publication_changed AFTER UPDATE ON local_tunnels
 WHEN NEW.state IS NOT OLD.state OR NEW.hostname IS NOT OLD.hostname
     OR NEW.target IS NOT OLD.target OR NEW.publish_run_number IS NOT OLD.publish_run_number
-    OR NEW.public_url_id IS NOT OLD.public_url_id OR NEW.framework IS NOT OLD.framework OR NEW.failure_code IS NOT OLD.failure_code
+    OR NEW.service_id IS NOT OLD.service_id OR NEW.framework IS NOT OLD.framework OR NEW.failure_code IS NOT OLD.failure_code
 BEGIN
     UPDATE project_journals SET last_sequence = last_sequence + 1, last_observed_at = NEW.updated_at WHERE project_root = NEW.project_root;
     INSERT INTO project_events (project_root, sequence, event_type, occurred_at, payload_json, stored_bytes)

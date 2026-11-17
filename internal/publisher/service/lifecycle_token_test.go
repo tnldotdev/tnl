@@ -23,28 +23,43 @@ func (c *opaqueTokenControl) HeartbeatServiceRun(_ context.Context, _, _ string,
 }
 
 func TestServiceRunPassesOpaqueTokenToControlAndCloses(t *testing.T) {
-	for _, token := range []string{"opaque-server-run-token", ""} {
-		name := "opaque"
-		if token == "" {
-			name = "empty"
-		}
-		t.Run(name, func(t *testing.T) {
-			config, control := lifecycleFixture(t)
-			control.setup.RunToken = token
-			boundary := errors.New("heartbeat boundary")
-			opaque := &opaqueTokenControl{lifecycleControl: control, heartbeatErr: boundary}
-			config.Control = opaque
-			err := Publish(t.Context(), config)
+	for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Tcp} {
+		for _, token := range []string{"opaque-server-run-token", ""} {
+			name := "opaque"
 			if token == "" {
-				if !errors.Is(err, ErrPrivateStream) || opaque.heartbeats != 0 {
-					t.Fatal("empty run token reached control heartbeat", err)
+				name = "empty"
+			}
+			t.Run(string(protocol)+"/"+name, func(t *testing.T) {
+				config, control := lifecycleFixture(t)
+				approved, err := control.GetPublisherService(t.Context(), config.ServiceID, "")
+				if err != nil {
+					t.Fatal(err)
 				}
-			} else if !errors.Is(err, boundary) || opaque.heartbeats != 1 || opaque.heartbeatToken.String() != token {
-				t.Fatal("publisher rejected or changed the server's opaque run token", err)
-			}
-			if control.closes != 1 || control.bad != nil {
-				t.Fatal("publisher did not close the exact returned run and token", control.closes, control.bad)
-			}
-		})
+				approved.Protocol = protocol
+				if protocol == controlv1.ServiceProtocolHTTP {
+					approved.Endpoint.Port = 443
+				}
+				control.approved = &approved
+				config.Metadata.Protocol = protocol
+				if token != "" {
+					control.prep.RunToken = token
+				}
+				control.setup.RunToken = token
+				boundary := errors.New("heartbeat boundary")
+				opaque := &opaqueTokenControl{lifecycleControl: control, heartbeatErr: boundary}
+				config.Control = opaque
+				err = Publish(t.Context(), config)
+				if token == "" {
+					if !errors.Is(err, ErrPrivateStream) || opaque.heartbeats != 0 {
+						t.Fatal("empty run token reached control heartbeat", err)
+					}
+				} else if !errors.Is(err, boundary) || opaque.heartbeats != 1 || opaque.heartbeatToken.String() != token {
+					t.Fatal("publisher rejected or changed the server's opaque run token", err)
+				}
+				if control.closes != 1 || control.bad != nil {
+					t.Fatal("publisher did not close the exact returned run and token", control.closes, control.bad)
+				}
+			})
+		}
 	}
 }

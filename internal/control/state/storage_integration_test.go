@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"net/netip"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
@@ -44,14 +45,17 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	if _, err := database.StoreRelayTransportCertificate(ctx, lease.RelayServiceID, lease.TLSServerName, certificate, privateKey, now); err != nil {
 		t.Fatal(err)
 	}
-	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
+	guest := newGuestTrialForTest(t, database, now)
+	service, err := database.AllocateGuestDemoService(ctx, AllocateGuestDemoServiceRequest{
+		Credential: guestCredentialForTest(guest), IdempotencyKey: "rotation", Target: guestLoopbackTarget(t), Now: guestOperationTime(guest)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreateGuestTrial(ctx, guest, "routes.example.test", now); err != nil {
+	declaration, err := database.serviceConfiguration(ctx, controlstatedb.New(database.pool), service.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	masterKey, err := database.EnsureGuestPrincipal(ctx, guest.ID, now)
+	declarationJSON, err := json.Marshal(declaration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +67,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 		{"acme_accounts", "account_key_ciphertext", "account_key_storage_key_id", account.AccountKeyDER},
 		{"relay_services", "transport_private_key_ciphertext", "transport_private_key_storage_key_id", privateKey},
 		{"relay_certificate_orders", "private_key_ciphertext", "private_key_storage_key_id", order.PrivateKeyPEM},
-		{"guest_retry_keys", "guest_retry_master_key_ciphertext", "guest_retry_master_key_storage_key_id", masterKey[:]},
+		{"services", "configuration_ciphertext", "storage_key_id", declarationJSON},
 	}
 	before := make(map[string][]byte)
 	oldKeyID := database.storageKey.CurrentID()
@@ -110,8 +114,24 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	if rotated, err := rotating.ReencryptStorageSecrets(ctx, 1); err != nil || rotated != 0 {
 		t.Fatalf("completed rotation = %d, %v", rotated, err)
 	}
+	// retain the actual rotated ciphertext for the new-key-only recovery check.
+	// expired guest declarations must be scrubbed before the old IP key can go.
+	var rotatedDeclaration []byte
+	var rotatedDeclarationKey string
+	if err := rotating.pool.QueryRow(ctx, `SELECT configuration_ciphertext,storage_key_id FROM control.services WHERE id=$1`,
+		service.ID).Scan(&rotatedDeclaration, &rotatedDeclarationKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rotating.ExpireServiceRuns(ctx, now.Add(73*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := rotating.ForgetGuestPrivateState(ctx, now.Add(73*time.Hour)); err != nil {
 		t.Fatal(err)
+	}
+	var scrubbed bool
+	if err := rotating.pool.QueryRow(ctx, `SELECT deleted_at IS NOT NULL AND configuration_ciphertext IS NULL AND storage_key_id IS NULL
+		FROM control.services WHERE id=$1`, service.ID).Scan(&scrubbed); err != nil || !scrubbed {
+		t.Fatalf("expired guest declaration was retained: %t, %v", scrubbed, err)
 	}
 	rotating.Close()
 	database.Close()
@@ -126,7 +146,9 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	for _, store := range stores {
 		var ciphertext []byte
 		var keyID string
-		if err := reopened.pool.QueryRow(ctx, "SELECT "+store.ciphertextColumn+", "+store.keyColumn+" FROM control."+store.table).Scan(&ciphertext, &keyID); err != nil {
+		if store.table == "services" {
+			ciphertext, keyID = rotatedDeclaration, rotatedDeclarationKey
+		} else if err := reopened.pool.QueryRow(ctx, "SELECT "+store.ciphertextColumn+", "+store.keyColumn+" FROM control."+store.table).Scan(&ciphertext, &keyID); err != nil {
 			t.Fatal(err)
 		}
 		if keyID != reopened.storageKey.CurrentID() || bytes.Equal(ciphertext, before[store.table]) {
@@ -149,8 +171,12 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	if err != nil || !found || recoveredOrder.ID != order.ID || !bytes.Equal(recoveredOrder.PrivateKeyPEM, order.PrivateKeyPEM) {
 		t.Fatalf("recover relay order key: found %t, %v", found, err)
 	}
-	recoveredMaster, err := reopened.EnsureGuestPrincipal(ctx, guest.ID, now)
-	if err != nil || recoveredMaster != masterKey {
-		t.Fatalf("recover external retry master key: %v", err)
+	recoveredDeclaration, err := reopened.openServiceConfiguration(service.ID, service.Name, rotatedDeclarationKey, rotatedDeclaration, "")
+	if err != nil {
+		t.Fatalf("recover guest service declaration: %v", err)
+	}
+	recoveredJSON, err := json.Marshal(recoveredDeclaration)
+	if err != nil || !bytes.Equal(recoveredJSON, declarationJSON) {
+		t.Fatalf("rotated guest declaration changed: %v", err)
 	}
 }

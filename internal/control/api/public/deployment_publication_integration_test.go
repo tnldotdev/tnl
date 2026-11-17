@@ -15,10 +15,12 @@ import (
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/config"
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
@@ -44,8 +46,8 @@ func TestIntegrationDeploymentPublicationHTTPAndNativePreparation(t *testing.T) 
 	}
 	team, actor := session.Identity.Memberships[0].TeamID, session.Identity.Identity.ID
 	applied, err := d.ApplyProjectConfiguration(ctx, controlstate.ApplyProjectConfigurationRequest{TeamID: team, ActorID: actor, ProjectKey: "shop", SourceFingerprint: strings.Repeat("a", 64), Deployment: "production", ServiceDeclarations: map[string]string{"web": "http", "other": "http"}, Configuration: controlstate.ProjectConfiguration{Settings: &controlstate.DeploymentSettings{}, Services: map[string]controlstate.ProjectServiceConfiguration{
-		"web":   {Target: "app", PublicURL: &controlstate.ProjectServicePublicURL{Access: &controlstate.ProjectPublicAccess{Mode: "anonymous"}, Limits: &controlstate.ProjectPublicLimits{HTTP: &controlstate.ProjectHTTPApplicationLimits{Total: new(10)}}}},
-		"other": {Target: "app", PublicURL: &controlstate.ProjectServicePublicURL{}},
+		"web":   {Target: "app", Public: new(true), HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}, Limits: &config.WorkLimits{Total: new(10)}}},
+		"other": {Target: "app", Public: new(true)},
 	}}, Now: now})
 	if err != nil {
 		t.Fatal(err)
@@ -108,21 +110,30 @@ func TestIntegrationDeploymentPublicationHTTPAndNativePreparation(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, saved, err := publisheridentity.PrepareDeployment(ctx, control, authority, *response.JSON201, private, "production", "web", nil)
-	if err != nil || saved == nil || saved.PublicUrl.Ephemeral || saved.PublicUrl.AccessMode != controlv1.Anonymous || saved.Limits == nil || saved.Limits.Http == nil || saved.Limits.Http.Total == nil || *saved.Limits.Http.Total != 10 {
+	native, saved, err := publisheridentity.PrepareDeployment(ctx, control, authority, *response.JSON201, private, "production", "web")
+	if err != nil || saved == nil || saved.Ephemeral || saved.HttpLimits == nil || saved.HttpLimits.Total == nil || *saved.HttpLimits.Total != 10 {
 		t.Fatal("named preparation lost saved policy/limits", err)
 	}
-	if _, err = native.GetPublicURLByHostname(ctx, team, "other.invalid"); err == nil {
+	otherID := ""
+	for _, service := range applied.Services {
+		if service.Service == "other" {
+			otherID = service.ServiceID
+		}
+	}
+	if otherID == "" {
+		t.Fatal("fixture lost the sibling service")
+	}
+	if _, _, err = native.ForService(ctx, otherID); err == nil {
 		t.Fatal("native escaped its one selected publication")
 	}
-	if _, _, err = publisheridentity.PrepareDeployment(ctx, control, authority, *response.JSON201, private, "production", "other", nil); err == nil {
+	if _, _, err = publisheridentity.PrepareDeployment(ctx, control, authority, *response.JSON201, private, "production", "other"); err == nil {
 		t.Fatal("HTTP preparation exposed unapproved service")
 	}
 	invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: "http://127.0.0.1:3000"}
+	allocation := controlv1.AllocateServiceRequest{InvocationId: invocation, Configuration: controlv1.ProjectServiceConfiguration{Target: "http://127.0.0.1:3000"}}
 	access, err := native.Access(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +146,7 @@ func TestIntegrationDeploymentPublicationHTTPAndNativePreparation(t *testing.T) 
 	if err != nil || read.JSON200 == nil || read.HTTPResponse.Header.Get("Cache-Control") != "no-store" {
 		t.Fatal("publication response was missing or cacheable", err)
 	}
-	invalidAllocation, err := json.Marshal(map[string]any{"invocation_id": invocation, "target": allocation.Target, "hostname": "claimed.example.test"})
+	invalidAllocation, err := json.Marshal(map[string]any{"invocation_id": invocation, "configuration": allocation.Configuration, "hostname": "claimed.example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,26 +154,67 @@ func TestIntegrationDeploymentPublicationHTTPAndNativePreparation(t *testing.T) 
 	if err != nil || denied.StatusCode() != 400 || denied.ApplicationproblemJSONDefault == nil || denied.ApplicationproblemJSONDefault.Code != controlv1.InvalidRequest {
 		t.Fatal("allocation accepted a custom hostname claim", denied, err)
 	}
-	temporary, first, err := publisheridentity.PrepareDeployment(ctx, control, authority, *response.JSON201, private, "production", "", &allocation)
-	if err != nil || first == nil || !first.PublicUrl.Ephemeral || first.PublicUrl.AccessMode != controlv1.Restricted {
+	temporary, err := publisheridentity.NewDeploymentAllocator(control, authority, *response.JSON201, private, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := temporary.AllocateService(ctx, allocation)
+	if err != nil || !first.Ephemeral {
 		t.Fatal("temporary preparation borrowed anonymous saved policy", err)
 	}
-	_, retry, err := publisheridentity.PrepareDeployment(ctx, control, authority, *response.JSON201, private, "production", "", &allocation)
-	if err != nil || retry.PublicUrl.Id != first.PublicUrl.Id || !retry.PublicUrl.ExpiresAt.Equal(*first.PublicUrl.ExpiresAt) {
+	retried, err := publisheridentity.NewDeploymentAllocator(control, authority, *response.JSON201, private, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := retried.AllocateService(ctx, allocation)
+	if err != nil || retry.Id != first.Id || retry.ExpiresAt == nil || first.ExpiresAt == nil || !retry.ExpiresAt.Equal(*first.ExpiresAt) {
 		t.Fatal("native retry lost original allocation", err)
 	}
 	anonymous := allocation
-	anonymous.AccessMode = new(controlv1.Anonymous)
-	if _, _, err := publisheridentity.PrepareDeployment(ctx, control, authority, *response.JSON201, private, "production", "", &anonymous); err == nil {
+	anonymous.Configuration.Http = &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.Anonymous)}}
+	if _, err := retried.AllocateService(ctx, anonymous); err == nil {
 		t.Fatal("HTTP allocation exceeded visitor approval")
 	}
-	if err := temporary.DeletePublicURL(ctx, first.PublicUrl.Id); err != nil {
+	if err := d.PrepareVisitorSigningKeys(ctx, server.URL, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := publisheridentity.PrepareDeployment(ctx, control, authority, *response.JSON201, private, "production", "", &allocation); err == nil {
+	for _, name := range []string{"http-a", "http-b"} {
+		if _, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: name, RelayID: name + "-1", RelayRunID: name + "-run", ProtocolVersion: 1, RelayAddress: name + ".example.test:443", TLSServerName: name + ".example.test", InternalRelayAddress: name + ".internal:9445", ConnectionCapacity: 10, StreamCapacity: 64}, now, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkPolicy := func(n *publisheridentity.Native, s controlv1.Service, anonymous bool) {
+		t.Helper()
+		token, err := n.Access(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared, err := n.PrepareServiceRun(ctx, s.Id, "http-policy", token, publisheridentity.ServiceDeclaration(s))
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := n.StartServiceRun(ctx, s.Id, prepared.ServiceRunId, token, prepared.RunNumber)
+		if err != nil {
+			t.Fatal(err)
+		}
+		policy, err := d.ReadPublisherVisitorPolicy(ctx, visitorscope.Scope{Kind: visitorscope.Service, ID: s.Id}, run.ServiceRunId, run.RunNumber, run.RunToken, 0, time.Now())
+		if err != nil || policy.Policy.Anonymous != anonymous {
+			t.Fatal("native selection lost the exact saved HTTP access policy", err)
+		}
+	}
+	checkPolicy(native, *saved, true)
+	checkPolicy(temporary, first, false)
+	if err := temporary.DeleteAllocatedService(ctx, first.Id); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := publisheridentity.NewDeploymentAllocator(control, authority, *response.JSON201, private, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replayed.AllocateService(ctx, allocation); err == nil {
 		t.Fatal("deleted allocation resurrected through native retry")
 	}
-	if err := native.DeletePublicURL(ctx, saved.PublicUrl.Id); err == nil {
+	if err := native.DeleteAllocatedService(ctx, saved.Id); err == nil {
 		t.Fatal("native named publication deleted saved URL")
 	}
 }

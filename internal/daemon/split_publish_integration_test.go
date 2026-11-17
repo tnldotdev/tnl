@@ -16,16 +16,20 @@ import (
 
 func TestIntegrationSplitPublishAndVisit(t *testing.T) {
 	fixture := newSplitPublishFixture(t, "split")
+	var targetRequests atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		targetRequests.Add(1)
 		response.Header().Set("X-Tnl-Integration", "split")
 		_, _ = io.WriteString(response, request.URL.RequestURI())
 	}))
 	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
+	// use only the publisher event: no applied-routing wait, warm-up request,
+	// or caller retry may make the first public request succeed.
 	ready := waitForPublisherReady(t, handle)
 
-	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/through-split?source=integration", nil)
+	response, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/through-split?source=integration", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +38,10 @@ func TestIntegrationSplitPublishAndVisit(t *testing.T) {
 		t.Fatalf("split visitor response = %s, headers %#v, body %q", response.Status, response.Header, body)
 	}
 	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
-	assertSplitRoutePlacement(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
+	if len(response.TLS.VerifiedChains) == 0 || targetRequests.Load() != 1 {
+		t.Fatal("first split request did not use verified visitor TLS and exactly one target request", targetRequests.Load())
+	}
+	assertSplitRoutePlacement(t, fixture.inspect, ready.ServiceId, ready.RunNumber)
 	assertRuntimeOperations(t, []*integrationProcess{fixture.relayA.process, fixture.relayB.process}, map[string]uint64{
 		"RelayRegister": 2, "RelayRenewLease": 1, "RelayAdmitPublisherConnection": 2, "RelayOpenVisitorStream": 1,
 	})
@@ -49,28 +56,28 @@ func TestIntegrationSplitRelayLossAndReplenishment(t *testing.T) {
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 	ready := fixture.waitReady(t, handle)
-	beforeConnection := readSplitConnectionState(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, "relay-a")
+	beforeConnection := readSplitConnectionState(t, fixture.inspect, ready.ServiceId, ready.RunNumber, "relay-a")
 	beforeLease := readSplitRelayLease(t, fixture.inspect, fixture.relayA.config.RelayID)
 
 	stopIntegrationProcess(t, fixture.relayA.process)
 	stoppedLease := readSplitRelayLease(t, fixture.inspect, fixture.relayA.config.RelayID)
-	waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 1)
+	waitForReadyPublisherConnections(t, fixture.inspect, ready.ServiceId, ready.RunNumber, 1)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
-	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/during-relay-loss", nil)
+	response, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/during-relay-loss", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if response.StatusCode != http.StatusOK || string(body) != "relay recovery" {
 		t.Fatalf("visitor during relay loss = %s, %q", response.Status, body)
 	}
-	assertPublishRunNumber(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
+	assertServiceRunNumber(t, fixture.inspect, ready.ServiceId, ready.RunNumber)
 
 	waitUntilIntegrationTime(t, stoppedLease.expiresAt.Add(25*time.Millisecond))
 	fixture.relayA.process = fixture.startRelay(t, fixture.relayA.config)
 	waitForProcessReady(t, fixture.relayA.process)
-	waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
+	waitForReadyPublisherConnections(t, fixture.inspect, ready.ServiceId, ready.RunNumber, 2)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
-	afterConnection := readSplitConnectionState(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, "relay-a")
+	afterConnection := readSplitConnectionState(t, fixture.inspect, ready.ServiceId, ready.RunNumber, "relay-a")
 	afterLease := readSplitRelayLease(t, fixture.inspect, fixture.relayA.config.RelayID)
 	if afterLease.runID == beforeLease.runID || afterLease.revision != beforeLease.revision+1 {
 		t.Fatalf(
@@ -83,8 +90,8 @@ func TestIntegrationSplitRelayLossAndReplenishment(t *testing.T) {
 		afterConnection.connectedRelayRunID != afterLease.runID {
 		t.Fatalf("replacement publisher connection = before %#v, after %#v, lease %#v", beforeConnection, afterConnection, afterLease)
 	}
-	assertPublishRunNumber(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
-	response, body, err = fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/after-relay-recovery", nil)
+	assertServiceRunNumber(t, fixture.inspect, ready.ServiceId, ready.RunNumber)
+	response, body, err = fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/after-relay-recovery", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,21 +144,21 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 		t.Fatalf("ACME authorization did not reach the gate%s", handle.diagnostics())
 	}
 
-	var orderID, orderURL, publishRunID, publicURLID, accountURL, workerID string
-	var publishRunNumber uint64
+	var orderID, orderURL, serviceRunID, serviceID, accountURL, workerID string
+	var runNumber int64
 	var pending bool
 	if err := fixture.inspect.QueryRowContext(integrationOperationContext(t), `
-		SELECT orders.id, orders.order_url, orders.publish_run_id, orders.public_url_id,
-			orders.publish_run_number, accounts.account_url, orders.work_owner,
+		SELECT orders.id, orders.order_url, orders.service_run_id, orders.service_id,
+			orders.service_run_number, accounts.account_url, orders.work_owner,
 			orders.state = 'authorizing' AND orders.challenge_method = 'dns-01'
 			AND orders.certificate_pem IS NULL AND orders.installed_at IS NULL
-			AND sessions.certificate_installed_at IS NULL AND sessions.ready_at IS NULL
+			AND sessions.certificate_expires_at IS NULL AND sessions.ready_at IS NULL
 		FROM control.acme_orders AS orders
-		JOIN control.publish_runs AS sessions ON sessions.id = orders.publish_run_id
+		JOIN control.service_runs AS sessions ON sessions.id = orders.service_run_id
 		JOIN control.acme_accounts AS accounts ON accounts.id = orders.account_id
 		WHERE orders.certificate_identifiers = ARRAY[$1]::text[]
 	`, fixture.identity.hostname).Scan(
-		&orderID, &orderURL, &publishRunID, &publicURLID, &publishRunNumber, &accountURL, &workerID, &pending,
+		&orderID, &orderURL, &serviceRunID, &serviceID, &runNumber, &accountURL, &workerID, &pending,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -185,9 +192,9 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 	waitForProcessReady(t, fixture.control)
 	release()
 	ready := fixture.waitReady(t, handle)
-	if ready.PublicURLID != publicURLID || ready.PublishRunNumber != publishRunNumber {
-		t.Fatalf("publisher changed route across issuance restart: %s version %d, want %s version %d",
-			ready.PublicURLID, ready.PublishRunNumber, publicURLID, publishRunNumber)
+	if ready.ServiceId != serviceID || ready.ServiceRunId != serviceRunID || ready.RunNumber != runNumber {
+		t.Fatalf("publisher changed service run across issuance restart: %s run %d, want %s run %d",
+			ready.ServiceId, ready.RunNumber, serviceID, runNumber)
 	}
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		afterLeases := []splitProcessLease{
@@ -213,26 +220,26 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 	// dns cleanup can commit after the publisher becomes ready.
 	waitForIntegrationCondition(t, 10*time.Second, func(ctx context.Context) (bool, error) {
 		err := fixture.inspect.QueryRowContext(ctx, `
-		SELECT orders.order_url = $2 AND orders.publish_run_id = $3
+		SELECT orders.order_url = $2 AND orders.service_run_id = $3
 			AND orders.state = 'installed' AND orders.certificate_pem IS NOT NULL
 			AND orders.not_before IS NOT NULL AND orders.not_after IS NOT NULL
-			AND sessions.certificate_issuance_id = orders.id AND sessions.certificate_installed_at IS NOT NULL
+			AND sessions.certificate_issuance_id = orders.id AND sessions.certificate_expires_at IS NOT NULL
 			AND sessions.closed_at IS NULL AND accounts.account_url = $4
 			AND (SELECT count(*) FROM control.acme_authorizations
 				WHERE order_id = orders.id AND challenge_type = 'dns-01' AND state = 'complete'
 				AND presented_at IS NOT NULL AND validated_at IS NOT NULL AND cleanup_completed_at IS NOT NULL) = 1
 		FROM control.acme_orders AS orders
-		JOIN control.publish_runs AS sessions ON sessions.id = orders.publish_run_id
+		JOIN control.service_runs AS sessions ON sessions.id = orders.service_run_id
 		JOIN control.acme_accounts AS accounts ON accounts.id = orders.account_id
 		WHERE orders.id = $1
-		`, orderID, orderURL, publishRunID, accountURL).Scan(&installed)
+		`, orderID, orderURL, serviceRunID, accountURL).Scan(&installed)
 		return installed, err
 	})
-	if !installed || integrationRouteOrderCount(t, fixture.inspect, publicURLID) != 1 || newOrders.Load() != 1 {
+	if !installed || integrationServiceOrderCount(t, fixture.inspect, serviceID) != 1 || newOrders.Load() != 1 {
 		t.Fatalf("original certificate order was not installed and acknowledged without duplication: installed %v, new orders %d",
 			installed, newOrders.Load())
 	}
-	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/after-issuance-restart", nil)
+	response, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/after-issuance-restart", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,16 +254,77 @@ func TestIntegrationControlRestartResumesCertificateOrder(t *testing.T) {
 
 func TestIntegrationControlRestartPreservesDataPlane(t *testing.T) {
 	fixture := newSplitPublishFixture(t, "control-restart")
-	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(response, "control restart")
+	duringRestart, afterRestart := make(chan struct{}), make(chan struct{})
+	releaseDuring := sync.OnceFunc(func() { close(duringRestart) })
+	releaseAfter := sync.OnceFunc(func() { close(afterRestart) })
+	defer releaseDuring()
+	defer releaseAfter()
+	streamDone := make(chan error, 1)
+	var retainedRequests atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/retained-control-restart" {
+			_, _ = io.WriteString(response, "control restart")
+			return
+		}
+		if retainedRequests.Add(1) != 1 {
+			http.Error(response, "retained request was replayed", http.StatusConflict)
+			return
+		}
+		streamDone <- func() error {
+			response.Header().Set("Content-Type", "text/plain")
+			for _, step := range []struct {
+				gate <-chan struct{}
+				body string
+			}{{nil, "before control restart\n"}, {duringRestart, "without control\n"}, {afterRestart, "after control restart\n"}} {
+				if step.gate != nil {
+					select {
+					case <-step.gate:
+					case <-request.Context().Done():
+						return request.Context().Err()
+					}
+				}
+				if _, err := io.WriteString(response, step.body); err != nil {
+					return err
+				}
+				if err := http.NewResponseController(response).Flush(); err != nil {
+					return err
+				}
+			}
+			return nil
+		}()
 	}))
 	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 	ready := fixture.waitReady(t, handle)
-	initial, initialBody, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/before-control-restart", nil)
+	initial, initialBody, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/before-control-restart", nil)
 	if err != nil || initial.StatusCode != http.StatusOK || string(initialBody) != "control restart" {
 		t.Fatalf("initial visitor did not establish a current access decision: %+v %q %v", initial, initialBody, err)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, serviceHTTPAddress(ready)+"/retained-control-restart", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, err := fixture.visitor.client.Do(request)
+	if err != nil {
+		t.Fatal("establish retained visitor before control shutdown", err)
+	}
+	defer retained.Body.Close()
+	if retained.StatusCode != http.StatusOK {
+		t.Fatal("retained visitor was not admitted before control shutdown", retained.Status)
+	}
+	assertIntegrationPublicURLCertificate(t, retained, fixture.identity.hostname)
+	readRetained := func(want string) {
+		t.Helper()
+		body := make([]byte, len(want))
+		if _, err := io.ReadFull(retained.Body, body); err != nil || string(body) != want {
+			t.Fatalf("established data plane did not carry %q: got %q, %v", want, body, err)
+		}
+	}
+	readRetained("before control restart\n")
+	beforeConnections := []splitConnectionState{
+		readSplitConnectionState(t, fixture.inspect, ready.ServiceId, ready.RunNumber, "relay-a"),
+		readSplitConnectionState(t, fixture.inspect, ready.ServiceId, ready.RunNumber, "relay-b"),
 	}
 	beforeIngress := readSplitIngressLease(t, fixture.inspect, fixture.ingressConfig.IngressID)
 	beforeRelayA := readSplitRelayLease(t, fixture.inspect, fixture.relayA.config.RelayID)
@@ -271,19 +339,37 @@ func TestIntegrationControlRestartPreservesDataPlane(t *testing.T) {
 		}
 	}
 
+	controlStopped := false
+	restartControl := func() {
+		fixture.control = startIntegrationProcessWithOptions(t, fixture.controlConfig, fixture.controlOptions)
+		controlStopped = false
+		waitForProcessReady(t, fixture.control)
+	}
+	defer func() {
+		// restore the dependency before topology cleanup even if an outage
+		// assertion fails; publisher closure and audit flush still need control.
+		if controlStopped {
+			restartControl()
+		}
+	}()
 	stopIntegrationProcess(t, fixture.control)
-	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/without-control", nil)
+	controlStopped = true
+	releaseDuring()
+	readRetained("without control\n")
+	// keep-alives are disabled, so this proves a new visitor can use prepared,
+	// unexpired authority rather than only retaining an already-open response.
+	response, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/without-control", nil)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal("new visitor while control was stopped", err)
 	}
 	if response.StatusCode != http.StatusOK || string(body) != "control restart" {
-		t.Fatalf("visitor while control was stopped = %s, %q", response.Status, body)
+		t.Fatalf("new visitor while control was stopped = %s, %q", response.Status, body)
 	}
+	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
 	if !time.Now().Before(earliestExpiry) {
 		t.Fatal("control restart did not begin before the earliest existing process lease expired")
 	}
-	fixture.control = startIntegrationProcessWithOptions(t, fixture.controlConfig, fixture.controlOptions)
-	waitForProcessReady(t, fixture.control)
+	restartControl()
 	if !time.Now().Before(earliestExpiry) {
 		t.Fatal("control did not become ready before the earliest existing process lease expired")
 	}
@@ -306,13 +392,42 @@ func TestIntegrationControlRestartPreservesDataPlane(t *testing.T) {
 			relayB.expiresAt.After(latestExpiry), nil
 	})
 	waitUntilIntegrationTime(t, latestExpiry.Add(25*time.Millisecond))
-	waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
-	assertPublishRunNumber(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
-	response, body, err = fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/after-control-restart", nil)
+	waitForReadyPublisherConnections(t, fixture.inspect, ready.ServiceId, ready.RunNumber, 2)
+	assertServiceRunNumber(t, fixture.inspect, ready.ServiceId, ready.RunNumber)
+	afterConnections := []splitConnectionState{
+		readSplitConnectionState(t, fixture.inspect, ready.ServiceId, ready.RunNumber, "relay-a"),
+		readSplitConnectionState(t, fixture.inspect, ready.ServiceId, ready.RunNumber, "relay-b"),
+	}
+	for index, before := range beforeConnections {
+		if afterConnections[index] != before {
+			t.Fatalf("publisher connection claim changed across control restart: before %#v, after %#v", before, afterConnections[index])
+		}
+	}
+	releaseAfter()
+	readRetained("after control restart\n")
+	if extra, err := io.ReadAll(retained.Body); err != nil || len(extra) != 0 {
+		t.Fatal("retained response did not finish without replay", len(extra), err)
+	}
+	if err := retained.Body.Close(); err != nil {
+		t.Fatal("close retained response", err)
+	}
+	select {
+	case err := <-streamDone:
+		if err != nil {
+			t.Fatal("retained target did not finish", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("retained target handler did not join")
+	}
+	if retainedRequests.Load() != 1 {
+		t.Fatal("control restart reopened the retained target request", retainedRequests.Load())
+	}
+	response, body, err = fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/after-control-restart", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if response.StatusCode != http.StatusOK || string(body) != "control restart" {
 		t.Fatalf("visitor after control restart = %s, %q", response.Status, body)
 	}
+	stopIntegrationPublisher(t, handle)
 }

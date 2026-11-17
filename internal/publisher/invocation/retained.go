@@ -6,8 +6,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisher/target"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
 type RetainedOptions struct{ StateDir, Server, Target, EnrollmentKey string }
@@ -15,7 +14,7 @@ type RetainedSelection struct{ Target, EnrollmentKey, PublisherIdentityID string
 
 func SelectRetained(ctx context.Context, options RetainedOptions) (RetainedSelection, error) {
 	selection := RetainedSelection{EnrollmentKey: options.EnrollmentKey}
-	address, err := target.NormalizePublicAddress(options.Target, controlv1.Http)
+	address, err := targetsyntax.NormalizeTarget(options.Target)
 	if err != nil {
 		return selection, err
 	}

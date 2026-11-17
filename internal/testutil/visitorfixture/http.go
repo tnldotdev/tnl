@@ -21,8 +21,6 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-const PublicURLID = "url_0123456789abcdefghijkl"
-
 type HTTPSource struct{ BrowserCookieSecret, ShareId, ShareCookieSecret *string }
 type HTTPDecision struct {
 	VisitAllowed bool
@@ -59,7 +57,9 @@ func (c *HTTPControl) ReadPublisherVisitorPolicy(_ context.Context, body control
 		if errors.Is(err, clientcontrol.ErrUnavailable) {
 			return controlv1.VisitorPolicyUpdate{}, err
 		}
-		allowed := err == nil && decision.VisitAllowed && decision.ValidUntil != nil && decision.ValidUntil.After(time.Now())
+		// a token deadline ends that credential, not every visitor's policy.
+		// explicit permission changes still advance the shared revision.
+		allowed := err == nil && decision.VisitAllowed
 		if allowed != c.Allowed[key] {
 			c.Revision++
 			c.Allowed[key] = allowed
@@ -74,7 +74,6 @@ func (c *HTTPControl) ReadPublisherVisitorPolicy(_ context.Context, body control
 		}
 	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: events, SnapshotRequired: body.AfterRevision == 0,
-		VisitorSourceKey: SourceKeyBytes(),
 		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "route.example", Port: 443, Issuer: "https://control.example.test", Enabled: true,
 			VisitorPolicyRevision: c.Revision, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "live", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
@@ -113,7 +112,7 @@ func (c *HTTPControl) IssueVisitorToken(_ context.Context, body controlv1.Visito
 	if source.Kind == "share_session" {
 		subject = visitortoken.Share{ShareID: source.ShareID}
 	}
-	permission := visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: PublicURLID}, Hostname: "route.example", Port: 443,
+	permission := visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Kind(body.Resource.Kind), ID: body.Resource.Id}, Hostname: "route.example", Port: 443,
 		VisitorPolicyRevision: c.Revision, Subject: subject, ExpiresAt: decision.ValidUntil.Truncate(time.Second)}
 	private := ed25519.NewKeyFromSeed([]byte(strings.Repeat("l", 32)))
 	token, err := visitortoken.Sign("https://control.example.test", "live", private, permission, time.Now())
@@ -145,7 +144,8 @@ func (c *HTTPControl) Credential(t *testing.T, cookie string, share bool) string
 	}
 	c.Sources[key], c.Allowed[key] = input, true
 	c.Mu.Unlock()
-	response, err := c.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: PublicURLID}, Source: source})
+	view, _, _ := c.Lease.Current()
+	response, err := c.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(view.Scope.Kind), Id: view.Scope.ID}, Source: source})
 	if err != nil {
 		return "invalid-visitor-permission"
 	}
@@ -166,6 +166,6 @@ func (c *HTTPControl) Permission(t *testing.T, cookie string, share bool) contro
 	if err != nil {
 		t.Fatal(err)
 	}
-	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
+	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(view.Scope.Kind), Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
 		VisitorPolicyRevision: permission.Facts().VisitorPolicyRevision, ExpiresAt: permission.Facts().ExpiresAt, VisitorToken: token}
 }

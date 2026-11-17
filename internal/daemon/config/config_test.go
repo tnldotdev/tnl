@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -50,8 +51,8 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 		config.IngressListen != ":443" || config.RelayTCPListen != ":443" || config.RelayUDPListen != ":443" {
 		t.Fatalf("standalone listeners = %#v", config)
 	}
-	if config.PublicURLCertificateWorkers != 8 {
-		t.Fatalf("public URL certificate workers = %d, want 8", config.PublicURLCertificateWorkers)
+	if config.ServiceCertificateWorkers != 8 {
+		t.Fatalf("service certificate workers = %d, want 8", config.ServiceCertificateWorkers)
 	}
 	if config.ManagedDomainMaxMemberChildLabels != 0 || config.CustomDomainsEnabled {
 		t.Fatal("standalone should allow nested managed-domain URLs and require custom-domain opt-in")
@@ -64,9 +65,10 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 	}
 }
 
-func TestParsePublicURLCertificateWorkers(t *testing.T) {
+func TestParseServiceCertificateWorkers(t *testing.T) {
 	base := []string{
 		"--role", "standalone",
+		"--route53-server-zone-id", "ZSERVER",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com",
 		"--managed-domain", "tunnels.example.com",
@@ -76,8 +78,27 @@ func TestParsePublicURLCertificateWorkers(t *testing.T) {
 		"--storage-key", testStorageKey,
 	}
 	for _, value := range []string{"0", "9"} {
-		if _, err := Parse(append(base, "--public-url-certificate-workers", value)); err == nil {
-			t.Fatalf("public URL certificate worker count %s was accepted", value)
+		if _, err := Parse(append(base, "--service-certificate-workers", value)); err == nil {
+			t.Fatalf("service certificate worker count %s was accepted", value)
+		}
+	}
+	for _, value := range []string{"1", "8"} {
+		cfg, err := Parse(append(base, "--service-certificate-workers", value))
+		if err != nil || strconv.Itoa(cfg.ServiceCertificateWorkers) != value {
+			t.Fatalf("service certificate worker count %s: config=%v error=%v", value, cfg.ServiceCertificateWorkers, err)
+		}
+	}
+	if _, err := Parse(append(base, "--public-url-certificate-workers", "8")); err == nil {
+		t.Fatal("removed public URL certificate worker flag was accepted")
+	}
+	for _, args := range [][]string{
+		{"--routing-table-wait", "1s"},
+		{"--pending-url-connection-limit", "8"},
+		{"--pending-url-rate", "5"},
+		{"--pending-url-burst", "10"},
+	} {
+		if _, err := Parse(append(base, args...)); err == nil {
+			t.Fatal("removed publication flag was accepted", args[0])
 		}
 	}
 }
@@ -246,9 +267,10 @@ func TestConfigControlHostnameRejectsURLAndPort(t *testing.T) {
 		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		RelayStreamCapacity: 1, QUICMaxIncomingStreams: 1,
-		IngressLeaseDuration: 30 * time.Second, RelayLeaseDuration: 30 * time.Second,
+		ControlOutageTolerance: 5 * time.Minute,
+		IngressLeaseDuration:   30 * time.Second, RelayLeaseDuration: 30 * time.Second,
 		LeaseRenewalInterval: 10 * time.Second, ControlRetryInterval: time.Second,
-		RoutingTableWait: time.Second, DrainTimeout: time.Second,
+		DrainTimeout:    time.Second,
 		QUICIdleTimeout: time.Second,
 	}
 	for _, value := range []string{"https://control.tnl.example.com", "control.tnl.example.com:443", "control.tnl.example.com/path", "Control.tnl.example.com"} {

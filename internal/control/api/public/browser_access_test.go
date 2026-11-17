@@ -26,14 +26,16 @@ import (
 
 type browserFlowStore struct {
 	BrowserAccessStore
+	ServiceHTTPStore
 	login    controlstate.BrowserLoginAttempt
 	issued   controlstate.BrowserAccessSession
 	consumed bool
 	binding  []byte
+	err      error
 }
 
 type shareReviewerTokenIssuer struct {
-	PublicURLStore
+	*serviceBrowserHandoffStore
 	requested []controlstate.VisitorTokenSource
 }
 
@@ -42,7 +44,7 @@ func (s *shareReviewerTokenIssuer) IssueVisitorToken(_ context.Context, _ string
 	if _, ok := source.(controlstate.BrowserSessionTokenSource); ok {
 		return controlstate.IssuedVisitorToken{}, controlstate.ErrVisitorPermission
 	}
-	if share, ok := source.(controlstate.ShareSessionTokenSource); ok && share.ShareID == "shr_0123456789abcdefghijkl" && share.Secret == "share-secret" {
+	if share, ok := source.(controlstate.ShareSessionTokenSource); ok && share.ShareID == "shr_"+strings.Repeat("A", 22) && share.Secret == strings.Repeat("C", 43) {
 		return controlstate.IssuedVisitorToken{Token: visitortoken.Token("share-permission"), Permission: visitortoken.Permission{
 			Scope: scope, Hostname: "preview.example.test", Port: 443, VisitorPolicyRevision: 1,
 			Subject: visitortoken.Share{ShareID: share.ShareID}, ExpiresAt: now.Add(time.Minute)}}, nil
@@ -51,28 +53,38 @@ func (s *shareReviewerTokenIssuer) IssueVisitorToken(_ context.Context, _ string
 }
 
 func TestShareReviewerBrowserHandoffKeepsIdentityAndShareAccessSeparate(t *testing.T) {
-	store := &shareReviewerTokenIssuer{}
-	h := &handler{store: store, dependencies: Stores{VisitorTokens: store}, config: Config{ControlURL: "https://control.example.test"}}
-	id, secret := "shr_0123456789abcdefghijkl", "share-secret"
-	result, err := h.redeemedBrowserHandoffPermission(t.Context(), "url_0123456789abcdefghijkl", "browser-session", controlv1.BrowserHandoffRequest{ShareId: &id, ShareSecret: &secret})
-	if err != nil || result.VisitorToken != "share-permission" || len(store.requested) != 2 {
-		t.Fatal("sign-in without a visitor grant displaced share access", err)
+	store := &shareReviewerTokenIssuer{serviceBrowserHandoffStore: &serviceBrowserHandoffStore{}}
+	h := &handler{dependencies: Stores{VisitorTokens: store, ServiceHTTP: store}, config: Config{ControlURL: "https://control.example.test"}}
+	service, run := "svc_"+strings.Repeat("A", 22), "srun_"+strings.Repeat("A", 22)
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"run_number":"1","secret":"`+strings.Repeat("B", 43)+`","share_id":"shr_`+strings.Repeat("A", 22)+`","share_cookie_secret":"`+strings.Repeat("C", 43)+`"}`))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("D", 43))
+	response := httptest.NewRecorder()
+	h.RedeemServiceBrowserHandoff(response, request, service, run)
+	var result controlv1.BrowserHandoffResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != 200 || result.CookieSecret == "" || result.Permission == nil || result.Permission.VisitorToken != "share-permission" || len(store.requested) != 1 {
+		t.Fatal("sign-in without a visitor grant displaced independent share access", response.Code, err)
 	}
-	if _, ok := store.requested[0].(controlstate.BrowserSessionTokenSource); !ok {
-		t.Fatal("share replaced the browser sign-in identity")
-	}
-	if _, ok := store.requested[1].(controlstate.ShareSessionTokenSource); !ok {
+	if _, ok := store.requested[0].(controlstate.ShareSessionTokenSource); !ok {
 		t.Fatal("browser sign-in was mistaken for share-backed access")
 	}
-	if _, err := h.redeemedBrowserHandoffPermission(t.Context(), "url_0123456789abcdefghijkl", "browser-session", controlv1.BrowserHandoffRequest{}); !errors.Is(err, controlstate.ErrVisitorPermission) {
-		t.Fatal("sign-in alone granted visitor access", err)
+	request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"run_number":"1","secret":"`+strings.Repeat("B", 43)+`"}`))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("D", 43))
+	response = httptest.NewRecorder()
+	h.RedeemServiceBrowserHandoff(response, request, service, run)
+	result = controlv1.BrowserHandoffResponse{}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != 200 || result.CookieSecret == "" || result.Permission != nil {
+		t.Fatal("identity-only sign-in granted visitor access or lost its identity cookie", err)
 	}
 }
 
-func (s *browserFlowStore) BeginBrowserLogin(_ context.Context, previewID, publicURLID, path, nonce, verifier string, binding []byte, _ *controlstate.CompanyLoginIntent, _ time.Time) (string, error) {
-	s.login = controlstate.BrowserLoginAttempt{PreviewID: previewID, PublicURLID: publicURLID, ReturnPath: path, Nonce: nonce, Verifier: verifier}
+func (s *browserFlowStore) ServiceHTTPBrowserTeam(context.Context, visitorscope.Scope, time.Time) (string, error) {
+	return "team_1", nil
+}
+
+func (s *browserFlowStore) BeginServiceBrowserLogin(_ context.Context, subject visitorscope.Scope, previewID, path, nonce, verifier string, binding []byte, _ *controlstate.CompanyLoginIntent, _ time.Time) (string, error) {
+	s.login = controlstate.BrowserLoginAttempt{PreviewID: previewID, Subject: subject, ReturnPath: path, Nonce: nonce, Verifier: verifier}
 	s.binding = bytes.Clone(binding)
-	return "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", nil
+	return "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", s.err
 }
 
 func (s *browserFlowStore) ConsumeBrowserLogin(_ context.Context, state string, binding []byte, _ time.Time) (controlstate.BrowserLoginAttempt, error) {
@@ -85,7 +97,7 @@ func (s *browserFlowStore) ConsumeBrowserLogin(_ context.Context, state string, 
 
 func (s *browserFlowStore) IssueBrowserHandoff(_ context.Context, _ controlstate.BrowserLoginAttempt, session controlstate.BrowserAccessSession, _ time.Time) (controlstate.BrowserHandoff, error) {
 	s.issued = session
-	return controlstate.BrowserHandoff{Token: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}, nil
+	return controlstate.BrowserHandoff{Origin: "https://web.example.test", Token: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}, nil
 }
 
 func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
@@ -140,22 +152,25 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions := &browserSessionStore{shareRoutesStub: &shareRoutesStub{}, session: controlstate.ControlSession{SessionID: sessionID, AccessToken: access, RefreshToken: refresh, AccessExpiresAt: time.Now().Add(time.Hour), RefreshExpiresAt: time.Now().Add(24 * time.Hour), Identity: controlstate.IdentityContext{Identity: controlstate.Identity{ID: "identity_1"}}}}
+	sessions := &browserSessionStore{session: controlstate.ControlSession{SessionID: sessionID, AccessToken: access, RefreshToken: refresh, AccessExpiresAt: time.Now().Add(time.Hour), RefreshExpiresAt: time.Now().Add(24 * time.Hour), Identity: controlstate.IdentityContext{Identity: controlstate.Identity{ID: "identity_1"}}}}
 	h := &handler{
 		config:       Config{OIDCIssuer: provider.URL, OIDCClientID: "tnl-browser", OIDCScopes: []string{"openid"}, ServerDomain: "example.test", HTTPClient: provider.Client()},
-		dependencies: Stores{BrowserSessions: sessions},
-		store:        sessions, previews: &previewStoreStub{preview: controlstate.Preview{
-			ID: "pv_0123456789abcdefghijkl", TeamID: "team_1", PublicURLIDs: []string{"url_0123456789abcdefghijkl"},
+		dependencies: Stores{BrowserSessions: sessions, ServiceHTTP: store},
+		previews: &previewStoreStub{preview: controlstate.Preview{
+			ID: "pv_0123456789abcdefghijkl", TeamID: "team_1", ServiceIDs: []string{"svc_" + strings.Repeat("A", 22)},
 		}},
 		browserAccess: store, browserOIDC: verifier, browserAuthority: authorityClient,
-		authorizer: &selectiveShareAuthorizer{principal: publicURLReadPrincipal{identityID: "identity_1", displayName: "Sam"}},
+		authorizer: &recordingAuthorizer{principal: controlReadPrincipal{identityID: "identity_1", displayName: "Sam"}},
 	}
 	start := httptest.NewRecorder()
-	h.BeginPreviewBrowserLogin(start, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{
-		PreviewId: new("pv_0123456789abcdefghijkl"), PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/settings?tab=profile",
+	h.BeginServiceBrowserLogin(start, httptest.NewRequest(http.MethodGet, "/v1/browser/service-login", nil), controlv1.BeginServiceBrowserLoginParams{
+		ServiceId: "svc_" + strings.Repeat("A", 22), PreviewId: new("pv_0123456789abcdefghijkl"), ReturnPath: "/settings?tab=profile",
 	})
 	if start.Code != http.StatusFound {
 		t.Fatalf("browser login = %d %s", start.Code, start.Body.String())
+	}
+	if store.login.PreviewID != "pv_0123456789abcdefghijkl" || store.login.Subject != (visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}) {
+		t.Fatal("service browser login lost its exact preview context")
 	}
 	authorize, err := url.Parse(start.Header().Get("Location"))
 	if err != nil || authorize.Host != newURLHost(t, provider.URL) || authorize.Query().Get("code_challenge_method") != "S256" ||
@@ -198,8 +213,8 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	}
 	store.consumed = false
 	secondStart := httptest.NewRecorder()
-	h.BeginPreviewBrowserLogin(secondStart, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{
-		PreviewId: new("pv_0123456789abcdefghijkl"), PublicUrlId: "url_0123456789abcdefghijkl", ReturnPath: "/",
+	h.BeginServiceBrowserLogin(secondStart, httptest.NewRequest(http.MethodGet, "/v1/browser/service-login", nil), controlv1.BeginServiceBrowserLoginParams{
+		ServiceId: "svc_" + strings.Repeat("A", 22), ReturnPath: "/",
 	})
 	wrongNonce := signer.Token(t, "browser-test", map[string]any{
 		"iss": provider.URL, "aud": "tnl-browser", "sub": "identity_1", "name": "Sam",
@@ -216,7 +231,6 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 }
 
 type browserSessionStore struct {
-	*shareRoutesStub
 	session controlstate.ControlSession
 }
 
@@ -233,15 +247,6 @@ func newURLHost(t *testing.T, value string) string {
 	return parsed.Host
 }
 
-type failingBrowserPreviewStore struct {
-	PreviewStore
-	err error
-}
-
-func (s failingBrowserPreviewStore) GetPreview(context.Context, string) (controlstate.Preview, error) {
-	return controlstate.Preview{}, s.err
-}
-
 func TestBrowserLoginDoesNotHideStorageFailureAsNotFound(t *testing.T) {
 	for _, test := range []struct {
 		err    error
@@ -251,9 +256,10 @@ func TestBrowserLoginDoesNotHideStorageFailureAsNotFound(t *testing.T) {
 		{controlstate.ErrPreviewNotFound, http.StatusNotFound, "not_found"},
 		{errors.New("database password private-test-secret"), http.StatusInternalServerError, "internal"},
 	} {
-		h := &handler{config: Config{ServerDomain: "example.test"}, browserAccess: &browserFlowStore{}, browserOIDC: &oidc.Server{}, browserAuthority: &clientauthority.Client{}, previews: failingBrowserPreviewStore{err: test.err}}
+		store := &browserFlowStore{err: test.err}
+		h := &handler{config: Config{ServerDomain: "example.test"}, browserAccess: store, browserOIDC: &oidc.Server{}, browserAuthority: &clientauthority.Client{}, dependencies: Stores{ServiceHTTP: store}}
 		response := httptest.NewRecorder()
-		h.BeginPreviewBrowserLogin(response, httptest.NewRequest(http.MethodGet, "/v1/browser/login", nil), controlv1.BeginPreviewBrowserLoginParams{PreviewId: new("pv_example"), PublicUrlId: "url_example", ReturnPath: "/"})
+		h.BeginServiceBrowserLogin(response, httptest.NewRequest(http.MethodGet, "/v1/browser/service-login", nil), controlv1.BeginServiceBrowserLoginParams{ServiceId: "svc_" + strings.Repeat("A", 22), ReturnPath: "/"})
 		var body struct {
 			Code      string `json:"code"`
 			RequestID string `json:"request_id"`
@@ -269,24 +275,18 @@ func TestBrowserLoginDoesNotHideStorageFailureAsNotFound(t *testing.T) {
 
 func TestBrowserSessionPreservesAuthorizationAvailabilityFailure(t *testing.T) {
 	cause := errors.Join(authorization.ErrUnavailable, errors.New("private authority failure"))
-	h := &handler{browserAccess: browserSessionStoreStub{}, authorizer: failingBrowserAuthorizer{err: cause}}
-	_, _, _, err := h.browserSessionAccess(httptest.NewRequest(http.MethodGet, "/", nil), controlstate.PublishRunAuthentication{}, "cookie")
+	h := &handler{dependencies: Stores{ServiceHTTP: browserSessionStoreStub{err: cause}}}
+	_, _, _, err := h.browserSessionAccess(httptest.NewRequest(http.MethodGet, "/", nil), controlstate.ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}}, "cookie")
 	if !errors.Is(err, authorization.ErrUnavailable) {
 		t.Fatalf("authorization failure became an expired session: %v", err)
 	}
 }
 
-type browserSessionStoreStub struct{ BrowserAccessStore }
-
-type failingBrowserAuthorizer struct {
-	publicURLAuthorizer
+type browserSessionStoreStub struct {
+	ServiceHTTPStore
 	err error
 }
 
-func (a failingBrowserAuthorizer) AuthorizePublicURLReads(context.Context, string) (publicURLReadPrincipal, error) {
-	return publicURLReadPrincipal{}, a.err
-}
-
-func (browserSessionStoreStub) BrowserSession(context.Context, string, string, time.Time) (controlstate.BrowserAccessSession, error) {
-	return controlstate.BrowserAccessSession{AccessExpiresAt: time.Now().Add(time.Hour)}, nil
+func (s browserSessionStoreStub) RefreshServiceBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error) {
+	return controlstate.BrowserAccessSession{}, s.err
 }

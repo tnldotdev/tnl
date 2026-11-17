@@ -12,6 +12,13 @@ import (
 )
 
 func TestPublisherCertificateCacheIsolationAndOwnReuse(t *testing.T) {
+	for _, team := range []string{"team", ""} {
+		t.Run("team="+team, func(t *testing.T) { testPublisherCertificateCacheIsolationAndOwnReuse(t, team) })
+	}
+}
+
+func testPublisherCertificateCacheIsolationAndOwnReuse(t *testing.T, team string) {
+	t.Helper()
 	root := filepath.Join(t.TempDir(), "state")
 	store := testStore(t, root, "https://server.example")
 	firstID, err := opaqueid.New(opaqueid.PublisherIdentityPrefix)
@@ -23,11 +30,11 @@ func TestPublisherCertificateCacheIsolationAndOwnReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := exactCertificateTestPlan()
-	first, err := store.CertificatesForPublisher("team", firstID, plan)
+	first, err := store.CertificatesForPublisher(team, firstID, plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.CertificatesForPublisher("team", secondID, plan)
+	second, err := store.CertificatesForPublisher(team, secondID, plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +62,7 @@ func TestPublisherCertificateCacheIsolationAndOwnReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = otherLock.Close()
-	duplicate, err := store.CertificatesForPublisher("team", firstID, plan)
+	duplicate, err := store.CertificatesForPublisher(team, firstID, plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,11 +102,11 @@ func TestPublisherCertificateCacheIsolationAndOwnReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	store = testStore(t, root, "https://server.example")
-	first, err = store.CertificatesForPublisher("team", firstID, plan)
+	first, err = store.CertificatesForPublisher(team, firstID, plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err = store.CertificatesForPublisher("team", secondID, plan)
+	second, err = store.CertificatesForPublisher(team, secondID, plan)
 	if err != nil {
 		t.Fatal(err)
 	}

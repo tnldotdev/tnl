@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const clientBaselineIdentity = "tnl-client-fresh-v1-telemetry"
+const clientBaselineIdentity = "tnl-client-fresh-v1-service-integrations"
 
 // openReadOnlySQLite reads existing client state without creating or migrating it.
 func openReadOnlySQLite(ctx context.Context, path string) (*sql.DB, error) {

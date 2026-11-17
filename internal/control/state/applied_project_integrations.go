@@ -19,10 +19,7 @@ func normalizeAppliedProjectIntegrations(c *ProjectConfiguration) error {
 	services := config.Services{}
 	for name, service := range c.Services {
 		protocol := service.Protocol
-		declared := config.Service{Protocol: &protocol, HTTP: service.HTTP}
-		if service.PublicURL != nil {
-			declared.Tunnel = &config.Tunnel{}
-		}
+		declared := config.Service{Protocol: &protocol, HTTP: service.HTTP, Public: service.Public}
 		services[name] = declared
 		if service.HTTP != nil {
 			for _, mount := range service.HTTP.Paths {
@@ -36,7 +33,7 @@ func normalizeAppliedProjectIntegrations(c *ProjectConfiguration) error {
 	definitions := map[string]config.Webhook{}
 	for name, w := range c.Webhooks {
 		service, declared := c.Services[w.Service]
-		if !declared || service.Protocol != "http" || service.PublicURL == nil || c.Settings != nil || len(w.Path) > 2048 || len(w.Methods) > 7 || len(w.SourceIPs) > 256 {
+		if !declared || service.Protocol != "http" || !projectServicePublic(service) || c.Settings != nil || len(w.Path) > 2048 || len(w.Methods) > 7 || len(w.SourceIPs) > 256 {
 			return ErrProjectConfigurationInvalid
 		}
 		definitions[name] = config.Webhook{Service: w.Service, Path: w.Path, Provider: w.Provider, Delivery: w.Delivery, Methods: w.Methods, SourceIPs: w.SourceIPs}

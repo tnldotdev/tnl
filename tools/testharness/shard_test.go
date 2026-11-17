@@ -17,7 +17,7 @@ func TestShardsCoverEveryTestOnceAndRemainStable(t *testing.T) {
 	for i := range 300 {
 		names = append(names, fmt.Sprintf("TestIntegrationCase%d", i))
 	}
-	for _, count := range []int{3, 4} {
+	for _, count := range []int{3, 4, 8} {
 		seen := make(map[string]int)
 		for index := 1; index <= count; index++ {
 			shard := testShard{index: index, count: count}
@@ -52,6 +52,57 @@ func TestShardsCoverEveryTestOnceAndRemainStable(t *testing.T) {
 				t.Fatalf("test %s assigned %d times with %d shards", name, seen[name], count)
 			}
 		}
+	}
+}
+
+func TestEightShardsRefineFourWithoutOmittingOrReassigningTests(t *testing.T) {
+	var names []string
+	for i := range 665 {
+		names = append(names, fmt.Sprintf("TestIntegrationCase%d", i))
+	}
+	inventory := strings.Join(names, "\n")
+	for _, tc := range []struct {
+		name, skip string
+		total      int
+	}{
+		{name: "all", total: 665},
+		{name: "separately scheduled", skip: "^TestIntegrationCase[0-9]$", total: 655},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			excluded := regexp.MustCompile(tc.skip)
+			for parent := 1; parent <= 4; parent++ {
+				pattern, _, total, err := shardTestPattern(inventory, "^TestIntegration", tc.skip, testShard{parent, 4})
+				if err != nil || total != tc.total {
+					t.Fatalf("old shard %d/4: total=%d, want %d, err=%v", parent, total, tc.total, err)
+				}
+				original := regexp.MustCompile(pattern)
+				seen := make(map[string]int)
+				for _, child := range []int{parent, parent + 4} {
+					pattern, _, total, err := shardTestPattern(inventory, "^TestIntegration", tc.skip, testShard{child, 8})
+					if err != nil || total != tc.total {
+						t.Fatalf("new shard %d/8: total=%d, want %d, err=%v", child, total, tc.total, err)
+					}
+					refined := regexp.MustCompile(pattern)
+					for _, name := range names {
+						if refined.MatchString(name) {
+							if tc.skip != "" && excluded.MatchString(name) {
+								t.Fatalf("new shard %d/8 includes separately scheduled test %s", child, name)
+							}
+							seen[name]++
+						}
+					}
+				}
+				for _, name := range names {
+					want := 0
+					if original.MatchString(name) {
+						want = 1
+					}
+					if seen[name] != want {
+						t.Fatalf("old shard %d/4 test %s executes %d times in its children, want %d", parent, name, seen[name], want)
+					}
+				}
+			}
+		})
 	}
 }
 

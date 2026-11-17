@@ -5,6 +5,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"net/http"
+	"net/netip"
+	"slices"
 	"time"
 
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -14,13 +17,18 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/security/tlspolicy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -35,26 +43,92 @@ type ManagedControl interface {
 }
 
 func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved controlv1.Service, cfg RunConfig) (*Prepared, error) {
-	if approved.Endpoint == nil || approved.Endpoint.Port < 1024 || approved.Endpoint.Port > 65535 || preparation.CertificatePlan == nil || preparation.ServiceId != approved.Id || preparation.TeamId != approved.TeamId || preparation.PublisherIdentityId != cfg.Identity.ClientId || preparation.PublisherGrantId != cfg.Identity.GrantId || preparation.PublisherKeyId != cfg.Identity.KeyId || preparation.RunNumber < 1 || !preparation.ExpiresAt.After(time.Now()) {
+	if preparation.RunToken == "" {
 		return nil, ErrPrivateStream
 	}
-	if preparation.Hostname != approved.Endpoint.Hostname || preparation.ServicePort != approved.Endpoint.Port || preparation.DomainId == "" || approved.DomainId != nil && preparation.DomainId != *approved.DomainId {
+	if (len(cfg.Mounts) != 0 || cfg.ResolveHTTPTarget != nil) &&
+		(approved.Protocol != controlv1.ServiceProtocolHTTP || cfg.Handler != nil || cfg.TargetResolver != nil) {
 		return nil, ErrPrivateStream
 	}
+	traffic, err := serviceTraffic(preparation.Traffic)
+	if err != nil {
+		return nil, err
+	}
+	if approved.Endpoint == nil || !serviceendpoint.Valid(string(approved.Protocol), approved.Endpoint.Hostname, approved.Endpoint.Port, approved.Endpoint.Public) || preparation.CertificatePlan == nil || preparation.ServiceId != approved.Id || !opaqueid.Valid(preparation.ServiceRunId, opaqueid.ServiceRunPrefix) || preparation.TeamId != approved.TeamId || preparation.PublisherIdentityId != cfg.PublisherIdentityID || preparation.PublisherGrantId != cfg.PublisherGrantID || preparation.PublisherKeyId != cfg.PublisherKeyID || preparation.RunNumber < 1 || !preparation.ExpiresAt.After(time.Now()) {
+		return nil, ErrPrivateStream
+	}
+	if preparation.Hostname != approved.Endpoint.Hostname || preparation.DomainId == "" || approved.DomainId != nil && preparation.DomainId != *approved.DomainId || preparation.RequirePostQuantum != approved.RequirePostQuantum {
+		return nil, ErrPrivateStream
+	}
+	capturedPlan := *preparation.CertificatePlan
+	capturedPlan.Identifiers = slices.Clone(capturedPlan.Identifiers)
+	preparation.CertificatePlan = &capturedPlan
 	plan, err := certificateidentity.CanonicalPlan(*preparation.CertificatePlan)
 	if err != nil || !certificateidentity.Covers(plan.Identifiers, approved.Endpoint.Hostname) || plan.ChallengeMethod != controlv1.Dns01 {
 		return nil, ErrPrivateStream
 	}
-	target, err := tcptarget.Normalize(cfg.Target)
-	if err != nil {
-		return nil, err
+	target := ""
+	if cfg.Handler != nil {
+		if approved.Protocol != controlv1.ServiceProtocolHTTP || cfg.Target != "" || cfg.TargetResolver != nil || approved.TargetTls != nil {
+			return nil, ErrPrivateStream
+		}
+	} else {
+		target, err = tcptarget.Normalize(cfg.Target)
+		if err != nil {
+			return nil, err
+		}
 	}
-	prepared := &Prepared{Preparation: preparation, target: target, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
+	preparation.Traffic = cloneTrafficApproval(preparation.Traffic)
+	prepared := &Prepared{Preparation: preparation, traffic: traffic, target: target, handler: cfg.Handler, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
+	prepared.visitorTLS = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return prepared.currentCertificate() }}
+	if preparation.RequirePostQuantum {
+		prepared.visitorTLS = tlspolicy.RequirePostQuantum(prepared.visitorTLS)
+	}
+	prepared.inspectionMode, prepared.observeSummary = cfg.InspectionMode, cfg.ObserveSummary
+	prepared.admitRequest = cfg.AdmitRequest
+	if cfg.HTTPAdmitRequest != nil {
+		if approved.Protocol != controlv1.ServiceProtocolHTTP {
+			return nil, ErrPrivateStream
+		}
+		run := HTTPRun{ServiceID: preparation.ServiceId, RunID: preparation.ServiceRunId,
+			Number: preparation.RunNumber, Hostname: preparation.Hostname}
+		prepared.admitRequest = func(request *http.Request) error {
+			if cfg.AdmitRequest != nil {
+				if err := cfg.AdmitRequest(request); err != nil {
+					return err
+				}
+			}
+			return cfg.HTTPAdmitRequest(request, run)
+		}
+	}
+	if cfg.HTTPPrepareRequest != nil {
+		if approved.Protocol != controlv1.ServiceProtocolHTTP {
+			return nil, ErrPrivateStream
+		}
+		run := HTTPRun{ServiceID: preparation.ServiceId, RunID: preparation.ServiceRunId,
+			Number: preparation.RunNumber, Hostname: preparation.Hostname}
+		prepared.prepareRequest = func(request *http.Request) (func(context.Context) error, error) {
+			return cfg.HTTPPrepareRequest(request, run)
+		}
+	}
 	prepared.managedPublic = approved.Endpoint.Public
 	prepared.metadataRevision = approved.TrustRevision
 	prepared.targetResolver = cfg.TargetResolver
+	prepared.mounts = slices.Clone(cfg.Mounts)
+	prepared.resolveHTTPTarget = cfg.ResolveHTTPTarget
+	if cfg.HTTPResponseHooks != nil {
+		if prepared.managedProtocol != serviceconfig.ProtocolHTTP || cfg.Handler != nil {
+			return nil, ErrPrivateStream
+		}
+	}
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP || prepared.managedProtocol == serviceconfig.ProtocolKubernetes {
 		prepared.serviceHTTPRequests, err = requestlimit.NewHTTP(approved.HttpLimits)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
+		prepared.requestBodyIdleTimeout, err = applicationlimits.RequestBodyIdleTimeout(approved.HttpRequestBodyIdleTimeout)
 		if err != nil {
 			return nil, err
 		}
@@ -77,6 +151,12 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 			return nil, err
 		}
 		prepared.managedTargetTLS = transport.TLS
+	}
+	if cfg.HTTPResponseHooks != nil {
+		prepared.httpResponseHooks = cfg.HTTPResponseHooks(HTTPRun{
+			ServiceID: preparation.ServiceId, RunID: preparation.ServiceRunId,
+			Number: preparation.RunNumber, Hostname: preparation.Hostname,
+		})
 	}
 	return prepared, nil
 }
@@ -109,21 +189,56 @@ func (p *Prepared) installManagedCertificate(certificate tls.Certificate) error 
 	return nil
 }
 
-func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepared, setup controlv1.ServiceRunSetup, control ManagedControl, profile *clientstate.Store) (func() error, func(), error) {
+func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepared, setup controlv1.ServiceRunSetup, control ManagedControl, profile *clientstate.Store, audit serviceaudit.Sink) (func() error, func() error, error) {
 	if profile == nil || prepared.Preparation.CertificatePlan == nil {
+		return nil, nil, ErrPrivateStream
+	}
+	if len(setup.VisitorSourceKey) != len(prepared.sourceKey) {
+		return nil, nil, ErrPrivateStream
+	}
+	copy(prepared.sourceKey[:], setup.VisitorSourceKey)
+	if prepared.sourceKey == [32]byte{} {
 		return nil, nil, ErrPrivateStream
 	}
 	closeHTTP := func() {}
 	var httpFrontend HTTP
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
+		var proof *httpaccess.ReadinessProof
+		if config.ReadinessProof != nil {
+			proof = config.ReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
+				ID: setup.ServiceRunId, Number: uint64(setup.RunNumber), Hostname: prepared.managedHostname})
+			if proof == nil {
+				return nil, nil, ErrPrivateStream
+			}
+		}
 		var err error
 		httpFrontend, closeHTTP, err = PrepareHTTP(ctx, HTTP{
+			AuditSink:      audit,
+			InspectionMode: config.InspectionMode, ObserveSummary: config.ObserveSummary,
+			AdmitRequest: prepared.admitRequest, PrepareRequest: prepared.prepareRequest, ReadinessProof: proof,
+			ResponseHooks: prepared.httpResponseHooks,
+			Feedback:      config.Feedback, PreviewID: config.PreviewID,
+			PublicEndpoint: prepared.managedPublic, BrowserLoginAvailable: config.BrowserLoginAvailable,
+			ProjectService: config.ProjectService, ProjectRoot: config.ProjectRoot, Demo: config.Demo,
 			Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 			RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
 			Hostname: prepared.managedHostname, Port: prepared.servicePort, Requests: prepared.serviceHTTPRequests,
 		})
 		if err != nil {
 			return nil, nil, err
+		}
+		prepared.connectorHTTP = httpFrontend
+		prepared.policy = httpFrontend.Policy
+		prepared.httpResponseHooks = httpFrontend.ResponseHooks
+		if prepared.handler == nil && prepared.targetResolver == nil {
+			target := servicestream.HTTPTarget{Address: prepared.target, Mounts: prepared.mounts, ResolveTarget: prepared.resolveHTTPTarget,
+				Transport:   targettransport.Transport{Protocol: prepared.managedProtocol, TLS: prepared.managedTargetTLS},
+				Connections: prepared.serviceHTTPRequests.Limits().Concurrency}
+			prepared.httpProxy, err = target.NewHTTPProxy(ctx, prepared.managedHostname, prepared.httpResponseHooks)
+			if err != nil {
+				closeHTTP()
+				return nil, nil, err
+			}
 		}
 	}
 	decision := func(result controlv1.ServiceClientCertificateDecision, err error) (servicestream.Decision, error) {
@@ -132,43 +247,46 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		}
 		return servicestream.Decision{Allowed: result.Allowed, ValidUntil: result.ValidUntil}, err
 	}
-	awaitAdmission := func(ctx context.Context, authorize func(context.Context) (controlv1.ServiceClientCertificateDecision, error)) (servicestream.Decision, error) {
-		for {
-			result, err := authorize(ctx)
-			if err != nil || !result.Allowed || result.Admitted {
-				return decision(result, err)
-			}
-			observability.PublisherAuthorization(ctx, true, false, nil)
-			timer := time.NewTimer(25 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return servicestream.Decision{}, context.Cause(ctx)
-			case <-timer.C:
-			}
-		}
-	}
-	prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader) servicestream.Authentication {
+	prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader, source netip.AddrPort, reserveCapacity func(context.Context) error) servicestream.Authentication {
 		if header.PublicService != nil {
 			if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 				frontend := httpFrontend
 				frontend.Header = header
+				frontend.Source = source
+				frontend.ReserveCapacity = reserveCapacity
 				return servicestream.HTTPVisitor{Frontend: frontend}
 			}
 			return servicestream.CertificateVisitor{Check: func(check context.Context, leaf *x509.Certificate) (servicestream.Decision, error) {
-				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
-					return control.AuthorizeServiceClientCertificate(ctx, setup.ServiceId, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken), controlv1.AuthorizeServiceClientCertificateRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, Certificate: leaf.Raw})
-				})
+				result, err := control.AuthorizeServiceClientCertificate(check, setup.ServiceId, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken), controlv1.AuthorizeServiceClientCertificateRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, DestinationPort: int(header.PublicService.DestinationPort), Certificate: leaf.Raw})
+				if err == nil && result.Allowed {
+					if reserveCapacity == nil || !result.ValidUntil.After(time.Now()) {
+						return servicestream.Decision{}, servicestream.ErrEndpoint
+					}
+					err = reserveCapacity(check)
+				}
+				return decision(result, err)
 			}}
 		}
 		return nil
 	}
-	cache, err := profile.CertificatesForPublisher(prepared.Preparation.TeamId, config.Identity.ClientId, *prepared.Preparation.CertificatePlan)
+	cache, err := profile.CertificatesForPublisher(prepared.Preparation.TeamId, config.PublisherIdentityID, *prepared.Preparation.CertificatePlan)
 	if err != nil {
 		closeHTTP()
+		if prepared.httpProxy != nil {
+			err = errors.Join(err, prepared.httpProxy.Close())
+		}
 		return nil, nil, err
 	}
-	certificates := Certificates{Control: control, Cache: cache, ServiceID: setup.ServiceId, RunID: setup.ServiceRunId, PublisherIdentityID: config.Identity.ClientId, RunNumber: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken), Hostname: prepared.managedHostname, Plan: *prepared.Preparation.CertificatePlan, Install: prepared.installManagedCertificate}
+	installed := make(chan struct{}, 1)
+	prepared.certificateInstalled = installed
+	certificates := Certificates{Control: control, Cache: cache, ServiceID: setup.ServiceId, RunID: setup.ServiceRunId, PublisherIdentityID: config.PublisherIdentityID, RunNumber: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken), Hostname: prepared.managedHostname, Plan: *prepared.Preparation.CertificatePlan, Install: prepared.installManagedCertificate, installed: installed}
 	certificateCtx, cancel := context.WithCancel(ctx)
-	return func() error { return certificates.Maintain(certificateCtx) }, func() { cancel(); closeHTTP() }, nil
+	return func() error { return certificates.Maintain(certificateCtx) }, func() error {
+		cancel()
+		closeHTTP()
+		if prepared.httpProxy != nil {
+			return prepared.httpProxy.Close()
+		}
+		return nil
+	}, nil
 }

@@ -133,7 +133,7 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 	}
 	t.Setenv("TNLD_METRICS_LISTEN", "env:2")
 	base := daemonconfig.Config{
-		Role: daemonconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99, PublicURLCertificateWorkers: 4,
+		Role: daemonconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99, ServiceCertificateWorkers: 4,
 		ControlHostname: "control.example.com", ClusterSecret: "0123456789abcdef0123456789abcdef",
 		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
@@ -142,7 +142,7 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		QUICIdleTimeout: time.Second, IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration: 3 * time.Second, LeaseRenewalInterval: time.Second, ControlRetryInterval: time.Second,
-		RoutingTableWait: time.Second, DrainTimeout: time.Second,
+		DrainTimeout: time.Second,
 	}
 	resolved, err := resolveConfigFile(path, base, map[string]bool{"relay_stream_capacity": true})
 	if err != nil {

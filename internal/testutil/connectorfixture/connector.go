@@ -51,7 +51,10 @@ type connectorPair struct {
 	paths      [2]chan peer.Carrier
 	mu         sync.Mutex
 	nonces     [2][]byte
-	seen       map[string]bool
+	seen       map[string]*JoinedVisitor
+	control    *JoinedControl
+	retirement *Retirement
+	retired    bool
 }
 
 func NewConnector(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, service, run, workload, hostname, target string) *Connector {
@@ -123,7 +126,7 @@ func (n *Connector) Prepare(ctx context.Context, body controlv1.ConnectorPeerPai
 		return controlv1.ConnectorPeerPair{}, context.Canceled
 	}
 	if p := n.pairs[body.IdempotencyKey]; p != nil {
-		if !bytes.Equal(p.public, public) || body.Action == "renew" && (body.PreviousPairId == nil || *body.PreviousPairId != p.response.PairId || body.PreviousGeneration == nil || *body.PreviousGeneration != 1) {
+		if p.retired || !bytes.Equal(p.public, public) || body.Action == "renew" && (body.PreviousPairId == nil || *body.PreviousPairId != p.response.PairId || body.PreviousGeneration == nil || *body.PreviousGeneration != 1) {
 			return controlv1.ConnectorPeerPair{}, errConnectorFixture
 		}
 		result := p.response
@@ -133,7 +136,7 @@ func (n *Connector) Prepare(ctx context.Context, body controlv1.ConnectorPeerPai
 	if body.Action != "create" {
 		return controlv1.ConnectorPeerPair{}, errConnectorFixture
 	}
-	p := &connectorPair{public: bytes.Clone(public), seen: make(map[string]bool)}
+	p := &connectorPair{public: bytes.Clone(public), seen: make(map[string]*JoinedVisitor)}
 	var delivery [16]byte
 	if _, err := rand.Read(delivery[:]); err != nil {
 		return controlv1.ConnectorPeerPair{}, err
@@ -151,6 +154,7 @@ func (n *Connector) Prepare(ctx context.Context, body controlv1.ConnectorPeerPai
 	p.response = controlv1.ConnectorPeerPair{PairId: id, DeliveryId: base64.RawURLEncoding.EncodeToString(delivery[:]), DeliveryGeneration: 1, Key: base64.RawURLEncoding.EncodeToString(p.key[:]),
 		SessionKey: base64.RawURLEncoding.EncodeToString(p.sessionKey[:]), TrustRevision: 1, BindingState: controlv1.ConnectorPeerPairBindingActive,
 		ServiceId: n.service, ServiceRunId: n.run, RunNumber: 1, PublisherIdentityId: n.Ready.PublisherIdentityId, Subject: body.Subject, Relays: n.Ready.Relays, ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
+	p.retirement = NewRetirement(p.response, body.IdempotencyKey, p.public, p.sessionKey)
 	for slot := range p.paths {
 		p.paths[slot] = make(chan peer.Carrier, 1)
 	}
@@ -166,6 +170,31 @@ func (n *Connector) Prepare(ctx context.Context, body controlv1.ConnectorPeerPai
 	case <-ctx.Done():
 		return controlv1.ConnectorPeerPair{}, context.Cause(ctx)
 	}
+}
+
+func (n *Connector) Retire(ctx context.Context, pairID string, body controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+	n.mu.Lock()
+	p := n.pairs[body.IdempotencyKey]
+	n.mu.Unlock()
+	if p == nil {
+		return controlv1.ConnectorPeerPairRetirement{}, errConnectorFixture
+	}
+	receipt, err := p.retirement.Retire(ctx, n.service, pairID, body)
+	if err != nil {
+		return receipt, err
+	}
+	n.mu.Lock()
+	p.retired = true
+	// fence new admissions and stop existing application work, but retain the
+	// control channel for the connector's joined terminal/close exchange. durable
+	// retirement is not a remote control-stream reset or proof of cleanup.
+	p.mu.Lock()
+	for _, visitor := range p.seen {
+		visitor.cancel()
+	}
+	p.mu.Unlock()
+	n.mu.Unlock()
+	return receipt, nil
 }
 
 // AllowWorkload admits another session exchanged by the fixture authority.
@@ -202,7 +231,7 @@ func (n *Connector) accept(connection net.Conn, slot int) {
 			}
 		}
 		message, err := proof.Message()
-		if pair == nil || err != nil || proof.ConnectionSlot != slot || !ed25519.Verify(pair.public, message, proof.Signature) {
+		if pair == nil || pair.retired || err != nil || proof.ConnectionSlot != slot || !ed25519.Verify(pair.public, message, proof.Signature) {
 			return nil, errConnectorFixture
 		}
 		r := receipt()
@@ -223,15 +252,22 @@ func (n *Connector) accept(connection net.Conn, slot int) {
 	}
 	defer carrier.Close()
 	_ = session.HandleConnectorLegControl(n.ctx, func(_ context.Context, selection tunnelv1.ConnectorLegBinding) error {
+		n.mu.Lock()
+		defer n.mu.Unlock()
 		pair.mu.Lock()
 		defer pair.mu.Unlock()
-		if len(pair.nonces[slot]) != 0 || !selection.Matches(*hello.ConnectorPairLegProof) {
+		if pair.retired || len(pair.nonces[slot]) != 0 || !selection.Matches(*hello.ConnectorPairLegProof) {
 			return errConnectorFixture
 		}
 		pair.nonces[slot] = bytes.Clone(hello.ConnectorPairLegProof.Nonce)
 		pair.paths[slot] <- carrier
 		return nil
 	}, func(context.Context, tunnelv1.ConnectorPairLegProof) (tunnelv1.ConnectorPairLegAccepted, error) {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		if pair.retired {
+			return tunnelv1.ConnectorPairLegAccepted{}, errConnectorFixture
+		}
 		return receipt(), nil
 	})
 }
@@ -278,23 +314,39 @@ func (n *Connector) serve(p *connectorPair, ready chan<- error) {
 	if err != nil {
 		return
 	}
-	control, cancelControl := context.WithCancel(n.ctx)
-	defer cancelControl()
+	scope := tunnelv1.ConnectorControlScope{ServiceID: p.response.ServiceId, ServiceRunID: p.response.ServiceRunId,
+		RunNumber: uint64(p.response.RunNumber), PublisherIdentityID: p.response.PublisherIdentityId, PairID: p.response.PairId}
+	control := NewJoinedControl(n.ctx, scope, func(key tunnelv1.ConnectorVisitorTerminalKey) *JoinedVisitor {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.seen[key.VisitorConnectionID]
+	})
+	n.mu.Lock()
+	p.control = control
+	retired := p.retired
+	n.mu.Unlock()
+	if retired {
+		control.Retire()
+	}
+	defer control.Retire()
 	var permissionGate tunnel.ConnectorPermissionGate
 	workers.Go(func() {
-		_ = tunnel.ServeConnectorPermissionControl(control, permissions, func(update tunnelv1.ConnectorPermissionUpdate, responder *tunnel.ConnectorPermissionResponder) {
-			_ = responder.Respond(update, true)
-		}, func() { _ = session.Close() }, &permissionGate)
+		_ = control.Serve(permissions, &permissionGate)
 	})
 	for {
-		stream, err := session.AcceptStream(n.ctx)
+		stream, err := session.AcceptStream(control.Context)
 		if err != nil {
 			return
 		}
 		workers.Go(func() {
-			defer stream.Close()
-			stop := context.AfterFunc(n.ctx, func() { _ = stream.Close() })
-			defer stop()
+			var visitor *JoinedVisitor
+			var workErr error
+			defer func() {
+				workErr = errors.Join(workErr, stream.Close())
+				if visitor != nil {
+					visitor.Join(workErr)
+				}
+			}()
 			entry, initial, err := tunnelv1.ReadConnectorPeerVisitorOpening(stream)
 			if err != nil {
 				return
@@ -305,27 +357,50 @@ func (n *Connector) serve(p *connectorPair, ready chan<- error) {
 			if err != nil || !bytes.Equal(public, p.public) || !ed25519.Verify(public, message, signature) || !visitorsubject.Equal(p.response.Subject, entry.Subject) || entry.PairID != p.response.PairId || entry.ServiceID != n.service || entry.ServiceRunID != n.run || entry.SourceIP != "127.0.0.1" {
 				return
 			}
+			n.mu.Lock()
 			p.mu.Lock()
-			replay := p.seen[entry.VisitorConnectionID]
-			p.seen[entry.VisitorConnectionID] = true
+			replay := p.seen[entry.VisitorConnectionID] != nil
+			retired := p.retired
+			if !replay && !retired {
+				visitor = NewJoinedVisitor(control.Context, entry, p.response.ExpiresAt, stream.Close)
+				p.seen[entry.VisitorConnectionID] = visitor
+			}
 			p.mu.Unlock()
-			if replay {
+			n.mu.Unlock()
+			if replay || retired {
 				return
 			}
+			stopped := make(chan struct{})
+			stop := context.AfterFunc(visitor.Context, func() { defer close(stopped); _ = stream.Close() })
+			defer func() {
+				if !stop() {
+					<-stopped
+				}
+			}()
 			if err := tunnelv1.WriteConnectorPeerVisitorAccepted(stream, entry.VisitorConnectionID); err != nil {
 				return
 			}
 			if len(initial) != 0 {
 				return // production connector preparation sends no initial bytes.
 			}
-			target, err := (&net.Dialer{Timeout: time.Second}).DialContext(n.ctx, "tcp", n.target)
+			target, err := (&net.Dialer{Timeout: time.Second}).DialContext(visitor.Context, "tcp", n.target)
 			if err != nil {
+				workErr = err
 				return
 			}
-			defer target.Close()
-			stopTarget := context.AfterFunc(n.ctx, func() { _ = target.Close() })
-			defer stopTarget()
-			_, _ = streamcopy.Copy(stream, target)
+			var closeTarget sync.Once
+			var targetErr error
+			closePhysical := func() { closeTarget.Do(func() { targetErr = target.Close() }) }
+			targetDone := make(chan struct{})
+			stopTarget := context.AfterFunc(visitor.Context, func() { defer close(targetDone); closePhysical() })
+			defer func() {
+				closePhysical()
+				if !stopTarget() {
+					<-targetDone
+				}
+				workErr = errors.Join(workErr, targetErr)
+			}()
+			_, workErr = streamcopy.Copy(stream, target)
 		})
 	}
 }

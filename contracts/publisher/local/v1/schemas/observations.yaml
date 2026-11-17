@@ -79,8 +79,8 @@ schemas:
       service: { type: string }
       service_protocol:
         { $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/ServiceProtocol" }
-      public_url_id: { type: string }
-      publish_run_number: { type: integer, format: int64, minimum: 1 }
+      service_id: { type: string }
+      run_number: { type: integer, format: int64, minimum: 1 }
       hostname: { type: string }
       public_url: { type: string }
       target: { type: string }

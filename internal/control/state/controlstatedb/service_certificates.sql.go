@@ -31,7 +31,7 @@ type GetPrivateDNSChallengeContextParams struct {
 
 type GetPrivateDNSChallengeContextRow struct {
 	ServiceID             string
-	TeamID                string
+	TeamID                pgtype.Text
 	DomainID              pgtype.Text
 	DnsAuthorityReference pgtype.Text
 	CanonicalHostname     string
@@ -63,7 +63,7 @@ func (q *Queries) GetPrivateDNSChallengeContext(ctx context.Context, arg GetPriv
 }
 
 const getServiceCertificateOrderByCSR = `-- name: GetServiceCertificateOrderByCSR :one
-SELECT issuance.id, issuance.created_revision, issuance.account_id, issuance.publish_run_id, issuance.public_url_id, issuance.publish_run_number, issuance.service_run_id, issuance.service_id, issuance.service_run_number, issuance.public_run_parent, issuance.public_url_parent, issuance.service_run_parent, issuance.service_parent, issuance.idempotency_key, issuance.request_digest, issuance.certificate_cache_key, issuance.certificate_scope, issuance.certificate_domain_id, issuance.certificate_identifiers, issuance.challenge_method, issuance.csr_der, issuance.csr_digest, issuance.state, issuance.order_revision, issuance.order_url, issuance.finalize_url, issuance.finalization_possible, issuance.certificate_url, issuance.certificate_pem, issuance.not_before, issuance.not_after, issuance.renew_at, issuance.installed_at, issuance.work_owner, issuance.work_epoch, issuance.work_expires_at, issuance.attempts, issuance.available_at, issuance.retry_not_before, issuance.last_error, issuance.created_at, issuance.updated_at FROM control.acme_orders issuance
+SELECT issuance.id, issuance.created_revision, issuance.account_id, issuance.service_run_id, issuance.service_id, issuance.service_run_number, issuance.service_run_parent, issuance.service_parent, issuance.idempotency_key, issuance.request_digest, issuance.certificate_cache_key, issuance.certificate_scope, issuance.certificate_domain_id, issuance.certificate_identifiers, issuance.challenge_method, issuance.csr_der, issuance.csr_digest, issuance.state, issuance.order_revision, issuance.order_url, issuance.finalize_url, issuance.finalization_possible, issuance.certificate_url, issuance.certificate_pem, issuance.not_before, issuance.not_after, issuance.renew_at, issuance.installed_at, issuance.work_owner, issuance.work_epoch, issuance.work_expires_at, issuance.attempts, issuance.available_at, issuance.retry_not_before, issuance.last_error, issuance.created_at, issuance.updated_at FROM control.acme_orders issuance
 JOIN control.service_runs source ON source.id=issuance.service_run_id
 WHERE source.publisher_identity_id=$1
     AND issuance.account_id=$2 AND issuance.csr_digest=$3
@@ -97,14 +97,9 @@ func (q *Queries) GetServiceCertificateOrderByCSR(ctx context.Context, arg GetSe
 		&i.ID,
 		&i.CreatedRevision,
 		&i.AccountID,
-		&i.PublishRunID,
-		&i.PublicURLID,
-		&i.PublishRunNumber,
 		&i.ServiceRunID,
 		&i.ServiceID,
 		&i.ServiceRunNumber,
-		&i.PublicRunParent,
-		&i.PublicUrlParent,
 		&i.ServiceRunParent,
 		&i.ServiceParent,
 		&i.IdempotencyKey,
@@ -172,7 +167,7 @@ SELECT $1,$2,run.id,run.service_id,run.run_number,
 FROM control.service_runs run
 JOIN control.services service ON service.id=run.service_id
 WHERE run.id=$8 AND run.closed_at IS NULL AND cardinality(run.certificate_identifiers)>0
-RETURNING id, created_revision, account_id, publish_run_id, public_url_id, publish_run_number, service_run_id, service_id, service_run_number, public_run_parent, public_url_parent, service_run_parent, service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
+RETURNING id, created_revision, account_id, service_run_id, service_id, service_run_number, service_run_parent, service_parent, idempotency_key, request_digest, certificate_cache_key, certificate_scope, certificate_domain_id, certificate_identifiers, challenge_method, csr_der, csr_digest, state, order_revision, order_url, finalize_url, finalization_possible, certificate_url, certificate_pem, not_before, not_after, renew_at, installed_at, work_owner, work_epoch, work_expires_at, attempts, available_at, retry_not_before, last_error, created_at, updated_at
 `
 
 type InsertServiceCertificateOrderParams struct {
@@ -202,14 +197,9 @@ func (q *Queries) InsertServiceCertificateOrder(ctx context.Context, arg InsertS
 		&i.ID,
 		&i.CreatedRevision,
 		&i.AccountID,
-		&i.PublishRunID,
-		&i.PublicURLID,
-		&i.PublishRunNumber,
 		&i.ServiceRunID,
 		&i.ServiceID,
 		&i.ServiceRunNumber,
-		&i.PublicRunParent,
-		&i.PublicUrlParent,
 		&i.ServiceRunParent,
 		&i.ServiceParent,
 		&i.IdempotencyKey,

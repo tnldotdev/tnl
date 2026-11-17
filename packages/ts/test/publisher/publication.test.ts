@@ -6,6 +6,7 @@ import { publishServer, publishFetch } from "../../src/internal/publisher/public
 import { parseStatus } from "../../src/internal/publisher/status.js";
 import { runtimeRequest, type RuntimeEndpoint } from "../../src/internal/publisher/local.js";
 import { invocationIDSchema } from "../../src/internal/values.js";
+import { withProcessEnvironment } from "../helpers/environment.js";
 
 const invocationSchema = z.looseObject({
   invocation_id: z.string(),
@@ -89,7 +90,7 @@ test.each(["unregister", "publications/register", "status"])(
 );
 
 test.each(["terminal", "transient", "forgotten"])(
-  "Fetch recovers a lost %s unregister reply over real IPC before closing its listener",
+  "Fetch closes its listener and recovers a lost %s unregister reply over real IPC",
   async (outcome) => {
     let service = "";
     let target = "";
@@ -160,21 +161,22 @@ test.each(["terminal", "transient", "forgotten"])(
           code: "sdk.cleanup_failed",
           errors: [{ code: "sdk.dev_unavailable" }, { code: "sdk.dev_unavailable" }],
         });
-        const body = await new Promise<string>((resolve, reject) => {
-          const request = httpRequest(
-            target,
-            { headers: { Host: "app.example.test" } },
-            (response) => {
-              const chunks: Buffer[] = [];
-              response.on("data", (chunk: Buffer) => chunks.push(chunk));
-              response.on("error", reject);
-              response.on("end", () => resolve(Buffer.concat(chunks).toString()));
-            },
-          );
-          request.on("error", reject);
-          request.end();
-        });
-        expect(body).toBe("owned");
+        await expect(
+          new Promise<string>((resolve, reject) => {
+            const request = httpRequest(
+              target,
+              { headers: { Host: "app.example.test" } },
+              (response) => {
+                const chunks: Buffer[] = [];
+                response.on("data", (chunk: Buffer) => chunks.push(chunk));
+                response.on("error", reject);
+                response.on("end", () => resolve(Buffer.concat(chunks).toString()));
+              },
+            );
+            request.on("error", reject);
+            request.end();
+          }),
+        ).rejects.toMatchObject({ code: "ECONNREFUSED" });
         // withdraw the simulated restart so the fixture can return its original
         // exact stopped outcome. no production fallback changes the capability.
         restored = true;
@@ -229,6 +231,7 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
         expect(payload.publisher_identity_id).toBe(`pub_${"A".repeat(22)}`);
         expect(payload.require_post_quantum).toBe(true);
         expect(payload.telemetry_disabled).toBe(true);
+        expect(payload.limits).toEqual({ total: 7, concurrency: 2, rate: { count: 3, per: "1s" } });
         expect(payload.credential).toBeUndefined();
         response.end(JSON.stringify({ version: 1, registration_id: id, owner, target }));
       } else if (request.url === "/v1/status") {
@@ -240,7 +243,17 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
           ),
         );
       } else {
-        expect(body).toEqual({ version: 1, registration_id: id, owner, target });
+        const deadline = z
+          .strictObject({
+            version: z.literal(1),
+            registration_id: z.literal(id),
+            owner: z.literal(owner),
+            target: z.literal(target),
+            shutdown_deadline: z.iso.datetime(),
+          })
+          .parse(body);
+        expect(Date.parse(deadline.shutdown_deadline)).toBeGreaterThan(Date.now());
+        expect(Date.parse(deadline.shutdown_deadline)).toBeLessThanOrEqual(Date.now() + 10_000);
         response.writeHead(204).end();
       }
     });
@@ -251,7 +264,12 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
   try {
     const handle = await publishServer(
       app,
-      { publisherIdentityID: `pub_${"A".repeat(22)}`, requirePostQuantum: true, telemetry: false },
+      {
+        publisherIdentityID: `pub_${"A".repeat(22)}`,
+        requirePostQuantum: true,
+        telemetry: false,
+        limits: { requests: 7, concurrency: 2, rate: { requests: 3, per: "1s" } },
+      },
       {
         start: async (_directory, _binary, selection) => ({
           version: 1,
@@ -332,6 +350,64 @@ test("default invocation rediscovery retains automatic publisher selection after
   await handle.close();
 });
 
+test.each(["default", "option-off", "environment-off"] as const)(
+  "publication %s telemetry choice survives native owner replacement",
+  async (choice) => {
+    await withProcessEnvironment(
+      { TNL_NO_TELEMETRY: choice === "environment-off" ? "true" : undefined },
+      async () => {
+        let starts = 0;
+        let service = "";
+        let target = "";
+        const choices: boolean[] = [];
+        const handle = await publishFetch(
+          () => new Response("app"),
+          choice === "option-off" ? { telemetry: false } : {},
+          {
+            start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
+              starts++;
+              service = selection?.invocationID ?? "";
+              return {
+                version: 1,
+                url: "http://127.0.0.1:12345",
+                capability: String(starts).repeat(64),
+                owner_id: "a".repeat(32),
+                scope: "invocation",
+                invocation_id: invocationIDSchema.parse(service),
+              };
+            },
+            request: async (_endpoint, operation, body) => {
+              if (operation === "publications/register") {
+                const payload = invocationSchema.parse(body);
+                choices.push(z.boolean().parse(payload.telemetry_disabled));
+                target = payload.target;
+                return {
+                  version: 1,
+                  registration_id: `reg_${String(starts).repeat(32)}`,
+                  owner: payload.owner,
+                  target,
+                };
+              }
+              if (operation === "status") {
+                if (starts === 1) throw new TnlError("sdk.registration_stale");
+                return snapshot(service, target, `reg_${String(starts).repeat(32)}`);
+              }
+              return undefined;
+            },
+            pause: () => new Promise<void>(() => {}),
+          },
+        );
+        try {
+          expect(starts).toBe(2);
+          expect(choices).toEqual([choice !== "default", choice !== "default"]);
+        } finally {
+          await handle.close();
+        }
+      },
+    );
+  },
+);
+
 test("close interrupts status polling and joins unregister without waiting for its next timer", async () => {
   let service = "";
   let target = "";
@@ -368,6 +444,82 @@ test("close interrupts status polling and joins unregister without waiting for i
   await handle.wait();
   expect(unregistered).toBe(true);
 });
+
+test.each(["canceled", "independent"] as const)(
+  "shutdown recovery preserves %s operation and cleanup provenance",
+  async (outcome) => {
+    const app = createServer();
+    await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+    const poll = Promise.withResolvers<void>();
+    const recovering = Promise.withResolvers<void>();
+    const operation = new TnlError("sdk.dev_unavailable");
+    const cleanup = new Error("independent unregister failure");
+    let service = "",
+      target = "",
+      starts = 0,
+      statuses = 0;
+    const handle = await publishServer(
+      app,
+      {},
+      {
+        start: async (_directory, _binary, selection, signal): Promise<RuntimeEndpoint> => {
+          if (++starts > 1) {
+            if (signal === undefined) throw new Error("recovery has no lifetime");
+            recovering.resolve();
+            return new Promise<never>((_resolve, reject) => {
+              signal.addEventListener(
+                "abort",
+                () => reject(outcome === "independent" ? operation : signal.reason),
+                { once: true },
+              );
+            });
+          }
+          service = selection?.invocationID ?? "";
+          return {
+            version: 1,
+            url: "http://127.0.0.1:12345",
+            capability: "b".repeat(64),
+            owner_id: "a".repeat(32),
+            scope: "invocation",
+            invocation_id: invocationIDSchema.parse(service),
+          };
+        },
+        request: async (_endpoint, name, value) => {
+          if (name === "publications/register") {
+            const body = invocationSchema.parse(value);
+            target = body.target;
+            return { version: 1, registration_id: id, owner: body.owner, target };
+          }
+          if (name === "status") {
+            if (++statuses > 1) throw new TnlError("sdk.registration_stale");
+            return snapshot(service, target);
+          }
+          if (name === "unregister" && outcome === "independent") throw cleanup;
+          return undefined;
+        },
+        pause: async (milliseconds) => {
+          if (milliseconds === 250) await poll.promise;
+        },
+      },
+    );
+    try {
+      poll.resolve();
+      await recovering.promise;
+      if (outcome === "independent") {
+        await expect(handle.close()).rejects.toMatchObject({
+          code: "sdk.cleanup_failed",
+          errors: [operation, cleanup],
+        });
+      } else {
+        await handle.close();
+        await handle.wait();
+      }
+      expect(app.listening).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => app.close(() => resolve()));
+    }
+  },
+);
 
 test("explicit publisher file is passed only to native and never enters status", async () => {
   let service = "";

@@ -157,15 +157,23 @@ export async function listeningTarget(
   );
 }
 
-export async function closeServer(server: LocalHTTPServer): Promise<void> {
+export async function closeServer(server: LocalHTTPServer, signal?: AbortSignal): Promise<void> {
   if (isBunServer(server)) {
-    await server.stop(true);
+    await server.stop(signal?.aborted === true);
+    signal?.throwIfAborted();
     return;
   }
   if (server.listening) {
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-      server.closeAllConnections?.();
+      const force = () => server.closeAllConnections?.();
+      signal?.addEventListener("abort", force, { once: true });
+      server.close((error) => {
+        signal?.removeEventListener("abort", force);
+        if (signal?.aborted === true) reject(signal.reason);
+        else if (error) reject(error);
+        else resolve();
+      });
+      if (signal === undefined || signal.aborted) force();
     });
   }
 }

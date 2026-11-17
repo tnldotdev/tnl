@@ -14,11 +14,8 @@ func TestServiceHTTPRunCredentialBoundary(t *testing.T) {
 	if !run.valid() {
 		t.Fatal("canonical managed run credential was rejected")
 	}
-	publicToken, _, _, err := credentials.NewPublishRunToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, token := range []string{"", publicToken.String(), run.Token.String() + "=", strings.Repeat("A", 42) + "B"} {
+	publicToken := "tnl_publish_run_" + strings.Repeat("A", 22) + "." + strings.Repeat("A", 43)
+	for _, token := range []string{"", publicToken, run.Token.String() + "=", strings.Repeat("A", 42) + "B"} {
 		invalid := run
 		invalid.Token = credentials.ServiceRunToken(token)
 		if invalid.valid() {
@@ -26,7 +23,7 @@ func TestServiceHTTPRunCredentialBoundary(t *testing.T) {
 		}
 	}
 	public := run
-	public.Subject = visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+	public.Subject = visitorscope.Scope{Kind: "public_url", ID: "url_" + strings.Repeat("A", 22)}
 	if public.valid() {
 		t.Fatal("managed token authorized a public URL subject")
 	}

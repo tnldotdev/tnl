@@ -381,9 +381,10 @@ func (s *quicSession) OpenStream(ctx context.Context) (Stream, error) {
 		return nil, normalizeQUICError(err)
 	}
 	return &quicStream{
-		Stream: stream,
-		local:  s.connection.LocalAddr(),
-		remote: s.connection.RemoteAddr(),
+		Stream:      stream,
+		sessionDone: s.Done(),
+		local:       s.connection.LocalAddr(),
+		remote:      s.connection.RemoteAddr(),
 	}, nil
 }
 
@@ -393,9 +394,10 @@ func (s *quicSession) AcceptStream(ctx context.Context) (Stream, error) {
 		return nil, normalizeQUICError(err)
 	}
 	return &quicStream{
-		Stream: stream,
-		local:  s.connection.LocalAddr(),
-		remote: s.connection.RemoteAddr(),
+		Stream:      stream,
+		sessionDone: s.Done(),
+		local:       s.connection.LocalAddr(),
+		remote:      s.connection.RemoteAddr(),
 	}, nil
 }
 
@@ -446,26 +448,68 @@ func normalizeQUICError(err error) error {
 
 type quicStream struct {
 	*quic.Stream
-	local  net.Addr
-	remote net.Addr
+	sessionDone <-chan struct{}
+	local       net.Addr
+	remote      net.Addr
 }
 
 func (s *quicStream) Read(b []byte) (int, error) {
 	n, err := s.Stream.Read(b)
-	return n, normalizeQUICError(err)
+	return n, normalizeQUICStreamError(s.sessionDone, err)
 }
 
 func (s *quicStream) Write(b []byte) (int, error) {
 	n, err := s.Stream.Write(b)
-	return n, normalizeQUICError(err)
+	return n, normalizeQUICStreamError(s.sessionDone, err)
+}
+
+func normalizeQUICStreamError(sessionDone <-chan struct{}, err error) error {
+	if application, ok := err.(*quic.ApplicationError); ok && application.ErrorCode == 0 {
+		// quic-go wakes stream i/o before canceling the connection context.
+		// join that already-decided session end before exposing its normal
+		// closure; a stream reset or independent operation never waits here.
+		<-sessionDone
+	}
+	return normalizeQUICError(err)
 }
 
 func (s *quicStream) Close() error {
 	s.Stream.CancelRead(0)
-	return s.Stream.Close()
+	err := s.Stream.Close()
+	if err != nil {
+		// quic's Close returns an untyped error after a send reset. our own
+		// reset, or a peer's normal stop, already released that direction.
+		// retain an abnormal peer reset as its typed cause, not the generic
+		// "close called for canceled stream" cleanup error.
+		var reset *quic.StreamError
+		if cause := context.Cause(s.Stream.Context()); errors.As(cause, &reset) {
+			if !reset.Remote || reset.ErrorCode == 0 {
+				return nil
+			}
+			return cause
+		}
+	}
+	return err
 }
 
-func (s *quicStream) CloseWrite() error { return s.Stream.Close() }
+func (s *quicStream) CloseWrite() error {
+	// native send close returns an untyped canceled-send failure. only an
+	// already-observed reset of this exact send direction can refine it;
+	// later context state cannot replace a successful or unrelated result.
+	cause := context.Cause(s.Stream.Context())
+	err := s.Stream.Close()
+	if err == nil {
+		return nil
+	}
+	reset, ok := cause.(*quic.StreamError)
+	if !ok || reset.StreamID != s.Stream.StreamID() {
+		return err
+	}
+	if reset.Remote && reset.ErrorCode == 0 {
+		return nil
+	}
+	return reset
+}
 
 func (s *quicStream) Reset(code uint32) error {
 	errorCode := quic.StreamErrorCode(code)

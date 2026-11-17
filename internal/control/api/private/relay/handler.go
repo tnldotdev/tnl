@@ -22,9 +22,6 @@ type Store interface {
 	RenewRelay(context.Context, controlstate.RelayRenewal, time.Time, time.Duration) (controlstate.RelayLease, error)
 	BeginRelayDrain(context.Context, controlstate.RelayLeaseIdentity, time.Time, time.Time) (controlstate.RelayLease, error)
 	GetRelayTransportCertificate(context.Context, controlstate.RelayLeaseIdentity, time.Time) (controlstate.RelayTransportCertificate, error)
-	ClaimPublisherConnection(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
-	MarkPublisherConnectionReady(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
-	DisconnectPublisherConnection(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time, bool) (controlstate.ClaimedPublisherConnection, error)
 }
 
 type Config struct {
@@ -132,64 +129,6 @@ func (h *handler) getRelayTransportCertificate(
 	serverhttp.WriteJSON(response, http.StatusOK, certificate)
 }
 
-func (h *handler) claimPublisherConnection(
-	response http.ResponseWriter,
-	request *http.Request,
-	publisherConnectionID relayv1.PublisherConnectionID,
-) {
-	var body relayv1.PublisherConnectionClaim
-	if !serverhttp.DecodeJSON(response, request, &body) {
-		return
-	}
-	connection, err := h.service.ClaimPublisherConnection(request.Context(), publisherConnectionID, body)
-	if h.writeServiceError(response, request, err) {
-		return
-	}
-	serverhttp.WriteJSON(response, http.StatusOK, connection)
-}
-
-func (h *handler) markPublisherConnectionReady(
-	response http.ResponseWriter,
-	request *http.Request,
-	publisherConnectionID relayv1.PublisherConnectionID,
-) {
-	var body relayv1.PublisherConnectionTransition
-	if !serverhttp.DecodeJSON(response, request, &body) {
-		return
-	}
-	connection, err := h.service.MarkPublisherConnectionReady(request.Context(), publisherConnectionID, body)
-	if h.writeServiceError(response, request, err) {
-		return
-	}
-	serverhttp.WriteJSON(response, http.StatusOK, connection)
-}
-
-func (h *handler) disconnectPublisherConnection(
-	response http.ResponseWriter,
-	request *http.Request,
-	publisherConnectionID relayv1.PublisherConnectionID,
-) {
-	var body relayv1.PublisherConnectionDisconnect
-	if !serverhttp.DecodeJSON(response, request, &body) {
-		return
-	}
-	connection, err := h.service.DisconnectPublisherConnection(request.Context(), publisherConnectionID, body)
-	if h.writeServiceError(response, request, err) {
-		return
-	}
-	serverhttp.WriteJSON(response, http.StatusOK, connection)
-}
-
-type publisherConnectionFields struct {
-	publishRunID, publicURLID                    string
-	publishRunNumber                             int64
-	publisherConnectionID                        string
-	connectionSlot                               int
-	assignmentRevision                           int64
-	relayServiceID, relayID, relayRunID, claimID string
-	relayLeaseRevision                           int64
-}
-
 func (h *handler) writeServiceError(response http.ResponseWriter, request *http.Request, err error) bool {
 	return serverhttp.WriteError(response, request, err, h.service.report, "The relay service request failed")
 }
@@ -206,17 +145,16 @@ func storeProblem(err error, report func(error)) (status int, kind, detail strin
 		return http.StatusConflict, "relay_lease_stale", "The relay lease is no longer current"
 	case errors.Is(err, controlstate.ErrRelayTransportCertificateNotFound):
 		return http.StatusServiceUnavailable, "certificate_unavailable", "The relay transport certificate is not ready"
-	case errors.Is(err, controlstate.ErrConnectionAssignmentStale), errors.Is(err, controlstate.ErrPublishRunStale):
+	case errors.Is(err, controlstate.ErrServiceAccess):
 		return http.StatusConflict, "stale_connection_assignment", "The publisher connection assignment is no longer current"
-	case errors.Is(err, controlstate.ErrPublisherConnectionAlreadyClaimed):
-		return http.StatusConflict, "publisher_connection_already_claimed", "The publisher connection is already claimed"
-	case errors.Is(err, controlstate.ErrPublisherConnectionCredential), errors.Is(err, credentials.ErrInvalidPublisherConnectionCredential):
+	case errors.Is(err, credentials.ErrInvalidPublisherConnectionCredential),
+		errors.Is(err, controlstate.ErrPublisherIdentity), errors.Is(err, controlstate.ErrGuestTrialSpent):
 		return http.StatusUnauthorized, "invalid_publisher_connection_credential", "Publisher connection credential is invalid"
 	case errors.Is(err, controlstate.ErrRelayDraining):
 		return http.StatusServiceUnavailable, "relay_draining", "The relay is draining"
 	case errors.Is(err, controlstate.ErrRelayConnectionCapacity):
 		return http.StatusServiceUnavailable, "relay_connection_capacity_exhausted", "The relay connection capacity is exhausted"
-	case errors.Is(err, controlstate.ErrPublisherConnectionRelayService), errors.Is(err, controlstate.ErrPublisherConnectionUnavailable):
+	case errors.Is(err, controlstate.ErrPublisherConnectionRelayService):
 		return http.StatusConflict, "publisher_connection_unavailable", "The publisher connection assignment is unavailable to this relay"
 	default:
 		report(err)
@@ -272,7 +210,7 @@ func relayLease(lease controlstate.RelayLease) relayv1.RelayLease {
 		ConnectionCapacity: int64(lease.ConnectionCapacity), StreamCapacity: int64(lease.StreamCapacity),
 		ReportedConnections: int64(lease.ReportedConnections), ReportedStreams: int64(lease.ReportedStreams),
 		Draining: lease.Draining, DrainDeadline: lease.DrainDeadline, RegisteredAt: lease.RegisteredAt,
-		RenewedAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt,
+		RenewedAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt, ServingUntil: lease.ServingUntil,
 	}
 	if len(lease.PeerSigningPublicKey) != 0 {
 		value := base64.RawURLEncoding.EncodeToString(lease.PeerSigningPublicKey)
@@ -283,20 +221,4 @@ func relayLease(lease controlstate.RelayLease) relayv1.RelayLease {
 		result.ObservedAddress = &value
 	}
 	return result
-}
-
-func claimedPublisherConnection(connection controlstate.ClaimedPublisherConnection) relayv1.ClaimedPublisherConnection {
-	return relayv1.ClaimedPublisherConnection{
-		PublishRunId: connection.PublishRunID, PublicUrlId: connection.PublicURLID,
-		PublishRunNumber: int64(connection.PublishRunNumber), PublisherConnectionId: connection.PublisherConnectionID,
-		ConnectionSlot:               connection.ConnectionSlot,
-		ConnectionAssignmentRevision: int64(connection.ConnectionAssignmentRevision),
-		RelayServiceId:               connection.ConnectionAssignmentIdentity.RelayServiceID,
-		RelayId:                      connection.RelayID, RelayRunId: connection.RelayRunID,
-		RelayLeaseRevision: int64(connection.RelayLeaseRevision), ClaimId: connection.ClaimID,
-		RelayAddress: connection.RelayAddress, TlsServerName: connection.TLSServerName,
-		State:                                  relayv1.ClaimedPublisherConnectionState(connection.State),
-		PublisherConnectionCredentialExpiresAt: connection.PublisherConnectionCredentialExpiresAt,
-		ConnectedAt:                            connection.ConnectedAt, ReadyAt: connection.ReadyAt,
-	}
 }

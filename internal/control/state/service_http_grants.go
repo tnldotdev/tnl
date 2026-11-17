@@ -14,7 +14,7 @@ import (
 
 func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor string, input controlv1.CreateVisitorCredentialRequest, now time.Time) (result controlv1.VisitorCredential, retErr error) {
 	kind := string(input.Kind)
-	if (kind != "token" && kind != "share") || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
+	if kind != "token" || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
@@ -22,7 +22,7 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 		return result, err
 	}
 	defer rollback(ctx, tx, "create service HTTP grant", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, service); err != nil {
+	if _, err = lockService(ctx, tx, service, actor); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
@@ -30,12 +30,9 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = serviceManager(ctx, tx, endpoint.TeamID, actor); err != nil {
-		return result, err
-	}
 	if _, _, err = privateVisitorAccess(ctx, tx, service, actor, now); err != nil {
 		if _, signed := serviceActor(ctx); signed && errors.Is(err, ErrServiceAccess) {
-			allowed, sourceErr := q.CompanySubjectSessionAuthorized(ctx, controlstatedb.CompanySubjectSessionAuthorizedParams{TeamID: endpoint.TeamID, IdentityID: actor, SessionID: "", Now: timestamptz(now)})
+			allowed, sourceErr := q.CompanySubjectSessionAuthorized(ctx, controlstatedb.CompanySubjectSessionAuthorizedParams{TeamID: endpoint.TeamID.String, IdentityID: actor, SessionID: "", Now: timestamptz(now)})
 			if sourceErr != nil {
 				return result, sourceErr
 			}
@@ -73,14 +70,6 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 	permission := issued.Permission
 	result = controlv1.VisitorCredential{GrantId: id, Kind: controlv1.VisitorCredentialKind(input.Kind), RefreshCredential: secret, ExpiresAt: input.ExpiresAt,
 		Permission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Hostname: permission.Hostname, Port: int(permission.Port), ServiceTrustRevision: &issued.ServiceTrustRevision, VisitorPolicyRevision: permission.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt, VisitorToken: issued.Token.Reveal()}}
-	if input.Kind == "share" {
-		origin, err := serviceHTTPOrigin(endpoint)
-		if err != nil {
-			return result, err
-		}
-		link := origin + "/__tnl/share/" + secret
-		result.ShareUrl = &link
-	}
 	return result, tx.Commit(ctx)
 }
 
@@ -90,7 +79,7 @@ func (d *Database) ListServiceHTTPGrants(ctx context.Context, service, actor str
 		return nil, err
 	}
 	defer rollback(ctx, tx, "list service HTTP grants", &retErr)()
-	_, err = lockService(ctx, tx, service, actor)
+	_, err = lockManagedService(ctx, tx, service, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -111,17 +100,10 @@ func (d *Database) RevokeServiceHTTPGrant(ctx context.Context, service, actor, i
 		return err
 	}
 	defer rollback(ctx, tx, "revoke service HTTP grant", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, service); err != nil {
+	if _, err = lockManagedService(ctx, tx, service, actor); err != nil {
 		return err
 	}
 	q := controlstatedb.New(tx)
-	s, err := q.GetService(ctx, service)
-	if err != nil {
-		return publisherLookupError(err, ErrServiceAccess)
-	}
-	if err = serviceManager(ctx, tx, s.TeamID, actor); err != nil {
-		return err
-	}
 	n, err := q.RevokeServiceHTTPGrant(ctx, controlstatedb.RevokeServiceHTTPGrantParams{ID: id, ServiceID: service, Now: timestamptz(now)})
 	if err != nil {
 		return err

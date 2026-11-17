@@ -2,99 +2,117 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
 )
 
-// a publisher can disappear without closing its publish run. its expired
-// reservations must not exhaust placement for unrelated public URLs.
 func TestIntegrationExpiredPublishRunReleasesPlacementForOtherPublicURL(t *testing.T) {
-	database, now, first, _ := newPublishRunPrerequisites(t)
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity = 1`); err != nil {
+	f := newServicePublicationFixture(t)
+	d, now := f.database, f.now
+	later := now.Add(45 * time.Second)
+	setExpirationProgressServingDeadline(t, &f, later)
+	other := f.sibling(t, "other", now)
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity=1`); err != nil {
 		t.Fatal(err)
 	}
-	seedControlPublicURL(t, database, now, "other")
-	second := first
-	second.PublicURLID = "public_url_other"
-	second.TeamID = "team_other"
-	second.ActingIdentityID = "identity_other"
-	second.MembershipID = "membership_other"
-	second.IdempotencyKey = "other"
-	second.RequestDigest = sha256.Sum256([]byte("other"))
-	second.CertificateIdentifiers = []string{"route-other.example.test"}
-	second.CertificateCacheKey = "certificate_other"
-
-	setup, err := database.CreatePublishRun(t.Context(), first, now, 30*time.Second, time.Minute)
+	prepared, err := d.PrepareServiceRun(t.Context(), other.service.ID, other.publisher, "first", now,
+		ServiceRunRequest{Metadata: other.service.ServiceMetadata})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertAssignmentTotals(t, database.pool, 2)
-	if _, err := database.CreatePublishRun(t.Context(), second, now.Add(time.Second), 30*time.Second, time.Minute); !errors.Is(err, ErrInsufficientRelayServices) {
-		t.Fatalf("live publish run must hold both placement slots: %v", err)
+	assertAssignmentTotals(t, d.pool, 2)
+	if _, err := d.StartServiceRun(t.Context(), other.service.ID, prepared.RunID, prepared.RunNumber, other.publisher,
+		now.Add(time.Second)); !errors.Is(err, ErrInsufficientRelayServices) {
+		t.Fatal("live run did not retain its placement reservations", err)
 	}
-
-	// no publisher retry or mutation of the first public URL occurs after expiry.
-	later := now.Add(31 * time.Second)
-	if _, err := database.CreatePublishRun(t.Context(), second, later, 30*time.Second, time.Minute); err != nil {
-		t.Fatalf("expired publish run %s still holds unrelated relay capacity: %v", setup.PublishRunID, err)
+	// cleanup does not require another request for the departed publisher.
+	if count, err := d.ExpireServiceRuns(t.Context(), later); err != nil || count != 1 {
+		t.Fatal("expired publisher did not release relay reservations", count, err)
 	}
-	assertAssignmentTotals(t, database.pool, 2)
-	var expired bool
-	if err := database.pool.QueryRow(t.Context(), `SELECT state = 'expired' AND close_reason = 'publisher_expired' AND closed_at = publisher_expires_at
-		FROM control.publish_runs WHERE id = $1`, setup.PublishRunID).Scan(&expired); err != nil || !expired {
-		t.Fatalf("old publish run expired = %t, %v", expired, err)
+	if _, err := d.StartServiceRun(t.Context(), other.service.ID, prepared.RunID, prepared.RunNumber, other.publisher, later); err != nil {
+		t.Fatal("expired publisher exhausted unrelated service placement", err)
+	}
+	assertAssignmentTotals(t, d.pool, 2)
+	var closed bool
+	if err := d.pool.QueryRow(t.Context(), `SELECT state='closed' AND closed_at>=publisher_expires_at AND closed_at>=serving_until AND NOT assignments_open
+		FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&closed); err != nil || !closed {
+		t.Fatal("expired run retained publication authority", err)
 	}
 }
 
 func TestIntegrationExpireSavedPublishRunsPublishesTombstones(t *testing.T) {
-	f := newPublishRunFixture(t)
-	readyTestSession(t, f)
+	f := publicServingFixture(t, newServicePublicationFixture(t))
+	prepareServingPublisher(t, f)
+	at := f.now.Add(45 * time.Second)
+	setExpirationProgressServingDeadline(t, &f, at)
+	owner := registerServingIngress(t, f, "expiry", f.now)
+	if _, err := readServingRun(t, f, owner, f.now); err != nil {
+		t.Fatal(err)
+	}
 	assertAssignmentTotals(t, f.database.pool, 2)
-
-	// cleanup works without an API request for this public URL, as when a
-	// control starts after an idle publisher has disappeared.
-	count, err := f.database.ExpireSavedPublishRuns(t.Context(), f.now.Add(31*time.Second))
-	if err != nil || count != 1 {
-		t.Fatalf("cleanup = %d, %v", count, err)
+	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
+	if closed, err := f.database.ClosedServiceRuns(t.Context(), owner, []ServiceRunReference{ref}, at); err != nil || len(closed) != 0 {
+		t.Fatal("serving expiry alone invented a committed tombstone", closed, err)
+	}
+	if count, err := f.database.ExpireServiceRuns(t.Context(), at); err != nil || count != 1 {
+		t.Fatal("idle publisher cleanup failed", count, err)
 	}
 	assertAssignmentTotals(t, f.database.pool, 0)
-	var expired, connectionsClosed bool
-	if err := f.database.pool.QueryRow(t.Context(), `SELECT state = 'expired' AND closed_at = publisher_expires_at,
-		(SELECT count(*) = 2 FROM control.publish_run_connection_slots WHERE publish_run_id = $1 AND state = 'closed')
-		FROM control.publish_runs WHERE id = $1`, f.setup.PublishRunID).Scan(&expired, &connectionsClosed); err != nil || !expired || !connectionsClosed {
-		t.Fatalf("expired run/connections = %t/%t: %v", expired, connectionsClosed, err)
+	var closed bool
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT state='closed' AND closed_at>=publisher_expires_at AND closed_at>=serving_until
+		AND (SELECT count(*)=2 FROM control.service_connection_slots WHERE service_run_id=$1 AND NOT session_open)
+		FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&closed); err != nil || !closed {
+		t.Fatal("expiry retained run or connection authority", err)
 	}
-	var eventKind string
-	if err := f.database.pool.QueryRow(t.Context(), `SELECT event_kind FROM control.ingress_routing_table_events
-		WHERE public_url_id = $1 ORDER BY id DESC LIMIT 1`, f.setup.PublicURLID).Scan(&eventKind); err != nil || eventKind != string(IngressPublicURLTombstone) {
-		t.Fatalf("latest routing event = %q, %v", eventKind, err)
+	if closed, err := f.database.ClosedServiceRuns(t.Context(), owner, []ServiceRunReference{ref}, at); err != nil || len(closed) != 1 || closed[0] != ref {
+		t.Fatal("cleanup did not retain the exact committed tombstone", closed, err)
 	}
-	if count, err := f.database.ExpireSavedPublishRuns(t.Context(), f.now.Add(time.Minute)); err != nil || count != 0 {
-		t.Fatalf("repeated cleanup = %d, %v", count, err)
+	if _, err := readServingRun(t, f, owner, at); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("expired run remained available to public admission", err)
+	}
+	if count, err := f.database.ExpireServiceRuns(t.Context(), at.Add(time.Second)); err != nil || count != 0 {
+		t.Fatal("repeated cleanup changed already-closed state", count, err)
 	}
 }
 
 func TestIntegrationExpireSavedPublishRunsSkipsLockedPublicURL(t *testing.T) {
-	f := newPublishRunFixture(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	gate, err := f.database.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollbackTestTransaction(t, gate)
-	if _, err := gate.Exec(ctx, `SELECT id FROM control.public_urls WHERE id = $1 FOR NO KEY UPDATE`, f.setup.PublicURLID); err != nil {
-		t.Fatal(err)
-	}
-	if count, err := f.database.ExpireSavedPublishRuns(ctx, f.now.Add(31*time.Second)); err != nil || count != 0 {
-		t.Fatalf("locked public URL cleanup = %d, %v", count, err)
-	}
-	if err := gate.Rollback(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if count, err := f.database.ExpireSavedPublishRuns(ctx, f.now.Add(31*time.Second)); err != nil || count != 1 {
-		t.Fatalf("unlocked public URL cleanup = %d, %v", count, err)
+	for _, boundary := range []string{"service", "run"} {
+		t.Run(boundary, func(t *testing.T) {
+			f := newServicePublicationFixture(t)
+			at := f.now.Add(45 * time.Second)
+			setExpirationProgressServingDeadline(t, &f, at)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			gate, err := f.database.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackTestTransaction(t, gate)
+			if boundary == "service" {
+				_, err = gate.Exec(ctx, `SELECT id FROM control.services WHERE id=$1 FOR UPDATE`, f.service.ID)
+			} else {
+				_, err = gate.Exec(ctx, `SELECT id FROM control.service_runs WHERE id=$1 FOR UPDATE`, f.run.RunID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := expirationProgressSnapshot(t, ctx, f.database, f.run.RunID)
+			if count, err := f.database.ExpireServiceRuns(ctx, at); err != nil || count != 0 {
+				t.Fatal("locked publication was not skipped within its original caller", count, err)
+			}
+			if after := expirationProgressSnapshot(t, ctx, f.database, f.run.RunID); after != before {
+				t.Fatal("skipping changed the busy run, slots, audit or recovery episode")
+			}
+			assertAssignmentTotals(t, f.database.pool, 2)
+			if err := gate.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if count, err := f.database.ExpireServiceRuns(ctx, at); err != nil || count != 1 {
+				t.Fatal("unlocked expired service run was not closed within the same five-second caller", count, err)
+			}
+			assertExpirationProgressClosed(t, ctx, f.database, f.run.RunID)
+			assertAssignmentTotals(t, f.database.pool, 0)
+		})
 	}
 }

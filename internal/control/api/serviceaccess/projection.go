@@ -9,9 +9,11 @@ import (
 )
 
 func Service(record controlstate.ServiceRecord) controlv1.Service {
-	result := controlv1.Service{Id: record.ID, TeamId: record.TeamID, Name: record.Name,
-		Enabled: record.Enabled, CreatedAt: record.CreatedAt, Protocol: controlv1.ServiceProtocol(record.Protocol),
-		PublisherPool: record.PublisherPool, TrustRevision: record.TrustRevision}
+	result := controlv1.Service{Id: record.ID, TeamId: record.TeamID, GuestId: record.GuestID, Name: record.Name,
+		HttpRequestBodyIdleTimeout: record.HTTPRequestBodyIdleTimeout,
+		Enabled:                    record.Enabled, CreatedAt: record.CreatedAt, Protocol: controlv1.ServiceProtocol(record.Protocol),
+		PublisherPool: record.PublisherPool, TrustRevision: record.TrustRevision, EndpointRevision: record.EndpointRevision, ServiceRevision: record.ServiceRevision,
+		Ephemeral: record.Ephemeral, ExpiresAt: record.ExpiresAt, RequirePostQuantum: record.RequirePostQuantum}
 	if t := record.Endpoint; t != nil {
 		result.Endpoint = &controlv1.ServiceEndpoint{Hostname: t.Hostname, Port: t.Port, Public: t.Public}
 	}
@@ -28,6 +30,9 @@ func Service(record controlstate.ServiceRecord) controlv1.Service {
 		result.Placement = &controlv1.ServicePlacement{}
 		if p.DomainID != "" {
 			result.Placement.DomainId = &p.DomainID
+		}
+		if p.Hostname != "" {
+			result.Placement.Hostname = &p.Hostname
 		}
 		if p.WorktreeKey != "" {
 			result.Placement.WorktreeKey = &p.WorktreeKey
@@ -52,10 +57,11 @@ func Service(record controlstate.ServiceRecord) controlv1.Service {
 // target trust or HTTP limits. callers needing approved trust fetch one service.
 func Summary(record controlstate.ServiceRecord) controlv1.ServiceSummary {
 	s := Service(record)
-	return controlv1.ServiceSummary{Id: s.Id, TeamId: s.TeamId, DomainId: s.DomainId, Name: s.Name,
+	return controlv1.ServiceSummary{Id: s.Id, TeamId: s.TeamId, GuestId: s.GuestId, DomainId: s.DomainId, Name: s.Name,
 		Placement: s.Placement, Source: s.Source, Enabled: s.Enabled, Endpoint: s.Endpoint,
 		Protocol: s.Protocol, KubernetesAuth: s.KubernetesAuth, PublisherPool: s.PublisherPool,
-		TrustRevision: s.TrustRevision, CreatedAt: s.CreatedAt, ServiceRunId: s.ServiceRunId, RunNumber: s.RunNumber}
+		RequirePostQuantum: s.RequirePostQuantum,
+		TrustRevision:      s.TrustRevision, CreatedAt: s.CreatedAt, ServiceRunId: s.ServiceRunId, RunNumber: s.RunNumber}
 }
 
 func Grant(grant controlstate.ServiceGrant) controlv1.ServiceGrant {

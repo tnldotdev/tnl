@@ -108,13 +108,6 @@ textarea:focus-visible {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
 }
-.display-name {
-  color: var(--muted);
-  font-size: 11px;
-}
-.display-name input {
-  padding: 4px;
-}
 .composer-actions,
 .card-actions,
 .comment-meta,

@@ -24,16 +24,6 @@ type HTTPNames<Config, Deployment extends PropertyKey> = Extract<
   }[keyof Targets<Config, Deployment>],
   string
 >;
-type PublicLocalHTTPNames<Config> = Extract<
-  {
-    [Name in keyof Targets<Config, "local">]: Targets<Config, "local">[Name] extends {
-      readonly publicURL: object;
-    }
-      ? Name
-      : never;
-  }[keyof Targets<Config, "local">],
-  HTTPNames<Config, "local">
->;
 type Reference<Names extends string> = { readonly service: Names };
 type ProtocolTarget<Protocol> = Protocol extends "http"
   ? { readonly type?: "app" | "address" | "compose" | "docker" }
@@ -51,6 +41,8 @@ type BindingReferences<
   Name extends PropertyKey,
   Binding,
 > = {
+  [Key in Exclude<keyof Binding, keyof TnlServiceTarget>]: never;
+} & {
   [Key in keyof Binding as Key extends "http" ? Key : never]: {
     [HTTP in keyof Binding[Key]]: HTTP extends "paths"
       ? {
@@ -67,18 +59,8 @@ type BindingReferences<
       : {
           readonly http?: { readiness?: never; paths?: never; open?: never };
         }
-    : { readonly publicURL?: never; readonly http?: never }) &
-  (Deployment extends "local"
-    ? unknown
-    : Binding extends { readonly publicURL: object }
-      ? {
-          readonly type?: "app" | "address";
-          readonly publicURL?: { readonly ephemeral?: false };
-          readonly http?: { readonly access?: never; readonly limits?: never };
-        }
-      : ({ readonly address: string | number } | { readonly type: "eks" | "rds" }) & {
-          readonly type?: "address" | "eks" | "rds";
-        });
+    : { readonly http?: never }) &
+  (Deployment extends "local" ? unknown : { readonly type?: "app" | "address" | "eks" | "rds" });
 
 type TargetReferences<Config> = { [Key in Exclude<keyof Config, keyof TnlConfig>]: never } & {
   [Key in keyof Config as Key extends "services" ? Key : never]: {
@@ -97,7 +79,7 @@ type TargetReferences<Config> = { [Key in Exclude<keyof Config, keyof TnlConfig>
           }
         : Deployment extends "local"
           ? never
-          : Property extends "description" | "domain" | "public"
+          : Property extends "description" | "domain"
             ? Config[Key][Deployment][Property]
             : never;
     };
@@ -114,7 +96,11 @@ type TargetReferences<Config> = { [Key in Exclude<keyof Config, keyof TnlConfig>
   };
 } & {
   [Key in keyof Config as Key extends "aliases" | "webhooks" ? Key : never]: {
-    [Name in keyof Config[Key]]: Reference<PublicLocalHTTPNames<Config>>;
+    [Name in keyof Config[Key]]: Reference<HTTPNames<Config, "local">> & {
+      [
+        Extra in Exclude<keyof Config[Key][Name], keyof (Key extends "aliases" ? Alias : Webhook)>
+      ]: never;
+    };
   };
 };
 
@@ -156,7 +142,10 @@ export function defineConfig<const Config extends TnlConfig>(
 ): (context: TnlConfigContext) => Config | Promise<Config>;
 export function defineConfig<const Config extends TnlConfig>(
   // factories must use the return-shape overload, not infer an empty object.
-  config: Config & NoInfer<TargetReferences<Config>> & { readonly call?: never },
+  config: Config &
+    NoInfer<[Config] extends [TargetReferences<Config>] ? unknown : never> & {
+      readonly call?: never;
+    },
 ): Config;
 export function defineConfig(config: TnlConfigInput): TnlConfigInput {
   return config;

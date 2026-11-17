@@ -73,7 +73,7 @@ func TestConnectorPeerPreparationRetriesUnconfirmedInstallation(t *testing.T) {
 				p.installedUntil = time.Now().Add(test.installed)
 			}
 			b.mu.Unlock()
-			candidate := controlv1.ConnectorPeerPairCandidate{PairId: binding.pairID, DeliveryGeneration: binding.generation}
+			candidate := controlv1.ConnectorPeerPairCandidate{PairId: binding.pairID, DeliveryGeneration: binding.generation, Disposition: controlv1.ConnectorPeerPairDispositionCandidate, OwnerRevision: 1}
 			if got := b.peerNeedsPreparation(candidate); got != test.want {
 				t.Fatalf("installation retry = %t, want %t after binding renewal", got, test.want)
 			}

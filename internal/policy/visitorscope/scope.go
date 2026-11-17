@@ -5,10 +5,7 @@ import "github.com/tnldotdev/tnl/internal/naming/opaqueid"
 
 type Kind string
 
-const (
-	PublicURL Kind = "public_url"
-	Service   Kind = "service"
-)
+const Service Kind = "service"
 
 // Scope never infers resource identity from a hostname or a certificate.
 type Scope struct {
@@ -17,12 +14,5 @@ type Scope struct {
 }
 
 func (s Scope) Valid() bool {
-	switch s.Kind {
-	case PublicURL:
-		return opaqueid.Valid(s.ID, opaqueid.PublicURLPrefix)
-	case Service:
-		return opaqueid.Valid(s.ID, opaqueid.ServicePrefix)
-	default:
-		return false
-	}
+	return s.Kind == Service && opaqueid.Valid(s.ID, opaqueid.ServicePrefix)
 }

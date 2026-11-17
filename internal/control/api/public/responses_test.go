@@ -19,7 +19,7 @@ func TestCertificateIssuanceResponseWithholdsCertificateUntilInstallable(t *test
 		{state: controlstate.ACMEOrderInstalled, wantExposed: true},
 	} {
 		t.Run(string(test.state), func(t *testing.T) {
-			response := certificateIssuanceResponse(controlstate.CertificateIssuance{
+			response := serviceCertificateResponse(controlstate.CertificateIssuance{
 				State: test.state, CertificatePEM: "certificate", NotBefore: &notBefore, NotAfter: &notAfter,
 			})
 			if test.wantExposed {

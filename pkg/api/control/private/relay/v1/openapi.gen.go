@@ -20,27 +20,6 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
-// Defines values for ClaimedPublisherConnectionState.
-const (
-	Closed    ClaimedPublisherConnectionState = "closed"
-	Connected ClaimedPublisherConnectionState = "connected"
-	Ready     ClaimedPublisherConnectionState = "ready"
-)
-
-// Valid indicates whether the value is a known member of the ClaimedPublisherConnectionState enum.
-func (e ClaimedPublisherConnectionState) Valid() bool {
-	switch e {
-	case Closed:
-		return true
-	case Connected:
-		return true
-	case Ready:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ConnectorPeerLegBindingState.
 const (
 	ConnectorPeerLegBindingActive   ConnectorPeerLegBindingState = "active"
@@ -119,30 +98,6 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// ClaimedPublisherConnection defines model for ClaimedPublisherConnection.
-type ClaimedPublisherConnection struct {
-	ClaimId                                Identifier                      `json:"claim_id"`
-	ConnectedAt                            time.Time                       `json:"connected_at"`
-	ConnectionAssignmentRevision           int64                           `json:"connection_assignment_revision"`
-	ConnectionSlot                         int                             `json:"connection_slot"`
-	PublicUrlId                            Identifier                      `json:"public_url_id"`
-	PublishRunId                           Identifier                      `json:"publish_run_id"`
-	PublishRunNumber                       int64                           `json:"publish_run_number"`
-	PublisherConnectionCredentialExpiresAt time.Time                       `json:"publisher_connection_credential_expires_at"`
-	PublisherConnectionId                  Identifier                      `json:"publisher_connection_id"`
-	ReadyAt                                *time.Time                      `json:"ready_at,omitempty"`
-	RelayAddress                           Identifier                      `json:"relay_address"`
-	RelayId                                Identifier                      `json:"relay_id"`
-	RelayLeaseRevision                     int64                           `json:"relay_lease_revision"`
-	RelayRunId                             Identifier                      `json:"relay_run_id"`
-	RelayServiceId                         Identifier                      `json:"relay_service_id"`
-	State                                  ClaimedPublisherConnectionState `json:"state"`
-	TlsServerName                          Identifier                      `json:"tls_server_name"`
-}
-
-// ClaimedPublisherConnectionState defines model for ClaimedPublisherConnection.State.
-type ClaimedPublisherConnectionState string
-
 // ConnectorPeerLegBindingState defines model for ConnectorPeerLegBindingState.
 type ConnectorPeerLegBindingState string
 
@@ -200,72 +155,6 @@ type Problem struct {
 // ProblemCode defines model for ProblemCode.
 type ProblemCode string
 
-// PublisherConnectionClaim defines model for PublisherConnectionClaim.
-type PublisherConnectionClaim struct {
-	ClaimId                       Identifier `json:"claim_id"`
-	ConnectionAssignmentRevision  int64      `json:"connection_assignment_revision"`
-	ConnectionSlot                int        `json:"connection_slot"`
-	PublicUrlId                   Identifier `json:"public_url_id"`
-	PublishRunId                  Identifier `json:"publish_run_id"`
-	PublishRunNumber              int64      `json:"publish_run_number"`
-	PublisherConnectionCredential string     `json:"publisher_connection_credential"`
-	PublisherConnectionId         Identifier `json:"publisher_connection_id"`
-	RelayId                       Identifier `json:"relay_id"`
-	RelayLeaseRevision            int64      `json:"relay_lease_revision"`
-	RelayRunId                    Identifier `json:"relay_run_id"`
-	RelayServiceId                Identifier `json:"relay_service_id"`
-}
-
-// PublisherConnectionDisconnect defines model for PublisherConnectionDisconnect.
-type PublisherConnectionDisconnect struct {
-	ClaimId                      Identifier `json:"claim_id"`
-	ConnectionAssignmentRevision int64      `json:"connection_assignment_revision"`
-	ConnectionSlot               int        `json:"connection_slot"`
-	PublicUrlId                  Identifier `json:"public_url_id"`
-	PublishRunId                 Identifier `json:"publish_run_id"`
-	PublishRunNumber             int64      `json:"publish_run_number"`
-	PublisherConnectionId        Identifier `json:"publisher_connection_id"`
-	RelayId                      Identifier `json:"relay_id"`
-	RelayLeaseRevision           int64      `json:"relay_lease_revision"`
-	RelayRunId                   Identifier `json:"relay_run_id"`
-	RelayServiceId               Identifier `json:"relay_service_id"`
-	Unexpected                   bool       `json:"unexpected"`
-}
-
-// PublisherConnectionIdentity defines model for PublisherConnectionIdentity.
-type PublisherConnectionIdentity struct {
-	ConnectionAssignmentRevision int64      `json:"connection_assignment_revision"`
-	ConnectionSlot               int        `json:"connection_slot"`
-	PublicUrlId                  Identifier `json:"public_url_id"`
-	PublishRunId                 Identifier `json:"publish_run_id"`
-	PublishRunNumber             int64      `json:"publish_run_number"`
-	PublisherConnectionId        Identifier `json:"publisher_connection_id"`
-	RelayServiceId               Identifier `json:"relay_service_id"`
-}
-
-// PublisherConnectionProcessIdentity defines model for PublisherConnectionProcessIdentity.
-type PublisherConnectionProcessIdentity struct {
-	ClaimId            Identifier `json:"claim_id"`
-	RelayId            Identifier `json:"relay_id"`
-	RelayLeaseRevision int64      `json:"relay_lease_revision"`
-	RelayRunId         Identifier `json:"relay_run_id"`
-}
-
-// PublisherConnectionTransition defines model for PublisherConnectionTransition.
-type PublisherConnectionTransition struct {
-	ClaimId                      Identifier `json:"claim_id"`
-	ConnectionAssignmentRevision int64      `json:"connection_assignment_revision"`
-	ConnectionSlot               int        `json:"connection_slot"`
-	PublicUrlId                  Identifier `json:"public_url_id"`
-	PublishRunId                 Identifier `json:"publish_run_id"`
-	PublishRunNumber             int64      `json:"publish_run_number"`
-	PublisherConnectionId        Identifier `json:"publisher_connection_id"`
-	RelayId                      Identifier `json:"relay_id"`
-	RelayLeaseRevision           int64      `json:"relay_lease_revision"`
-	RelayRunId                   Identifier `json:"relay_run_id"`
-	RelayServiceId               Identifier `json:"relay_service_id"`
-}
-
 // RelayDrainRequest defines model for RelayDrainRequest.
 type RelayDrainRequest struct {
 	Deadline           time.Time  `json:"deadline"`
@@ -282,8 +171,10 @@ type RelayLease struct {
 	Draining             bool       `json:"draining"`
 	InternalNetworks     []string   `json:"internal_networks"`
 	InternalRelayAddress Identifier `json:"internal_relay_address"`
-	LeaseExpiresAt       time.Time  `json:"lease_expires_at"`
-	ObservedAddress      *string    `json:"observed_address,omitempty"`
+
+	// LeaseExpiresAt Control's deadline for process availability and replacement.
+	LeaseExpiresAt  time.Time `json:"lease_expires_at"`
+	ObservedAddress *string   `json:"observed_address,omitempty"`
 
 	// PeerSigningPublicKey Process-run key when registered. Missing-key leases cannot authorize connector pair claims.
 	PeerSigningPublicKey *string `json:"peer_signing_public_key,omitempty"`
@@ -300,8 +191,11 @@ type RelayLease struct {
 	RenewedAt           time.Time  `json:"renewed_at"`
 	ReportedConnections int64      `json:"reported_connections"`
 	ReportedStreams     int64      `json:"reported_streams"`
-	StreamCapacity      int64      `json:"stream_capacity"`
-	TlsServerName       Identifier `json:"tls_server_name"`
+
+	// ServingUntil Serving authorization issued at renewed_at; response latency spends this allowance.
+	ServingUntil   time.Time  `json:"serving_until"`
+	StreamCapacity int64      `json:"stream_capacity"`
+	TlsServerName  Identifier `json:"tls_server_name"`
 }
 
 // RelayLeaseIdentity defines model for RelayLeaseIdentity.
@@ -366,14 +260,17 @@ type ServicePublisherConnection struct {
 
 // ServicePublisherConnectionClaim defines model for ServicePublisherConnectionClaim.
 type ServicePublisherConnectionClaim struct {
-	ConnectionAssignmentRevision int64        `json:"connection_assignment_revision"`
-	Credential                   string       `json:"credential"`
-	RelayId                      Identifier   `json:"relay_id"`
-	RelayLeaseRevision           int64        `json:"relay_lease_revision"`
-	RelayRunId                   Identifier   `json:"relay_run_id"`
-	RunNumber                    int64        `json:"run_number"`
-	ServiceId                    ServiceID    `json:"service_id"`
-	ServiceRunId                 ServiceRunID `json:"service_run_id"`
+	ConnectionAssignmentRevision int64  `json:"connection_assignment_revision"`
+	Credential                   string `json:"credential"`
+
+	// ObservedSourceIp Canonical original publisher peer IP observed by the authenticated relay transport. Never a client-declared source, forwarded header, CIDR, or the relay's own address.
+	ObservedSourceIp   string       `json:"observed_source_ip"`
+	RelayId            Identifier   `json:"relay_id"`
+	RelayLeaseRevision int64        `json:"relay_lease_revision"`
+	RelayRunId         Identifier   `json:"relay_run_id"`
+	RunNumber          int64        `json:"run_number"`
+	ServiceId          ServiceID    `json:"service_id"`
+	ServiceRunId       ServiceRunID `json:"service_run_id"`
 }
 
 // ServicePublisherConnectionTransition defines model for ServicePublisherConnectionTransition.
@@ -384,6 +281,9 @@ type ServicePublisherConnectionTransition struct {
 	RelayRunId                   Identifier   `json:"relay_run_id"`
 	RunNumber                    int64        `json:"run_number"`
 	ServiceRunId                 ServiceRunID `json:"service_run_id"`
+
+	// Unexpected Required for disconnect and absent for readiness. True only for an unexpected loss of an admitted publisher connection; intentional drain and failed setup use false.
+	Unexpected *bool `json:"unexpected,omitempty"`
 }
 
 // ServiceRunID defines model for ServiceRunID.
@@ -416,15 +316,6 @@ type DisconnectServicePublisherConnectionJSONRequestBody = ServicePublisherConne
 
 // ReadyServicePublisherConnectionJSONRequestBody defines body for ReadyServicePublisherConnection for application/json ContentType.
 type ReadyServicePublisherConnectionJSONRequestBody = ServicePublisherConnectionTransition
-
-// ClaimPublisherConnectionJSONRequestBody defines body for ClaimPublisherConnection for application/json ContentType.
-type ClaimPublisherConnectionJSONRequestBody = PublisherConnectionClaim
-
-// DisconnectPublisherConnectionJSONRequestBody defines body for DisconnectPublisherConnection for application/json ContentType.
-type DisconnectPublisherConnectionJSONRequestBody = PublisherConnectionDisconnect
-
-// MarkPublisherConnectionReadyJSONRequestBody defines body for MarkPublisherConnectionReady for application/json ContentType.
-type MarkPublisherConnectionReadyJSONRequestBody = PublisherConnectionTransition
 
 // RegisterRelayJSONRequestBody defines body for RegisterRelay for application/json ContentType.
 type RegisterRelayJSONRequestBody = RelayRegistration
@@ -556,48 +447,6 @@ type ClientInterface interface {
 	//
 	// Mark the private slot ready only while its assignment and relay lease are current.
 	ReadyServicePublisherConnection(ctx context.Context, publisherConnectionId Identifier, body ReadyServicePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ClaimPublisherConnectionWithBody Claim a publisher connection with its credential
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
-	ClaimPublisherConnectionWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ClaimPublisherConnection Claim a publisher connection with its credential
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
-	ClaimPublisherConnection(ctx context.Context, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DisconnectPublisherConnectionWithBody Close a matching publisher connection
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
-	DisconnectPublisherConnectionWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DisconnectPublisherConnection Close a matching publisher connection
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
-	DisconnectPublisherConnection(ctx context.Context, publisherConnectionId PublisherConnectionID, body DisconnectPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MarkPublisherConnectionReadyWithBody Mark one connected publisher connection ready
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
-	MarkPublisherConnectionReadyWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MarkPublisherConnectionReady Mark one connected publisher connection ready
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
-	MarkPublisherConnectionReady(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetRelayTransportCertificate Retrieve the current relay transport certificate and private key
 	//
@@ -765,108 +614,6 @@ func (c *Client) ReadyServicePublisherConnectionWithBody(ctx context.Context, pu
 // Mark the private slot ready only while its assignment and relay lease are current.
 func (c *Client) ReadyServicePublisherConnection(ctx context.Context, publisherConnectionId Identifier, body ReadyServicePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReadyServicePublisherConnectionRequest(c.Server, publisherConnectionId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ClaimPublisherConnectionWithBody Claim a publisher connection with its credential
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
-func (c *Client) ClaimPublisherConnectionWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewClaimPublisherConnectionRequestWithBody(c.Server, publisherConnectionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ClaimPublisherConnection Claim a publisher connection with its credential
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
-func (c *Client) ClaimPublisherConnection(ctx context.Context, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewClaimPublisherConnectionRequest(c.Server, publisherConnectionId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DisconnectPublisherConnectionWithBody Close a matching publisher connection
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
-func (c *Client) DisconnectPublisherConnectionWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDisconnectPublisherConnectionRequestWithBody(c.Server, publisherConnectionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DisconnectPublisherConnection Close a matching publisher connection
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
-func (c *Client) DisconnectPublisherConnection(ctx context.Context, publisherConnectionId PublisherConnectionID, body DisconnectPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDisconnectPublisherConnectionRequest(c.Server, publisherConnectionId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// MarkPublisherConnectionReadyWithBody Mark one connected publisher connection ready
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
-func (c *Client) MarkPublisherConnectionReadyWithBody(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMarkPublisherConnectionReadyRequestWithBody(c.Server, publisherConnectionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// MarkPublisherConnectionReady Mark one connected publisher connection ready
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
-func (c *Client) MarkPublisherConnectionReady(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMarkPublisherConnectionReadyRequest(c.Server, publisherConnectionId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1170,147 +917,6 @@ func NewReadyServicePublisherConnectionRequestWithBody(server string, publisherC
 	}
 
 	operationPath := fmt.Sprintf("/internal/v1/private-publisher-connections/%s/ready", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewClaimPublisherConnectionRequest calls the generic ClaimPublisherConnection builder with application/json body
-func NewClaimPublisherConnectionRequest(server string, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewClaimPublisherConnectionRequestWithBody(server, publisherConnectionId, "application/json", bodyReader)
-}
-
-// NewClaimPublisherConnectionRequestWithBody constructs an http.Request for the ClaimPublisherConnection method, with any body, and a specified content type
-func NewClaimPublisherConnectionRequestWithBody(server string, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_connection_id", publisherConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/publisher-connections/%s/claim", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewDisconnectPublisherConnectionRequest calls the generic DisconnectPublisherConnection builder with application/json body
-func NewDisconnectPublisherConnectionRequest(server string, publisherConnectionId PublisherConnectionID, body DisconnectPublisherConnectionJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewDisconnectPublisherConnectionRequestWithBody(server, publisherConnectionId, "application/json", bodyReader)
-}
-
-// NewDisconnectPublisherConnectionRequestWithBody constructs an http.Request for the DisconnectPublisherConnection method, with any body, and a specified content type
-func NewDisconnectPublisherConnectionRequestWithBody(server string, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_connection_id", publisherConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/publisher-connections/%s/disconnect", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewMarkPublisherConnectionReadyRequest calls the generic MarkPublisherConnectionReady builder with application/json body
-func NewMarkPublisherConnectionReadyRequest(server string, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewMarkPublisherConnectionReadyRequestWithBody(server, publisherConnectionId, "application/json", bodyReader)
-}
-
-// NewMarkPublisherConnectionReadyRequestWithBody constructs an http.Request for the MarkPublisherConnectionReady method, with any body, and a specified content type
-func NewMarkPublisherConnectionReadyRequestWithBody(server string, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "publisher_connection_id", publisherConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/publisher-connections/%s/ready", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1637,48 +1243,6 @@ type ClientWithResponsesInterface interface {
 	// Mark the private slot ready only while its assignment and relay lease are current.
 	ReadyServicePublisherConnectionWithResponse(ctx context.Context, publisherConnectionId Identifier, body ReadyServicePublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadyServicePublisherConnectionResponse, error)
 
-	// ClaimPublisherConnectionWithBodyWithResponse Claim a publisher connection with its credential
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
-	ClaimPublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPublisherConnectionResponse, error)
-
-	// ClaimPublisherConnectionWithResponse Claim a publisher connection with its credential
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
-	ClaimPublisherConnectionWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPublisherConnectionResponse, error)
-
-	// DisconnectPublisherConnectionWithBodyWithResponse Close a matching publisher connection
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
-	DisconnectPublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DisconnectPublisherConnectionResponse, error)
-
-	// DisconnectPublisherConnectionWithResponse Close a matching publisher connection
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
-	DisconnectPublisherConnectionWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body DisconnectPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*DisconnectPublisherConnectionResponse, error)
-
-	// MarkPublisherConnectionReadyWithBodyWithResponse Mark one connected publisher connection ready
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
-	MarkPublisherConnectionReadyWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublisherConnectionReadyResponse, error)
-
-	// MarkPublisherConnectionReadyWithResponse Mark one connected publisher connection ready
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
-	MarkPublisherConnectionReadyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublisherConnectionReadyResponse, error)
-
 	// GetRelayTransportCertificateWithResponse Retrieve the current relay transport certificate and private key
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -1915,150 +1479,6 @@ func (r ReadyServicePublisherConnectionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReadyServicePublisherConnectionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ClaimPublisherConnectionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ClaimedPublisherConnection
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ClaimPublisherConnectionResponse) GetJSON200() *ClaimedPublisherConnection {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ClaimPublisherConnectionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ClaimPublisherConnectionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ClaimPublisherConnectionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ClaimPublisherConnectionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ClaimPublisherConnectionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type DisconnectPublisherConnectionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ClaimedPublisherConnection
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r DisconnectPublisherConnectionResponse) GetJSON200() *ClaimedPublisherConnection {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r DisconnectPublisherConnectionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r DisconnectPublisherConnectionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r DisconnectPublisherConnectionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DisconnectPublisherConnectionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DisconnectPublisherConnectionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type MarkPublisherConnectionReadyResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ClaimedPublisherConnection
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r MarkPublisherConnectionReadyResponse) GetJSON200() *ClaimedPublisherConnection {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r MarkPublisherConnectionReadyResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r MarkPublisherConnectionReadyResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r MarkPublisherConnectionReadyResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r MarkPublisherConnectionReadyResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r MarkPublisherConnectionReadyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2368,84 +1788,6 @@ func (c *ClientWithResponses) ReadyServicePublisherConnectionWithResponse(ctx co
 	return ParseReadyServicePublisherConnectionResponse(rsp)
 }
 
-// ClaimPublisherConnectionWithBodyWithResponse Claim a publisher connection with its credential
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
-func (c *ClientWithResponses) ClaimPublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimPublisherConnectionResponse, error) {
-	rsp, err := c.ClaimPublisherConnectionWithBody(ctx, publisherConnectionId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseClaimPublisherConnectionResponse(rsp)
-}
-
-// ClaimPublisherConnectionWithResponse Claim a publisher connection with its credential
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/claim (the `ClaimPublisherConnection` operationId).
-func (c *ClientWithResponses) ClaimPublisherConnectionWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body ClaimPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimPublisherConnectionResponse, error) {
-	rsp, err := c.ClaimPublisherConnection(ctx, publisherConnectionId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseClaimPublisherConnectionResponse(rsp)
-}
-
-// DisconnectPublisherConnectionWithBodyWithResponse Close a matching publisher connection
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
-func (c *ClientWithResponses) DisconnectPublisherConnectionWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DisconnectPublisherConnectionResponse, error) {
-	rsp, err := c.DisconnectPublisherConnectionWithBody(ctx, publisherConnectionId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDisconnectPublisherConnectionResponse(rsp)
-}
-
-// DisconnectPublisherConnectionWithResponse Close a matching publisher connection
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect (the `DisconnectPublisherConnection` operationId).
-func (c *ClientWithResponses) DisconnectPublisherConnectionWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body DisconnectPublisherConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*DisconnectPublisherConnectionResponse, error) {
-	rsp, err := c.DisconnectPublisherConnection(ctx, publisherConnectionId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDisconnectPublisherConnectionResponse(rsp)
-}
-
-// MarkPublisherConnectionReadyWithBodyWithResponse Mark one connected publisher connection ready
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
-func (c *ClientWithResponses) MarkPublisherConnectionReadyWithBodyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkPublisherConnectionReadyResponse, error) {
-	rsp, err := c.MarkPublisherConnectionReadyWithBody(ctx, publisherConnectionId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMarkPublisherConnectionReadyResponse(rsp)
-}
-
-// MarkPublisherConnectionReadyWithResponse Mark one connected publisher connection ready
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /internal/v1/publisher-connections/{publisher_connection_id}/ready (the `MarkPublisherConnectionReady` operationId).
-func (c *ClientWithResponses) MarkPublisherConnectionReadyWithResponse(ctx context.Context, publisherConnectionId PublisherConnectionID, body MarkPublisherConnectionReadyJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkPublisherConnectionReadyResponse, error) {
-	rsp, err := c.MarkPublisherConnectionReady(ctx, publisherConnectionId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMarkPublisherConnectionReadyResponse(rsp)
-}
-
 // GetRelayTransportCertificateWithResponse Retrieve the current relay transport certificate and private key
 //
 // Returns a wrapper object for the known response body format(s).
@@ -2678,105 +2020,6 @@ func ParseReadyServicePublisherConnectionResponse(rsp *http.Response) (*ReadySer
 	return response, nil
 }
 
-// ParseClaimPublisherConnectionResponse parses an HTTP response from a ClaimPublisherConnectionWithResponse call
-func ParseClaimPublisherConnectionResponse(rsp *http.Response) (*ClaimPublisherConnectionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ClaimPublisherConnectionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ClaimedPublisherConnection
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDisconnectPublisherConnectionResponse parses an HTTP response from a DisconnectPublisherConnectionWithResponse call
-func ParseDisconnectPublisherConnectionResponse(rsp *http.Response) (*DisconnectPublisherConnectionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DisconnectPublisherConnectionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ClaimedPublisherConnection
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseMarkPublisherConnectionReadyResponse parses an HTTP response from a MarkPublisherConnectionReadyWithResponse call
-func ParseMarkPublisherConnectionReadyResponse(rsp *http.Response) (*MarkPublisherConnectionReadyResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &MarkPublisherConnectionReadyResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ClaimedPublisherConnection
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseGetRelayTransportCertificateResponse parses an HTTP response from a GetRelayTransportCertificateWithResponse call
 func ParseGetRelayTransportCertificateResponse(rsp *http.Response) (*GetRelayTransportCertificateResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2936,15 +2179,6 @@ type ServerInterface interface {
 
 	// (POST /internal/v1/private-publisher-connections/{publisher_connection_id}/ready)
 	ReadyServicePublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId Identifier)
-	// ClaimPublisherConnection Claim a publisher connection with its credential
-	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/claim)
-	ClaimPublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
-	// DisconnectPublisherConnection Close a matching publisher connection
-	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/disconnect)
-	DisconnectPublisherConnection(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
-	// MarkPublisherConnectionReady Mark one connected publisher connection ready
-	// (POST /internal/v1/publisher-connections/{publisher_connection_id}/ready)
-	MarkPublisherConnectionReady(w http.ResponseWriter, r *http.Request, publisherConnectionId PublisherConnectionID)
 	// GetRelayTransportCertificate Retrieve the current relay transport certificate and private key
 	// (GET /internal/v1/relay-services/{relay_service_id}/certificate)
 	GetRelayTransportCertificate(w http.ResponseWriter, r *http.Request, relayServiceId RelayServiceID, params GetRelayTransportCertificateParams)
@@ -3072,84 +2306,6 @@ func (siw *ServerInterfaceWrapper) ReadyServicePublisherConnection(w http.Respon
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ReadyServicePublisherConnection(w, r, publisherConnectionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ClaimPublisherConnection operation middleware
-func (siw *ServerInterfaceWrapper) ClaimPublisherConnection(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publisher_connection_id" -------------
-	var publisherConnectionId PublisherConnectionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publisher_connection_id", r.PathValue("publisher_connection_id"), &publisherConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_connection_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ClaimPublisherConnection(w, r, publisherConnectionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DisconnectPublisherConnection operation middleware
-func (siw *ServerInterfaceWrapper) DisconnectPublisherConnection(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publisher_connection_id" -------------
-	var publisherConnectionId PublisherConnectionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publisher_connection_id", r.PathValue("publisher_connection_id"), &publisherConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_connection_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DisconnectPublisherConnection(w, r, publisherConnectionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// MarkPublisherConnectionReady operation middleware
-func (siw *ServerInterfaceWrapper) MarkPublisherConnectionReady(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "publisher_connection_id" -------------
-	var publisherConnectionId PublisherConnectionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "publisher_connection_id", r.PathValue("publisher_connection_id"), &publisherConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_connection_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.MarkPublisherConnectionReady(w, r, publisherConnectionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3421,9 +2577,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/relays/{relay_id}/renew", wrapper.RenewRelay)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/relays/{relay_id}/drain", wrapper.DrainRelay)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/relay-services/{relay_service_id}/certificate", wrapper.GetRelayTransportCertificate)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/publisher-connections/{publisher_connection_id}/claim", wrapper.ClaimPublisherConnection)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/publisher-connections/{publisher_connection_id}/ready", wrapper.MarkPublisherConnectionReady)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/publisher-connections/{publisher_connection_id}/disconnect", wrapper.DisconnectPublisherConnection)
 
 	return m
 }

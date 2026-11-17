@@ -24,6 +24,9 @@ func unreachableControlConfig() ControlConfig {
 		RebindPair: func(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
 			panic("unexpected pair rebind")
 		},
+		RetirePair: func(context.Context, string, string, controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+			panic("unexpected pair retirement")
+		},
 		Permission: func(context.Context, string) (controlv1.VisitorTokenResponse, error) { panic("unexpected permission") },
 		Close:      func(context.Context) error { panic("unexpected close") },
 	}
@@ -37,6 +40,7 @@ func TestControlConfigRequiresEveryAuthorityAndCleanupOperation(t *testing.T) {
 		"pair":       func(c *ControlConfig) { c.Pair = nil },
 		"renew":      func(c *ControlConfig) { c.RenewPair = nil },
 		"rebind":     func(c *ControlConfig) { c.RebindPair = nil },
+		"retire":     func(c *ControlConfig) { c.RetirePair = nil },
 		"close":      func(c *ControlConfig) { c.Close = nil },
 		"permission": func(c *ControlConfig) { c.Permission = nil },
 	} {

@@ -17,6 +17,7 @@ import (
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
@@ -25,13 +26,14 @@ const testClusterSecret = "0123456789abcdef0123456789abcdef"
 const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 type integrationProcessOptions struct {
-	context           context.Context
-	acmeHTTPClient    *http.Client
-	serviceHTTPClient *http.Client
-	relayClientTLS    *tls.Config
-	dns               dnsBackend
-	listeners         runtimeListeners
-	owner             *runtimeTopology
+	context                  context.Context
+	acmeHTTPClient           *http.Client
+	serviceHTTPClient        *http.Client
+	relayClientTLS           *tls.Config
+	dns                      dnsBackend
+	listeners                runtimeListeners
+	owner                    *runtimeTopology
+	observeOperationalReport func(operationalReport)
 }
 
 type integrationProcess struct {
@@ -190,6 +192,7 @@ func startIntegrationProcessWithOptions(t *testing.T, cfg daemonconfig.Config, o
 		err := serveRuntime(ctx, cfg, runtimeOptions{
 			acmeHTTPClient: options.acmeHTTPClient, serviceHTTPClient: options.serviceHTTPClient,
 			relayClientTLS: options.relayClientTLS, dns: options.dns, listeners: options.listeners,
+			observeOperationalReport: options.observeOperationalReport,
 		})
 		process.mu.Lock()
 		process.err = err
@@ -356,14 +359,15 @@ func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig
 		Role: role, MetricsListen: metricsAddress,
 		ManagedURLMode:        naming.ManagedURLModeGenerated,
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
-		PublicURLCertificateWorkers:      4,
+		ServiceCertificateWorkers:        4,
 		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		VisitorConnectionLimit: 100, PublisherConnectionLimit: 10,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 2 * time.Second,
 		RelayLeaseDuration:   2 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond,
-		ControlRetryInterval: 50 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: time.Second,
+		ControlOutageTolerance: controloutage.DefaultTolerance,
+		ControlRetryInterval:   50 * time.Millisecond, DrainTimeout: time.Second,
 	}
 }
 

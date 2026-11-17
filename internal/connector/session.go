@@ -22,8 +22,10 @@ import (
 // Operations composes connector operations with the client's sign-in UI.
 // the opener resolves a human client context; connector owns its lifetime.
 type Operations struct {
-	Telemetry   *clienttelemetry.Collector
-	OpenSession SessionOpener
+	Telemetry        *clienttelemetry.Collector
+	OpenSession      SessionOpener
+	ShutdownDeadline func() time.Time
+	ShutdownContext  context.Context
 }
 
 type SessionOptions struct {

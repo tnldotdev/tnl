@@ -7,30 +7,9 @@ package controlstatedb
 
 import (
 	"context"
-	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-const cleanupServiceHTTPLogins = `-- name: CleanupServiceHTTPLogins :exec
-DELETE FROM control.service_http_browser_logins stored WHERE stored.state_digest IN
-    (SELECT expired.state_digest FROM control.service_http_browser_logins expired WHERE expired.expires_at<=$1 LIMIT 100)
-`
-
-func (q *Queries) CleanupServiceHTTPLogins(ctx context.Context, now pgtype.Timestamptz) error {
-	_, err := q.db.Exec(ctx, cleanupServiceHTTPLogins, now)
-	return err
-}
-
-const cleanupServiceHTTPSessions = `-- name: CleanupServiceHTTPSessions :exec
-DELETE FROM control.service_http_browser_sessions stored WHERE stored.handoff_digest IN
-    (SELECT expired.handoff_digest FROM control.service_http_browser_sessions expired WHERE expired.expires_at<=$1 OR expired.revoked_at IS NOT NULL LIMIT 100)
-`
-
-func (q *Queries) CleanupServiceHTTPSessions(ctx context.Context, now pgtype.Timestamptz) error {
-	_, err := q.db.Exec(ctx, cleanupServiceHTTPSessions, now)
-	return err
-}
 
 const consumeServiceHTTPBrowserLogin = `-- name: ConsumeServiceHTTPBrowserLogin :one
 UPDATE control.service_http_browser_logins SET consumed_at=$1
@@ -61,6 +40,40 @@ func (q *Queries) ConsumeServiceHTTPBrowserLogin(ctx context.Context, arg Consum
 		&i.ConsumedAt,
 	)
 	return i, err
+}
+
+const insertServiceHTTPBrowserHandoff = `-- name: InsertServiceHTTPBrowserHandoff :exec
+INSERT INTO control.service_http_browser_handoffs(token_digest,session_digest,service_id,run_ids,cookie_ciphertext,storage_key_id,return_path,redirect_url,bridge,expires_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+`
+
+type InsertServiceHTTPBrowserHandoffParams struct {
+	TokenDigest      []byte
+	SessionDigest    []byte
+	ServiceID        string
+	RunIds           []string
+	CookieCiphertext []byte
+	StorageKeyID     string
+	ReturnPath       string
+	RedirectUrl      string
+	Bridge           bool
+	ExpiresAt        pgtype.Timestamptz
+}
+
+func (q *Queries) InsertServiceHTTPBrowserHandoff(ctx context.Context, arg InsertServiceHTTPBrowserHandoffParams) error {
+	_, err := q.db.Exec(ctx, insertServiceHTTPBrowserHandoff,
+		arg.TokenDigest,
+		arg.SessionDigest,
+		arg.ServiceID,
+		arg.RunIds,
+		arg.CookieCiphertext,
+		arg.StorageKeyID,
+		arg.ReturnPath,
+		arg.RedirectUrl,
+		arg.Bridge,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const insertServiceHTTPBrowserLogin = `-- name: InsertServiceHTTPBrowserLogin :exec
@@ -96,33 +109,27 @@ func (q *Queries) InsertServiceHTTPBrowserLogin(ctx context.Context, arg InsertS
 }
 
 const insertServiceHTTPBrowserSession = `-- name: InsertServiceHTTPBrowserSession :exec
-INSERT INTO control.service_http_browser_sessions(handoff_digest,service_id,run_ids,control_session_id,return_path,handoff_expires_at,expires_at,refresh_ciphertext,storage_key_id)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+INSERT INTO control.service_http_browser_sessions(token_digest,control_session_id,parent_control_session_id,expires_at,refresh_ciphertext,storage_key_id)
+VALUES($1,$2,$6,$3,$4,$5)
 `
 
 type InsertServiceHTTPBrowserSessionParams struct {
-	HandoffDigest     []byte
-	ServiceID         string
-	RunIds            []string
-	ControlSessionID  string
-	ReturnPath        string
-	HandoffExpiresAt  pgtype.Timestamptz
-	ExpiresAt         pgtype.Timestamptz
-	RefreshCiphertext []byte
-	StorageKeyID      string
+	TokenDigest            []byte
+	ControlSessionID       string
+	ExpiresAt              pgtype.Timestamptz
+	RefreshCiphertext      []byte
+	StorageKeyID           string
+	ParentControlSessionID pgtype.Text
 }
 
 func (q *Queries) InsertServiceHTTPBrowserSession(ctx context.Context, arg InsertServiceHTTPBrowserSessionParams) error {
 	_, err := q.db.Exec(ctx, insertServiceHTTPBrowserSession,
-		arg.HandoffDigest,
-		arg.ServiceID,
-		arg.RunIds,
+		arg.TokenDigest,
 		arg.ControlSessionID,
-		arg.ReturnPath,
-		arg.HandoffExpiresAt,
 		arg.ExpiresAt,
 		arg.RefreshCiphertext,
 		arg.StorageKeyID,
+		arg.ParentControlSessionID,
 	)
 	return err
 }
@@ -193,54 +200,54 @@ func (q *Queries) ListServiceHTTPGrants(ctx context.Context, serviceID string) (
 }
 
 const lockServiceHTTPBrowserSession = `-- name: LockServiceHTTPBrowserSession :one
-SELECT session.handoff_digest, session.cookie_digest, session.service_id, session.run_ids, session.control_session_id, session.refresh_ciphertext, session.storage_key_id, session.return_path, session.handoff_expires_at, session.expires_at, session.revoked_at, parent.identity_id, parent.access_expires_at, parent.refresh_expires_at,
-    parent.revoked_at AS parent_revoked_at
+SELECT session.token_digest, session.control_session_id, session.parent_control_session_id, session.refresh_ciphertext, session.storage_key_id, session.expires_at, session.revoked_at, parent.identity_id,person.display_name,parent.access_expires_at,
+    LEAST(parent.refresh_expires_at,original.refresh_expires_at)::timestamptz AS refresh_expires_at,
+    COALESCE(parent.revoked_at,original.revoked_at) AS parent_revoked_at
 FROM control.service_http_browser_sessions session
 JOIN control.control_sessions parent ON parent.id=session.control_session_id
-WHERE session.service_id=$1 AND session.cookie_digest=$2 AND session.revoked_at IS NULL AND session.expires_at>$3
+JOIN control.identities person ON person.id=parent.identity_id AND person.disabled_at IS NULL
+LEFT JOIN control.control_sessions original ON original.id=session.parent_control_session_id AND original.identity_id=parent.identity_id
+WHERE session.token_digest=$1 AND session.revoked_at IS NULL AND session.expires_at>$2
+    AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
+        WHERE bound.session_digest=session.token_digest AND bound.service_id=$3
+        AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
 FOR UPDATE OF session NOWAIT
 `
 
 type LockServiceHTTPBrowserSessionParams struct {
-	ServiceID    string
 	CookieDigest []byte
 	ExpiresAt    pgtype.Timestamptz
+	ServiceID    string
 }
 
 type LockServiceHTTPBrowserSessionRow struct {
-	HandoffDigest     []byte
-	CookieDigest      []byte
-	ServiceID         string
-	RunIds            []string
-	ControlSessionID  string
-	RefreshCiphertext []byte
-	StorageKeyID      string
-	ReturnPath        string
-	HandoffExpiresAt  pgtype.Timestamptz
-	ExpiresAt         pgtype.Timestamptz
-	RevokedAt         pgtype.Timestamptz
-	IdentityID        string
-	AccessExpiresAt   pgtype.Timestamptz
-	RefreshExpiresAt  pgtype.Timestamptz
-	ParentRevokedAt   pgtype.Timestamptz
+	TokenDigest            []byte
+	ControlSessionID       string
+	ParentControlSessionID pgtype.Text
+	RefreshCiphertext      []byte
+	StorageKeyID           string
+	ExpiresAt              pgtype.Timestamptz
+	RevokedAt              pgtype.Timestamptz
+	IdentityID             string
+	DisplayName            string
+	AccessExpiresAt        pgtype.Timestamptz
+	RefreshExpiresAt       pgtype.Timestamptz
+	ParentRevokedAt        pgtype.Timestamptz
 }
 
 func (q *Queries) LockServiceHTTPBrowserSession(ctx context.Context, arg LockServiceHTTPBrowserSessionParams) (LockServiceHTTPBrowserSessionRow, error) {
-	row := q.db.QueryRow(ctx, lockServiceHTTPBrowserSession, arg.ServiceID, arg.CookieDigest, arg.ExpiresAt)
+	row := q.db.QueryRow(ctx, lockServiceHTTPBrowserSession, arg.CookieDigest, arg.ExpiresAt, arg.ServiceID)
 	var i LockServiceHTTPBrowserSessionRow
 	err := row.Scan(
-		&i.HandoffDigest,
-		&i.CookieDigest,
-		&i.ServiceID,
-		&i.RunIds,
+		&i.TokenDigest,
 		&i.ControlSessionID,
+		&i.ParentControlSessionID,
 		&i.RefreshCiphertext,
 		&i.StorageKeyID,
-		&i.ReturnPath,
-		&i.HandoffExpiresAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
 		&i.IdentityID,
+		&i.DisplayName,
 		&i.AccessExpiresAt,
 		&i.RefreshExpiresAt,
 		&i.ParentRevokedAt,
@@ -248,60 +255,121 @@ func (q *Queries) LockServiceHTTPBrowserSession(ctx context.Context, arg LockSer
 	return i, err
 }
 
-const redeemServiceHTTPBrowserSession = `-- name: RedeemServiceHTTPBrowserSession :one
-UPDATE control.service_http_browser_sessions SET cookie_digest=$1
-WHERE handoff_digest=$2 AND service_id=$3
-AND $4::text=ANY(run_ids) AND cookie_digest IS NULL AND revoked_at IS NULL
-AND handoff_expires_at>$5 AND expires_at>$5
-RETURNING return_path,expires_at
+const readyServiceBrowserHosts = `-- name: ReadyServiceBrowserHosts :many
+SELECT service.id AS service_id,service.certificate_hostname,
+    array_agg(run.id ORDER BY run.run_number)::text[] AS run_ids
+FROM control.services service JOIN control.service_runs run ON run.service_id=service.id
+WHERE service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
+    AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
+    AND run.publisher_expires_at>$1 AND run.certificate_expires_at>$1
+    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
+        run.publisher_grant_id,service.id,$1) permission
+        JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
+        JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
+            AND signing.publisher_identity_id=run.publisher_identity_id
+            AND (grant_record.kind='service' OR signing.retired_at IS NULL))
+    AND (service.id=$2 OR EXISTS(
+        SELECT 1 FROM control.preview_services included WHERE included.preview_id=$3::text
+            AND included.service_id=service.id))
+GROUP BY service.id,service.certificate_hostname ORDER BY service.id LIMIT 32
 `
 
-type RedeemServiceHTTPBrowserSessionParams struct {
-	CookieDigest  []byte
-	HandoffDigest []byte
-	ServiceID     string
-	ServiceRunID  string
-	Now           pgtype.Timestamptz
+type ReadyServiceBrowserHostsParams struct {
+	Now       pgtype.Timestamptz
+	ServiceID string
+	PreviewID string
 }
 
-type RedeemServiceHTTPBrowserSessionRow struct {
-	ReturnPath string
-	ExpiresAt  pgtype.Timestamptz
+type ReadyServiceBrowserHostsRow struct {
+	ServiceID           string
+	CertificateHostname string
+	RunIds              []string
 }
 
-func (q *Queries) RedeemServiceHTTPBrowserSession(ctx context.Context, arg RedeemServiceHTTPBrowserSessionParams) (RedeemServiceHTTPBrowserSessionRow, error) {
-	row := q.db.QueryRow(ctx, redeemServiceHTTPBrowserSession,
-		arg.CookieDigest,
-		arg.HandoffDigest,
+func (q *Queries) ReadyServiceBrowserHosts(ctx context.Context, arg ReadyServiceBrowserHostsParams) ([]ReadyServiceBrowserHostsRow, error) {
+	rows, err := q.db.Query(ctx, readyServiceBrowserHosts, arg.Now, arg.ServiceID, arg.PreviewID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadyServiceBrowserHostsRow
+	for rows.Next() {
+		var i ReadyServiceBrowserHostsRow
+		if err := rows.Scan(&i.ServiceID, &i.CertificateHostname, &i.RunIds); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const redeemServiceHTTPBrowserHandoff = `-- name: RedeemServiceHTTPBrowserHandoff :one
+UPDATE control.service_http_browser_handoffs handoff SET consumed_at=$1
+FROM control.service_http_browser_sessions session
+WHERE handoff.token_digest=$2 AND handoff.service_id=$3
+AND $4::text=ANY(handoff.run_ids) AND handoff.consumed_at IS NULL AND handoff.revoked_at IS NULL
+AND handoff.expires_at>$1 AND session.token_digest=handoff.session_digest
+AND session.revoked_at IS NULL AND session.expires_at>$1
+RETURNING handoff.session_digest,handoff.cookie_ciphertext,handoff.storage_key_id,
+    handoff.return_path,handoff.redirect_url,handoff.bridge,session.expires_at
+`
+
+type RedeemServiceHTTPBrowserHandoffParams struct {
+	Now          pgtype.Timestamptz
+	TokenDigest  []byte
+	ServiceID    string
+	ServiceRunID string
+}
+
+type RedeemServiceHTTPBrowserHandoffRow struct {
+	SessionDigest    []byte
+	CookieCiphertext []byte
+	StorageKeyID     string
+	ReturnPath       string
+	RedirectUrl      string
+	Bridge           bool
+	ExpiresAt        pgtype.Timestamptz
+}
+
+func (q *Queries) RedeemServiceHTTPBrowserHandoff(ctx context.Context, arg RedeemServiceHTTPBrowserHandoffParams) (RedeemServiceHTTPBrowserHandoffRow, error) {
+	row := q.db.QueryRow(ctx, redeemServiceHTTPBrowserHandoff,
+		arg.Now,
+		arg.TokenDigest,
 		arg.ServiceID,
 		arg.ServiceRunID,
-		arg.Now,
 	)
-	var i RedeemServiceHTTPBrowserSessionRow
-	err := row.Scan(&i.ReturnPath, &i.ExpiresAt)
+	var i RedeemServiceHTTPBrowserHandoffRow
+	err := row.Scan(
+		&i.SessionDigest,
+		&i.CookieCiphertext,
+		&i.StorageKeyID,
+		&i.ReturnPath,
+		&i.RedirectUrl,
+		&i.Bridge,
+		&i.ExpiresAt,
+	)
 	return i, err
 }
 
 const revokeServiceHTTPBrowserSession = `-- name: RevokeServiceHTTPBrowserSession :exec
-UPDATE control.service_http_browser_sessions SET revoked_at=$1
-WHERE service_id=$2 AND cookie_digest=$3
-AND $4::text=ANY(run_ids)
+UPDATE control.service_http_browser_sessions browser SET revoked_at=COALESCE(browser.revoked_at,$1)
+WHERE browser.token_digest=$2
+AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
+    WHERE bound.session_digest=browser.token_digest AND bound.service_id=$3
+    AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
 `
 
 type RevokeServiceHTTPBrowserSessionParams struct {
 	Now          pgtype.Timestamptz
-	ServiceID    string
 	CookieDigest []byte
-	ServiceRunID string
+	ServiceID    string
 }
 
 func (q *Queries) RevokeServiceHTTPBrowserSession(ctx context.Context, arg RevokeServiceHTTPBrowserSessionParams) error {
-	_, err := q.db.Exec(ctx, revokeServiceHTTPBrowserSession,
-		arg.Now,
-		arg.ServiceID,
-		arg.CookieDigest,
-		arg.ServiceRunID,
-	)
+	_, err := q.db.Exec(ctx, revokeServiceHTTPBrowserSession, arg.Now, arg.CookieDigest, arg.ServiceID)
 	return err
 }
 
@@ -326,26 +394,33 @@ func (q *Queries) RevokeServiceHTTPGrant(ctx context.Context, arg RevokeServiceH
 
 const rotateServiceHTTPBrowserSession = `-- name: RotateServiceHTTPBrowserSession :exec
 UPDATE control.service_http_browser_sessions SET refresh_ciphertext=$2,storage_key_id=$3
-WHERE handoff_digest=$1
+WHERE token_digest=$1
 `
 
 type RotateServiceHTTPBrowserSessionParams struct {
-	HandoffDigest     []byte
+	TokenDigest       []byte
 	RefreshCiphertext []byte
 	StorageKeyID      string
 }
 
 func (q *Queries) RotateServiceHTTPBrowserSession(ctx context.Context, arg RotateServiceHTTPBrowserSessionParams) error {
-	_, err := q.db.Exec(ctx, rotateServiceHTTPBrowserSession, arg.HandoffDigest, arg.RefreshCiphertext, arg.StorageKeyID)
+	_, err := q.db.Exec(ctx, rotateServiceHTTPBrowserSession, arg.TokenDigest, arg.RefreshCiphertext, arg.StorageKeyID)
 	return err
 }
 
 const serviceHTTPBrowserEndpoint = `-- name: ServiceHTTPBrowserEndpoint :one
-SELECT s.team_id,s.certificate_hostname,s.service_port,
+SELECT s.team_id,s.guest_id,s.certificate_hostname,s.service_port,
     ARRAY(SELECT run.id FROM control.service_runs run
-        WHERE run.service_id=s.id AND run.state='ready' AND run.healthy
-        AND run.closed_at IS NULL AND run.publisher_expires_at>$1
-        AND run.certificate_expires_at>$1 ORDER BY run.run_number LIMIT 256)::text[] AS run_ids
+         WHERE run.service_id=s.id AND run.state='ready' AND run.healthy
+         AND run.closed_at IS NULL AND run.publisher_expires_at>$1
+         AND run.certificate_expires_at>$1
+         AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
+             run.publisher_grant_id,s.id,$1) permission
+             JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
+             JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
+                 AND signing.publisher_identity_id=run.publisher_identity_id
+                 AND (grant_record.kind='service' OR signing.retired_at IS NULL))
+         ORDER BY run.run_number LIMIT 256)::text[] AS run_ids
 FROM control.services s
 WHERE s.id=$2 AND s.protocol='http' AND s.enabled AND s.deleted_at IS NULL
 `
@@ -356,7 +431,8 @@ type ServiceHTTPBrowserEndpointParams struct {
 }
 
 type ServiceHTTPBrowserEndpointRow struct {
-	TeamID              string
+	TeamID              pgtype.Text
+	GuestID             pgtype.Text
 	CertificateHostname string
 	ServicePort         pgtype.Int4
 	RunIds              []string
@@ -367,6 +443,7 @@ func (q *Queries) ServiceHTTPBrowserEndpoint(ctx context.Context, arg ServiceHTT
 	var i ServiceHTTPBrowserEndpointRow
 	err := row.Scan(
 		&i.TeamID,
+		&i.GuestID,
 		&i.CertificateHostname,
 		&i.ServicePort,
 		&i.RunIds,
@@ -376,20 +453,23 @@ func (q *Queries) ServiceHTTPBrowserEndpoint(ctx context.Context, arg ServiceHTT
 
 const serviceHTTPBrowserPermission = `-- name: ServiceHTTPBrowserPermission :one
 SELECT session.identity_id,session.id AS control_session_id,person.display_name,
-    LEAST(browser.expires_at,session.refresh_expires_at)::timestamptz AS expires_at
+    LEAST(browser.expires_at,session.access_expires_at,session.refresh_expires_at,original.refresh_expires_at)::timestamptz AS expires_at
 FROM control.service_http_browser_sessions browser
 JOIN control.control_sessions session ON session.id=browser.control_session_id AND session.revoked_at IS NULL
 JOIN control.identities person ON person.id=session.identity_id AND person.disabled_at IS NULL
-WHERE browser.service_id=$1 AND browser.cookie_digest=$2
-AND $3::text=ANY(browser.run_ids) AND browser.revoked_at IS NULL
-AND browser.expires_at>$4 AND session.refresh_expires_at>$4
+LEFT JOIN control.control_sessions original ON original.id=browser.parent_control_session_id AND original.identity_id=session.identity_id
+WHERE browser.token_digest=$1 AND browser.revoked_at IS NULL
+AND browser.expires_at>$2 AND session.access_expires_at>$2 AND session.refresh_expires_at>$2
+AND (browser.parent_control_session_id IS NULL OR original.revoked_at IS NULL AND original.refresh_expires_at>$2)
+AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
+    WHERE bound.session_digest=browser.token_digest AND bound.service_id=$3
+    AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
 `
 
 type ServiceHTTPBrowserPermissionParams struct {
-	ServiceID    string
 	CookieDigest []byte
-	ServiceRunID string
 	Now          pgtype.Timestamptz
+	ServiceID    string
 }
 
 type ServiceHTTPBrowserPermissionRow struct {
@@ -400,12 +480,7 @@ type ServiceHTTPBrowserPermissionRow struct {
 }
 
 func (q *Queries) ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceHTTPBrowserPermissionParams) (ServiceHTTPBrowserPermissionRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPBrowserPermission,
-		arg.ServiceID,
-		arg.CookieDigest,
-		arg.ServiceRunID,
-		arg.Now,
-	)
+	row := q.db.QueryRow(ctx, serviceHTTPBrowserPermission, arg.CookieDigest, arg.Now, arg.ServiceID)
 	var i ServiceHTTPBrowserPermissionRow
 	err := row.Scan(
 		&i.IdentityID,
@@ -416,64 +491,34 @@ func (q *Queries) ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceH
 	return i, err
 }
 
-const serviceHTTPTransportBinding = `-- name: ServiceHTTPTransportBinding :one
-SELECT (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST($1::timestamptz+interval '2 minutes',
-    run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,
-    (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
-     JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-     AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-     WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-     AND relay.lease_expires_at>$1 AND NOT relay.draining))::timestamptz AS valid_until
-FROM control.public_service_visitors v
-JOIN control.services service ON service.id=v.service_id AND service.public AND service.enabled
-    AND service.deleted_at IS NULL AND service.protocol='http' AND service.service_port=v.destination_port
-JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=service.id
-    AND run.run_number=v.run_number AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
-    AND run.publisher_expires_at>$1 AND run.certificate_expires_at>$1
-JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id
-    AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$1
-JOIN control.publisher_grants g ON g.id=run.publisher_grant_id AND g.kind='service'
-    AND g.service_id=service.id AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$1)
-JOIN control.publisher_identities publisher ON publisher.id=g.publisher_identity_id AND publisher.id=run.publisher_identity_id AND publisher.revoked_at IS NULL
-WHERE v.visitor_connection_id=$2 AND v.service_id=$3
-AND v.service_run_id=$4 AND v.run_number=$5
-AND v.source_ip=$6 AND v.destination_port=$7
-AND v.closed_at IS NULL AND v.valid_until>$1
-AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases relay
-    ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
-    AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-    WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
-    AND relay.lease_expires_at>$1 AND NOT relay.draining)
+const serviceHTTPPreviewTeamPermission = `-- name: ServiceHTTPPreviewTeamPermission :one
+SELECT control.company_subject_deadline(service.team_id,$1::text,$2::text,$3::timestamptz)::timestamptz AS expires_at
+FROM control.services service
+JOIN control.team_memberships member ON member.team_id=service.team_id AND member.identity_id=$1
+WHERE service.id=$4 AND service.protocol='http' AND service.enabled AND service.deleted_at IS NULL
+    AND control.active_membership(member.id,$3) AND control.active_team_subject(service.team_id,member.identity_id,$3)
+    AND control.company_subject_session_authorized(service.team_id,member.identity_id,$2::text,$3)
+    AND EXISTS(SELECT 1 FROM control.previews preview JOIN control.preview_services included ON included.preview_id=preview.id AND included.team_id=preview.team_id
+        WHERE included.service_id=service.id AND preview.team_id=service.team_id AND preview.team_access_enabled AND preview.demo_service_run_id IS NULL)
 `
 
-type ServiceHTTPTransportBindingParams struct {
-	Now                 pgtype.Timestamptz
-	VisitorConnectionID string
-	ServiceID           string
-	ServiceRunID        string
-	RunNumber           int64
-	SourceIp            netip.Addr
-	DestinationPort     int32
+type ServiceHTTPPreviewTeamPermissionParams struct {
+	IdentityID       string
+	ControlSessionID string
+	Now              pgtype.Timestamptz
+	ServiceID        string
 }
 
-type ServiceHTTPTransportBindingRow struct {
-	Admitted   bool
-	ValidUntil pgtype.Timestamptz
-}
-
-func (q *Queries) ServiceHTTPTransportBinding(ctx context.Context, arg ServiceHTTPTransportBindingParams) (ServiceHTTPTransportBindingRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPTransportBinding,
+func (q *Queries) ServiceHTTPPreviewTeamPermission(ctx context.Context, arg ServiceHTTPPreviewTeamPermissionParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, serviceHTTPPreviewTeamPermission,
+		arg.IdentityID,
+		arg.ControlSessionID,
 		arg.Now,
-		arg.VisitorConnectionID,
 		arg.ServiceID,
-		arg.ServiceRunID,
-		arg.RunNumber,
-		arg.SourceIp,
-		arg.DestinationPort,
 	)
-	var i ServiceHTTPTransportBindingRow
-	err := row.Scan(&i.Admitted, &i.ValidUntil)
-	return i, err
+	var expires_at pgtype.Timestamptz
+	err := row.Scan(&expires_at)
+	return expires_at, err
 }
 
 const servicePublicEndpointBinding = `-- name: ServicePublicEndpointBinding :one

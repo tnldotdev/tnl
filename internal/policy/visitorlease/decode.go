@@ -15,14 +15,21 @@ import (
 func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 	policy := body.Policy
 	scope := visitorscope.Scope{Kind: visitorscope.Kind(policy.Resource.Kind), ID: policy.Resource.Id}
-	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || policy.MetadataRevision < 0 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(policy.RegisteredKeyLeases) > 4096 || len(body.Revisions) > 256 {
+	if !scope.Valid() || policy.Port < 0 || policy.Port > 65535 || policy.MetadataRevision < 0 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(policy.RegisteredKeyLeases) > 4096 || len(body.Revisions) > 256 {
 		return Update{}, ErrUpdate
 	}
 	update := Update{View: visitortoken.View{Scope: scope, Issuer: policy.Issuer, Hostname: policy.Hostname, Port: uint16(policy.Port), VisitorPolicyRevision: policy.VisitorPolicyRevision,
 		ObservedAt: policy.ObservedAt, ValidUntil: policy.ValidUntil, MetadataRevision: policy.MetadataRevision},
 		KeyRevision: policy.KeyRevision, Enabled: policy.Enabled, Anonymous: policy.Anonymous, AfterRevision: body.AfterRevision, Events: body.Revisions, Snapshot: body.SnapshotRequired}
+	if policy.PublicEndpoint != nil {
+		if !validPublicEndpoint(*policy.PublicEndpoint) {
+			return Update{}, ErrUpdate
+		}
+		endpoint := *policy.PublicEndpoint
+		update.PublicEndpoint = &endpoint
+	}
 	if policy.ConnectionDeadline != nil {
-		if scope.Kind != visitorscope.PublicURL || policy.ConnectionDeadline.IsZero() || policy.Enabled && policy.ValidUntil.After(*policy.ConnectionDeadline) {
+		if policy.ConnectionDeadline.IsZero() || policy.Enabled && policy.ValidUntil.After(*policy.ConnectionDeadline) {
 			return Update{}, ErrUpdate
 		}
 		update.BoundConnections = true
@@ -50,7 +57,7 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 		subject := tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorRegisteredKey, GrantID: parent.GrantId, KeyID: parent.KeyId}
 		digest, err := base64.RawURLEncoding.Strict().DecodeString(parent.KeySha256)
 		id := (visitortoken.RegisteredKey{GrantID: parent.GrantId, KeyID: parent.KeyId}).AuthorityID()
-		if scope.Kind != visitorscope.Service || subject.Validate() != nil || err != nil || len(digest) != 32 || !parent.ExpiresAt.After(policy.ObservedAt) || parent.ExpiresAt.After(policy.ObservedAt.Add(90*time.Second)) {
+		if subject.Validate() != nil || err != nil || len(digest) != 32 || !parent.ExpiresAt.After(policy.ObservedAt) || parent.ExpiresAt.After(policy.ObservedAt.Add(90*time.Second)) {
 			return Update{}, ErrUpdate
 		}
 		if _, found := registered[id]; found {

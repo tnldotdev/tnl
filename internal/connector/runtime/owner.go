@@ -18,9 +18,22 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
+// accept fencing, HTTP shutdown, and setup cleanup share one raw close. keep its
+// result even if the server's accept loop unregisters before Shutdown observes it.
+type ownerIPCListener struct {
+	net.Listener
+	close func() error
+}
+
+func (l *ownerIPCListener) Close() error { return l.close() }
+
 // Serve owns private IPC and joins cleanup. process-owned adapters distinguish
 // their process lifetime from bounded session and per-service authorization.
 func Serve(ctx context.Context, scope Context, directory, executable string, config OwnerConfig, output io.Writer) (result error) {
+	return serveOwner(ctx, scope, directory, executable, config, output, net.Listen)
+}
+
+func serveOwner(ctx context.Context, scope Context, directory, executable string, config OwnerConfig, output io.Writer, listen func(string, string) (net.Listener, error)) (result error) {
 	startup, finishStartup := observability.ClientOperation(ctx, "connector.connections.startup")
 	defer func() { finishStartup(result) }()
 	backend := config.Backend
@@ -29,11 +42,36 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 	}
 	lifetime, cancel := context.WithCancel(observability.Independent(ctx))
 	defer cancel()
+	var shutdownMu sync.Mutex
+	var shutdownUntil time.Time
+	deadline := func() time.Time {
+		shutdownMu.Lock()
+		defer shutdownMu.Unlock()
+		if shutdownUntil.IsZero() {
+			var outer time.Time
+			if config.ShutdownDeadline != nil {
+				outer = config.ShutdownDeadline()
+			}
+			shutdownUntil = time.Now().Add(10 * time.Second)
+			if !outer.IsZero() && outer.Before(shutdownUntil) {
+				shutdownUntil = outer
+			}
+		}
+		shutdownUntil = observability.ShutdownDeadline(ctx, shutdownUntil)
+		return shutdownUntil
+	}
+	stopped := make(chan struct{})
+	stopDeadline := context.AfterFunc(lifetime, func() { defer close(stopped); deadline() })
+	defer func() {
+		if !stopDeadline() {
+			<-stopped
+		}
+	}()
 	var closeOnce sync.Once
 	var closeError error
 	closeBackend := func() {
 		closeOnce.Do(func() {
-			cleanup, done := context.WithTimeout(observability.Independent(context.WithoutCancel(ctx)), 15*time.Second)
+			cleanup, done := context.WithDeadline(observability.Independent(context.WithoutCancel(ctx)), deadline())
 			defer done()
 			cleanup, finish := observability.ClientOperation(cleanup, "connector.connections.shutdown")
 			closeError = backend.Close(cleanup)
@@ -70,11 +108,12 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 		expires = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 		localDeadline = expires
 	}
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	rawListener, err := listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	listener := &ownerIPCListener{Listener: rawListener, close: sync.OnceValue(rawListener.Close)}
+	defer func() { result = errors.Join(result, listener.Close()) }()
 	key, err := randomKey()
 	if err != nil {
 		return err
@@ -118,6 +157,14 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 		}
 		operation := strings.TrimPrefix(r.URL.Path, "/v1/connections/")
 		if operation == "stop" {
+			deadline()
+			if request.ShutdownDeadline != nil {
+				shutdownMu.Lock()
+				if request.ShutdownDeadline.Before(shutdownUntil) {
+					shutdownUntil = *request.ShutdownDeadline
+				}
+				shutdownMu.Unlock()
+			}
 			defer cancel()
 			_ = json.NewEncoder(w).Encode(map[string]any{"schema": Schema, "state": "stopping"})
 			return
@@ -250,14 +297,21 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 	var serveError error
 	go func() { serveError = server.Serve(listener); close(serverDone) }()
 	defer func() {
+		until := deadline()
 		cancel()
-		shutdown, done := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = server.Shutdown(shutdown)
-		done()
-		_ = server.Close()
+		shutdown, done := context.WithDeadline(context.Background(), until)
+		defer done()
+		forced := make(chan error, 1)
+		stopForce := context.AfterFunc(shutdown, func() { forced <- errors.Join(context.DeadlineExceeded, server.Close()) })
+		_ = listener.Close()
 		closeBackend()
+		result = errors.Join(result, server.Shutdown(shutdown))
+		if !stopForce() {
+			result = errors.Join(result, <-forced)
+		}
+		result = errors.Join(result, server.Close())
 		<-serverDone
-		if !errors.Is(serveError, http.ErrServerClosed) {
+		if !failure.Only(serveError, http.ErrServerClosed) && !failure.Only(serveError, net.ErrClosed) {
 			result = errors.Join(result, serveError)
 		}
 	}()
@@ -272,8 +326,8 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 	}
 	renew := time.NewTicker(30 * time.Second)
 	defer renew.Stop()
-	deadline := time.NewTimer(time.Until(localDeadline))
-	defer deadline.Stop()
+	expiration := time.NewTimer(time.Until(localDeadline))
+	defer expiration.Stop()
 	updateDeadline := func(next time.Time) error {
 		stateMu.Lock()
 		defer stateMu.Unlock()
@@ -290,7 +344,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 			handle = nextHandle
 		}
 		localDeadline, expires, state.ExpiresAt = shifted, next, next
-		deadline.Reset(time.Until(localDeadline))
+		expiration.Reset(time.Until(localDeadline))
 		return nil
 	}
 	for {
@@ -301,7 +355,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 			return ErrUnavailable
 		case err := <-config.Done:
 			return errors.Join(ErrUnavailable, err)
-		case <-deadline.C:
+		case <-expiration.C:
 			return ErrExpired
 		case <-deadlineChanged:
 			if !persistent {
@@ -327,6 +381,11 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 				continue
 			}
 			if err != nil {
+				if time.Now().Before(localDeadline) && temporaryOwnerRenewal(err) {
+					// retain only the last confirmed deadline. a failed renewal
+					// neither changes the handle nor restarts its clock.
+					continue
+				}
 				return err
 			}
 			if err := updateDeadline(next); err != nil {

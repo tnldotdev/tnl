@@ -1,6 +1,7 @@
 package serviceaudit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -109,6 +110,7 @@ func (q *Queue) Observe(o Observation) bool {
 	err := o.Validate()
 	var data []byte
 	if err == nil {
+		o.RoutingAuthority = bytes.Clone(o.RoutingAuthority)
 		data, err = json.Marshal(o)
 	}
 	q.mu.Lock()

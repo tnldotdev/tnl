@@ -16,17 +16,14 @@ func TestPrivatePublishTargetAndPublicBoundary(t *testing.T) {
 			t.Fatalf("protocol %q: %v", value, err)
 		}
 		for input, want := range map[string]string{"5432": "127.0.0.1:5432", "db.internal:5432": "db.internal:5432"} {
-			if got, err := targetplan.NormalizePublicAddress(input, protocol); err != nil || got != want {
+			if got, err := targetplan.NormalizePrivateAddress(input, protocol); err != nil || got != want {
 				t.Fatalf("%s target %q = %q, %v", value, input, got, err)
 			}
 		}
 		for _, target := range []string{"http://db.internal:5432", "db.internal", "db.internal:0", "db.internal:65536"} {
-			if _, err := targetplan.NormalizePublicAddress(target, protocol); err == nil {
+			if _, err := targetplan.NormalizePrivateAddress(target, protocol); err == nil {
 				t.Fatalf("invalid target %q accepted", target)
 			}
-		}
-		if _, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: protocol}); err == nil {
-			t.Fatal("service accepted as a public URL")
 		}
 		for _, flags := range []publishCommand{
 			{openOptions: openOptions{Open: true}},
@@ -46,8 +43,10 @@ func TestPrivatePublishTargetAndPublicBoundary(t *testing.T) {
 			t.Fatalf("unsupported protocol %q accepted", value)
 		}
 	}
-	if address, err := savedPublicAddress(controlv1.PublicURL{ServiceProtocol: controlv1.Http, CanonicalHostname: "web.example"}); err != nil || address != "https://web.example" {
-		t.Fatalf("HTTP public address = %q, %v", address, err)
+	for _, value := range []string{"", "http"} {
+		if protocol, err := publishProtocol(value); err != nil || protocol != controlv1.ServiceProtocolHTTP {
+			t.Fatalf("HTTP protocol %q = %q, %v", value, protocol, err)
+		}
 	}
 }
 

@@ -8,6 +8,7 @@ import {
   createProjectFixture,
   temporaryDirectory,
   testPublicProject,
+  testPrivateAssignment,
   withCurrentDirectory,
 } from "../helpers/project.js";
 import {
@@ -33,6 +34,7 @@ vi.mock("../../dist/internal/publisher/app.js", async (importOriginal) => {
       framework: Parameters<typeof actual.createPreparedService>[1],
       signal?: AbortSignal,
     ) => {
+      let closeRequested = false;
       const prepared = await actual.createPreparedService(
         options,
         framework,
@@ -44,10 +46,16 @@ vi.mock("../../dist/internal/publisher/app.js", async (importOriginal) => {
           },
           request: actual.runtimeRequest,
         },
-        () => {},
+        () => {
+          closeRequested = true;
+        },
         signal,
       );
-      onTestFinished(() => prepared.close());
+      onTestFinished(async () => {
+        // the framework observes its own close result; teardown only joins it.
+        if (closeRequested) await Promise.allSettled([prepared.close()]);
+        else await prepared.close();
+      });
       return prepared;
     },
   };
@@ -66,7 +74,45 @@ const buildEnvironment: ConfigEnv = {
   mode: "production",
 };
 
+test.each(["default", "option-off", "environment-off"] as const)(
+  "Vite sends its %s telemetry choice through normal preparation",
+  async (choice) => {
+    const bootstrap = await startTestBootstrap();
+    await withProcessEnvironment(
+      {
+        ...bootstrap.environment,
+        TNL_NO_TELEMETRY: choice === "environment-off" ? "true" : undefined,
+      },
+      async () => {
+        await runConfigHook(tnl(choice === "option-off" ? { telemetry: false } : {}), {});
+        expect(bootstrap.requests[0]?.body).toMatchObject({
+          framework: "vite",
+          telemetry_disabled: choice !== "default",
+        });
+      },
+    );
+  },
+);
+
 describe("tnl", () => {
+  test("allows only the selected connector-only canonical hostname", async () => {
+    const selected = testPrivateAssignment();
+    const bootstrap = await startTestBootstrap({ responseBody: JSON.stringify(selected) });
+    await withProcessEnvironment(bootstrap.environment, async () => {
+      const result = z
+        .strictObject({
+          define: z.strictObject({ "process.env.TNL_PROJECT_RUNTIME": z.string() }),
+          server: z.strictObject({ allowedHosts: z.array(z.string()) }),
+        })
+        .parse(await runConfigHook(tnl(), { server: { allowedHosts: ["existing.example"] } }));
+      expect(result.server.allowedHosts).toEqual(["existing.example", selected.hostname]);
+      const payload = z
+        .string()
+        .parse(JSON.parse(result.define["process.env.TNL_PROJECT_RUNTIME"]));
+      expect(JSON.parse(payload)).toEqual(selected.project);
+    });
+  });
+
   test("allows aliases that reach the service without broadening other hosts", async () => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify(testAliasAssignment()),

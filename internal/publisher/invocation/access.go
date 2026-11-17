@@ -26,9 +26,13 @@ func AccessIPPrefixes(ctx context.Context, control clientIPLookup, values []stri
 		}
 		input = append(input, value)
 	}
-	result, err := authorization.CanonicalizeIPPrefixes(input)
-	if err != nil || len(result) > 256 {
-		return nil, failure.Wrap("validate visitor IP list", failure.InvalidCommand, errors.New("IP list must contain at most 256 distinct addresses or prefixes"))
+	result, err := authorization.CanonicalizeVisitorIPPrefixes(input)
+	if err != nil {
+		problem := errors.New("IP list must contain valid addresses or prefixes")
+		if errors.Is(err, authorization.ErrIPPrefixLimit) {
+			problem = authorization.ErrIPPrefixLimit
+		}
+		return nil, failure.Wrap("validate visitor IP list", failure.InvalidCommand, problem)
 	}
 	return append([]string{}, result...), nil
 }

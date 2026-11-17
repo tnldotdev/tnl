@@ -11,8 +11,10 @@ import (
 
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -61,6 +63,7 @@ type Control interface {
 	PrepareConnectorPeerPair(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
 	RenewConnectorPeerPair(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error)
 	RebindConnectorPeerPair(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error)
+	RetireConnectorPeerPair(context.Context, string, string, controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error)
 	VisitorPermission(context.Context, string) (controlv1.VisitorTokenResponse, error)
 	Close(context.Context) error
 }
@@ -77,6 +80,7 @@ type Config struct {
 	Endpoint                        *controlv1.ServiceEndpoint
 	ServiceTLS                      *tls.Config            `json:"-"`
 	CleanupContext                  func() context.Context `json:"-"`
+	cleanup                         *connectorCleanup
 	RelayQUIC, RelayTCP             muxsession.Connector
 	Connectivity                    peer.ConnectivityOptions
 	// PeerSocket is borrowed by qualification; the default connection owns one.
@@ -116,7 +120,7 @@ type connectionConsumer func(context.Context, func(context.Context, net.Conn) er
 func serveConnections(ctx context.Context, config Config, consume connectionConsumer) (result error) {
 	startup, finish := observability.ClientOperation(ctx, "connector.startup")
 	defer func() { finish(result) }()
-	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) || config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !validProtocol(config.Protocol) || config.TrustRevision < 1 || config.Endpoint == nil || config.Endpoint.Hostname == "" || config.Endpoint.Port < 1024 || config.Endpoint.Port > 65535 {
+	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) || config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !validProtocol(config.Protocol) || config.TrustRevision < 1 || config.Endpoint == nil || !serviceendpoint.Valid(config.Protocol, config.Endpoint.Hostname, config.Endpoint.Port, config.Endpoint.Public) {
 		return ErrServiceConnection
 	}
 	if config.TransportTLS != nil && config.TransportTLS.InsecureSkipVerify || config.ServiceTLS == nil || config.ServiceTLS.InsecureSkipVerify || len(config.ServiceTLS.Certificates) != 0 || config.ServiceTLS.GetClientCertificate != nil {
@@ -128,14 +132,10 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 	if config.MaxConnections < 1 || config.MaxConnections > 4096 {
 		return ErrServiceConnection
 	}
+	config.cleanup = newConnectorCleanup(ctx, config.CleanupContext)
 	defer func() {
-		cleanup := observability.Independent(context.WithoutCancel(ctx))
-		if config.CleanupContext != nil {
-			cleanup = config.CleanupContext()
-		}
-		bounded, stop := context.WithTimeout(cleanup, 5*time.Second)
-		defer stop()
-		err := config.Control.Close(bounded)
+		defer config.cleanup.close()
+		err := config.Control.Close(config.cleanup.context())
 		if err != nil {
 			result = errors.Join(result, &CleanupError{Err: err})
 		}
@@ -153,9 +153,25 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 	if err != nil {
 		return err
 	}
-	defer p.Close()
+	defer func() {
+		operation, cleanup := p.close(config.cleanup.context())
+		result = errors.Join(result, operation)
+		if cleanup != nil {
+			result = errors.Join(result, &CleanupError{Err: cleanup})
+		}
+	}()
 	finish(nil)
 	err = consume(p.ctx, p.Forward)
+	cause := context.Cause(p.ctx)
+	if MetadataReloadOnly(cause) {
+		// this owner supplied the exact stop observed by its consumer. omit
+		// the derived generic failure only for that clean retirement; an
+		// independent operation or unowned cancellation remains a failure.
+		if err == nil || MetadataReloadOnly(err) && failure.Only(err, cause) {
+			return errors.Join(cause, err)
+		}
+		return errors.Join(ErrServiceConnection, cause, err)
+	}
 	if ctx.Err() != nil {
 		if context.Cause(ctx) == context.Canceled {
 			return err // the consumer already joins its owned work and classifies its stop.
@@ -165,7 +181,7 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 	if p.ctx.Err() != nil {
 		// retain the established connection's retirement boundary regardless of
 		// which authority or transport worker ends it first, plus its exact cause.
-		return errors.Join(ErrServiceConnection, context.Cause(p.ctx), err)
+		return errors.Join(ErrServiceConnection, cause, err)
 	}
 	return err
 }
@@ -178,5 +194,5 @@ func sameEndpoint(left, right *controlv1.ServiceEndpoint) bool {
 	if left == nil || right == nil {
 		return left == right
 	}
-	return left.Hostname == right.Hostname && left.Port == right.Port && left.Public == right.Public
+	return left.Hostname == right.Hostname
 }

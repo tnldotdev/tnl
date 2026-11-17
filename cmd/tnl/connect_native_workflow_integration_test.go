@@ -34,10 +34,10 @@ func TestIntegrationCLINativeConnectRequiresReadyPublisher(t *testing.T) {
 	}
 	configuration := filepath.Join(root, "tnl.json")
 	for _, public := range []bool{true, false} {
-		data, _ := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": session.Identity().PersonalTeamId, "services": map[string]any{"inventory": map[string]any{}, "orders": map[string]any{"protocol": "postgres"}, "profile": map[string]any{"protocol": "mysql"}}, "deployments": map[string]any{"production": map[string]any{"public": public, "targets": map[string]any{
-			"inventory": map[string]any{"address": "http://do-not-dial.invalid:3000"},
-			"orders":    map[string]any{"address": "do-not-dial.invalid:5432"},
-			"profile":   map[string]any{"address": "do-not-dial.invalid:3306"},
+		data, _ := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": session.Identity().PersonalTeamId, "services": map[string]any{"inventory": map[string]any{}, "orders": map[string]any{"protocol": "postgres"}, "profile": map[string]any{"protocol": "mysql"}}, "deployments": map[string]any{"production": map[string]any{"targets": map[string]any{
+			"inventory": map[string]any{"address": "http://do-not-dial.invalid:3000", "public": public},
+			"orders":    map[string]any{"address": "do-not-dial.invalid:5432", "public": public},
+			"profile":   map[string]any{"address": "do-not-dial.invalid:3306", "public": public},
 		}}}}})
 		if err := os.WriteFile(configuration, data, 0600); err != nil {
 			t.Fatal(err)

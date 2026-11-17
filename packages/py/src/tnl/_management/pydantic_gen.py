@@ -222,11 +222,11 @@ class DeploymentPublisherPage(BaseModel):
 
 
 class ServiceEndpoint(BaseModel):
-    """Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary."""
+    """Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary."""
 
     model_config = ConfigDict(extra="forbid")
     hostname: Annotated[str, Field(min_length=1, max_length=253)]
-    port: Annotated[int, Field(ge=1024, le=65535)]
+    port: Annotated[int, Field(ge=0, le=65535)]
     public: bool
 
 
@@ -236,14 +236,10 @@ class ResourceId(RootModel[str]):
 
 class DeploymentService(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: ResourceId = Field(..., description="The bound saved service or public URL ID.")
+    id: ResourceId = Field(..., description="The bound service ID.")
     protocol: ServiceProtocol
     trust_revision: Annotated[int, Field(ge=1)]
     endpoint: ServiceEndpoint | None = None
-    public_url: AnyUrl | None = Field(
-        default=None,
-        description="The saved HTTP public URL when this binding uses one rather than a private service endpoint.",
-    )
 
 
 class Deployment(BaseModel):
@@ -281,7 +277,6 @@ class ProblemCode(StrEnum):
     UNAVAILABLE = "unavailable"
     INTERNAL = "internal"
     NAME_UNAVAILABLE = "name_unavailable"
-    PUBLISH_RUN_OPEN = "publish_run_open"
     POLICY_REVISION_STALE = "policy_revision_stale"
     DNS_SETUP_PENDING = "dns_setup_pending"
     PLACEMENT_UNAVAILABLE = "placement_unavailable"
@@ -298,7 +293,10 @@ class Problem(BaseModel):
     request_id: Annotated[str, Field(min_length=1)]
     detail: Annotated[str, Field(min_length=1)]
     retry_at: datetime | None = None
-    details: dict[str, Any] | None = None
+    details: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional code-specific diagnostic fields. A not_found problem with HTTP status 404 may include allowed_namespace, a canonical ASCII hostname of at most 253 bytes from the current actor's authorized namespace. It is omitted after membership loss and when the namespace denial includes an independent fault. It never identifies the rejected hostname's owner or whether a foreign service exists. Clients must validate this field before displaying it and ignore unknown detail keys.",
+    )
 
 
 class TeamIdQuery(RootModel[ResourceId]):

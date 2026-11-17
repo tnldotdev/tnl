@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strconv"
 	"testing"
 	"time"
@@ -13,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
@@ -295,19 +295,24 @@ func TestIntegrationCompanySuccessfulSourceReplacementAndExplicitRebind(t *testi
 	f.decode(f.provision(a.IdentityConnection, a.ProvisioningToken, employee.sub, employee.dir, 2000, false, employee.slug), 403, nil)
 	f.decode(f.call("GET", "/v1/teams/"+team.ID, newSessions[employee].AccessToken, "", nil), 200, nil)
 	// resumption permits a new member-owned run without reopening the closed
-	// old run or changing the saved URL/namespace. team-owned runs remain live.
-	url, err := d.GetPublicURLForAuthorization(ctx, publicMember.url.ID)
+	// old run or changing the saved service endpoint. team-owned runs remain live.
+	service, err := d.GetService(newOwnerCtx, publicMember.service.ID, newOwnerPrincipal.IdentityID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if url.ID != publicMember.url.ID || url.Namespace != publicMember.url.Namespace || url.LifecycleState != controlstate.PublicURLLifecycleEnabled {
-		t.Fatal("replacement lost saved publication", url)
+	if service.ID != publicMember.service.ID || service.DomainID != publicMember.service.DomainID ||
+		service.Endpoint == nil || publicMember.service.Endpoint == nil || *service.Endpoint != *publicMember.service.Endpoint ||
+		service.Placement == nil || publicMember.service.Placement == nil || *service.Placement != *publicMember.service.Placement || !service.Enabled {
+		t.Fatal("replacement lost saved publication", service)
 	}
-	resumed := replacementPublicRun(t, f, publicMember.publisher, publicMember.key, url, "after-owner-rebind")
-	if resumed.PublishRunNumber != publicMember.run.PublishRunNumber+1 {
-		t.Fatal("replacement did not retain publish run numbering")
+	resumed, err := d.PrepareServiceRun(ctx, service.ID, publicMember.publisher, "after-owner-rebind", time.Now().UTC(), controlstate.ServiceRunRequest{Metadata: service.ServiceMetadata})
+	if err != nil || resumed.RunNumber != publicMember.run.RunNumber+1 {
+		t.Fatal("replacement did not retain service run numbering", err)
 	}
-	if _, err = d.HeartbeatPublishRun(ctx, publicTeam.auth(), time.Now().UTC(), time.Hour, time.Hour); err != nil {
+	if _, err = d.StartServiceRun(ctx, service.ID, resumed.RunID, resumed.RunNumber, publicMember.publisher, time.Now().UTC()); err != nil {
+		t.Fatal("rebound publisher could not start another service run", err)
+	}
+	if _, err = d.HeartbeatServiceRun(ctx, publicTeam.service.ID, publicTeam.run.RunID, publicTeam.run.Token, time.Now().UTC(), controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal("team public run lost continuity after member rebind", err)
 	}
 	if _, err = d.HeartbeatServiceRun(ctx, privateTeam.service.ID, privateTeam.run.RunID, privateTeam.run.Token, time.Now().UTC(), controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
@@ -315,41 +320,14 @@ func TestIntegrationCompanySuccessfulSourceReplacementAndExplicitRebind(t *testi
 	}
 }
 
-type replacementPublicPublication struct {
+type replacementPublication struct {
 	publisher controlstate.PublisherIdentity
 	key       ed25519.PrivateKey
-	url       controlstate.PublicURL
-	run       controlstate.PublishRunSetup
-}
-
-func (p replacementPublicPublication) auth() controlstate.PublishRunAuthentication {
-	return controlstate.PublishRunAuthentication{PublishRunID: p.run.PublishRunID, PublicURLID: p.url.ID, PublishRunNumber: p.run.PublishRunNumber, PublishRunToken: p.run.PublishRunToken}
-}
-
-type replacementPrivatePublication struct {
-	publisher controlstate.PublisherIdentity
 	service   controlstate.ServiceRecord
 	run       controlstate.ServiceRunState
 }
 
-func replacementPublicRun(t *testing.T, f *companyHTTPFixture, p controlstate.PublisherIdentity, key ed25519.PrivateKey, url controlstate.PublicURL, attempt string) controlstate.PublishRunSetup {
-	t.Helper()
-	plan, err := f.d.PublisherRunPlan(t.Context(), p, url, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	proof, err := publisherproof.SignRun(key, url.ID, attempt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	run, err := f.d.CreatePublishRun(t.Context(), controlstate.PublishRunRequest{PublicURLID: url.ID, TeamID: url.TeamID, MembershipID: url.MembershipID, ActingIdentityID: p.CreatorID, IdempotencyKey: attempt, RequestDigest: sha256.Sum256([]byte(attempt)), PolicyRevision: uint64(url.PolicyRevision), ExpectedMutationRevision: url.MutationRevision, CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateChallenge: plan.ChallengeMethod, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherKeyID: p.KeyID, PublisherRunProof: proof}, time.Now().UTC(), time.Hour, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return run
-}
-
-func replacementPublications(t *testing.T, f *companyHTTPFixture, team controlstate.Team, domainOwner, session authorityv1.ControlSessionResponse, member companyMembershipSnapshot) (replacementPublicPublication, replacementPublicPublication, replacementPrivatePublication, replacementPrivatePublication) {
+func replacementPublications(t *testing.T, f *companyHTTPFixture, team controlstate.Team, domainOwner, session authorityv1.ControlSessionResponse, member companyMembershipSnapshot) (replacementPublication, replacementPublication, replacementPublication, replacementPublication) {
 	t.Helper()
 	d := f.d
 	ctx := t.Context()
@@ -404,33 +382,40 @@ func replacementPublications(t *testing.T, f *companyHTTPFixture, team controlst
 		}
 		return p, key
 	}
-	public := func(ownership string) replacementPublicPublication {
+	var privateService controlstate.ServiceRecord
+	publish := func(ownership, protocol string, public bool) replacementPublication {
 		t.Helper()
-		scope := controlstate.PublicURLScopeShared
-		membership := ""
-		hostname := "team.replacement.example.org"
-		if ownership == "member" {
-			scope = controlstate.PublicURLScopeMember
-			membership = member.ID
-			ns, _ := naming.PublicURLNamespace(naming.NamespaceFacts{Domain: domain.CanonicalDomain, Mode: naming.ManagedURLModeGenerated, TeamName: team.DisplayName, MemberSlug: member.Slug, ManagedLabel: member.ManagedLabel})
-			hostname = "app." + ns
+		name := protocol + "-" + ownership
+		service := privateService
+		if public || service.ID == "" {
+			serviceName := name
+			if !public {
+				serviceName = "private-pool"
+			}
+			configuration := &controlstate.ProjectServiceConfiguration{Protocol: protocol, Target: "127.0.0.1:3000", Public: &public}
+			var err error
+			if public && ownership == "member" {
+				configuration.DomainID = domain.ID
+				local, realizeErr := d.RealizeLocalProjectService(actorCtx, controlstate.RealizeLocalProjectServiceRequest{
+					TeamID: team.ID, ActorID: actor.IdentityID, ProjectKey: "replacement", SourceFingerprint: fmt.Sprintf("%x", sha256.Sum256([]byte("replacement"))),
+					Service: serviceName, WorktreeKey: "replacement", Configuration: *configuration, Now: time.Now().UTC(),
+				})
+				if realizeErr != nil {
+					t.Fatal("realize member-owned replacement service", realizeErr)
+				}
+				service, err = d.GetService(actorCtx, local.ServiceID, actor.IdentityID)
+			} else {
+				service, err = d.CreateServiceAt(actorCtx, team.ID, actor.IdentityID, serviceName, serviceName, controlstate.ServicePlacement{DomainID: domain.ID}, time.Now().UTC(), controlstate.ServiceMetadata{Protocol: protocol, PublisherPool: !public}, configuration)
+			}
+			if err != nil {
+				t.Fatal("create replacement service", err)
+			}
+			if !public {
+				privateService = service
+			}
 		}
-		u, err := d.CreatePublicURL(actorCtx, controlstate.CreatePublicURLRequest{TeamID: team.ID, DomainID: domain.ID, MembershipID: membership, ActingIdentityID: actor.IdentityID, IdempotencyKey: "replacement-" + ownership, RequestDigest: sha256.Sum256([]byte(ownership)), CanonicalHostname: hostname, Target: "http://127.0.0.1:3000", PublicURLScope: scope, Purpose: controlstate.PublicURLPurposeApp, DNSState: controlstate.PublicURLDNSPending, DNSAuthorityReference: domain.DNSAuthorityReference}, time.Now().UTC())
-		if err != nil {
-			t.Fatal(err)
-		}
-		p, key := enroll(controlstate.PublisherScope{TeamID: team.ID, Kind: "saved_public_url", PublicURLID: u.ID}, ownership, "public-"+ownership)
-		return replacementPublicPublication{publisher: p, key: key, url: u, run: replacementPublicRun(t, f, p, key, u, "before-replacement")}
-	}
-	teamPublic, memberPublic := public("team"), public("member")
-	service, err := d.CreateServiceAt(actorCtx, team.ID, actor.IdentityID, "replacement-private", "replacement-private", controlstate.ServicePlacement{}, time.Now().UTC(), controlstate.ServiceMetadata{Protocol: "tcp", PublisherPool: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	private := func(ownership string) replacementPrivatePublication {
-		t.Helper()
-		p, _ := enroll(controlstate.PublisherScope{TeamID: team.ID, Kind: "service", ServiceID: service.ID}, ownership, "private-"+ownership)
-		prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "before-replacement", time.Now().UTC(), service.ServiceMetadata)
+		p, key := enroll(controlstate.PublisherScope{TeamID: team.ID, Kind: "service", ServiceID: service.ID}, ownership, name)
+		prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "before-replacement", time.Now().UTC(), controlstate.ServiceRunRequest{Metadata: service.ServiceMetadata})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -441,7 +426,7 @@ func replacementPublications(t *testing.T, f *companyHTTPFixture, team controlst
 		managedcert.Install(t, d, prepared, run, time.Now().UTC())
 		for _, slot := range run.Connections {
 			lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-			if _, err = d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, time.Now().UTC()); err != nil {
+			if _, err = d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, time.Now().UTC()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err = d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, time.Now().UTC()); err != nil {
@@ -449,37 +434,33 @@ func replacementPublications(t *testing.T, f *companyHTTPFixture, team controlst
 			}
 		}
 		if current, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, time.Now().UTC(), controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil || current.State != "ready" {
-			t.Fatal("private publication not ready", current, err)
+			t.Fatal("service publication not ready", current, err)
 		}
-		return replacementPrivatePublication{publisher: p, service: service, run: run}
+		return replacementPublication{publisher: p, key: key, service: service, run: run}
 	}
-	return teamPublic, memberPublic, private("team"), private("member")
+	return publish("team", "http", true), publish("member", "http", true), publish("team", "tcp", false), publish("member", "tcp", false)
 }
 
-func checkReplacementPublications(t *testing.T, f *companyHTTPFixture, team, member replacementPublicPublication, privateTeam, privateMember replacementPrivatePublication) {
+func checkReplacementPublications(t *testing.T, f *companyHTTPFixture, team, member, privateTeam, privateMember replacementPublication) {
 	t.Helper()
 	ctx := t.Context()
 	d := f.d
 	if team.publisher.Ownership != "team" || privateTeam.publisher.Ownership != "team" || member.publisher.Ownership != "member" || privateMember.publisher.Ownership != "member" {
 		t.Fatal("publisher ownership was not explicit")
 	}
-	if _, err := d.HeartbeatPublishRun(ctx, team.auth(), time.Now().UTC(), time.Hour, time.Hour); err != nil {
+	if privateTeam.service.ID != privateMember.service.ID || !privateTeam.service.PublisherPool {
+		t.Fatal("private publications did not share the same service pool")
+	}
+	if _, err := d.HeartbeatServiceRun(ctx, team.service.ID, team.run.RunID, team.run.Token, time.Now().UTC(), controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal("team-owned public run depended on offboarded creator", err)
 	}
 	if _, err := d.HeartbeatServiceRun(ctx, privateTeam.service.ID, privateTeam.run.RunID, privateTeam.run.Token, time.Now().UTC(), controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal("team-owned private run depended on offboarded creator", err)
 	}
-	for _, run := range []struct {
-		id      string
-		private bool
-	}{{member.run.PublishRunID, false}, {privateMember.run.RunID, true}} {
+	for _, run := range []replacementPublication{member, privateMember} {
 		var closed bool
-		query := `SELECT closed_at IS NOT NULL FROM control.publish_runs WHERE id=$1`
-		if run.private {
-			query = `SELECT closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`
-		}
-		if err := f.sql.QueryRow(ctx, query, run.id).Scan(&closed); err != nil || !closed {
-			t.Fatal("member-owned run survived replacement", run.id, closed, err)
+		if err := f.sql.QueryRow(ctx, `SELECT closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`, run.run.RunID).Scan(&closed); err != nil || !closed {
+			t.Fatal("member-owned run survived replacement", run.run.RunID, closed, err)
 		}
 	}
 	assertion, err := publisherproof.Sign(member.publisher.ID, member.publisher.KeyID, member.publisher.GrantID, "https://control.example/v1/publisher-token", member.key, time.Now().UTC())

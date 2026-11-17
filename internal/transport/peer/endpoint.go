@@ -412,15 +412,20 @@ func (e *Endpoint) chooseLocked() {
 			continue
 		}
 		p.refreshRevisionLocked()
-		if p.alive && !p.failed && now.Sub(p.ack) <= e.config.PathTimeout {
+		if p.alive && !p.failed && now.Sub(p.ack) <= e.config.PathTimeout && p.revision.available() {
 			e.active = index
 			return
 		}
 	}
-	// bound relays can carry encrypted data while their probes recover.
+	// installed relays can carry encrypted data while their probes recover.
 	// choosing a relay does not mark it healthy or change its binding.
 	for _, index := range []int{RelayA, RelayB} {
-		if p := e.paths[index]; p != nil && !p.failed {
+		p := e.paths[index]
+		if p == nil || p.failed {
+			continue
+		}
+		p.refreshRevisionLocked()
+		if p.revision.available() {
 			e.active = index
 			return
 		}

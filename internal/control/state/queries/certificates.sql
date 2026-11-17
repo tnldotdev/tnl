@@ -47,72 +47,11 @@ SET contact_email = sqlc.arg(contact_email),
 WHERE id = sqlc.arg(account_id)
 RETURNING *;
 
--- name: GetPublishRunByTokenID :one
-SELECT *
-FROM control.publish_runs
-WHERE publish_run_token_id = sqlc.arg(publish_run_token_id);
-
--- name: GetACMEOrderByIdempotency :one
-SELECT *
-FROM control.acme_orders
-WHERE publish_run_id = sqlc.arg(publish_run_id)
-  AND idempotency_key = sqlc.arg(idempotency_key);
-
 -- name: LockCertificateIssuanceControl :one
 SELECT allowed
 FROM control.maintenance_controls
 WHERE operation = 'certificate_issuance'
 FOR SHARE;
-
--- name: InsertACMEOrder :one
-INSERT INTO control.acme_orders (
-    id,
-    account_id,
-    publish_run_id,
-    public_url_id,
-    publish_run_number,
-    idempotency_key,
-    request_digest,
-    certificate_cache_key,
-    certificate_scope,
-    certificate_identifiers,
-    challenge_method,
-    csr_der,
-    csr_digest,
-    state,
-    available_at,
-    created_at,
-    updated_at
-) SELECT
-    sqlc.arg(id),
-    sqlc.arg(account_id),
-    sqlc.arg(publish_run_id),
-    sqlc.arg(public_url_id),
-    sqlc.arg(publish_run_number),
-    sqlc.arg(idempotency_key),
-    sqlc.arg(request_digest),
-    sqlc.arg(certificate_cache_key),
-    sqlc.arg(certificate_scope),
-    sqlc.arg(certificate_identifiers),
-    sqlc.arg(challenge_method),
-    sqlc.arg(csr_der),
-    sqlc.arg(csr_digest),
-    'pending',
-    sqlc.arg(created_at),
-    sqlc.arg(created_at),
-    sqlc.arg(created_at)
-FROM control.publish_runs AS run
-JOIN control.public_urls AS url ON url.id = run.public_url_id
-WHERE run.id = sqlc.arg(publish_run_id) AND run.public_url_id = sqlc.arg(public_url_id)
-  AND run.publish_run_number = sqlc.arg(publish_run_number) AND run.closed_at IS NULL
-  AND run.certificate_cache_key IS NOT NULL AND url.service_protocol = 'http'
-RETURNING *;
-
--- name: GetCertificateOrderDomainKind :one
-SELECT domains.kind
-FROM control.public_urls AS public_urls
-JOIN control.domains AS domains ON domains.id = public_urls.domain_id
-WHERE public_urls.id = sqlc.arg(public_url_id);
 
 -- name: GetACMEOrder :one
 SELECT *
@@ -130,26 +69,6 @@ SELECT *
 FROM control.acme_authorizations
 WHERE order_id = sqlc.arg(issuance_id)
 ORDER BY identifier;
-
--- name: LockACMEOrderForInstall :one
-SELECT orders.*
-FROM control.acme_orders AS orders
-JOIN control.publish_runs AS issued_session
-  ON issued_session.id = orders.publish_run_id
- AND issued_session.public_url_id = orders.public_url_id
- AND issued_session.publish_run_number = orders.publish_run_number
-WHERE orders.id = sqlc.arg(issuance_id)
-  AND issued_session.team_id = sqlc.arg(team_id)
-  AND orders.certificate_cache_key = sqlc.arg(certificate_cache_key)
-  AND orders.certificate_scope = sqlc.arg(certificate_scope)
-  AND orders.certificate_identifiers = sqlc.arg(certificate_identifiers)
-  AND orders.challenge_method = sqlc.arg(challenge_method)
-  AND orders.state IN ('waiting_for_install', 'installed')
-  AND orders.certificate_pem IS NOT NULL
-  AND orders.not_before <= sqlc.arg(installed_at)
-  AND orders.not_after = sqlc.arg(not_after)
-  AND orders.not_after > sqlc.arg(installed_at)
-FOR UPDATE OF orders;
 
 -- name: MarkACMEOrderInstalled :one
 UPDATE control.acme_orders
@@ -312,29 +231,3 @@ WHERE control.acme_authorizations.authorization_url = excluded.authorization_url
   AND control.acme_authorizations.presentation_reference IS NOT DISTINCT FROM excluded.presentation_reference
   AND control.acme_authorizations.authorization_revision = sqlc.arg(expected_authorization_revision)
 RETURNING *;
-
--- name: CancelPublishRunACMEOrders :exec
-UPDATE control.acme_orders
-SET state = 'canceled',
-    order_revision = order_revision + 1,
-    work_owner = NULL,
-    work_expires_at = NULL,
-    available_at = sqlc.arg(canceled_at),
-    updated_at = GREATEST(updated_at, sqlc.arg(canceled_at))
-WHERE publish_run_id = sqlc.arg(publish_run_id)
-  AND certificate_pem IS NULL
-  AND state IN ('pending', 'authorizing', 'ready_to_finalize', 'finalizing', 'failed');
-
--- name: CancelPublishRunACMEAuthorizations :exec
-UPDATE control.acme_authorizations AS authorizations
-SET state = CASE
-        WHEN challenge_type = 'dns-01' THEN 'cleaning'
-        ELSE 'canceled'
-    END,
-    authorization_revision = authorization_revision + 1,
-    available_at = sqlc.arg(canceled_at),
-    updated_at = GREATEST(authorizations.updated_at, sqlc.arg(canceled_at))
-FROM control.acme_orders AS orders
-WHERE orders.id = authorizations.order_id
-  AND orders.publish_run_id = sqlc.arg(publish_run_id)
-  AND authorizations.state NOT IN ('complete', 'canceled');

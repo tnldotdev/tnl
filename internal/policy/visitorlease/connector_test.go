@@ -107,6 +107,52 @@ func TestPolicyConnectorRemovalFencesBeforeCallback(t *testing.T) {
 	}
 }
 
+func TestPolicyConnectorCurrentRefusalDoesNotTagStaleOrClosedGuards(t *testing.T) {
+	for _, boundary := range []string{"current refusal", "stale", "guard closed", "lease closed", "revoked", "closed before refusal", "revoked before refusal"} {
+		t.Run(boundary, func(t *testing.T) {
+			l, u, permission := connectorGuardFixture(t)
+			guard, err := l.BindConnector(permission, netip.MustParseAddr("192.0.2.1"), 5, func() {})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer guard.Close()
+			switch boundary {
+			case "current refusal":
+				u.Enabled = false
+				if err := l.Apply(l.Begin(), u); err != nil {
+					t.Fatal(err)
+				}
+			case "stale":
+				l.mu.Lock()
+				now := l.update.View.ValidUntil
+				l.now = func() time.Time { return now }
+				l.mu.Unlock()
+			case "guard closed":
+				guard.Close()
+			case "lease closed":
+				l.Close()
+			case "revoked":
+				guard.Revoke()
+			case "closed before refusal", "revoked before refusal":
+				if boundary == "closed before refusal" {
+					guard.Close()
+				} else {
+					guard.Revoke()
+				}
+				u.Enabled = false
+				if err := l.Apply(l.Begin(), u); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err = guard.Current()
+			var refusal *ConnectorPolicyRefusal
+			if !errors.Is(err, visitortoken.ErrPolicy) || errors.As(err, &refusal) != (boundary == "current refusal") {
+				t.Fatal("current policy refusal lost its exact provenance", err)
+			}
+		})
+	}
+}
+
 func TestPolicyConnectorCloseAndExpiryAreSynchronous(t *testing.T) {
 	for _, closeGuard := range []bool{false, true} {
 		synctest.Test(t, func(t *testing.T) {

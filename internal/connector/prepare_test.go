@@ -21,15 +21,15 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func connectionPreparationFixture(t *testing.T) (*connectorConnectionBackend, controlv1.Service) {
+func connectionPreparationFixture(t *testing.T) (*connectorConnectionBackend, controlv1.ServiceSummary) {
 	t.Helper()
-	service := controlv1.Service{Id: "svc_" + strings.Repeat("s", 22), Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 15443}}
+	service := controlv1.ServiceSummary{Id: "svc_" + strings.Repeat("s", 22), Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443}}
 	lifetime, cancel := context.WithCancel(t.Context())
 	b := &connectorConnectionBackend{
 		scope: connectorruntime.Context{Services: []string{"api"}}, parentPID: 1,
 		connectorConnectionSession: connectorConnectionSession{deadline: time.Now().Add(time.Hour)},
 		project:                    projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}}}}},
-		services:                   map[string]controlv1.Service{"api": service}, listeners: map[string]*ownedServiceListener{},
+		services:                   map[string]controlv1.ServiceSummary{"api": service}, listeners: map[string]*ownedServiceListener{},
 		lifetime: lifetime, cancel: cancel,
 	}
 	t.Cleanup(func() {
@@ -105,7 +105,7 @@ func TestConnectionPreparationRejectsStalePublication(t *testing.T) {
 				b.services["api"] = service
 			case "endpoint":
 				endpoint := *service.Endpoint
-				endpoint.Port++
+				endpoint.Hostname = "another.example.test"
 				service.Endpoint = &endpoint
 				b.services["api"] = service
 			case "closed":
@@ -251,6 +251,10 @@ func TestConnectionPreparationInvalidResolvedRunClosesAdapterOnce(t *testing.T) 
 					t.Error("invalid resolved run reached pair rebind")
 					return controlv1.ConnectorPeerPairRebindState{}, connectorstream.ErrServiceConnection
 				},
+				RetirePair: func(context.Context, string, string, controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+					t.Error("invalid resolved run reached pair retirement")
+					return controlv1.ConnectorPeerPairRetirement{}, connectorstream.ErrServiceConnection
+				},
 				Permission: func(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 					t.Error("invalid resolved run reached visitor permission")
 					return controlv1.VisitorTokenResponse{}, connectorstream.ErrServiceConnection
@@ -306,7 +310,7 @@ func TestConnectionPreparationFailureJoinsResourcesAndReusesListener(t *testing.
 					}
 					endpoint := *service.Endpoint
 					if scenario == "endpoint" {
-						endpoint.Port++
+						endpoint.Hostname = "another.example.test"
 					}
 					return connectorstream.Run{Protocol: "http", Endpoint: &endpoint, TrustRevision: 1}, nil
 				},
@@ -328,6 +332,10 @@ func TestConnectionPreparationFailureJoinsResourcesAndReusesListener(t *testing.
 				RebindPair: func(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
 					t.Error("failed preparation reached pair rebind")
 					return controlv1.ConnectorPeerPairRebindState{}, failure
+				},
+				RetirePair: func(context.Context, string, string, controlv1.ConnectorPeerPairRetireRequest) (controlv1.ConnectorPeerPairRetirement, error) {
+					t.Error("failed preparation reached pair retirement")
+					return controlv1.ConnectorPeerPairRetirement{}, failure
 				},
 				Permission: func(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 					t.Error("failed preparation reached visitor permission")

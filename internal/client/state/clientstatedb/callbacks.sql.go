@@ -10,32 +10,60 @@ import (
 	"database/sql"
 )
 
-const consumeOAuthAliasReturn = `-- name: ConsumeOAuthAliasReturn :execrows
-UPDATE oauth_alias_handoffs SET consumed_at = ?1
-WHERE server_origin = ?2 AND hostname = ?3 AND state_digest = ?4
-    AND consumed_at IS NULL AND expires_at > ?1 AND callback_path = ?5
-    AND public_url_id = ?6 AND publish_run_number = ?7
+const consumeOAuthReturn = `-- name: ConsumeOAuthReturn :execrows
+UPDATE oauth_callback_handoffs SET consumed_at = ?1
+WHERE oauth_callback_handoffs.server_origin = ?2
+    AND oauth_callback_handoffs.hostname = ?3
+    AND oauth_callback_handoffs.state_digest = ?4
+    AND oauth_callback_handoffs.created_at = ?5
+    AND oauth_callback_handoffs.expires_at = ?6
+    AND oauth_callback_handoffs.consumed_at IS NULL AND oauth_callback_handoffs.expires_at > ?1
+    AND oauth_callback_handoffs.callback_path = ?7
+    AND oauth_callback_handoffs.service_id = ?8 AND oauth_callback_handoffs.run_number = ?9
+    AND EXISTS (
+      SELECT 1 FROM local_tunnels t
+      WHERE t.id = oauth_callback_handoffs.tunnel_id AND t.server_origin = oauth_callback_handoffs.server_origin
+        AND t.primary_project_root = oauth_callback_handoffs.primary_project_root
+        AND t.integration_namespace = oauth_callback_handoffs.integration_namespace
+        AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?1
+        AND ((t.hostname = oauth_callback_handoffs.hostname AND t.service_id = oauth_callback_handoffs.service_id
+              AND t.publish_run_number = oauth_callback_handoffs.run_number)
+          OR EXISTS (
+            SELECT 1 FROM project_aliases a JOIN alias_publish_runs r ON r.alias_id = a.id
+            JOIN alias_declarations d ON d.alias_id = a.id AND d.tunnel_id = r.tunnel_id
+            JOIN integration_url_leases p ON p.server_origin = a.server_origin AND p.hostname = a.hostname
+            WHERE r.tunnel_id = t.id AND a.server_origin = t.server_origin AND a.hostname = oauth_callback_handoffs.hostname
+              AND a.selection_revision = r.selection_revision AND a.selected_project_root = t.project_root
+              AND t.primary_project_root = a.primary_project_root AND t.integration_namespace = d.integration_namespace
+              AND d.fingerprint = a.fingerprint AND t.service = a.service
+              AND r.service_id = oauth_callback_handoffs.service_id AND r.run_number = oauth_callback_handoffs.run_number
+              AND t.service_id = r.target_service_id AND t.publish_run_number = r.target_run_number
+              AND p.service_id = r.service_id AND p.run_number = r.run_number AND p.expires_at > ?1)))
 `
 
-type ConsumeOAuthAliasReturnParams struct {
-	Now              sql.NullInt64
-	ServerOrigin     string
-	Hostname         string
-	StateDigest      []byte
-	CallbackPath     string
-	PublicURLID      string
-	PublishRunNumber int64
+type ConsumeOAuthReturnParams struct {
+	Now          sql.NullInt64
+	ServerOrigin string
+	Hostname     string
+	StateDigest  []byte
+	CreatedAt    int64
+	ExpiresAt    int64
+	CallbackPath string
+	ServiceID    string
+	RunNumber    int64
 }
 
-func (q *Queries) ConsumeOAuthAliasReturn(ctx context.Context, arg ConsumeOAuthAliasReturnParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, consumeOAuthAliasReturn,
+func (q *Queries) ConsumeOAuthReturn(ctx context.Context, arg ConsumeOAuthReturnParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, consumeOAuthReturn,
 		arg.Now,
 		arg.ServerOrigin,
 		arg.Hostname,
 		arg.StateDigest,
+		arg.CreatedAt,
+		arg.ExpiresAt,
 		arg.CallbackPath,
-		arg.PublicURLID,
-		arg.PublishRunNumber,
+		arg.ServiceID,
+		arg.RunNumber,
 	)
 	if err != nil {
 		return 0, err
@@ -62,15 +90,6 @@ func (q *Queries) DeleteOAuthCallback(ctx context.Context, arg DeleteOAuthCallba
 	return result.RowsAffected()
 }
 
-const expireOAuthAliasReturns = `-- name: ExpireOAuthAliasReturns :exec
-DELETE FROM oauth_alias_handoffs WHERE expires_at <= ?1
-`
-
-func (q *Queries) ExpireOAuthAliasReturns(ctx context.Context, now int64) error {
-	_, err := q.db.ExecContext(ctx, expireOAuthAliasReturns, now)
-	return err
-}
-
 const expireOAuthCallbacks = `-- name: ExpireOAuthCallbacks :exec
 DELETE FROM oauth_pending_callbacks WHERE expires_at <= ?1
 `
@@ -80,22 +99,37 @@ func (q *Queries) ExpireOAuthCallbacks(ctx context.Context, now int64) error {
 	return err
 }
 
+const expireOAuthReturns = `-- name: ExpireOAuthReturns :exec
+DELETE FROM oauth_callback_handoffs WHERE expires_at <= ?1
+`
+
+func (q *Queries) ExpireOAuthReturns(ctx context.Context, now int64) error {
+	_, err := q.db.ExecContext(ctx, expireOAuthReturns, now)
+	return err
+}
+
 const getCurrentOAuthCallback = `-- name: GetCurrentOAuthCallback :one
 SELECT c.callback_path, c.callback_query, c.expires_at, t.id AS tunnel_id, t.hostname, c.origin_hostname,
-    c.origin_public_url_id AS public_url_id, c.origin_publish_run_number AS publish_run_number
+    c.origin_service_id, c.origin_run_number, c.primary_project_root, c.integration_namespace
 FROM oauth_pending_callbacks c JOIN local_tunnels t ON t.id = c.tunnel_id
 WHERE c.server_origin = ?1 AND c.hostname = ?2
   AND c.state_digest = ?3 AND c.callback_path = ?4
   AND c.expires_at > ?5 AND t.lease_expires_at > ?5
   AND t.state = 'ready' AND t.stopped_at IS NULL AND t.server_origin = c.server_origin
-  AND t.public_url_id = c.public_url_id AND t.publish_run_number = c.publish_run_number
-  AND ((c.origin_public_url_id = t.public_url_id AND c.origin_publish_run_number = t.publish_run_number)
+  AND t.primary_project_root = c.primary_project_root AND t.integration_namespace = c.integration_namespace
+  AND t.service_id = c.service_id AND t.publish_run_number = c.run_number
+  AND ((c.origin_service_id = t.service_id AND c.origin_run_number = t.publish_run_number
+        AND (c.origin_hostname = '' OR c.origin_hostname = t.hostname))
     OR EXISTS (SELECT 1 FROM alias_publish_runs r JOIN project_aliases a ON a.id = r.alias_id
+      JOIN alias_declarations d ON d.alias_id = a.id AND d.tunnel_id = r.tunnel_id
       JOIN integration_url_leases p ON p.server_origin = a.server_origin AND p.hostname = a.hostname
       WHERE r.tunnel_id = t.id AND a.server_origin = c.server_origin AND a.hostname = c.origin_hostname
-        AND a.selected_project_root = t.project_root AND a.selection_revision = r.selection_revision
-        AND r.target_public_url_id = t.public_url_id AND r.target_publish_run_number = t.publish_run_number
-        AND r.public_url_id = c.origin_public_url_id AND r.publish_run_number = c.origin_publish_run_number
+         AND a.selected_project_root = t.project_root AND a.selection_revision = r.selection_revision
+         AND a.primary_project_root = t.primary_project_root AND d.integration_namespace = t.integration_namespace
+         AND d.fingerprint = a.fingerprint AND t.service = a.service
+         AND r.target_service_id = t.service_id AND r.target_run_number = t.publish_run_number
+         AND r.service_id = c.origin_service_id AND r.run_number = c.origin_run_number
+         AND p.service_id = r.service_id AND p.run_number = r.run_number
         AND p.expires_at > ?5))
 `
 
@@ -108,14 +142,16 @@ type GetCurrentOAuthCallbackParams struct {
 }
 
 type GetCurrentOAuthCallbackRow struct {
-	CallbackPath     string
-	CallbackQuery    string
-	ExpiresAt        int64
-	TunnelID         string
-	Hostname         sql.NullString
-	OriginHostname   string
-	PublicURLID      string
-	PublishRunNumber int64
+	CallbackPath         string
+	CallbackQuery        string
+	ExpiresAt            int64
+	TunnelID             string
+	Hostname             sql.NullString
+	OriginHostname       string
+	OriginServiceID      string
+	OriginRunNumber      int64
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
 }
 
 func (q *Queries) GetCurrentOAuthCallback(ctx context.Context, arg GetCurrentOAuthCallbackParams) (GetCurrentOAuthCallbackRow, error) {
@@ -134,8 +170,10 @@ func (q *Queries) GetCurrentOAuthCallback(ctx context.Context, arg GetCurrentOAu
 		&i.TunnelID,
 		&i.Hostname,
 		&i.OriginHostname,
-		&i.PublicURLID,
-		&i.PublishRunNumber,
+		&i.OriginServiceID,
+		&i.OriginRunNumber,
+		&i.PrimaryProjectRoot,
+		&i.IntegrationNamespace,
 	)
 	return i, err
 }
@@ -165,27 +203,30 @@ func (q *Queries) GetIntegrationURLHostname(ctx context.Context, arg GetIntegrat
 	return hostname, err
 }
 
-const getOAuthAliasReturn = `-- name: GetOAuthAliasReturn :one
-SELECT server_origin, hostname, state_digest, callback_path, public_url_id, publish_run_number, created_at, expires_at, consumed_at FROM oauth_alias_handoffs
+const getOAuthReturn = `-- name: GetOAuthReturn :one
+SELECT server_origin, hostname, state_digest, tunnel_id, primary_project_root, integration_namespace, callback_path, service_id, run_number, created_at, expires_at, consumed_at FROM oauth_callback_handoffs
 WHERE server_origin = ?1 AND hostname = ?2 AND state_digest = ?3
 `
 
-type GetOAuthAliasReturnParams struct {
+type GetOAuthReturnParams struct {
 	ServerOrigin string
 	Hostname     string
 	StateDigest  []byte
 }
 
-func (q *Queries) GetOAuthAliasReturn(ctx context.Context, arg GetOAuthAliasReturnParams) (OauthAliasHandoff, error) {
-	row := q.db.QueryRowContext(ctx, getOAuthAliasReturn, arg.ServerOrigin, arg.Hostname, arg.StateDigest)
-	var i OauthAliasHandoff
+func (q *Queries) GetOAuthReturn(ctx context.Context, arg GetOAuthReturnParams) (OauthCallbackHandoff, error) {
+	row := q.db.QueryRowContext(ctx, getOAuthReturn, arg.ServerOrigin, arg.Hostname, arg.StateDigest)
+	var i OauthCallbackHandoff
 	err := row.Scan(
 		&i.ServerOrigin,
 		&i.Hostname,
 		&i.StateDigest,
+		&i.TunnelID,
+		&i.PrimaryProjectRoot,
+		&i.IntegrationNamespace,
 		&i.CallbackPath,
-		&i.PublicURLID,
-		&i.PublishRunNumber,
+		&i.ServiceID,
+		&i.RunNumber,
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.ConsumedAt,
@@ -218,64 +259,34 @@ func (q *Queries) SaveIntegrationURLHostname(ctx context.Context, arg SaveIntegr
 	return err
 }
 
-const saveOAuthAliasReturn = `-- name: SaveOAuthAliasReturn :execrows
-INSERT INTO oauth_alias_handoffs (server_origin, hostname, state_digest, callback_path, public_url_id, publish_run_number, created_at, expires_at)
-SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
-WHERE (SELECT count(*) FROM oauth_alias_handoffs WHERE server_origin = ?1 AND hostname = ?2) < 1024
-`
-
-type SaveOAuthAliasReturnParams struct {
-	ServerOrigin     string
-	Hostname         string
-	StateDigest      []byte
-	CallbackPath     string
-	PublicURLID      string
-	PublishRunNumber int64
-	Now              int64
-	ExpiresAt        int64
-}
-
-func (q *Queries) SaveOAuthAliasReturn(ctx context.Context, arg SaveOAuthAliasReturnParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, saveOAuthAliasReturn,
-		arg.ServerOrigin,
-		arg.Hostname,
-		arg.StateDigest,
-		arg.CallbackPath,
-		arg.PublicURLID,
-		arg.PublishRunNumber,
-		arg.Now,
-		arg.ExpiresAt,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const saveOAuthCallback = `-- name: SaveOAuthCallback :execrows
 INSERT INTO oauth_pending_callbacks (
-    server_origin, hostname, state_digest, tunnel_id, callback_path, callback_query,
-    expires_at, public_url_id, publish_run_number, origin_hostname, origin_public_url_id, origin_publish_run_number
+    server_origin, hostname, state_digest, tunnel_id, primary_project_root, integration_namespace, callback_path, callback_query,
+    expires_at, service_id, run_number, origin_hostname, origin_service_id, origin_run_number
 )
-SELECT t.server_origin, ?1, ?2, t.id,
+SELECT t.server_origin, ?1, ?2, t.id, t.primary_project_root, t.integration_namespace,
     ?3, ?4, ?5,
-    t.public_url_id, t.publish_run_number, ?6, ?7, ?8
+    t.service_id, t.publish_run_number, ?6, ?7, ?8
 FROM local_tunnels t
 WHERE t.id = ?9 AND t.server_origin = ?10
   AND t.primary_project_root = ?11
   AND t.integration_namespace = ?12 AND t.state = 'ready'
-  AND ((t.public_url_id = ?7 AND t.publish_run_number = ?8
+  AND ((t.service_id = ?7 AND t.publish_run_number = ?8
         AND (?6 = '' OR ?6 = t.hostname))
     OR EXISTS (SELECT 1 FROM alias_publish_runs r JOIN project_aliases a ON a.id = r.alias_id
+      JOIN alias_declarations d ON d.alias_id = a.id AND d.tunnel_id = r.tunnel_id
       JOIN integration_url_leases p ON p.server_origin = a.server_origin AND p.hostname = a.hostname
       WHERE r.tunnel_id = t.id AND a.server_origin = t.server_origin AND a.hostname = ?6
-        AND a.selected_project_root = t.project_root AND a.selection_revision = r.selection_revision
-        AND r.target_public_url_id = t.public_url_id AND r.target_publish_run_number = t.publish_run_number
-        AND r.public_url_id = ?7 AND r.publish_run_number = ?8
+         AND a.selected_project_root = t.project_root AND a.selection_revision = r.selection_revision
+         AND a.primary_project_root = t.primary_project_root AND d.integration_namespace = t.integration_namespace
+         AND d.fingerprint = a.fingerprint AND t.service = a.service
+         AND r.target_service_id = t.service_id AND r.target_run_number = t.publish_run_number
+         AND r.service_id = ?7 AND r.run_number = ?8
+         AND p.service_id = r.service_id AND p.run_number = r.run_number
         AND p.expires_at > ?13))
   AND t.stopped_at IS NULL AND t.lease_expires_at > ?13
-   AND (SELECT count(*) FROM oauth_pending_callbacks WHERE server_origin = ?10
-       AND hostname = ?1) < 1024
+  AND (SELECT count(*) FROM oauth_pending_callbacks pending WHERE pending.server_origin = ?10
+        AND pending.hostname = ?1) < 1024
 ON CONFLICT DO NOTHING
 `
 
@@ -286,8 +297,8 @@ type SaveOAuthCallbackParams struct {
 	CallbackQuery        string
 	ExpiresAt            int64
 	OriginHostname       string
-	PublicURLID          string
-	PublishRunNumber     int64
+	ServiceID            string
+	RunNumber            int64
 	TunnelID             string
 	ServerOrigin         string
 	PrimaryProjectRoot   sql.NullString
@@ -303,13 +314,55 @@ func (q *Queries) SaveOAuthCallback(ctx context.Context, arg SaveOAuthCallbackPa
 		arg.CallbackQuery,
 		arg.ExpiresAt,
 		arg.OriginHostname,
-		arg.PublicURLID,
-		arg.PublishRunNumber,
+		arg.ServiceID,
+		arg.RunNumber,
 		arg.TunnelID,
 		arg.ServerOrigin,
 		arg.PrimaryProjectRoot,
 		arg.IntegrationNamespace,
 		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const saveOAuthReturn = `-- name: SaveOAuthReturn :execrows
+INSERT INTO oauth_callback_handoffs (server_origin, hostname, state_digest, tunnel_id, primary_project_root, integration_namespace, callback_path, service_id, run_number, created_at, expires_at)
+SELECT ?1, ?2, ?3, ?4, ?5, ?6,
+    ?7, ?8, ?9, ?10, ?11
+WHERE (SELECT count(*) FROM oauth_callback_handoffs handoff
+    WHERE handoff.server_origin = ?1 AND handoff.hostname = ?2) < 1024
+`
+
+type SaveOAuthReturnParams struct {
+	ServerOrigin         string
+	Hostname             string
+	StateDigest          []byte
+	TunnelID             string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	CallbackPath         string
+	ServiceID            string
+	RunNumber            int64
+	Now                  int64
+	ExpiresAt            int64
+}
+
+func (q *Queries) SaveOAuthReturn(ctx context.Context, arg SaveOAuthReturnParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, saveOAuthReturn,
+		arg.ServerOrigin,
+		arg.Hostname,
+		arg.StateDigest,
+		arg.TunnelID,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
+		arg.CallbackPath,
+		arg.ServiceID,
+		arg.RunNumber,
+		arg.Now,
+		arg.ExpiresAt,
 	)
 	if err != nil {
 		return 0, err

@@ -28,7 +28,7 @@ SELECT * FROM project_events
 WHERE project_root = sqlc.arg(project_root) AND sequence > sqlc.arg(after)
 ORDER BY sequence;
 
--- name: ListKnownProjectURLs :many
-SELECT public_url_id FROM project_url_inventory
+-- name: ListKnownProjectServices :many
+SELECT service_id FROM project_service_inventory
 WHERE project_root = sqlc.arg(project_root) AND server_origin = sqlc.arg(server_origin)
-ORDER BY last_seen_at DESC, public_url_id LIMIT 256;
+ORDER BY last_seen_at DESC, service_id LIMIT 256;

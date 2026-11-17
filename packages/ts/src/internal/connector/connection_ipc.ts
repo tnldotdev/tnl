@@ -17,7 +17,7 @@ export interface OwnerIPC {
     expected?: ProjectDeploymentSelection,
   ): Promise<unknown>;
   workload(service: string, request: WorkloadRequest): Promise<unknown>;
-  close(): void;
+  close(reason?: TnlError): void;
 }
 
 type ProjectDeploymentSelection = Pick<
@@ -88,9 +88,11 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
     const agent = new Agent({ keepAlive: true, maxSockets: 4, maxFreeSockets: 4 });
     let pending = 0;
     let closed = false;
+    let closeReason = new TnlError("sdk.connection_unavailable");
     let expiry: ReturnType<typeof setTimeout> | undefined;
     let refreshing: Promise<void> | undefined;
-    const close = () => {
+    const close = (reason?: TnlError) => {
+      if (reason !== undefined) closeReason = reason;
       closed = true;
       clearTimeout(expiry);
       agent.destroy();
@@ -109,15 +111,17 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
     // renewal can advance only this exact capability. it never retargets an
     // adapter or replays a request already sent to the native owner.
     const current = async () => {
-      if (closed) throw new TnlError("sdk.connection_unavailable");
+      if (closed) throw closeReason;
       if (Date.now() < expires) return;
       refreshing ??= (async () => {
         try {
           const { expires_at: next, ...nextIdentity } = await readHandle(filename);
-          if (closed || !isDeepStrictEqual(identity, nextIdentity) || next <= Date.now())
+          if (!isDeepStrictEqual(identity, nextIdentity) || next <= Date.now())
             throw new TnlError("sdk.connection_unavailable");
-          expires = next;
-          scheduleExpiry();
+          if (!closed) {
+            expires = next;
+            scheduleExpiry();
+          }
         } catch {
           close();
           throw new TnlError("sdk.connection_unavailable");
@@ -126,7 +130,8 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
         }
       })();
       await refreshing;
-      if (closed || Date.now() >= expires) throw new TnlError("sdk.connection_unavailable");
+      if (closed) throw closeReason;
+      if (Date.now() >= expires) throw new TnlError("sdk.connection_unavailable");
     };
     scheduleExpiry();
     const send = (
@@ -137,7 +142,8 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
       expected?: ProjectDeploymentSelection,
     ): Promise<unknown> => {
       return operation("sdk.native.request", async () => {
-        if (closed || pending >= 64) throw new TnlError("sdk.connection_unavailable");
+        if (closed) throw closeReason;
+        if (pending >= 64) throw new TnlError("sdk.connection_unavailable");
         pending++;
         try {
           await current();
@@ -171,7 +177,9 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
                     reject(new TnlError("sdk.response_invalid"));
                   } else chunks.push(chunk);
                 });
-                response.on("error", () => reject(new TnlError("sdk.connection_unavailable")));
+                response.on("error", () =>
+                  reject(closed ? closeReason : new TnlError("sdk.connection_unavailable")),
+                );
                 response.on("end", () => {
                   if (
                     (response.statusCode !== 200 && operationName === "prepare") ||
@@ -191,7 +199,9 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
             );
             const timer = setTimeout(() => req.destroy(new Error("owner IPC deadline")), 35_000);
             req.once("close", () => clearTimeout(timer));
-            req.once("error", () => reject(new TnlError("sdk.connection_unavailable")));
+            req.once("error", () =>
+              reject(closed ? closeReason : new TnlError("sdk.connection_unavailable")),
+            );
             req.end(body);
           });
         } catch (cause) {

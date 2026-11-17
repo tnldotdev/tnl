@@ -12,7 +12,7 @@ func TestPortInventory(t *testing.T) {
 	if err != nil || !slices.Equal(got.Ranges(), []Range{{1024, 1024}, {20000, 20100}, {65535, 65535}}) {
 		t.Fatal(got, err)
 	}
-	for _, values := range [][]string{nil, {""}, {"443"}, {"65536"}, {"20001-20000"}, {"20000-20010", "20010"}, {"20000", "20000"}, {"020000"}, {"20000-"}, {"20000-20001-20002"}, {" 20000"}} {
+	for _, values := range [][]string{{""}, {"443"}, {"65536"}, {"20001-20000"}, {"20000-20010", "20010"}, {"20000", "20000"}, {"020000"}, {"20000-"}, {"20000-20001-20002"}, {" 20000"}} {
 		if _, err = ParseInventory(values); !errors.Is(err, ErrInventory) {
 			t.Errorf("accepted %q: %v", values, err)
 		}
@@ -46,7 +46,7 @@ func TestInventoryLimitsAndCopyIsolation(t *testing.T) {
 	if _, err := ParseInventory([]string{"20000-20256"}); !errors.Is(err, ErrInventory) {
 		t.Fatal("257 ports", err)
 	}
-	for _, invalid := range [][]Range{nil, {}, {{1023, 1024}}, {{65535, 65536}}, {{20001, 20000}}, {{20000, 20001}, {20001, 20002}}, {{20000, 20256}}} {
+	for _, invalid := range [][]Range{{{1023, 1024}}, {{65535, 65536}}, {{20001, 20000}}, {{20000, 20001}, {20001, 20002}}, {{20000, 20256}}} {
 		if _, err := NewInventory(invalid); !errors.Is(err, ErrInventory) {
 			t.Errorf("accepted %v: %v", invalid, err)
 		}
@@ -61,5 +61,20 @@ func TestInventoryLimitsAndCopyIsolation(t *testing.T) {
 	var empty Inventory
 	if empty.Contains(20000) || len(empty.Ports()) != 0 || len(empty.Ranges()) != 0 {
 		t.Fatal("zero inventory has ports")
+	}
+}
+
+func TestEmptyInventoryHasNoAllocatedPorts(t *testing.T) {
+	for _, values := range [][]string{nil, {}} {
+		inventory, err := ParseInventory(values)
+		if err != nil || len(inventory.Ranges()) != 0 || len(inventory.Ports()) != 0 || inventory.Contains(443) || inventory.Contains(20000) {
+			t.Fatal("empty textual inventory gained ports", inventory, err)
+		}
+	}
+	for _, ranges := range [][]Range{nil, {}} {
+		inventory, err := NewInventory(ranges)
+		if err != nil || len(inventory.Ranges()) != 0 || len(inventory.Ports()) != 0 || inventory.Contains(443) || inventory.Contains(20000) {
+			t.Fatal("empty in-memory inventory gained ports", inventory, err)
+		}
 	}
 }

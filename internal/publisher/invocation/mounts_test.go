@@ -27,7 +27,7 @@ func (canceledMountResolver) ResolveTargetIdentity(ctx context.Context, _ client
 
 func TestDiscoveredMountPreservesRequestCancellation(t *testing.T) {
 	project := clientproject.Project{Config: config.TNL{Services: config.Services{
-		"web": {Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
+		"web": {HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
 		"api": {Target: &config.ServiceTarget{Type: "docker", Container: new("api"), Port: new(3000)}},
 	}}}
 	mounts, err := ProjectMounts(t.Context(), project, "web", nil, canceledMountResolver{})
@@ -50,7 +50,7 @@ func TestAppMountCapturesRegisteredTargetTrust(t *testing.T) {
 	t.Cleanup(server.Close)
 	ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
 	project := clientproject.Project{Config: config.TNL{Services: config.Services{
-		"web": {Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api", StripPrefix: true}}}},
+		"web": {HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api", StripPrefix: true}}}},
 		"api": {Target: &config.ServiceTarget{Type: "app", TLS: &config.TargetTLS{CA: &ca}}},
 	}}}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -102,7 +102,7 @@ func TestAppMountTrustBeforeRegistration(t *testing.T) {
 				trust.Hostname = &hostname
 			}
 			project := clientproject.Project{Config: config.TNL{Services: config.Services{
-				"web": {Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
+				"web": {HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
 				"api": {Target: &config.ServiceTarget{Type: "app", TLS: trust}},
 			}}}
 			mounts, err := ProjectMounts(t.Context(), project, "web", func(string) string { return "" }, nil)

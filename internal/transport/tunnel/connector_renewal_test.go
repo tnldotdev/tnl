@@ -9,8 +9,36 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+type failedRenewalAcknowledgment struct {
+	muxsession.Stream
+	err error
+}
+
+func (s failedRenewalAcknowledgment) CloseWrite() error {
+	return errors.Join(s.Stream.CloseWrite(), s.err)
+}
+
+func TestConnectorLegRenewalDenialPreservesAcknowledgmentCloseFailure(t *testing.T) {
+	client, server, proof, initial := connectorRenewalPair(t)
+	physical := errors.New("independent denial acknowledgment close failure")
+	client.control = failedRenewalAcknowledgment{Stream: client.control, err: physical}
+	done := tunnelWorker(t, func() { _ = server.Close() }, func() error {
+		return server.HandleConnectorLegControl(t.Context(), nil, func(context.Context, tunnelv1.ConnectorPairLegProof) (tunnelv1.ConnectorPairLegAccepted, error) {
+			return tunnelv1.ConnectorPairLegAccepted{}, &ProtocolError{Code: tunnelv1.Unauthenticated}
+		})
+	})
+	_, err := client.RenewConnectorLeg(t.Context(), "denied", proof, initial)
+	if !client.ConnectorLegRenewalDenied(err) || client.ConnectorLegRenewalDeniedOnly(err) || !errors.Is(err, physical) {
+		t.Fatal("decoded denial hid its independent acknowledgment close failure", err)
+	}
+	if err := await(t, done); err == nil {
+		t.Fatal("relay denial became success")
+	}
+}
 
 func connectorRenewalPair(t *testing.T) (*Session, *Session, tunnelv1.ConnectorPairLegProof, tunnelv1.ConnectorPairLegAccepted) {
 	t.Helper()
@@ -65,7 +93,7 @@ func TestConnectorLegRenewalUsesExistingControlAndRejectsSubstitution(t *testing
 	})
 	changed := proof
 	changed.AssignmentRevision++
-	if _, err := client.RenewConnectorLeg(t.Context(), "wrong", changed, initial); err == nil {
+	if _, err := client.RenewConnectorLeg(t.Context(), "wrong", changed, initial); err == nil || client.ConnectorLegRenewalDenied(err) {
 		t.Fatal("renewal substituted the original assignment")
 	}
 	canceled, stop := context.WithCancel(t.Context())
@@ -79,7 +107,7 @@ func TestConnectorLegRenewalUsesExistingControlAndRejectsSubstitution(t *testing
 		receipt, err := client.RenewConnectorLeg(t.Context(), "renew", proof, initial)
 		if index == 1 {
 			var unavailable *ProtocolError
-			if !errors.As(err, &unavailable) || unavailable.Code != tunnelv1.Unavailable {
+			if !errors.As(err, &unavailable) || unavailable.Code != tunnelv1.Unavailable || client.ConnectorLegRenewalDenied(err) {
 				t.Fatal("temporary error lost its synchronized retry boundary", err)
 			}
 		} else if err != nil || receipt.SourceIP != initial.SourceIP || !receipt.ExpiresAt.After(initial.ExpiresAt) {
@@ -89,6 +117,28 @@ func TestConnectorLegRenewalUsesExistingControlAndRejectsSubstitution(t *testing
 	cancel()
 	if err := await(t, done); err == nil || calls != 2 {
 		t.Fatal("connector renewal worker did not join", err, calls)
+	}
+}
+
+func TestConnectorLegRenewalDenialIsBoundToDecodedCurrentSession(t *testing.T) {
+	client, server, proof, initial := connectorRenewalPair(t)
+	done := tunnelWorker(t, func() { _ = server.Close() }, func() error {
+		return server.HandleConnectorLegControl(t.Context(), nil, func(context.Context, tunnelv1.ConnectorPairLegProof) (tunnelv1.ConnectorPairLegAccepted, error) {
+			return tunnelv1.ConnectorPairLegAccepted{}, &ProtocolError{Code: tunnelv1.Unauthenticated}
+		})
+	})
+	_, err := client.RenewConnectorLeg(t.Context(), "denied", proof, initial)
+	if !client.ConnectorLegRenewalDenied(err) || !client.ConnectorLegRenewalDeniedOnly(err) || server.ConnectorLegRenewalDenied(err) ||
+		client.ConnectorLegRenewalDenied(&ProtocolError{Code: tunnelv1.Unauthenticated}) {
+		t.Fatal("renewal confused decoded authority with local or foreign failure", err)
+	}
+	physical := errors.New("independent close failure")
+	joined := errors.Join(err, physical)
+	if !client.ConnectorLegRenewalDenied(joined) || client.ConnectorLegRenewalDeniedOnly(joined) || !errors.Is(joined, physical) {
+		t.Fatal("authority observation erased an independent failure", joined)
+	}
+	if err := await(t, done); err == nil {
+		t.Fatal("relay denial became success")
 	}
 }
 

@@ -17,11 +17,12 @@ import (
 
 // Webhook declares one exact endpoint on the project's stable webhook hostname.
 type Webhook struct {
-	Service   string   `json:"service" yaml:"service"`
-	Path      string   `json:"path" yaml:"path"`
-	Provider  string   `json:"provider" yaml:"provider" jsonschema:"enum=amazon-sns,enum=auth0,enum=clerk,enum=custom,enum=discord,enum=github,enum=gitlab,enum=incident-io,enum=lemon-squeezy,enum=linear,enum=loops,enum=paddle,enum=postmark,enum=resend,enum=sendgrid,enum=shopify,enum=slack,enum=stripe,enum=supabase,enum=telegram,enum=twilio,enum=vercel,enum=workos"`
-	Delivery  string   `json:"delivery,omitempty" yaml:"delivery,omitempty" jsonschema:"enum=fanout,enum=selected"`
-	Methods   []string `json:"methods,omitempty" yaml:"methods,omitempty" jsonschema:"uniqueItems=true"`
+	Service  string   `json:"service" yaml:"service"`
+	Path     string   `json:"path" yaml:"path"`
+	Provider string   `json:"provider" yaml:"provider" jsonschema:"enum=amazon-sns,enum=auth0,enum=clerk,enum=custom,enum=discord,enum=github,enum=gitlab,enum=incident-io,enum=lemon-squeezy,enum=linear,enum=loops,enum=paddle,enum=postmark,enum=resend,enum=sendgrid,enum=shopify,enum=slack,enum=stripe,enum=supabase,enum=telegram,enum=twilio,enum=vercel,enum=workos"`
+	Delivery string   `json:"delivery,omitempty" yaml:"delivery,omitempty" jsonschema:"enum=fanout,enum=selected"`
+	Methods  []string `json:"methods,omitempty" yaml:"methods,omitempty" jsonschema:"uniqueItems=true"`
+	// source_ips replaces this endpoint's provider-managed ranges, not a union.
 	SourceIPs []string `json:"source_ips,omitempty" yaml:"source_ips,omitempty" jsonschema:"uniqueItems=true,minItems=1"`
 }
 
@@ -72,8 +73,8 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 				return fmt.Errorf("webhooks.%s: service %q is not configured", name, endpoint.Service)
 			}
 			service := services[endpoint.Service]
-			if Protocol(service) != "http" || !IsPublicService(service) {
-				return fmt.Errorf("webhooks.%s: service must be a local public HTTP service", name)
+			if Protocol(service) != "http" {
+				return fmt.Errorf("webhooks.%s: service must be a local HTTP service", name)
 			}
 		}
 		if !targetsyntax.ValidMountPrefix(endpoint.Path) {

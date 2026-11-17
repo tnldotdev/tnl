@@ -5,13 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
@@ -21,31 +19,24 @@ import (
 // expiration holds one parent before those same clocks. new rows are private to
 // this transaction and cannot be held by a concurrent run worker.
 func lockAppliedProjectPublications(ctx context.Context, tx pgx.Tx, team, project string) error {
-	if _, err := tx.Exec(ctx, `SELECT service.id FROM control.services service
+	_, err := tx.Exec(ctx, `SELECT service.id FROM control.services service
 		WHERE service.id IN (
 			SELECT service_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
 			UNION SELECT service_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2)
-		ORDER BY service.id FOR UPDATE OF service`, team, project); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, `SELECT service.id FROM control.public_urls service
-		WHERE service.id IN (
-			SELECT public_url_id FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2
-			UNION SELECT public_url_id FROM control.local_project_services WHERE team_id=$1 AND project_key=$2
-			UNION SELECT allocation.public_url_id FROM control.publisher_namespace_allocations allocation
-			JOIN control.deployments deployment ON deployment.id=allocation.deployment_id
-			WHERE deployment.team_id=$1 AND deployment.project_key=$2)
-		ORDER BY service.id FOR NO KEY UPDATE OF service`, team, project)
+		ORDER BY service.id FOR UPDATE OF service`, team, project)
 	return err
 }
 
 func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration, publisherPool bool) (string, error) {
+	if err := requireNewServiceWork(ctx, q, MaintenanceControlServiceCreation); err != nil {
+		return "", err
+	}
 	id, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256([]byte(r.TeamID + "\x00" + r.ProjectKey + "\x00" + key))
-	_, err = q.InsertService(ctx, controlstatedb.InsertServiceParams{ID: id, TeamID: r.TeamID, Name: s.Name, NameScope: scope, CreatedByIdentityID: r.ActorID, IdempotencyKey: "applied/" + id, RequestDigest: digest[:], Now: timestamptz(r.Now)})
+	_, err = q.InsertService(ctx, controlstatedb.InsertServiceParams{ID: id, TeamID: text(r.TeamID), Name: s.Name, NameScope: scope, CreatedByIdentityID: text(r.ActorID), IdempotencyKey: "applied/" + id, RequestDigest: digest[:], Now: timestamptz(r.Now)})
 	if err != nil {
 		return "", projectConstraintError(err)
 	}
@@ -57,7 +48,8 @@ func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4 WHERE id=$1`, id, s.Protocol, string(encoded), publisherPool)
+	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4,
+	    ephemeral=$5,require_post_quantum=COALESCE($6::boolean,require_post_quantum) WHERE id=$1`, id, s.Protocol, string(encoded), publisherPool, s.Ephemeral, s.RequirePostQuantum)
 	if err != nil {
 		return "", err
 	}
@@ -74,6 +66,9 @@ func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err != nil {
 		return err
 	}
+	if err = requireServiceProtocolChange(ctx, tx, row, s.Protocol); err != nil {
+		return err
+	}
 	trust, err := appliedServiceTargetTrust(s.TargetTLS)
 	if err != nil {
 		return err
@@ -83,9 +78,16 @@ func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err != nil {
 		return err
 	}
-	changed := !serviceMetadataMatches(saved, metadata) || row.PublisherPool != metadata.PublisherPool
+	changed := !serviceMetadataMatches(saved, metadata)
 	if saved.Protocol != s.Protocol || row.NameScope != scope {
 		if _, err = tx.Exec(ctx, `UPDATE control.deployment_publisher_enrollment_services SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, id, now); err != nil {
+			return err
+		}
+	}
+	if s.RequirePostQuantum != nil && *s.RequirePostQuantum != row.RequirePostQuantum {
+		// visitor TLS is captured for each run. changing it ends that run
+		// without changing publisher-to-target trust or a broader grant.
+		if err = closeServiceRuns(ctx, tx, id, now); err != nil {
 			return err
 		}
 	}
@@ -93,7 +95,9 @@ func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4,trust_revision=trust_revision+CASE WHEN $5 THEN 1 ELSE 0 END,updated_at=$6,name=$7,name_scope=$8 WHERE id=$1`, id, s.Protocol, string(encoded), metadata.PublisherPool, changed, now, s.Name, scope)
+	_, err = tx.Exec(ctx, `UPDATE control.services SET protocol=$2,tls_metadata=$3::jsonb,publisher_pool=$4,trust_revision=trust_revision+CASE WHEN $5 THEN 1 ELSE 0 END,
+	    service_port=CASE WHEN protocol<>$2 THEN CASE WHEN $2='http' THEN 443 ELSE 0 END ELSE service_port END,
+	    updated_at=$6,name=$7,name_scope=$8,ephemeral=$9,require_post_quantum=COALESCE($10::boolean,require_post_quantum) WHERE id=$1`, id, s.Protocol, string(encoded), metadata.PublisherPool, changed, now, s.Name, scope, s.Ephemeral, s.RequirePostQuantum)
 	return projectConstraintError(err)
 }
 
@@ -101,142 +105,34 @@ func appliedServiceTargetTrust(trust *ProjectTargetTLS) (*ServiceTargetTLS, erro
 	if trust == nil {
 		return nil, nil
 	}
-	snapshot, err := (targettrust.Declaration{Hostname: trust.Hostname, CAPEM: []byte(trust.CAPEM), Digest: trust.Digest}).Snapshot()
+	snapshot, err := (targettrust.Declaration{Hostname: trust.Hostname, CAPEM: []byte(trust.CAPEM), Digest: trust.Digest, HostnameFromTarget: trust.HostnameFromTarget}).Snapshot()
 	if err != nil {
 		return nil, errors.Join(ErrProjectConfigurationInvalid, err)
 	}
 	return &ServiceTargetTLS{Hostname: snapshot.Hostname, PEM: string(snapshot.PEM), System: snapshot.System, Digest: snapshot.Digest}, nil
 }
 
-// use the same exact grants, encrypted IP snapshots and routing invalidation as
-// the complete visitor-access API, within the apply transaction.
-func (d *Database) reconcileAppliedPublicSettings(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, id string, p *ProjectServicePublicURL, now time.Time) error {
-	u, err := q.LockPublicURLForRun(ctx, id)
-	if err != nil {
-		return err
-	}
-	modeChanged := u.AccessMode != p.Access.Mode
-	if p.RequirePostQuantum != nil && *p.RequirePostQuantum != u.RequirePostQuantum {
-		n, err := q.SetPublicURLPostQuantum(ctx, controlstatedb.SetPublicURLPostQuantumParams{PublicURLID: id, RequirePostQuantum: *p.RequirePostQuantum, Now: timestamptz(now)})
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			return ErrPublishRunOpen
-		}
-		u.MutationRevision++
-	}
-	if modeChanged {
-		n, err := q.SetPublicURLAccessMode(ctx, controlstatedb.SetPublicURLAccessModeParams{PublicURLID: id, AccessMode: p.Access.Mode, ExpectedRevision: u.MutationRevision, Now: timestamptz(now)})
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			return ErrPublicURLMutationStale
-		}
-	}
-	if err = q.RevokeVisitorIPGrants(ctx, controlstatedb.RevokeVisitorIPGrantsParams{PublicURLID: id, RevokedAt: timestamptz(now)}); err != nil {
-		return err
-	}
-	if err = q.MarkVisitorIPSet(ctx, id); err != nil {
-		return err
-	}
-	for _, value := range p.Access.IP {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil {
-			return ErrProjectConfigurationInvalid
-		}
-		grant, err := opaqueid.New(opaqueid.SharePrefix)
-		if err != nil {
-			return err
-		}
-		sealed, err := d.storageKey.Seal(ipGrantContext(id, grant), []byte(prefix.String()))
-		if err != nil {
-			return err
-		}
-		if err = q.CreateVisitorIPGrant(ctx, controlstatedb.CreateVisitorIPGrantParams{ID: grant, PublicURLID: id, PrefixCiphertext: sealed, StorageKeyID: d.storageKey.CurrentID(), CreatedAt: timestamptz(now)}); err != nil {
-			return err
-		}
-	}
-	return d.refreshVisitorIPPolicy(ctx, q, id, now, !modeChanged)
-}
-
-func (d *Database) appliedProjectTraffic(ctx context.Context, tx pgx.Tx, url string, fallback *trafficlimits.Selection) (*trafficlimits.Selection, error) {
-	var team, project, service, deployment string
-	err := tx.QueryRow(ctx, `SELECT team_id,project_key,service,COALESCE(deployment_id,'') FROM control.applied_project_services WHERE public_url_id=$1`, url).Scan(&team, &project, &service, &deployment)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fallback, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if deployment != "" {
-		// the team guard stabilizes this snapshot; do not acquire its parent
-		// after the caller has already locked the public URL.
-		row := controlstatedb.ControlDeployment{ID: deployment}
-		err := tx.QueryRow(ctx, `SELECT revision,configuration_ciphertext,storage_key_id FROM control.deployments WHERE id=$1 AND deleted_at IS NULL`, deployment).Scan(&row.Revision, &row.ConfigurationCiphertext, &row.StorageKeyID)
-		if err != nil {
-			return nil, err
-		}
-		snapshot, err := d.openDeploymentConfiguration(row)
-		if err != nil {
-			return nil, err
-		}
-		s, found := snapshot.Services[service]
-		if !found || s.PublicURL == nil {
-			return nil, ErrProjectConfigurationStale
-		}
-		if s.PublicURL.Limits == nil {
-			return nil, nil
-		}
-		return s.PublicURL.Limits.Traffic, nil
-	}
-	// the caller holds the team guard and URL lock. do not reverse the apply
-	// project's lock order by locking its project row after that URL.
-	var row controlstatedb.ControlAppliedProject
-	err = tx.QueryRow(ctx, `SELECT team_id,project_key,source_fingerprint,revision,configuration_hash,configuration_ciphertext,storage_key_id,created_by_identity_id,updated_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2`, team, project).Scan(&row.TeamID, &row.ProjectKey, &row.SourceFingerprint, &row.Revision, &row.ConfigurationHash, &row.ConfigurationCiphertext, &row.StorageKeyID, &row.CreatedByIdentityID, &row.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	c, err := d.openAppliedProject(row, "local")
-	if err != nil {
-		return nil, err
-	}
-	s, ok := c.Services[service]
-	if !ok || s.PublicURL == nil {
-		return nil, ErrProjectConfigurationStale
-	}
-	if s.PublicURL.Limits == nil {
-		return nil, nil
-	}
-	return s.PublicURL.Limits.Traffic, nil
-}
-
 func (d *Database) revokeAppliedServicePublishers(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, s controlstatedb.ControlAppliedProjectService, now time.Time) error {
 	if err := d.revokeProjectResourcePublishers(ctx, tx, q, s, now); err != nil {
 		return err
-	}
-	if s.PublicURLID.Valid {
-		// project-scoped publication approvals remain reusable, but their runs
-		// still serve the old binding. retire only this URL's runs and slots.
-		u, err := q.LockPublicURLForRun(ctx, s.PublicURLID.String)
-		if err != nil {
-			return err
-		}
-		pending := pendingIngressRoutingTableEvents{}
-		if err := closeOpenPublishRun(ctx, q, &pending, u, now, "configuration_changed"); err != nil {
-			return err
-		}
-		if err := pending.publish(ctx, q); err != nil {
-			return err
-		}
 	}
 	_, err := tx.Exec(ctx, `DELETE FROM control.deployment_publisher_service_grants WHERE team_id=$1 AND project_key=$2 AND service=$3 AND deployment_id=$4`, s.TeamID, s.ProjectKey, s.Service, s.DeploymentID)
 	return err
 }
 
 func (d *Database) revokeProjectResourcePublishers(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, s controlstatedb.ControlAppliedProjectService, now time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT id,publisher_identity_id FROM control.publisher_grants WHERE revoked_at IS NULL AND (($1::text IS NOT NULL AND service_id=$1) OR ($2::text IS NOT NULL AND public_url_id=$2)) ORDER BY publisher_identity_id,id`, s.ServiceID, s.PublicURLID)
+	if !s.ServiceID.Valid {
+		return nil
+	}
+	if _, err := q.LockService(ctx, s.ServiceID.String); err != nil {
+		return err
+	}
+	// a changed binding ends every affected run, including those using a
+	// registered credential. that credential may still cover other services.
+	if err := closeServiceRuns(ctx, tx, s.ServiceID.String, now); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT id,publisher_identity_id FROM control.publisher_grants WHERE revoked_at IS NULL AND service_id=$1 ORDER BY publisher_identity_id,id`, s.ServiceID)
 	if err != nil {
 		return err
 	}
@@ -256,11 +152,7 @@ func (d *Database) revokeProjectResourcePublishers(ctx context.Context, tx pgx.T
 		return err
 	}
 	for _, g := range grants {
-		if s.ServiceID.Valid {
-			err = closeRevokedPrivatePublication(ctx, tx, q, s.ServiceID.String, g.publisher, g.id, now)
-		} else {
-			err = closeRevokedPublicPublications(ctx, tx, q, g.publisher, g.id, now)
-		}
+		err = closeRevokedPrivatePublication(ctx, tx, q, s.ServiceID.String, g.publisher, g.id, now)
 		if err != nil {
 			return err
 		}
@@ -283,39 +175,21 @@ func (d *Database) removeAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 }
 
 func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, s controlstatedb.ControlAppliedProjectService, now time.Time) error {
-	if _, err := tx.Exec(ctx, `UPDATE control.deployment_publisher_enrollment_services SET revoked_at=COALESCE(revoked_at,$3)
-		WHERE service_id=$1::text OR public_url_id=$2::text`, s.ServiceID, s.PublicURLID, now); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE control.deployment_publisher_enrollment_services SET revoked_at=COALESCE(revoked_at,$2)
+		WHERE service_id=$1::text`, s.ServiceID, now); err != nil {
 		return err
 	}
 	if s.ServiceID.Valid {
 		if _, err := q.LockService(ctx, s.ServiceID.String); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE control.service_runs SET state='closed',closed_at=$2 WHERE service_id=$1 AND closed_at IS NULL`, s.ServiceID.String, now); err != nil {
+		if err := closeServiceRuns(ctx, tx, s.ServiceID.String, now); err != nil {
 			return err
 		}
-		if _, err := q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: s.ServiceID.String, TeamID: s.TeamID, Now: timestamptz(now)}); err != nil {
+		if _, err := q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: s.ServiceID.String, TeamID: text(s.TeamID), Now: timestamptz(now)}); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE control.visitor_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, s.ServiceID.String, now); err != nil {
-			return err
-		}
-	} else if s.PublicURLID.Valid {
-		u, err := q.LockPublicURLForRun(ctx, s.PublicURLID.String)
-		if err != nil {
-			return err
-		}
-		pending := pendingIngressRoutingTableEvents{}
-		if err = closeOpenPublishRun(ctx, q, &pending, u, now, "configuration_removed"); err != nil {
-			return err
-		}
-		if _, err = q.DeletePublicURL(ctx, controlstatedb.DeletePublicURLParams{PublicURLID: u.ID, ExpectedMutationRevision: u.MutationRevision, DeletedAt: timestamptz(now)}); err != nil {
-			return err
-		}
-		if _, err = tx.Exec(ctx, `UPDATE control.visitor_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE public_url_id=$1`, u.ID, now); err != nil {
-			return err
-		}
-		if err = pending.publish(ctx, q); err != nil {
 			return err
 		}
 	}
@@ -340,32 +214,20 @@ func reconcileProjectVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstate
 		if enabled {
 			return grant, nil
 		}
-		table := "control.visitor_grants"
-		if s.ServiceID.Valid {
-			table = "control.visitor_grants"
-		}
-		if _, err := tx.Exec(ctx, `UPDATE `+table+` SET revoked_at=COALESCE(revoked_at,$2) WHERE id=$1`, grant, now); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE control.visitor_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE id=$1`, grant, now); err != nil {
 			return "", err
 		}
 		return "", nil
 	}
-	if !enabled || !s.ServiceID.Valid && !s.PublicURLID.Valid {
+	if !enabled || !s.ServiceID.Valid {
 		return "", nil
 	}
-	prefix := opaqueid.SharePrefix
-	if s.ServiceID.Valid {
-		prefix = opaqueid.ServiceGrantPrefix
-	}
-	id, err := opaqueid.New(prefix)
+	id, err := opaqueid.New(opaqueid.ServiceGrantPrefix)
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256([]byte("applied-team/" + id))
-	if s.ServiceID.Valid {
-		_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.ServiceID.String, s.TeamID, actor, digest[:], now)
-	} else {
-		_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,public_url_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.PublicURLID.String, s.TeamID, actor, digest[:], now)
-	}
+	_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.ServiceID.String, s.TeamID, actor, digest[:], now)
 	if err != nil {
 		return "", err
 	}
@@ -400,7 +262,10 @@ func (d *Database) reconcileAppliedPublisherGrants(ctx context.Context, tx pgx.T
 }
 
 func (d *Database) ensureDeploymentServiceGrant(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisher string, s controlstatedb.ControlAppliedProjectService, actor string, now time.Time) error {
-	allowed, err := q.DeploymentPublisherServiceAllowed(ctx, controlstatedb.DeploymentPublisherServiceAllowedParams{PublisherID: publisher, DeploymentID: s.DeploymentID.String, Service: s.Service, ServiceID: s.ServiceID, PublicURLID: s.PublicURLID})
+	if !s.ServiceID.Valid {
+		return ErrProjectConfigurationInvalid
+	}
+	allowed, err := q.DeploymentPublisherServiceAllowed(ctx, controlstatedb.DeploymentPublisherServiceAllowedParams{PublisherID: publisher, DeploymentID: s.DeploymentID.String, Service: s.Service, ServiceID: s.ServiceID.String})
 	if err != nil || !allowed {
 		return err
 	}
@@ -412,7 +277,19 @@ func (d *Database) ensureDeploymentServiceGrant(ctx context.Context, tx pgx.Tx, 
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	scope := publisherScopeForAppliedService(s)
+	var approvedProtocol string
+	if err := tx.QueryRow(ctx, `SELECT scope.protocol FROM control.deployment_publisher_members member
+	    JOIN control.deployment_publisher_enrollment_services scope ON scope.enrollment_id=member.enrollment_id
+	    WHERE member.publisher_identity_id=$1 AND member.deployment_id=$2
+	      AND scope.service=$3 AND scope.service_id=$4 AND scope.revoked_at IS NULL`,
+		publisher, s.DeploymentID, s.Service, s.ServiceID).Scan(&approvedProtocol); err != nil {
+		return publisherLookupError(err, ErrPublisherIdentity)
+	}
+	protocols, err := normalizePublisherProtocols([]string{approvedProtocol})
+	if err != nil {
+		return err
+	}
+	scope := publisherScopeForAppliedService(s, protocols)
 	g, err := insertPublisherGrant(ctx, q, publisher, actor, scope, nil, now)
 	if err != nil {
 		return err

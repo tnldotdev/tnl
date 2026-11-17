@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -35,13 +36,14 @@ var migrationFiles embed.FS
 // Database is the PostgreSQL connection pool for control state. its database
 // details remain private to this package.
 type Database struct {
-	oidcAdmissions map[string]configuredAdmission
-	pool           *pgxpool.Pool
-	storageKey     *storagekey.Keyring
-	managedURLMode naming.ManagedURLMode
-	diagnosticsMu  sync.Mutex
-	activity       *queryActivity
-	connections    *connectionActivity
+	controlOutageTolerance atomic.Int64
+	oidcAdmissions         map[string]configuredAdmission
+	pool                   *pgxpool.Pool
+	storageKey             *storagekey.Keyring
+	managedURLMode         naming.ManagedURLMode
+	diagnosticsMu          sync.Mutex
+	activity               *queryActivity
+	connections            *connectionActivity
 }
 
 // Migrate applies every embedded control-state migration through a direct

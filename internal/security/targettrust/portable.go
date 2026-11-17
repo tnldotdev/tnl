@@ -19,12 +19,17 @@ func CapturePortable(ctx context.Context, protocol, address, ca, hostname string
 	if err != nil {
 		return Snapshot{}, ErrInvalidBundle
 	}
-	if hostname == "" {
+	explicitHostname := hostname != ""
+	if !explicitHostname {
 		hostname = host
 	}
 	switch ca {
 	case "", "system":
-		return NewCache(nil).Capture(ctx, "", address, config.TrustSource{CA: "system", Hostname: &hostname})
+		setting := config.TrustSource{CA: "system"}
+		if explicitHostname {
+			setting.Hostname = &hostname
+		}
+		return NewCache(nil).Capture(ctx, "", address, setting)
 	case "aws-rds":
 		if protocol != "postgres" && protocol != "mysql" || hostname != host {
 			return Snapshot{}, ErrInvalidBundle

@@ -74,7 +74,6 @@ func Resolve(ctx context.Context, selection Selection, cwd string, salt [32]byte
 	if err != nil {
 		return Project{}, err
 	}
-	config.NormalizeProjectPublicURLs(&declared)
 	// retain evaluated declarations before resolving worktree-local defaults.
 	project.Declared = &declared
 	name := selection.Deployment
@@ -186,19 +185,16 @@ func (p Project) AppService(cwd, selected string) (string, error) {
 // ResolvedService contains inherited settings for one service, not a parsed
 // project document. target discovery and trust resolution happen separately.
 type ResolvedService struct {
-	Name       *string
-	Server     *string
-	Team       *string
-	Feedback   *bool
-	OAuth      bool
-	Inspection *config.Inspection
-	Tunnel     *config.Tunnel
-	Publish    *config.Publish
-	Readiness  *config.Readiness
-	Webhooks   map[string]config.Webhook
+	config.Service
+	Server   *string
+	Team     *string
+	Feedback *bool
+	OAuth    bool
+	Publish  *config.Publish
+	Webhooks map[string]config.Webhook
 }
 
-// EffectiveService merges one named service over the applicable root defaults.
+// EffectiveService selects one binding with project identity and local settings.
 func (p Project) EffectiveService(name string) (ResolvedService, error) {
 	if err := config.ValidateTNL(p.Config); err != nil {
 		return ResolvedService{}, err
@@ -213,45 +209,43 @@ func (p Project) EffectiveService(name string) (ResolvedService, error) {
 		}
 	}
 	result := ResolvedService{
-		Name: base.Name, Server: base.Server, Team: base.Team,
+		Service: service, Server: base.Server, Team: base.Team,
 		Publish: config.ServicePublish(service),
 	}
+	result.Name = base.Name
 	if name != "" {
 		savedName := config.ServiceName(name, service)
 		result.Name = &savedName
 	}
-	// private services start with only their own settings; public URL defaults
-	// are selected here rather than copied into every service and then cleared.
-	if name == "" || config.IsPublicService(service) {
+	if config.Protocol(service) == "http" {
 		result.Feedback, result.OAuth, result.Webhooks = base.Feedback, base.OAuth, base.Webhooks
 		result.Inspection = config.MergeInspection(base.Inspection, service.Inspection)
-		result.Tunnel = mergeTunnel(base.Tunnel, service.Tunnel)
-		if name == "" {
-			if result.Name != nil {
-				if result.Tunnel == nil {
-					result.Tunnel = &config.Tunnel{}
-				}
-				result.Tunnel.Name = result.Name
-			}
-		} else {
-			if result.Tunnel == nil {
-				result.Tunnel = &config.Tunnel{}
-			}
-			if result.Tunnel.PublicURL == nil && service.Name != nil {
-				result.Tunnel.Name = result.Name
-			}
-		}
 	} else {
 		result.Inspection = config.MergeInspection(nil, service.Inspection)
 	}
 	if service.HTTP != nil {
-		result.Readiness = service.HTTP.Readiness
-		if service.HTTP.Open != nil && config.IsPublicService(service) {
-			if result.Tunnel == nil {
-				result.Tunnel = &config.Tunnel{}
+		http := *service.HTTP
+		http.Paths = maps.Clone(http.Paths)
+		if http.Access != nil {
+			access := *http.Access
+			if err := access.Validate(); err != nil {
+				return ResolvedService{}, err
 			}
-			result.Tunnel.Open = service.HTTP.Open
+			http.Access = &access
 		}
+		if http.Limits != nil {
+			limits := *http.Limits
+			if limits.Rate != nil {
+				rate := *limits.Rate
+				limits.Rate = &rate
+			}
+			http.Limits = &limits
+		}
+		result.HTTP = &http
+	}
+	if service.Traffic != nil {
+		traffic := *service.Traffic
+		result.Traffic = &traffic
 	}
 	return result, nil
 }
@@ -267,55 +261,6 @@ func (p Project) ResolvePublish(name, discovered string) (*config.Publish, error
 		return nil, err
 	}
 	return result, nil
-}
-
-func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
-	result := cloneTunnel(base)
-	if override == nil {
-		return result
-	}
-	if result == nil {
-		result = &config.Tunnel{}
-	}
-	if override.Domain != nil {
-		result.Domain = override.Domain
-	}
-	if override.Name != nil {
-		result.Name, result.PublicURL = override.Name, nil
-	}
-	if override.PublicURL != nil {
-		result.PublicURL, result.Name = override.PublicURL, nil
-	}
-	if override.Open != nil {
-		result.Open = override.Open
-	}
-	if override.Access != nil {
-		access := *override.Access
-		access.IP = slices.Clone(access.IP)
-		result.Access = &access
-	}
-	if override.Ephemeral != nil {
-		result.Ephemeral = override.Ephemeral
-	}
-	if override.RequirePostQuantum != nil {
-		result.RequirePostQuantum = override.RequirePostQuantum
-	}
-	result.Limits = config.MergeLimits(result.Limits, override.Limits)
-	return result
-}
-
-func cloneTunnel(value *config.Tunnel) *config.Tunnel {
-	if value == nil {
-		return nil
-	}
-	result := *value
-	if value.Access != nil {
-		access := *value.Access
-		access.IP = slices.Clone(access.IP)
-		result.Access = &access
-	}
-	result.Limits = config.MergeLimits(value.Limits, nil)
-	return &result
 }
 
 // ComposeProject derives a worktree-specific Compose project name unless the

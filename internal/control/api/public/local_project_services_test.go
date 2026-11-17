@@ -13,7 +13,6 @@ import (
 )
 
 type localProjectVisitorStore struct {
-	PublicURLStore
 	LocalProjectStore
 	request controlstate.GetLocalProjectServiceRequest
 	err     error
@@ -26,7 +25,56 @@ func (s *localProjectVisitorStore) GetLocalProjectService(_ context.Context, r c
 	if s.err != nil {
 		return controlstate.LocalProjectService{}, s.err
 	}
-	return controlstate.LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, Kind: "service", ServiceID: "svc_exact", Metadata: &controlstate.ServiceMetadata{Protocol: "http", TrustRevision: 1}}, nil
+	return controlstate.LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, ServiceID: "svc_exact", Metadata: &controlstate.ServiceMetadata{Protocol: "http", TrustRevision: 1}}, nil
+}
+
+type localProjectRealizationStore struct {
+	LocalProjectStore
+	request controlstate.RealizeLocalProjectServiceRequest
+	calls   int
+}
+
+func (s *localProjectRealizationStore) RealizeLocalProjectService(_ context.Context, r controlstate.RealizeLocalProjectServiceRequest) (controlstate.LocalProjectService, error) {
+	s.calls++
+	s.request = r
+	return controlstate.LocalProjectService{Service: r.Service, WorktreeKey: r.WorktreeKey, ServiceID: "svc_exact"}, nil
+}
+
+func TestRealizeLocalProjectServiceUsesOneConfigurationSelection(t *testing.T) {
+	for _, extra := range []string{"", "domain_id", "public_url_id"} {
+		t.Run("root-field-"+extra, func(t *testing.T) {
+			store := &localProjectRealizationStore{}
+			h := &handler{dependencies: Stores{LocalProjects: store}, authorizer: &recordingAuthorizer{principal: testControlReadPrincipal()}}
+			body := map[string]any{
+				"team_id": "team_1", "source_fingerprint": strings.Repeat("a", 64),
+				"worktree_key": "checkout-a", "configuration": map[string]any{
+					"target": "app", "domain_id": "dom_selected", "hostname": "app.example.test",
+				},
+			}
+			if extra != "" {
+				body[extra] = "another-selection"
+			}
+			encoded, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := httptest.NewRequest(http.MethodPost, "/v1/projects/shop/local-services/orders", strings.NewReader(string(encoded)))
+			r.Header.Set("Authorization", "Bearer manager-token")
+			w := httptest.NewRecorder()
+			h.RealizeLocalProjectService(w, r, "shop", "orders")
+			if extra != "" {
+				if w.Code != http.StatusBadRequest || store.calls != 0 {
+					t.Fatal("retired root selection reached realization", w.Code, store.calls)
+				}
+				return
+			}
+			if w.Code != http.StatusOK || store.calls != 1 || store.request.Configuration.DomainID != "dom_selected" ||
+				store.request.Configuration.Hostname != "app.example.test" || store.request.Service != "orders" ||
+				store.request.ProjectKey != "shop" || store.request.ActorID != "identity_1" {
+				t.Fatal("direct configuration lost its selected endpoint or authenticated project", w.Code, store.request)
+			}
+		})
+	}
 }
 
 func TestGetLocalProjectServiceUsesVisitorAuthorizationAndSafeResponse(t *testing.T) {
@@ -44,9 +92,9 @@ func TestGetLocalProjectServiceUsesVisitorAuthorizationAndSafeResponse(t *testin
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &localProjectVisitorStore{err: test.err}
-			principal := testPublicURLReadPrincipal()
+			principal := testControlReadPrincipal()
 			principal.teamIDs = nil // a direct visitor grant does not require team management.
-			h := &handler{store: store, dependencies: Stores{LocalProjects: store}, authorizer: &recordingAuthorizer{principal: principal}}
+			h := &handler{dependencies: Stores{LocalProjects: store}, authorizer: &recordingAuthorizer{principal: principal}}
 			r := httptest.NewRequest(http.MethodGet, "/v1/projects/shop/local-services/orders", nil)
 			if test.auth {
 				r.Header.Set("Authorization", "Bearer visitor-token")

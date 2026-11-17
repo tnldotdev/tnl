@@ -14,14 +14,13 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/connector"
-	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -57,7 +56,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 		"services": map[string]any{"internal": map[string]any{"protocol": "tcp"}, "shell": map[string]any{"protocol": "tcp"}},
 		"deployments": map[string]any{
 			"internal":   map[string]any{"targets": map[string]any{"internal": map[string]any{"address": address}}},
-			"production": map[string]any{"public": true, "targets": map[string]any{"shell": map[string]any{"address": address}}},
+			"production": map[string]any{"targets": map[string]any{"shell": map[string]any{"address": address, "public": true}}},
 		}}})
 	if err != nil {
 		t.Fatal(err)
@@ -97,13 +96,14 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var service controlv1.Service
+			var service controlv1.ServiceSummary
+			var selected controlv1.ServiceSelection
 			workflowWait(t, 30*time.Second, func() bool {
 				service, err = connector.Select(t.Context(), session.Authenticated().Control, project.Project, name, session.Identity().PersonalTeamId)
 				if err != nil {
 					return false
 				}
-				_, err = session.Authenticated().Control.SelectServiceRun(t.Context(), service.Id, device.ID)
+				selected, err = session.Authenticated().Control.SelectServiceRun(t.Context(), service.Id, device.ID)
 				return err == nil
 			})
 			endpoint := service.Endpoint
@@ -131,7 +131,8 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 			}
 			args := []string{"-F", "/dev/null", "-T", "-i", clientKey, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + known, "-o", "GlobalKnownHostsFile=/dev/null", "-o", "CheckHostIP=no", "-o", "ProxyCommand=" + strings.Join(proxyArgs, " "), username + "@" + endpoint.Hostname}
 			var before int
-			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_peer_pairs`).Scan(&before); err != nil {
+			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_peer_pairs WHERE service_id=$1 AND service_run_id=$2 AND run_number=$3 AND subject_kind='human_device' AND subject_id=$4`,
+				service.Id, selected.ServiceRunId, selected.RunNumber, device.ID).Scan(&before); err != nil {
 				t.Fatal(err)
 			}
 			for _, remote := range []string{"cat", "printf 'remote-exit'; exit 7"} {
@@ -170,6 +171,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 					}
 					var diagnostics bytes.Buffer
 					command.Stderr = &diagnostics
+					started := time.Now()
 					if err := command.Start(); err != nil {
 						t.Fatal(err)
 					}
@@ -193,6 +195,22 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 						_ = command.Wait()
 						t.Fatal("stdio never became active", ctx.Err(), diagnostics.String())
 					}
+					// inspect live claims before signaling. successful retirement
+					// deletes them, so they cannot be counted after Wait joins.
+					var pairID string
+					var active int
+					err = inspect.QueryRow(ctx, `SELECT min(pair.id),count(*) FROM control.connector_peer_pairs pair
+						WHERE pair.service_id=$1 AND pair.service_run_id=$2 AND pair.run_number=$3
+						AND pair.subject_kind='human_device' AND pair.subject_id=$4 AND pair.created_at>=$5
+						AND pair.retired_at IS NULL AND pair.owner_revision=1 AND pair.publisher_prepared_until>now()
+						AND (SELECT count(*) FROM control.connector_peer_pair_leg_claims claim
+							WHERE claim.pair_id=pair.id AND claim.delivery_generation=pair.delivery_generation AND claim.confirmed_until>now())=2`,
+						service.Id, selected.ServiceRunId, selected.RunNumber, device.ID, started).Scan(&pairID, &active)
+					if err != nil || active != 1 {
+						_ = command.Process.Kill()
+						_ = command.Wait()
+						t.Fatal("active stdio did not own one exact pair with both current relay claims", err, active)
+					}
 					if err := command.Process.Signal(signal); err != nil {
 						_ = command.Wait()
 						t.Fatal(err)
@@ -200,14 +218,39 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 					if err := command.Wait(); err != nil || ctx.Err() != nil {
 						t.Fatal("signal did not join the active stdio stream cleanly", err, ctx.Err(), diagnostics.String())
 					}
+					var retired bool
+					if err := inspect.QueryRow(ctx, `SELECT pair.retired_at IS NOT NULL AND pair.owner_revision=2
+						AND NOT EXISTS(SELECT 1 FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)
+						FROM control.connector_peer_pairs pair WHERE pair.id=$1`, pairID).Scan(&retired); err != nil || !retired {
+						t.Fatal("signal returned before retiring its exact connector owner", err)
+					}
 				})
 			}
 			var after int
-			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_peer_pairs pair WHERE pair.publisher_prepared_until IS NOT NULL AND (SELECT count(*) FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)=2`).Scan(&after); err != nil {
+			// the durable audit binding is saved only after control checks both
+			// claims and the publisher's installation. retirement preserves that
+			// receipt while clearing preparation authority and deleting live claims.
+			if err := inspect.QueryRow(t.Context(), `SELECT count(DISTINCT pair.owner_key)
+				FROM control.connector_peer_pairs pair JOIN control.connector_peer_audit_bindings installed
+					ON installed.pair_id=pair.id AND installed.delivery_generation=pair.delivery_generation
+				WHERE pair.service_id=$1 AND pair.service_run_id=$2 AND pair.run_number=$3
+					AND pair.subject_kind='human_device' AND pair.subject_id=$4
+					AND installed.identity_id=$5 AND installed.device_id=$4
+					AND installed.service_id=pair.service_id AND installed.service_run_id=pair.service_run_id
+					AND installed.run_number=pair.run_number AND installed.publisher_identity_id=pair.publisher_identity_id
+					AND pair.retired_at IS NOT NULL AND pair.owner_revision=2 AND installed.retired_at IS NOT NULL
+					AND pair.publisher_prepared_until IS NULL
+					AND NOT EXISTS(SELECT 1 FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)`,
+				service.Id, selected.ServiceRunId, selected.RunNumber, device.ID, session.Identity().Identity.Id).Scan(&after); err != nil {
 				t.Fatal(err)
 			}
 			if after != before+4 {
-				t.Fatal("SSH and signal tests did not install four independent connector owners with both relay claims")
+				t.Fatal("SSH and signal tests did not install and retire four independent exact connector owners", before, after)
+			}
+			var owners int
+			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_peer_pairs WHERE service_id=$1 AND service_run_id=$2 AND run_number=$3 AND subject_kind='human_device' AND subject_id=$4`,
+				service.Id, selected.ServiceRunId, selected.RunNumber, device.ID).Scan(&owners); err != nil || owners != before+4 {
+				t.Fatal("SSH and signal tests created extra or missing connector owners", err, owners, before)
 			}
 		})
 	}
@@ -255,20 +298,28 @@ func (f *cliWorkflow) connectDirectListener(t *testing.T, endpoint *controlv1.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, PublicServices: f.publicServices, ServicePortRanges: []tcpport.Range{{First: endpoint.Port, Last: endpoint.Port}}, MaxConnections: 16, OnError: func(err error) { t.Logf("direct ingress: %v", err) }})
-	if err != nil {
-		_ = listener.Close()
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve() }()
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = server.Drain(ctx)
-		if err := <-done; err != nil {
-			t.Error(err)
+	done := make(chan struct{})
+	var workers sync.WaitGroup
+	go func() {
+		defer close(done)
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			workers.Go(func() {
+				if err := f.publicIngress.AcceptPublic(f.ctx, connection,
+					connection.RemoteAddr().(*net.TCPAddr).AddrPort(), connection.LocalAddr().(*net.TCPAddr).AddrPort(), "", nil); err != nil && f.ctx.Err() == nil {
+					t.Logf("direct ingress: %v", err)
+				}
+			})
 		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-done
+		_ = f.publicIngress.Close()
+		workers.Wait()
 	})
 }
 

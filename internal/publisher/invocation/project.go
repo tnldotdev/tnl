@@ -2,6 +2,7 @@ package invocation
 
 import (
 	"context"
+	"errors"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
@@ -9,8 +10,8 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
@@ -27,7 +28,7 @@ type ProjectRuntime struct {
 	state             *clientstate.Database
 	manager           *publisherapp.Manager
 	TargetResolver    target.TargetResolver
-	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
+	AttachPublication func(context.Context, publisherapp.Service, *publisherservice.RunConfig) error
 }
 
 func NewProjectRuntime(project clientproject.Project, state *clientstate.Database, manager *publisherapp.Manager, resolver target.TargetResolver) *ProjectRuntime {
@@ -39,16 +40,33 @@ func (a *ProjectRuntime) Metadata(ctx context.Context) (meta.Metadata, error) {
 	return r.Generate(ctx)
 }
 
+// prepare allocates only the selected local service and projects its returned
+// endpoint. publication still waits for a registered app listener.
+func (a *ProjectRuntime) PrepareLocalService(ctx context.Context, name string) (meta.Metadata, error) {
+	if _, found := a.project.Config.Services[name]; !found || config.SelectedDeployment(a.project.Config) != "local" {
+		return meta.Metadata{}, errors.New("preparation requires a selected local service")
+	}
+	effective, err := a.project.EffectiveService(name)
+	if err != nil {
+		return meta.Metadata{}, err
+	}
+	resolver := resolve.NewMetadataResolver(a.state, a.project.Project, authenticateRuntime)
+	authenticated, current, err := resolver.Context(ctx, effective)
+	if err != nil {
+		return meta.Metadata{}, err
+	}
+	selected, err := RealizeLocalService(ctx, authenticated.Control, LocalService{
+		Project: a.project.Project, Team: FromTeamContext(current), Name: name, TargetResolver: a.TargetResolver,
+	})
+	if err != nil {
+		return meta.Metadata{}, err
+	}
+	return resolver.GenerateForLocalService(ctx, selected)
+}
+
 func valueOrEmpty(value *string) string {
 	if value == nil {
 		return ""
 	}
 	return *value
-}
-
-func effectiveTunnelLimits(effective clientproject.ResolvedService) *config.Limits {
-	if effective.Tunnel == nil {
-		return nil
-	}
-	return effective.Tunnel.Limits
 }

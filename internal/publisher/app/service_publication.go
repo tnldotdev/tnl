@@ -4,41 +4,78 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
 
-func (w *Workers) runPrivate(ctx context.Context, service Service, configuration Configuration, observe func(uint64, bool) error) error {
-	var entry *proofEntry
+func (w *Workers) runService(ctx context.Context, service Service, publication *ServicePublication, journal *publicationJournal, observe func(PublicationUpdate) error) error {
+	var entry *readinessEntry
+	var observations sync.Mutex
+	var stopReadiness func()
 	defer func() {
+		if stopReadiness != nil {
+			stopReadiness()
+		}
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		if w.proofs[service.RegistrationID] == entry {
-			delete(w.proofs, service.RegistrationID)
+		if w.checks[service.RegistrationID] == entry {
+			delete(w.checks, service.RegistrationID)
 		}
 	}()
-	return configuration.RunPrivate(ctx, func(run uint64, routable bool) error {
+	record := SummaryObservation(journal.recorder)
+	return publication.Run(ctx, journal.tunnel, func(run uint64, routable bool) error {
+		// serialize the owning operation's callbacks so a late older run cannot
+		// change the local journal before the manager rejects its observation.
+		observations.Lock()
+		defer observations.Unlock()
 		if run == 0 || ctx.Err() != nil || !w.Manager.CurrentRegistration(service.Name, service.RegistrationID, service.Target) {
 			return ErrRegistrationStale
 		}
-		if err := observe(run, routable); err != nil {
+		if entry != nil && run < entry.run {
+			return ErrRegistrationStale
+		}
+		newRun := entry == nil || run != entry.run
+		if stopReadiness != nil && (!routable || newRun) {
+			stopReadiness()
+		}
+		if routable {
+			if err := journal.tunnel.SetReady(ctx, publication.URL, run); err != nil {
+				return err
+			}
+		} else if err := journal.tunnel.SetProvisioning(ctx, run); err != nil {
 			return err
 		}
-		entry = &proofEntry{service: service, run: publisher.PublishRunIdentity{Number: run}, privateCheck: configuration.CheckPrivate}
-		w.mu.Lock()
-		if w.proofs == nil {
-			w.proofs = map[string]*proofEntry{}
+		if err := observe(PublicationUpdate{RunNumber: run, Routable: routable, TunnelID: journal.tunnel.ID(), Target: service.Target, PublicURL: publication.URL}); err != nil {
+			return err
 		}
-		w.proofs[service.RegistrationID] = entry
-		w.mu.Unlock()
+		if newRun {
+			entry = &readinessEntry{target: service.Target, run: run, check: publication.Check}
+			w.mu.Lock()
+			if w.checks == nil {
+				w.checks = map[string]*readinessEntry{}
+			}
+			w.checks[service.RegistrationID] = entry
+			w.mu.Unlock()
+			stopReadiness = nil
+		}
+		// retain a stopped check until the run changes: repeated readiness or
+		// recovery of this same run must not grant another automatic budget.
+		if w.AutomaticReadiness && routable && stopReadiness == nil {
+			stopReadiness = w.startReadiness(ctx, service, run)
+		}
 		return nil
+	}, func(summary inspection.Summary) {
+		if record != nil {
+			record(summary)
+		}
 	})
 }
 
-// ProbeServiceTarget checks the actual local target for a ready private run.
+// ProbeServiceTarget checks the actual local target independently of ingress.
 // it does not claim a public visitor proof or require a public hostname.
 func ProbeServiceTarget(ctx context.Context, service Service, target targettransport.Transport) Observation {
 	observation := Observation{Target: service.Target, RegistrationID: service.RegistrationID, RunNumber: service.RunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.probe_failed"}

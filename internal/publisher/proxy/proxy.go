@@ -29,9 +29,6 @@ import (
 
 const maxHeaderFields = 100
 
-// readiness probes keep HTML responses streaming and observe headers only.
-const ReadinessProbeHeader = "X-Tnl-Readiness-Probe"
-
 const defaultMaxConnsPerHost = 64
 
 // Preflight validates the target and verifies that it accepts a connection.
@@ -43,6 +40,13 @@ func Preflight(ctx context.Context, target string) error {
 type TargetOptions struct {
 	RootCAs    *x509.CertPool
 	ServerName string
+}
+
+// transport owns a captured target's requests, connections, and joined shutdown.
+type Transport interface {
+	RoundTrip(*http.Request) (*http.Response, error)
+	CloseIdleConnections()
+	Close() error
 }
 
 // LoadTargetRootCAs adds a PEM file to the system roots used for one HTTPS target.
@@ -133,23 +137,18 @@ func waitForTarget(ctx context.Context, target string, preflight func(context.Co
 	}
 }
 
-// ResponseHooks separates header observation from body modification. observing
-// a response must not disable upstream compression or consume its body.
-type ResponseHooks struct {
-	ModifyHTML    func(*http.Response) error
-	Observe       func(*http.Response) error
-	ObserveStatus func(*http.Request, int)
-	OnForwarded   func(*http.Request)
-}
-
 // Config selects targets, target trust, response hooks, and transport sizing.
 // the publisher owns application admission for base, mounted, and inline handlers.
 type Config struct {
 	Target        string
 	Hostname      string
 	Mounts        []Mount
-	Hooks         ResponseHooks
+	Hooks         httpstream.ResponseHooks
 	TargetOptions TargetOptions
+	// transport receives one normalized target and its captured trust. nil keeps
+	// the pooled transport used by standalone callers. base identifies the base
+	// slot, including resolved targets; mounts remain independent at any address.
+	Transport func(target *url.URL, options TargetOptions, base bool) (Transport, error)
 	// ResolveTarget selects the base target before each request. its immutable
 	// identity retires pooled connections even when the address stays the same.
 	// nil uses Target; mounted paths retain their own target selection.
@@ -160,21 +159,47 @@ type Config struct {
 	OnTargetFailure func()
 }
 
-// Proxy owns the target connection pools for one publication. the publisher
-// stops serving and joins requests before closing these pools.
+// proxy owns captured target transports. close fences new handlers and creation,
+// closes every remaining owner, and joins handlers, factories, and retirement.
 type Proxy struct {
 	handler    http.Handler
+	hostname   string
 	mu         sync.Mutex
-	transports map[*http.Transport]struct{}
+	transports map[*targetProxy]struct{}
+	work       sync.WaitGroup
 	closed     bool
+	closeDone  chan struct{}
+	closeErr   error
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	p.serve(w, r, false)
+}
+
+// ServeAdmittedHTTP keeps request-shape checks without rebinding the host or SNI.
+// the service owner must already have authorized and bound this visitor.
+func (p *Proxy) ServeAdmittedHTTP(w http.ResponseWriter, r *http.Request) {
+	p.serve(w, r, true)
+}
+
+func (p *Proxy) serve(w http.ResponseWriter, r *http.Request, admitted bool) {
 	p.mu.Lock()
-	closed := p.closed
-	p.mu.Unlock()
-	if closed {
+	if p.closed {
+		p.mu.Unlock()
 		diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
+		return
+	}
+	p.work.Add(1)
+	p.mu.Unlock()
+	defer p.work.Done()
+	var code diagnostic.Code
+	if admitted {
+		code = validateRequestShape(r)
+	} else {
+		code = ValidateRequest(r, p.hostname)
+	}
+	if code != "" {
+		diagnostic.WriteHTTP(w, r, code, "")
 		return
 	}
 	p.handler.ServeHTTP(w, r)
@@ -182,30 +207,147 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (p *Proxy) Close() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.closed = true
-	for transport := range p.transports {
-		transport.CloseIdleConnections()
+	if p.closed {
+		done := p.closeDone
+		p.mu.Unlock()
+		<-done
+		p.mu.Lock()
+		err := p.closeErr
+		p.mu.Unlock()
+		return err
 	}
-	clear(p.transports)
-	return nil
+	p.closed = true
+	var targets []*targetProxy
+	for target := range p.transports {
+		if p.beginCloseLocked(target) {
+			targets = append(targets, target)
+		}
+	}
+	p.mu.Unlock()
+	for _, target := range targets {
+		go p.closeTarget(target)
+	}
+	p.work.Wait()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	close(p.closeDone)
+	return p.closeErr
 }
 
 type targetProxy struct {
 	*httputil.ReverseProxy
-	transport *http.Transport
+	transport Transport
+	refs      int
+	retired   bool
+	closing   bool
+}
+
+func (p *Proxy) beginCloseLocked(target *targetProxy) bool {
+	if target.closing {
+		return false
+	}
+	target.closing = true
+	p.work.Add(1)
+	return true
+}
+
+func (p *Proxy) closeTarget(target *targetProxy) {
+	err := target.transport.Close()
+	p.mu.Lock()
+	p.closeErr = errors.Join(p.closeErr, err)
+	delete(p.transports, target)
+	p.mu.Unlock()
+	p.work.Done()
 }
 
 func (p *Proxy) retire(target *targetProxy) {
-	p.mu.Lock()
-	delete(p.transports, target.transport)
-	p.mu.Unlock()
-	// active requests finish normally; their connections close on becoming idle.
+	// closing idle connections must not interrupt a captured request or upgrade.
+	// retain the owner until its last captured handler and Close have joined.
 	target.transport.CloseIdleConnections()
+	p.mu.Lock()
+	target.retired = true
+	close := target.refs == 0 && p.beginCloseLocked(target)
+	p.mu.Unlock()
+	if close {
+		go p.closeTarget(target)
+	}
+}
+
+func (p *Proxy) release(target *targetProxy) {
+	p.mu.Lock()
+	target.refs--
+	close := target.refs == 0 && target.retired && p.beginCloseLocked(target)
+	p.mu.Unlock()
+	if close {
+		go p.closeTarget(target)
+	}
+}
+
+// targetSlot shares capture and retirement mechanics for base and mounted targets.
+// its selection lock covers acquisition, so replacement cannot retire a target
+// between capture and the request's first use.
+type targetSlot struct {
+	owner             *Proxy
+	mu                sync.Mutex
+	current           *targetProxy
+	address, identity string
+	resolve           func(*http.Request) (string, string, error)
+	create            func(string) (*targetProxy, error)
+}
+
+func (s *targetSlot) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var address, identity string
+	if s.resolve != nil {
+		var err error
+		address, identity, err = s.resolve(r)
+		if err != nil || address == "" || identity == "" {
+			diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
+			return
+		}
+		address, err = targetsyntax.NormalizeTarget(address)
+		if err != nil {
+			diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
+			return
+		}
+	}
+	s.mu.Lock()
+	selected := s.current
+	var previous *targetProxy
+	if s.resolve != nil && (s.address != address || s.identity != identity) {
+		var err error
+		selected, err = s.create(address)
+		if err != nil {
+			s.mu.Unlock()
+			diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
+			return
+		}
+		previous = s.current
+	}
+	s.owner.mu.Lock()
+	if s.owner.closed {
+		s.owner.mu.Unlock()
+		s.mu.Unlock()
+		diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
+		return
+	}
+	selected.refs++
+	s.current = selected
+	s.address, s.identity = address, identity
+	s.owner.mu.Unlock()
+	s.mu.Unlock()
+	defer s.owner.release(selected)
+	if previous != nil {
+		s.owner.retire(previous)
+	}
+	httpstream.ServeProxy(selected.ReverseProxy, w, r, func(err error) {
+		s.owner.mu.Lock()
+		s.owner.closeErr = errors.Join(s.owner.closeErr, err)
+		s.owner.mu.Unlock()
+	})
 }
 
 // New forwards requests already admitted by the publisher.
-func New(config Config) (*Proxy, error) {
+func New(config Config) (_ *Proxy, result error) {
 	if config.MaxConnsPerHost < 0 {
 		return nil, errors.New("localproxy: transport connection limit cannot be negative")
 	}
@@ -216,50 +358,33 @@ func New(config Config) (*Proxy, error) {
 	if err != nil || canonical != config.Hostname {
 		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
 	}
-	owner := &Proxy{transports: make(map[*http.Transport]struct{})}
-	base, err := owner.newReverseProxy(config.Target, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
-	if err != nil {
+	owner := &Proxy{hostname: canonical, transports: make(map[*targetProxy]struct{}), closeDone: make(chan struct{})}
+	defer func() {
+		if result != nil {
+			result = errors.Join(result, owner.Close())
+		}
+	}()
+	// validate the declared base even when a resolver will capture each request.
+	if _, err := parseTarget(config.Target, config.TargetOptions); err != nil {
 		return nil, err
 	}
-	var baseHandler http.Handler = base
-	if config.ResolveTarget != nil {
-		var mu sync.Mutex
-		var currentAddress, currentIdentity string
-		baseHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			address, identity, err := config.ResolveTarget(r)
-			if err != nil || address == "" || identity == "" {
-				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
-				return
-			}
-			canonical, err := targetsyntax.NormalizeTarget(address)
+	newSlot := func(target string, options TargetOptions, base bool, resolve func(*http.Request) (string, string, error)) (*targetSlot, error) {
+		options = captureTargetOptions(options)
+		slot := &targetSlot{owner: owner, resolve: resolve, create: func(target string) (*targetProxy, error) {
+			return owner.newReverseProxy(target, config.MaxConnsPerHost, config.Hooks, options, base, config.OnTargetFailure, config.Transport)
+		}}
+		if resolve == nil {
+			current, err := slot.create(target)
 			if err != nil {
-				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
-				return
+				return nil, err
 			}
-			mu.Lock()
-			if currentAddress != canonical || currentIdentity != identity {
-				selected, err := owner.newReverseProxy(canonical, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
-				if err != nil {
-					mu.Unlock()
-					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
-					return
-				}
-				owner.retire(base)
-				base, currentAddress, currentIdentity = selected, canonical, identity
-			}
-			selected := base
-			mu.Unlock()
-			defer func() {
-				mu.Lock()
-				defer mu.Unlock()
-				// a captured request can start after replacement closed the old pool.
-				// close it again when that last use returns its connection.
-				if selected != base {
-					selected.transport.CloseIdleConnections()
-				}
-			}()
-			selected.ServeHTTP(w, r)
-		})
+			slot.current = current
+		}
+		return slot, nil
+	}
+	baseHandler, err := newSlot(config.Target, config.TargetOptions, true, config.ResolveTarget)
+	if err != nil {
+		return nil, err
 	}
 	type mountedProxy struct {
 		Mount
@@ -274,44 +399,14 @@ func New(config Config) (*Proxy, error) {
 		seen[mount.Prefix] = true
 		var proxy http.Handler
 		if mount.ResolveTarget != nil {
-			var mu sync.Mutex
-			var current, currentIdentity string
-			var upstream *targetProxy
-			proxy = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				target, identity, err := mount.ResolveTarget(r.Context())
-				if err != nil || target == "" || identity == "" {
-					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
-					return
-				}
-				mu.Lock()
-				if current != target || currentIdentity != identity {
-					selected, err := owner.newReverseProxy(target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
-					if err != nil {
-						mu.Unlock()
-						diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
-						return
-					}
-					if upstream != nil {
-						owner.retire(upstream)
-					}
-					upstream, current, currentIdentity = selected, target, identity
-				}
-				selected := upstream
-				mu.Unlock()
-				defer func() {
-					mu.Lock()
-					defer mu.Unlock()
-					if selected != upstream {
-						selected.transport.CloseIdleConnections()
-					}
-				}()
-				selected.ServeHTTP(w, r)
+			proxy, err = newSlot("", mount.Options, false, func(r *http.Request) (string, string, error) {
+				return mount.ResolveTarget(r.Context())
 			})
 		} else {
-			proxy, err = owner.newReverseProxy(mount.Target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
-			if err != nil {
-				return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
-			}
+			proxy, err = newSlot(mount.Target, mount.Options, false, nil)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
 		}
 		routes = append(routes, mountedProxy{Mount: mount, proxy: proxy})
 	}
@@ -322,10 +417,6 @@ func New(config Config) (*Proxy, error) {
 		return strings.Compare(left.Prefix, right.Prefix)
 	})
 	owner.handler = httpstream.Requests(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if code := ValidateRequest(request, config.Hostname); code != "" {
-			diagnostic.WriteHTTP(response, request, code, "")
-			return
-		}
 		escapedPath := request.URL.EscapedPath()
 		for _, mount := range routes {
 			if !matchesMountPath(escapedPath, mount.Prefix) {
@@ -351,26 +442,28 @@ func New(config Config) (*Proxy, error) {
 			return
 		}
 		baseHandler.ServeHTTP(response, request)
-	}), httpstream.RequestBodyTimeout)
+	}), 0)
 	return owner, nil
 }
 
-func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks ResponseHooks, options TargetOptions, onTargetFailure func()) (*targetProxy, error) {
-	canonicalTarget, err := targetsyntax.NormalizeTarget(target)
-	if err != nil {
-		return nil, err
+func captureTargetOptions(options TargetOptions) TargetOptions {
+	if options.RootCAs != nil {
+		options.RootCAs = options.RootCAs.Clone()
 	}
-	targetURL, err := url.Parse(canonicalTarget)
-	if err != nil {
-		return nil, err
-	}
-	if targetURL.Scheme != "https" && options.ServerName != "" {
-		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target TLS server name requires HTTPS"))
-	}
+	return options
+}
+
+type pooledTransport struct{ *http.Transport }
+
+func (t *pooledTransport) Close() error {
+	t.CloseIdleConnections()
+	return nil
+}
+
+func newPooledTransport(targetURL *url.URL, maxConnsPerHost int, options TargetOptions) Transport {
 	targetAddress := targetURL.Host
 	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
-	var failing atomic.Bool
-	transport := &http.Transport{
+	return &pooledTransport{&http.Transport{
 		Proxy:               nil,
 		DisableCompression:  true,
 		ForceAttemptHTTP2:   false,
@@ -388,7 +481,60 @@ func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks Respon
 			finish(err)
 			return connection, err
 		},
+	}}
+}
+
+func parseTarget(target string, options TargetOptions) (*url.URL, error) {
+	canonicalTarget, err := targetsyntax.NormalizeTarget(target)
+	if err != nil {
+		return nil, err
 	}
+	targetURL, err := url.Parse(canonicalTarget)
+	if err != nil {
+		return nil, err
+	}
+	if targetURL.Scheme != "https" && options.ServerName != "" {
+		return nil, diagnostic.Wrap(diagnostic.TargetInvalid, errors.New("target TLS server name requires HTTPS"))
+	}
+	return targetURL, nil
+}
+
+func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks httpstream.ResponseHooks, options TargetOptions, base bool, onTargetFailure func(), factory func(*url.URL, TargetOptions, bool) (Transport, error)) (*targetProxy, error) {
+	targetURL, err := parseTarget(target, options)
+	if err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil, net.ErrClosed
+	}
+	// creation may finish after Close starts. keep it joined until any late
+	// transport has also closed; no owner may escape through that race.
+	p.work.Add(1)
+	p.mu.Unlock()
+	defer p.work.Done()
+	options = captureTargetOptions(options)
+	var transport Transport
+	if factory == nil {
+		transport = newPooledTransport(targetURL, maxConnsPerHost, options)
+	} else {
+		captured := *targetURL
+		transport, err = factory(&captured, options, base)
+	}
+	if err != nil {
+		if transport != nil {
+			cleanup := transport.Close()
+			p.mu.Lock()
+			p.closeErr = errors.Join(p.closeErr, cleanup)
+			p.mu.Unlock()
+		}
+		return nil, err
+	}
+	if transport == nil {
+		return nil, errors.New("localproxy: target transport factory returned no owner")
+	}
+	var failing atomic.Bool
 	proxy := &httputil.ReverseProxy{
 		Transport:     transport,
 		FlushInterval: -1,
@@ -397,24 +543,19 @@ func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks Respon
 			observability.PublisherHTTPForward(request.Out.Context())
 			request.Out = observability.TargetRequest(request.Out)
 			host := request.In.Host
-			if hooks.ModifyHTML != nil && !IsReadinessProbe(request.In) {
-				request.Out.Header.Del("Accept-Encoding")
-			}
+			hooks.Rewrite(request)
 			// remove client forwarding identity before deriving trusted headers.
 			removeForwardingHeaders(request.Out.Header)
-			request.Out.Header.Del(ReadinessProbeHeader)
 			request.SetURL(targetURL)
 			request.Out.Host = host
 			request.SetXForwarded()
 		},
 		ErrorHandler: func(response http.ResponseWriter, request *http.Request, targetErr error) {
 			observability.PublisherHTTPError(request.Context(), targetErr)
+			hooks.ForwardingFailed(request)
 			if code, ok := diagnostic.CodeOf(targetErr); ok {
 				diagnostic.WriteHTTP(response, request, code, "")
 				return
-			}
-			if hooks.ObserveStatus != nil {
-				hooks.ObserveStatus(request, 0)
 			}
 			if failing.CompareAndSwap(false, true) && onTargetFailure != nil {
 				onTargetFailure()
@@ -429,43 +570,30 @@ func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks Respon
 		},
 		ModifyResponse: func(response *http.Response) error {
 			failing.Store(false)
-			if hooks.ObserveStatus != nil && response.StatusCode >= 400 {
-				hooks.ObserveStatus(response.Request, response.StatusCode)
-			}
-			if hooks.Observe != nil {
-				if err := hooks.Observe(response); err != nil {
-					return err
-				}
-			}
-			if hooks.ModifyHTML != nil && !IsReadinessProbe(response.Request) {
-				if err := hooks.ModifyHTML(response); err != nil {
-					return err
-				}
-			}
-			if hooks.OnForwarded != nil {
-				hooks.OnForwarded(response.Request)
-			}
-			observability.PublisherHTTPResponse(response.Request.Context())
-			observability.PublisherHTTPUpgrade(response)
-			return nil
+			return hooks.ModifyResponse(response)
 		},
 	}
+	selected := &targetProxy{ReverseProxy: proxy, transport: transport}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed {
-		transport.CloseIdleConnections()
-		return nil, net.ErrClosed
+		p.mu.Unlock()
+		cleanup := transport.Close()
+		p.mu.Lock()
+		p.closeErr = errors.Join(p.closeErr, cleanup)
+		p.mu.Unlock()
+		return nil, errors.Join(net.ErrClosed, cleanup)
 	}
-	p.transports[transport] = struct{}{}
-	return &targetProxy{ReverseProxy: proxy, transport: transport}, nil
+	p.transports[selected] = struct{}{}
+	p.mu.Unlock()
+	return selected, nil
 }
 
 // ValidateRequest binds a visitor HTTP request to its public URL hostname and SNI.
 func ValidateRequest(request *http.Request, hostname string) diagnostic.Code {
-	// bind origin-form authority and TLS SNI to this public URL's hostname.
-	if request.Method == http.MethodConnect || request.URL.IsAbs() || request.URL.Host != "" || strings.HasPrefix(request.RequestURI, "http://") || strings.HasPrefix(request.RequestURI, "https://") {
-		return diagnostic.RequestRejected
+	if code := validateRequestShape(request); code != "" {
+		return code
 	}
+	// bind origin-form authority and TLS SNI to this public URL's hostname.
 	authority, err := naming.CanonicalizeAuthority(request.Host)
 	if err != nil || request.TLS == nil {
 		return diagnostic.RequestRejected
@@ -481,6 +609,14 @@ func ValidateRequest(request *http.Request, hostname string) diagnostic.Code {
 		if request.ProtoMajor == 2 {
 			return diagnostic.RequestMisdirected
 		}
+		return diagnostic.RequestRejected
+	}
+	return ""
+}
+
+func validateRequestShape(request *http.Request) diagnostic.Code {
+	if request.Method == http.MethodConnect || request.URL == nil || request.URL.IsAbs() || request.URL.Host != "" ||
+		strings.HasPrefix(request.RequestURI, "http://") || strings.HasPrefix(request.RequestURI, "https://") {
 		return diagnostic.RequestRejected
 	}
 	fields := 0

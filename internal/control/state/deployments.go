@@ -8,14 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
 var (
@@ -192,7 +190,8 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		if _, err = tx.Exec(ctx, `INSERT INTO control.applied_project_services(team_id,project_key,service,deployment_id,service_id,desired_revision) VALUES($1,$2,$3,$4,$5,1)`, r.TeamID, r.ProjectKey, name, id, serviceID); err != nil {
 			return result, err
 		}
-		if err = d.ensureServiceEndpoint(ctx, tx, serviceID, id, r.DNSAutomation, r.Now); err != nil {
+		selection := c.Services[name]
+		if err = d.ensureServiceEndpoint(ctx, tx, serviceID, id, r.ActorID, ServicePlacement{DomainID: selection.DomainID, Hostname: selection.Hostname}, projectServicePublic(selection), r.DNSAutomation, r.Now); err != nil {
 			return result, err
 		}
 	}
@@ -284,20 +283,8 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 		byName[binding.Service] = binding
 	}
 	for name := range requested.Services {
-		if _, ok := snapshot.Services[name]; !ok || !byName[name].ServiceID.Valid && (!byName[name].PublicURLID.Valid || snapshot.Services[name].Target == "app") {
+		if _, ok := snapshot.Services[name]; !ok || !byName[name].ServiceID.Valid || snapshot.Services[name].Target == "app" {
 			return result, ErrProjectConfigurationInvalid
-		}
-		if byName[name].PublicURLID.Valid {
-			next := requested.Services[name]
-			address := r.Targets[name].Address
-			if next.TargetTLS != nil && !strings.Contains(address, "://") {
-				address = "https://" + address
-			}
-			next.Target, err = targetsyntax.NormalizeTarget(address)
-			if err != nil {
-				return result, ErrProjectConfigurationInvalid
-			}
-			requested.Services[name] = next
 		}
 	}
 	if err = access.setAuditActor(ctx, tx); err != nil {
@@ -320,11 +307,7 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 		if err = d.revokeAppliedServicePublishers(ctx, tx, q, binding, r.Now); err != nil {
 			return result, err
 		}
-		if binding.PublicURLID.Valid {
-			err = updateDeploymentPublicURLTarget(ctx, tx, binding.PublicURLID.String, previous, r.Now)
-		} else {
-			err = d.updateAppliedService(ctx, tx, q, binding.ServiceID.String, row.ID, previous, true, r.Now)
-		}
+		err = d.updateAppliedService(ctx, tx, q, binding.ServiceID.String, row.ID, previous, true, r.Now)
 		if err != nil {
 			return result, err
 		}
@@ -482,18 +465,10 @@ func (d *Database) deploymentStatus(ctx context.Context, tx pgx.Tx, row controls
 			continue
 		}
 		service, ok := snapshot.Services[binding.Service]
-		if !ok || !binding.ServiceID.Valid && !binding.PublicURLID.Valid {
+		if !ok || !binding.ServiceID.Valid {
 			return result, ErrProjectConfigurationStale
 		}
 		result.Targets[binding.Service] = deploymentTarget(service)
-		if binding.PublicURLID.Valid {
-			u, err := controlstatedb.New(tx).LockPublicURLForRun(ctx, binding.PublicURLID.String)
-			if err != nil {
-				return result, err
-			}
-			result.Services[binding.Service] = DeploymentService{ID: u.ID, Protocol: "http", TrustRevision: u.MutationRevision, PublicURL: "https://" + u.CanonicalHostname}
-			continue
-		}
 		saved, err := controlstatedb.New(tx).GetService(ctx, binding.ServiceID.String)
 		if err != nil {
 			return result, err

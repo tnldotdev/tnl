@@ -7,10 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -27,7 +30,7 @@ func TestIntegrationDeploymentPublicationRealControlAndVisitor(t *testing.T) {
 		TeamId: f.identity.teamID, Source: &testProjectSource, Deployment: "production",
 		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol},
 		Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{
-			"web": {Target: target.URL, Protocol: &protocol, PublicUrl: &controlv1.ProjectServicePublicURL{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}},
+			"web": {Target: target.URL, Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}},
 		}},
 	})
 	if err != nil {
@@ -47,51 +50,60 @@ func TestIntegrationDeploymentPublicationRealControlAndVisitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, temporary := range []bool{false, true} {
-		service := "web"
-		var allocation *controlv1.AllocateEphemeralPublicURLRequest
+		var native *publisheridentity.Native
+		var selected *controlv1.Service
 		if temporary {
-			service = ""
-			invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+			var invocation string
+			invocation, err = opaqueid.New(opaqueid.InvocationPrefix)
 			if err != nil {
 				t.Fatal(err)
 			}
-			allocation = &controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: target.URL, AccessMode: &mode}
+			native, err = publisheridentity.NewDeploymentAllocator(f.identity.routes, f.identity.authority, approval, private, "production")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var service controlv1.Service
+			service, err = native.AllocateService(t.Context(), controlv1.AllocateServiceRequest{InvocationId: invocation, Configuration: controlv1.ProjectServiceConfiguration{
+				Protocol: &protocol, Target: target.URL, Public: new(true),
+				Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}},
+			}})
+			selected = &service
+		} else {
+			native, selected, err = publisheridentity.PrepareDeployment(t.Context(), f.identity.routes, f.identity.authority, approval, private, "production", "web")
 		}
-		native, selected, err := publisheridentity.PrepareDeployment(t.Context(), f.identity.routes, f.identity.authority, approval, private, "production", service, allocation)
 		if err != nil {
 			t.Fatal(err)
 		}
-		u := selected.PublicUrl
 		quic, tcp := f.connectors()
-		config := f.identity.publisherConfig(target.URL, quic, tcp)
-		config.Control, config.Identity, config.Audit = native, native, native
-		config.VisitorControl, config.BrowserControl, config.Shares = native, native, native
-		config.Hostname, config.DomainID, config.MembershipID = u.CanonicalHostname, u.DomainId, ""
-		config.PublicURLScope, config.PolicyRevision = u.PublicUrlScope, uint64(u.PolicyRevision)
-		config.Ephemeral, config.AssignedPublicURL = temporary, &u
+		config := publisherservice.RunConfig{
+			Control: native, Access: native.Access, State: f.identity.state, ServiceID: selected.Id,
+			PublisherIdentityID: approval.ClientId, PublisherGrantID: approval.GrantId, PublisherKeyID: approval.KeyId,
+			Metadata: publisheridentity.ServiceMetadata(*selected), Target: strings.TrimPrefix(target.URL, "http://"),
+			RelayQUIC: quic, RelayTCP: tcp, HeartbeatInterval: 100 * time.Millisecond, DrainTime: time.Second,
+		}
 		handle := startOwnedIntegrationPublisher(t, f.owner, config, nil)
 		ready := waitForPublisherReady(t, handle)
-		waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
+		waitForReadyPublisherConnections(t, f.inspect, ready.ServiceId, ready.RunNumber, 2)
 		waitForIngressRoutingCurrent(t, f.inspect, 1)
-		response, body, err := f.visitor.requestURL(http.MethodGet, ready.PublicURL, nil)
+		response, body, err := f.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready), nil)
 		if err != nil || response.StatusCode != http.StatusOK || string(body) != "deployment visitor" {
 			t.Fatal("authorized deployment publication did not carry visitor traffic", err)
 		}
 		f.visitor.transport.CloseIdleConnections()
 		stopIntegrationPublisher(t, handle)
-		// the allocation owner deletes its exact URL after joining the run;
-		// publisher.Run never adopts an already allocated URL's lifetime.
+		// the allocation owner deletes its exact service after joining the run;
+		// the service run never adopts the saved service's lifetime.
 		if temporary {
-			if err := native.DeletePublicURL(t.Context(), u.Id); err != nil {
+			if err := native.DeleteAllocatedService(t.Context(), selected.Id); err != nil {
 				t.Fatal(err)
 			}
 		}
-		var state string
-		if err := f.inspect.QueryRowContext(t.Context(), `SELECT lifecycle_state FROM control.public_urls WHERE id=$1`, u.Id).Scan(&state); err != nil {
+		var deleted, enabled bool
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT deleted_at IS NOT NULL, enabled FROM control.services WHERE id=$1`, selected.Id).Scan(&deleted, &enabled); err != nil {
 			t.Fatal(err)
 		}
-		if temporary && state != "deleted" || !temporary && state != "enabled" {
-			t.Fatal("publication cleanup changed the wrong URL lifetime", state)
+		if deleted != temporary || !temporary && !enabled {
+			t.Fatal("publication cleanup changed the wrong service lifetime", deleted, enabled)
 		}
 	}
 }

@@ -9,20 +9,21 @@ import (
 )
 
 type AliasDeclaration struct {
-	AliasID     string
-	TunnelID    string
-	Fingerprint []byte
+	AliasID              string
+	TunnelID             string
+	Fingerprint          []byte
+	IntegrationNamespace string
 }
 
 type AliasPublishRun struct {
-	AliasID                string
-	Owner                  string
-	TunnelID               string
-	SelectionRevision      int64
-	PublicURLID            string
-	PublishRunNumber       int64
-	TargetPublicURLID      string
-	TargetPublishRunNumber int64
+	AliasID           string
+	Owner             string
+	TunnelID          string
+	SelectionRevision int64
+	ServiceID         string
+	RunNumber         int64
+	TargetServiceID   string
+	TargetRunNumber   int64
 }
 
 type BaselineIdentity struct {
@@ -58,10 +59,6 @@ type GuestDemoSession struct {
 	ServerOrigin          string
 	GuestID               string
 	AccessTokenCiphertext []byte
-	TeamID                string
-	MembershipID          string
-	DomainID              string
-	Namespace             string
 	ExpiresAt             int64
 	CreatedAt             int64
 }
@@ -124,6 +121,8 @@ type IntegrationUrlLease struct {
 	ServerOrigin        string
 	Hostname            string
 	PublisherInstanceID string
+	ServiceID           string
+	RunNumber           int64
 	ExpiresAt           int64
 }
 
@@ -135,12 +134,12 @@ type LocalTunnel struct {
 	ProjectRoot          string
 	Service              sql.NullString
 	ServiceProtocol      string
+	ServiceID            sql.NullString
 	PrimaryProjectRoot   sql.NullString
 	IntegrationNamespace sql.NullString
 	Hostname             sql.NullString
 	Target               sql.NullString
 	Framework            sql.NullString
-	PublicURLID          sql.NullString
 	PublishRunNumber     sql.NullInt64
 	State                string
 	StartedAt            int64
@@ -166,31 +165,36 @@ type LoginOperation struct {
 	UpdatedAt     int64
 }
 
-type OauthAliasHandoff struct {
-	ServerOrigin     string
-	Hostname         string
-	StateDigest      []byte
-	CallbackPath     string
-	PublicURLID      string
-	PublishRunNumber int64
-	CreatedAt        int64
-	ExpiresAt        int64
-	ConsumedAt       sql.NullInt64
+type OauthCallbackHandoff struct {
+	ServerOrigin         string
+	Hostname             string
+	StateDigest          []byte
+	TunnelID             string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	CallbackPath         string
+	ServiceID            string
+	RunNumber            int64
+	CreatedAt            int64
+	ExpiresAt            int64
+	ConsumedAt           sql.NullInt64
 }
 
 type OauthPendingCallback struct {
-	ServerOrigin           string
-	Hostname               string
-	StateDigest            []byte
-	TunnelID               string
-	CallbackPath           string
-	CallbackQuery          string
-	PublicURLID            string
-	PublishRunNumber       int64
-	ExpiresAt              int64
-	OriginHostname         string
-	OriginPublicURLID      string
-	OriginPublishRunNumber int64
+	ServerOrigin         string
+	Hostname             string
+	StateDigest          []byte
+	TunnelID             string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	CallbackPath         string
+	CallbackQuery        string
+	ServiceID            string
+	RunNumber            int64
+	ExpiresAt            int64
+	OriginHostname       string
+	OriginServiceID      string
+	OriginRunNumber      int64
 }
 
 type PendingPublisherEnrollment struct {
@@ -250,10 +254,10 @@ type ProjectPreview struct {
 	UpdatedAt    int64
 }
 
-type ProjectUrlInventory struct {
+type ProjectServiceInventory struct {
 	ProjectRoot  string
 	ServerOrigin string
-	PublicURLID  string
+	ServiceID    string
 	LastSeenAt   int64
 }
 

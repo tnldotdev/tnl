@@ -173,11 +173,11 @@ func TestNetworkFaultsRejectEmptyPlansBeforeApplying(t *testing.T) {
 		}
 	}
 	h := runtimeHarness{selected: "udp-fallback", plan: map[string][]string{"fault-sources": {"source"}, "fault-destinations": {"destination"}}}
-	if err := h.blackhole(t.Context(), time.Now()); err == nil || !strings.Contains(err.Error(), "requires planned publishers") {
+	if err := h.blackhole(t.Context(), time.Now(), nil); err == nil || !strings.Contains(err.Error(), "requires planned publishers") {
 		t.Fatalf("UDP fallback accepted missing publishers: %v", err)
 	}
 	h = runtimeHarness{selected: "publisher-blackhole", plan: map[string][]string{"fault-sources": {"source"}, "fault-destinations": {"planned-replica"}}}
-	if err := h.blackhole(t.Context(), time.Now()); err == nil || !strings.Contains(err.Error(), "component planned-replica is missing") {
+	if err := h.blackhole(t.Context(), time.Now(), nil); err == nil || !strings.Contains(err.Error(), "component planned-replica is missing") {
 		t.Fatalf("blackhole did not use its planned destination: %v", err)
 	}
 }
@@ -196,5 +196,192 @@ func TestBlackholeEvidenceRequiresDroppedPackets(t *testing.T) {
 	}
 	if err := validateBlackholeCounters("12 0 0 DROP tnl-runtime-fault", 2); err == nil {
 		t.Fatal("accepted missing blackhole rules")
+	}
+}
+
+const publisherDNSFixture = "UNCONN 0 0 127.0.0.11:38881 0.0.0.0:* ino:100 sk:10 cgroup:unreachable:1 <->\n"
+
+func publisherUDPFixture(inode, cookie, pid, fd int) string {
+	return fmt.Sprintf("UNCONN 0 0 *:%d *:* users:((\"runtime.test\",pid=%d,fd=%d)) uid:0 ino:%d sk:%x v6only:0 <->\n",
+		40000+fd, pid, fd, inode, cookie)
+}
+
+func TestParsePublisherUDPRequiresKernelAndProcessOwnership(t *testing.T) {
+	socket := publisherUDPFixture(101, 17, 9, 21)
+	parse := func(output string) []publisherUDPSocket {
+		t.Helper()
+		sockets, err := parsePublisherUDP(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sockets
+	}
+	got := parse(socket + publisherDNSFixture)
+	want := []publisherUDPSocket{
+		{Address: "127.0.0.11:38881", Inode: 100, Cookie: 16},
+		{Address: "*:40021", Inode: 101, Cookie: 17, PID: 9, FD: 21},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("UDP identities=%+v, want %+v", got, want)
+	}
+	for _, host := range []string{"0.0.0.0", "[::]"} {
+		parse(strings.Replace(socket, "*:40021", host+":40021", 1))
+	}
+	for _, test := range []struct{ name, output string }{
+		{"stderr is not socket evidence", "Failed to open cgroup2 by ID\n" + socket},
+		{"short row", "UNCONN 0 0 *:40021 *:*"},
+		{"queue", strings.Replace(socket, "UNCONN 0 0", "UNCONN invalid 0", 1)},
+		{"connected attempt", strings.Replace(socket, "UNCONN", "ESTAB", 1)},
+		{"remote peer", strings.Replace(socket, "*:*", "192.0.2.1:443", 1)},
+		{"unexpected local address", strings.Replace(socket, "*:40021", "192.0.2.1:40021", 1)},
+		{"missing owner", strings.Replace(socket, `users:(("runtime.test",pid=9,fd=21)) `, "", 1)},
+		{"different owner", strings.Replace(socket, "runtime.test", "unrelated", 1)},
+		{"multiple owners", strings.Replace(socket, `fd=21))`, `fd=21),("other",pid=10,fd=22))`, 1)},
+		{"invalid process", strings.Replace(socket, "pid=9", "pid=0", 1)},
+		{"overflow process", strings.Replace(socket, "pid=9", "pid=18446744073709551616", 1)},
+		{"missing inode", strings.Replace(socket, "ino:101 ", "", 1)},
+		{"missing cookie", strings.Replace(socket, "sk:11 ", "", 1)},
+		{"invalid inode", strings.Replace(socket, "ino:101", "ino:invalid", 1)},
+		{"invalid cookie", strings.Replace(socket, "sk:11", "sk:invalid", 1)},
+		{"zero inode", strings.Replace(socket, "ino:101", "ino:0", 1)},
+		{"zero cookie", strings.Replace(socket, "sk:11", "sk:0", 1)},
+		{"duplicate metadata", strings.Replace(socket, "ino:101", "ino:101 ino:102", 1)},
+		{"duplicate row", socket + socket},
+		{"duplicate inode", socket + publisherUDPFixture(101, 18, 9, 22)},
+		{"duplicate cookie", socket + publisherUDPFixture(102, 17, 9, 22)},
+		{"DNS address is not an owner exemption", strings.Replace(socket, "*:40021", "127.0.0.11:40021", 1)},
+		{"unowned wildcard", strings.Replace(publisherDNSFixture, "127.0.0.11:38881", "*:38881", 1)},
+		{"invalid port", strings.Replace(socket, "*:40021", "*:65536", 1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := parsePublisherUDP(test.output); err == nil {
+				t.Fatalf("accepted invalid socket evidence: %q", test.output)
+			}
+		})
+	}
+}
+
+func TestPublisherUDPBoundsFollowPlannedPublicationOwnership(t *testing.T) {
+	plan := map[string][]string{
+		"publishers":                   {"selected", "selected-2"},
+		"fault-sources":                {"selected", "selected-2"},
+		"fault-destinations":           {"relay"},
+		"publisher-indexes.selected":   {"0", "1", "8", "9"},
+		"publisher-indexes.selected-2": {"2"},
+		"publisher-indexes.unused":     {"3", "4"},
+	}
+	counts, err := publisherUDPSocketCounts(plan)
+	if err != nil || !reflect.DeepEqual(counts, map[string]int{"selected": 8, "selected-2": 2}) {
+		t.Fatalf("socket bounds=%v error=%v", counts, err)
+	}
+	for _, plan := range []map[string][]string{
+		nil,
+		{"publishers": {"selected"}},
+		{"publishers": {"selected", "selected"}, "publisher-indexes.selected": {"0"}},
+		{"publishers": {"selected"}, "publisher-indexes.selected": {"invalid"}},
+		{"publishers": {"selected"}, "publisher-indexes.selected": {"-1"}},
+		{"publishers": {"selected"}, "publisher-indexes.selected": {"0", "0"}},
+		{"publishers": {"selected", "selected-2"}, "publisher-indexes.selected": {"0"}, "publisher-indexes.selected-2": {"0"}},
+	} {
+		if _, err := publisherUDPSocketCounts(plan); err == nil {
+			t.Fatalf("accepted missing or ambiguous publication ownership: %v", plan)
+		}
+	}
+	h := runtimeHarness{selected: "udp-fallback", plan: plan}
+	if err := h.blackhole(t.Context(), time.Now(), nil); err == nil || !strings.Contains(err.Error(), "socket lifecycle proof") {
+		t.Fatalf("UDP blackhole accepted missing lifecycle proof: %v", err)
+	}
+}
+
+func TestPublisherUDPLifecycleRejectsAttemptsReplacementAndShutdownLeaks(t *testing.T) {
+	parse := func(output string) []publisherUDPSocket {
+		t.Helper()
+		sockets, err := parsePublisherUDP(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sockets
+	}
+	baseline := parse(publisherDNSFixture)
+	liveOutput := publisherDNSFixture + publisherUDPFixture(101, 17, 9, 21) + publisherUDPFixture(102, 18, 9, 22)
+	live := parse(liveOutput)
+	for _, phase := range []struct {
+		name                string
+		sockets, identities []publisherUDPSocket
+		expected            int
+	}{
+		{"before-publication", baseline, nil, 0},
+		{"fallback", live, nil, 2},
+		{"before-restoration", live, live, 2},
+		{"recovered", live, live, 2},
+		{"closed", baseline, baseline, 0},
+	} {
+		if err := validatePublisherUDP(phase.sockets, baseline, phase.identities, phase.expected); err != nil {
+			t.Fatalf("%s rejected the bounded lifecycle: %v", phase.name, err)
+		}
+	}
+	for _, test := range []struct {
+		name, output string
+		expected     int
+		identities   []publisherUDPSocket
+	}{
+		{"abandoned attempt at fallback", liveOutput + publisherUDPFixture(103, 19, 9, 23), 2, nil},
+		{"missing run socket", publisherDNSFixture + publisherUDPFixture(101, 17, 9, 21), 2, nil},
+		{"accumulated attempt during fallback", liveOutput + publisherUDPFixture(103, 19, 9, 23), 2, live},
+		{"accumulated attempt after recovery", liveOutput + publisherUDPFixture(104, 20, 9, 24), 2, live},
+		{"same count replaced inode", strings.Replace(liveOutput, "ino:101", "ino:103", 1), 2, live},
+		{"same count replaced cookie", strings.Replace(liveOutput, "sk:11", "sk:13", 1), 2, live},
+		{"same count replaced fd", strings.Replace(liveOutput, "fd=21", "fd=23", 1), 2, live},
+		{"same count replaced port", strings.Replace(liveOutput, "*:40021", "*:40023", 1), 2, live},
+		{"same count restarted process", strings.ReplaceAll(liveOutput, "pid=9", "pid=10"), 2, live},
+		{"multiple processes", strings.Replace(liveOutput, "pid=9", "pid=10", 1), 2, nil},
+		{"DNS identity changed", strings.Replace(liveOutput, "ino:100", "ino:104", 1), 2, live},
+		{"extra DNS socket", liveOutput + strings.ReplaceAll(strings.ReplaceAll(publisherDNSFixture, "ino:100", "ino:104"), "sk:10", "sk:14"), 2, nil},
+		{"live socket after joined shutdown", publisherDNSFixture + publisherUDPFixture(101, 17, 9, 21), 0, baseline},
+		{"new attempt after joined shutdown", publisherDNSFixture + publisherUDPFixture(104, 20, 9, 24), 0, baseline},
+		{"socket before publication", liveOutput, 0, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validatePublisherUDP(parse(test.output), baseline, test.identities, test.expected); err == nil {
+				t.Fatal("accepted a missing, replaced, or leaked socket")
+			}
+		})
+	}
+}
+
+func TestUDPFallbackCompletionRequiresRecoveryAndJoinedShutdownProofs(t *testing.T) {
+	want := []string{
+		"wait:udp.recovered", "check:recovered", "signal:udp.recovery-checked",
+		"wait:udp.publishers-joined", "check:closed", "signal:udp.closed",
+	}
+	for failAt := -1; failAt < len(want); failAt++ {
+		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
+			failure := errors.New("lifecycle evidence failed")
+			var calls []string
+			record := func(operation, name string) error {
+				calls = append(calls, operation+":"+name)
+				if len(calls)-1 == failAt {
+					return failure
+				}
+				return nil
+			}
+			err := finishUDPFallback(
+				func(name string) error { return record("wait", name) },
+				func(name string) error { return record("check", name) },
+				func(name string) error { return record("signal", name) },
+			)
+			expected := want
+			if failAt >= 0 {
+				expected = want[:failAt+1]
+				if !errors.Is(err, failure) {
+					t.Fatalf("lost lifecycle failure: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(calls, expected) {
+				t.Fatalf("completion order=%v, want=%v", calls, expected)
+			}
+		})
 	}
 }

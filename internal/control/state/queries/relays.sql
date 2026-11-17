@@ -45,7 +45,8 @@ INSERT INTO control.relay_leases (
     stream_capacity,
     registered_at,
     renewed_at,
-    lease_expires_at
+    lease_expires_at,
+    serving_until
 )
 SELECT
     sqlc.arg(region),
@@ -61,7 +62,8 @@ SELECT
     sqlc.arg(stream_capacity),
     sqlc.arg(registered_at),
     sqlc.arg(renewed_at),
-    sqlc.arg(lease_expires_at)
+    sqlc.arg(lease_expires_at),
+    sqlc.arg(serving_until)
 FROM relay_service
 ON CONFLICT (relay_id) DO UPDATE SET
     region = EXCLUDED.region,
@@ -69,7 +71,7 @@ ON CONFLICT (relay_id) DO UPDATE SET
     relay_run_id = EXCLUDED.relay_run_id,
     relay_lease_revision = CASE
         WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
-         AND control.relay_leases.lease_expires_at > EXCLUDED.registered_at
+         AND control.relay_leases.serving_until > EXCLUDED.registered_at
             THEN control.relay_leases.relay_lease_revision
         ELSE control.relay_leases.relay_lease_revision + 1
     END,
@@ -81,31 +83,31 @@ ON CONFLICT (relay_id) DO UPDATE SET
     stream_capacity = EXCLUDED.stream_capacity,
     reported_connections = CASE
         WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
-         AND control.relay_leases.lease_expires_at > EXCLUDED.registered_at
+         AND control.relay_leases.serving_until > EXCLUDED.registered_at
             THEN control.relay_leases.reported_connections
         ELSE 0
     END,
     reported_streams = CASE
         WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
-         AND control.relay_leases.lease_expires_at > EXCLUDED.registered_at
+         AND control.relay_leases.serving_until > EXCLUDED.registered_at
             THEN control.relay_leases.reported_streams
         ELSE 0
     END,
     draining = CASE
         WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
-         AND control.relay_leases.lease_expires_at > EXCLUDED.registered_at
+         AND control.relay_leases.serving_until > EXCLUDED.registered_at
             THEN control.relay_leases.draining
         ELSE false
     END,
     drain_deadline = CASE
         WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
-         AND control.relay_leases.lease_expires_at > EXCLUDED.registered_at
+         AND control.relay_leases.serving_until > EXCLUDED.registered_at
             THEN control.relay_leases.drain_deadline
         ELSE NULL
     END,
     registered_at = CASE
         WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
-         AND control.relay_leases.lease_expires_at > EXCLUDED.registered_at
+         AND control.relay_leases.serving_until > EXCLUDED.registered_at
             THEN control.relay_leases.registered_at
         ELSE EXCLUDED.registered_at
     END,
@@ -116,6 +118,8 @@ ON CONFLICT (relay_id) DO UPDATE SET
             THEN control.relay_leases.renewed_at
         ELSE EXCLUDED.renewed_at
     END,
+    serving_until = CASE WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id AND control.relay_leases.draining
+        THEN control.relay_leases.serving_until ELSE EXCLUDED.serving_until END,
     lease_expires_at = CASE
         WHEN control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
          AND control.relay_leases.lease_expires_at > EXCLUDED.registered_at
@@ -124,6 +128,7 @@ ON CONFLICT (relay_id) DO UPDATE SET
         ELSE EXCLUDED.lease_expires_at
     END
 WHERE ((control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
+    AND control.relay_leases.serving_until > EXCLUDED.registered_at
     AND control.relay_leases.region = EXCLUDED.region
     AND control.relay_leases.peer_signing_public_key IS NOT DISTINCT FROM EXCLUDED.peer_signing_public_key)
     OR (control.relay_leases.relay_run_id <> EXCLUDED.relay_run_id
@@ -146,12 +151,13 @@ UPDATE control.relay_leases AS leases
 SET reported_connections = sqlc.arg(reported_connections),
     reported_streams = sqlc.arg(reported_streams),
     renewed_at = sqlc.arg(renewed_at),
+    serving_until = sqlc.arg(serving_until),
     lease_expires_at = sqlc.arg(lease_expires_at)
 WHERE leases.relay_service_id = sqlc.arg(relay_service_id)
   AND leases.relay_id = sqlc.arg(relay_id)
   AND leases.relay_run_id = sqlc.arg(relay_run_id)
   AND leases.relay_lease_revision = sqlc.arg(relay_lease_revision)
-  AND leases.lease_expires_at > sqlc.arg(renewed_at)
+   AND leases.serving_until > sqlc.arg(renewed_at)
   AND NOT leases.draining
 RETURNING leases.*
 ), relay_lease AS (
@@ -248,16 +254,15 @@ FOR KEY SHARE OF leases;
 
 -- name: CountRelayActiveConnections :one
 SELECT count(*)
-FROM control.publisher_service_connection_slots
-WHERE connected_relay_id = sqlc.arg(relay_id)
-  AND connected_relay_run_id = sqlc.arg(relay_run_id)
-  AND connected_relay_lease_revision = sqlc.arg(relay_lease_revision)
+FROM control.service_connection_slots
+WHERE relay_id = sqlc.arg(relay_id)
+  AND relay_run_id = sqlc.arg(relay_run_id)
+  AND relay_lease_revision = sqlc.arg(relay_lease_revision)
   AND session_open
   AND state IN ('connected', 'ready', 'draining');
 
--- callers hold the affected public URL and existing publish run rows, or the
--- affected service and existing service run rows. take the assignment-total
--- guard before relay service guards and lease rows; lock every relay service
+-- callers hold the affected service and existing service run rows. take the
+-- assignment-total guard before relay service guards and lease rows; lock every relay service
 -- before checking capacity or locking leases.
 -- name: LockRelayServicesForPlacement :many
 WITH assignment_guard AS MATERIALIZED (
@@ -300,12 +305,12 @@ WHERE services.relay_service_id = sqlc.arg(relay_service_id)
 FOR UPDATE OF services;
 
 -- diagnostic/test oracle only; placement reads trigger-maintained totals.
--- name: CountOpenPublishRunAssignmentsByRelayService :many
+-- name: CountOpenServiceRunAssignmentsByRelayService :many
 SELECT connections.relay_service_id,
     count(*) AS assignment_count
-FROM control.publish_run_connection_slots AS connections
-JOIN control.publish_runs AS sessions ON sessions.id = connections.publish_run_id
-WHERE sessions.closed_at IS NULL
+FROM control.service_connection_slots AS connections
+JOIN control.service_runs AS sessions ON sessions.id = connections.service_run_id
+WHERE sessions.closed_at IS NULL AND connections.session_open
   AND connections.state IN ('assigned', 'connected', 'ready', 'draining')
 GROUP BY connections.relay_service_id;
 

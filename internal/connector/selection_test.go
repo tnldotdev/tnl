@@ -93,9 +93,12 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 					if test.corrupt {
 						worktree = "other-worktree"
 					}
-					_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "orders", WorktreeKey: worktree, ServiceKind: controlv1.LocalProjectServiceServiceKindService, ServiceId: "svc_bound", Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP}})
+					_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "orders", WorktreeKey: worktree, ServiceId: "svc_bound", Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP}})
 				case "/v1/visitor/services":
 					inventory++
+					if r.URL.Query().Get("access_path") != "connector" {
+						t.Error("native selection requested public endpoint discovery")
+					}
 					services := []controlv1.ServiceSummary{{Id: "svc_unrelated", Name: "orders", TeamId: "team_one"}, {Id: "svc_alias", Name: alias, TeamId: "team_one"}, {Id: "svc_remote", Name: group, TeamId: "team_one"}, {Id: "svc_worktree_b", Name: "orders-other-worktree", TeamId: "team_one"}, {Id: "svc_spoof", Name: "svc_bound", TeamId: "team_one"}}
 					if !test.omitID {
 						services = append(services, controlv1.ServiceSummary{Id: "svc_bound", Name: "database-scoped", TeamId: "team_one"})
@@ -137,8 +140,12 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 			if local && lookup != 1 || !local && lookup != 0 || local && (test.status != 0 || test.corrupt) && inventory != 0 {
 				t.Fatalf("unexpected lookup/inventory calls: %d/%d", lookup, inventory)
 			}
-			if remote && (remoteLookup != 1 || inventory != 0) || !remote && remoteLookup != 0 {
-				t.Fatalf("applied selection fell back to friendly inventory: %d/%d", remoteLookup, inventory)
+			expectedRemoteInventory := 0
+			if remote && test.status == 0 {
+				expectedRemoteInventory = 1
+			}
+			if remote && (remoteLookup != 1 || inventory != expectedRemoteInventory) || !remote && remoteLookup != 0 {
+				t.Fatalf("applied selection did not retain its exact source-bound native identity: %d/%d", remoteLookup, inventory)
 			}
 		})
 	}
@@ -150,18 +157,18 @@ func TestConnectConfiguredNameCollisionIsRejected(t *testing.T) {
 	if _, err := ConfiguredService(project.Project, name); err == nil {
 		t.Fatal("key/override collision selected an arbitrary declaration")
 	}
-	project.Config.Services["orders"] = config.Service{Tunnel: &config.Tunnel{}}
+	project.Config.Services["orders"] = config.Service{Public: new(true)}
 	if _, err := ConfiguredService(project.Project, name); err == nil {
 		t.Fatal("override overlapping a public service key selected another declaration")
 	}
 	delete(project.Config.Services, "other")
-	if _, err := ConfiguredService(project.Project, name); err == nil {
-		t.Fatal("public service key fell back to another project's friendly name")
+	if selected, err := ConfiguredService(project.Project, name); err != nil || selected != name {
+		t.Fatal("public service key did not select its configured service", selected, err)
 	}
 	project.Config.Deployment = "production"
-	project.Config.Services["orders"] = config.Service{Tunnel: &config.Tunnel{}}
+	project.Config.Services["orders"] = config.Service{Public: new(true), HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}}
 	if selected, err := ConfiguredService(project.Project, name); err != nil || selected != name {
-		t.Fatal("named service HTTP policy was mistaken for a public URL", err)
+		t.Fatal("HTTP visitor policy changed the selected service", err)
 	}
 	definition, ok := failure.DefinitionFor(failure.LocalServiceUnavailable)
 	if !ok || !strings.Contains(definition.Action, "tnl publish") || definition.Retry != failure.RetryAfterChange {

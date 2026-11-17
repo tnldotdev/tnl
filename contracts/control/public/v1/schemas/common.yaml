@@ -8,11 +8,6 @@ securitySchemes:
     scheme: bearer
     bearerFormat: tnl access token
     description: "Access token for a signed-in control session."
-  publishRunAuth:
-    type: http
-    scheme: bearer
-    bearerFormat: tnl publish-run token
-    description: "Token for one public URL publish run, returned when the run is created."
   serviceRunAuth:
     type: http
     scheme: bearer
@@ -67,19 +62,6 @@ parameters:
     required: true
     schema:
       $ref: "../openapi.yaml#/components/schemas/TeamID"
-  CanonicalHostnameQuery:
-    name: canonical_hostname
-    in: query
-    required: false
-    description: Exact canonical hostname within the selected team. Returns zero or one non-deleted public URL with no next cursor. Cannot be combined with cursor.
-    schema:
-      $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
-  PublicURLID:
-    name: public_url_id
-    in: path
-    required: true
-    schema:
-      $ref: "../openapi.yaml#/components/schemas/PublicURLID"
   PreviewID:
     name: preview_id
     in: path
@@ -106,12 +88,6 @@ parameters:
       type: string
       pattern: "^[0-9]+$"
       x-go-type: int64
-  PublishRunID:
-    name: publish_run_id
-    in: path
-    required: true
-    schema:
-      $ref: "../openapi.yaml#/components/schemas/PublishRunID"
   IssuanceID:
     name: issuance_id
     in: path
@@ -184,10 +160,10 @@ schemas:
     type: object
     additionalProperties: false
     required: [hostname, port, public]
-    description: Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+    description: Control-owned service TLS identity. HTTP uses shared port 443 without an exclusive ingress reservation, including when public access is disabled. Other protocols use zero when no public ingress port is reserved; an allocated port remains reserved during temporary disablement. Only public enables ingress access. This port is never a machine-local connector port. Target trust is a separate publisher-side boundary.
     properties:
       hostname: { type: string, minLength: 1, maxLength: 253 }
-      port: { type: integer, minimum: 1024, maximum: 65535 }
+      port: { type: integer, minimum: 0, maximum: 65535 }
       public: { type: boolean }
   WebhookProvider:
     type: string
@@ -253,7 +229,7 @@ schemas:
   TrafficSelection:
     type: object
     additionalProperties: false
-    description: Explicit encrypted visitor traffic limits, resolved once against operator defaults and ceilings when the publish run is created. Omitted values use operator defaults. Zero totals mean unlimited.
+    description: Explicit encrypted public endpoint traffic limits, resolved once against operator defaults and ceilings when the service run is prepared. Omitted values use operator defaults. Zero totals mean unlimited.
     properties:
       connections:
         type: integer
@@ -296,6 +272,51 @@ schemas:
         type: integer
         format: int64
         minimum: 0
+  TrafficLimits:
+    type: object
+    additionalProperties: false
+    description: Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
+    required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
+    properties:
+      connections:
+        type: integer
+        minimum: 1
+        maximum: 1048576
+      rate:
+        type: integer
+        minimum: 1
+        maximum: 2147483648
+      rate_per_ns:
+        type: integer
+        format: int64
+        minimum: 1000000
+        maximum: 86400000000000
+      burst:
+        type: integer
+        minimum: 1
+        maximum: 2147483648
+      upload_bytes:
+        type: integer
+        format: int64
+        minimum: 65536
+        maximum: 1099511627776
+      download_bytes:
+        type: integer
+        format: int64
+        minimum: 65536
+        maximum: 1099511627776
+      total_connections:
+        type: integer
+        format: int64
+        minimum: 1
+      total_upload_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+      total_download_bytes:
+        type: integer
+        format: int64
+        minimum: 1
   ConnectionAssignment:
     type: object
     additionalProperties: false
@@ -342,6 +363,49 @@ schemas:
         format: date-time
       state:
         $ref: "../openapi.yaml#/components/schemas/PublisherConnectionState"
+  PublisherConnectionID:
+    $ref: "../openapi.yaml#/components/schemas/ResourceID"
+  PublisherConnectionState:
+    type: string
+    enum: [assigned, connected, ready, replacing]
+  CertificatePlan:
+    type: object
+    additionalProperties: false
+    required: [cache_key, scope, identifiers, challenge_method]
+    properties:
+      cache_key:
+        type: string
+        minLength: 1
+        maxLength: 256
+      scope:
+        type: string
+        minLength: 1
+        maxLength: 256
+      identifiers:
+        type: array
+        minItems: 1
+        maxItems: 2
+        uniqueItems: true
+        items:
+          type: string
+          minLength: 1
+          maxLength: 253
+          pattern: "^(?:\\*\\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+      challenge_method:
+        $ref: "../openapi.yaml#/components/schemas/CertificateChallengeMethod"
+  CertificateIssuanceState:
+    type: string
+    enum:
+      [
+        pending,
+        authorizing,
+        ready_to_finalize,
+        finalizing,
+        waiting_for_install,
+        installed,
+        failed,
+        canceled,
+      ]
   ProblemCode:
     type: string
     enum:
@@ -363,7 +427,6 @@ schemas:
         unavailable,
         internal,
         name_unavailable,
-        publish_run_open,
         policy_revision_stale,
         dns_setup_pending,
         placement_unavailable,
@@ -398,4 +461,12 @@ schemas:
         format: date-time
       details:
         type: object
+        description: >-
+          Optional code-specific diagnostic fields. A not_found problem with HTTP
+          status 404 may include allowed_namespace, a canonical ASCII hostname of
+          at most 253 bytes from the current actor's authorized namespace. It is
+          omitted after membership loss and when the namespace denial includes
+          an independent fault. It never identifies the rejected hostname's owner
+          or whether a foreign service exists. Clients must validate this field
+          before displaying it and ignore unknown detail keys.
         additionalProperties: true

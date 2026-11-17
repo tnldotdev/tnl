@@ -7,6 +7,7 @@ import ipaddress
 import os
 import re
 import ssl
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -149,6 +150,8 @@ class Deployment:
         self._closing: asyncio.Task[None] | None = None
         self._publications: set[Publication] = set()
         self._publication_tasks: set[asyncio.Task[Publication]] = set()
+        self._shutdown_until: float | None = None
+        self._native_shutdown_until: float | None = None
 
     def __repr__(self) -> str:
         return "<tnl deployment (private)>"
@@ -228,6 +231,8 @@ class Deployment:
             name,
             "--protocol",
             protocol,
+            deadline=self._native_shutdown_until,
+            interrupted=lambda: self._closed,
         )
         value = _object(
             raw,
@@ -376,6 +381,7 @@ class Deployment:
                 on_close=self._publications.discard,
                 on_start=self._publications.add,
                 environment=self._environment,
+                shutdown_deadline=lambda: self._shutdown_until,
             )
             if self._closed:
                 await publication.aclose()
@@ -416,7 +422,17 @@ class Deployment:
             self._factories.discard(factory)
 
         factory = _Factory(
-            lambda: self._acquire(name), create=create, close=close, on_closed=retired
+            lambda: self._acquire(name),
+            create=create,
+            close=close,
+            on_closed=retired,
+            shutdown_deadline=lambda: self._shutdown_until,
+            acquisition_stopped=lambda error: (
+                self._closed
+                and isinstance(error, TnlError)
+                and error.code == "sdk.connection_closed"
+                and error.__cause__ is None
+            ),
         )
         self._factories.add(factory)
         return factory
@@ -425,9 +441,28 @@ class Deployment:
         if self._pid != os.getpid():
             return
         self._closed = True
+        if self._shutdown_until is None:
+            self._shutdown_until = asyncio.get_running_loop().time() + 10
+        if self._native_shutdown_until is None:
+            remaining = max(0, self._shutdown_until - asyncio.get_running_loop().time())
+            self._native_shutdown_until = time.monotonic() + remaining
 
         async def cleanup() -> None:
             failures: list[BaseException] = []
+            assert self._native_shutdown_until is not None
+            native_until = self._native_shutdown_until
+            # fence every publication and start native retirement before waiting
+            # for a factory, late selection, or a single remote cleanup response.
+            publications = tuple(self._publications)
+            publication_stops = [asyncio.create_task(value.aclose()) for value in publications]
+            acquisition_stops = [
+                asyncio.create_task(value.aclose(native_until))
+                for value in self._acquisitions.values()
+            ]
+            scope_stop = asyncio.create_task(asyncio.to_thread(self._scope.stop, native_until))
+            factory_stops = [
+                asyncio.create_task(value.aclose()) for value in tuple(self._factories)
+            ]
             publication_tasks = tuple(self._publication_tasks)
             for work in publication_tasks:
                 work.cancel()
@@ -439,17 +474,6 @@ class Deployment:
                 and not isinstance(value, asyncio.CancelledError)
                 and not (isinstance(value, TnlError) and value.code == "sdk.connection_closed")
             )
-            for publication in tuple(self._publications):
-                try:
-                    await publication.aclose()
-                except BaseException as error:
-                    failures.append(error)
-                if publication._close_complete:
-                    try:
-                        await publication.wait()
-                    except BaseException as error:
-                        if error not in failures:
-                            failures.append(error)
             operations = tuple(self._pending)
             pending = await asyncio.gather(*operations, return_exceptions=True)
             self._pending.difference_update(operations)
@@ -459,22 +483,23 @@ class Deployment:
                 if isinstance(value, BaseException)
                 and not (isinstance(value, TnlError) and value.code == "sdk.connection_closed")
             )
-            for factory in tuple(self._factories):
-                try:
-                    await factory.aclose()
-                except BaseException as error:
-                    failures.append(error)
-                else:
-                    self._factories.discard(factory)
-            for acquisition in self._acquisitions.values():
-                try:
-                    await acquisition.aclose()
-                except BaseException as error:
-                    failures.append(error)
-            try:
-                await asyncio.to_thread(self._scope.stop)
-            except BaseException as error:
-                failures.append(error)
+            results = await asyncio.gather(
+                *publication_stops,
+                *factory_stops,
+                *acquisition_stops,
+                scope_stop,
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException) and result not in failures:
+                    failures.append(result)
+            for publication in publications:
+                if publication._close_complete:
+                    try:
+                        await publication.wait()
+                    except BaseException as error:
+                        if error not in failures:
+                            failures.append(error)
             if failures:
                 raise BaseExceptionGroup("deployment cleanup failed", failures)
 

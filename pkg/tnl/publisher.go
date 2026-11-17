@@ -3,7 +3,6 @@ package tnl
 import (
 	"context"
 	"errors"
-	"net/http"
 	"os"
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
@@ -105,7 +104,11 @@ func preparePublisher(ctx context.Context, options Options) (*clientstate.Databa
 	if err != nil {
 		return fail(err)
 	}
-	control, authority, err := publisherClients(server, options.HTTPClient)
+	control, err := clientcontrol.New(server, options.HTTPClient, "")
+	if err != nil {
+		return fail(err)
+	}
+	authority, err := clientauthority.New(server, options.HTTPClient, "")
 	if err != nil {
 		return fail(err)
 	}
@@ -113,7 +116,7 @@ func preparePublisher(ctx context.Context, options Options) (*clientstate.Databa
 	if options.PublisherIdentity != nil {
 		selectedIdentity = options.PublisherIdentity.value
 	}
-	native, err := publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, server, "", "", "", options.PublisherCredentialFile, options.EnrollmentKey, options.PublisherIdentityID, selectedIdentity)
+	native, err := publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{Services: control, Allocations: control}, authority, server, "", "", "", options.PublisherCredentialFile, options.EnrollmentKey, options.PublisherIdentityID, selectedIdentity)
 	if err != nil {
 		return fail(err)
 	}
@@ -121,13 +124,4 @@ func preparePublisher(ctx context.Context, options Options) (*clientstate.Databa
 		return fail(err)
 	}
 	return database, profile, server, native, nil
-}
-
-func publisherClients(server string, httpClient *http.Client) (*clientcontrol.Client, *clientauthority.Client, error) {
-	control, err := clientcontrol.New(server, httpClient, "")
-	if err != nil {
-		return nil, nil, err
-	}
-	authority, err := clientauthority.New(server, httpClient, "")
-	return control, authority, err
 }

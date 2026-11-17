@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,11 +17,9 @@ import (
 
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -34,13 +31,13 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 	for _, standalone := range []bool{false, true} {
 		t.Run(map[bool]string{false: "split", true: "standalone"}[standalone], func(t *testing.T) {
 			f := newServiceRuntimeFixtureTiming(t, standalone, nil, false)
-			var publicServiceIngress *ingress.PublicServices
+			var publicServiceIngress *ingress.Server
 			if !standalone {
 				process := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
-				publicServiceIngress = process.ingresses[0].publicServices
+				publicServiceIngress = process.ingresses[0].server
 				startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 			} else {
-				publicServiceIngress = f.composed.ingresses[0].publicServices
+				publicServiceIngress = f.composed.ingresses[0].server
 			}
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/once" {
@@ -55,7 +52,16 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			projectLabel := "storefront"
 			protocol := controlv1.ServiceProtocolHTTP
 			targetAddress := strings.TrimPrefix(target.URL, "http://")
-			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, Source: &testProjectSource, ProjectLabel: &projectLabel, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: targetAddress}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, Source: &testProjectSource, ProjectLabel: &projectLabel, Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: targetAddress, Public: new(true)}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// retain the shared HTTP endpoint identity while starting privately.
+			// enablement below must not replace the active run.
+			binding := applied.Configuration.Services["api"]
+			binding.Public = new(false)
+			applied.Configuration.Services["api"] = binding
+			applied, err = f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: applied.ServiceDeclarations, TeamId: f.identity.teamID, Source: &testProjectSource, ExpectedRevision: applied.Revision, Configuration: applied.Configuration})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -71,7 +77,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			owner, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
+			owner, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{Services: f.identity.routes, Runtime: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -88,15 +94,15 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if service.Endpoint == nil || applied.Services[0].Hostname == nil || *applied.Services[0].Hostname != service.Endpoint.Hostname {
-				t.Fatal("missing managed TLS metadata", service)
+			if service.Endpoint == nil || applied.Services[0].Hostname == nil || *applied.Services[0].Hostname != service.Endpoint.Hostname || service.Endpoint.Port == 0 || service.Endpoint.Public {
+				t.Fatal("missing private TLS metadata or retained public reservation", service)
 			}
 			identity := authorityv1.PublisherEnrollmentResult{ClientId: member.PublisherIdentityId, KeyId: member.KeyId, TeamId: member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.Service, ServiceId: &assignment.ServiceId}
 			quic, tcp := f.connectors()
 			publisherCtx, stopPublisher := context.WithCancel(t.Context())
 			publisherReady, publisherDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				publisherDone <- publisherservice.Publish(publisherCtx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: targetAddress, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, RelayQUIC: quic, RelayTCP: tcp})
+				publisherDone <- publisherservice.Publish(publisherCtx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: targetAddress, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 			}()
 			t.Cleanup(func() {
 				stopPublisher()
@@ -171,7 +177,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil || response.StatusCode != http.StatusOK || string(body) != "native TLS reaches the publisher" {
 				t.Fatal(response.StatusCode, string(body), err)
 			}
-			// arrivals use prepared permission, not a control RPC. revocation must
+			// connector arrivals use prepared permission, not a control RPC. revocation must
 			// terminate this owner on its background refresh within the existing
 			// client request budget, without an application client certificate.
 			device, err := production.ConnectorSigner(t.Context(), person.Identity.Id)
@@ -208,44 +214,11 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 	}
 }
 
-func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.PublicServices, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device string) {
+func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, server *ingress.Server, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device string) {
 	t.Helper()
 	ctx := t.Context()
 	material := issueServiceClientCertificate(t, f, service.Id, device)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
-	if err != nil {
-		_ = listener.Close()
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve() }()
-	t.Cleanup(func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = server.Drain(cleanup)
-		if err := <-done; err != nil {
-			t.Error(err)
-		}
-	})
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: f.visitorRoots.RootCAs, ServerName: service.Endpoint.Hostname, MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{material}}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		connection, err := (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
-		if err != nil {
-			return nil, err
-		}
-		header, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.44:4242"), Destination: netip.AddrPortFrom(netip.MustParseAddr("203.0.113.10"), uint16(service.Endpoint.Port))})
-		if err == nil {
-			_, err = connection.Write(header)
-		}
-		if err != nil {
-			_ = connection.Close()
-			return nil, err
-		}
-		return connection, nil
-	}}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: f.visitorRoots.RootCAs, ServerName: service.Endpoint.Hostname, MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{material}}, DialContext: workloadPublicEndpointDialer(t, server, service.Endpoint.Port)}
 	t.Cleanup(transport.CloseIdleConnections)
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	endpoint := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port)) + "/once"
@@ -261,21 +234,63 @@ func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, con
 	assertDenied()
 	setPublic := func(public bool) {
 		t.Helper()
-		applied.Configuration.Settings.Public = &public
+		binding := applied.Configuration.Services["api"]
+		binding.Public = &public
+		applied.Configuration.Services["api"] = binding
 		result, err := f.identity.routes.ApplyProjectConfiguration(ctx, "managed-runtime", controlv1.ApplyProjectConfigurationRequest{Deployment: applied.Deployment, ServiceDeclarations: applied.ServiceDeclarations, TeamId: f.identity.teamID, Source: &testProjectSource, ExpectedRevision: applied.Revision, Configuration: applied.Configuration})
 		if err != nil {
 			t.Fatal(err)
 		}
 		applied = result
+		var committed time.Time
+		if err := f.inspect.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&committed); err != nil {
+			t.Fatal(err)
+		}
+		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+			return !server.RoutingObservedAt().Before(committed), nil
+		})
 	}
 	setPublic(true)
-	response, err := client.Post(endpoint, "text/plain", strings.NewReader("service HTTP certificate"))
+	// exposure changed the policy revision. the earlier certificate cannot
+	// authorize requests with its superseded embedded visitor permission.
+	response, err := client.Get(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, readErr := io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || response.StatusCode != http.StatusForbidden {
+		t.Fatal("stale certificate retained visitor permission", response.StatusCode, readErr)
+	}
+	transport.CloseIdleConnections()
+	currentTLS := transport.TLSClientConfig.Clone()
+	currentTLS.Certificates = []tls.Certificate{issueServiceClientCertificate(t, f, service.Id, device)}
+	transport = &http.Transport{TLSClientConfig: currentTLS, DialContext: workloadPublicEndpointDialer(t, server, service.Endpoint.Port)}
+	t.Cleanup(transport.CloseIdleConnections)
+	client.Transport = transport
+	// observe publisher policy installation with side-effect-free reads before
+	// the single application write; a failed POST is never retried.
+	privateWait(t, 10*time.Second, func(ctx context.Context) (bool, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return false, err
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return false, err
+		}
+		defer response.Body.Close()
+		_, err = io.Copy(io.Discard, response.Body)
+		return response.StatusCode == http.StatusOK, err
+	})
+	response, err = client.Post(endpoint, "text/plain", strings.NewReader("service HTTP certificate"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	body, err := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if err != nil || response.StatusCode != http.StatusOK || string(body) != "service HTTP certificate" {
+	if err != nil || response.StatusCode != http.StatusOK || string(body) != "service HTTP certificate" ||
+		response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
 		t.Fatalf("service HTTP default frontend: status=%d body=%q err=%v", response.StatusCode, body, err)
 	}
 	setPublic(false)

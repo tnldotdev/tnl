@@ -49,7 +49,7 @@ func ValidatePrepared(p Prepared, service string) error {
 			return ErrInvalid
 		}
 		if c.Protocol == "http" || c.Protocol == "kubernetes" {
-			if c.URL != endpoint.URL {
+			if c.URL != "https://"+endpoint.Hostname {
 				return ErrInvalid
 			}
 		} else if c.URL != "" {

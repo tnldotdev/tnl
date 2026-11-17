@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 func trafficFixture(t *testing.T) *trafficAdmission {
@@ -29,24 +31,51 @@ func TestRunBucketsSurviveRefreshAndSeparateRuns(t *testing.T) {
 	l.Burst = 1
 	l.Rate = 1
 	l.RatePer = time.Hour
-	key := trafficKey{url: "url", run: 1}
+	key := trafficKey{service: "service", id: "run", run: 1}
 	release, reason := a.acquire(key, l)
 	if release == nil {
 		t.Fatal(reason)
 	}
 	release()
-	if release, reason := a.acquire(key, l); release != nil || reason != "public_url_connection_rate" {
+	if release, reason := a.acquire(key, l); release != nil || reason != "service_connection_rate" {
 		t.Fatal("same run refilled", reason)
 	}
-	if release, reason := a.acquire(trafficKey{url: "url", run: 2}, l); release == nil {
+	if release, reason := a.acquire(trafficKey{service: "service", id: "run-2", run: 2}, l); release == nil {
 		t.Fatal(reason)
 	} else {
 		release()
 	}
-	if release, reason := a.acquire(trafficKey{url: "other", run: 1}, l); release == nil {
+	if release, reason := a.acquire(trafficKey{service: "other", id: "run", run: 1}, l); release == nil {
 		t.Fatal(reason)
 	} else {
 		release()
+	}
+	for _, independent := range []trafficKey{
+		{service: key.service, id: "different-run-id", run: key.run},
+		{service: key.service, id: key.id, run: key.run + 1},
+	} {
+		if release, reason := a.acquire(independent, l); release == nil {
+			t.Fatal("different exact run reused another run's rate bucket", reason)
+		} else {
+			release()
+		}
+	}
+}
+
+func TestRunTrafficApprovalCannotChangeOrRefill(t *testing.T) {
+	a := trafficFixture(t)
+	key := trafficKey{service: "service", id: "run", run: 1}
+	limits := a.config.Default
+	limits.TotalConnections = 1
+	release, _ := a.acquire(key, limits)
+	release()
+	changed := limits
+	changed.TotalConnections = 0
+	if release, reason := a.acquire(key, changed); release != nil || reason != "invalid_traffic_projection" {
+		t.Fatal("changed projection replaced immutable approval", reason)
+	}
+	if release, reason := a.acquire(key, limits); release != nil || reason != "service_connection_total" {
+		t.Fatal("rejected projection reset totals", reason)
 	}
 }
 
@@ -61,7 +90,7 @@ func TestRunConcurrencyAndTotalsAreAtomic(t *testing.T) {
 	releases := make(chan func(), 50)
 	for range 50 {
 		group.Go(func() {
-			if release, _ := a.acquire(trafficKey{url: "url", run: 1}, l); release != nil {
+			if release, _ := a.acquire(trafficKey{service: "service", id: "run", run: 1}, l); release != nil {
 				accepted.Add(1)
 				releases <- release
 			}
@@ -76,7 +105,7 @@ func TestRunConcurrencyAndTotalsAreAtomic(t *testing.T) {
 		release()
 		release()
 	}
-	if release, reason := a.acquire(trafficKey{url: "url", run: 1}, l); release != nil || reason != "public_url_connection_total" {
+	if release, reason := a.acquire(trafficKey{service: "service", id: "run", run: 1}, l); release != nil || reason != "service_connection_total" {
 		t.Fatal(reason)
 	}
 }
@@ -87,7 +116,7 @@ func TestEncryptedBytesTotalsWaitAndCancellation(t *testing.T) {
 		l := a.config.Default
 		l.UploadBytes = 64 << 10
 		l.TotalDownloadBytes = 4
-		key := trafficKey{url: "url", run: 1}
+		key := trafficKey{service: "service", id: "run", run: 1}
 		release, _ := a.acquire(key, l)
 		defer release()
 		if err := a.bytes(t.Context(), key, false, 4, true); err != nil {
@@ -124,14 +153,14 @@ func TestEncryptedBytesTotalsWaitAndCancellation(t *testing.T) {
 func TestSourceAndPendingBudgetsUseIPv6Networks(t *testing.T) {
 	a := trafficFixture(t)
 	a.pending.SourceConnections = 1
-	key := trafficKey{url: "url", run: 1}
+	key := trafficKey{service: "service", id: "run", run: 1}
 	one := netip.MustParseAddr("2001:db8::1")
 	two := netip.MustParseAddr("2001:db8::2")
 	release, reason := a.acquirePending(key, one)
 	if release == nil {
 		t.Fatal(reason)
 	}
-	if r, reason := a.acquirePending(trafficKey{url: "other", run: 1}, two); r != nil || reason != "pending_source_connections" {
+	if r, reason := a.acquirePending(trafficKey{service: "other", id: "run", run: 1}, two); r != nil || reason != "pending_source_connections" {
 		t.Fatal(reason)
 	}
 	release()
@@ -155,18 +184,16 @@ func TestSourceAndPendingBudgetsUseIPv6Networks(t *testing.T) {
 func TestRunTotalsRetireOnlyAfterTrustedRunClosure(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		a := trafficFixture(t)
-		key := trafficKey{url: "url", id: "run", run: 1}
+		key := trafficKey{service: "service", id: "run", run: 1}
 		l := a.config.Default
 		l.TotalConnections = 1
-		terminal := map[TrafficRun]struct{}{}
-		a.terminalRuns = func([]TrafficRun) map[TrafficRun]struct{} { return terminal }
 		release, _ := a.acquire(key, l)
 		release()
 		time.Sleep(3 * time.Minute)
-		if release, reason := a.acquire(key, l); release != nil || reason != "public_url_connection_total" {
+		if release, reason := a.acquire(key, l); release != nil || reason != "service_connection_total" {
 			t.Fatal("refresh reset live totals", reason)
 		}
-		terminal[TrafficRun{PublicURLID: key.url, PublishRunID: key.id, PublishRunNumber: key.run}] = struct{}{}
+		a.retireTerminal([]ingressv1.ServiceRunReference{{ServiceId: key.service, ServiceRunId: key.id, RunNumber: int64(key.run)}})
 		time.Sleep(31 * time.Second)
 		a.mu.Lock()
 		a.prune(time.Now())

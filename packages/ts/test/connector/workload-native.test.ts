@@ -96,7 +96,11 @@ vi.mock("node:child_process", () => ({
     _options: unknown,
     callback: (error: Error | null, value?: string) => void,
   ) {
+    let onClose = () => {};
     return {
+      once(_event: string, done: () => void) {
+        onClose = done;
+      },
       stdin: {
         end(input: string | undefined) {
           const complete = () => {
@@ -106,6 +110,8 @@ vi.mock("node:child_process", () => ({
               callback(null, JSON.stringify(response(args, body)));
             } catch {
               callback(new Error("native operation rejected"));
+            } finally {
+              onClose();
             }
           };
           if (args[2] === "recover" && fixture.dead.size > 0 && ++fixture.recoveries > 1)
@@ -222,7 +228,7 @@ function response(args: string[], input: unknown): unknown {
         ...(metadata.protocol === "tcp"
           ? {}
           : { ssl: { servername: metadata.hostname, rejectUnauthorized: true } }),
-        ...(metadata.url === undefined ? {} : { url: metadata.url }),
+        ...(metadata.url === undefined ? {} : { url: `https://${metadata.hostname}` }),
         ...(metadata.protocol === "kubernetes"
           ? { kubeconfig: "/fixture/kubeconfig", context: "tnl:cluster" }
           : {}),
@@ -257,10 +263,10 @@ function project() {
       protocol,
       hostname: `${name}.example.test`,
       namespace: "example.test",
-      port: 15443,
+      port: protocol === "http" ? 443 : 15443,
       public: false,
       ...(["http", "kubernetes"].includes(protocol)
-        ? { url: `https://${name}.example.test:15443` }
+        ? { url: `https://${name}.example.test${protocol === "http" ? "" : ":15443"}` }
         : {}),
     };
   return { dev: false, namespace: "example.test", services };

@@ -14,7 +14,7 @@ import (
 
 type authBrowserCommand struct {
 	remoteFlags `embed:""`
-	URL         string `arg:"" name:"url" required:"" help:"HTTP public URL ID or hostname to open with your current control session."`
+	URL         string `arg:"" name:"url" required:"" help:"HTTP service ID or public hostname to open with your current control session."`
 }
 
 func runAuthBrowser(ctx context.Context, flags authBrowserCommand, output, diagnostics io.Writer) error {
@@ -23,11 +23,11 @@ func runAuthBrowser(ctx context.Context, flags authBrowserCommand, output, diagn
 		return err
 	}
 	defer s.Close()
-	item, err := resolveVisitorPublicURL(ctx, s, flags.URL)
+	item, err := resolveVisitorService(ctx, s, flags.URL)
 	if err != nil {
 		return err
 	}
-	if item.ServiceProtocol != "http" {
+	if item.Protocol != "http" {
 		return failure.Wrap("select an HTTP public URL", failure.InvalidCommand, errors.New("browser handoff requires an HTTP public URL"))
 	}
 	saved, found, err := s.Store().ControlSession(ctx)
@@ -46,11 +46,11 @@ func runAuthBrowser(ctx context.Context, flags authBrowserCommand, output, diagn
 		return err
 	}
 	parsed, err := url.Parse(handoff)
-	if err != nil || parsed.Scheme != "https" || parsed.Host != item.CanonicalHostname || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Host != item.Endpoint.Hostname || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return failure.Wrap("validate browser handoff", failure.ServerResponseInvalid, errors.New("invalid browser handoff response"))
 	}
 	if err = openBrowser(handoff); err != nil {
 		return failure.Wrap("open browser handoff", failure.BrowserOpenFailed, err)
 	}
-	return writeHumanFrame(output, "tnl auth browser", "opened", "", clioutput.Fields(clioutput.Field{Label: "public URL", Value: "https://" + item.CanonicalHostname}, clioutput.Field{Label: "session", Value: "browser session follows this CLI session's revocation"}))
+	return writeHumanFrame(output, "tnl auth browser", "opened", "", clioutput.Fields(clioutput.Field{Label: "public URL", Value: "https://" + item.Endpoint.Hostname}, clioutput.Field{Label: "session", Value: "browser session follows this CLI session's revocation"}))
 }

@@ -92,5 +92,15 @@ func domainResponse(domain controlstate.Domain) authorityv1.Domain {
 	if !domain.VerifiedAt.IsZero() {
 		result.VerifiedAt = &domain.VerifiedAt
 	}
+	if domain.Release != nil {
+		result.Release = &authorityv1.DomainRelease{
+			ObservedAt: domain.Release.ObservedAt, Blockers: make([]authorityv1.DomainReleaseBlocker, len(domain.Release.Blockers)),
+			CertificateExpiresAt: domain.Release.CertificateExpiresAt,
+			CompletionUnknown:    domain.Release.CompletionUnknown, ReleasedAt: domain.Release.ReleasedAt,
+		}
+		for index, blocker := range domain.Release.Blockers {
+			result.Release.Blockers[index] = authorityv1.DomainReleaseBlocker(blocker)
+		}
+	}
 	return result
 }

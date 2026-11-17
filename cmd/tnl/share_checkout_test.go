@@ -80,14 +80,14 @@ func TestShareCheckoutCommandParsing(t *testing.T) {
 
 func TestShareCheckoutEntryIsDeterministic(t *testing.T) {
 	services := map[string]shareServiceResult{
-		"api": {PublicURLID: "url_api"}, "docs": {PublicURLID: "url_docs"},
-		"web": {PublicURLID: "url_web"}, "app": {PublicURLID: "url_app"},
+		"api": {ServiceID: "svc_api"}, "docs": {ServiceID: "svc_docs"},
+		"web": {ServiceID: "svc_web"}, "app": {ServiceID: "svc_app"},
 	}
 	for _, test := range []struct{ remove, service, want string }{
-		{"", "", "url_app"},
-		{"app", "", "url_web"},
-		{"web", "", "url_api"},
-		{"", "docs", "url_docs"},
+		{"", "", "svc_app"},
+		{"app", "", "svc_web"},
+		{"web", "", "svc_api"},
+		{"", "docs", "svc_docs"},
 	} {
 		delete(services, test.remove)
 		got, err := checkoutShareEntry(test.service, services)
@@ -126,7 +126,7 @@ func TestShareCheckoutHelpDescribesScopeAndLifetime(t *testing.T) {
 
 func TestShareCheckoutValidatesBeforeAuthentication(t *testing.T) {
 	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
-		Services: config.Services{"web": {Tunnel: &config.Tunnel{}}, "private": {}},
+		Services: config.Services{"web": {Public: new(true)}, "private": {}},
 	}}}
 	for _, service := range []string{"missing", "private"} {
 		err := runShareCheckout(t.Context(), shareCheckoutCommand{Service: service}, project, io.Discard, io.Discard)
@@ -166,18 +166,18 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 	keyring.MockInit()
 	const teamID = "tm_0123456789abcdefghijkl"
 	const previewID = "pv_0123456789abcdefghijkl"
-	const webID = "url_0123456789abcdefghijkl"
-	const apiID = "url_abcdefghijkl0123456789"
-	const otherID = "url_othercheckout123456789"
+	const webID = "svc_0123456789abcdefghijkl"
+	const apiID = "svc_abcdefghijkl0123456789"
+	const otherID = "svc_othercheckout123456789"
 	const shareID = "shr_0123456789abcdefghijkl"
 	access, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
 	}
-	urls := []controlv1.PublicURL{
-		{Id: webID, TeamId: teamID, CanonicalHostname: "web.example.test", ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
-		{Id: apiID, TeamId: teamID, CanonicalHostname: "api.example.test", ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
-		{Id: otherID, TeamId: teamID, CanonicalHostname: "other.example.test", ServiceProtocol: controlv1.Http, LifecycleState: controlv1.Enabled},
+	services := []controlv1.ServiceSummary{
+		{Id: webID, TeamId: teamID, Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443, Public: true}, Protocol: controlv1.ServiceProtocolHTTP, Enabled: true},
+		{Id: apiID, TeamId: teamID, Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443, Public: true}, Protocol: controlv1.ServiceProtocolHTTP, Enabled: true},
+		{Id: otherID, TeamId: teamID, Endpoint: &controlv1.ServiceEndpoint{Hostname: "other.example.test", Port: 443, Public: true}, Protocol: controlv1.ServiceProtocolHTTP, Enabled: true},
 	}
 	type creation struct {
 		path string
@@ -205,16 +205,13 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 		case "GET /v1/teams/" + teamID + "/domains":
 			write(authorityv1.DomainPage{Domains: []authorityv1.Domain{{Id: "dom_fixture", CanonicalDomain: "example.test", Kind: "custom", State: "ready"}}})
 		case "GET /v1/previews/" + previewID:
-			write(controlv1.Preview{Id: previewID, TeamId: teamID, PublicUrlIds: []string{webID, apiID}})
-		case "GET /v1/public-urls":
-			lookups <- r.URL.Query().Get("canonical_hostname")
-			page := controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{}}
-			for _, publicURL := range urls {
-				if hostname := r.URL.Query().Get("canonical_hostname"); hostname == "" || hostname == publicURL.CanonicalHostname {
-					page.PublicUrls = append(page.PublicUrls, publicURL)
-				}
+			write(controlv1.Preview{Id: previewID, TeamId: teamID, ServiceIds: []string{webID, apiID}})
+		case "GET /v1/services":
+			if r.URL.Query().Get("team_id") != teamID {
+				t.Error("service inventory lost its selected team")
 			}
-			write(page)
+			lookups <- r.URL.Path
+			write(controlv1.ServicePage{Services: services})
 		case "POST /v1/previews/" + previewID + "/shares", "POST /v1/shares":
 			var body controlv1.CreateShareRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -226,18 +223,19 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 				t.Error("share creation omitted its idempotency key")
 			}
 			created <- creation{r.URL.Path, body}
-			share := controlv1.Share{Id: shareID, TeamId: teamID, PublicUrlIds: body.PublicUrlIds, ExpiresAt: body.ExpiresAt}
+			share := controlv1.Share{Id: shareID, TeamId: teamID, Scope: "service", ServiceIds: body.ServiceIds, EntryServiceId: body.EntryServiceId, ExpiresAt: body.ExpiresAt}
 			if widenResponse.Load() {
-				share.PublicUrlIds = append(slices.Clone(share.PublicUrlIds), otherID)
+				share.ServiceIds = append(slices.Clone(share.ServiceIds), otherID)
 			}
 			if strings.HasPrefix(r.URL.Path, "/v1/previews/") {
 				id := previewID
 				share.PreviewId = &id
+				share.Scope = "preview"
 			}
 			entry := ""
-			for _, publicURL := range urls {
-				if publicURL.Id == body.EntryPublicUrlId {
-					entry = "https://" + publicURL.CanonicalHostname + "/__tnl/share/" + shareID + "." + strings.Repeat("A", 43)
+			for _, service := range services {
+				if service.Id == body.EntryServiceId {
+					entry = "https://" + service.Endpoint.Hostname + "/__tnl/share/" + shareID + "." + strings.Repeat("A", 43)
 				}
 			}
 			w.WriteHeader(http.StatusCreated)
@@ -253,7 +251,7 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 	t.Cleanup(func() { http.DefaultTransport = original })
 	root := t.TempDir()
 	configPath := filepath.Join(root, "tnl.yml")
-	source := "version: 1\ntnl:\n  server: " + server.URL + "\n  team: " + teamID + "\n  services:\n    web: {}\n    api: {}\n    private: {}\n    database:\n      protocol: postgres\n  deployments:\n    local:\n      targets:\n        web:\n          public_url: {hostname: web.example.test}\n        api:\n          public_url: {hostname: api.example.test}\n        private: {}\n    remote:\n      targets:\n        database:\n          address: database.internal:5432\n"
+	source := "version: 1\ntnl:\n  server: " + server.URL + "\n  team: " + teamID + "\n  services:\n    web: {}\n    api: {}\n    private: {}\n    database:\n      protocol: postgres\n  deployments:\n    local:\n      targets:\n        web:\n          public: true\n          hostname: web.example.test\n        api:\n          public: true\n          hostname: api.example.test\n        private: {}\n    remote:\n      targets:\n        database:\n          address: database.internal:5432\n"
 	if err := os.WriteFile(configPath, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -273,6 +271,18 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 	closeErr := db.Close()
 	if err != nil || closeErr != nil {
 		t.Fatalf("save preview: %v; close: %v", err, closeErr)
+	}
+	project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configPath}, stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceIdentity := project.LocalPublicationIdentity()
+	for i, name := range []string{"web", "api", "web"} {
+		worktree := project.LocalWorktreeKey()
+		if i == 2 {
+			worktree += "-other"
+		}
+		services[i].Source = &controlv1.LocalServiceSource{ProjectKey: sourceIdentity.Key, SourceFingerprint: sourceIdentity.Fingerprint, WorktreeKey: worktree, Service: name}
 	}
 	for _, test := range []struct {
 		name    string
@@ -309,21 +319,15 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 			if test.preview {
 				wantPath = "/v1/previews/" + previewID + "/shares"
 			}
-			if got.path != wantPath || !slices.Equal(got.body.PublicUrlIds, wantIDs) || got.body.EntryPublicUrlId != test.entry {
+			if got.path != wantPath || !slices.Equal(got.body.ServiceIds, wantIDs) || got.body.EntryServiceId != test.entry {
 				t.Fatalf("share path=%q scope=%+v; want path=%q IDs=%v entry=%q", got.path, got.body, wantPath, wantIDs, test.entry)
 			}
 			var queried []string
 			for len(lookups) != 0 {
 				queried = append(queried, <-lookups)
 			}
-			if strings.HasPrefix(test.name, "one service") || test.name == "API service" {
-				wantHostname := "web.example.test"
-				if test.entry == apiID {
-					wantHostname = "api.example.test"
-				}
-				if !slices.Equal(queried, []string{wantHostname}) {
-					t.Fatalf("single-service share queried other URLs: %v", queried)
-				}
+			if !slices.Equal(queried, []string{"/v1/services"}) {
+				t.Fatalf("share did not use one team inventory read: %v", queried)
 			}
 			lifetime := 24 * time.Hour
 			if test.name == "checkout" {
@@ -339,14 +343,14 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 				var result struct {
 					SchemaVersion int                           `json:"schema_version"`
 					PreviewID     *string                       `json:"preview_id"`
-					PublicURLIDs  []string                      `json:"public_url_ids"`
+					ServiceIDs    []string                      `json:"service_ids"`
 					Services      map[string]shareServiceResult `json:"services"`
 				}
 				if err := json.Unmarshal(output.Bytes(), &result); err != nil {
 					t.Fatal(err)
 				}
-				if result.SchemaVersion != 1 || (result.PreviewID != nil) != test.preview || !slices.Equal(result.PublicURLIDs, wantIDs) ||
-					test.preview && (len(result.Services) != 2 || result.Services["web"].PublicURLID != webID || result.Services["api"].PublicURLID != apiID) {
+				if result.SchemaVersion != 1 || (result.PreviewID != nil) != test.preview || !slices.Equal(result.ServiceIDs, wantIDs) ||
+					test.preview && (len(result.Services) != 2 || result.Services["web"].ServiceID != webID || result.Services["api"].ServiceID != apiID) {
 					t.Fatalf("share JSON lost its captured scope: %s", output.String())
 				}
 			} else if !strings.HasPrefix(output.String(), "https://") || strings.Count(output.String(), "\n") != 1 {

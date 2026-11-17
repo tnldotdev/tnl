@@ -2,114 +2,110 @@ package invocation
 
 import (
 	"bytes"
-	"encoding/base64"
+	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/auth"
-	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+func TestNativeIntegrationConfigCarriesEnclosingShutdownFacts(t *testing.T) {
+	for _, test := range integrationIntentCases {
+		t.Run(test.hostname, func(t *testing.T) {
+			f := newServiceSetupFixture(t, test.hostname)
+			parentUntil := time.Now().Add(time.Minute)
+			ctx, cancel := context.WithDeadline(t.Context(), parentUntil)
+			defer cancel()
+			fence, expire := context.WithCancelCause(context.Background())
+			defer expire(context.Canceled)
+			until := parentUntil.Add(-time.Second)
+			calls := 0
+			shutdown := integrationShutdown{fence: fence, deadline: func() time.Time { calls++; return until }}
+			cfg, _, err := nativeIntegrationConfig(ctx, f.services, test.hostname, test.intent, nil, shutdown)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ShutdownContext != fence || cfg.ShutdownDeadline == nil {
+				t.Fatal("integration run lost its enclosing shutdown fence or deadline")
+			}
+			if got := cfg.ShutdownDeadline(); got != parentUntil || calls != 0 || ctx.Err() != nil {
+				t.Fatal("an internal attempt started the parent's terminal budget", got, calls, ctx.Err())
+			}
+			cancel()
+			if got := cfg.ShutdownDeadline(); got != until || calls != 1 {
+				t.Fatal("integration run did not retain the parent's original stop bound", got, calls)
+			}
+			expire(context.DeadlineExceeded)
+			if context.Cause(cfg.ShutdownContext) != context.DeadlineExceeded {
+				t.Fatal("integration run lost its active expiry fence")
+			}
+		})
+	}
+}
+
 func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing.T) {
-	for _, purpose := range []controlv1.PublicURLPurpose{controlv1.Oauth, controlv1.Webhooks} {
-		t.Run(string(purpose), func(t *testing.T) {
-			root := filepath.Join(t.TempDir(), "state")
+	for _, test := range integrationIntentCases {
+		hostname, intent := test.hostname, test.intent
+		t.Run(hostname, func(t *testing.T) {
+			f := newServiceSetupFixture(t, hostname)
+			inventories := 0
+			f.before = func(r *http.Request) (*http.Response, bool) {
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/services" {
+					inventories++
+				}
+				return nil, false
+			}
+			// reopen the same private state after every preparation to exercise
+			// the persisted service grant and signing key, not a native cache.
+			root := filepath.Join(t.TempDir(), "persistent")
 			state, err := clientstate.OpenWithOptions(t.Context(), root, clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = state.Close() }()
-			const server = "https://control.example"
-			newID := func(prefix string) string {
-				t.Helper()
-				id, err := opaqueid.New(prefix)
-				if err != nil {
-					t.Fatal(err)
-				}
-				return id
-			}
-			prefixes := []string{}
-			publicURL := controlv1.PublicURL{Id: newID(opaqueid.PublicURLPrefix), TeamId: "team", DomainId: "domain", CanonicalHostname: "integration.example", PublicUrlScope: controlv1.Shared, ServiceProtocol: controlv1.Http, Purpose: purpose, LifecycleState: controlv1.Enabled, AllowedIpPrefixes: &prefixes}
-			identity := authorityv1.PublisherEnrollmentResult{ClientId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), TeamId: publicURL.TeamId, PublicUrlId: &publicURL.Id, Kind: authorityv1.SavedPublicUrl}
-			enrollmentID := newID(opaqueid.PublisherEnrollmentPrefix)
-			enrollmentKey := enrollmentID + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-			creations, updates, enrollments, redemptions := 0, 0, 0, 0
-			transport := publicationHTTPTransport(func(r *http.Request) (*http.Response, error) {
-				var value any
-				status := http.StatusOK
-				switch r.Method + " " + r.URL.Path {
-				case "GET /v1/public-urls":
-					page := controlv1.PublicURLPage{PublicUrls: []controlv1.PublicURL{}}
-					if creations != 0 {
-						page.PublicUrls = append(page.PublicUrls, publicURL)
-					}
-					value = page
-				case "POST /v1/public-urls":
-					var body controlv1.CreatePublicURLRequest
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-						return nil, err
-					}
-					if body.Target != "" || body.Purpose != purpose || body.Ephemeral != nil && *body.Ephemeral {
-						t.Errorf("integration reservation = %+v", body)
-					}
-					creations++
-					status, value = http.StatusCreated, publicURL
-				case "PATCH /v1/public-urls/" + publicURL.Id:
-					var body controlv1.UpdatePublicURLRequest
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-						return nil, err
-					}
-					if body.Target != nil || body.AllowedIpPrefixes == nil {
-						t.Errorf("integration policy update = %+v", body)
-					}
-					prefixes = slices.Clone(*body.AllowedIpPrefixes)
-					publicURL.AllowedIpPrefixes = &prefixes
-					updates++
-					value = publicURL
-				case "POST /v1/publisher-enrollments":
-					enrollments++
-					status, value = http.StatusCreated, controlv1.PublisherEnrollment{Id: enrollmentID, EnrollmentKey: enrollmentKey, ExpiresAt: time.Now().Add(time.Minute), PublicUrlId: &publicURL.Id, TeamId: publicURL.TeamId, Kind: "saved_public_url"}
-				case "POST /v1/publisher-enrollments/redeem":
-					redemptions++
-					value = identity
-				default:
-					return nil, errors.New("unexpected integration setup request: " + r.Method + " " + r.URL.Path)
-				}
-				data, err := json.Marshal(value)
-				if err != nil {
-					return nil, err
-				}
-				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(data)), Request: r}, nil
-			})
-			control, err := clientcontrol.New(server, &http.Client{Transport: transport}, "session")
-			if err != nil {
-				t.Fatal(err)
-			}
-			authority, err := clientauthority.New(server, &http.Client{Transport: transport}, "session")
-			if err != nil {
-				t.Fatal(err)
-			}
-			services := publisherServices{teamID: publicURL.TeamId, domainID: publicURL.DomainId, publicURLScope: controlv1.Shared, routes: control, authenticated: &auth.Client{ServerEndpoint: server, Control: control, Authority: authority}}
 			for _, desired := range [][]string{{}, {"192.0.2.1/32"}, nil, {}} {
-				services.state, err = state.Server(t.Context(), server)
+				f.services.state, err = state.Server(t.Context(), f.services.authenticated.ServerEndpoint)
 				if err != nil {
 					t.Fatal(err)
 				}
-				cfg, err := nativeIntegrationConfig(t.Context(), state, services, publicURL.CanonicalHostname, purpose, desired)
-				if err != nil || cfg.Target != "" || cfg.Ephemeral || !cfg.PreserveSavedPublicURLTarget || cfg.PublisherIdentityID != identity.ClientId || cfg.AllowedIPPrefixes == nil || !slices.Equal(cfg.AllowedIPPrefixes, desired) {
-					t.Fatalf("native integration config = %+v, %v", cfg, err)
+				cfg, saved, err := nativeIntegrationConfig(t.Context(), f.services, hostname, intent, desired, integrationShutdown{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if cfg.Target != "" || cfg.ServiceID != f.saved.Id || saved.Ephemeral ||
+					cfg.PublisherIdentityID != f.identity.ClientId || cfg.PublisherGrantID != f.identity.GrantId || cfg.PublisherKeyID != f.identity.KeyId {
+					t.Fatal("integration replaced its service, grant, or key, or invented a TCP target", cfg, saved)
+				}
+				http := f.declaration.Http
+				if f.declaration.Target != string(intent) || f.declaration.Traffic != nil || http == nil ||
+					http.Access == nil || http.Access.Mode == nil || *http.Access.Mode != controlv1.Anonymous ||
+					(http.Access.Ip == nil) != (len(desired) == 0) ||
+					http.Access.Ip != nil && !slices.Equal(*http.Access.Ip, desired) ||
+					http.Limits == nil || http.Limits.Concurrency == nil || *http.Limits.Concurrency != 32 {
+					t.Fatal("integration changed its handler declaration, source policy, or independent HTTP budget", f.declaration)
+				}
+				encoded, err := json.Marshal(http)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var settings config.HTTPService
+				if err := json.Unmarshal(encoded, &settings); err != nil || settings.Access == nil || settings.Access.Validate() != nil {
+					t.Fatal("integration emitted an invalid HTTP access declaration", err)
+				}
+				access, err := cfg.Access(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if scoped, err := cfg.Control.GetPublisherService(t.Context(), cfg.ServiceID, access); err != nil || scoped.Id != saved.Id {
+					t.Fatal("exact integration publisher could not read its actual service", scoped, err)
 				}
 				if err := state.Close(); err != nil {
 					t.Fatal(err)
@@ -119,18 +115,71 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 					t.Fatal(err)
 				}
 			}
-			if creations != 1 || updates != 2 || enrollments != 1 || redemptions != 1 {
-				t.Fatalf("integration setup: creates=%d updates=%d enrollments=%d redemptions=%d", creations, updates, enrollments, redemptions)
+			if f.creates != 1 || f.changes != 2 || f.enrollments != 1 || f.redemptions != 1 {
+				t.Fatal("integration re-enrolled or recreated its saved service", f.creates, f.changes, f.enrollments, f.redemptions)
 			}
-			services.state, err = state.Server(t.Context(), server)
+			f.saved.Endpoint.Hostname = "different.member.example"
+			keys, receipts, updates, gets := len(f.createKeys), len(f.creations), f.updates, f.gets
+			declaration, err := json.Marshal(f.declaration)
 			if err != nil {
 				t.Fatal(err)
 			}
-			publicURL.Target = "http://127.0.0.1:3000"
-			_, err = nativeIntegrationConfig(t.Context(), state, services, publicURL.CanonicalHostname, purpose)
-			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
-				t.Fatalf("nonempty integration target loaded: %v", err)
+			public := bytes.Clone(f.public)
+			_, _, err = nativeIntegrationConfig(t.Context(), f.services, hostname, intent, nil, integrationShutdown{})
+			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerConflict {
+				t.Fatal("canonical reservation did not reject the conflicting endpoint", err)
+			}
+			current, marshalErr := json.Marshal(f.declaration)
+			if marshalErr != nil || !bytes.Equal(current, declaration) || !bytes.Equal(public, f.public) ||
+				f.creates != 1 || f.changes != 2 || f.enrollments != 1 || f.redemptions != 1 || inventories != 0 ||
+				f.updates != updates || f.gets != gets || len(f.creations) != receipts || len(f.createKeys) != keys+3 {
+				t.Fatal("conflicting reservation adopted or changed the service, current intent, or signing identity", err, marshalErr)
+			}
+			retries := f.createKeys[keys:]
+			if retries[0] != retries[1] || retries[0] != retries[2] {
+				t.Fatal("conflict retries changed their operation key", retries)
 			}
 		})
+	}
+}
+
+func TestNativeIntegrationConfigRejectsMismatchedReservationResponse(t *testing.T) {
+	f := newServiceSetupFixture(t, "oauth.member.example")
+	_, saved, err := nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, targetsyntax.OAuthIntegration, nil, integrationShutdown{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, receipts, updates, gets := len(f.createKeys), len(f.creations), f.updates, f.gets
+	public := bytes.Clone(f.public)
+	replies := 0
+	f.before = func(r *http.Request) (*http.Response, bool) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/services" {
+			t.Fatal("malformed reservation reply triggered another authority operation", r.Method, r.URL.Path)
+		}
+		var body controlv1.CreateServiceRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Reserve == nil || !*body.Reserve || body.TeamId != saved.TeamId || body.Name != saved.Name ||
+			body.Placement == nil || body.Placement.DomainId == nil || *body.Placement.DomainId != *saved.DomainId ||
+			body.Placement.Hostname == nil || *body.Placement.Hostname != f.services.hostname ||
+			body.Configuration == nil || r.Header.Get("Authorization") != "Bearer session" || r.Header.Get("Idempotency-Key") == "" {
+			t.Fatal("integration stopped selecting the exact authenticated reservation", body)
+		}
+		replies++
+		invalid := saved
+		endpoint := *saved.Endpoint
+		endpoint.Hostname = "different.member.example"
+		invalid.Endpoint = &endpoint
+		return serviceTestResponse(r, http.StatusOK, invalid), true
+	}
+	_, _, err = nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, targetsyntax.OAuthIntegration, nil, integrationShutdown{})
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
+		t.Fatal("integration adopted a mismatched successful reservation response", err)
+	}
+	if replies != 1 || f.creates != 1 || f.enrollments != 1 || f.redemptions != 1 || !bytes.Equal(public, f.public) ||
+		f.updates != updates || f.gets != gets || len(f.createKeys) != keys || len(f.creations) != receipts ||
+		f.saved.Endpoint.Hostname != f.services.hostname {
+		t.Fatal("malformed reservation reply changed the actual service or its signing identity")
 	}
 }

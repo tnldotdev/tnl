@@ -102,10 +102,8 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 	}
 	services := slices.Clone(options.Service)
 	if options.Workload == "" && len(services) == 0 {
-		for name, service := range project.Config.Services {
-			if !isConnectPublicURL(project.Config, service) {
-				services = append(services, name)
-			}
+		for name := range project.Config.Services {
+			services = append(services, name)
 		}
 	}
 	if options.Workload != "" {
@@ -127,7 +125,7 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 	}
 	slices.Sort(services)
 	for _, name := range services {
-		if service, ok := project.Config.Services[name]; !ok || isConnectPublicURL(project.Config, service) {
+		if _, ok := project.Config.Services[name]; !ok {
 			return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
 		}
 		effective, err := project.EffectiveService(name)
@@ -241,6 +239,7 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 	}
 	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
 	backend.telemetry = o.Telemetry
+	backend.shutdownDeadline = o.ShutdownDeadline
 	if request.Deployment != nil {
 		backend.deployment, err = newDeploymentConnection(*request.Deployment, nil)
 		if err != nil {

@@ -85,7 +85,9 @@ func inspectionFromRecord(item clientstate.InspectionRecord) (inspectionRecord, 
 	}
 	switch item.Protocol {
 	case inspection.HTTP:
-		record.Result = inspection.HTTPResult(item.Status)
+		if !item.Result.Valid() {
+			return record, errors.New("inspection has an invalid HTTP outcome")
+		}
 		record.HTTP = &inspectionHTTP{
 			Method: item.Method, Path: item.Path, Status: item.Status, Origin: item.Origin,
 		}

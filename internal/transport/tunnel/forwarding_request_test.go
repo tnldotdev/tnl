@@ -36,11 +36,11 @@ func (s *responseCountingStream) Close() error {
 }
 
 func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
-	for _, private := range []bool{false, true} {
+	for _, claimed := range []bool{false, true} {
 		for _, reject := range []bool{false, true} {
-			name := "public/accept"
-			if private {
-				name = "private/accept"
+			name := "ingress/accept"
+			if claimed {
+				name = "publisher/accept"
 			}
 			if reject {
 				name += "/reject"
@@ -53,15 +53,17 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer peer.Close()
+				header := serviceStreamHeader()
 				wrote := tunnelWorker(t, func() { _ = client.Close() }, func() error {
-					if private {
-						_, err := tunnelv1.WriteServiceOpening(peer, maximumServiceHeader("relay"))
-						return err
-					}
-					_, err := tunnelv1.WriteForwardingOpening(peer, maximumPublicHeader("relay"), nil, nil)
+					_, err := tunnelv1.WriteServiceOpening(peer, header)
 					return err
 				})
-				incoming, err := (&Session{transport: server}).AcceptInternalForwardingStream(ctx)
+				owner := &Session{transport: server, role: tunnelv1.Ingress}
+				if claimed {
+					owner.role = tunnelv1.Publisher
+					owner.serviceConnection = publisherHello().ServiceConnection
+				}
+				incoming, err := owner.AcceptServiceForwardingStream(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -69,26 +71,9 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 					t.Fatal(err)
 				}
 				counted := &responseCountingStream{Stream: incoming.Stream().(*replyStream).Stream}
-				var copiedAccept func() error
-				var copiedReject func(tunnelv1.ErrorCode) error
-				switch value := incoming.(type) {
-				case *IncomingPublicForwardingStream:
-					value.response.Stream = counted
-					if private {
-						t.Fatal("private request dispatched as public")
-					}
-					copy := *value
-					copiedAccept, copiedReject = copy.Accept, copy.Reject
-				case *IncomingServiceForwardingStream:
-					value.response.Stream = counted
-					if !private {
-						t.Fatal("public request dispatched as private")
-					}
-					copy := *value
-					copiedAccept, copiedReject = copy.Accept, copy.Reject
-				default:
-					t.Fatal("missing concrete forwarding request")
-				}
+				incoming.response.Stream = counted
+				copy := *incoming
+				copiedAccept, copiedReject := copy.Accept, copy.Reject
 				response := tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted}
 				if reject {
 					response = tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: tunnelv1.Unavailable}
@@ -160,7 +145,7 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 }
 
 func TestServiceForwardingMissingIdentityFieldsFailBeforeDispatch(t *testing.T) {
-	for _, field := range []string{"service_id", "service_run_id", "run_number", "publisher_connection_id", "connection_assignment_revision", "relay_service_id", "relay_id", "relay_run_id", "relay_lease_revision", "lease_expires_at", "expires_at"} {
+	for _, field := range []string{"service_id", "service_run_id", "run_number", "publisher_connection_id", "connection_assignment_revision", "relay_service_id", "relay_id", "relay_run_id", "relay_lease_revision", "serving_until", "expires_at"} {
 		t.Run(field, func(t *testing.T) {
 			client, server := newMemoryPair(t)
 			ctx := tunnelContext(t)
@@ -196,7 +181,7 @@ func TestServiceForwardingMissingIdentityFieldsFailBeforeDispatch(t *testing.T) 
 				}
 				return err
 			})
-			_, err = (&Session{transport: server}).AcceptInternalForwardingStream(ctx)
+			_, err = (&Session{transport: server, role: tunnelv1.Ingress}).AcceptServiceForwardingStream(ctx)
 			var headerErr *StreamHeaderError
 			if !errors.As(err, &headerErr) {
 				t.Fatalf("missing field reached dispatch: %v", err)

@@ -12,14 +12,23 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
+type auditSinkFunc func(serviceaudit.Observation) bool
+
+func (f auditSinkFunc) Observe(o serviceaudit.Observation) bool { return f(o) }
+
 type publicServiceControlFixture struct {
 	mu                                   sync.Mutex
 	service, run                         string
+	traffic                              ingressv1.IngressTrafficLimits
+	anonymous                            bool
+	recoveryEpisodeID                    *int64
 	relays                               []ingressv1.ServiceRelay
 	claimStarted, claimGate              chan struct{}
 	recheckStarted, recheckGate          chan struct{}
@@ -29,6 +38,31 @@ type publicServiceControlFixture struct {
 	deny, pending, authenticated         bool
 	recheckErr, promoteErr               error
 	initialValidUntil, recheckValidUntil time.Time
+	closedRuns                           []ingressv1.ServiceRunReference
+	closureStarted, closureGate          chan struct{}
+	closureErr                           error
+}
+
+func (c *publicServiceControlFixture) ReadIngressServices(context.Context, string, ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error) {
+	now := time.Now()
+	return ingressv1.IngressServices{ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), Runs: []ingressv1.IngressServiceRun{}}, nil
+}
+
+func (c *publicServiceControlFixture) ClosedServiceRuns(ctx context.Context, _ string, lookup ingressv1.ServiceRunClosureLookup) (ingressv1.ServiceRunClosures, error) {
+	if len(lookup.ServiceRuns) < 1 || len(lookup.ServiceRuns) > 128 {
+		return ingressv1.ServiceRunClosures{}, ErrServiceAdmission
+	}
+	if c.closureStarted != nil {
+		c.closureStarted <- struct{}{}
+	}
+	if c.closureGate != nil {
+		select {
+		case <-c.closureGate:
+		case <-ctx.Done():
+			return ingressv1.ServiceRunClosures{}, ctx.Err()
+		}
+	}
+	return ingressv1.ServiceRunClosures{Closed: c.closedRuns}, c.closureErr
 }
 
 func (c *publicServiceControlFixture) AdmitPublicServiceVisitor(ctx context.Context, id string, claim ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
@@ -49,7 +83,7 @@ func (c *publicServiceControlFixture) AdmitPublicServiceVisitor(ctx context.Cont
 	if until.IsZero() {
 		until = time.Now().Add(time.Minute)
 	}
-	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: until, ConnectedRelays: append([]ingressv1.ServiceRelay(nil), c.relays...)}, nil
+	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, Traffic: c.traffic, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: until, ConnectedRelays: append([]ingressv1.ServiceRelay(nil), c.relays...), RecoveryEpisodeId: c.recoveryEpisodeID}, nil
 }
 
 func (c *publicServiceControlFixture) PublicServiceVisitorStatus(ctx context.Context, _ string, _ ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
@@ -100,6 +134,9 @@ func (c *publicServiceControlFixture) PromotePublicServiceVisitor(context.Contex
 		default:
 		}
 	}
+	if c.promoteErr == nil {
+		c.authenticated = false
+	}
 	return c.promoteErr
 }
 
@@ -111,6 +148,10 @@ func (c *publicServiceControlFixture) ClosePublicServiceVisitor(context.Context,
 }
 
 type publicServiceForwarderFixture struct {
+	ctx                                       context.Context
+	checkAccess                               func(context.Context) error
+	replyBeforeAccess                         bool
+	capacityResult                            chan error
 	mu                                        sync.Mutex
 	calls                                     int
 	failFirst, closeAfterByte, holdAfterReply bool
@@ -121,7 +162,7 @@ type publicServiceForwarderFixture struct {
 	data                                      chan []byte
 }
 
-func (f *publicServiceForwarderFixture) OpenPrivate(_ context.Context, relay ingressv1.ServiceRelay, h tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f *publicServiceForwarderFixture) OpenService(_ context.Context, relay ingressv1.ServiceRelay, h tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 	f.mu.Lock()
 	f.calls++
 	call := f.calls
@@ -154,7 +195,30 @@ func (f *publicServiceForwarderFixture) OpenPrivate(_ context.Context, relay ing
 			return
 		}
 		f.data <- value
-		_, _ = upstream.Write([]byte("pong"))
+		if f.replyBeforeAccess {
+			if _, err := upstream.Write([]byte("pong")); err != nil {
+				return
+			}
+		}
+		check, cancel := context.WithDeadline(f.ctx, h.ExpiresAt)
+		defer cancel()
+		if f.checkAccess != nil {
+			if err := f.checkAccess(check); err != nil {
+				return
+			}
+		}
+		if reserveCapacity != nil {
+			err := reserveCapacity(check)
+			if f.capacityResult != nil {
+				f.capacityResult <- err
+			}
+			if err != nil {
+				return
+			}
+		}
+		if !f.replyBeforeAccess {
+			_, _ = upstream.Write([]byte("pong"))
+		}
 		if f.holdAfterReply {
 			_, _ = io.Copy(io.Discard, remaining)
 		}
@@ -173,30 +237,56 @@ func publicServiceTestID(t *testing.T, prefix string) string {
 	return id
 }
 
-func publicServiceTestSetup(t *testing.T) (*PublicServices, *publicServiceControlFixture, *publicServiceForwarderFixture, ingressv1.IngressLease) {
-	t.Helper()
-	lease := ingressv1.IngressLease{IngressId: "ingress-a", IngressRunId: publicServiceTestID(t, opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
-	control := &publicServiceControlFixture{service: publicServiceTestID(t, opaqueid.ServicePrefix), run: publicServiceTestID(t, opaqueid.ServiceRunPrefix)}
-	for slot := range 2 {
-		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: publicServiceTestID(t, opaqueid.PublisherConnectionPrefix), ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[slot], RelayId: []string{"relay-a", "relay-b"}[slot], RelayRunId: publicServiceTestID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:443", TlsServerName: "relay.test", LeaseExpiresAt: time.Now().Add(time.Minute)})
+func publicServiceTraffic(limits TrafficLimits) ingressv1.IngressTrafficLimits {
+	traffic := ingressv1.IngressTrafficLimits{Connections: limits.Connections, Rate: limits.Rate, RatePerNs: int64(limits.Period()), Burst: limits.Burst, UploadBytes: limits.UploadBytes, DownloadBytes: limits.DownloadBytes}
+	if limits.TotalConnections > 0 {
+		traffic.TotalConnections = &limits.TotalConnections
 	}
-	forwarder := &publicServiceForwarderFixture{observed: make(chan tunnelv1.ServiceForwardingHeader, 8), metadata: make(chan proxyproto.Header, 8), data: make(chan []byte, 8), relayDone: make(chan struct{}, 8)}
-	direct, err := NewPublicServices(PublicServicesConfig{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }})
+	if limits.TotalUploadBytes > 0 {
+		traffic.TotalUploadBytes = &limits.TotalUploadBytes
+	}
+	if limits.TotalDownloadBytes > 0 {
+		traffic.TotalDownloadBytes = &limits.TotalDownloadBytes
+	}
+	return traffic
+}
+
+func publicServiceTestConfig(t *testing.T) (Config, *publicServiceControlFixture, *publicServiceForwarderFixture, ingressv1.IngressLease) {
+	t.Helper()
+	lease := ingressv1.IngressLease{IngressId: "ingress-a", IngressRunId: publicServiceTestID(t, opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}
+	control := &publicServiceControlFixture{service: publicServiceTestID(t, opaqueid.ServicePrefix), run: publicServiceTestID(t, opaqueid.ServiceRunPrefix), traffic: publicServiceTraffic(trafficFixture(t).config.Default)}
+	for slot := range 2 {
+		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: publicServiceTestID(t, opaqueid.PublisherConnectionPrefix), ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[slot], RelayId: []string{"relay-a", "relay-b"}[slot], RelayRunId: publicServiceTestID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:443", TlsServerName: "relay.test", ServingUntil: time.Now().Add(time.Minute)})
+	}
+	forwarder := &publicServiceForwarderFixture{ctx: t.Context(), observed: make(chan tunnelv1.ServiceForwardingHeader, 8), metadata: make(chan proxyproto.Header, 8), data: make(chan []byte, 8), relayDone: make(chan struct{}, 8)}
+	t.Cleanup(forwarder.workers.Wait)
+	return Config{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }, MaxConnections: 256}, control, forwarder, lease
+}
+
+func publicServiceTestSetup(t *testing.T) (*Server, *publicServiceControlFixture, *publicServiceForwarderFixture, ingressv1.IngressLease) {
+	t.Helper()
+	config, control, forwarder, lease := publicServiceTestConfig(t)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = direct.Close(); forwarder.workers.Wait() })
-	return direct, control, forwarder, lease
+	server, err := New(listener, config)
+	if err != nil {
+		_ = listener.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	return server, control, forwarder, lease
 }
 
-func publicServiceTestConnect(t *testing.T, p *PublicServices) (net.Conn, <-chan error, func()) {
+func publicServiceTestConnect(t *testing.T, p *Server) (net.Conn, <-chan error, func()) {
 	t.Helper()
 	connection, visitor := net.Pipe()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		defer connection.Close()
-		done <- p.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"))
+		done <- p.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "", nil)
 		close(done)
 	}()
 	stop := sync.OnceFunc(func() {
@@ -213,7 +303,7 @@ func publicServiceTestConnect(t *testing.T, p *PublicServices) (net.Conn, <-chan
 	return visitor, done, stop
 }
 
-func publicServiceActiveStream(t *testing.T, p *PublicServices, forwarder *publicServiceForwarderFixture) (net.Conn, func()) {
+func publicServiceActiveStream(t *testing.T, p *Server, forwarder *publicServiceForwarderFixture) (net.Conn, func()) {
 	t.Helper()
 	forwarder.holdAfterReply = true
 	visitor, _, stop := publicServiceTestConnect(t, p)
@@ -297,7 +387,7 @@ func TestPublicServiceVisitorRejectsLeaseLostDuringAdmission(t *testing.T) {
 					case "replacement":
 						current.IngressLeaseRevision++
 					case "expired":
-						current.LeaseExpiresAt = lease.LeaseExpiresAt.Add(-2 * time.Minute)
+						current.ServingUntil = lease.ServingUntil.Add(-2 * time.Minute)
 					}
 				}
 				return current
@@ -326,7 +416,7 @@ func TestPublicServiceVisitorRejectsLeaseLostDuringAdmission(t *testing.T) {
 	}
 }
 
-func TestPublicServicesCloseJoinsBlockedAdmission(t *testing.T) {
+func TestServerCloseJoinsBlockedServiceAdmission(t *testing.T) {
 	p, control, forwarder, _ := publicServiceTestSetup(t)
 	control.claimStarted, control.claimGate = make(chan struct{}, 1), make(chan struct{})
 	_, _, _ = publicServiceTestConnect(t, p)
@@ -338,7 +428,7 @@ func TestPublicServicesCloseJoinsBlockedAdmission(t *testing.T) {
 	if err := p.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if p.Load() != 0 || p.pending != 0 || p.active != 0 || forwarder.count() != 0 || control.closed != 1 {
+	if p.Load() != 0 || !publicServiceCapacityReleased(p) || forwarder.count() != 0 || control.closed != 1 {
 		t.Fatal("close left setup or capacity owned")
 	}
 }

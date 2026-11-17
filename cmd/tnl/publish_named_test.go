@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -81,7 +83,7 @@ func TestNamedServerOverrideRequiresAnExplicitReplacementTeam(t *testing.T) {
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveNamedPrivate(flags); err == nil {
+	if _, err := namedInvocation(flags); err == nil {
 		t.Fatal("changing server silently selected that server's default team")
 	}
 }
@@ -89,7 +91,7 @@ func TestNamedServerOverrideRequiresAnExplicitReplacementTeam(t *testing.T) {
 func TestNamedPublishRejectsUnsupportedPolicyBeforeOwnerState(t *testing.T) {
 	root := t.TempDir()
 	project := projectConfiguration{Project: clientproject.Project{Root: root, Config: config.TNL{Services: config.Services{
-		"web": {Tunnel: &config.Tunnel{}},
+		"web": {Public: new(true)},
 	}}}}
 	flags := publishCommand{Target: "web", Output: publishOutputHuman, tunnelFlags: tunnelFlags{Anonymous: true}, remoteFlags: remoteFlags{StateDir: filepath.Join(root, "state")}}
 	if err := project.applyPublish(&flags); err != nil {
@@ -121,7 +123,7 @@ func TestNamedLeasePinsServerTeamConfigAndTargetAtOwnerBoundary(t *testing.T) {
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	invocation, err := resolveNamedPrivate(flags)
+	invocation, err := namedInvocation(flags)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,5 +140,57 @@ func TestNamedLeasePinsServerTeamConfigAndTargetAtOwnerBoundary(t *testing.T) {
 	}
 	if digest == "" {
 		t.Fatal("resolved invocation omitted its configuration digest")
+	}
+}
+
+func TestNamedInvocationUsesOneSelectionForProtocolAndReachability(t *testing.T) {
+	for _, protocol := range []string{"http", "tcp", "mysql", "postgres", "kubernetes"} {
+		for _, public := range []bool{false, true} {
+			t.Run(protocol+"/"+strconv.FormatBool(public), func(t *testing.T) {
+				binding := config.Service{Protocol: &protocol, Public: &public}
+				project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"app": binding}}}}
+				flags := publishCommand{Service: "app", Protocol: protocol, project: project}
+				selected, err := namedInvocation(flags)
+				if err != nil || selected.service != "app" || !reflect.DeepEqual(selected.project, project) {
+					t.Fatalf("named service selection changed: %+v %v", selected, err)
+				}
+				flags.Protocol = "other"
+				if _, err := namedInvocation(flags); err == nil {
+					t.Fatal("named service accepted another protocol")
+				}
+				flags.Protocol, flags.Service = protocol, "missing"
+				if _, err := namedInvocation(flags); err == nil {
+					t.Fatal("named service accepted a missing declaration")
+				}
+			})
+		}
+	}
+}
+
+func TestNamedPublishRejectsUnsupportedProcessOptionsBeforeOwnerState(t *testing.T) {
+	for _, test := range []struct {
+		name, protocol string
+		public         bool
+		flags          publishCommand
+	}{
+		{name: "public browser requires HTTP", protocol: "tcp", public: true, flags: publishCommand{openOptions: openOptions{Open: true}}},
+		{name: "connector-only browser", protocol: "http", flags: publishCommand{openOptions: openOptions{Open: true}}},
+		{name: "public system without install", protocol: "http", public: true, flags: publishCommand{backgroundPublishFlags: backgroundPublishFlags{System: true}}},
+		{name: "connector-only system without install", protocol: "http", flags: publishCommand{backgroundPublishFlags: backgroundPublishFlags{System: true}}},
+		{name: "service name without install", protocol: "tcp", public: true, flags: publishCommand{backgroundPublishFlags: backgroundPublishFlags{ServiceName: "app"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			flags := test.flags
+			flags.Service, flags.Protocol, flags.Output = "app", test.protocol, publishOutputHuman
+			flags.StateDir = filepath.Join(t.TempDir(), "state")
+			flags.project.Config.Services = config.Services{"app": {Protocol: &test.protocol, Public: &test.public}}
+			err := runPublish(t.Context(), flags, io.Discard, io.Discard)
+			if reason, _ := failure.ReasonOf(err); reason != failure.InvalidTunnelFlags {
+				t.Fatalf("unsupported process options reached publication: %v", err)
+			}
+			if _, err := os.Stat(flags.StateDir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("unsupported process options opened owner state: %v", err)
+			}
+		})
 	}
 }

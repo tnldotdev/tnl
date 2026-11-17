@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
@@ -67,7 +68,7 @@ func connectModeError(reason failure.Reason) error {
 	return failure.Wrap("select connection mode", reason, errors.New("connect mode validation failed"))
 }
 
-func ValidateServiceMode(flags StartOptions, service controlv1.Service) error {
+func ValidateServiceMode(flags StartOptions, service controlv1.ServiceSummary) error {
 	if err := ValidateService(service); err != nil {
 		return err
 	}
@@ -148,9 +149,6 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 		return runConnectStdio(observability.Independent(ctx), session, service, input, output, o.Telemetry)
 	}
 	flags.Protocol = string(service.Protocol)
-	if flags.Listen == "" && service.Endpoint != nil {
-		flags.Listen = net.JoinHostPort("127.0.0.1", strconv.Itoa(service.Endpoint.Port))
-	}
 	identity := session.identity.Identity.Id
 	jobID := installedjobs.JobKey(session.authenticated.ServerEndpoint, "connect", identity+":"+service.Id)
 	var registry *installedjobs.Registry
@@ -172,25 +170,17 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 		}
 	}
 	var listener net.Listener
-	portProtocol := flags.Protocol
-	if portProtocol == "http" || portProtocol == "kubernetes" {
-		portProtocol = "tcp"
-	}
 	if flags.Install {
 		override := flags.Listen
 		if override == "" {
 			override = listenAddress
 		}
-		listenAddress, err = session.store.ServiceListenAddress(ctx, identity, service.Id, portProtocol, override)
+		listenAddress, err = session.store.ServiceListenAddress(ctx, identity, service.Id, flags.Protocol, override)
 		if err != nil {
 			return err
 		}
 	} else if listenAddress == "" {
-		if flags.Listen == "" {
-			listener, err = session.store.ListenService(ctx, identity, service.Id, portProtocol)
-		} else {
-			listener, err = session.store.ListenServiceAt(ctx, identity, service.Id, flags.Listen)
-		}
+		listener, err = listenConnector(ctx, session.store, identity, service, flags.Listen)
 		if err != nil {
 			return err
 		}
@@ -203,7 +193,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 	job.Endpoint = service.Endpoint
 	job.TelemetryDisabled = flags.TelemetryDisabled
 	writeReady := func(job installedjobs.Job, destination io.Writer) error {
-		profile, err := serviceConnectionProfile(controlv1.Service{Id: job.ServiceID, Protocol: controlv1.ServiceProtocol(job.Protocol), Enabled: true, Endpoint: job.Endpoint}, job.Target)
+		profile, err := serviceConnectionProfile(controlv1.ServiceSummary{Id: job.ServiceID, Protocol: controlv1.ServiceProtocol(job.Protocol), Enabled: true, Endpoint: job.Endpoint}, job.Target)
 		if err != nil {
 			return err
 		}
@@ -234,7 +224,7 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 			return session.store.ListenServiceAt(ctx, job.IdentityID, job.ServiceID, job.Target)
 		},
 		serve: func(ctx context.Context, listener net.Listener, job installedjobs.Job, ready func() error) error {
-			return serveConnector(ctx, session, listener, job, ready, o.Telemetry)
+			return serveConnector(ctx, session, listener, job, ready, o.Telemetry, o.ShutdownDeadline, o.ShutdownContext)
 		},
 		ready: func(job installedjobs.Job) error {
 			finishStartup(nil)
@@ -246,16 +236,16 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 	})
 }
 
-func selectSessionConnectService(ctx context.Context, session *Session, project projectConfiguration, name string, flags StartOptions) (controlv1.Service, error) {
+func selectSessionConnectService(ctx context.Context, session *Session, project projectConfiguration, name string, flags StartOptions) (controlv1.ServiceSummary, error) {
 	key, err := ConfiguredService(project.Project, name)
 	if err != nil {
-		return controlv1.Service{}, err
+		return controlv1.ServiceSummary{}, err
 	}
 	team := ""
 	if flags.Team != "" || flags.ProjectTeam != "" || key != "" {
 		membership, err := session.currentMembership(ctx)
 		if err != nil {
-			return controlv1.Service{}, err
+			return controlv1.ServiceSummary{}, err
 		}
 		team = membership.TeamId
 	}
@@ -289,7 +279,7 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job insta
 			return nil
 		})
 		_ = listener.Close()
-		if !connectorstream.IsMetadataReload(err) {
+		if !connectorstream.MetadataReloadOnly(err) {
 			return err
 		}
 		if lifecycle.starting != nil {
@@ -298,7 +288,7 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job insta
 		if ctx.Err() != nil {
 			return nil
 		}
-		services, err := lifecycle.services.ListAvailableServices(ctx)
+		services, err := lifecycle.services.ListAvailableServices(ctx, controlv1.ServiceAccessPathConnector)
 		if err != nil {
 			return err
 		}
@@ -319,14 +309,79 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job insta
 	}
 }
 
-func serveConnector(ctx context.Context, session *Session, listener net.Listener, job installedjobs.Job, ready func() error, telemetry *clienttelemetry.Collector) error {
+func serveConnector(ctx context.Context, session *Session, listener net.Listener, job installedjobs.Job, ready func() error, telemetry *clienttelemetry.Collector, deadline func() time.Time, shutdown context.Context) error {
 	configuration, err := connectConfiguration(ctx, session, job)
 	if err != nil {
 		return err
 	}
 	configuration.Ready = ready
 	configuration.Telemetry = telemetry
-	return connectorstream.Serve(ctx, listener, configuration)
+	var bounded context.Context
+	if deadline != nil {
+		// the stream owner retains its narrower authority and transport fences.
+		// its cleanup cannot open a new remote phase after installed shutdown.
+		if shutdown == nil {
+			shutdown = context.WithoutCancel(ctx)
+		}
+		finish, cancel := context.WithCancel(shutdown)
+		defer cancel()
+		var stop context.CancelFunc
+		var once sync.Once
+		configuration.CleanupContext = func() context.Context {
+			once.Do(func() {
+				until := deadline()
+				if until.IsZero() {
+					until = time.Now().Add(10 * time.Second)
+				}
+				bounded, stop = context.WithDeadline(finish, until)
+			})
+			return bounded
+		}
+		defer func() {
+			if stop != nil {
+				stop()
+			}
+		}()
+	}
+	finishShutdown := func(error) {}
+	if deadline == nil {
+		ctx, finishShutdown = connectorShutdownHandoff(ctx)
+	}
+	result := connectorstream.Serve(ctx, listener, configuration)
+	finishShutdown(result)
+	if bounded != nil {
+		result = errors.Join(result, context.Cause(bounded))
+	}
+	return result
+}
+
+// metadata replacement retires a connection, not the foreground process. retain
+// the exact cleanup limit but hand it to final exports only when this runner ends.
+func connectorShutdownHandoff(parent context.Context) (context.Context, func(error)) {
+	var mu sync.Mutex
+	var original time.Time
+	ctx := observability.WithShutdownDeadline(parent, func(until time.Time) time.Time {
+		if parent.Err() != nil {
+			until = observability.ShutdownDeadline(parent, until)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if original.IsZero() || until.Before(original) {
+			original = until
+		}
+		return original
+	})
+	return ctx, func(result error) {
+		if connectorstream.MetadataReloadOnly(result) {
+			return
+		}
+		mu.Lock()
+		until := original
+		mu.Unlock()
+		if !until.IsZero() {
+			observability.ShutdownDeadline(parent, until)
+		}
+	}
 }
 
 func connectConfiguration(ctx context.Context, session *Session, job installedjobs.Job) (connectorstream.Config, error) {
@@ -374,7 +429,7 @@ func (o Operations) RunInstalled(ctx context.Context, job installedjobs.Job, rea
 	if session.identity.Identity.Id != job.IdentityID {
 		return publisherCLIError("connector sign-in identity changed; remove and install it for the current identity")
 	}
-	services, err := session.authenticated.Control.ListAvailableServices(ctx)
+	services, err := session.authenticated.Control.ListAvailableServices(ctx, controlv1.ServiceAccessPathConnector)
 	if err != nil {
 		return err
 	}
@@ -394,5 +449,5 @@ func (o Operations) RunInstalled(ctx context.Context, job installedjobs.Job, rea
 		return err
 	}
 	defer listener.Close()
-	return serveConnector(ctx, session, listener, job, ready, o.Telemetry)
+	return serveConnector(ctx, session, listener, job, ready, o.Telemetry, o.ShutdownDeadline, o.ShutdownContext)
 }

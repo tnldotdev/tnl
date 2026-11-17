@@ -26,14 +26,10 @@ func recordDeploymentPublisherIdentityRevocation(ctx context.Context, tx pgx.Tx,
 }
 
 func recordAppliedDeploymentChange(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor, publisher, request string, revision int64, now time.Time) error {
-	id, kind := s.PublicURLID.String, "public_url"
-	if s.ServiceID.Valid {
-		id, kind = s.ServiceID.String, "service"
-	}
-	if id == "" {
+	if !s.ServiceID.Valid {
 		return nil
 	}
-	return RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: s.TeamID, ServiceID: id, ServiceKind: kind, EventType: "deployment.update", OccurredAt: now, ActorIdentityID: actor, PublisherIdentityID: publisher, ConfigurationRevision: revision}, request)
+	return RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: s.TeamID, ServiceID: s.ServiceID.String, ServiceKind: "service", EventType: "deployment.update", OccurredAt: now, ActorIdentityID: actor, PublisherIdentityID: publisher, ConfigurationRevision: revision}, request)
 }
 
 func recordDeploymentPublisherUpdate(ctx context.Context, tx pgx.Tx, deployment, actor, publisher, request string, now time.Time) error {
@@ -60,7 +56,7 @@ func recordAppliedDeploymentConfiguration(ctx context.Context, tx pgx.Tx, oldSer
 			if !changed[s.DeploymentID.String] {
 				continue
 			}
-			key := s.DeploymentID.String + "/" + s.ServiceID.String + "/" + s.PublicURLID.String
+			key := s.DeploymentID.String + "/" + s.ServiceID.String
 			if seen[key] {
 				continue
 			}

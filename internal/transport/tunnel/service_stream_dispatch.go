@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -32,20 +34,23 @@ type PeerStreamIntroduction interface {
 // authenticated TLS/yamux session. it borrows the session and never grants
 // permission to forward a visitor or to register a peer pair.
 type ServiceStreamDispatcher struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	owner    *Session
-	outer    muxsession.Session
-	peer     PeerStreamIntroduction
-	queue    chan *queuedForward
-	reads    chan struct{}
-	peers    chan struct{}
-	forwards chan struct{}
-	mu       sync.Mutex
-	active   map[muxsession.Stream]struct{}
-	reading  []muxsession.Stream
-	wait     sync.WaitGroup
-	once     sync.Once
+	ctx       context.Context
+	cancel    context.CancelFunc
+	owner     *Session
+	outer     muxsession.Session
+	peer      PeerStreamIntroduction
+	queue     chan *queuedForward
+	reads     chan struct{}
+	peers     chan struct{}
+	forwards  chan struct{}
+	mu        sync.Mutex
+	active    map[muxsession.Stream]struct{}
+	reading   []muxsession.Stream
+	wait      sync.WaitGroup
+	once      sync.Once
+	acceptErr error
+	closeErr  error
+	resultErr error
 }
 
 type queuedForward struct {
@@ -66,8 +71,8 @@ func (q *queuedForward) stop() bool {
 // control handshake. while it runs, no other caller may accept from that outer
 // session. close and join it before closing the peer owner and tunnel session.
 func NewServiceStreamDispatcher(parent context.Context, owner *Session, peer PeerStreamIntroduction) (*ServiceStreamDispatcher, error) {
-	if parent == nil || owner == nil || owner.transport == nil || owner.role != tunnelv1.Publisher || owner.serviceConnection == nil || peer == nil {
-		return nil, errors.New("service stream dispatcher needs a claimed service publisher session and peer acceptor")
+	if parent == nil || owner == nil || owner.transport == nil || owner.role != tunnelv1.Publisher || owner.serviceConnection == nil {
+		return nil, errors.New("service stream dispatcher needs a claimed service publisher session")
 	}
 	ctx, cancel := context.WithCancel(parent)
 	d := &ServiceStreamDispatcher{ctx: ctx, cancel: cancel, owner: owner, outer: owner.transport, peer: peer,
@@ -82,13 +87,17 @@ func (d *ServiceStreamDispatcher) acceptLoop() {
 	for d.ctx.Err() == nil {
 		stream, err := d.outer.AcceptStream(d.ctx)
 		if err != nil {
+			err = d.operationError(err)
+			d.mu.Lock()
+			d.acceptErr = err
+			d.mu.Unlock()
 			d.cancel()
 			return
 		}
 		d.mu.Lock()
 		if d.ctx.Err() != nil {
 			d.mu.Unlock()
-			_ = stream.Close()
+			d.closeStream(stream)
 			return
 		}
 		d.active[stream] = struct{}{}
@@ -139,8 +148,40 @@ func (d *ServiceStreamDispatcher) release(stream muxsession.Stream, closeStream 
 	delete(d.active, stream)
 	d.mu.Unlock()
 	if closeStream {
-		_ = stream.Close()
+		d.closeStream(stream)
 	}
+}
+
+func (d *ServiceStreamDispatcher) operationError(err error) error {
+	if err == nil || muxsession.NormalSessionCloseOnly(err) ||
+		d.ctx.Err() != nil && (failure.Only(err, context.Cause(d.ctx)) || failure.Only(err, d.ctx.Err())) {
+		return nil
+	}
+	return err
+}
+
+// retain owned stream work and physical-close failures, not malformed visitor
+// input or pure expected shutdown. terminal accepts are a separate operation.
+func (d *ServiceStreamDispatcher) recordError(err error) error {
+	if err = d.operationError(err); err == nil {
+		return nil
+	}
+	d.mu.Lock()
+	d.closeErr = errors.Join(d.closeErr, err)
+	d.mu.Unlock()
+	return err
+}
+
+func (d *ServiceStreamDispatcher) closeStream(stream muxsession.Stream) {
+	d.recordError(stream.Close())
+}
+
+// AcceptError returns the terminal accept operation, not owned cleanup. Close
+// joins the accept loop before a retiring owner collects its final value.
+func (d *ServiceStreamDispatcher) AcceptError() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.acceptErr
 }
 
 func (d *ServiceStreamDispatcher) classify(stream muxsession.Stream) {
@@ -154,6 +195,9 @@ func (d *ServiceStreamDispatcher) classify(stream muxsession.Stream) {
 		return
 	}
 	if prefix[0] == tunnelv1.Version {
+		if d.peer == nil {
+			return
+		}
 		select {
 		case d.peers <- struct{}{}:
 			// a peer's full header and tagged first frame are checked by the
@@ -175,7 +219,15 @@ func (d *ServiceStreamDispatcher) classify(stream muxsession.Stream) {
 		return
 	}
 	n := binary.BigEndian.Uint32(prefix[:])
-	if n == 0 || n > tunnelv1.MaxServiceHeaderBytes {
+	if n == 0 {
+		if err := stream.SetWriteDeadline(time.Now().Add(serviceDispatchTimeout)); err != nil {
+			d.recordError(err)
+			return
+		}
+		d.recordError(tunnelv1.WriteReturnFrame(stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnRejected, Code: tunnelv1.InvalidMessage}))
+		return
+	}
+	if n > tunnelv1.MaxServiceHeaderBytes {
 		return
 	}
 	select {
@@ -199,6 +251,18 @@ func (d *ServiceStreamDispatcher) readForwardingHeader(stream muxsession.Stream,
 	if _, err := io.ReadFull(stream, frame[4:]); err != nil {
 		return
 	}
+	var kind struct {
+		Kind tunnelv1.StreamKind `json:"kind"`
+	}
+	if json.Unmarshal(frame[4:], &kind) != nil {
+		return
+	}
+	if kind.Kind == tunnelv1.ServiceCapacityStream {
+		keep = true
+		err := d.owner.answerServiceCapacity(d.ctx, &prefixedStream{Stream: stream, prefix: bytes.NewReader(frame)})
+		d.recordError(err)
+		return
+	}
 	if _, err := tunnelv1.ReadServiceForwardingHeader(bytes.NewReader(frame)); err != nil {
 		return
 	}
@@ -207,7 +271,7 @@ func (d *ServiceStreamDispatcher) readForwardingHeader(stream muxsession.Stream,
 	}
 	forward := &prefixedStream{Stream: stream, prefix: bytes.NewReader(frame)}
 	q := &queuedForward{stream: forward, done: make(chan struct{})}
-	q.timer = time.AfterFunc(handshakeTimeout, func() { _ = stream.Close(); close(q.done) })
+	q.timer = time.AfterFunc(handshakeTimeout, func() { d.closeStream(stream); close(q.done) })
 	select {
 	case d.queue <- q:
 		keep = true
@@ -234,9 +298,9 @@ func (d *ServiceStreamDispatcher) AcceptForwardingStream(ctx context.Context) (m
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, errors.Join(ctx.Err(), d.AcceptError())
 		case <-d.ctx.Done():
-			return nil, net.ErrClosed
+			return nil, errors.Join(net.ErrClosed, d.AcceptError())
 		case q := <-d.queue:
 			if !q.stop() {
 				// an unclaimed opening expired, not the dispatcher or its
@@ -244,18 +308,24 @@ func (d *ServiceStreamDispatcher) AcceptForwardingStream(ctx context.Context) (m
 				continue
 			}
 			if d.ctx.Err() != nil || ctx.Err() != nil {
-				_ = q.stream.Close()
-				return nil, net.ErrClosed
+				d.closeStream(q.stream)
+				return nil, errors.Join(net.ErrClosed, d.AcceptError())
 			}
 			return q.stream, nil
 		}
 	}
 }
 
-// Close interrupts and joins classification and peer introduction workers.
-// the caller still owns both the outer session and the peer owner.
+// Close interrupts and joins classification and peer introduction workers,
+// returning both the terminal accept result and owned cleanup. the caller still
+// owns both the outer session and the peer owner.
 func (d *ServiceStreamDispatcher) Close() error {
 	d.once.Do(func() {
+		defer func() {
+			d.mu.Lock()
+			d.resultErr = errors.Join(d.acceptErr, d.closeErr)
+			d.mu.Unlock()
+		}()
 		d.cancel()
 		d.mu.Lock()
 		for stream := range d.active {
@@ -267,11 +337,23 @@ func (d *ServiceStreamDispatcher) Close() error {
 			select {
 			case q := <-d.queue:
 				q.stop()
-				_ = q.stream.Close()
+				d.closeStream(q.stream)
 			default:
 				return
 			}
 		}
 	})
-	return nil
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.resultErr
+}
+
+// CloseCleanup joins the same work but returns only owned cleanup. a serving
+// owner must collect Close's full operation result before retiring the claim;
+// an earlier accept failure is not a failure to clean up that retired claim.
+func (d *ServiceStreamDispatcher) CloseCleanup() error {
+	_ = d.Close()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.closeErr
 }

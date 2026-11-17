@@ -16,32 +16,27 @@ import (
 // saveConnectorPeerAuditBinding records only checked installation facts. it cannot
 // hold delivery keys, authorize a visitor, or transfer authority to a replacement.
 func saveConnectorPeerAuditBinding(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, binding connectorPeerBinding, until time.Time) error {
-	result, err := tx.Exec(ctx, `INSERT INTO control.connector_peer_audit_bindings
-		(pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_ip,created_at,expires_at,delivery_generation)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		ON CONFLICT (pair_id,delivery_generation) DO UPDATE SET expires_at=GREATEST(control.connector_peer_audit_bindings.expires_at,EXCLUDED.expires_at)
-		WHERE control.connector_peer_audit_bindings.service_id=EXCLUDED.service_id
-		AND control.connector_peer_audit_bindings.service_run_id=EXCLUDED.service_run_id
-		AND control.connector_peer_audit_bindings.run_number=EXCLUDED.run_number
-		AND control.connector_peer_audit_bindings.publisher_identity_id=EXCLUDED.publisher_identity_id
-		AND control.connector_peer_audit_bindings.identity_id IS NOT DISTINCT FROM EXCLUDED.identity_id
-		AND control.connector_peer_audit_bindings.device_id IS NOT DISTINCT FROM EXCLUDED.device_id
-		AND control.connector_peer_audit_bindings.source_ip=EXCLUDED.source_ip
-		AND control.connector_peer_audit_bindings.created_at=EXCLUDED.created_at`,
-		pair.ID, pair.ServiceID, pair.ServiceRunID, pair.RunNumber, pair.PublisherIdentityID,
-		nullableText(binding.subject.IdentityID), nullableText(binding.subject.DeviceID), binding.source, pair.CreatedAt.Time, until, pair.DeliveryGeneration)
+	if !connectorPeerPairUnretired(pair) {
+		return ErrServiceAuditAccess
+	}
+	count, err := controlstatedb.New(tx).SaveConnectorPeerAuditBinding(ctx, controlstatedb.SaveConnectorPeerAuditBindingParams{
+		PairID: pair.ID, ServiceID: pair.ServiceID, ServiceRunID: pair.ServiceRunID, RunNumber: pair.RunNumber,
+		PublisherIdentityID: pair.PublisherIdentityID, IdentityID: nullableText(binding.subject.IdentityID),
+		DeviceID: nullableText(binding.subject.DeviceID), SourceIp: binding.source, CreatedAt: pair.CreatedAt,
+		ExpiresAt: timestamptz(until), DeliveryGeneration: pair.DeliveryGeneration,
+	})
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() != 1 {
+	if count != 1 {
 		return ErrServiceAuditAccess
 	}
 	return nil
 }
 
-// IngestServiceRunObservations accepts facts from the run that owns the native
-// listener, not a connector or relay. identity and source come from control's
-// installed pair. this operation neither renews authority nor admits a stream.
+// IngestServiceRunObservations accepts facts from the owning publisher, not a
+// connector or relay. connector identity and source come from control's installed
+// pair; HTTP observations carry no actor identity. reports never renew authority.
 func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, runID, token string, number int64, batch serviceaudit.Batch, now time.Time) (result ServiceObservationResult, retErr error) {
 	if err := validateObservationBatch(batch, now); err != nil {
 		return result, err
@@ -55,7 +50,16 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 		return result, err
 	}
 	defer rollback(ctx, tx, "ingest native service audit", &retErr)()
-	run, err := controlstatedb.New(tx).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
+	// audit inserts retain foreign keys to the owner. take that parent before
+	// the run, as heartbeat and closure do, even for a report after service deletion.
+	if err := lockServiceOwner(ctx, tx, serviceID); err != nil {
+		return result, err
+	}
+	q := controlstatedb.New(tx)
+	if _, err := q.LockService(ctx, serviceID); err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
 	}
@@ -71,8 +75,9 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 	}
 	err = tx.QueryRow(ctx, `SELECT LEAST($4::timestamptz,p.revoked_at,g.revoked_at,g.expires_at)
 		FROM control.publisher_identities p JOIN control.publisher_grants g ON g.publisher_identity_id=p.id
-		WHERE p.id=$1 AND g.id=$2 AND p.team_id=$3 AND g.service_id=$5`,
-		run.PublisherIdentityID, run.PublisherGrantID, run.TeamID, until, serviceID).Scan(&until)
+		WHERE p.id=$1 AND g.id=$2 AND p.team_id IS NOT DISTINCT FROM $3::text
+		AND p.guest_id IS NOT DISTINCT FROM $5::text`,
+		run.PublisherIdentityID, run.PublisherGrantID, run.TeamID, until, run.GuestID).Scan(&until)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
 	}
@@ -82,12 +87,32 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 	if now.After(until.Add(serviceObservationDeliveryGrace)) {
 		return result, ErrServiceAccess
 	}
+	events := make([]serviceaudit.Event, 0, len(batch.Events))
 	for _, o := range batch.Events {
-		if o.ServiceKind != "service" || o.ServiceID != serviceID || o.RunID != runID || o.RunNumber != number || o.PairID == "" || o.EventType != "connection.open" && o.EventType != "connection.close" {
+		if o.ServiceKind != "service" || o.ServiceID != serviceID || o.RunID != runID || o.RunNumber != number {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
 		e := observationEvent(o)
-		e.TeamID, e.PublisherIdentityID = run.TeamID, run.PublisherIdentityID
+		e.TeamID, e.PublisherIdentityID = run.TeamID.String, run.PublisherIdentityID
+		if run.Protocol == "http" && o.PairID == "" {
+			// the HTTP frontend reports requests and public connection lifetime
+			// under its exact run credential. it supplies no actor identity.
+			deadline := until
+			if o.EventType == "connection.close" || o.EventType == "connection.open" && o.Outcome != "allowed" {
+				deadline = deadline.Add(serviceObservationDeliveryGrace)
+			}
+			if o.DeliveryGeneration != 0 || o.OccurredAt.Before(run.CreatedAt.Time.Add(-time.Second)) || o.OccurredAt.After(deadline) {
+				return ServiceObservationResult{}, ErrServiceAuditAccess
+			}
+			events = append(events, e)
+			continue
+		}
+		if o.EventType == "http.decision" {
+			return ServiceObservationResult{}, ErrServiceAuditAccess
+		}
+		if o.PairID == "" || o.EventType != "connection.open" && o.EventType != "connection.close" {
+			return ServiceObservationResult{}, ErrServiceAuditAccess
+		}
 		var created, expires time.Time
 		var retired pgtype.Timestamptz
 		// installation checked both claims and their immutable source agreement.
@@ -119,12 +144,11 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 		if o.OccurredAt.Before(created.Add(-time.Second)) || o.OccurredAt.After(deadline) {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
-		n, err := insertServiceAuditCount(ctx, tx, e, now)
-		if err != nil {
-			return ServiceObservationResult{}, err
-		}
-		result.Accepted += int(n)
-		result.Duplicates += 1 - int(n)
+		events = append(events, e)
+	}
+	result, err = insertServiceAuditBatch(ctx, tx, events, now)
+	if err != nil {
+		return ServiceObservationResult{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return ServiceObservationResult{}, err

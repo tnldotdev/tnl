@@ -85,7 +85,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			}
 			key, _ := randomIdempotencyKey()
 			service, err := session.Authenticated().Control.CreateService(t.Context(), session.Identity().PersonalTeamId, fmt.Sprintf("reload-%t", detached), key,
-				controlv1.ServiceMetadata{Protocol: "tcp", TrustRevision: 1, TargetTls: publisheridentity.ServiceTargetTLS(&trust)})
+				controlv1.ServiceMetadata{Protocol: "tcp", TrustRevision: 1, TargetTls: publisheridentity.ServiceTargetTLS(&trust)}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,7 +98,8 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				ready, done := make(chan struct{}), make(chan error, 1)
 				go func() {
-					done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: session.Authenticated().Control, Access: native.Access, Identity: identity,
+					done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: native, Access: native.Access,
+						PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
 						State: session.Store(), ServiceID: service.Id, Target: target.Addr().String(), Metadata: publisheridentity.ServiceMetadata(service),
 						HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }})
 				}()

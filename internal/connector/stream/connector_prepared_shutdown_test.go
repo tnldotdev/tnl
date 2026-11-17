@@ -110,7 +110,7 @@ func TestPreparedConnectorEOFCancelsPendingPermission(t *testing.T) {
 				}
 				accepted <- control
 			}()
-			writer, err := tunnel.OpenConnectorPermissionControl(ctx, ctx, client)
+			writer, err := tunnel.OpenConnectorPermissionControl(ctx, ctx, client, connectorTestControlScope())
 			if err != nil {
 				t.Fatal(err)
 			}

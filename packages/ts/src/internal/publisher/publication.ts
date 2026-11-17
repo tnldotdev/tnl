@@ -1,12 +1,14 @@
 import { randomBytes, randomInt } from "node:crypto";
 import * as path from "node:path";
 import { isIP } from "node:net";
+import { setTimeout as pause } from "node:timers/promises";
 import type { FetchHandler } from "./fetch_types.js";
 import { TnlCleanupError, TnlError } from "../../errors.js";
 import { operation, independent, scheduled, background, bound } from "../tracing.js";
 import {
   startRuntime,
   runtimeRequest,
+  canceledRuntimeRequest,
   type RuntimeEndpoint,
   type EndpointSelection,
 } from "./local.js";
@@ -99,6 +101,7 @@ export type PublicationSelection = (
 ) & {
   readonly environment?: NodeJS.ProcessEnv;
   readonly retainCleanup?: (cleanup: () => Promise<void>) => void;
+  readonly shutdownDeadline?: () => string | undefined;
 };
 
 interface Dependencies {
@@ -106,20 +109,49 @@ interface Dependencies {
     directory: string,
     binary?: string,
     selection?: EndpointSelection,
+    signal?: AbortSignal,
   ): Promise<RuntimeEndpoint>;
-  request(endpoint: RuntimeEndpoint, operation: string, body?: unknown): Promise<unknown>;
-  pause(milliseconds: number): Promise<void>;
+  request(
+    endpoint: RuntimeEndpoint,
+    operation: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown>;
+  pause(milliseconds: number, signal?: AbortSignal): Promise<void>;
 }
 
 const dependencies: Dependencies = {
   start: startRuntime,
   request: runtimeRequest,
-  pause: (milliseconds) =>
-    new Promise((resolve) => {
-      const timer = setTimeout(resolve, milliseconds);
-      timer.unref();
-    }),
+  pause: async (milliseconds, signal) => {
+    await pause(milliseconds, undefined, {
+      ref: false,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  },
 };
+
+interface PublicationShutdown {
+  readonly signal: AbortSignal;
+  readonly deadline: string;
+  finish(): void;
+}
+
+function publicationShutdown(original?: string): PublicationShutdown {
+  const controller = new AbortController();
+  const deadline = original ?? new Date(Date.now() + 10_000).toISOString();
+  const abort = () =>
+    controller.abort(
+      new DOMException(
+        "publication shutdown timed out; remote cleanup may be unconfirmed",
+        "TimeoutError",
+      ),
+    );
+  const remaining = Date.parse(deadline) - Date.now();
+  const timer = setTimeout(abort, Math.max(0, remaining));
+  if (remaining <= 0) abort();
+  return { signal: controller.signal, deadline, finish: () => clearTimeout(timer) };
+}
 
 // registration acknowledges a listener; filtered status identifies its exact run.
 export function publishServer(
@@ -127,9 +159,10 @@ export function publishServer(
   options: InvocationOptions = {},
   runtime: Dependencies = dependencies,
   publication?: PublicationSelection,
+  shutdown?: () => PublicationShutdown,
 ): Promise<Publication> {
   return operation("sdk.publish", () =>
-    publishServerUntraced(server, options, runtime, publication),
+    publishServerUntraced(server, options, runtime, publication, shutdown),
   );
 }
 
@@ -138,6 +171,7 @@ async function publishServerUntraced(
   options: InvocationOptions,
   runtime: Dependencies,
   publication?: PublicationSelection,
+  shutdown?: () => PublicationShutdown,
 ): Promise<Publication> {
   validateOptions(options);
   const target = await listeningTarget(server, options);
@@ -199,7 +233,19 @@ async function publishServerUntraced(
             ? {}
             : { ip: [...options.access.ip] }),
         }),
-    ...(options.limits === undefined ? {} : { limits: structuredClone(options.limits) }),
+    ...(options.limits === undefined
+      ? {}
+      : {
+          limits: {
+            ...(options.limits.requests === undefined ? {} : { total: options.limits.requests }),
+            ...(options.limits.concurrency === undefined
+              ? {}
+              : { concurrency: options.limits.concurrency }),
+            ...(options.limits.rate === undefined
+              ? {}
+              : { rate: { count: options.limits.rate.requests, per: options.limits.rate.per } }),
+          },
+        }),
     ...(options.requirePostQuantum === undefined
       ? {}
       : { require_post_quantum: options.requirePostQuantum }),
@@ -210,18 +256,36 @@ async function publishServerUntraced(
     ...(publication?.kind === "deployment" ? { publications: true } : {}),
     ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
   };
-  let endpoint = await runtime.start(directory, undefined, selection);
+  let endpoint = await runtime.start(directory, undefined, selection, options.signal);
   if (options.signal?.aborted) throw aborted();
-  let assignedURL: `https://${string}` | undefined;
+  let currentURL: `https://${string}` | undefined;
   let registration: z.output<typeof registrationSchema> | undefined;
   let uncertain = false;
   let unregisterReplyLost = false;
-  const register = async () => {
+  let shutdownBudget: PublicationShutdown | undefined;
+  let shutdownUntil: string | undefined;
+  const beginShutdown = () => {
+    if (shutdown !== undefined) return shutdown();
+    const parent = publication?.shutdownDeadline?.();
+    if (parent !== undefined && (shutdownUntil === undefined || parent < shutdownUntil))
+      shutdownUntil = parent;
+    shutdownBudget ??= publicationShutdown(shutdownUntil);
+    shutdownUntil = shutdownBudget.deadline;
+    return shutdownBudget;
+  };
+  const finishShutdown = () => {
+    shutdownBudget?.finish();
+    shutdownBudget = undefined;
+  };
+  const lifetime = new AbortController();
+  const abortLifetime = () => lifetime.abort(options.signal?.reason);
+  options.signal?.addEventListener("abort", abortLifetime, { once: true });
+  const register = async (signal: AbortSignal = lifetime.signal) => {
     uncertain = true;
     try {
       if (localService === undefined) {
         registration = parseRegistration(
-          await runtime.request(endpoint, "publications/register", request),
+          await runtime.request(endpoint, "publications/register", request, signal),
           owner,
           target,
         );
@@ -229,15 +293,20 @@ async function publishServerUntraced(
         return;
       }
       const assignment = parseAssignment(
-        await runtime.request(endpoint, "prepare", {
-          version: 1,
-          directory,
-          service: localService,
-          framework: isBunServer(server) ? "bun" : "node",
-          owner,
-          pid: process.pid,
-          telemetry_disabled: request.telemetry_disabled,
-        }),
+        await runtime.request(
+          endpoint,
+          "prepare",
+          {
+            version: 1,
+            directory,
+            service: localService,
+            framework: isBunServer(server) ? "bun" : "node",
+            owner,
+            pid: process.pid,
+            telemetry_disabled: request.telemetry_disabled,
+          },
+          signal,
+        ),
       );
       registration = {
         version: 1 as const,
@@ -252,13 +321,14 @@ async function publishServerUntraced(
         endpoint.scope !== "app" ||
         assignment.service !== localService ||
         endpoint.service !== localService ||
-        assignment.publicURL === undefined ||
-        (assignedURL !== undefined && assignedURL !== assignment.publicURL)
+        (assignment.publicURL !== undefined &&
+          currentURL !== undefined &&
+          currentURL !== assignment.publicURL)
       )
         throw new TnlError("sdk.response_invalid");
-      assignedURL = assignment.publicURL;
+      if (assignment.publicURL !== undefined) currentURL = assignment.publicURL;
       uncertain = true;
-      await runtime.request(endpoint, "register", registration);
+      await runtime.request(endpoint, "register", registration, signal);
       uncertain = false;
     } catch (cause) {
       if (
@@ -271,69 +341,83 @@ async function publishServerUntraced(
       throw cause;
     }
   };
-  const unregister = async () => {
-    // recover the original invocation before cleanup when its reply was lost.
-    for (
-      let attempt = 0;
-      uncertain && !(localService !== undefined && registration !== undefined);
-      attempt++
-    ) {
-      try {
-        await register();
-      } catch (cause) {
-        if (attempt >= 2 || !(cause instanceof TnlError) || cause.code !== "sdk.dev_unavailable")
-          throw cause;
-        endpoint = await runtime.start(directory, undefined, selection);
-      }
-    }
-    if (registration !== undefined) {
-      for (let attempt = 0; ; attempt++) {
+  const unregister = async (budget: PublicationShutdown = beginShutdown()) => {
+    budget.signal.throwIfAborted();
+    try {
+      // recover the original invocation before cleanup when its reply was lost.
+      for (
+        let attempt = 0;
+        uncertain && !(localService !== undefined && registration !== undefined);
+        attempt++
+      ) {
         try {
-          await runtime.request(endpoint, "unregister", registration);
-          break;
+          await register(budget.signal);
         } catch (cause) {
-          if (publicationCleanupFailed(cause)) {
-            registration = undefined;
-            uncertain = false;
-            unregisterReplyLost = false;
-          }
-          // an expired outcome or a replacement owner's capability rejection
-          // cannot turn a previously lost cleanup result into successful cleanup.
-          if (
-            unregisterReplyLost &&
-            cause instanceof TnlError &&
-            cause.code === "sdk.registration_stale"
-          )
-            throw new TnlError("sdk.dev_unavailable");
-          if (
-            cause instanceof TnlError &&
-            (cause.code === "sdk.dev_unavailable" || cause.code === "sdk.response_invalid")
-          )
-            unregisterReplyLost = true;
           if (attempt >= 2 || !(cause instanceof TnlError) || cause.code !== "sdk.dev_unavailable")
             throw cause;
-          // retry the same endpoint and exact registration. native retains the
-          // stopped error when a terminal unregister acknowledgment is lost.
-          await runtime.pause(100);
+          endpoint = await runtime.start(directory, undefined, selection, budget.signal);
         }
       }
-      registration = undefined;
-      uncertain = false;
-      unregisterReplyLost = false;
+      if (registration !== undefined) {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await runtime.request(
+              endpoint,
+              "unregister",
+              { ...registration, shutdown_deadline: budget.deadline },
+              budget.signal,
+            );
+            break;
+          } catch (cause) {
+            if (publicationCleanupFailed(cause)) {
+              registration = undefined;
+              uncertain = false;
+              unregisterReplyLost = false;
+            }
+            // an expired outcome or a replacement owner's capability rejection
+            // cannot turn a previously lost cleanup result into successful cleanup.
+            if (
+              unregisterReplyLost &&
+              cause instanceof TnlError &&
+              cause.code === "sdk.registration_stale"
+            )
+              throw new TnlError("sdk.dev_unavailable");
+            if (
+              cause instanceof TnlError &&
+              (cause.code === "sdk.dev_unavailable" || cause.code === "sdk.response_invalid")
+            )
+              unregisterReplyLost = true;
+            if (
+              attempt >= 2 ||
+              !(cause instanceof TnlError) ||
+              cause.code !== "sdk.dev_unavailable"
+            )
+              throw cause;
+            // retry the same endpoint and exact registration. native retains the
+            // stopped error when a terminal unregister acknowledgment is lost.
+            await runtime.pause(100, budget.signal);
+          }
+        }
+        registration = undefined;
+        uncertain = false;
+        unregisterReplyLost = false;
+      }
+    } finally {
+      if (shutdown === undefined) finishShutdown();
     }
   };
   try {
     await register();
   } catch (cause) {
+    options.signal?.removeEventListener("abort", abortLifetime);
     try {
       await unregister();
     } catch (cleanup) {
-      if (!publicationCleanupFailed(cleanup)) publication?.retainCleanup?.(unregister);
+      if (!publicationCleanupFailed(cleanup)) publication?.retainCleanup?.(() => unregister());
       throw new TnlCleanupError(cause, cleanup);
     }
     throw cause;
   }
-  let currentURL: `https://${string}` | undefined;
   let closed = false;
   let resolveClosing!: () => void;
   const closingSignal = new Promise<void>((resolve) => {
@@ -365,12 +449,28 @@ async function publishServerUntraced(
     closed = true;
     resolveClosing();
     options.signal?.removeEventListener("abort", onAbort);
+    options.signal?.removeEventListener("abort", abortLifetime);
     process.off("beforeExit", beforeExit);
     detachListener?.();
     if (!terminal && !readyReached) rejectReady(aborted());
     closePromise = operation("sdk.publish.cleanup", async () => {
-      await monitoring;
-      await unregister();
+      const budget = beginShutdown();
+      lifetime.abort(aborted());
+      let monitorFailure: unknown;
+      try {
+        await monitoring;
+      } catch (cause) {
+        monitorFailure = cause;
+      }
+      try {
+        await unregister(budget);
+      } catch (cleanup) {
+        if (monitorFailure !== undefined) throw new TnlCleanupError(monitorFailure, cleanup);
+        throw cleanup;
+      } finally {
+        if (shutdown === undefined) finishShutdown();
+      }
+      if (monitorFailure !== undefined) throw monitorFailure;
     }).then(
       () => {
         if (!terminal) {
@@ -379,13 +479,10 @@ async function publishServerUntraced(
         }
       },
       (cause: unknown) => {
-        const stale = cause instanceof TnlError && cause.code === "sdk.registration_stale";
         if (!terminal) {
           terminal = true;
-          if (stale) resolveDone();
-          else rejectDone(cause);
+          rejectDone(cause);
         }
-        if (stale) return;
         closePromise = undefined;
         throw cause;
       },
@@ -421,10 +518,7 @@ async function publishServerUntraced(
   let lastRun = 0;
   const observe = (status: NonNullable<ReturnType<typeof parseStatus>>) => {
     if (status.publicURL !== undefined) {
-      if (
-        (currentURL !== undefined && currentURL !== status.publicURL) ||
-        (assignedURL !== undefined && assignedURL !== status.publicURL)
-      )
+      if (currentURL !== undefined && currentURL !== status.publicURL)
         throw new TnlError("sdk.response_invalid");
       currentURL = status.publicURL;
     }
@@ -433,6 +527,7 @@ async function publishServerUntraced(
       lastRun = status.publishRunNumber;
     }
     if (status.routable) {
+      if (status.publicURL === undefined) throw new TnlError("sdk.response_invalid");
       if (!readyReached) {
         readyReached = true;
         resolveReady(handle);
@@ -441,13 +536,13 @@ async function publishServerUntraced(
   };
   // registering acknowledges the listener, not routability.
   const statusRequest = independent("sdk.publish.status", () =>
-    runtime.request(endpoint, "status"),
+    runtime.request(endpoint, "status", undefined, lifetime.signal),
   );
   const renew = independent("sdk.publish.renew", () =>
-    runtime.request(endpoint, "renew", registration),
+    runtime.request(endpoint, "renew", registration, lifetime.signal),
   );
   const recover = independent("sdk.publish.recover", async () => {
-    endpoint = await runtime.start(directory, undefined, selection);
+    endpoint = await runtime.start(directory, undefined, selection, lifetime.signal);
     await register();
   });
   const monitoring = background(async () => {
@@ -463,14 +558,17 @@ async function publishServerUntraced(
         );
         if (status !== undefined) observe(status);
         if (closed || terminal) break;
-        await Promise.race([runtime.pause(250), closingSignal]);
+        await Promise.race([runtime.pause(250, lifetime.signal), closingSignal]);
         if (closed || terminal) break;
         if (Date.now() - lastRenew >= 5_000) {
           await renew();
           lastRenew = Date.now();
         }
       } catch (cause) {
-        if (closed || terminal) break;
+        if (closed || terminal) {
+          if (!canceledRuntimeRequest(cause, lifetime.signal)) throw cause;
+          break;
+        }
         if (
           cause instanceof TnlError &&
           (cause.code === "sdk.dev_unavailable" || cause.code === "sdk.registration_stale")
@@ -479,12 +577,16 @@ async function publishServerUntraced(
             await recover();
             continue;
           } catch (restartError) {
+            if (closed || terminal) {
+              if (!canceledRuntimeRequest(restartError, lifetime.signal)) throw restartError;
+              break;
+            }
             if (
               restartError instanceof TnlError &&
               (restartError.code === "sdk.dev_unavailable" ||
                 restartError.code === "sdk.registration_stale")
             ) {
-              await Promise.race([runtime.pause(1_000), closingSignal]);
+              await Promise.race([runtime.pause(1_000, lifetime.signal), closingSignal]);
               continue;
             }
             fail(restartError);
@@ -597,21 +699,19 @@ export function publicationCleanupFailed(cause: unknown): boolean {
 async function closeOwnedPublication(
   server: LocalHTTPServer,
   cleanup: () => Promise<void>,
+  budget: PublicationShutdown,
 ): Promise<void> {
-  let publicationError: unknown;
-  try {
-    await cleanup();
-  } catch (cause) {
-    if (!publicationCleanupFailed(cause)) throw cause;
-    publicationError = cause;
-  }
-  try {
-    await closeServer(server);
-  } catch (cause) {
-    if (publicationError !== undefined) throw new TnlCleanupError(publicationError, cause);
-    throw cause;
-  }
-  if (publicationError !== undefined) throw publicationError;
+  // detach native monitoring before stopping the owned listener. both phases
+  // start now and share the same deadline; arbitrary Fetch handlers are not joined.
+  const native = cleanup();
+  const results = await Promise.allSettled([native, closeServer(server, budget.signal)]);
+  const { joinFetchServer } = await import("./fetch.js");
+  await joinFetchServer(server);
+  const failures = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason as unknown] : [],
+  );
+  if (failures.length > 1) throw new TnlCleanupError(failures[0], failures[1]);
+  if (failures.length === 1) throw failures[0];
 }
 
 // inline Fetch handlers own their Node listener; a supplied server is never closed.
@@ -624,8 +724,21 @@ export async function publishFetch(
   validateOptions(options);
   const { createFetchServer } = await import("./fetch.js");
   const server = await createFetchServer(handler);
+  let shutdown: PublicationShutdown | undefined;
+  let shutdownUntil: string | undefined;
+  const budget = () => {
+    const parent = publication?.shutdownDeadline?.();
+    if (parent !== undefined && (shutdownUntil === undefined || parent < shutdownUntil))
+      shutdownUntil = parent;
+    shutdown ??= publicationShutdown(shutdownUntil);
+    shutdownUntil = shutdown.deadline;
+    return shutdown;
+  };
+  const finish = () => {
+    shutdown?.finish();
+    shutdown = undefined;
+  };
   let base: Publication;
-  let retained = false;
   try {
     base = await publishServer(
       server,
@@ -636,27 +749,32 @@ export async function publishFetch(
         : {
             ...publication,
             retainCleanup: (cleanup) => {
-              retained = true;
-              publication.retainCleanup?.(() => closeOwnedPublication(server, cleanup));
+              publication.retainCleanup?.(() =>
+                closeOwnedPublication(server, cleanup, budget()).finally(finish),
+              );
             },
           },
+      budget,
     );
   } catch (cause) {
-    if (retained) throw cause;
     try {
-      await closeServer(server);
+      await closeServer(server, budget().signal);
     } catch (cleanupError) {
       throw new TnlCleanupError(cause, cleanupError);
+    } finally {
+      finish();
     }
     throw cause;
   }
   let closing: Promise<void> | undefined;
   const close = (): Promise<void> => {
     if (closing !== undefined) return closing;
-    closing = closeOwnedPublication(server, base.close).catch((cause: unknown) => {
-      closing = undefined;
-      throw cause;
-    });
+    closing = closeOwnedPublication(server, base.close, budget())
+      .finally(finish)
+      .catch((cause: unknown) => {
+        closing = undefined;
+        throw cause;
+      });
     return closing;
   };
   return Object.freeze({

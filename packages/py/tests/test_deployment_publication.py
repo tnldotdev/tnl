@@ -27,10 +27,12 @@ class Session:
     registration: dict[str, object] = field(default_factory=dict)
     payloads: list[dict[str, object]] = field(default_factory=list)
     stopped: bool = False
+    public_url: str | None = None
+    run_number: int = 1
 
     @property
     def url(self) -> str:
-        return f"https://app-{self.endpoint.owner_id}.example.test"
+        return self.public_url or f"https://app-{self.endpoint.owner_id}.example.test"
 
 
 class Native(NativeRuntime):
@@ -48,6 +50,8 @@ class Native(NativeRuntime):
         self.retired_cleanup = False
         self.retired_error = PublicationCleanupFailed()
         self.private_http = False
+        self.unrealized = False
+        self.run_number = 1
         self.initial_retired = False
 
     async def start(
@@ -69,7 +73,9 @@ class Native(NativeRuntime):
             service=service,
             invocation_id=invocation_id,
         )
-        self.sessions[endpoint.capability] = Session(endpoint, environment, publications)
+        self.sessions[endpoint.capability] = Session(
+            endpoint, environment, publications, run_number=self.run_number
+        )
         return endpoint
 
     async def request(
@@ -78,7 +84,7 @@ class Native(NativeRuntime):
         self.operations.append(operation)
         session = self.sessions[endpoint.capability]
         if operation == "prepare":
-            if self.private_http:
+            if self.private_http or self.unrealized:
                 return {
                     "version": 1,
                     "registration_id": "reg_" + endpoint.owner_id,
@@ -145,8 +151,8 @@ class Native(NativeRuntime):
                         "routable": True,
                         "ready": False,
                         "readiness": {"path": "/"},
-                        "public_url": session.url,
-                        "run_number": 1,
+                        **({} if self.private_http else {"public_url": session.url}),
+                        "run_number": session.run_number,
                     }
                 ],
             }
@@ -159,7 +165,17 @@ class Native(NativeRuntime):
             if self.failed_cleanup:
                 raise tnl.TnlError("sdk.request_rejected", "cleanup failed")
             if session.registration:
-                assert payload == session.registration
+                assert payload is not None
+                deadline = payload["shutdown_deadline"]
+                assert isinstance(deadline, str)
+                from datetime import UTC, datetime
+
+                assert (
+                    0 < (datetime.fromisoformat(deadline) - datetime.now(UTC)).total_seconds() <= 10
+                )
+                assert {
+                    key: value for key, value in payload.items() if key != "shutdown_deadline"
+                } == session.registration
             else:
                 assert payload is not None
                 session.registration = dict(payload)
@@ -174,7 +190,7 @@ async def endpoint(_request: Request) -> PlainTextResponse:
 def setup(monkeypatch: pytest.MonkeyPatch) -> Native:
     native = Native()
     monkeypatch.setattr(_asgi, "_native", native)
-    monkeypatch.setattr(_connections._Scope, "stop", lambda _scope: None)
+    monkeypatch.setattr(_connections._Scope, "stop", lambda _scope, _until=None: None)
     return native
 
 
@@ -249,7 +265,73 @@ def test_local_named_uses_framework_registration_and_saved_policy(
     asyncio.run(scenario())
 
 
-def test_private_http_prepare_releases_acknowledged_reservation_and_asgi(
+def test_local_named_waits_for_first_endpoint_after_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        native = setup(monkeypatch)
+        native.unrealized = True
+        native.routable.clear()
+        local = tnl.create_client(
+            project="acme/shop", services={"web": {"protocol": "http"}}
+        ).deployment("local")
+        pending = asyncio.create_task(local.publish("web", tnl.handler(endpoint)))
+        try:
+            await asyncio.wait_for(native.status_entered.wait(), 5)
+            assert not pending.done()
+            assert native.operations.count("prepare") == 1
+            assert native.operations.count("register") == 1
+            session = next(iter(native.sessions.values()))
+            async with httpx.AsyncClient(trust_env=False) as http:
+                assert (
+                    await http.get(str(session.registration["target"]))
+                ).text == "ASGI application"
+            native.routable.set()
+            publication = await asyncio.wait_for(pending, 5)
+            assert publication.url == session.url
+            await publication.aclose()
+            assert native.operations.count("unregister") == 1
+            assert publication._serve_task.done() and session.stopped
+            async with httpx.AsyncClient(trust_env=False) as http:
+                with pytest.raises(httpx.ConnectError):
+                    await http.get(str(session.registration["target"]))
+        finally:
+            native.routable.set()
+            await local.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("changed", ["url", "run"])
+def test_late_named_endpoint_retains_url_and_run_fences(
+    monkeypatch: pytest.MonkeyPatch, changed: str
+) -> None:
+    async def scenario() -> None:
+        native = setup(monkeypatch)
+        native.unrealized, native.run_number = True, 2
+        local = tnl.create_client(
+            project="acme/shop", services={"web": {"protocol": "http"}}
+        ).deployment("local")
+        publication = await local.publish("web", tnl.handler(endpoint))
+        try:
+            session = next(iter(native.sessions.values()))
+            if changed == "url":
+                session.public_url = "https://another.example.test"
+            else:
+                session.run_number = 1
+            with pytest.raises(tnl.TnlError) as failure:
+                await asyncio.wait_for(publication.wait(), 5)
+            assert failure.value.code == "sdk.response_invalid"
+        finally:
+            await publication.aclose()
+            await local.aclose()
+        assert publication._serve_task.done() and session.stopped
+        assert native.operations.count("unregister") == 1
+
+    asyncio.run(scenario())
+
+
+def test_connector_only_http_releases_registration_and_asgi(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def scenario() -> None:
@@ -262,7 +344,7 @@ def test_private_http_prepare_releases_acknowledged_reservation_and_asgi(
             await local.publish("web", tnl.handler(endpoint))
         assert failure.value.code == "sdk.response_invalid"
         assert native.operations.count("prepare") == 1
-        assert native.operations.count("register") == 0
+        assert native.operations.count("register") == 1
         assert native.operations.count("unregister") == 1
         session = next(iter(native.sessions.values()))
         assert session.stopped and not local._publications
@@ -460,7 +542,7 @@ def test_internal_shutdown_deadline_cancels_and_joins_a_hung_lifespan(
         independent = ValueError("lifespan cancellation cleanup failed")
         # arm the real timeout only after lifespan shutdown reaches its gate.
         deadline = asyncio.timeout(None)
-        monkeypatch.setattr(_asgi, "_server_shutdown_deadline", lambda: deadline)
+        monkeypatch.setattr(_asgi, "_server_shutdown_deadline", lambda _until: deadline)
 
         async def app(scope: Scope, receive: Receive, send: Send) -> None:
             if scope["type"] == "lifespan":
@@ -581,16 +663,15 @@ def test_lost_unregister_result_is_not_acknowledged_by_a_replacement_owner(
             await publication.aclose()
         assert publication._registration is not None and not publication._close_complete
         waiting = asyncio.create_task(publication.wait())
-        await asyncio.sleep(0)
-        assert not waiting.done()
+        with pytest.raises(NativeUnavailable):
+            await waiting
         async with httpx.AsyncClient(trust_env=False) as client:
-            assert (await client.get(publication._target)).text == "ASGI application"
+            with pytest.raises(httpx.ConnectError):
+                await client.get(publication._target)
         restored, native.retired_cleanup = True, True
         with pytest.raises(PublicationCleanupFailed) as closing:
             await publication.aclose()
-        with pytest.raises(PublicationCleanupFailed) as finished:
-            await waiting
-        assert finished.value is closing.value
+        assert isinstance(closing.value, PublicationCleanupFailed)
         assert publication._close_complete
         await deployment.aclose()
 
@@ -653,7 +734,7 @@ def test_lost_reply_retains_exact_intent_and_retryable_start_cleanup(
         assert len(session.payloads) == 2 and session.payloads[0] == session.payloads[1]
         assert len(deployment._publications) == 1
         publication = next(iter(deployment._publications))
-        assert not publication._serve_task.done()
+        assert publication._serve_task.done()
         native.failed_cleanup = False
         native.draining.clear()
         native.drained.clear()
@@ -663,10 +744,13 @@ def test_lost_reply_retains_exact_intent_and_retryable_start_cleanup(
         with pytest.raises(asyncio.CancelledError):
             await closing
         assert deployment._closing is not None and not deployment._closing.done()
-        assert not publication._serve_task.done()
-        native.drained.set()
-        await deployment.aclose()
         assert publication._serve_task.done()
+        native.drained.set()
+        with pytest.raises(ExceptionGroup) as retained:
+            await deployment.aclose()
+        assert retained.value.exceptions == (failure.value.exceptions[1],)
+        assert publication._serve_task.done()
+        await deployment.aclose()
 
     asyncio.run(scenario())
 
@@ -685,12 +769,14 @@ def test_retained_startup_cleanup_retires_asgi_after_permanent_authority_loss(
         publication = next(iter(deployment._publications))
         session = next(iter(native.sessions.values()))
         assert len(session.payloads) == 2 and session.payloads[0] == session.payloads[1]
-        assert not publication._serve_task.done()
+        assert publication._serve_task.done()
         native.retired_cleanup = True
         with pytest.raises(ExceptionGroup) as failure:
             await deployment.aclose()
-        assert len(failure.value.exceptions) == 1
+        assert len(failure.value.exceptions) == 2
         assert isinstance(failure.value.exceptions[0], PublicationCleanupFailed)
+        assert isinstance(failure.value.exceptions[1], tnl.TnlError)
+        assert failure.value.exceptions[1].code == "sdk.request_rejected"
         assert publication._serve_task.done() and not deployment._publications
         await deployment.aclose()
 
@@ -741,9 +827,96 @@ def test_context_preserves_body_failure_and_retryable_cleanup(
             async with publication:
                 raise primary
         assert failure.value.exceptions[0] is primary
-        assert not publication._serve_task.done()
-        native.failed_cleanup = False
-        await deployment.aclose()
         assert publication._serve_task.done()
+        native.failed_cleanup = False
+        with pytest.raises(ExceptionGroup) as retained:
+            await deployment.aclose()
+        assert retained.value.exceptions == (failure.value.exceptions[1],)
+        assert publication._serve_task.done()
+        await deployment.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_original_budget_forces_asgi_io_and_joins_native_without_waiting_for_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        native = setup(monkeypatch)
+        entered, canceled, release, native_joined = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        original_request = native.request
+        independent = ValueError("native cleanup failed while timing out")
+
+        async def request(
+            endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
+        ) -> object:
+            if operation != "unregister":
+                return await original_request(endpoint, operation, payload)
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise independent from None
+            finally:
+                native_joined.set()
+            return None
+
+        monkeypatch.setattr(native, "request", request)
+
+        async def app(scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] == "lifespan":
+                while True:
+                    message = await receive()
+                    if message["type"] == "lifespan.startup":
+                        await send({"type": "lifespan.startup.complete"})
+                    else:
+                        await send({"type": "lifespan.shutdown.complete"})
+                        return
+            elif scope["type"] == "http":
+                entered.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    canceled.set()
+                    await release.wait()
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send({"type": "http.response.body", "body": b"late application"})
+
+        deployment = tnl.create_client(project="acme/shop", token="private").deployment(
+            "production"
+        )
+        publication = await deployment.publish(app)
+        until = asyncio.get_running_loop().time() + 0.08
+        monkeypatch.setattr(_asgi, "_shutdown_deadline", lambda: until)
+        async with httpx.AsyncClient(trust_env=False) as client:
+            visitor = asyncio.create_task(client.get(publication._target))
+            await entered.wait()
+            workers = tuple(publication._server._asgi_workers)
+            try:
+                with pytest.raises(BaseExceptionGroup) as closing:
+                    await asyncio.wait_for(publication.aclose(), 1)
+
+                def leaves(error: BaseException) -> list[BaseException]:
+                    if isinstance(error, BaseExceptionGroup):
+                        return [leaf for member in error.exceptions for leaf in leaves(member)]
+                    return [error]
+
+                failures = leaves(closing.value)
+                assert independent in failures
+                assert any(isinstance(value, TimeoutError) for value in failures)
+                assert publication._shutdown_until == until
+                assert native_joined.is_set() and publication._serve_task.done()
+                assert publication._monitor is not None and publication._monitor.done()
+                assert canceled.is_set() and not release.is_set()
+                assert any(not worker.done() for worker in workers)
+                with pytest.raises(httpx.RemoteProtocolError):
+                    await visitor
+            finally:
+                release.set()
+                await asyncio.gather(*workers, visitor, return_exceptions=True)
 
     asyncio.run(scenario())

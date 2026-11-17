@@ -46,16 +46,23 @@ func TestProjectMetadataConformance(t *testing.T) {
 func TestEndpointPreservesPortAndExposureForEveryProtocol(t *testing.T) {
 	for _, protocol := range []string{"http", "tcp", "mysql", "postgres", "kubernetes"} {
 		for _, public := range []bool{false, true} {
-			for _, port := range []int{1, 443, 15432, 65535} {
+			for _, port := range []int{0, 1, 443, 15432, 65535} {
 				t.Run(fmt.Sprintf("%s/public=%t/port=%d", protocol, public, port), func(t *testing.T) {
 					service, err := NewEndpoint("member.example", "app.member.example", protocol, port, public)
+					valid := protocol == "http" && port == 443 || protocol != "http" && (port >= 1024 || port == 0 && !public)
+					if !valid {
+						if err == nil {
+							t.Fatal("endpoint accepted a port that does not match its protocol and exposure")
+						}
+						return
+					}
 					if err != nil {
 						t.Fatal(err)
 					}
 					wantURL := ""
 					if protocol == "http" || protocol == "kubernetes" {
 						wantURL = "https://app.member.example"
-						if port != 443 {
+						if port != 0 && port != 443 {
 							wantURL += fmt.Sprintf(":%d", port)
 						}
 					}
@@ -78,7 +85,7 @@ func TestEndpointPreservesPortAndExposureForEveryProtocol(t *testing.T) {
 
 func TestEndpointRejectsUnassignedPortsAndInvalidProtocols(t *testing.T) {
 	for _, protocol := range []string{"http", "tcp", "mysql", "postgres", "kubernetes"} {
-		for _, port := range []int{-1, 0, 65536} {
+		for _, port := range []int{-1, 65536} {
 			for _, public := range []bool{false, true} {
 				if _, err := NewEndpoint("member.example", "app.member.example", protocol, port, public); err == nil {
 					t.Fatalf("accepted %s endpoint with port %d and public=%t", protocol, port, public)

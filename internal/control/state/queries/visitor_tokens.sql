@@ -8,6 +8,13 @@ ON CONFLICT(id) DO NOTHING;
 -- name: LockVisitorTokenSigningKey :one
 SELECT * FROM control.visitor_token_keys WHERE retired_at IS NULL AND revoked_at IS NULL FOR UPDATE;
 
+-- name: LockVisitorTokenSigningAuthority :one
+SELECT signing.*
+FROM control.visitor_token_keys AS signing
+CROSS JOIN control.visitor_verification_key_revision AS authority
+WHERE signing.retired_at IS NULL AND signing.revoked_at IS NULL AND authority.id=1
+FOR SHARE OF authority;
+
 -- name: CreateVisitorTokenSigningKey :one
 INSERT INTO control.visitor_token_keys(id,public_key,seed_ciphertext,storage_key_id,created_at,retain_until)
 VALUES(sqlc.arg(id),sqlc.arg(public_key),sqlc.arg(seed_ciphertext),sqlc.arg(storage_key_id),sqlc.arg(now),sqlc.arg(now)) RETURNING *;

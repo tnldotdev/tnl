@@ -81,7 +81,7 @@ paths:
     post:
       operationId: appendFeedbackEvent
       tags: [feedback]
-      description: Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+      description: Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
       summary: Reply, record a checkout update, resolve, or reopen feedback
       security:
         - bearerAuth: []
@@ -103,16 +103,21 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/FeedbackEvent"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/feedback:
+  /v1/services/{service_id}/runs/{service_run_id}/feedback:
     post:
       operationId: createFeedbackReport
       tags: [feedback]
-      description: Submit the immutable first report through the exact publish run token with the reviewer's current access proof in the body. Control verifies the author and evidence; publisher authentication alone does not authorize a reviewer report.
+      description: Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
       summary: Store a reviewer's first report for a preview page
       security:
-        - publishRunAuth: []
+        - serviceRunAuth: []
       parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/ServiceID"
+        - name: service_run_id
+          in: path
+          required: true
+          schema:
+            $ref: "../openapi.yaml#/components/schemas/ServiceRunID"
         - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -129,16 +134,21 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/FeedbackThread"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/feedback/query:
+  /v1/services/{service_id}/runs/{service_run_id}/feedback/query:
     post:
       operationId: listPreviewPageFeedback
       tags: [feedback]
-      description: Read feedback for one page through the exact publish run token and the reviewer's body access proof. The result is limited to the authorized preview context, not a team-wide management inventory.
+      description: Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
       summary: List feedback on one page for a reviewer
       security:
-        - publishRunAuth: []
+        - serviceRunAuth: []
       parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/ServiceID"
+        - name: service_run_id
+          in: path
+          required: true
+          schema:
+            $ref: "../openapi.yaml#/components/schemas/ServiceRunID"
       requestBody:
         required: true
         content:
@@ -154,16 +164,21 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/FeedbackThreadPage"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events:
+  /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events:
     post:
       operationId: appendReviewerFeedbackEvent
       tags: [feedback]
-      description: Append a reply, resolution, or reopening through the exact publish run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+      description: Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
       summary: Reply, resolve, or reopen feedback through preview access
       security:
-        - publishRunAuth: []
+        - serviceRunAuth: []
       parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/ServiceID"
+        - name: service_run_id
+          in: path
+          required: true
+          schema:
+            $ref: "../openapi.yaml#/components/schemas/ServiceRunID"
         - $ref: "../openapi.yaml#/components/parameters/FeedbackID"
         - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
       requestBody:
@@ -181,16 +196,21 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/FeedbackEvent"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/query:
+  /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query:
     post:
       operationId: getReviewerFeedbackThread
       tags: [feedback]
-      description: Read one thread through the exact publish run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
+      description: Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
       summary: Read a feedback thread through a current publisher connection
       security:
-        - publishRunAuth: []
+        - serviceRunAuth: []
       parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/ServiceID"
+        - name: service_run_id
+          in: path
+          required: true
+          schema:
+            $ref: "../openapi.yaml#/components/schemas/ServiceRunID"
         - $ref: "../openapi.yaml#/components/parameters/FeedbackID"
       requestBody:
         required: true
@@ -207,16 +227,21 @@ paths:
                 $ref: "../openapi.yaml#/components/schemas/FeedbackThread"
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/feedback/{feedback_id}/events/query:
+  /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query:
     post:
       operationId: listReviewerFeedbackEvents
       tags: [feedback]
-      description: Read one thread's ordered follow-up history through the exact publish run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
+      description: Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
       summary: Read thread events through a current publisher connection
       security:
-        - publishRunAuth: []
+        - serviceRunAuth: []
       parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
+        - $ref: "../openapi.yaml#/components/parameters/ServiceID"
+        - name: service_run_id
+          in: path
+          required: true
+          schema:
+            $ref: "../openapi.yaml#/components/schemas/ServiceRunID"
         - $ref: "../openapi.yaml#/components/parameters/FeedbackID"
       requestBody:
         required: true

@@ -143,7 +143,7 @@ func TestBrowserTokensRedemptionWaitsForConcurrentPolicyWithoutReissuingPermissi
 					}
 					return update, err
 				})
-				scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+				scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
 				policy, err := PreparePolicy(t.Context(), provider, scope, "run", 1, "run-secret", nil)
 				if err != nil {
 					t.Fatal(err)
@@ -173,7 +173,7 @@ func TestBrowserTokensRedemptionWaitsForConcurrentPolicyWithoutReissuingPermissi
 				if err != nil {
 					t.Fatal(err)
 				}
-				response := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
+				response := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
 					VisitorToken: signed.Reveal(), VisitorPolicyRevision: 3, ExpiresAt: permission.ExpiresAt}
 				refresh, prepared := make(chan error, 1), make(chan error, 1)
 				go func() { refresh <- policy.Refresh(t.Context()) }()
@@ -246,7 +246,7 @@ func TestBrowserTokensRenewalErrorsCannotExtendOrRestorePermission(t *testing.T)
 					t.Fatal(err)
 				}
 				defer guard.Close()
-				_, release, found := tokens.use(token, guard)
+				_, _, release, found := tokens.use(token, guard)
 				if !found {
 					t.Fatal("redeemed source was not prepared")
 				}
@@ -267,7 +267,7 @@ func TestBrowserTokensRenewalErrorsCannotExtendOrRestorePermission(t *testing.T)
 						t.Fatal("background cleanup discarded a live denial fence")
 					}
 				} else {
-					current, done, found := tokens.use(token, nil)
+					current, _, done, found := tokens.use(token, nil)
 					done()
 					if !found || !current.ExpiresAt.Equal(initial.ExpiresAt) || stopped.Load() != 0 {
 						t.Fatal("renewal failure changed the last signed authority")
@@ -295,7 +295,7 @@ func TestBrowserTokensRenewalWaitsForSignedPolicyRevision(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port), VisitorToken: signed.Reveal(), VisitorPolicyRevision: 2, ExpiresAt: facts.ExpiresAt}
+		response := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port), VisitorToken: signed.Reveal(), VisitorPolicyRevision: 2, ExpiresAt: facts.ExpiresAt}
 		client := &visitorfixture.TokenClient{Issue: func(context.Context, controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
 			return response, nil
 		}}
@@ -314,7 +314,7 @@ func TestBrowserTokensRenewalWaitsForSignedPolicyRevision(t *testing.T) {
 		token := visitortoken.Token(initial.VisitorToken)
 		var reported error
 		tokens.renew(t.Context(), job, func(err error) { reported = err })
-		current, done, found := tokens.use(token, nil)
+		current, _, done, found := tokens.use(token, nil)
 		done()
 		if !errors.Is(reported, visitortoken.ErrPolicy) || tokens.rejects(token) || !found || current.VisitorToken != initial.VisitorToken {
 			t.Fatal("pending policy revision revoked or replaced confirmed authority", reported)
@@ -324,7 +324,7 @@ func TestBrowserTokensRenewalWaitsForSignedPolicyRevision(t *testing.T) {
 			t.Fatal(err)
 		}
 		tokens.renew(t.Context(), job, func(err error) { t.Error(err) })
-		current, done, found = tokens.use(token, nil)
+		current, _, done, found = tokens.use(token, nil)
 		done()
 		if !found || current.VisitorToken != response.VisitorToken || tokens.rejects(token) {
 			t.Fatal("installed policy did not allow same-source renewal")
@@ -364,7 +364,7 @@ func TestBrowserTokensRequestCancellationIsLocalAndCloseJoinsRenewal(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, guard.release, _ = tokens.use(visitortoken.Token(initial.VisitorToken), guard.local)
+			_, _, guard.release, _ = tokens.use(visitortoken.Token(initial.VisitorToken), guard.local)
 			guards, requests = append(guards, guard), append(requests, bound)
 		}
 		time.Sleep(4*time.Minute + time.Millisecond)
@@ -427,7 +427,7 @@ func TestBrowserTokensLateRenewalCannotReplaceNewRedemption(t *testing.T) {
 		}
 		close(release)
 		<-done
-		current, finish, found := tokens.use(visitortoken.Token(initial.VisitorToken), nil)
+		current, _, finish, found := tokens.use(visitortoken.Token(initial.VisitorToken), nil)
 		finish()
 		if !found || current.VisitorToken != latest.VisitorToken {
 			t.Fatal("late renewal overwrote a newer explicit redemption")
@@ -439,8 +439,8 @@ func browserTokensFixture(t *testing.T) (*Policy, ed25519.PrivateKey, visitortok
 	t.Helper()
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", 32)))
 	client := &visitorfixture.PolicyClient{Key: key}
-	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
-	policy, err := PreparePolicy(t.Context(), client, scope, "pr_"+strings.Repeat("B", 22), 1, "run-secret", nil)
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
+	policy, err := PreparePolicy(t.Context(), client, scope, "srun_"+strings.Repeat("B", 22), 1, "run-secret", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func signedBrowserPermission(t *testing.T, policy *Policy, key ed25519.PrivateKe
 	if err != nil {
 		t.Fatal(err)
 	}
-	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
+	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: view.Scope.ID}, Hostname: view.Hostname, Port: int(view.Port),
 		VisitorToken: token.Reveal(), VisitorPolicyRevision: view.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt}
 }
 
@@ -490,7 +490,7 @@ func TestBrowserTokensSessionExchangeCannotAdvanceKnownParentOrChangeSubject(t *
 	if err := tokens.installFromSession(source, signedBrowserPermission(t, policy, key, subject, parent)); err == nil {
 		t.Fatal("session exchange changed its verified subject")
 	}
-	current, release, found := tokens.use(visitortoken.Token(initial.VisitorToken), nil)
+	current, _, release, found := tokens.use(visitortoken.Token(initial.VisitorToken), nil)
 	defer release()
 	if !found || current.VisitorToken != initial.VisitorToken {
 		t.Fatal("rejected session evidence replaced the prior permission")
@@ -516,7 +516,7 @@ func TestBrowserTokensBackgroundRenewalDoesNotAddRequestRPCs(t *testing.T) {
 			t.Fatal(err)
 		}
 		for range 100 {
-			_, release, found := tokens.use(visitortoken.Token(initial.VisitorToken), nil)
+			_, _, release, found := tokens.use(visitortoken.Token(initial.VisitorToken), nil)
 			if !found {
 				t.Fatal("redeemed token lost its renewal owner")
 			}
@@ -536,17 +536,22 @@ func TestBrowserTokensBackgroundRenewalDoesNotAddRequestRPCs(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer guard.Close()
-		_, release, found := tokens.use(visitortoken.Token(initial.VisitorToken), guard)
+		_, _, release, found := tokens.use(visitortoken.Token(initial.VisitorToken), guard)
 		if !found {
 			t.Fatal("active request did not retain its exact source")
 		}
 		defer release()
 		time.Sleep(4*time.Minute + 2*time.Second)
 		synctest.Wait()
-		current, done, found := tokens.use(visitortoken.Token(initial.VisitorToken), nil)
+		current, selected, done, found := tokens.use(visitortoken.Token(initial.VisitorToken), nil)
 		done()
 		if !found || !current.ExpiresAt.After(initial.ExpiresAt) || client.Calls.Load() != 1 {
 			t.Fatal("browser token did not renew in the background")
+		}
+		view, _, _ = policy.lease.Current()
+		verified, err := visitortoken.VerifyBearer(visitortoken.Token(current.VisitorToken), view, time.Now())
+		if err != nil || selected.Facts() != verified.Facts() {
+			t.Fatal("prepared response and verified permission did not match", err)
 		}
 		var laterStopped atomic.Int64
 		laterGuard, err := policy.lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() { laterStopped.Add(1) })
@@ -554,7 +559,7 @@ func TestBrowserTokensBackgroundRenewalDoesNotAddRequestRPCs(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer laterGuard.Close()
-		_, laterRelease, found := tokens.use(visitortoken.Token(initial.VisitorToken), laterGuard)
+		_, _, laterRelease, found := tokens.use(visitortoken.Token(initial.VisitorToken), laterGuard)
 		if !found {
 			t.Fatal("request arriving after renewal lost its source")
 		}
@@ -564,9 +569,16 @@ func TestBrowserTokensBackgroundRenewalDoesNotAddRequestRPCs(t *testing.T) {
 		if stopped.Load() != 0 || laterStopped.Load() != 0 {
 			t.Fatal("renewed same-subject request stopped at the replaced token deadline")
 		}
-		if _, done, found := tokens.use(visitortoken.Token(initial.VisitorToken), nil); found {
-			done()
+		expired, proof, done, found := tokens.use(visitortoken.Token(initial.VisitorToken), nil)
+		done()
+		if found || expired.VisitorToken != "" || proof.Valid() {
 			t.Fatal("expired cookie selected a prepared replacement credential")
+		}
+		request := visitorfixture.Request()
+		request.AddCookie(&http.Cookie{Name: VisitorTokenCookie, Value: initial.VisitorToken})
+		authorization, requestGuard, guarded, err := AuthorizeRequest(httptest.NewRecorder(), request, policy.Lease(), tokens)
+		if token, ok := authorization.BearerToken(); err == nil || ok || token != "" || authorization.Permission().Valid() || requestGuard != nil || guarded != nil {
+			t.Fatal("expired alias authorized a request or exposed a replacement proof", err)
 		}
 	})
 }
@@ -617,7 +629,7 @@ func TestBrowserTokensDeniedRenewalStopsOnlyItsSource(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer guard.Close()
-					_, release, found := tokens.use(visitortoken.Token(response.VisitorToken), guard)
+					_, _, release, found := tokens.use(visitortoken.Token(response.VisitorToken), guard)
 					if !found {
 						t.Fatal("source was not registered")
 					}
@@ -681,7 +693,7 @@ func TestBrowserTokensBoundSourcesAndAliasesWithoutEvictingLiveCredentials(t *te
 		if err := tokens.install(browserSourceFixture(visitorfixture.BrowserCookie), response, parent); err == nil {
 			t.Fatal("alias bound was not enforced")
 		}
-		_, release, found := tokens.use(visitortoken.Token(original.VisitorToken), nil)
+		_, _, release, found := tokens.use(visitortoken.Token(original.VisitorToken), nil)
 		release()
 		if !found || client.Calls.Load() != 0 || len(tokens.sources) != maximumBrowserTokenSources {
 			t.Fatal("bound rejection evicted live authority or started control work")

@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 func TestIntegrationPublisherAllocationPreservesReadFailure(t *testing.T) {
@@ -22,7 +23,12 @@ func TestIntegrationPublisherAllocationPreservesReadFailure(t *testing.T) {
 	t.Cleanup(pool.Close)
 	reader := &Database{pool: pool}
 	publisher := PublisherIdentity{Scope: PublisherScope{Kind: "namespace", TeamID: "missing"}}
-	_, err = reader.AllocatePublisherPublicURL(t.Context(), publisher, "invocation", "http://localhost:3000", nil, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted})
+	invocation, err := opaqueid.New(opaqueid.InvocationPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := AllocateServiceRequest{Invocation: invocation, Configuration: ProjectServiceConfiguration{Target: "localhost:3000"}}
+	_, err = reader.AllocatePublisherService(t.Context(), publisher, request, now)
 	if !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("missing team = %v", err)
 	}
@@ -34,7 +40,7 @@ func TestIntegrationPublisherAllocationPreservesReadFailure(t *testing.T) {
 	if _, err := lock.Exec(t.Context(), "LOCK TABLE control.teams IN ACCESS EXCLUSIVE MODE"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = reader.AllocatePublisherPublicURL(t.Context(), publisher, "invocation", "http://localhost:3000", nil, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted})
+	_, err = reader.AllocatePublisherService(t.Context(), publisher, request, now)
 	var postgres *pgconn.PgError
 	if !errors.As(err, &postgres) || postgres.Code != "55P03" || errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("team read failure became an identity denial: %v", err)

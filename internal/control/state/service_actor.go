@@ -42,18 +42,25 @@ func serviceActor(ctx context.Context) (serviceActorProof, bool) {
 	return p, ok
 }
 
-// consumeServiceActor resolves the account again in the operation's transaction;
-// an earlier account lookup is not authorization. successful reads consume too.
-func consumeServiceActor(ctx context.Context, q *controlstatedb.Queries, actor string, now time.Time) (OIDCIdentity, error) {
-	p, ok := serviceActor(ctx)
-	if !ok || p.nonce == "" || p.identity.Nonce != p.nonce ||
+func validateServiceActorProof(p serviceActorProof, now time.Time) error {
+	if p.nonce == "" || p.identity.Nonce != p.nonce ||
 		!p.identity.AssertionExpiry.After(now) || p.identity.AssertionDigest == ([32]byte{}) ||
 		p.identity.IssuedAt.IsZero() || p.identity.IssuedAt.After(now) ||
 		p.identity.IssuedAt.Before(now.Add(-5*time.Minute)) ||
 		p.identity.AssertionExpiry.After(p.identity.IssuedAt.Add(5*time.Minute)) {
-		return OIDCIdentity{}, ErrControlAuthentication
+		return ErrControlAuthentication
 	}
 	if !validStateText(p.identity.AssertionID) || len(p.identity.AssertionID) > 256 {
+		return ErrControlAuthentication
+	}
+	return nil
+}
+
+// consumeServiceActor resolves the account again in the operation's transaction;
+// an earlier account lookup is not authorization. successful reads consume too.
+func consumeServiceActor(ctx context.Context, q *controlstatedb.Queries, actor string, now time.Time) (OIDCIdentity, error) {
+	p, ok := serviceActor(ctx)
+	if !ok || validateServiceActorProof(p, now) != nil {
 		return OIDCIdentity{}, ErrControlAuthentication
 	}
 	i, err := q.FindOIDCIdentity(ctx, controlstatedb.FindOIDCIdentityParams{Issuer: text(p.identity.Issuer), Subject: text(p.identity.Subject)})
@@ -80,44 +87,92 @@ func consumeServiceActor(ctx context.Context, q *controlstatedb.Queries, actor s
 }
 
 func serviceActorManager(ctx context.Context, tx pgx.Tx, team, actor string, now time.Time) error {
-	q := controlstatedb.New(tx)
-	if _, err := q.LockLocalTeamForMutation(ctx, team); err != nil {
-		return publisherLookupError(err, ErrServiceManagerRequired)
-	}
-	i, err := consumeServiceActor(ctx, q, actor, now)
+	member, err := serviceMembershipForActor(ctx, tx, team, actor, now)
 	if err != nil {
 		return err
 	}
+	if !member.administrator() {
+		return ErrServiceManagerRequired
+	}
+	return nil
+}
+
+// callers checking several services reuse this fact in the same transaction.
+// consuming an assertion again, even after an admin denial, is not a fallback.
+func serviceMembershipForActor(ctx context.Context, tx pgx.Tx, team, actor string, now time.Time) (member serviceMembership, err error) {
+	q := controlstatedb.New(tx)
+	_, signed := serviceActor(ctx)
+	var identity *OIDCIdentity
+	if signed {
+		if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
+			return member, publisherLookupError(err, ErrServiceManagerRequired)
+		}
+		consumed, err := consumeServiceActor(ctx, q, actor, now)
+		if err != nil {
+			return member, err
+		}
+		identity = &consumed
+	}
+	return currentServiceMembership(ctx, tx, team, actor, identity, now)
+}
+
+// currentServiceMembership repeats the defining permission checks without
+// consuming a signed assertion again. callers retain the operation's team guard.
+func currentServiceMembership(ctx context.Context, tx pgx.Tx, team, actor string, identity *OIDCIdentity, now time.Time) (member serviceMembership, err error) {
+	q := controlstatedb.New(tx)
+	signed := identity != nil
+	denied := ErrServiceAccess
+	if signed {
+		denied = ErrServiceManagerRequired
+	}
 	var required, exception, active bool
-	err = tx.QueryRow(ctx, `SELECT t.company_sign_in_required,m.personal_account_exception,control.active_membership(m.id,$3)
+	query := `SELECT m.id,m.role,t.company_sign_in_required,m.personal_account_exception,control.active_membership(m.id,$3)
 		FROM control.teams t JOIN control.team_memberships m ON m.team_id=t.id
+		JOIN control.identities person ON person.id=m.identity_id AND person.disabled_at IS NULL
 		WHERE t.id=$1 AND m.identity_id=$2 AND t.deleted_at IS NULL
-		AND m.removed_at IS NULL AND m.manual_suspended_at IS NULL AND m.role IN ('owner','admin')
-		FOR UPDATE OF t,m`, team, actor, now).Scan(&required, &exception, &active)
+		AND m.removed_at IS NULL AND m.manual_suspended_at IS NULL`
+	if signed {
+		query += ` FOR UPDATE OF t,m`
+	}
+	err = tx.QueryRow(ctx, query, team, actor, now).Scan(&member.id, &member.role, &required, &exception, &active)
 	if err != nil {
-		return publisherLookupError(err, ErrServiceManagerRequired)
+		return serviceMembership{}, publisherLookupError(err, denied)
+	}
+	if !signed {
+		if !active {
+			return serviceMembership{}, denied
+		}
+		if err = requireTeamSession(ctx, q, team, actor, now); err != nil {
+			if errors.Is(err, ErrAuthorityAccess) {
+				err = errors.Join(ErrServiceAccess, err)
+			}
+			return serviceMembership{}, err
+		}
+		member.teamID = team
+		return member, nil
 	}
 	if required && !exception {
 		valid := false
-		for _, c := range i.TeamContexts {
+		for _, c := range identity.TeamContexts {
 			if c.TeamID != team {
 				continue
 			}
-			ok, err := verifiedCompanyProof(ctx, q, actor, i.Issuer, c, now)
+			ok, err := verifiedCompanyProof(ctx, q, actor, identity.Issuer, c, now)
 			if err != nil {
-				return err
+				return serviceMembership{}, err
 			}
 			valid = valid || ok
 		}
 		// unlike company configuration recovery, disconnected or replaced
 		// sources never authorize service access management.
 		if !active || !valid {
-			return ErrServiceSourceSignInRequired
+			return serviceMembership{}, ErrServiceSourceSignInRequired
 		}
 	} else if !active {
-		return ErrServiceManagerRequired
+		return serviceMembership{}, denied
 	}
-	return nil
+	member.teamID = team
+	return member, nil
 }
 
 func serviceReadOptions(ctx context.Context) pgx.TxOptions {

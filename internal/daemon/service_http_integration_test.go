@@ -18,7 +18,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/http/httptrace"
-	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -33,13 +32,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
-	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -67,14 +63,17 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.identity.teamID = team.Id
-	direct := startSeparatedPrivateIngress(t, f, 0, "quic", nil).ingresses[0].publicServices
-	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
+	firstIngress := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
+	secondIngress := startSeparatedPrivateIngress(t, f, 1, "quic", nil)
+	direct := firstIngress.ingresses[0].server
 	var requests atomic.Int64
 	var targetConnection atomic.Value
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		targetConnection.Store(r.RemoteAddr)
-		if r.Header.Get("Tnl-Access-Token") != "" || r.Header.Get("Tnl-Share-Token") != "" || strings.Contains(r.Header.Get("Cookie"), "__Host-tnl-") || r.Header.Get("X-Forwarded-Host") != "" || r.Header.Get("X-Real-IP") != "" || r.Header.Get("Forwarded") != "" {
+		if r.Header.Get("Tnl-Visitor-Token") != "" || r.Header.Get("Tnl-Access-Token") != "" || r.Header.Get("Tnl-Share-Token") != "" || strings.Contains(r.Header.Get("Cookie"), "__Host-tnl-") ||
+			r.Header.Get("X-Forwarded-Host") != r.Host || r.Header.Get("X-Forwarded-Proto") != "https" ||
+			strings.Contains(r.Header.Get("X-Forwarded-For"), "203.0.113.99") || r.Header.Get("X-Real-IP") != "" || r.Header.Get("Forwarded") != "" {
 			t.Error("target received visitor credentials or spoofed forwarding identity")
 		}
 		if r.URL.Path == "/cookie-whitespace" && r.Header.Get("Cookie") != "app_session=kept" {
@@ -115,7 +114,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	group := "production"
 	public := true
 	protocol := controlv1.ServiceProtocolHTTP
-	configuration := controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{Public: &public}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Target: target.URL, TargetTls: &trust, Http: &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(1)}}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}
+	configuration := controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {Protocol: &protocol, Public: &public, Target: target.URL, TargetTls: &trust, Http: &controlv1.ProjectServiceHTTP{Limits: &controlv1.ProjectHTTPApplicationLimits{Concurrency: new(1)}}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}
 	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{Deployment: group, ServiceDeclarations: controlv1.ProjectServiceDeclarations{"api": protocol}, TeamId: f.identity.teamID, Source: &testProjectSource, Configuration: configuration})
 	if err != nil {
 		t.Fatal(err)
@@ -126,11 +125,18 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	serviceID := *applied.Services[0].ServiceId
 	// a group assignment is the only publisher grant for this service.
 	publisherMetrics := startServiceHTTPDeploymentPublisher(t, f, applied, "http-auth", group, target.Listener.Addr().String())
-	services, err := f.identity.routes.ListAvailableServices(t.Context())
+	var readyAt time.Time
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT ready_at FROM control.service_runs WHERE service_id=$1 AND state='ready'`, serviceID).Scan(&readyAt); err != nil {
+		t.Fatal(err)
+	}
+	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+		return !direct.RoutingObservedAt().Before(readyAt) && !secondIngress.ingresses[0].server.RoutingObservedAt().Before(readyAt), nil
+	})
+	services, err := f.identity.routes.ListAvailableServices(t.Context(), controlv1.ServiceAccessPathPublicEndpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var service controlv1.Service
+	var service controlv1.ServiceSummary
 	for _, s := range services {
 		if s.Id == serviceID {
 			service = s
@@ -139,23 +145,8 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if service.Endpoint == nil {
 		t.Fatal("missing managed endpoint")
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: direct, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- server.Serve() }()
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = server.Drain(ctx)
-		<-done
-	})
-	base := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port))
+	publicDial := workloadPublicEndpointDialer(t, direct, service.Endpoint.Port)
+	base := "https://" + service.Endpoint.Hostname
 	newTransport := func(certificate *tls.Certificate) *http.Transport {
 		roots := f.visitorRoots.RootCAs.Clone()
 		roots.AddCert(f.certificateAuthority.certificate)
@@ -170,19 +161,10 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 			if address == f.controlConfig.ServerHostname()+":443" {
 				return (&net.Dialer{}).DialContext(ctx, network, f.publicControlAddress)
 			}
-			if address != strings.TrimPrefix(base, "https://") {
+			if address != net.JoinHostPort(service.Endpoint.Hostname, "443") {
 				return nil, net.InvalidAddrError("unexpected fixture destination")
 			}
-			conn, err := (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
-			if err != nil {
-				return nil, err
-			}
-			metadata, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.44:4242"), Destination: netip.AddrPortFrom(netip.MustParseAddr("203.0.113.10"), uint16(service.Endpoint.Port))})
-			if _, err = conn.Write(metadata); err != nil {
-				_ = conn.Close()
-				return nil, err
-			}
-			return conn, nil
+			return publicDial(ctx, network, address)
 		}}
 		t.Cleanup(transport.CloseIdleConnections)
 		return transport
@@ -247,25 +229,37 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	awaitServiceHTTPStatus(t, client, base, "Tnl-Visitor-Token", token.Permission.VisitorToken, 403)
 	closeResponse(request(client, "/", "Tnl-Visitor-Token", token.Permission.VisitorToken, 403))
-	share, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "share", ExpiresAt: time.Now().Add(time.Hour)})
-	if err != nil || share.ShareUrl == nil || !strings.HasPrefix(*share.ShareUrl, base+"/") {
-		t.Fatal("share lost allocated port", err)
+	share, err := f.identity.routes.CreateServiceShare(t.Context(), "http-auth-share", controlv1.CreateShareRequest{
+		ServiceIds: []string{service.Id}, EntryServiceId: service.Id, ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil || !strings.HasPrefix(share.Link, base+"/__tnl/share/") {
+		t.Fatal("share lost the canonical HTTPS origin", err)
 	}
-	awaitServiceHTTPStatus(t, client, base, "Tnl-Visitor-Token", share.Permission.VisitorToken, 200)
-	closeResponse(request(client, "/", "Tnl-Visitor-Token", share.Permission.VisitorToken, 200))
-	closeResponse(request(client, "/", "Tnl-Visitor-Token", share.RefreshCredential, 403))
+	shareSource, err := json.Marshal(share.TokenSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharePermission, err := f.identity.routes.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{
+		Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.Id}, Source: shareSource,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitServiceHTTPStatus(t, client, base, "Tnl-Visitor-Token", sharePermission.VisitorToken, 200)
+	closeResponse(request(client, "/", "Tnl-Visitor-Token", sharePermission.VisitorToken, 200))
+	closeResponse(request(client, "/", "Tnl-Visitor-Token", share.TokenSource.Secret, 403))
 	jar, _ := cookiejar.New(nil)
 	shareClient := *client
 	shareClient.Jar = jar
-	closeResponse(request(&shareClient, "/__tnl/share/"+share.RefreshCredential, "", "", 303))
+	closeResponse(request(&shareClient, strings.TrimPrefix(share.Link, base), "", "", 303))
 	closeResponse(request(&shareClient, "/", "", "", 200))
-	if err = f.identity.routes.RevokeServiceHTTPGrant(t.Context(), service.Id, share.GrantId); err != nil {
+	if _, err = f.identity.routes.RevokeShare(t.Context(), share.Share.Id); err != nil {
 		t.Fatal(err)
 	}
 	awaitServiceHTTPStatus(t, &shareClient, base, "", "", 403)
 	closeResponse(request(&shareClient, "/", "", "", 403))
 	// a browser completes real OIDC discovery, PKCE/code redemption and the same
-	// control callback used by public URLs. it never supplies a TLS certificate.
+	// control callback used by the browser. it never supplies a TLS certificate.
 	browser := *client
 	browser.Jar, _ = cookiejar.New(nil)
 	response := request(&browser, "/__tnl/team/login?return=/", "", "", 303)
@@ -301,7 +295,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	handoff := response.Header.Get("Location")
 	if response.StatusCode != 303 || !strings.HasPrefix(handoff, base+"/__tnl/team/handoff/") {
 		body, _ := io.ReadAll(response.Body)
-		t.Fatalf("browser callback lost managed port: status=%d location=%s body=%s", response.StatusCode, handoff, body)
+		t.Fatalf("browser callback lost the HTTPS origin: status=%d location=%s body=%s", response.StatusCode, handoff, body)
 	}
 	closeResponse(response)
 	response, err = browser.Get(handoff)
@@ -339,24 +333,24 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		closeResponse(request(client, "/cookie-whitespace", "Cookie", "app_session=kept; __Host-tnl-visitor"+space+"="+visitorPermission+"; __Host-tnl-browser"+space+"="+browserSecret+"; __Host-tnl-share"+space+"=unused; __Host-tnl-feedback-browser"+space+"=unused; __Host-tnl-browser-attempt"+space+"=unused", 200))
 	}
 	badOrigin, _ := http.NewRequestWithContext(t.Context(), "POST", base+"/__tnl/team/logout", nil)
-	badOrigin.Header.Set("Origin", "https://"+service.Endpoint.Hostname)
+	badOrigin.Header.Set("Origin", "https://"+net.JoinHostPort(service.Endpoint.Hostname, "9443"))
 	badOriginResponse, err := browser.Do(badOrigin)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if badOriginResponse.StatusCode != 403 {
-		t.Fatal("logout accepted an origin without its allocated port")
+		t.Fatal("logout accepted an unrelated origin port")
 	}
 	closeResponse(badOriginResponse)
 	badHost, _ := http.NewRequestWithContext(t.Context(), "GET", base+"/", nil)
-	badHost.Host = service.Endpoint.Hostname
+	badHost.Host = net.JoinHostPort(service.Endpoint.Hostname, "9443")
 	badHost.Header.Set("X-Forwarded-Host", strings.TrimPrefix(base, "https://"))
 	badHostResponse, err := browser.Do(badHost)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if badHostResponse.StatusCode != 421 {
-		t.Fatal("forwarded host overrode the allocated port")
+		t.Fatal("forwarded host overrode an unrelated authority port")
 	}
 	closeResponse(badHostResponse)
 	closeResponse(request(&browser, "/__tnl/feedback/threads", "", "", 404))
@@ -398,7 +392,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	if loggedOut.StatusCode != 204 {
-		t.Fatal("port-bound logout failed", loggedOut.StatusCode)
+		t.Fatal("host-bound logout failed", loggedOut.StatusCode)
 	}
 	closeResponse(loggedOut)
 	if _, err = io.Copy(io.Discard, reader); err == nil {
@@ -441,7 +435,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	closeResponse(request(mtls, "/", "", "", 200))
 	closeResponse(request(mtls, "/", "Tnl-Access-Token", "invalid", 403))
-	serviceHTTPCurl(t, f, listener.Addr().String(), service, material)
+	serviceHTTPCurl(t, f, publicDial, service, material)
 	certificateDigest := sha256.Sum256(material.Certificate[0])
 	if _, err = f.inspect.ExecContext(t.Context(), `UPDATE control.service_client_certificates SET revoked_at=now() WHERE certificate_digest=$1`, certificateDigest[:]); err != nil {
 		t.Fatal(err)
@@ -464,7 +458,9 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	closeResponse(request(mtls, "/", "", "", 403))
 	// stale public DNS cannot override current private reachability, and neither
 	// the stable hostname nor allocated port changes during the transition.
-	applied.Configuration.Settings.Public = new(false)
+	binding := applied.Configuration.Services["api"]
+	binding.Public = new(false)
+	applied.Configuration.Services["api"] = binding
 	updated, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{Deployment: applied.Deployment, ServiceDeclarations: applied.ServiceDeclarations, TeamId: f.identity.teamID, Source: &testProjectSource, ExpectedRevision: applied.Revision, Configuration: applied.Configuration})
 	if err != nil {
 		t.Fatal(err)
@@ -472,19 +468,32 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if *updated.Services[0].Hostname != service.Endpoint.Hostname || *updated.Services[0].Port != service.Endpoint.Port {
 		t.Fatal("reachability changed endpoint")
 	}
+	waitForHTTPRoutingMutation := func() {
+		t.Helper()
+		var committed time.Time
+		if err := f.inspect.QueryRowContext(t.Context(), `SELECT clock_timestamp()`).Scan(&committed); err != nil {
+			t.Fatal(err)
+		}
+		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+			return !direct.RoutingObservedAt().Before(committed) && !secondIngress.ingresses[0].server.RoutingObservedAt().Before(committed), nil
+		})
+	}
+	waitForHTTPRoutingMutation()
 	client.Transport.(*http.Transport).CloseIdleConnections()
 	if response, err = client.Get(base + "/"); err == nil {
 		_ = response.Body.Close()
 		t.Fatal("stale DNS admitted service directly")
 	}
-	updated.Configuration.Settings.Public = new(true)
+	binding.Public = new(true)
+	updated.Configuration.Services["api"] = binding
 	if _, err = f.identity.routes.ApplyProjectConfiguration(t.Context(), "http-auth", controlv1.ApplyProjectConfigurationRequest{Deployment: updated.Deployment, ServiceDeclarations: updated.ServiceDeclarations, TeamId: f.identity.teamID, Source: &testProjectSource, ExpectedRevision: updated.Revision, Configuration: updated.Configuration}); err != nil {
 		t.Fatal(err)
 	}
+	waitForHTTPRoutingMutation()
 	checkServiceHTTPCompany(t, f, issuer, client, base, service, person.Identity.Id)
-	var publicURLs int
-	if err = f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 {
-		t.Fatal("managed authentication fabricated public URL state", publicURLs, err)
+	var retired bool
+	if err = f.inspect.QueryRowContext(t.Context(), `SELECT to_regclass('control.public_urls') IS NULL`).Scan(&retired); err != nil || !retired {
+		t.Fatal("HTTP authentication retained a second publication family", retired, err)
 	}
 }
 
@@ -580,9 +589,10 @@ func TestServiceHTTPIdleWaitObservesPublisherRequestRelease(t *testing.T) {
 	}
 }
 
-func serviceHTTPCurl(t *testing.T, f *privateSeparatedFixture, direct string, service controlv1.Service, certificate tls.Certificate) {
+func serviceHTTPCurl(t *testing.T, f *privateSeparatedFixture, dial func(context.Context, string, string) (net.Conn, error), service controlv1.ServiceSummary, certificate tls.Certificate) {
 	t.Helper()
-	// curl connects to a fixture edge which supplies trusted outer PROXY v2.
+	// curl uses the same ingress admission and trusted source/destination facts
+	// as the native HTTP client, while verifying visitor TLS independently.
 	edge, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -596,13 +606,11 @@ func serviceHTTPCurl(t *testing.T, f *privateSeparatedFixture, direct string, se
 			return
 		}
 		defer c.Close()
-		up, err := net.Dial("tcp", direct)
+		up, err := dial(t.Context(), "tcp", net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port)))
 		if err != nil {
 			return
 		}
 		defer up.Close()
-		metadata, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.44:4242"), Destination: netip.AddrPortFrom(netip.MustParseAddr("203.0.113.10"), uint16(service.Endpoint.Port))})
-		_, _ = up.Write(metadata)
 		copied := make(chan struct{})
 		go func() { defer close(copied); _, _ = io.Copy(up, c); _ = up.Close() }()
 		_, _ = io.Copy(c, up)
@@ -657,7 +665,7 @@ func startServiceHTTPDeploymentPublisher(t *testing.T, f *privateSeparatedFixtur
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
+	owner, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{Services: f.identity.routes, Runtime: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,7 +696,7 @@ func startServiceHTTPDeploymentPublisher(t *testing.T, f *privateSeparatedFixtur
 	ctx, cancel := context.WithCancel(observability.WithMetrics(t.Context(), metrics))
 	ready, done := make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
+		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 	}()
 	t.Cleanup(func() {
 		cancel()

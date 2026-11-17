@@ -28,7 +28,7 @@ import (
 
 func TestLocalHTTPPermissionRejectsInvalidSuppliedCredentialsWithoutAnonymousFallback(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		policy, _, token := visitorfixture.Policy(t, true)
+		policy, _, token := visitorfixture.ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}, "preview.example.test", 443, true)
 		for _, test := range []struct {
 			name   string
 			change func(*http.Request)
@@ -45,10 +45,17 @@ func TestLocalHTTPPermissionRejectsInvalidSuppliedCredentialsWithoutAnonymousFal
 			}},
 			{"malformed cookie", func(r *http.Request) { r.Header.Set("Cookie", VisitorTokenCookie+"=\"unterminated") }},
 			{"retired share header", func(r *http.Request) { r.Header.Set(ShareHeaderName, "share.old-secret") }},
-			{"retired browser cookie", func(r *http.Request) {
+			{"malformed identity cookie", func(r *http.Request) {
+				r.AddCookie(&http.Cookie{Name: BrowserCookieName, Value: "invalid"})
+			}},
+			{"duplicate identity cookies", func(r *http.Request) {
+				r.AddCookie(&http.Cookie{Name: BrowserCookieName, Value: visitorfixture.BrowserCookie})
 				r.AddCookie(&http.Cookie{Name: BrowserCookieName, Value: visitorfixture.BrowserCookie})
 			}},
 			{"retired share cookie", func(r *http.Request) { r.AddCookie(&http.Cookie{Name: ShareCookieName, Value: "share.old-secret"}) }},
+			{"share session without visitor permission", func(r *http.Request) {
+				r.AddCookie(&http.Cookie{Name: ShareCookieName, Value: "shr_0123456789abcdefghijkl." + visitorfixture.BrowserCookie})
+			}},
 			{"combined browser and share sources", func(r *http.Request) {
 				r.AddCookie(&http.Cookie{Name: BrowserCookieName, Value: visitorfixture.BrowserCookie})
 				r.AddCookie(&http.Cookie{Name: ShareCookieName, Value: "share.old-secret"})
@@ -88,60 +95,155 @@ func TestLocalHTTPPermissionUsesPreparedHostPolicyAndTrustedSource(t *testing.T)
 	})
 }
 
+func TestLocalHTTPPermissionSNIIsCaseInsensitiveAndServiceBound(t *testing.T) {
+	policy, _, token := visitorfixture.Policy(t, false)
+	for _, test := range []struct {
+		name, sni, credential string
+		want                  error
+	}{
+		{"exact", "preview.example.test", token.Reveal(), nil},
+		{"uppercase", "PREVIEW.EXAMPLE.TEST", token.Reveal(), nil},
+		{"sibling", "sibling.example.test", token.Reveal(), visitortoken.ErrBinding},
+		{"missing_sni", "", token.Reveal(), visitortoken.ErrBinding},
+		{"invalid_sni", "preview.example.test:443", token.Reveal(), visitortoken.ErrBinding},
+		{"uppercase_missing_permission", "PREVIEW.EXAMPLE.TEST", "", visitortoken.ErrToken},
+		{"uppercase_invalid_permission", "PREVIEW.EXAMPLE.TEST", "invalid", visitortoken.ErrToken},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := visitorfixture.Request()
+			request.TLS.ServerName = test.sni
+			if test.credential != "" {
+				request.Header.Set(VisitorTokenHeader, test.credential)
+			}
+			permission, err := localHTTPPermission(request, policy, nil)
+			if test.want == nil {
+				if err != nil || permission.token != token || permission.anonymous {
+					t.Fatal("same-service SNI lost its verified permission", err)
+				}
+			} else if !errors.Is(err, test.want) {
+				t.Fatal("SNI or credential crossed its authorization boundary", err)
+			}
+			if request.TLS.ServerName != test.sni {
+				t.Fatal("authorization rewrote the observed TLS server name")
+			}
+		})
+	}
+}
+
+func TestLocalHTTPPermissionAuthorityIsCaseInsensitiveAndPortBound(t *testing.T) {
+	policy, _, token := visitorfixture.Policy(t, false)
+	for _, test := range []struct {
+		name, authority, credential string
+		want                        error
+	}{
+		{"exact", "preview.example.test", token.Reveal(), nil},
+		{"uppercase", "PREVIEW.EXAMPLE.TEST", token.Reveal(), nil},
+		{"mixed_case_default_port", "PrEvIeW.ExAmPlE.TeSt:443", token.Reveal(), nil},
+		{"sibling", "SIBLING.EXAMPLE.TEST", token.Reveal(), visitortoken.ErrBinding},
+		{"control", "CONTROL.EXAMPLE.TEST", token.Reveal(), visitortoken.ErrBinding},
+		{"trailing_dot", "PREVIEW.EXAMPLE.TEST.", token.Reveal(), visitortoken.ErrBinding},
+		{"trailing_dot_default_port", "PREVIEW.EXAMPLE.TEST.:443", token.Reveal(), visitortoken.ErrBinding},
+		{"wrong_port", "PREVIEW.EXAMPLE.TEST:8443", token.Reveal(), visitortoken.ErrBinding},
+		{"noncanonical_port", "PREVIEW.EXAMPLE.TEST:0443", token.Reveal(), visitortoken.ErrBinding},
+		{"missing_permission", "PREVIEW.EXAMPLE.TEST", "", visitortoken.ErrToken},
+		{"invalid_permission", "PREVIEW.EXAMPLE.TEST", "invalid", visitortoken.ErrToken},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := visitorfixture.Request()
+			request.Host = test.authority
+			if test.credential != "" {
+				request.Header.Set(VisitorTokenHeader, test.credential)
+			}
+			permission, err := localHTTPPermission(request, policy, nil)
+			if test.want == nil {
+				if err != nil || permission.token != token || permission.anonymous {
+					t.Fatal("same-service authority lost its verified permission", err)
+				}
+			} else if !errors.Is(err, test.want) {
+				t.Fatal("authority or credential crossed its authorization boundary", err)
+			}
+			if request.Host != test.authority {
+				t.Fatal("authorization rewrote the original HTTP authority")
+			}
+		})
+	}
+}
+
 func TestServiceHTTPWorkloadCertificateNeverFallsBackToHumanCredentials(t *testing.T) {
-	policy, update, bearer := visitorfixture.ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}, "preview.example.test", 25443, false)
-	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("h", 32)))
-	digest, err := visitortoken.KeyDigest(key.Public())
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now()
-	workload := visitortoken.Workload{SessionID: "wls_" + strings.Repeat("W", 22), KeySHA256: digest}
-	update.View = update.View.WithWorkloadLeases(map[string]visitortoken.WorkloadLease{workload.SessionID: {KeySHA256: digest, ExpiresAt: now.Add(time.Minute)}})
-	if err := policy.Apply(policy.Begin(), update); err != nil {
-		t.Fatal(err)
-	}
-	token, err := visitortoken.Sign(update.View.Issuer, "http", key, visitortoken.Permission{Scope: update.View.Scope, Hostname: update.View.Hostname, Port: update.View.Port,
-		VisitorPolicyRevision: 1, Subject: visitortoken.Certificate{Serial: "1", KeySHA256: digest, Source: workload}, ExpiresAt: now.Add(time.Minute)}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	uri, err := visitortoken.CertificateURI(token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaf := &x509.Certificate{PublicKey: key.Public(), SerialNumber: big.NewInt(1), URIs: []*url.URL{uri}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Minute)}
-	request := func() *http.Request {
-		r := visitorfixture.Request()
-		r.Host = "preview.example.test:25443"
-		r.TLS.HandshakeComplete = true
-		r.TLS.PeerCertificates = []*x509.Certificate{leaf}
-		return r
-	}
-	if permission, err := localHTTPPermission(request(), policy, nil); err != nil || permission.token != token {
-		t.Fatal("current workload certificate was not selected", err)
-	}
-	for _, revoked := range []bool{false, true} {
-		if revoked {
-			update.View = update.View.WithWorkloadLeases(nil)
+	for _, profile := range []string{"fixed permission", "workload identity"} {
+		t.Run(profile, func(t *testing.T) {
+			policy, update, bearer := visitorfixture.ScopePolicy(t, visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}, "preview.example.test", 25443, false)
+			key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("h", 32)))
+			digest, err := visitortoken.KeyDigest(key.Public())
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			workload := visitortoken.Workload{SessionID: "wls_" + strings.Repeat("W", 22), KeySHA256: digest}
+			update.View = update.View.WithWorkloadLeases(map[string]visitortoken.WorkloadLease{workload.SessionID: {KeySHA256: digest, ExpiresAt: now.Add(time.Minute)}})
 			if err := policy.Apply(policy.Begin(), update); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := localHTTPPermission(request(), policy, nil); !errors.Is(err, visitortoken.ErrBinding) {
-				t.Fatal("revoked workload certificate retained permission", err)
+			token, err := visitortoken.Sign(update.View.Issuer, "http", key, visitortoken.Permission{Scope: update.View.Scope, Hostname: update.View.Hostname, Port: update.View.Port,
+				VisitorPolicyRevision: 1, Subject: visitortoken.Certificate{Serial: "1", KeySHA256: digest, Source: workload}, ExpiresAt: now.Add(time.Minute)}, now)
+			if profile == "workload identity" {
+				token, err = visitortoken.SignWorkloadIdentity(update.View.Issuer, "http", key, visitortoken.WorkloadIdentity{
+					Scope: update.View.Scope, Hostname: update.View.Hostname, Port: update.View.Port,
+					Certificate: visitortoken.Certificate{Serial: "1", KeySHA256: digest, Source: workload}, ExpiresAt: now.Add(time.Minute)}, now)
 			}
-		}
-		for _, header := range []bool{false, true} {
-			r := request()
-			if header {
-				r.Header.Set(VisitorTokenHeader, bearer.Reveal())
-			} else {
-				r.AddCookie(&http.Cookie{Name: VisitorTokenCookie, Value: bearer.Reveal()})
+			if err != nil {
+				t.Fatal(err)
 			}
-			if _, err := localHTTPPermission(r, policy, nil); !errors.Is(err, visitortoken.ErrToken) {
-				t.Fatal("HTTP credential replaced the workload certificate subject", err)
+			uri, err := visitortoken.CertificateURI(token)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
+			leaf := &x509.Certificate{PublicKey: key.Public(), SerialNumber: big.NewInt(1), URIs: []*url.URL{uri}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Minute)}
+			if profile == "workload identity" {
+				leaf.NotAfter = leaf.NotAfter.Truncate(time.Second)
+			}
+			request := func() *http.Request {
+				r := visitorfixture.Request()
+				r.Host = "preview.example.test:25443"
+				r.TLS.HandshakeComplete = true
+				r.TLS.PeerCertificates = []*x509.Certificate{leaf}
+				return r
+			}
+			if permission, err := localHTTPPermission(request(), policy, nil); err != nil || permission.token != token {
+				t.Fatal("current workload certificate was not selected", err)
+			}
+			authorization, guard, _, err := AuthorizeRequest(httptest.NewRecorder(), request(), policy, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			guard.Finish()
+			if bearer, ok := authorization.BearerToken(); ok || bearer != "" || !authorization.Permission().Valid() ||
+				authorization.Permission().Facts().Subject != (visitortoken.Certificate{Serial: "1", KeySHA256: digest, Source: workload}) {
+				t.Fatal("certificate authorization lost its permission or exposed its token as bearer proof")
+			}
+			for _, revoked := range []bool{false, true} {
+				if revoked {
+					update.View = update.View.WithWorkloadLeases(nil)
+					if err := policy.Apply(policy.Begin(), update); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := localHTTPPermission(request(), policy, nil); !errors.Is(err, visitortoken.ErrBinding) {
+						t.Fatal("revoked workload certificate retained permission", err)
+					}
+				}
+				for _, header := range []bool{false, true} {
+					r := request()
+					if header {
+						r.Header.Set(VisitorTokenHeader, bearer.Reveal())
+					} else {
+						r.AddCookie(&http.Cookie{Name: VisitorTokenCookie, Value: bearer.Reveal()})
+					}
+					if _, err := localHTTPPermission(r, policy, nil); !errors.Is(err, visitortoken.ErrToken) {
+						t.Fatal("HTTP credential replaced the workload certificate subject", err)
+					}
+				}
+			}
+		})
 	}
 }
 

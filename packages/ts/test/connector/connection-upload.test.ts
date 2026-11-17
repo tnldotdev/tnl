@@ -3,21 +3,28 @@ import { expect, test, vi } from "vitest";
 import { managedFetch } from "../../src/internal/connector/connection.js";
 import { TnlCleanupError } from "../../src/errors.js";
 
-async function listener(respond: (request: IncomingMessage, response: ServerResponse) => void) {
+async function listener(
+  respond: (request: IncomingMessage, response: ServerResponse) => void,
+  parent?: () => number | undefined,
+) {
   const server = createServer(respond);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("missing listener");
   const origin = `http://127.0.0.1:${address.port}` as const;
-  const fetch = managedFetch(origin, async () => ({
-    protocol: "http",
-    host: "127.0.0.1",
-    port: address.port,
-    ssl: false,
-    url: origin,
-    expires: Number.MAX_SAFE_INTEGER,
-    transportID: "a".repeat(64),
-  }));
+  const fetch = managedFetch(
+    origin,
+    async () => ({
+      protocol: "http",
+      host: "127.0.0.1",
+      port: address.port,
+      ssl: false,
+      url: origin,
+      expires: Number.MAX_SAFE_INTEGER,
+      transportID: "a".repeat(64),
+    }),
+    parent,
+  );
   return {
     fetch,
     async close() {
@@ -148,4 +155,122 @@ test("preparation failure joins upload cancellation without losing either error"
   expect(cancel).toHaveBeenCalledExactlyOnceWith(failure);
   expect(body.locked).toBe(false);
   await fetch.close();
+});
+
+test.each([0, 1_000])(
+  "upload shutdown reports an uncooperative cancellation with %i ms already spent",
+  async (spent) => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const received = Promise.withResolvers<void>();
+    const disconnected = Promise.withResolvers<void>();
+    const cancelStarted = Promise.withResolvers<void>();
+    const finishCancel = Promise.withResolvers<void>();
+    let shutdownUntil: number | undefined;
+    const server = await listener(
+      (request, response) => {
+        request.socket.once("close", () => disconnected.resolve());
+        request.once("data", () => {
+          received.resolve();
+          response.writeHead(200).flushHeaders();
+        });
+      },
+      () => shutdownUntil,
+    );
+    const cancel = vi.fn(async () => {
+      cancelStarted.resolve();
+      await finishCancel.promise;
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(new TextEncoder().encode("first"));
+      },
+      cancel,
+    });
+    let closing: Promise<unknown> | undefined;
+    try {
+      const response = await server.fetch("/", { method: "POST", body });
+      await received.promise;
+      shutdownUntil = Date.now() + 10_000;
+      await vi.advanceTimersByTimeAsync(spent);
+      let settled = false;
+      closing = server.fetch.close().then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        (cause: unknown) => {
+          settled = true;
+          return cause;
+        },
+      );
+      await cancelStarted.promise;
+      await disconnected.promise;
+      await vi.advanceTimersByTimeAsync(9_999 - spent);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+      expect(await closing).toMatchObject({
+        errors: [expect.objectContaining({ name: "TimeoutError" })],
+      });
+      expect(body.locked).toBe(false);
+      expect(cancel).toHaveBeenCalledOnce();
+      await expect(server.fetch.close()).rejects.toMatchObject({
+        errors: [expect.objectContaining({ name: "TimeoutError" })],
+      });
+      const stopped = await response.body?.cancel().catch((cause: unknown) => cause);
+      expect(stopped === undefined || stopped instanceof Error).toBe(true);
+    } finally {
+      finishCancel.resolve();
+      await closing;
+      await server.close();
+      vi.useRealTimers();
+    }
+  },
+);
+
+test("shutdown bounds preparation upload cleanup without losing its independent operation failure", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  const entered = Promise.withResolvers<void>();
+  const finishCancel = Promise.withResolvers<void>();
+  const operation = new Error("preparation failed");
+  const fetch = managedFetch("https://api.tnl.invalid", async () => {
+    throw operation;
+  });
+  const body = new ReadableStream<Uint8Array>({
+    cancel: async () => {
+      entered.resolve();
+      await finishCancel.promise;
+    },
+  });
+  const request = fetch("/", { method: "POST", body }).catch((cause: unknown) => cause);
+  let closing: Promise<unknown> | undefined;
+  try {
+    await entered.promise;
+    let settled = false;
+    closing = fetch.close().then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      (cause: unknown) => {
+        settled = true;
+        return cause;
+      },
+    );
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    expect(await closing).toMatchObject({
+      errors: [expect.objectContaining({ name: "TimeoutError" })],
+    });
+    expect(await request).toMatchObject({
+      errors: [operation, expect.objectContaining({ name: "TimeoutError" })],
+    });
+    expect(body.locked).toBe(false);
+  } finally {
+    finishCancel.resolve();
+    await Promise.all([request, closing]);
+    vi.useRealTimers();
+  }
 });

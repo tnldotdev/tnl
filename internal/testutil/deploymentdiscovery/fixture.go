@@ -50,6 +50,7 @@ type Fixture struct {
 	Key              ed25519.PrivateKey
 	Profile          *clientstate.Store
 	Heartbeat        chan controlv1.ServiceRunHeartbeat
+	RunClosed        chan struct{}
 	TargetHandshake  chan struct{}
 	DiscoveryStarted chan struct{}
 	DiscoveryStopped chan struct{}
@@ -58,7 +59,7 @@ type Fixture struct {
 	Stops            atomic.Int32
 	Closes           atomic.Int32
 	Block            atomic.Bool
-	HoldHeartbeat    atomic.Bool
+	HoldPublication  atomic.Bool
 	mu               sync.Mutex
 	assignment       controlv1.DeploymentPublisherAssignments
 	service          controlv1.Service
@@ -85,12 +86,18 @@ func New(t *testing.T) *Fixture {
 	}
 	member := controlv1.DeploymentPublisherIdentity{TeamId: id(opaqueid.TeamPrefix), PublisherIdentityId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), DeploymentId: id("dpl_"), DeploymentName: "cloud", ProjectKey: strings.Repeat("a", 56)}
 	serviceID, runID, grantID := id(opaqueid.ServicePrefix), id(opaqueid.ServiceRunPrefix), id(opaqueid.PublisherGrantPrefix)
-	f := &Fixture{Key: key, Heartbeat: make(chan controlv1.ServiceRunHeartbeat, 16), TargetHandshake: make(chan struct{}, 1), DiscoveryStarted: make(chan struct{}), DiscoveryStopped: make(chan struct{}), proofs: map[string]bool{}}
+	f := &Fixture{Key: key, Heartbeat: make(chan controlv1.ServiceRunHeartbeat, 16), RunClosed: make(chan struct{}, 1), TargetHandshake: make(chan struct{}, 1), DiscoveryStarted: make(chan struct{}), DiscoveryStopped: make(chan struct{}), proofs: map[string]bool{}}
 	protocol := controlv1.ServiceProtocol("kubernetes")
-	f.assignment = controlv1.DeploymentPublisherAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), CertificateStatePlans: []controlv1.CertificatePlan{}, Services: []controlv1.DeploymentPublisherServiceAssignment{{Service: "cluster", ServiceId: serviceID, ServiceKind: "service", GrantId: grantID, TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}}}
-	f.service = controlv1.Service{Id: serviceID, TeamId: member.TeamId, Name: "cluster", Protocol: protocol, Enabled: true, TrustRevision: 1, PublisherPool: true, CreatedAt: time.Now(), Endpoint: &controlv1.ServiceEndpoint{Hostname: "managed.example.test", Port: 25443}}
-	f.prepare = controlv1.ServiceRunPreparation{ServiceId: serviceID, ServiceRunId: runID, TeamId: member.TeamId, PublisherIdentityId: member.PublisherIdentityId, PublisherGrantId: grantID, PublisherKeyId: member.KeyId, RunNumber: 1, Hostname: f.service.Endpoint.Hostname, ServicePort: 25443, DomainId: id(opaqueid.DomainPrefix), ExpiresAt: time.Now().Add(time.Minute), CertificatePlan: &controlv1.CertificatePlan{CacheKey: "group-fixture", Scope: f.service.Endpoint.Hostname, Identifiers: []string{f.service.Endpoint.Hostname}, ChallengeMethod: controlv1.Dns01}}
+	f.assignment = controlv1.DeploymentPublisherAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), CertificateStatePlans: []controlv1.CertificatePlan{}, Services: []controlv1.DeploymentPublisherServiceAssignment{{Service: "cluster", ServiceId: serviceID, GrantId: grantID, TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}}}
+	f.service = controlv1.Service{Id: serviceID, TeamId: member.TeamId, Name: "cluster", Protocol: protocol, Enabled: true, TrustRevision: 1, EndpointRevision: 1, PublisherPool: true, CreatedAt: time.Now(), Endpoint: &controlv1.ServiceEndpoint{Hostname: "managed.example.test", Port: 25443}}
+	f.prepare = controlv1.ServiceRunPreparation{ServiceId: serviceID, ServiceRunId: runID, TeamId: member.TeamId, PublisherIdentityId: member.PublisherIdentityId, PublisherGrantId: grantID, PublisherKeyId: member.KeyId, RunNumber: 1, Hostname: f.service.Endpoint.Hostname, DomainId: id(opaqueid.DomainPrefix), ExpiresAt: time.Now().Add(time.Minute), CertificatePlan: &controlv1.CertificatePlan{CacheKey: "group-fixture", Scope: f.service.Endpoint.Hostname, Identifiers: []string{f.service.Endpoint.Hostname}, ChallengeMethod: controlv1.Dns01}}
+	f.prepare.Traffic = controlv1.TrafficLimits{Connections: 32, Rate: 20, RatePerNs: int64(time.Second), Burst: 40, UploadBytes: 8 << 20, DownloadBytes: 16 << 20}
 	f.setup = controlv1.ServiceRunSetup{ServiceId: serviceID, ServiceRunId: runID, RunNumber: 1, RunToken: "fixture-run"}
+	f.prepare.RunToken = f.setup.RunToken
+	f.setup.VisitorSourceKey = make([]byte, 32)
+	if _, err := rand.Read(f.setup.VisitorSourceKey); err != nil {
+		t.Fatal(err)
+	}
 	for slot := range 2 {
 		f.setup.PublisherConnections = append(f.setup.PublisherConnections, controlv1.ConnectionAssignment{PublisherConnectionId: id(opaqueid.PublisherConnectionPrefix), ConnectionSlot: slot, ConnectionAssignmentRevision: 1, RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayAddress: "127.0.0.1:1", TlsServerName: "relay.example.test", PublisherConnectionCredential: "fixture-connection", PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Minute)})
 	}
@@ -167,7 +174,21 @@ func (f *Fixture) verify(t *testing.T, proof, scope, audience string) bool {
 
 func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	hold := false
+	defer func() {
+		f.mu.Unlock()
+		if hold {
+			// publication waits without blocking signed control cleanup.
+			// HTTP/1 disconnect detection starts only after the body is read.
+			// a client that cancels during that read has already ended the wait.
+			if _, err := io.Copy(io.Discard, r.Body); err == nil {
+				<-r.Context().Done()
+			}
+			// returning would let net/http send an empty implicit HTTP 200
+			// while the peer's response side may still be readable.
+			panic(http.ErrAbortHandler)
+		}
+	}()
 	if r.TLS == nil {
 		t.Error("control request was not HTTPS")
 		w.WriteHeader(400)
@@ -228,7 +249,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		write(w, authorityv1.PublisherTokenResponse{AccessToken: "fixture-service", GrantId: request.GrantId, TokenType: "Bearer", ExpiresIn: 60})
-	case "/v1/publisher/service":
+	case "/v1/publisher/services/" + f.assignment.Services[0].ServiceId:
 		if r.Header.Get("Authorization") != "Bearer fixture-service" {
 			t.Error("saved service lacked scoped grant")
 			w.WriteHeader(401)
@@ -238,7 +259,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	case "/v1/services/" + f.service.Id + "/runs":
 		var declaration controlv1.ServiceRunDeclaration
 		_ = json.NewDecoder(r.Body).Decode(&declaration)
-		if declaration.Protocol != f.service.Protocol || declaration.TrustRevision != f.service.TrustRevision || declaration.TargetTls != nil {
+		if declaration.Protocol != f.service.Protocol || declaration.TrustRevision < 1 || declaration.TrustRevision != f.service.TrustRevision || declaration.TargetTls != nil {
 			t.Error("discovered trust leaked into control declaration")
 		}
 		preparation := f.prepare
@@ -249,6 +270,10 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId:
 		f.Closes.Add(1)
 		w.WriteHeader(http.StatusNoContent)
+		select {
+		case f.RunClosed <- struct{}{}:
+		default:
+		}
 	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId + "/renew":
 		var health controlv1.ServiceRunHeartbeat
 		_ = json.NewDecoder(r.Body).Decode(&health)
@@ -256,14 +281,19 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		case f.Heartbeat <- health:
 		default:
 		}
-		if f.HoldHeartbeat.Load() {
-			<-r.Context().Done()
+		if f.HoldPublication.Load() {
+			hold = true
+			return
 		}
 		// stop before relay admission: the fixture proves connector preparation and
 		// real verified target preflight, without inventing a ready relay.
 		serverhttp.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture heartbeat boundary", "")
 	default:
 		if strings.HasSuffix(r.URL.Path, "/certificate-issuances") {
+			if f.HoldPublication.Load() {
+				hold = true
+				return
+			}
 			serverhttp.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture certificate boundary", "")
 			return
 		}

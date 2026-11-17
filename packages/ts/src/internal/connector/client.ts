@@ -154,33 +154,56 @@ async function localConnection(
   name: string,
   protocol: ServiceProtocol,
   environment: NodeJS.ProcessEnv,
+  signal: AbortSignal,
 ) {
-  const value = await new Promise<string>((resolve, reject) => {
-    execFile(
-      binary,
-      [
-        "runtime",
-        "connections",
-        "local",
-        "--directory",
-        directory,
-        "--service",
-        name,
-        "--protocol",
-        protocol,
-      ],
-      {
-        encoding: "utf8",
-        timeout: 15_000,
-        maxBuffer: 2 << 20,
-        env: environment,
-      },
-      (error, stdout) => {
-        if (error !== null) reject(new TnlError("sdk.local_connection_unavailable"));
-        else resolve(stdout);
-      },
-    );
-  });
+  signal.throwIfAborted();
+  let exited: Promise<void> | undefined;
+  let value: string;
+  try {
+    value = await new Promise<string>((resolve, reject) => {
+      const child = execFile(
+        binary,
+        [
+          "runtime",
+          "connections",
+          "local",
+          "--directory",
+          directory,
+          "--service",
+          name,
+          "--protocol",
+          protocol,
+        ],
+        {
+          encoding: "utf8",
+          timeout: 15_000,
+          maxBuffer: 2 << 20,
+          env: environment,
+          signal,
+          killSignal: "SIGKILL",
+        },
+        (error, stdout) => {
+          if (error !== null) reject(error);
+          else resolve(stdout);
+        },
+      );
+      exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    });
+  } catch (cause) {
+    if (
+      signal.aborted &&
+      (cause === signal.reason ||
+        (cause instanceof Error &&
+          cause.name === "AbortError" &&
+          "code" in cause &&
+          cause.code === "ABORT_ERR" &&
+          cause.cause === signal.reason))
+    )
+      throw signal.reason;
+    throw new TnlError("sdk.local_connection_unavailable");
+  } finally {
+    await exited;
+  }
   try {
     const snapshot = localConnectionSchema.parse(JSON.parse(value));
     if (snapshot.protocol !== protocol) throw new Error("protocol changed during selection");
@@ -263,11 +286,13 @@ export function createClient<const Services extends ServiceFacts = Record<never,
       const requests = new Set<Promise<unknown>>();
       const httpFetches = new Map<string, TnlFetch & { close(): Promise<void> }>();
       const httpLifetime = new AbortController();
+      const selectionLifetime = new AbortController();
       const publications = new Set<Publication>();
       const failedPublications = new Set<() => Promise<void>>();
       const publicationLifetime = new AbortController();
       let closed = false;
       let closing: Promise<void> | undefined;
+      let shutdownUntil: number | undefined;
       const validate = (service: string) => {
         if (closed) throw closedError;
         const protocol = protocols.get(service);
@@ -314,26 +339,29 @@ export function createClient<const Services extends ServiceFacts = Record<never,
               const fetch: TnlFetch = async (input, init) => {
                 if (closed) throw closedError;
                 managed ??= import("./connection.js").then(({ managedFetch }) =>
-                  managedFetch(origin, async () =>
-                    ssl === false
-                      ? {
-                          protocol: "http" as const,
-                          host: snapshot.host,
-                          port: snapshot.port,
-                          url: origin as `http://${string}`,
-                          ssl: false as const,
-                          expires: Number.MAX_SAFE_INTEGER,
-                          transportID: snapshot.binding,
-                        }
-                      : ({
-                          protocol: "http",
-                          host: snapshot.host,
-                          port: snapshot.port,
-                          url: origin as `https://${string}`,
-                          ssl,
-                          expires: Number.MAX_SAFE_INTEGER,
-                          transportID: snapshot.binding,
-                        } as ConnectionSnapshot),
+                  managedFetch(
+                    origin,
+                    async () =>
+                      ssl === false
+                        ? {
+                            protocol: "http" as const,
+                            host: snapshot.host,
+                            port: snapshot.port,
+                            url: origin as `http://${string}`,
+                            ssl: false as const,
+                            expires: Number.MAX_SAFE_INTEGER,
+                            transportID: snapshot.binding,
+                          }
+                        : ({
+                            protocol: "http",
+                            host: snapshot.host,
+                            port: snapshot.port,
+                            url: origin as `https://${string}`,
+                            ssl,
+                            expires: Number.MAX_SAFE_INTEGER,
+                            transportID: snapshot.binding,
+                          } as ConnectionSnapshot),
+                    () => shutdownUntil,
                   ),
                 );
                 const signal =
@@ -381,6 +409,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                 service,
                 protocol,
                 environment,
+                selectionLifetime.signal,
               ).then((value) => ({
                 key: value.key,
                 connection: connectionSettings(value.snapshot),
@@ -452,6 +481,10 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                 ? {
                     kind: "local",
                     environment,
+                    shutdownDeadline: () =>
+                      shutdownUntil === undefined
+                        ? undefined
+                        : new Date(shutdownUntil).toISOString(),
                     retainCleanup: (cleanup) => {
                       failedPublications.add(cleanup);
                     },
@@ -463,6 +496,10 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                     name,
                     credential: token ?? "",
                     environment,
+                    shutdownDeadline: () =>
+                      shutdownUntil === undefined
+                        ? undefined
+                        : new Date(shutdownUntil).toISOString(),
                     retainCleanup: (cleanup) => {
                       failedPublications.add(cleanup);
                     },
@@ -546,10 +583,21 @@ export function createClient<const Services extends ServiceFacts = Record<never,
         ) {
           validate(service);
           if (factories.size >= 64) throw new TnlError("sdk.client_capacity");
-          const factory = clientFactory(async () => {
-            const value = await acquire(service);
-            return { key: value.key, connection: value.connection };
-          }, driver);
+          const factory = clientFactory(
+            async (factoryClosedError) => {
+              try {
+                const value = await acquire(service);
+                return { key: value.key, connection: value.connection };
+              } catch (cause) {
+                // only the parent's exact intentional stop becomes factory
+                // closure. independent acquisition and driver failures survive.
+                if (closed && cause === closedError) throw factoryClosedError;
+                throw cause;
+              }
+            },
+            driver,
+            () => shutdownUntil,
+          );
           const close = factory.close.bind(factory);
           factory.close = async () => {
             await close();
@@ -560,7 +608,9 @@ export function createClient<const Services extends ServiceFacts = Record<never,
         },
         close(): Promise<void> {
           closed = true;
+          shutdownUntil ??= Date.now() + 10_000;
           closing ??= (async () => {
+            selectionLifetime.abort(closedError);
             httpLifetime.abort(closedError);
             const stoppingPublications = [...publications].map((publication) =>
               publication.close(),
@@ -585,6 +635,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
               }),
               ...requests,
               ...[...httpFetches.values()].map((value) => value.close()),
+              connector?.close(shutdownUntil, closedError),
             ]);
             const errors = [
               ...new Set(
@@ -595,11 +646,6 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                 ),
               ),
             ];
-            try {
-              await connector?.close();
-            } catch (error) {
-              errors.push(error);
-            }
             if (errors.length === 1) throw errors[0];
             if (errors.length > 1) throw new AggregateError(errors, "deployment cleanup failed");
           })().finally(() => {

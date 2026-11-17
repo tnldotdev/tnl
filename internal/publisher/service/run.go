@@ -1,24 +1,36 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"strconv"
+	"net/http"
+	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -31,22 +43,38 @@ import (
 
 var ErrPrivateStream = errors.New("private publisher: stream is not bound to the current claimed connection")
 
-// Prepared retains control's exact endpoint and certificate plan across retries.
+// Prepared retains control's exact endpoint, traffic approval and certificate plan across retries.
 type Prepared struct {
 	Preparation controlv1.ServiceRunPreparation
 	*preparedCertificate
-	clock               func() time.Time
-	target              string
-	targetResolver      TargetResolver
-	managedHostname     string
-	managedProtocol     config.ProtocolName
-	managedTargetTLS    *tls.Config
-	managedVisitor      func(tunnelv1.ServiceForwardingHeader) servicestream.Authentication
-	servicePort         uint16
-	managedPublic       bool
-	serviceHTTPRequests *requestlimit.HTTP
-	policy              *visitorlease.Lease
-	metadataRevision    int64
+	traffic                trafficlimits.Limits
+	clock                  func() time.Time
+	target                 string
+	handler                http.Handler
+	mounts                 []proxy.Mount
+	resolveHTTPTarget      func(*http.Request) (address, identity string, err error)
+	inspectionMode         inspection.Mode
+	observeSummary         inspection.Observer
+	admitRequest           func(*http.Request) error
+	prepareRequest         func(*http.Request) (func(context.Context) error, error)
+	targetResolver         TargetResolver
+	managedHostname        string
+	managedProtocol        config.ProtocolName
+	managedTargetTLS       *tls.Config
+	visitorTLS             *tls.Config
+	managedVisitor         func(tunnelv1.ServiceForwardingHeader, netip.AddrPort, func(context.Context) error) servicestream.Authentication
+	sourceKey              [32]byte
+	servicePort            uint16
+	managedPublic          bool
+	serviceHTTPRequests    *requestlimit.HTTP
+	requestBodyIdleTimeout time.Duration
+	httpProxy              *proxy.Proxy
+	httpResponseHooks      httpstream.ResponseHooks
+	connectorHTTP          servicestream.ConnectorHTTPFrontend
+	policy                 *visitorlease.Lease
+	metadataRevision       int64
+
+	certificateInstalled <-chan struct{}
 }
 
 // mutable certificate state stays behind a pointer so redacted value
@@ -79,6 +107,16 @@ func (p *Prepared) currentCertificate() (*tls.Certificate, error) {
 	return &certificate, nil
 }
 
+func (p *Prepared) currentPolicy() bool {
+	if p.policy == nil {
+		return false
+	}
+	view, enabled, _ := p.policy.Current()
+	return enabled && view.Scope == (visitorscope.Scope{Kind: visitorscope.Service, ID: p.Preparation.ServiceId}) &&
+		view.Hostname == p.managedHostname && view.MetadataRevision == p.metadataRevision &&
+		view.Port == serviceendpoint.PermissionPort(string(p.managedProtocol))
+}
+
 // Bound accepts only the exact control-approved run and two different assigned
 // relay services. neither the run token nor cached TLS key enters any log.
 type Bound struct {
@@ -92,15 +130,24 @@ type Bound struct {
 }
 
 type boundState struct {
-	connections      [2]controlv1.ConnectionAssignment
-	mu               sync.Mutex
-	active           map[net.Conn]struct{}
-	closed           bool
-	reservedStreams  int
-	connectorPending int
-	connectorPeers   map[string]*PeerSession
-	packetSlots      [2]*Claimed
-	closePolicy      func()
+	connections         [2]controlv1.ConnectionAssignment
+	mu                  sync.Mutex
+	active              map[net.Conn]*boundVisitor
+	closed              bool
+	reservedStreams     int
+	connectorPending    int
+	connectorPeers      map[string]*PeerSession
+	packetSlots         [2]*Claimed
+	closePolicy         func()
+	drainStarted        chan struct{}
+	drainUntil          time.Time
+	visitorWorkers      sync.WaitGroup
+	terminalWorkers     sync.WaitGroup
+	terminalEntrySealed bool
+	sourceProofs        sourceProofHistory
+	httpPending         int
+	httpPendingRelays   map[string]int
+	httpPendingSources  map[netip.Prefix]int
 }
 
 func (Bound) String() string   { return "private publisher run" }
@@ -109,9 +156,13 @@ func (Bound) GoString() string { return "private publisher run" }
 func (p *Prepared) Activate(setup controlv1.ServiceRunSetup) (*Bound, error) {
 	if p == nil || setup.ServiceId != p.Preparation.ServiceId ||
 		setup.ServiceRunId != p.Preparation.ServiceRunId || setup.RunNumber != p.Preparation.RunNumber ||
-		setup.RunToken == "" ||
+		setup.RunToken == "" || setup.RunToken != p.Preparation.RunToken ||
 		!p.Preparation.ExpiresAt.After(time.Now()) ||
 		len(setup.PublisherConnections) != 2 {
+		return nil, ErrPrivateStream
+	}
+	traffic, err := serviceTraffic(p.Preparation.Traffic)
+	if err != nil || traffic != p.traffic {
 		return nil, ErrPrivateStream
 	}
 	var connections [2]controlv1.ConnectionAssignment
@@ -128,7 +179,7 @@ func (p *Prepared) Activate(setup controlv1.ServiceRunSetup) (*Bound, error) {
 		// connection slots are exactly 0 and 1; the credential stays local.
 		connections[assignment.ConnectionSlot] = assignment
 	}
-	return &Bound{prepared: p, boundState: &boundState{connections: connections, active: make(map[net.Conn]struct{})}}, nil
+	return &Bound{prepared: p, boundState: &boundState{connections: connections, active: make(map[net.Conn]*boundVisitor)}}, nil
 }
 
 func (p *Prepared) connectionRef(assignment controlv1.ConnectionAssignment) tunnelv1.ServicePublisherConnectionRef {
@@ -254,7 +305,7 @@ func (b *Bound) reserveStream(ref tunnelv1.ServicePublisherConnectionRef) (func(
 	if limit == 0 {
 		limit = 64
 	}
-	if !b.currentLocked(ref) || b.reservedStreams >= limit {
+	if !b.currentLocked(ref) || !b.drainUntil.IsZero() || b.reservedStreams >= limit {
 		return nil, false
 	}
 	b.reservedStreams++
@@ -294,7 +345,9 @@ func (b *Bound) ConnectSlot(ctx context.Context, slot uint8, options ConnectOpti
 		return nil, err
 	}
 	if !b.current(*hello.ServiceConnection) {
-		_ = session.Close()
+		if err := session.Close(); err != nil {
+			return nil, errors.Join(ErrPrivateStream, &tunnel.SessionCleanupError{Err: err})
+		}
 		return nil, ErrPrivateStream
 	}
 	outer, err := session.BorrowServicePublisherTransport()
@@ -319,7 +372,11 @@ func (b *Bound) ConnectSlot(ctx context.Context, slot uint8, options ConnectOpti
 	}
 	b.mu.Unlock()
 	if !current {
-		return nil, errors.Join(ErrPrivateStream, claimed.Close())
+		cleanup := claimed.Close()
+		if cleanup != nil {
+			cleanup = &tunnel.SessionCleanupError{Err: cleanup}
+		}
+		return nil, errors.Join(ErrPrivateStream, claimed.acceptError(), cleanup)
 	}
 	return claimed, nil
 }
@@ -334,18 +391,34 @@ type Claimed struct {
 	endObservation func(error, bool)
 	packets        *peer.SharedSession
 	dispatcher     *tunnel.ServiceStreamDispatcher
+	lifetimeMu     sync.Mutex
+	serving        bool
+	closing        bool
 	closeOnce      sync.Once
 	closeErr       error
 }
 
 func (c *Claimed) Transport() tunnel.Transport { return c.transport }
 
+func (c *Claimed) acceptError() error {
+	if c.dispatcher != nil {
+		return c.dispatcher.AcceptError()
+	}
+	return nil
+}
+
 func (c *Claimed) Drain(ctx context.Context) error {
 	id, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 	if err != nil {
 		return err
 	}
-	return c.session.RequestPublisherDrain(ctx, id)
+	err = c.session.RequestPublisherDrain(ctx, id)
+	sessionErr := c.session.Err()
+	sessionClosed := errors.Is(sessionErr, muxsession.ErrClosed) && serviceDrainCloseOnly(sessionErr, false)
+	if context.Cause(ctx) == nil && (errors.Is(err, muxsession.ErrClosed) || sessionClosed) && serviceDrainCloseOnly(err, sessionClosed) {
+		return nil
+	}
+	return err
 }
 
 func (c *Claimed) Close() error {
@@ -353,6 +426,10 @@ func (c *Claimed) Close() error {
 		return nil
 	}
 	c.closeOnce.Do(func() {
+		c.lifetimeMu.Lock()
+		c.closing = true
+		unserved := !c.serving
+		c.lifetimeMu.Unlock()
 		c.bound.mu.Lock()
 		var obsolete []struct {
 			p       *PeerSession
@@ -376,17 +453,20 @@ func (c *Claimed) Close() error {
 		for _, old := range obsolete {
 			old.p.detachDelivery(old.network)
 		}
-		if c.endObservation != nil {
-			c.endObservation(nil, true)
-		}
 		if c.dispatcher != nil {
-			c.closeErr = errors.Join(c.closeErr, c.dispatcher.Close())
+			c.closeErr = errors.Join(c.closeErr, c.dispatcher.CloseCleanup())
 		}
 		if c.packets != nil {
 			c.closeErr = errors.Join(c.closeErr, c.packets.Close())
 		}
 		if c.session != nil {
 			c.closeErr = errors.Join(c.closeErr, c.session.Close())
+		}
+		if unserved && c.endObservation != nil {
+			// an unused claim has no Serve result. retain a failed accept in
+			// its observation, without relabeling it as physical cleanup.
+			operation := c.acceptError()
+			c.endObservation(errors.Join(operation, c.closeErr), operation == nil)
 		}
 	})
 	return c.closeErr
@@ -396,6 +476,16 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 	if c == nil || c.bound == nil || c.session == nil {
 		return ErrPrivateStream
 	}
+	c.lifetimeMu.Lock()
+	if c.closing {
+		c.lifetimeMu.Unlock()
+		cleanup := c.Close()
+		return errors.Join(c.acceptError(), cleanup)
+	}
+	// once serving starts, only its joined result may consume the observation.
+	// Close can interrupt it, but cannot publish an earlier expected close.
+	c.serving = true
+	c.lifetimeMu.Unlock()
 	owner := ctx
 	defer func() {
 		if c.endObservation != nil {
@@ -407,9 +497,40 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 		}
 	}()
 	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(ctx, func() { _ = c.session.Close() })
+	closed := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { defer close(closed); _ = c.session.Close() })
 	var workers sync.WaitGroup
-	defer func() { cancel(); _ = c.session.Close(); workers.Wait(); stop() }()
+	var httpCleanupMu sync.Mutex
+	var httpCleanupErr error
+	recordHTTPCleanup := func(err error) {
+		if !httpAdmissionRoutineError(err) {
+			httpCleanupMu.Lock()
+			httpCleanupErr = errors.Join(httpCleanupErr, err)
+			httpCleanupMu.Unlock()
+		}
+	}
+	defer func() {
+		cancel()
+		_ = c.session.Close()
+		workers.Wait()
+		if !stop() {
+			<-closed
+		}
+		// retain the session's once-owned result and join the accept owner.
+		// the caller still closes packets and removes the claimed slot; doing
+		// that here would report an expected close before the result observer.
+		err := c.session.Close()
+		if c.dispatcher != nil {
+			err = errors.Join(err, c.dispatcher.Close())
+		}
+		// a physical cleanup marker remains a failure even when its cause is expected.
+		var physicalClose *muxsession.QUICTransportCloseError
+		if errors.As(err, &physicalClose) || !muxsession.NormalSessionCloseOnly(err) &&
+			!failure.Only(err, context.Cause(ctx)) && !failure.Only(err, ctx.Err()) {
+			result = errors.Join(result, err)
+		}
+		result = errors.Join(result, httpCleanupErr)
+	}()
 	for {
 		incoming, err := c.session.AcceptDispatchedServiceForwardingStream(ctx, c.dispatcher)
 		if err != nil {
@@ -417,13 +538,30 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 			if errors.As(err, &invalid) {
 				continue
 			}
-			if ctx.Err() != nil || errors.Is(err, muxsession.ErrClosed) {
+			if muxsession.NormalSessionCloseOnly(err) ||
+				ctx.Err() != nil && (failure.Only(err, context.Cause(ctx)) || failure.Only(err, ctx.Err())) {
 				return nil
 			}
 			return err
 		}
 		if !c.bound.current(c.ref) || !headerMatches(c.ref, incoming.Header, time.Now()) {
 			_ = incoming.Reject(tunnelv1.StaleConnectionAssignment)
+			continue
+		}
+		if c.bound.prepared.managedProtocol == config.ProtocolHTTP && incoming.Header.PublicService != nil {
+			visitor, code := c.bound.reserveHTTP(incoming.Context(), c.ref, incoming.Stream(), incoming.Header)
+			if visitor == nil {
+				_ = incoming.Reject(code)
+				continue
+			}
+			if err := incoming.Accept(); err != nil {
+				recordHTTPCleanup(errors.Join(err, visitor.http.retire()))
+				continue
+			}
+			workers.Go(func() {
+				defer func() { recordHTTPCleanup(visitor.http.retire()) }()
+				_ = c.bound.serveBody(visitor.http.ctx, c.ref, visitor, incoming.Header, incoming.CloseWrite, incoming.RequestCapacity, visitor)
+			})
 			continue
 		}
 		release, available := c.bound.reserveStream(c.ref)
@@ -438,7 +576,7 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 		workers.Go(func() {
 			defer release()
 			defer incoming.Stream().Close()
-			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream(), incoming.Header, incoming.CloseWrite)
+			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream(), incoming.Header, incoming.CloseWrite, incoming.RequestCapacity, nil)
 		})
 	}
 }
@@ -456,8 +594,8 @@ func (b *Bound) Invalidate() {
 		peers = append(peers, p)
 	}
 	streams := make([]net.Conn, 0, len(b.active))
-	for stream := range b.active {
-		streams = append(streams, stream)
+	for _, visitor := range b.active {
+		streams = append(streams, visitor)
 	}
 	b.mu.Unlock()
 	for _, stream := range streams {
@@ -471,7 +609,7 @@ func (b *Bound) Invalidate() {
 	}
 }
 
-func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConnectionRef, stream net.Conn, header tunnelv1.ServiceForwardingHeader, endStream func(context.Context) error) error {
+func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConnectionRef, stream net.Conn, header tunnelv1.ServiceForwardingHeader, endStream func(context.Context) error, reserveCapacity func(context.Context) error, owned *boundVisitor) (result error) {
 	ctx = observability.ExtractWireTrace(ctx, header.TraceContext)
 	ctx = observability.WithVisitor(ctx, header.VisitorConnectionID)
 	if b == nil || stream == nil || !b.current(ref) ||
@@ -483,10 +621,42 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 		b.mu.Unlock()
 		return ErrPrivateStream
 	}
-	b.active[stream] = struct{}{}
+	if owned != nil {
+		if owned != stream || owned.http == nil || owned.http.bound != b || owned.http.ref != ref {
+			b.mu.Unlock()
+			return ErrPrivateStream
+		}
+	} else {
+		b.active[stream] = &boundVisitor{Conn: stream}
+	}
 	b.mu.Unlock()
-	defer func() { b.mu.Lock(); delete(b.active, stream); b.mu.Unlock() }()
+	if owned == nil {
+		defer func() { b.mu.Lock(); delete(b.active, stream); b.mu.Unlock() }()
+	}
+	if policy := b.prepared.policy; policy != nil {
+		life, cancel := context.WithCancel(ctx)
+		defer cancel()
+		// time-limited serving authority fences metadata, TLS setup, and idle
+		// sockets. this guard grants no visitor access and leaves ordinary
+		// policies' request-level lifetimes unchanged.
+		guard, err := policy.BindConnection(func() { cancel(); _ = stream.Close() })
+		if err != nil {
+			return errors.Join(ErrPrivateStream, err)
+		}
+		if guard != nil {
+			defer guard.Close()
+		}
+		ctx = life
+	}
 	deadline := time.Now().Add(10 * time.Second)
+	for _, until := range []time.Time{header.ExpiresAt, header.ServingUntil} {
+		if until.Before(deadline) {
+			deadline = until
+		}
+	}
+	if owned != nil {
+		deadline = owned.http.setupUntil
+	}
 	if err := stream.SetDeadline(deadline); err != nil {
 		return err
 	}
@@ -494,23 +664,192 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if err != nil || metadata.Source.Addr().String() != header.SourceIP {
 		return ErrPrivateStream
 	}
-	if header.PublicService != nil && (metadata.Destination.Port() != header.PublicService.DestinationPort || header.PublicService.DestinationPort != b.prepared.servicePort) {
+	if header.PublicService != nil && (metadata.Destination.Port() != header.PublicService.DestinationPort ||
+		b.prepared.managedProtocol == config.ProtocolHTTP && header.PublicService.DestinationPort != 443) {
 		return ErrPrivateStream
+	}
+	if b.prepared.managedProtocol == config.ProtocolHTTP {
+		if b.prepared.policy == nil {
+			return ErrPrivateStream
+		}
+		proof, err := tunnelv1.ReadVisitorSourceProof([]byte(metadata.VisitorSourceProof))
+		if err != nil {
+			return err
+		}
+		// authenticate and commit source evidence only after a visitor byte.
+		// a newer signed delegation can wait for background policy installation
+		// within this same setup deadline; it cannot authorize against old policy.
+		reader := bufio.NewReader(replay)
+		if _, err := reader.Peek(1); err != nil {
+			return err
+		}
+		check, stop := context.WithDeadline(ctx, deadline)
+		err = b.checkVisitorSource(check, header, metadata, proof)
+		stop()
+		if err != nil {
+			return err
+		}
+		if owned != nil {
+			if err := owned.http.verifySource(metadata.Source.Addr()); err != nil {
+				return err
+			}
+		}
+		life, cancel := context.WithCancel(ctx)
+		defer cancel()
+		guard, err := b.prepared.policy.BindPublicConnection(controlv1.VisitorPublicEndpoint{
+			Hostname: b.prepared.managedHostname, Port: int(metadata.Destination.Port()), EndpointRevision: proof.Authority.EndpointRevision,
+		}, metadata.Source.Addr(), func() { cancel(); _ = stream.Close() })
+		if err != nil {
+			if errors.Is(err, visitorlease.ErrSourceDenied) {
+				serviceaudit.Emit(b.audit, serviceaudit.Observation{ServiceID: header.ServiceID, ServiceKind: "service",
+					RunID: header.ServiceRunID, RunNumber: int64(header.RunNumber), VisitorConnectionID: header.VisitorConnectionID,
+					SourceIP: metadata.Source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "denied", Reason: "ip_policy"})
+				return diagnostic.WrapMessage(diagnostic.VisitorAccessDenied, "visitor source is not permitted by the service IP policy", err)
+			}
+			return err
+		}
+		defer guard.Close()
+		ctx = life
+		replay = reader
+		// the publisher reports HTTP access under its exact run credential.
+		// ingress capacity is not an authenticated visitor identity.
+		event := serviceaudit.Observation{ServiceID: header.ServiceID, ServiceKind: "service", RunID: header.ServiceRunID,
+			RunNumber: int64(header.RunNumber), VisitorConnectionID: header.VisitorConnectionID, SourceIP: header.SourceIP,
+			EventType: "connection.open", Outcome: "allowed"}
+		var opened atomic.Bool
+		var once sync.Once
+		reserve := reserveCapacity
+		if owned != nil {
+			exchange := reserve
+			reserve = func(call context.Context) error { return owned.http.reserveCapacity(call, exchange) }
+		}
+		reserveCapacity = func(call context.Context) error {
+			if reserve == nil {
+				return ErrPrivateStream
+			}
+			if err := reserve(call); err != nil {
+				return err
+			}
+			if err := context.Cause(call); err != nil {
+				return err
+			}
+			once.Do(func() {
+				serviceaudit.Emit(b.audit, event)
+				opened.Store(true)
+			})
+			return nil
+		}
+		defer func() {
+			if opened.Load() {
+				event.EventType, event.Outcome, event.Reason = "connection.close", "closed", "closed"
+				if result != nil {
+					event.Outcome, event.Reason = "failed", "forwarding"
+				}
+			} else {
+				event.Outcome, event.Reason = "denied", "authorization"
+			}
+			serviceaudit.Emit(b.audit, event)
+		}()
 	}
 	authority := ""
 	// direct visitors use the exact managed origin. admitted connector clients
 	// can use a loopback authority, including an owned kubeconfig's local server.
-	if b.prepared.managedPublic && header.PublicService != nil {
-		authority = net.JoinHostPort(b.prepared.managedHostname, strconv.Itoa(int(b.prepared.servicePort)))
+	if header.PublicService != nil {
+		authority = serviceendpoint.HTTPAuthority(b.prepared.managedHostname, header.PublicService.DestinationPort)
 	}
-	connection := &replayConn{Conn: stream, reader: replay}
+	serving := stream
+	if owned != nil {
+		serving = &httpServingConn{boundVisitor: owned}
+	}
+	connection := &replayConn{Conn: serving, reader: replay}
 	if endStream != nil {
 		connection.endStream = func() error { return endStream(ctx) }
 	}
-	return b.forwardManaged(ctx, connection, b.prepared.managedVisitor(header), authority)
+	return b.forwardManaged(ctx, connection, b.prepared.managedVisitor(header, metadata.Source, reserveCapacity), authority, nil)
 }
 
-func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor servicestream.Authentication, authority string) error {
+func (b *Bound) checkVisitorSource(ctx context.Context, header tunnelv1.ServiceForwardingHeader, metadata proxyproto.Header, proof tunnelv1.VisitorSourceProof) error {
+	public := header.PublicService
+	if public == nil || b.prepared.policy == nil || header.ServiceID != b.prepared.Preparation.ServiceId ||
+		header.ServiceRunID != b.prepared.Preparation.ServiceRunId || header.RunNumber != uint64(b.prepared.Preparation.RunNumber) ||
+		proof.Authority.IngressID != public.IngressID || proof.Authority.IngressRunID != public.IngressRunID ||
+		proof.Authority.IngressLeaseRevision != public.IngressLeaseRevision {
+		return visitortoken.ErrVisitorSource
+	}
+	view, enabled, _ := b.prepared.policy.Current()
+	if !enabled || view.Scope.ID != header.ServiceID {
+		return visitortoken.ErrVisitorSource
+	}
+	binding := tunnelv1.VisitorSourceBinding{
+		ServiceID: header.ServiceID, ServiceRunID: header.ServiceRunID, RunNumber: header.RunNumber,
+		VisitorConnectionID: header.VisitorConnectionID, Source: metadata.Source, Destination: metadata.Destination,
+	}
+	now := view.AuthorityTime(time.Now())
+	// reject a forged source before allowing it to wait for any policy update.
+	if err := visitortoken.VerifyVisitorSource(b.prepared.sourceKey, proof, binding, proof.Authority.VisitorPolicyRevision, now); err != nil {
+		return err
+	}
+	if proof.Authority.VisitorPolicyRevision > view.VisitorPolicyRevision {
+		wait, cancel := context.WithTimeout(ctx, time.Unix(proof.Authority.ValidUntil, 0).Sub(now))
+		err := b.prepared.policy.WaitRevision(wait, proof.Authority.VisitorPolicyRevision)
+		cancel()
+		if err != nil {
+			return err
+		}
+		view, enabled, _ = b.prepared.policy.Current()
+		if !enabled {
+			return visitortoken.ErrVisitorSource
+		}
+		now = view.AuthorityTime(time.Now())
+	}
+	if err := visitortoken.VerifyVisitorSource(b.prepared.sourceKey, proof, binding, view.VisitorPolicyRevision, now); err != nil {
+		return err
+	}
+	return b.sourceProofs.remember(proof, now)
+}
+
+func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor servicestream.Authentication, authority string, finishDelivery func(error) error) error {
+	b.mu.Lock()
+	if b.closed || !b.drainUntil.IsZero() {
+		b.mu.Unlock()
+		return ErrPrivateStream
+	}
+	if b.drainStarted == nil {
+		b.drainStarted = make(chan struct{})
+	}
+	drain := httpstream.Drain{Started: b.drainStarted, Deadline: func() time.Time {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.drainUntil
+	}}
+	b.visitorWorkers.Add(1)
+	b.mu.Unlock()
+	// cover target resolution, visitor TLS, HTTP responses, and native sessions.
+	// the run's fixed fence leaves admitted work and half-closes live when drain
+	// starts, without extending its existing authority or original drain bound.
+	life, cancel := context.WithCancel(ctx)
+	fenced := make(chan struct{})
+	go func() {
+		defer close(fenced)
+		select {
+		case <-life.Done():
+			return
+		case <-drain.Started:
+		}
+		timer := time.NewTimer(time.Until(drain.Deadline()))
+		defer timer.Stop()
+		select {
+		case <-life.Done():
+		case <-timer.C:
+			cancel()
+		}
+	}()
+	ctx = life
+	defer func() {
+		cancel()
+		<-fenced
+		b.visitorWorkers.Done()
+	}()
 	check := func() error {
 		if native, ok := visitor.(servicestream.ConnectorVisitor); ok {
 			_, err := native.Admission.CheckUse(ctx)
@@ -544,17 +883,112 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 	if err := check(); err != nil {
 		return err
 	}
-	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.serviceHTTPRequests,
+	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, Handler: b.prepared.handler, HTTPRequests: b.prepared.serviceHTTPRequests,
+		RequestBodyIdleTimeout: b.prepared.requestBodyIdleTimeout,
+		Mounts:                 b.prepared.mounts, ResolveHTTPTarget: b.prepared.resolveHTTPTarget,
+		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,
+		AdmitRequest: b.prepared.admitRequest, PrepareRequest: b.prepared.prepareRequest, HTTPResponseHooks: b.prepared.httpResponseHooks, HTTPDrain: drain,
+		ConnectorHTTP: b.prepared.connectorHTTP, FinishVisitor: finishDelivery,
+		HTTPProxy: b.prepared.httpProxy,
 		Authority: authority,
-		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
+		TLS:       b.prepared.visitorTLS, TargetTLS: targetTLS, Visitor: visitor}
 	return managed.Forward(ctx, stream)
+}
+
+// startDrain fences new forwarding under the same lock as worker entry.
+// existing public, connector, and base work retains its authority checks.
+func (b *Bound) startDrain(until time.Time) error {
+	return b.fenceDrain(until)()
+}
+
+// fenceDrain publishes the original deadline synchronously. the run owner then
+// owns the returned interruption operation, whose physical closes may block.
+func (b *Bound) fenceDrain(until time.Time) func() error {
+	b.mu.Lock()
+	if b.drainStarted == nil {
+		b.drainStarted = make(chan struct{})
+	}
+	var pending []*connectorAdmission
+	var pendingHTTP []*httpAdmission
+	if b.drainUntil.IsZero() {
+		b.drainUntil = until
+		close(b.drainStarted)
+		for _, visitor := range b.active {
+			if a := visitor.http; a != nil && a.pendingLocked() {
+				a.retireLocked()
+				pendingHTTP = append(pendingHTTP, a)
+			}
+		}
+		for _, peer := range b.connectorPeers {
+			for admission := range peer.streams {
+				if admission.terminal != nil {
+					admission.terminalBudgetLocked()
+				}
+				if !admission.readyLocked() {
+					admission.retireLocked()
+					pending = append(pending, admission)
+				}
+			}
+		}
+	}
+	b.mu.Unlock()
+	return func() error {
+		var result error
+		for _, admission := range pendingHTTP {
+			result = errors.Join(result, admission.close())
+		}
+		for _, admission := range pending {
+			// an unused opening has no response to drain. keep its permit
+			// until this physical close and its actual owner have joined.
+			admission.cancel()
+			result = errors.Join(result, admission.closeStream())
+		}
+		return result
+	}
+}
+
+func (b *Bound) joinDrain() error {
+	b.mu.Lock()
+	var httpVisitors []*httpAdmission
+	for _, visitor := range b.active {
+		if visitor.http != nil {
+			httpVisitors = append(httpVisitors, visitor.http)
+		}
+	}
+	b.mu.Unlock()
+	b.visitorWorkers.Wait()
+	// reservation is already fenced by startDrain. terminal registration and
+	// the last visitor's Done use this same mutex: no Add can follow zero Wait.
+	b.mu.Lock()
+	b.terminalEntrySealed = true
+	for _, peer := range b.connectorPeers {
+		peer.pruneAdmissionsLocked()
+	}
+	b.mu.Unlock()
+	b.terminalWorkers.Wait()
+	var result error
+	for _, admission := range httpVisitors {
+		<-admission.completed
+		if !httpAdmissionRoutineError(admission.retireErr) {
+			result = errors.Join(result, admission.retireErr)
+		}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, peer := range b.connectorPeers {
+		result = errors.Join(result, peer.err)
+	}
+	if !time.Now().Before(b.drainUntil) {
+		return errors.Join(result, context.DeadlineExceeded)
+	}
+	return result
 }
 
 func headerMatches(ref tunnelv1.ServicePublisherConnectionRef, h tunnelv1.ServiceForwardingHeader, now time.Time) bool {
 	return h.Validate() == nil && h.ServiceID == ref.ServiceID && h.ServiceRunID == ref.ServiceRunID &&
 		h.RunNumber == ref.RunNumber && h.PublisherConnectionID == ref.PublisherConnectionID &&
 		h.ConnectionSlot == ref.ConnectionSlot && h.ConnectionAssignmentRevision == ref.ConnectionAssignmentRevision &&
-		h.RelayServiceID == ref.RelayServiceID && h.LeaseExpiresAt.After(now) && h.ExpiresAt.After(now) &&
+		h.RelayServiceID == ref.RelayServiceID && h.ServingUntil.After(now) && h.ExpiresAt.After(now) &&
 		opaqueid.Valid(h.RelayRunID, opaqueid.RelayRunPrefix)
 }
 

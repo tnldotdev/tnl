@@ -100,7 +100,7 @@ func TestDeploymentKubeconfigIsPrivateToEachOwner(t *testing.T) {
 		t.Cleanup(func() { _ = listener.Close() })
 		connection := connectorruntime.Connection{
 			Schema: 1, Protocol: "kubernetes", Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port,
-			URL: "https://" + hostname + ":15443", ExpiresAt: b.deadline,
+			URL: "https://" + hostname, ExpiresAt: b.deadline,
 		}
 		kube, err := b.prepareKube(t.Context(), "cluster", service, connection)
 		if err != nil {
@@ -205,7 +205,7 @@ func TestDeploymentKubeconfigArtifactScope(t *testing.T) {
 	t.Setenv("KUBECONFIG", shared)
 	credential := connectorDeploymentCredential(t, "https://control.example.test")
 	project, state := t.TempDir(), t.TempDir()
-	service := controlv1.Service{
+	service := controlv1.ServiceSummary{
 		Id: "svc_aaaaaaaaaaaaaaaaaaaaaa", Endpoint: &controlv1.ServiceEndpoint{Hostname: "cluster.example.test"},
 		KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "saved-cluster", Region: "us-east-1"},
 	}

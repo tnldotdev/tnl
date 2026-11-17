@@ -67,7 +67,7 @@ export default defineConfig(({worktree}) => ({
     ...(worktree.label.id ? {worker: {protocol: "tcp" as const}} : {}),
   },
   deployments: {
-    local: {targets: {web: {publicURL: {}, http: {paths: {"/api": "api"}}}, api: {}}},
+    local: {targets: {web: {public: true, http: {paths: {"/api": "api"}}}, api: {}}},
     production: {targets: {db: {address: "db:5432"}}},
   },
   aliases: { review: { service: "web" } },
@@ -102,7 +102,7 @@ tnl.services.worker.protocol;
 				address := config.Target("db.internal:5432")
 				configuration.Services = map[string]config.ServiceDeclaration{"db": {Protocol: &protocol}, "api": {}, "web": {}}
 				configuration.Deployments = map[string]config.Deployment{"local": {Targets: map[string]config.DeploymentBinding{
-					"db": {ServiceTarget: config.ServiceTarget{Address: &address}}, "api": {}, "web": {Tunnel: &config.Tunnel{}, HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
+					"db": {ServiceTarget: config.ServiceTarget{Address: &address}}, "api": {}, "web": {Public: new(true), HTTP: &config.HTTPService{Paths: map[string]config.PathMount{"/api": {Service: "api"}}}},
 				}}}
 				if err := config.ValidateProject(configuration); err != nil {
 					t.Fatal(err)

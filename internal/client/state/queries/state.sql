@@ -106,10 +106,10 @@ INSERT INTO local_tunnels (
     project_root,
     service,
     service_protocol,
+    service_id,
     hostname,
     target,
     framework,
-    public_url_id,
     publish_run_number,
     state,
     started_at,
@@ -127,9 +127,9 @@ INSERT INTO local_tunnels (
     sqlc.arg(project_root),
     nullif(sqlc.arg(service), ''),
     sqlc.arg(service_protocol),
+    sqlc.narg(service_id),
     NULL,
     nullif(sqlc.arg(target), ''),
-    NULL,
     NULL,
     NULL,
     'starting',
@@ -141,14 +141,6 @@ INSERT INTO local_tunnels (
     sqlc.narg(primary_project_root),
     sqlc.narg(integration_namespace)
 );
-
--- name: SetTunnelPublicURL :execrows
-UPDATE local_tunnels
-SET public_url_id = sqlc.arg(public_url_id),
-    hostname = sqlc.arg(hostname),
-    state = 'provisioning',
-    updated_at = sqlc.arg(now)
-WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
 
 -- name: SetTunnelProvisioning :execrows
 UPDATE local_tunnels

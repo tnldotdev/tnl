@@ -6,10 +6,90 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
+
+func TestIntegrationServiceMetadataPoolChangesPreserveAuthority(t *testing.T) {
+	f := newServiceHTTPFixture(t)
+	d, ctx, now := f.database, t.Context(), f.now
+	var err error
+	f.service, err = d.CreateServiceAt(ctx, f.project.TeamID, f.project.ActorID, "pool", "pool",
+		ServicePlacement{}, now, ServiceMetadata{Protocol: "http"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run = f.publish(t, f.service)
+	q := controlstatedb.New(d.pool)
+	policyKey := f.service.ID
+	policyRevision := func() int64 {
+		t.Helper()
+		revision, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return revision
+	}
+	auditCounts := func() (updates, trust int) {
+		t.Helper()
+		if err := d.pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE event_type='service.update'),
+		    count(*) FILTER(WHERE event_type='trust.update') FROM control.service_audit_events WHERE service_id=$1`,
+			f.service.ID).Scan(&updates, &trust); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	check := func(service ServiceRecord, revision int64, updates int) {
+		t.Helper()
+		if service.ID != f.service.ID || service.TrustRevision != f.service.TrustRevision ||
+			service.EndpointRevision != f.service.EndpointRevision || *service.Endpoint != *f.service.Endpoint {
+			t.Fatal("pool-only edit changed service identity, trust, or endpoint counters")
+		}
+		if policyRevision() != revision {
+			t.Fatal("pool-only edit invalidated visitor policy")
+		}
+		auth := f.auth()
+		if _, err := d.ReadPublisherVisitorPolicy(ctx, auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, now); err != nil {
+			t.Fatal("pool-only edit closed or fenced the valid run", err)
+		}
+		if gotUpdates, trust := auditCounts(); gotUpdates != updates || trust != 0 {
+			t.Fatal("pool-only edit lost service audit or emitted a trust update", gotUpdates, trust)
+		}
+	}
+	metadata := f.service.ServiceMetadata
+	metadata.PublisherPool = true
+	before := policyRevision()
+	enabled, err := d.ConfigureService(ctx, f.service.ID, f.project.ActorID, metadata, nil, ServiceUpdateConditions{}, now)
+	if err != nil || !enabled.PublisherPool {
+		t.Fatal("enable publisher pool", err)
+	}
+	check(enabled, before, 1)
+	second := f.publish(t, enabled)
+	metadata = enabled.ServiceMetadata
+	metadata.PublisherPool = false
+	before = policyRevision()
+	if _, err := d.ConfigureService(ctx, f.service.ID, f.project.ActorID, metadata, nil, ServiceUpdateConditions{}, now); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("pool guard accepted disabling two valid runs", err)
+	}
+	stillEnabled, err := d.GetService(ctx, f.service.ID, f.project.ActorID)
+	if err != nil || !stillEnabled.PublisherPool {
+		t.Fatal("rejected pool update changed its setting", err)
+	}
+	check(stillEnabled, before, 1)
+	if err := d.CloseServiceRun(ctx, second.ServiceID, second.RunID, second.Token, now); err != nil {
+		t.Fatal(err)
+	}
+	before = policyRevision()
+	disabled, err := d.ConfigureService(ctx, f.service.ID, f.project.ActorID, metadata, nil, ServiceUpdateConditions{}, now)
+	if err != nil || disabled.PublisherPool {
+		t.Fatal("disable publisher pool after the second run joined", err)
+	}
+	check(disabled, before, 2)
+}
 
 func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 	d, now, _, leases := newPublishRunPrerequisites(t)
@@ -47,7 +127,7 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := readyAppliedServiceRun(t, d, access, replica.private, service, leases, now)
+	run := readyAppliedServiceRun(t, d, access, replica.private, service, netip.MustParseAddr("127.0.0.1"), leases, now)
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

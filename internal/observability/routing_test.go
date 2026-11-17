@@ -76,3 +76,31 @@ func TestIngressRoutingMetricsUseOnePassiveSnapshot(t *testing.T) {
 		})
 	}
 }
+
+func TestIngressServiceRoutingReportsTheAppliedControlTimestamp(t *testing.T) {
+	for _, at := range []time.Time{{}, time.Unix(100, 500_000_000)} {
+		metrics := New("ingress")
+		var calls atomic.Int64
+		metrics.RegisterIngressServiceRouting(func() time.Time {
+			calls.Add(1)
+			return at
+		})
+		families, err := metrics.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, family := range families {
+			if family.GetName() != "tnl_ingress_service_routing_observed_timestamp_seconds" {
+				continue
+			}
+			found = true
+			if len(family.Metric) != 1 || len(family.Metric[0].Label) != 0 || family.Metric[0].GetGauge().GetValue() != routingTimestamp(at) {
+				t.Fatal("service routing metric changed the timestamp or added resource labels")
+			}
+		}
+		if !found || calls.Load() != 1 {
+			t.Fatal("service routing did not read one passive local observation")
+		}
+	}
+}

@@ -81,3 +81,55 @@ func TestVisitorPreparationRetryFreshDecisionAndCancellation(t *testing.T) {
 		}
 	})
 }
+
+func TestVisitorPreparationBrowserLockContentionBudget(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		code        string
+		recoverAt   int
+		wantCalls   int
+		wantSuccess bool
+		cancel      bool
+	}{
+		{"authority refresh outlasts local retries", "55P03", 13, 13, true, false},
+		{"busy row remains bounded", "55P03", 0, 64, false, false},
+		{"serialization keeps local retry bound", "40001", 0, 8, false, false},
+		{"deadlock keeps local retry bound", "40P01", 0, 8, false, false},
+		{"unrelated error is not retried", "23505", 0, 1, false, false},
+		{"cancellation interrupts contention", "55P03", 0, 1, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancelCause(t.Context())
+				defer cancel(nil)
+				cause := errors.New("browser request canceled")
+				failure := &pgconn.PgError{Code: test.code}
+				first, calls := time.Now().Add(-time.Hour), 0
+				result, err := retryVisitorPreparationWithLockAttempts(ctx, first, 64, func(at time.Time) (int, error) {
+					calls++
+					if calls == 1 && !at.Equal(first) || calls > 1 && !at.Equal(time.Now()) {
+						t.Fatal("browser contention retry reused a stale decision time")
+					}
+					if test.cancel {
+						cancel(cause)
+					}
+					if calls == test.recoverAt {
+						return 7, nil
+					}
+					return 0, failure
+				})
+				if calls != test.wantCalls || (err == nil) != test.wantSuccess {
+					t.Fatalf("browser contention retry: %d calls, result %d, %v", calls, result, err)
+				}
+				switch {
+				case test.wantSuccess && result != 7:
+					t.Fatal("browser contention retry lost the successful result")
+				case test.cancel && (!errors.Is(err, cause) || result != 0):
+					t.Fatal("browser contention retry lost cancellation")
+				case !test.wantSuccess && !test.cancel && err != failure:
+					t.Fatal("browser contention retry lost its original failure")
+				}
+			})
+		})
+	}
+}

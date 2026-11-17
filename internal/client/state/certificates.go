@@ -90,9 +90,11 @@ func (s *Store) CertificatesForPublisher(teamID, publisherIdentityID string, pla
 	if !opaqueid.Valid(publisherIdentityID, opaqueid.PublisherIdentityPrefix) {
 		return nil, errors.New("clientstate: enrolled publisher identity is required for certificate cache")
 	}
-	if s == nil || teamID == "" || strings.TrimSpace(teamID) != teamID {
-		return nil, errors.New("clientstate: certificate state store and team are required")
+	if s == nil || strings.TrimSpace(teamID) != teamID {
+		return nil, errors.New("clientstate: certificate state store and exact ownership are required")
 	}
+	// guest publishers have no team. the real publisher identity, server, and
+	// approved plan still isolate their durable material without a synthetic owner.
 	plan, err := certificateidentity.CanonicalPlan(plan)
 	if err != nil {
 		return nil, err
@@ -585,5 +587,3 @@ func unixNanoTime(value int64) time.Time {
 	}
 	return time.Unix(0, value).UTC()
 }
-
-func validPublicURLID(value string) bool { return opaqueid.Valid(value, opaqueid.PublicURLPrefix) }

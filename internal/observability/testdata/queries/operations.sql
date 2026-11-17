@@ -1,4 +1,4 @@
--- name: HeartbeatPublishRun :one
+-- name: HeartbeatServiceRun :one
 select 1;
 
 -- name: LockAppliedProject :exec

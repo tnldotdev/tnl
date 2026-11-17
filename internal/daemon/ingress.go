@@ -30,8 +30,14 @@ type ingressRuntime struct {
 	server             *ingress.Server
 	forwarder          *ingress.Forwarder
 	recovery           *ingress.RecoveryReporter
-	publicServices     *ingress.PublicServices
 	audit              *ingressServiceAudit
+}
+
+func (r *ingressRuntime) load() int64 {
+	if r.server == nil {
+		return 0
+	}
+	return r.server.Load()
 }
 
 // only fully constructed controllers enter the immutable collection snapshot.
@@ -95,12 +101,11 @@ type ingressRuntimeControl interface {
 }
 
 type ingressRuntimeConfig struct {
-	client                  ingressRuntimeControl
-	ingressID               string
-	listener                net.Listener
-	clusterSecret           string
-	configure               func(*ingress.Config)
-	configurePublicServices func(*ingress.PublicServicesConfig)
+	client        ingressRuntimeControl
+	ingressID     string
+	listener      net.Listener
+	clusterSecret string
+	configure     func(*ingress.Config)
 }
 
 type ingressSettings struct {
@@ -114,7 +119,6 @@ type ingressSettings struct {
 	trustedProxyPeers                []netip.Prefix
 	leaseRenewalInterval             time.Duration
 	controlRetryInterval             time.Duration
-	routingTableWait                 time.Duration
 	traffic                          ingress.TrafficConfig
 	pending                          ingress.PendingConfig
 	servicePortRanges                tcpport.Inventory
@@ -138,7 +142,6 @@ func ingressSettingsFrom(cfg daemonconfig.Config) ingressSettings {
 		trustedProxyPeers:                peers,
 		leaseRenewalInterval:             cfg.LeaseRenewalInterval,
 		controlRetryInterval:             cfg.ControlRetryInterval,
-		routingTableWait:                 cfg.RoutingTableWait,
 		traffic:                          cfg.IngressTraffic(),
 		pending:                          cfg.IngressPending(),
 		servicePortRanges:                ports,
@@ -162,8 +165,8 @@ func (d *daemon) startIngressRuntime(
 			flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			_ = runtime.audit.Close(flush)
 			cancel()
-			if runtime.publicServices != nil {
-				_ = runtime.publicServices.Close()
+			if runtime.server != nil {
+				_ = runtime.server.Close()
 			}
 			if runtime.forwarder != nil {
 				_ = runtime.forwarder.Close()
@@ -175,9 +178,7 @@ func (d *daemon) startIngressRuntime(
 		return fmt.Errorf("create ingress process run ID: %w", err)
 	}
 	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.ingressID, runID
-	routingTable := new(ingress.RoutingTable)
-	var publicServer *ingress.Server
-	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
+	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit, Https: true}
 	registration.Region = settings.region
 	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), settings.servicePortRanges.Ports()
 	controller, err := ingress.NewController(ingress.ControllerConfig{
@@ -185,26 +186,16 @@ func (d *daemon) startIngressRuntime(
 			logOperationalError(ctx, "renew ingress lease", failure.ServerControlConnectionFailed, err)
 		},
 		LeaseEstablished: runtime.audit.bind,
-		Client:           runtimeConfig.client, RoutingTable: routingTable,
-		Registration:    registration,
-		RenewalInterval: settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
-		RoutingWait: settings.routingTableWait, Observer: metrics,
-		Load: func() int64 {
-			var private int64
-			if runtime.publicServices != nil {
-				private = runtime.publicServices.Load()
-			}
-			if publicServer == nil {
-				return private
-			}
-			return publicServer.Load() + private
-		},
+		Client:           runtimeConfig.client,
+		Registration:     registration,
+		RenewalInterval:  settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
+		Observer: metrics,
+		Load:     runtime.load,
 	})
 	if err != nil {
 		return err
 	}
 	runtime.controller = controller
-	metrics.RegisterIngressRouting(controller.RoutingStatus)
 	metrics.RegisterIngressLease(func() time.Time {
 		deadline := controller.Lease().LeaseExpiresAt
 		if snapshot := d.ingressLeases.Load(); snapshot != nil {
@@ -231,10 +222,8 @@ func (d *daemon) startIngressRuntime(
 		forwardingTLS.MinVersion = tls.VersionTLS13
 	}
 	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{
-		SignVisitorSource:    controller.SignVisitorSource,
-		BindPublicConnection: controller.BindPublicConnection,
-		Context:              ctx,
-		TLSConfig:            forwardingTLS, ClusterSecret: runtimeConfig.clusterSecret, Observer: metrics,
+		Context:   ctx,
+		TLSConfig: forwardingTLS, ClusterSecret: runtimeConfig.clusterSecret, Observer: metrics,
 		OnSessionClosed: func(relayServiceID, relayID, origin string, cause error) {
 			logOperationalError(ctx, "close ingress relay session", failure.ServerConnectionFailed, cause)
 		},
@@ -249,31 +238,16 @@ func (d *daemon) startIngressRuntime(
 	}
 	ingressConfig := ingress.Config{
 		AuditSink: runtime.audit,
-		Lookup: func(hostname string) ([]ingress.PublicURL, ingress.LookupReason) {
-			entries, reason := controller.Lookup(hostname, time.Now())
-			if reason != ingress.LookupCurrent {
-				return nil, reason
-			}
-			routes, err := forwarder.PublicURLs(entries)
-			if err != nil {
-				logOperationalError(ctx, "read ingress public URL", failure.ServerIngressFailed, err)
-				return nil, ingress.LookupInvalidProjection
-			}
-			return routes, ingress.LookupCurrent
-		},
+		Control:   runtimeConfig.client, Forwarder: forwarder, CurrentLease: controller.Lease,
+		IngressPoolID: string(settings.ingressPoolID), ServicePortRanges: settings.servicePortRanges.Ranges(),
 		RequireProxyHeader: settings.requireProxyHeader, TrustedProxyPeers: settings.trustedProxyPeers, MaxConnections: publicCapacity,
 		Traffic: settings.traffic, Pending: settings.pending,
-		TerminalTrafficRuns:       routingTable.TerminalTrafficRuns,
 		MaxClientHelloConnections: settings.clientHelloConnectionLimit,
 		MaxControlConnections:     settings.standaloneControlConnectionLimit,
 		MaxRelayConnections:       settings.standaloneRelayConnectionLimit,
 		Metrics:                   metrics, Observer: metrics,
 		OnError: func(err error) {
-			logOperationalError(ctx, "serve ingress connection", failure.ServerIngressFailed, err)
-		},
-		OnForwardingFailure: func(publicURLID string, version uint64, visitorID string, reason ingress.ForwardingFailureReason, attempts int) {
-			log.Printf("ingress forwarding failed public_url_id=%s publish_run_number=%d visitor_connection_id=%s reason=%s available_backends=%d",
-				publicURLID, version, visitorID, reason, attempts)
+			d.reportOperationalError(ctx, "serve ingress connection", failure.ServerIngressFailed, err)
 		},
 	}
 	if recovery != nil {
@@ -283,16 +257,6 @@ func (d *daemon) startIngressRuntime(
 		runtimeConfig.configure(&ingressConfig)
 	}
 	ingressConfig.AuditSink = runtime.audit
-	publicServicesConfig := ingress.PublicServicesConfig{IngressPoolID: string(settings.ingressPoolID), Control: runtimeConfig.client, Forwarder: forwarder, CurrentLease: controller.Lease, AuditSink: runtime.audit}
-	if runtimeConfig.configurePublicServices != nil {
-		runtimeConfig.configurePublicServices(&publicServicesConfig)
-	}
-	publicServicesConfig.AuditSink = runtime.audit
-	runtime.publicServices, err = ingress.NewPublicServices(publicServicesConfig)
-	if err != nil {
-		return err
-	}
-	ingressConfig.PublicServices, ingressConfig.ServicePortRanges = runtime.publicServices, settings.servicePortRanges.Ranges()
 	ingressConfig.Traffic, ingressConfig.Pending, err = daemonconfig.ValidateIngressTraffic(ingressConfig.Traffic, ingressConfig.Pending)
 	if err != nil {
 		_ = forwarder.Close()
@@ -304,24 +268,24 @@ func (d *daemon) startIngressRuntime(
 		return err
 	}
 	runtime.server = server
-	forwarder.SetPromotionHandler(server.PromotePendingAdmission)
+	metrics.RegisterIngressServiceRouting(server.RoutingObservedAt)
 	if metrics != nil {
 		for resource, limit := range map[string]int64{
-			"public_url_connections":         int64(ingressConfig.Traffic.Default.Connections),
-			"source_connections":             int64(ingressConfig.Traffic.SourceConnections),
-			"source_connection_rate":         int64(ingressConfig.Traffic.SourceRate),
-			"process_connection_rate":        int64(ingressConfig.Traffic.ProcessRate),
-			"denied_connections":             int64(ingressConfig.Pending.Connections),
-			"pending_public_url_connections": int64(ingressConfig.Pending.PublicURLConnections),
-			"pending_source_connections":     int64(ingressConfig.Pending.SourceConnections),
+			"service_connections":         int64(ingressConfig.Traffic.Default.Connections),
+			"source_connections":          int64(ingressConfig.Traffic.SourceConnections),
+			"source_connection_rate":      int64(ingressConfig.Traffic.SourceRate),
+			"process_connection_rate":     int64(ingressConfig.Traffic.ProcessRate),
+			"denied_connections":          int64(ingressConfig.Pending.Connections),
+			"pending_service_connections": int64(ingressConfig.Pending.ServiceConnections),
+			"pending_source_connections":  int64(ingressConfig.Pending.SourceConnections),
 		} {
 			metrics.SetCapacityLimit(resource, limit)
 		}
 	}
-	publicServer = server
 	d.publishIngressRuntime(runtime)
 	owned = true
 	d.start("run ingress control", func() error { return controller.Run(ctx) })
+	d.start("refresh service routing", func() error { return server.RefreshServices(ctx) })
 	d.start("serve public ingress", server.Serve)
 	log.Printf("public ingress listening on %s", runtimeConfig.listener.Addr())
 	return nil

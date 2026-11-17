@@ -88,7 +88,8 @@ func assertConnectorPairOwnerIsolation(t *testing.T, d *Database, ctx context.Co
 		t.Fatal("full inventory blocked an exact retry", err)
 	}
 	// expiry does not free a row while its signed creation can still be replayed.
-	if _, err := d.pool.Exec(ctx, `UPDATE control.connector_peer_pairs SET created_at=$2,last_authorized_at=$2,expires_at=$3 WHERE id=$1`, second.ID, now.Add(-time.Minute), now.Add(-time.Microsecond)); err != nil {
+	now = now.Add(time.Second)
+	if _, err := d.pool.Exec(ctx, `UPDATE control.connector_peer_pairs SET expires_at=created_at+interval '1 microsecond' WHERE id=$1`, second.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.PrepareConnectorPeerPair(ctx, full, now); !errors.Is(err, ErrServiceConflict) {
@@ -112,9 +113,10 @@ func assertConnectorPairOwnerIsolation(t *testing.T, d *Database, ctx context.Co
 	}
 	// a fully expired row awaiting cleanup no longer holds a slot. replacement
 	// must reacquire capacity rather than increase the live inventory beyond 64.
+	now = now.Add(time.Second)
 	if _, err := d.pool.Exec(ctx, `UPDATE control.connector_peer_pairs
-		SET created_at=$2,last_authorized_at=$2,expires_at=$3,last_request_at=$4,replay_fence_until=$3 WHERE id=$1`,
-		replaced.ID, now.Add(-time.Minute), now.Add(-time.Microsecond), now.Add(-5*time.Minute-time.Microsecond)); err != nil {
+		SET expires_at=last_authorized_at+interval '1 microsecond',last_request_at=$2,replay_fence_until=$2::timestamptz+interval '5 minutes' WHERE id=$1`,
+		replaced.ID, now.Add(-5*time.Minute-time.Microsecond)); err != nil {
 		t.Fatal(err)
 	}
 	newOwner, err := d.PrepareConnectorPeerPair(ctx, full, now)
@@ -123,6 +125,7 @@ func assertConnectorPairOwnerIsolation(t *testing.T, d *Database, ctx context.Co
 	}
 	inserted = append(inserted, newOwner.ID)
 	replace.PreviousPairID, replace.PreviousGeneration = replaced.ID, replaced.DeliveryGeneration
+	replace.RequestedAt = now
 	sign(&replace)
 	if _, err := d.PrepareConnectorPeerPair(ctx, replace, replace.RequestedAt); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("expired replacement exceeded owner capacity", err)

@@ -25,7 +25,9 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -91,7 +93,7 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				client, server := connectorInnerPair(t, ctx, verification)
 				done := make(chan error, 1)
 				go func() { done <- serveConnectorInner(ctx, peer, server) }()
-				connectorControl(t, ctx, client)
+				connectorControl(t, ctx, client, peer)
 				raw, err := client.OpenStream(ctx)
 				if err != nil {
 					t.Fatal(err)
@@ -156,11 +158,21 @@ func TestPublicServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
 	_ = client.SetDeadline(time.Now().Add(5 * time.Second))
 	var ended atomic.Int32
 	done := make(chan error, 1)
+	header := privateHeader(t, ref)
+	header.PublicService.DestinationPort = 443
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: p.Preparation.ServiceId}
+	policy, update, _ := visitorfixture.ScopePolicy(t, scope, p.managedHostname, 443, true)
+	p.policy = policy
+	defer p.policy.Close()
+	update.PublicEndpoint = &controlv1.VisitorPublicEndpoint{Hostname: p.managedHostname, Port: 443, EndpointRevision: 1}
+	if err := p.policy.Apply(p.policy.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	metadata := publicSourceMetadata(t, p, header)
 	go func() {
 		defer server.Close()
-		done <- bound.serveBody(ctx, ref, server, privateHeader(t, ref), func(context.Context) error { ended.Add(1); return nil })
+		done <- bound.serveBody(ctx, ref, server, header, func(context.Context) error { ended.Add(1); return nil }, nil, nil)
 	}()
-	metadata, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:25443")})
 	if _, err := client.Write(metadata); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +180,7 @@ func TestPublicServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
 	if err := secure.HandshakeContext(ctx); err != nil {
 		t.Fatal(err)
 	}
-	request, _ := http.NewRequest(http.MethodGet, "https://"+p.managedHostname+":25443/", nil)
+	request, _ := http.NewRequest(http.MethodGet, "https://"+p.managedHostname+"/", nil)
 	request.Close = true
 	if err := request.Write(secure); err != nil {
 		t.Fatal(err)
@@ -206,23 +218,25 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: id(opaqueid.PublisherIdentityPrefix), GrantId: id(opaqueid.PublisherGrantPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), TeamId: team, Kind: authorityv1.Service, ServiceId: &service}
 	const hostname = "service.worktree.member.example.test"
 	plan := controlv1.CertificatePlan{CacheKey: "service-test", Scope: hostname, Identifiers: []string{hostname}, ChallengeMethod: controlv1.Dns01}
-	prep := controlv1.ServiceRunPreparation{TeamId: team, ServiceId: service, ServiceRunId: id(opaqueid.ServiceRunPrefix), RunNumber: 7, PublisherIdentityId: identity.ClientId, PublisherGrantId: identity.GrantId, PublisherKeyId: identity.KeyId, IdempotencyKey: id(opaqueid.IdempotencyPrefix), ExpiresAt: time.Now().Add(time.Minute), Hostname: hostname, ServicePort: 25443, DomainId: domain, CertificatePlan: &plan}
-	approved := controlv1.Service{Id: service, TeamId: team, DomainId: &domain, Protocol: controlv1.Tcp, Enabled: true, TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: prep.ServicePort}}
-	p, err := newManagedPrepared(prep, approved, RunConfig{Identity: identity, Target: target})
+	prep := controlv1.ServiceRunPreparation{TeamId: team, ServiceId: service, ServiceRunId: id(opaqueid.ServiceRunPrefix), RunNumber: 7, PublisherIdentityId: identity.ClientId, PublisherGrantId: identity.GrantId, PublisherKeyId: identity.KeyId, IdempotencyKey: id(opaqueid.IdempotencyPrefix), ExpiresAt: time.Now().Add(time.Minute), Hostname: hostname, DomainId: domain, CertificatePlan: &plan, Traffic: serviceTrafficFixture()}
+	prep.RunToken = "service-run-token"
+	approved := controlv1.Service{Id: service, TeamId: team, DomainId: &domain, Protocol: controlv1.Tcp, Enabled: true, TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 25443}}
+	p, err := newManagedPrepared(prep, approved, RunConfig{PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, Target: target})
 	if err != nil {
 		t.Fatal(err)
 	}
+	p.sourceKey = [32]byte{1}
 	certificate, verification := managedTestCertificate(t, hostname)
 	verification.Certificates = []tls.Certificate{certificate}
 	if err := p.installManagedCertificate(certificate); err != nil {
 		t.Fatal(err)
 	}
-	p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) servicestream.Authentication {
+	p.managedVisitor = func(tunnelv1.ServiceForwardingHeader, netip.AddrPort, func(context.Context) error) servicestream.Authentication {
 		return servicestream.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (servicestream.Decision, error) {
 			return servicestream.Decision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 		}}
 	}
-	setup := controlv1.ServiceRunSetup{ServiceId: service, ServiceRunId: prep.ServiceRunId, RunNumber: prep.RunNumber, RunToken: "service-run-token"}
+	setup := controlv1.ServiceRunSetup{ServiceId: service, ServiceRunId: prep.ServiceRunId, RunNumber: prep.RunNumber, RunToken: prep.RunToken}
 	for slot := range 2 {
 		setup.PublisherConnections = append(setup.PublisherConnections, controlv1.ConnectionAssignment{PublisherConnectionId: id(opaqueid.PublisherConnectionPrefix), ConnectionSlot: slot, ConnectionAssignmentRevision: 3, RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayAddress: fmt.Sprintf("relay-%d.example:443", slot), TlsServerName: fmt.Sprintf("relay-%d.example", slot), PublisherConnectionCredential: "private-assignment-credential", PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Minute)})
 	}
@@ -242,7 +256,7 @@ func privateHeader(t *testing.T, ref tunnelv1.ServicePublisherConnectionRef) tun
 		}
 		return v
 	}
-	return tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.10", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, ExpiresAt: time.Now().Add(time.Minute)}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID, RelayID: "relay-instance", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2, LeaseExpiresAt: time.Now().Add(time.Minute)}
+	return tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.10", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, ExpiresAt: time.Now().Add(time.Minute)}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID, RelayID: "relay-instance", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2, ServingUntil: time.Now().Add(time.Minute)}
 }
 
 func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
@@ -273,7 +287,7 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 			case "source":
 				header.SourceIP = "192.0.2.11"
 			case "denied":
-				p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) servicestream.Authentication {
+				p.managedVisitor = func(tunnelv1.ServiceForwardingHeader, netip.AddrPort, func(context.Context) error) servicestream.Authentication {
 					return servicestream.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (servicestream.Decision, error) {
 						return servicestream.Decision{}, nil
 					}}
@@ -286,7 +300,7 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 			defer server.Close()
 			_ = client.SetDeadline(time.Now().Add(time.Second))
 			done := make(chan error, 1)
-			go func() { defer server.Close(); done <- bound.serveBody(t.Context(), ref, server, header, nil) }()
+			go func() { defer server.Close(); done <- bound.serveBody(t.Context(), ref, server, header, nil, nil, nil) }()
 			proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:25443")})
 			_, _ = client.Write(proxy)
 			secure := tls.Client(client, verification)

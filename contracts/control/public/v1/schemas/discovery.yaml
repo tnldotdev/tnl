@@ -114,39 +114,6 @@ schemas:
         pattern: "^https://"
       authentication:
         $ref: "../openapi.yaml#/components/schemas/AuthenticationFacts"
-  GuestDemoSession:
-    type: object
-    additionalProperties: false
-    required: [access_token, guest_id, team_id, membership_id, domain_id, namespace, expires_at]
-    properties:
-      access_token:
-        type: string
-        minLength: 1
-      guest_id:
-        $ref: "../openapi.yaml#/components/schemas/ResourceID"
-      team_id:
-        $ref: "../openapi.yaml#/components/schemas/TeamID"
-      membership_id:
-        $ref: "../openapi.yaml#/components/schemas/MembershipID"
-      domain_id:
-        $ref: "../openapi.yaml#/components/schemas/DomainID"
-      namespace:
-        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
-      expires_at:
-        type: string
-        format: date-time
-  GuestDemoNumber:
-    type: object
-    additionalProperties: false
-    required: [number]
-    properties:
-      number:
-        {
-          type: string,
-          pattern: "^[0-9]+$",
-          x-go-type: int64,
-          x-oapi-codegen-extra-tags: { json: "number,string" },
-        }
   AuthenticationFacts:
     type: object
     additionalProperties: false

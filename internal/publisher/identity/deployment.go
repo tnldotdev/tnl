@@ -40,7 +40,7 @@ type Deployment struct {
 
 func NewDeployment(control NativeControl, deployments DeploymentControl, authority AssertionExchanger, server string, member controlv1.DeploymentPublisherIdentity, private ed25519.PrivateKey) (*Deployment, error) {
 	canonical, err := naming.CanonicalControlURL(server)
-	if err != nil || canonical != server || control.PublicURLControl == nil || control.ControlURL() != server || control.Services == nil || deployments == nil || authority == nil || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private) || !opaqueid.Valid(member.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(member.KeyId, opaqueid.PublisherIdentityKeyPrefix) || member.TeamId == "" || member.ProjectKey == "" || member.DeploymentId == "" || member.DeploymentName == "local" || member.DeploymentName == "" {
+	if err != nil || canonical != server || control.Services == nil || control.Services.ControlURL() != server || deployments == nil || authority == nil || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private) || !opaqueid.Valid(member.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(member.KeyId, opaqueid.PublisherIdentityKeyPrefix) || member.TeamId == "" || member.ProjectKey == "" || member.DeploymentId == "" || member.DeploymentName == "local" || member.DeploymentName == "" {
 		return nil, ErrScope
 	}
 	return &Deployment{control: control, deployments: deployments, authority: authority, server: server, member: member, private: append(ed25519.PrivateKey(nil), private...)}, nil
@@ -106,18 +106,15 @@ func (g *Deployment) Poll(ctx context.Context) (controlv1.DeploymentPublisherAss
 
 func deploymentAssignmentIdentity(m controlv1.DeploymentPublisherIdentity, a controlv1.DeploymentPublisherServiceAssignment) (authorityv1.PublisherEnrollmentResult, error) {
 	i := authorityv1.PublisherEnrollmentResult{ClientId: m.PublisherIdentityId, KeyId: m.KeyId, GrantId: a.GrantId, TeamId: m.TeamId}
-	if a.ServiceKind == "service" && opaqueid.Valid(a.ServiceId, opaqueid.ServicePrefix) && a.TrustRevision > 0 {
-		i.Kind, i.ServiceId = "service", &a.ServiceId
-	} else if a.ServiceKind == "public_url" && opaqueid.Valid(a.ServiceId, opaqueid.PublicURLPrefix) && a.TrustRevision == 0 && a.Hostname != nil && *a.Hostname != "" {
-		i.Kind, i.PublicUrlId = authorityv1.SavedPublicUrl, &a.ServiceId
-	} else {
+	if !opaqueid.Valid(a.ServiceId, opaqueid.ServicePrefix) || a.Configuration.Protocol == nil || !a.Configuration.Protocol.Valid() || a.TrustRevision < 1 {
 		return i, ErrScope
 	}
+	i.Kind, i.ServiceId = authorityv1.Service, &a.ServiceId
 	return i, nil
 }
 
 // Service adapts an exact assignment from the latest poll to the shared native
-// public/private publish lifecycle. target and trust remain in the assignment;
+// service-run lifecycle. target and trust remain in the assignment;
 // the adapter carries only the exact service grant and this replica's key.
 func (g *Deployment) Service(a controlv1.DeploymentPublisherServiceAssignment) (*Native, error) {
 	g.mu.Lock()

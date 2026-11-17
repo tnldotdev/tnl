@@ -11,7 +11,6 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestDirectStaleLeaseClearsController(t *testing.T) {
@@ -25,14 +24,18 @@ func TestDirectStaleLeaseClearsController(t *testing.T) {
 	if err == nil {
 		t.Fatal("direct adapter accepted a stale lease")
 	}
-	controller := &Controller{lease: ingressv1.IngressLease{IngressLeaseRevision: 1}, routingTableCurrent: true}
+	controller := &Controller{lease: ingressv1.IngressLease{IngressLeaseRevision: 1}}
 	controller.responseError("renew", err)
-	if controller.lease.IngressLeaseRevision != 0 || controller.routingTableCurrent {
+	if controller.lease.IngressLeaseRevision != 0 || !controller.leaseLost {
 		t.Fatalf("stale state retained: %#v", controller)
 	}
 }
 
 type staleLeaseStore struct{ controlingress.Store }
+
+func (staleLeaseStore) RenewIngress(context.Context, controlstate.IngressRenewal, time.Time, time.Duration) (controlstate.IngressLease, error) {
+	return controlstate.IngressLease{}, controlstate.ErrIngressLeaseStale
+}
 
 func TestRunUntilEitherStopsJoinsSibling(t *testing.T) {
 	failure := errors.New("renewal stopped")
@@ -55,20 +58,35 @@ func TestRunUntilEitherStopsJoinsSibling(t *testing.T) {
 	}
 }
 
-func (staleLeaseStore) RenewIngress(context.Context, controlstate.IngressRenewal, time.Time, time.Duration) (controlstate.IngressLease, error) {
-	return controlstate.IngressLease{}, controlstate.ErrIngressLeaseStale
+func TestRunUntilEitherStopsRetainsIndependentFailureDuringCancellation(t *testing.T) {
+	failure := errors.New("renewal failed during shutdown")
+	ctx, cancel := context.WithCancel(t.Context())
+	entered := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		result <- runUntilEitherStops(ctx,
+			func(context.Context) error {
+				close(entered)
+				<-ctx.Done()
+				return failure
+			},
+			func(runCtx context.Context) error {
+				<-runCtx.Done()
+				return nil
+			},
+		)
+	}()
+	<-entered
+	cancel()
+	if err := <-result; !errors.Is(err, failure) {
+		t.Fatalf("independent renewal failure lost during cancellation: %v", err)
+	}
 }
 
 type leaseTestClient struct {
 	ControlClient
 	register func(context.Context, ingressv1.IngressRegistration) (ingressv1.IngressLease, error)
 	renew    func(context.Context) (ingressv1.IngressLease, error)
-	snapshot func(context.Context) (ingressv1.IngressRoutingTableSnapshot, error)
-	events   func(context.Context) (ingressv1.IngressRoutingTablePage, error)
-}
-
-func (leaseTestClient) ReadIngressVisitorPolicy(context.Context, string, ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
-	return controlv1.VisitorPolicyUpdate{}, errors.New("lease-only fixture has no visitor policy")
 }
 
 func (c leaseTestClient) RegisterIngress(ctx context.Context, registration ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
@@ -77,36 +95,23 @@ func (c leaseTestClient) RegisterIngress(ctx context.Context, registration ingre
 func (c leaseTestClient) RenewIngress(ctx context.Context, _ ingressv1.IngressID, _ ingressv1.IngressRenewal) (ingressv1.IngressLease, error) {
 	return c.renew(ctx)
 }
-func (c leaseTestClient) GetIngressRoutingTableSnapshot(ctx context.Context, _ ingressv1.IngressID, _ ingressv1.GetIngressRoutingTableSnapshotParams) (ingressv1.IngressRoutingTableSnapshot, error) {
-	return c.snapshot(ctx)
-}
-func (c leaseTestClient) GetIngressRoutingTableEvents(ctx context.Context, _ ingressv1.IngressID, _ ingressv1.GetIngressRoutingTableEventsParams) (ingressv1.IngressRoutingTablePage, error) {
-	return c.events(ctx)
-}
 
 func testIngressLease(now time.Time) ingressv1.IngressLease {
-	lease := ingressv1.IngressLease{IngressId: "ingress", IngressRunId: "run", IngressLeaseRevision: 1, ProtocolVersion: 1, ConnectionCapacity: 10, RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Hour)}
-	return lease
+	return ingressv1.IngressLease{IngressId: "ingress", IngressRunId: "run", IngressLeaseRevision: 1, ProtocolVersion: 1, ConnectionCapacity: 10, RegisteredAt: now, RenewedAt: now, ServingUntil: now.Add(time.Hour)}
 }
 
 func testLeaseController(t *testing.T, client ControlClient) *Controller {
 	t.Helper()
-	controller, err := NewController(ControllerConfig{Client: client, RoutingTable: new(RoutingTable), Registration: ingressv1.IngressRegistration{IngressId: "ingress", IngressRunId: "run", ProtocolVersion: 1, ConnectionCapacity: 10}, RenewalInterval: time.Millisecond, RetryInterval: time.Millisecond, RoutingWait: time.Second, Report: func(error) {}})
+	controller, err := NewController(ControllerConfig{Client: client, Registration: ingressv1.IngressRegistration{IngressId: "ingress", IngressRunId: "run", ProtocolVersion: 1, ConnectionCapacity: 10}, RenewalInterval: time.Millisecond, RetryInterval: time.Millisecond, Report: func(error) {}})
 	if err != nil {
 		t.Fatal(err)
-	}
-	// these tests isolate lease/routing mechanics. installed-policy composition
-	// has its own fixture and never uses this explicit test-only observation.
-	controller.publicRunPrepared = func(entry ingressv1.IngressRoutingTableEntry, _ ingressv1.IngressLease, _ time.Time) (time.Time, bool) {
-		return entry.PublicUrlExpiresAt, true
 	}
 	return controller
 }
 
 func TestControllerRetriesTransientErrorsButTerminatesStaleRun(t *testing.T) {
 	lease := testIngressLease(time.Now())
-	var registrations, renewals, snapshots, eventCalls atomic.Int32
-	resnapshot := make(chan struct{})
+	var registrations, renewals atomic.Int32
 	client := leaseTestClient{
 		register: func(_ context.Context, registration ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
 			if registration.IngressRunId != "run" {
@@ -117,25 +122,7 @@ func TestControllerRetriesTransientErrorsButTerminatesStaleRun(t *testing.T) {
 			}
 			return lease, nil
 		},
-		snapshot: func(context.Context) (ingressv1.IngressRoutingTableSnapshot, error) {
-			if snapshots.Add(1) == 2 {
-				close(resnapshot)
-			}
-			return ingressv1.IngressRoutingTableSnapshot{}, nil
-		},
-		events: func(ctx context.Context) (ingressv1.IngressRoutingTablePage, error) {
-			if eventCalls.Add(1) == 1 {
-				return ingressv1.IngressRoutingTablePage{}, serverhttp.NewProblemError(409, "routing_table_resnapshot_required", "snapshot required")
-			}
-			<-ctx.Done()
-			return ingressv1.IngressRoutingTablePage{}, ctx.Err()
-		},
-		renew: func(ctx context.Context) (ingressv1.IngressLease, error) {
-			select {
-			case <-resnapshot:
-			case <-ctx.Done():
-				return ingressv1.IngressLease{}, ctx.Err()
-			}
+		renew: func(context.Context) (ingressv1.IngressLease, error) {
 			if renewals.Add(1) == 1 {
 				return ingressv1.IngressLease{}, errors.New("temporary renewal transport failure")
 			}
@@ -148,23 +135,23 @@ func TestControllerRetriesTransientErrorsButTerminatesStaleRun(t *testing.T) {
 	if err := controller.Run(ctx); !errors.Is(err, ErrIngressLeaseLost) {
 		t.Fatalf("Run = %v", err)
 	}
-	if registrations.Load() != 3 || snapshots.Load() != 3 || controller.Ready(time.Now()) {
-		t.Fatalf("registrations=%d snapshots=%d ready=%t", registrations.Load(), snapshots.Load(), controller.Ready(time.Now()))
+	if registrations.Load() != 3 || renewals.Load() != 2 || controller.Ready(time.Now()) {
+		t.Fatalf("registrations=%d renewals=%d ready=%t", registrations.Load(), renewals.Load(), controller.Ready(time.Now()))
 	}
 }
 
-func TestControllerExpiresWhileSnapshotIsBlocked(t *testing.T) {
+func TestControllerExpiresWhileRenewalIsBlocked(t *testing.T) {
 	lease := testIngressLease(time.Now())
-	lease.LeaseExpiresAt = time.Now().Add(50 * time.Millisecond)
+	lease.ServingUntil = time.Now().Add(50 * time.Millisecond)
 	var registrations atomic.Int32
 	client := leaseTestClient{
 		register: func(context.Context, ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
 			registrations.Add(1)
 			return lease, nil
 		},
-		snapshot: func(ctx context.Context) (ingressv1.IngressRoutingTableSnapshot, error) {
+		renew: func(ctx context.Context) (ingressv1.IngressLease, error) {
 			<-ctx.Done()
-			return ingressv1.IngressRoutingTableSnapshot{}, ctx.Err()
+			return ingressv1.IngressLease{}, ctx.Err()
 		},
 	}
 	controller := testLeaseController(t, client)
@@ -191,11 +178,11 @@ func TestControllerRejectsLateRenewalAndChangedRevision(t *testing.T) {
 			updated := lease
 			switch mode {
 			case "late-valid":
-				now = lease.LeaseExpiresAt
+				now = lease.ServingUntil
 				updated = testIngressLease(now)
 				updated.RegisteredAt = lease.RegisteredAt
 			case "expired-response":
-				updated.LeaseExpiresAt = now
+				updated.ServingUntil = now
 			case "changed-revision":
 				updated.IngressLeaseRevision++
 			}

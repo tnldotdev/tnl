@@ -305,25 +305,25 @@ type Event struct {
 type Invocation struct {
 	AccessMode *InvocationAccessMode `json:"access_mode,omitempty"`
 
-	// Deployment Private captured selection. Omit service for a temporary URL; named publication retains saved visitor policy and limits.
+	// Deployment Private captured selection. Omit service for a temporary service; named publication retains saved visitor policy and limits.
 	Deployment *struct {
 		Credential string `json:"credential"`
 		Name       string `json:"name"`
 		Project    string `json:"project"`
 		Service    string `json:"service,omitempty"`
 	} `json:"deployment,omitempty"`
-	InvocationId            string                                   `json:"invocation_id"`
-	Ip                      *[]string                                `json:"ip,omitempty"`
-	Limits                  *externalRef0.PublisherApplicationLimits `json:"limits,omitempty"`
-	Owner                   string                                   `json:"owner"`
-	Pid                     int                                      `json:"pid"`
-	PublisherCredentialFile string                                   `json:"publisher_credential_file,omitempty"`
-	PublisherIdentityId     string                                   `json:"publisher_identity_id,omitempty"`
-	RequirePostQuantum      *bool                                    `json:"require_post_quantum,omitempty"`
-	ServerUrl               *string                                  `json:"server_url,omitempty"`
-	Target                  string                                   `json:"target"`
-	TelemetryDisabled       bool                                     `json:"telemetry_disabled,omitempty"`
-	Version                 InvocationVersion                        `json:"version"`
+	InvocationId            string                                     `json:"invocation_id"`
+	Ip                      *[]string                                  `json:"ip,omitempty"`
+	Limits                  *externalRef0.ProjectHTTPApplicationLimits `json:"limits,omitempty"`
+	Owner                   string                                     `json:"owner"`
+	Pid                     int                                        `json:"pid"`
+	PublisherCredentialFile string                                     `json:"publisher_credential_file,omitempty"`
+	PublisherIdentityId     string                                     `json:"publisher_identity_id,omitempty"`
+	RequirePostQuantum      *bool                                      `json:"require_post_quantum,omitempty"`
+	ServerUrl               *string                                    `json:"server_url,omitempty"`
+	Target                  string                                     `json:"target"`
+	TelemetryDisabled       bool                                       `json:"telemetry_disabled,omitempty"`
+	Version                 InvocationVersion                          `json:"version"`
 }
 
 // InvocationAccessMode defines model for Invocation.AccessMode.
@@ -378,25 +378,25 @@ type Problem struct {
 
 // Publication defines model for Publication.
 type Publication struct {
-	Command          PublicationCommand            `json:"command"`
-	Failure          *string                       `json:"failure,omitempty"`
-	Framework        *string                       `json:"framework,omitempty"`
-	HeartbeatAt      time.Time                     `json:"heartbeat_at"`
-	Hostname         *string                       `json:"hostname,omitempty"`
-	LeaseExpiresAt   time.Time                     `json:"lease_expires_at"`
-	ProcessId        int                           `json:"process_id"`
-	Project          string                        `json:"project"`
-	PublicUrl        *string                       `json:"public_url,omitempty"`
-	PublicUrlId      *string                       `json:"public_url_id,omitempty"`
-	PublishRunNumber *int64                        `json:"publish_run_number,omitempty"`
-	Server           string                        `json:"server"`
-	Service          *string                       `json:"service,omitempty"`
-	ServiceProtocol  *externalRef0.ServiceProtocol `json:"service_protocol,omitempty"`
-	StartedAt        time.Time                     `json:"started_at"`
-	State            PublicationState              `json:"state"`
-	Target           *string                       `json:"target,omitempty"`
-	TunnelId         string                        `json:"tunnel_id"`
-	UpdatedAt        time.Time                     `json:"updated_at"`
+	Command         PublicationCommand            `json:"command"`
+	Failure         *string                       `json:"failure,omitempty"`
+	Framework       *string                       `json:"framework,omitempty"`
+	HeartbeatAt     time.Time                     `json:"heartbeat_at"`
+	Hostname        *string                       `json:"hostname,omitempty"`
+	LeaseExpiresAt  time.Time                     `json:"lease_expires_at"`
+	ProcessId       int                           `json:"process_id"`
+	Project         string                        `json:"project"`
+	PublicUrl       *string                       `json:"public_url,omitempty"`
+	RunNumber       *int64                        `json:"run_number,omitempty"`
+	Server          string                        `json:"server"`
+	Service         *string                       `json:"service,omitempty"`
+	ServiceId       *string                       `json:"service_id,omitempty"`
+	ServiceProtocol *externalRef0.ServiceProtocol `json:"service_protocol,omitempty"`
+	StartedAt       time.Time                     `json:"started_at"`
+	State           PublicationState              `json:"state"`
+	Target          *string                       `json:"target,omitempty"`
+	TunnelId        string                        `json:"tunnel_id"`
+	UpdatedAt       time.Time                     `json:"updated_at"`
 }
 
 // PublicationCommand defines model for Publication.Command.
@@ -412,10 +412,13 @@ type Readiness struct {
 
 // Registration defines model for Registration.
 type Registration struct {
-	Owner          string              `json:"owner"`
-	RegistrationID string              `json:"registration_id"`
-	Target         string              `json:"target,omitempty"`
-	Version        RegistrationVersion `json:"version"`
+	Owner          string `json:"owner"`
+	RegistrationID string `json:"registration_id"`
+
+	// ShutdownDeadline Original caller shutdown deadline. Valid only for unregister; the native owner may shorten it but never grants more than ten seconds.
+	ShutdownDeadline *time.Time          `json:"shutdown_deadline,omitempty"`
+	Target           string              `json:"target,omitempty"`
+	Version          RegistrationVersion `json:"version"`
 }
 
 // RegistrationVersion defines model for Registration.Version.

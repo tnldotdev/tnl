@@ -49,6 +49,7 @@ type Certificates struct {
 	Hostname            string
 	Plan                controlv1.CertificatePlan
 	Install             func(tls.Certificate) error
+	installed           chan<- struct{}
 }
 
 func (r Certificates) Maintain(ctx context.Context) error {
@@ -58,25 +59,42 @@ func (r Certificates) Maintain(ctx context.Context) error {
 	var installed clientstate.Material
 	terminalRetried := false
 	for {
-		material, err := r.advance(ctx, installed.Certificate.Leaf == nil)
-		if err != nil {
-			if ctx.Err() != nil {
-				return context.Cause(ctx)
+		retriedTerminal := false
+		material, err := func() (clientstate.Material, error) {
+			attempt := ctx
+			stop := func() {}
+			if installed.Certificate.Leaf != nil {
+				// renewal cannot outlive the certificate currently serving visitors,
+				// including cache-lock waits, pending orders, and control requests.
+				attempt, stop = context.WithDeadlineCause(ctx, installed.Certificate.Leaf.NotAfter, errCertificateExpired)
 			}
-			if errors.Is(err, errManagedIssuanceFailed) && !terminalRetried {
-				terminalRetried = true
-				lock, lockErr := r.Cache.Lock(ctx)
+			defer stop()
+			material, err := r.advance(attempt, installed.Certificate.Leaf == nil)
+			if attempt.Err() == nil && errors.Is(err, errManagedIssuanceFailed) && !terminalRetried {
+				terminalRetried, retriedTerminal = true, true
+				lock, lockErr := r.Cache.Lock(attempt)
 				if lockErr != nil {
-					return lockErr
-				}
-				_, replaceErr := r.Cache.NewPending(ctx, r.Hostname)
-				_ = lock.Close()
-				if replaceErr != nil {
-					if !managedCertificateRetryable(replaceErr) {
-						return replaceErr
+					err = errors.Join(err, lockErr)
+					retriedTerminal = managedCertificateRetryable(lockErr)
+				} else {
+					_, replaceErr := r.Cache.NewPending(attempt, r.Hostname)
+					replaceErr = errors.Join(replaceErr, lock.Close())
+					if replaceErr != nil {
+						err = errors.Join(err, replaceErr)
+						retriedTerminal = managedCertificateRetryable(replaceErr)
 					}
 				}
-			} else if !managedCertificateRetryable(err) {
+			}
+			if attempt.Err() != nil {
+				return material, errors.Join(context.Cause(attempt), serviceWorkerError(err, attempt.Err()))
+			}
+			return material, err
+		}()
+		if err != nil {
+			if ctx.Err() != nil {
+				return errors.Join(context.Cause(ctx), serviceWorkerError(err, ctx.Err()))
+			}
+			if errors.Is(err, errCertificateExpired) || !retriedTerminal && !managedCertificateRetryable(err) {
 				return err
 			}
 			delay := time.Second
@@ -96,6 +114,12 @@ func (r Certificates) Maintain(ctx context.Context) error {
 		}
 		installed = material
 		terminalRetried = false
+		// wake the run owner only after serving installation succeeds. coalesced
+		// notifications request a readiness recheck, not a grant of authority.
+		select {
+		case r.installed <- struct{}{}:
+		default:
+		}
 		if err = waitCertificateRetry(ctx, max(time.Until(material.RenewAt), time.Second)); err != nil {
 			return err
 		}
@@ -117,12 +141,22 @@ func managedCertificateRetryable(err error) bool {
 func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.Material, result error) {
 	ctx, finish := observability.PublisherOperation(ctx, "certificate")
 	defer func() { finish(result) }()
+	// atomic current snapshots can be acknowledged by a new run while another
+	// worker holds the separate issuance lock for renewal.
+	current, found, err := r.Cache.Current(ctx, r.Hostname)
+	if err != nil && !errors.Is(err, clientstate.ErrCertificateExpired) {
+		return current, err
+	}
+	if err == nil && found && (initial || time.Now().Before(current.RenewAt)) {
+		err = r.Control.MarkServiceCertificateInstalled(ctx, r.ServiceID, r.RunID, r.RunNumber, current.IssuanceID, current.Certificate.Leaf.NotAfter, r.Token)
+		return current, err
+	}
 	lock, err := r.Cache.Lock(ctx)
 	if err != nil {
 		return clientstate.Material{}, err
 	}
-	defer lock.Close()
-	current, found, err := r.Cache.Current(ctx, r.Hostname)
+	defer func() { result = errors.Join(result, lock.Close()) }()
+	current, found, err = r.Cache.Current(ctx, r.Hostname)
 	if err != nil && !errors.Is(err, clientstate.ErrCertificateExpired) {
 		return current, err
 	}
@@ -151,9 +185,13 @@ func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.
 	if err != nil {
 		return current, err
 	}
+	selectedIssuance := issuance.Id
 	for {
-		if issuance.PublisherIdentityId != r.PublisherIdentityID || !opaqueid.Valid(issuance.ServiceId, opaqueid.ServicePrefix) || !opaqueid.Valid(issuance.ServiceRunId, opaqueid.ServiceRunPrefix) || issuance.RunNumber < 1 || !certificateidentity.SamePlan(issuance.CertificatePlan, r.Plan) {
-			return current, servicestream.ErrEndpoint
+		if err := context.Cause(ctx); err != nil {
+			return current, err
+		}
+		if err := r.validateIssuance(issuance, selectedIssuance); err != nil {
+			return current, err
 		}
 		if issuance.CertificatePem != nil {
 			if issuance.NotBefore == nil || issuance.NotAfter == nil || !issuance.NotAfter.After(time.Now()) {
@@ -173,12 +211,9 @@ func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.
 			}
 			return r.promote(ctx, staged)
 		}
-		if issuance.State == controlv1.CertificateIssuanceStateFailed || issuance.State == controlv1.CertificateIssuanceStateCanceled {
-			return current, errManagedIssuanceFailed
-		}
 		delay := time.Second
 		if issuance.RetryAt != nil {
-			delay = max(100*time.Millisecond, min(5*time.Second, time.Until(*issuance.RetryAt)))
+			delay = max(100*time.Millisecond, time.Until(*issuance.RetryAt))
 		}
 		if err := waitCertificateRetry(ctx, delay); err != nil {
 			return current, err
@@ -188,6 +223,27 @@ func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.
 			return current, err
 		}
 	}
+}
+
+// a shared order may originate in another run with the same publisher and plan.
+// polling must retain that selected order, and only installable states can carry
+// material. reject inconsistent responses before staging or acknowledging them.
+func (r Certificates) validateIssuance(issuance controlv1.ServiceCertificateIssuance, selected string) error {
+	if selected == "" || issuance.Id != selected || issuance.PublisherIdentityId != r.PublisherIdentityID ||
+		!opaqueid.Valid(issuance.ServiceId, opaqueid.ServicePrefix) ||
+		!opaqueid.Valid(issuance.ServiceRunId, opaqueid.ServiceRunPrefix) || issuance.RunNumber < 1 ||
+		!certificateidentity.SamePlan(issuance.CertificatePlan, r.Plan) || !issuance.State.Valid() {
+		return servicestream.ErrEndpoint
+	}
+	installable := issuance.State == controlv1.CertificateIssuanceStateWaitingForInstall ||
+		issuance.State == controlv1.CertificateIssuanceStateInstalled
+	if (issuance.CertificatePem != nil) != installable {
+		return servicestream.ErrEndpoint
+	}
+	if issuance.State == controlv1.CertificateIssuanceStateFailed || issuance.State == controlv1.CertificateIssuanceStateCanceled {
+		return errManagedIssuanceFailed
+	}
+	return nil
 }
 
 func (r Certificates) promote(ctx context.Context, staged clientstate.Material) (clientstate.Material, error) {
@@ -207,6 +263,6 @@ func waitCertificateRetry(ctx context.Context, delay time.Duration) error {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 	case <-timer.C:
-		return nil
+		return context.Cause(ctx)
 	}
 }

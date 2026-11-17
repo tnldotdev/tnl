@@ -102,16 +102,11 @@ schemas:
     minLength: 1
     maxLength: 256
     pattern: '^\S(?:.*\S)?$'
-  PublicURLID:
-    $ref: "../openapi.yaml#/components/schemas/ResourceID"
   CanonicalLabel:
     type: string
     minLength: 1
     maxLength: 63
     pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
-  PublicURLScope:
-    type: string
-    enum: [member, shared]
   CertificateChallengeMethod:
     type: string
     enum: [dns-01]

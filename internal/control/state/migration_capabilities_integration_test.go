@@ -28,7 +28,7 @@ func TestIntegrationMigrationRejectsCompatibilityViewBaseline(t *testing.T) {
 		`CREATE VIEW control.publish_run_publisher_grants AS
 		 SELECT id AS publish_run_id, COALESCE(publisher_identity_id,'')::text AS publisher_identity_id,
 		 COALESCE(publisher_grant_id,'')::text AS publisher_grant_id
-		 FROM control.publish_runs WHERE publisher_identity_id IS NOT NULL`,
+		 FROM control.service_runs WHERE publisher_identity_id IS NOT NULL`,
 		`ALTER TABLE control.schema_identity DROP CONSTRAINT schema_identity_baseline_id_check`,
 		`UPDATE control.schema_identity SET baseline_id='tnl-control-fresh-v1-workload-gitlab' WHERE id=1`,
 		`ALTER TABLE control.schema_identity ADD CONSTRAINT schema_identity_baseline_id_check
@@ -40,8 +40,8 @@ func TestIntegrationMigrationRejectsCompatibilityViewBaseline(t *testing.T) {
 	}
 	assertPredecessor := func() {
 		t.Helper()
-		if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != 1 {
-			t.Fatalf("predecessor schema version = %d, %v; want 1", version, err)
+		if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != schemaVersion {
+			t.Fatalf("schema version changed while reconstructing predecessor identity: %d, %v", version, err)
 		}
 		var stored string
 		var present bool

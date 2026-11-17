@@ -33,8 +33,8 @@ func observationFixture(t *testing.T, defaultProtection bool) (projectConfigurat
 	}
 	t.Cleanup(func() { _ = state.Close() })
 	project := projectConfiguration{Project: clientproject.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}, "api": {}}}}}
-	manager, err := publisherapp.New(t.Context(), root, state, publisherapp.ConfiguredServices(project.Project), func(ctx context.Context, _ publisherapp.Service, observe func(uint64, bool) error) error {
-		if err := observe(1, true); err != nil {
+	manager, err := publisherapp.New(t.Context(), root, state, publisherapp.ConfiguredServices(project.Project), func(ctx context.Context, service publisherapp.Service, observe func(publisherapp.PublicationUpdate) error) error {
+		if err := observe(publisherapp.PublicationUpdate{RunNumber: 1, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL}); err != nil {
 			return err
 		}
 		<-ctx.Done()

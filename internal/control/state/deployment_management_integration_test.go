@@ -107,7 +107,7 @@ func TestIntegrationDeploymentManagementScopeAndRecovery(t *testing.T) {
 	if _, err = d.GetServiceForPublisher(t.Context(), production.Services["db"].ID, access.PublisherIdentity, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("management implied publish", err)
 	}
-	if _, err = d.AllocatePublisherPublicURL(t.Context(), access.PublisherIdentity, "allocation", "http://localhost:3000", nil, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublisherIdentity) {
+	if _, err = d.AllocatePublisherService(t.Context(), access.PublisherIdentity, AllocateServiceRequest{}, now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("management implied namespace allocation", err)
 	}
 	// explicit project-wide approval creates only the captured service names.
@@ -352,7 +352,7 @@ func TestIntegrationDeploymentManagementRevocationDuringLockWait(t *testing.T) {
 				done <- err
 			})
 			waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), done)
-			if _, err = controlstatedb.New(gate).RevokePublisherIdentity(ctx, controlstatedb.RevokePublisherIdentityParams{ID: credential.ClientID, TeamID: r.TeamID, Now: timestamptz(now)}); err != nil {
+			if _, err = controlstatedb.New(gate).RevokePublisherIdentity(ctx, controlstatedb.RevokePublisherIdentityParams{ID: credential.ClientID, TeamID: text(r.TeamID), Now: timestamptz(now)}); err != nil {
 				t.Fatal(err)
 			}
 			if err = gate.Commit(ctx); err != nil {

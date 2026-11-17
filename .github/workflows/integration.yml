@@ -20,9 +20,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [state:shard, runtime:shard]
-        shard: [1/4, 2/4, 3/4, 4/4]
+        suite: [runtime:shard]
+        # modulo eight splits each old runtime shard into i and i+4.
+        shard: [1/8, 2/8, 3/8, 4/8, 5/8, 6/8, 7/8, 8/8]
         include:
+          # modulo eight splits each old state shard into i and i+4.
+          - suite: state:shard
+            shard: 1/8
+          - suite: state:shard
+            shard: 2/8
+          - suite: state:shard
+            shard: 3/8
+          - suite: state:shard
+            shard: 4/8
+          - suite: state:shard
+            shard: 5/8
+          - suite: state:shard
+            shard: 6/8
+          - suite: state:shard
+            shard: 7/8
+          - suite: state:shard
+            shard: 8/8
           - suite: api
             shard: 1/1
           - suite: runtime:leases
@@ -30,6 +48,8 @@ jobs:
           - suite: runtime:workload
             shard: 1/1
           - suite: runtime:workload:closure
+            shard: 1/1
+          - suite: runtime:workload:public
             shard: 1/1
           - suite: connector-rebinding
             shard: 1/1

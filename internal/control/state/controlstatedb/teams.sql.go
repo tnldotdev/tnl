@@ -1179,86 +1179,6 @@ func (q *Queries) ListTeamMembershipContexts(ctx context.Context, arg ListTeamMe
 	return items, nil
 }
 
-const lockDomainPublicURLs = `-- name: LockDomainPublicURLs :many
-SELECT require_post_quantum, id, team_id, domain_id, ingress_pool_id, membership_id, created_by_identity_id, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname, target, namespace, purpose, service_protocol, publisher_pool, public_url_scope, policy_revision, access_mode, ip_policy, allowed_ip_policy_ciphertext, allowed_ip_policy_storage_key_id, allowed_ip_hashes, allowed_ip_hash_key_id, lifecycle_state, dns_authority_reference, dns_state, dns_revision, dns_work_owner, dns_work_epoch, dns_work_expires_at, dns_attempts, dns_available_at, dns_last_error, next_publish_run_number, mutation_revision, ephemeral, expires_at, suspension_revision, suspension_reason, created_at, updated_at, suspended_at, deleted_at
-FROM control.public_urls
-WHERE team_id = $1
-  AND domain_id = $2
-  AND lifecycle_state <> 'deleted'
-ORDER BY id
-FOR UPDATE
-`
-
-type LockDomainPublicURLsParams struct {
-	TeamID   string
-	DomainID string
-}
-
-func (q *Queries) LockDomainPublicURLs(ctx context.Context, arg LockDomainPublicURLsParams) ([]ControlPublicUrl, error) {
-	rows, err := q.db.Query(ctx, lockDomainPublicURLs, arg.TeamID, arg.DomainID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlPublicUrl
-	for rows.Next() {
-		var i ControlPublicUrl
-		if err := rows.Scan(
-			&i.RequirePostQuantum,
-			&i.ID,
-			&i.TeamID,
-			&i.DomainID,
-			&i.IngressPoolID,
-			&i.MembershipID,
-			&i.CreatedByIdentityID,
-			&i.IdempotencyKey,
-			&i.RequestDigestCiphertext,
-			&i.RequestDigestStorageKeyID,
-			&i.CanonicalHostname,
-			&i.Target,
-			&i.Namespace,
-			&i.Purpose,
-			&i.ServiceProtocol,
-			&i.PublisherPool,
-			&i.PublicURLScope,
-			&i.PolicyRevision,
-			&i.AccessMode,
-			&i.IpPolicy,
-			&i.AllowedIpPolicyCiphertext,
-			&i.AllowedIpPolicyStorageKeyID,
-			&i.AllowedIpHashes,
-			&i.AllowedIpHashKeyID,
-			&i.LifecycleState,
-			&i.DnsAuthorityReference,
-			&i.DnsState,
-			&i.DnsRevision,
-			&i.DnsWorkOwner,
-			&i.DnsWorkEpoch,
-			&i.DnsWorkExpiresAt,
-			&i.DnsAttempts,
-			&i.DnsAvailableAt,
-			&i.DnsLastError,
-			&i.NextPublishRunNumber,
-			&i.MutationRevision,
-			&i.Ephemeral,
-			&i.ExpiresAt,
-			&i.SuspensionRevision,
-			&i.SuspensionReason,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.SuspendedAt,
-			&i.DeletedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockIdentityForTeamCreation = `-- name: LockIdentityForTeamCreation :one
 SELECT id, display_name
 FROM control.identities
@@ -1434,95 +1354,6 @@ func (q *Queries) LockManagedDomainForClaim(ctx context.Context) (ControlDomain,
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const lockMembershipPublicURLs = `-- name: LockMembershipPublicURLs :many
-SELECT routes.require_post_quantum, routes.id, routes.team_id, routes.domain_id, routes.ingress_pool_id, routes.membership_id, routes.created_by_identity_id, routes.idempotency_key, routes.request_digest_ciphertext, routes.request_digest_storage_key_id, routes.canonical_hostname, routes.target, routes.namespace, routes.purpose, routes.service_protocol, routes.publisher_pool, routes.public_url_scope, routes.policy_revision, routes.access_mode, routes.ip_policy, routes.allowed_ip_policy_ciphertext, routes.allowed_ip_policy_storage_key_id, routes.allowed_ip_hashes, routes.allowed_ip_hash_key_id, routes.lifecycle_state, routes.dns_authority_reference, routes.dns_state, routes.dns_revision, routes.dns_work_owner, routes.dns_work_epoch, routes.dns_work_expires_at, routes.dns_attempts, routes.dns_available_at, routes.dns_last_error, routes.next_publish_run_number, routes.mutation_revision, routes.ephemeral, routes.expires_at, routes.suspension_revision, routes.suspension_reason, routes.created_at, routes.updated_at, routes.suspended_at, routes.deleted_at
-FROM control.public_urls AS routes
-WHERE routes.team_id = $1
-  AND (
-      routes.membership_id = $2
-      OR EXISTS (
-          SELECT 1
-          FROM control.publish_runs AS sessions
-          WHERE sessions.public_url_id = routes.id
-            AND sessions.membership_id = $2
-            AND sessions.closed_at IS NULL
-      )
-  )
-  AND routes.lifecycle_state <> 'deleted'
-ORDER BY routes.id
-FOR UPDATE
-`
-
-type LockMembershipPublicURLsParams struct {
-	TeamID       string
-	MembershipID pgtype.Text
-}
-
-func (q *Queries) LockMembershipPublicURLs(ctx context.Context, arg LockMembershipPublicURLsParams) ([]ControlPublicUrl, error) {
-	rows, err := q.db.Query(ctx, lockMembershipPublicURLs, arg.TeamID, arg.MembershipID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlPublicUrl
-	for rows.Next() {
-		var i ControlPublicUrl
-		if err := rows.Scan(
-			&i.RequirePostQuantum,
-			&i.ID,
-			&i.TeamID,
-			&i.DomainID,
-			&i.IngressPoolID,
-			&i.MembershipID,
-			&i.CreatedByIdentityID,
-			&i.IdempotencyKey,
-			&i.RequestDigestCiphertext,
-			&i.RequestDigestStorageKeyID,
-			&i.CanonicalHostname,
-			&i.Target,
-			&i.Namespace,
-			&i.Purpose,
-			&i.ServiceProtocol,
-			&i.PublisherPool,
-			&i.PublicURLScope,
-			&i.PolicyRevision,
-			&i.AccessMode,
-			&i.IpPolicy,
-			&i.AllowedIpPolicyCiphertext,
-			&i.AllowedIpPolicyStorageKeyID,
-			&i.AllowedIpHashes,
-			&i.AllowedIpHashKeyID,
-			&i.LifecycleState,
-			&i.DnsAuthorityReference,
-			&i.DnsState,
-			&i.DnsRevision,
-			&i.DnsWorkOwner,
-			&i.DnsWorkEpoch,
-			&i.DnsWorkExpiresAt,
-			&i.DnsAttempts,
-			&i.DnsAvailableAt,
-			&i.DnsLastError,
-			&i.NextPublishRunNumber,
-			&i.MutationRevision,
-			&i.Ephemeral,
-			&i.ExpiresAt,
-			&i.SuspensionRevision,
-			&i.SuspensionReason,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.SuspendedAt,
-			&i.DeletedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const lockTeamActorContext = `-- name: LockTeamActorContext :one
@@ -2064,48 +1895,6 @@ func (q *Queries) SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDo
 	return result.RowsAffected(), nil
 }
 
-const suspendAuthorityPublicURL = `-- name: SuspendAuthorityPublicURL :execrows
-UPDATE control.public_urls
-SET lifecycle_state = 'suspended',
-    dns_state = CASE
-        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN 'removing'
-        ELSE dns_state
-    END,
-    dns_revision = CASE
-        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN dns_revision + 1
-        ELSE dns_revision
-    END,
-    dns_work_owner = NULL,
-    dns_work_expires_at = NULL,
-    dns_available_at = CASE
-        WHEN dns_state NOT IN ('unmanaged', 'removed') THEN $1
-        ELSE dns_available_at
-    END,
-    dns_last_error = NULL,
-    mutation_revision = mutation_revision + 1,
-    suspension_revision = suspension_revision + 1,
-    suspension_reason = $2,
-    suspended_at = $1,
-    updated_at = $1
-WHERE id = $3
-  AND lifecycle_state <> 'deleted'
-  AND mutation_revision < 9223372036854775807
-`
-
-type SuspendAuthorityPublicURLParams struct {
-	SuspendedAt      pgtype.Timestamptz
-	SuspensionReason pgtype.Text
-	PublicURLID      string
-}
-
-func (q *Queries) SuspendAuthorityPublicURL(ctx context.Context, arg SuspendAuthorityPublicURLParams) (int64, error) {
-	result, err := q.db.Exec(ctx, suspendAuthorityPublicURL, arg.SuspendedAt, arg.SuspensionReason, arg.PublicURLID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const teamMemberSlugReserved = `-- name: TeamMemberSlugReserved :one
 SELECT EXISTS (
     SELECT 1 FROM control.member_slug_reservations
@@ -2151,19 +1940,19 @@ func (q *Queries) TeamMembershipIdentityExists(ctx context.Context, arg TeamMemb
 
 const teamSharedNameInUse = `-- name: TeamSharedNameInUse :one
 SELECT EXISTS (
-    SELECT 1 FROM control.public_urls AS public_url
-    JOIN control.domains AS domain ON domain.id = public_url.domain_id
-    WHERE public_url.team_id = $1
-      AND public_url.public_url_scope = 'shared'
-      AND public_url.lifecycle_state <> 'deleted'
+    SELECT 1 FROM control.service_endpoints AS endpoint
+    JOIN control.services AS service ON service.id = endpoint.service_id
+    JOIN control.domains AS domain ON domain.id = endpoint.domain_id
+    WHERE service.team_id = $1
+      AND service.deleted_at IS NULL AND endpoint.retired_at IS NULL
       AND domain.kind = 'custom'
-      AND (public_url.canonical_hostname = $2::text || '.' || domain.canonical_domain
-        OR public_url.canonical_hostname LIKE '%.' || $2::text || '.' || domain.canonical_domain)
+      AND (endpoint.hostname = $2::text || '.' || domain.canonical_domain
+        OR endpoint.hostname LIKE '%.' || $2::text || '.' || domain.canonical_domain)
 )
 `
 
 type TeamSharedNameInUseParams struct {
-	TeamID string
+	TeamID pgtype.Text
 	Label  string
 }
 

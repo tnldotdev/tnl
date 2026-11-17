@@ -231,14 +231,14 @@ func startConnectorDirectPublisher(t *testing.T, f *privateSeparatedFixture, ser
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.authority, enrollment.EnrollmentKey)
+	native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{Services: f.identity.routes}, f.identity.authority, enrollment.EnrollmentKey)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	ready, done := make(chan struct{}), make(chan error, 1)
 	go func() {
-		config := publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target,
+		config := publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target,
 			Metadata:     controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
 			TransportTLS: f.roots, HeartbeatInterval: 100 * time.Millisecond, PeerSocket: socket, Connectivity: connectivity,
 			Ready: func() error { close(ready); return nil }}
@@ -283,7 +283,7 @@ func startConnectorDirectRuntime(t *testing.T, f *privateSeparatedFixture, targe
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "connector-direct", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "connector-direct", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

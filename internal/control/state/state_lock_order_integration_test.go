@@ -2,76 +2,47 @@ package state
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
 
 func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
 	for _, kind := range []string{"identity", "grant"} {
 		t.Run(kind, func(t *testing.T) {
-			d, now, r, _ := newPublishRunPrerequisites(t)
-			u, err := d.GetPublicURLForAuthorization(t.Context(), r.PublicURLID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			e := publisherEnrollment(t, d, CreatePublicURLRequest{TeamID: r.TeamID, ActingIdentityID: r.ActingIdentityID}, PublisherScope{TeamID: r.TeamID, Kind: "saved_public_url", PublicURLID: r.PublicURLID}, now)
-			public, private, err := ed25519.GenerateKey(rand.Reader)
-			if err != nil {
-				t.Fatal(err)
-			}
-			p, err := d.RedeemPublisherEnrollment(t.Context(), e.Key, public, now)
-			if err != nil {
-				t.Fatal(err)
-			}
-			plan, err := d.PublisherRunPlan(t.Context(), p, u, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			r.CertificateCacheKey, r.CertificateScope, r.CertificateIdentifiers, r.CertificateChallenge = plan.CacheKey, plan.Scope, plan.Identifiers, plan.ChallengeMethod
-			r.PublisherIdentityID, r.PublisherGrantID, r.PublisherKeyID = p.ID, p.GrantID, p.KeyID
-			r.PublisherRunProof, err = publisherproof.SignRun(private, r.PublicURLID, r.IdempotencyKey)
-			if err != nil {
-				t.Fatal(err)
-			}
-			r.RetrySecret = nil
-			setup, err := d.CreatePublishRun(t.Context(), r, now, time.Minute, time.Minute)
-			if err != nil {
-				t.Fatal(err)
-			}
-			auth := PublishRunAuthentication{PublicURLID: r.PublicURLID, PublishRunID: setup.PublishRunID, PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken}
+			f := newServicePublicationFixture(t)
+			// keep a live run so heartbeat contends with revocation.
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
 			workers := newIntegrationWorkers(t, cancel)
-			gate, err := d.pool.Begin(ctx)
+			defer workers.stop()
+			gate, err := f.database.pool.Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
-			if _, err = controlstatedb.New(gate).LockPublishRun(ctx, setup.PublishRunID); err != nil {
+			if _, err = controlstatedb.New(gate).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: f.run.RunID, ServiceID: f.service.ID}); err != nil {
 				t.Fatal(err)
 			}
 			heartbeat := make(chan error, 1)
 			workers.Go(func() {
-				_, err := d.HeartbeatPublishRun(ctx, auth, now.Add(time.Second), time.Minute, time.Minute)
+				_, err := f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.now.Add(time.Second), ServiceRunHealth{StreamCapacity: 64})
 				heartbeat <- err
 			})
-			pid := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), heartbeat)
+			pid := waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), heartbeat)
 			revoked := make(chan error, 1)
+			actor := f.actor(t)
 			workers.Go(func() {
 				if kind == "identity" {
-					revoked <- d.RevokePublisherIdentity(ctx, r.TeamID, p.ID, r.ActingIdentityID, now.Add(2*time.Second))
+					revoked <- f.database.RevokePublisherIdentity(ctx, f.service.TeamID, f.publisher.ID, actor, f.now.Add(2*time.Second))
 				} else {
-					revoked <- d.RevokePublisherGrant(ctx, r.TeamID, p.ID, p.GrantID, r.ActingIdentityID, now.Add(2*time.Second))
+					revoked <- f.database.RevokePublisherGrant(ctx, f.service.TeamID, f.publisher.ID, f.publisher.GrantID, actor, f.now.Add(2*time.Second))
 				}
 			})
-			waitForPostgresBlock(t, ctx, d, pid, revoked)
+			waitForPostgresBlock(t, ctx, f.database, pid, revoked)
 			if err = gate.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -79,8 +50,23 @@ func TestIntegrationStateLockOrderPublisherRevocation(t *testing.T) {
 			if heartbeatErr != nil || revokeErr != nil {
 				t.Fatalf("heartbeat = %v; revocation = %v", heartbeatErr, revokeErr)
 			}
-			if _, err = d.HeartbeatPublishRun(ctx, auth, now.Add(3*time.Second), time.Minute, time.Minute); !errors.Is(err, ErrPublisherIdentity) && !errors.Is(err, ErrPublishRunStale) {
-				t.Fatalf("revoked run heartbeat = %v", err)
+			if _, err = f.database.HeartbeatServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, f.now.Add(3*time.Second), ServiceRunHealth{StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
+				t.Fatalf("post-revocation heartbeat = %v", err)
+			}
+			var closed bool
+			if err = f.database.pool.QueryRow(t.Context(), `SELECT state='closed' AND closed_at IS NOT NULL FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&closed); err != nil || !closed {
+				t.Fatalf("revoked run not closed: closed=%t err=%v", closed, err)
+			}
+			if kind == "identity" {
+				var revokedAt bool
+				if err = f.database.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM control.publisher_identities WHERE id=$1`, f.publisher.ID).Scan(&revokedAt); err != nil || !revokedAt {
+					t.Fatalf("publisher identity not revoked: revoked=%t err=%v", revokedAt, err)
+				}
+			} else {
+				var revokedAt bool
+				if err = f.database.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM control.publisher_grants WHERE id=$1`, f.publisher.GrantID).Scan(&revokedAt); err != nil || !revokedAt {
+					t.Fatalf("publisher grant not revoked: revoked=%t err=%v", revokedAt, err)
+				}
 			}
 		})
 	}
@@ -100,7 +86,7 @@ func TestIntegrationStateLockOrderServiceActor(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "service_actor_order")
 			r := appliedProjectRequest(t, d, now)
-			s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "database", "database", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+			s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "database", "database", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -134,9 +120,9 @@ func TestIntegrationStateLockOrderServiceActor(t *testing.T) {
 				case "create-grant":
 					_, err = d.CreateServiceGrant(signed, s.ID, r.ActorID, "team", "team", "", nil, now)
 				case "create-service":
-					_, err = d.CreateServiceAt(signed, r.TeamID, r.ActorID, "second", "second", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+					_, err = d.CreateServiceAt(signed, r.TeamID, r.ActorID, "second", "second", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 				case "delete-service":
-					err = d.DeleteService(signed, s.ID, r.ActorID, now)
+					err = d.DeleteService(signed, s.ID, r.ActorID, observedServiceDeletion(t, d, s.ID), now)
 				}
 				done <- err
 			})
@@ -216,7 +202,7 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unrelated, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "unrelated", "unrelated", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	unrelated, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActorID, "unrelated", "unrelated", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,32 +213,34 @@ func TestIntegrationStateLockOrderApplyExpiration(t *testing.T) {
 	}
 	replica := enrollAppliedDeployment(t, d, r, e, now)
 	access := deploymentAssignmentAccess(t, d, replica, replica.assignments.Services[1], now)
-	prepared, err := d.PrepareServiceRun(t.Context(), service, access.PublisherIdentity, "prepared", now, ServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(t.Context(), service, access.PublisherIdentity, "prepared", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	workers := newIntegrationWorkers(t, cancel)
-	gate, err := d.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	gate, key := newExpirationProgressCloseGate(t, ctx, d, prepared.RunID)
 	defer rollbackTestTransaction(t, gate)
-	if _, err = controlstatedb.New(gate).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: prepared.RunID, ServiceID: service}); err != nil {
-		t.Fatal(err)
-	}
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
 	expired := make(chan error, 1)
 	workers.Go(func() {
-		_, err := d.ExpireServiceRuns(ctx, prepared.ExpiresAt)
+		count, err := d.ExpireServiceRuns(ctx, prepared.ExpiresAt)
+		if err == nil && count != 1 {
+			err = errors.New("admitted expiration did not close the exact prepared run")
+		}
 		expired <- err
 	})
-	pid := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), expired)
+	// pause the actual close after owner/service/run acquisition, rather than
+	// holding a run that nonblocking cleanup must now skip.
+	pid := waitForExpirationProgressAdvisory(t, ctx, d, int32(gate.Conn().PgConn().PID()),
+		"ExclusiveLock", "ExclusiveLock", key, "-- name: CloseServiceRun", expired)
 	r.ExpectedRevision, r.Now = applied.Revision, prepared.ExpiresAt
 	r.Configuration.Services = map[string]ProjectServiceConfiguration{}
 	updated := make(chan error, 1)
 	workers.Go(func() { _, err := d.ApplyProjectConfiguration(ctx, r); updated <- err })
-	waitForPostgresBlock(t, ctx, d, pid, updated)
+	waitForExpirationProgressAdvisory(t, ctx, d, pid, "ShareLock", "ExclusiveLock",
+		"tnl:local-team:"+r.TeamID, "-- name: LockLocalTeamForMutation", updated)
 	if _, err = gate.Exec(ctx, `SELECT id FROM control.services WHERE id=$1 FOR UPDATE NOWAIT`, unrelated.ID); err != nil {
 		t.Fatalf("apply locked a service outside its project: %v", err)
 	}

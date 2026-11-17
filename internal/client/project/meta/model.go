@@ -14,6 +14,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
@@ -86,13 +87,13 @@ func (service *Service) UnmarshalJSON(data []byte) error {
 }
 
 // NewEndpoint builds browser-safe metadata from the current endpoint facts.
-// port and public are independent of protocol. target addresses, trust, and
-// credentials never enter this type.
+// HTTP uses shared 443; other public protocols need a port reservation.
+// target addresses, trust, and credentials never enter this type.
 func NewEndpoint(namespace, hostname, protocol string, port int, public bool) (Service, error) {
 	service := Service{Namespace: namespace, Hostname: hostname, Protocol: protocol, Port: port, Public: public}
 	if protocol == "http" || protocol == "kubernetes" {
 		service.URL = "https://" + hostname
-		if port != 443 {
+		if port != 0 && port != 443 {
 			service.URL = "https://" + net.JoinHostPort(hostname, strconv.Itoa(port))
 		}
 	}
@@ -109,8 +110,8 @@ func validateServiceAddress(service Service) error {
 	if err := canonicalHostname("service hostname", service.Hostname); err != nil {
 		return err
 	}
-	if !config.ValidProtocol(service.Protocol) || service.Port < 1 || service.Port > 65535 {
-		return errors.New("service metadata needs a supported protocol, allocated port, and valid public exposure")
+	if !serviceendpoint.Valid(service.Protocol, service.Hostname, service.Port, service.Public) {
+		return errors.New("service metadata needs a protocol-matched endpoint")
 	}
 	if service.Protocol != "http" && len(service.Paths) != 0 {
 		return errors.New("path metadata requires protocol http")
@@ -130,7 +131,7 @@ func validateServiceAddress(service Service) error {
 		if err != nil || port != service.Port || service.URL != "https://"+net.JoinHostPort(service.Hostname, strconv.Itoa(port)) {
 			return errors.New("service HTTP port is invalid")
 		}
-	} else if service.URL != "https://"+service.Hostname || service.Port != 443 {
+	} else if service.URL != "https://"+service.Hostname || service.Port != 0 && service.Port != 443 {
 		return errors.New("HTTP service needs its exact HTTPS URL")
 	}
 	return nil

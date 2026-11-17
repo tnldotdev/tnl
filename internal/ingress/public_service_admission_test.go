@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -17,11 +18,11 @@ func TestPublicServiceAdmissionExpiryAtUse(t *testing.T) {
 	for _, expiry := range []string{"run", "relay"} {
 		t.Run(expiry, func(t *testing.T) {
 			_, c, _, _ := publicServiceTestSetup(t)
-			p := ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, ExpiresAt: now.Add(time.Minute), ConnectedRelays: c.relays}
+			p := ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, Traffic: c.traffic, ExpiresAt: now.Add(time.Minute), ConnectedRelays: c.relays}
 			if expiry == "run" {
 				p.ExpiresAt = now
 			} else {
-				p.ConnectedRelays[0].LeaseExpiresAt = now
+				p.ConnectedRelays[0].ServingUntil = now
 			}
 			if err := validatePublicServiceAdmission(p, now.Add(-time.Nanosecond)); err != nil {
 				t.Fatalf("live claim rejected: %v", err)
@@ -29,6 +30,51 @@ func TestPublicServiceAdmissionExpiryAtUse(t *testing.T) {
 			if err := validatePublicServiceAdmission(p, now); !errors.Is(err, ErrServiceAdmission) {
 				t.Fatalf("claim accepted at expiry: %v", err)
 			}
+		})
+	}
+}
+
+func TestPublicServiceExpiredAdmissionNeedsFreshControlDecisionNotFreshIngressLease(t *testing.T) {
+	for _, expiry := range []string{"run", "relay"} {
+		t.Run(expiry, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				server, control, forwarder, lease := publicServiceTestSetup(t)
+				now := time.Now()
+				if expiry == "run" {
+					control.initialValidUntil = now
+				} else {
+					control.relays[0].ServingUntil = now
+				}
+				// renewing only ingress cannot make an expired service claim usable.
+				lease.RenewedAt, lease.ServingUntil = now, now.Add(time.Hour)
+				server.config.CurrentLease = func() ingressv1.IngressLease { return lease }
+				connection, visitor := net.Pipe()
+				err := server.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "", nil)
+				_ = visitor.Close()
+				if !errors.Is(err, ErrServiceAdmission) || forwarder.count() != 0 || control.closed != 1 ||
+					server.Load() != 0 || !publicServiceCapacityReleased(server) {
+					t.Fatal("fresh ingress lease revived an expired service admission", err)
+				}
+				if current, err := server.liveLease(now); err != nil || !samePrivateLease(current, lease) {
+					t.Fatal("one expired service invalidated the process lease", err)
+				}
+				control.initialValidUntil = now.Add(time.Minute)
+				for i := range control.relays {
+					control.relays[i].ServingUntil = now.Add(time.Minute)
+				}
+				stream, stop := publicServiceActiveStream(t, server, forwarder)
+				header := ingressAwait(t, forwarder.observed)
+				if header.ServiceID != control.service || header.ServiceRunID != control.run || header.RunNumber != 1 ||
+					!header.ExpiresAt.Equal(privateMinTime(control.initialValidUntil, now.Add(server.config.OpenTimeout))) {
+					t.Fatal("recovery used another service run or an expired claim", header)
+				}
+				_ = stream.Close()
+				stop()
+				ingressAwait(t, forwarder.relayDone)
+				if control.recheckActive.Load() != 0 || server.Load() != 0 || !publicServiceCapacityReleased(server) {
+					t.Fatal("fresh admission retained workers or capacity after close")
+				}
+			})
 		})
 	}
 }
@@ -46,7 +92,7 @@ func (c changedPublicServiceControl) AdmitPublicServiceVisitor(ctx context.Conte
 
 type rejectedPublicServiceForwarder struct{ calls int }
 
-func (f *rejectedPublicServiceForwarder) OpenPrivate(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f *rejectedPublicServiceForwarder) OpenService(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader, func(context.Context) error) (net.Conn, error) {
 	f.calls++
 	return nil, ErrServiceAdmission
 }
@@ -55,18 +101,22 @@ func TestPublicServiceVisitorRejectsExpiredOrMalformedClaim(t *testing.T) {
 	for name, change := range map[string]func(*ingressv1.PublicServiceVisitorAdmission){
 		"expired claim": func(p *ingressv1.PublicServiceVisitorAdmission) { p.ExpiresAt = time.Now().Add(-time.Second) },
 		"expired relay with live sibling": func(p *ingressv1.PublicServiceVisitorAdmission) {
-			p.ConnectedRelays[0].LeaseExpiresAt = time.Now().Add(-time.Second)
+			p.ConnectedRelays[0].ServingUntil = time.Now().Add(-time.Second)
 		},
 		"missing service":    func(p *ingressv1.PublicServiceVisitorAdmission) { p.ServiceId = "" },
 		"missing run":        func(p *ingressv1.PublicServiceVisitorAdmission) { p.ServiceRunId = "" },
 		"missing run number": func(p *ingressv1.PublicServiceVisitorAdmission) { p.RunNumber = 0 },
-		"missing relays":     func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays = nil },
-		"invalid slot":       func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[0].ConnectionSlot = 2 },
-		"duplicate slot":     func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[1].ConnectionSlot = 0 },
+		"missing traffic":    func(p *ingressv1.PublicServiceVisitorAdmission) { p.Traffic = ingressv1.IngressTrafficLimits{} },
+		"invalid traffic period": func(p *ingressv1.PublicServiceVisitorAdmission) {
+			p.Traffic.RatePerNs = 0
+		},
+		"missing relays": func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays = nil },
+		"invalid slot":   func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[0].ConnectionSlot = 2 },
+		"duplicate slot": func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[1].ConnectionSlot = 0 },
 		"duplicate relay service": func(p *ingressv1.PublicServiceVisitorAdmission) {
 			p.ConnectedRelays[1].RelayServiceId = p.ConnectedRelays[0].RelayServiceId
 		},
-		"missing relay expiry": func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[0].LeaseExpiresAt = time.Time{} },
+		"missing relay expiry": func(p *ingressv1.PublicServiceVisitorAdmission) { p.ConnectedRelays[0].ServingUntil = time.Time{} },
 		"missing assignment": func(p *ingressv1.PublicServiceVisitorAdmission) {
 			p.ConnectedRelays[0].ConnectionAssignmentRevision = 0
 		},
@@ -81,7 +131,7 @@ func TestPublicServiceVisitorRejectsExpiredOrMalformedClaim(t *testing.T) {
 			connection, visitor := net.Pipe()
 			defer connection.Close()
 			defer visitor.Close()
-			err := p.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"))
+			err := p.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"), "", nil)
 			if !errors.Is(err, ErrServiceAdmission) || forwarder.calls != 0 || c.closed != 1 || p.Load() != 0 {
 				t.Fatalf("invalid admission: err=%v forwarded=%d closed=%d sessions=%d", err, forwarder.calls, c.closed, p.Load())
 			}

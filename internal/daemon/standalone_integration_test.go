@@ -13,6 +13,7 @@ import (
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -44,16 +45,17 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		RelayTLSPrivateKeyFile:    relayCertificate.privateKeyFile,
 		ACMEDirectoryURL:          acmeServer.URL + "/directory", ACMEEmail: "operator@example.test",
 		ACMEAcceptTerms: true, ACMEProfile: "tlsserver", OIDCIssuer: testOIDCIssuer, OIDCClientID: "server",
-		PublicURLCertificateWorkers: 4,
-		StorageKey:                  testStorageKey,
-		AccessTokenLifetime:         5 * time.Minute, RefreshTokenLifetime: time.Hour,
+		ServiceCertificateWorkers: 4,
+		StorageKey:                testStorageKey,
+		AccessTokenLifetime:       5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		VisitorConnectionLimit: 100, PublisherConnectionLimit: 10,
 		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration:   3 * time.Second, LeaseRenewalInterval: time.Second,
-		ControlRetryInterval: 10 * time.Millisecond, RoutingTableWait: time.Second, DrainTimeout: 2 * time.Second,
+		ControlOutageTolerance: controloutage.DefaultTolerance,
+		ControlRetryInterval:   10 * time.Millisecond, DrainTimeout: 2 * time.Second,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)

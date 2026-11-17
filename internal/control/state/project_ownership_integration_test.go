@@ -1,13 +1,13 @@
 package state
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
@@ -19,13 +19,13 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := addAuthorityMember(t, d, now, base.ActingIdentityID, base.TeamID, "local-reader", TeamRoleMember)
-	unrelated, err := d.CreateServiceAt(ctx, base.TeamID, base.ActingIdentityID, "db", "manual-db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	unrelated, err := d.CreateServiceAt(ctx, base.TeamID, base.ActingIdentityID, "db", "manual-db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	configuration := ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{
 		"db":  {Protocol: "postgres", Target: "localhost:5432", Access: &ProjectServiceAccess{Team: true}},
-		"web": {Target: "app", PublicURL: &ProjectServicePublicURL{}, Access: &ProjectServiceAccess{Team: true}},
+		"web": {Target: "app", Public: new(true), Access: &ProjectServiceAccess{Team: true}},
 	}}
 	r := ApplyProjectConfigurationRequest{TeamID: base.TeamID, ProjectKey: "local-project", SourceFingerprint: strings.Repeat("a", 64), ActorID: base.ActingIdentityID, Configuration: configuration, Now: now}
 	r = selectedProjectRequest(r, "local")
@@ -46,13 +46,16 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 	if err != nil || second.ServiceID == first.ServiceID {
 		t.Fatal("worktrees share a service", err)
 	}
-	public := createTestPublicURL(t, d, base, now)
-	local.Service, local.WorktreeKey, local.PublicURLID, local.Configuration = "web", "checkout-a", public.ID, configuration.Services["web"]
-	if _, err = d.RealizeLocalProjectService(ctx, local); err != nil {
+	local.Service, local.WorktreeKey, local.Configuration = "web", "checkout-a", configuration.Services["web"]
+	public, err := d.RealizeLocalProjectService(ctx, local)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.RealizeLocalProjectService(ctx, RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "another-project", SourceFingerprint: r.SourceFingerprint, Service: "web", WorktreeKey: "checkout-a", ActorID: r.ActorID, Configuration: local.Configuration, PublicURLID: public.ID, Now: now}); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("public resource adopted by unrelated project", err)
+	spoof := local
+	spoof.ProjectKey = "another-project"
+	spoof.Configuration.Hostname = public.Hostname
+	if _, err = d.RealizeLocalProjectService(ctx, spoof); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("public service hostname adopted by unrelated project", err)
 	}
 	status, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
@@ -64,16 +67,20 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		}
 	}
 	var count int
-	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.services WHERE team_id=$1 AND deleted_at IS NULL`, r.TeamID).Scan(&count); err != nil || count != 3 {
+	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.services WHERE team_id=$1 AND deleted_at IS NULL`, r.TeamID).Scan(&count); err != nil || count != 4 {
 		t.Fatal("apply duplicated local service", count, err)
 	}
 	if _, err = d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, member.IdentityID, "local"); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("member read manager configuration", err)
 	}
-	if _, err = d.ConfigureService(ctx, first.ServiceID, r.ActorID, *first.Metadata, now); !errors.Is(err, ErrProjectManaged) {
+	if _, err = d.ConfigureService(ctx, first.ServiceID, r.ActorID, *first.Metadata, nil, ServiceUpdateConditions{}, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("direct managed definition changed", err)
 	}
-	if err = d.DeleteService(ctx, first.ServiceID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
+	if _, err = d.ConfigureService(ctx, first.ServiceID, r.ActorID, *first.Metadata,
+		&ProjectServiceConfiguration{Target: "localhost:4000"}, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); !errors.Is(err, ErrProjectManaged) {
+		t.Fatal("explicit declaration bypassed project management", err)
+	}
+	if err = d.DeleteService(ctx, first.ServiceID, r.ActorID, observedServiceDeletion(t, d, first.ServiceID), now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("public service deleted", err)
 	}
 	var configuredGrant string
@@ -91,10 +98,10 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	var publicGrant string
-	if err = d.pool.QueryRow(ctx, `SELECT visitor_grant_id FROM control.local_project_services WHERE public_url_id=$1`, public.ID).Scan(&publicGrant); err != nil {
+	if err = d.pool.QueryRow(ctx, `SELECT visitor_grant_id FROM control.local_project_services WHERE service_id=$1`, public.ServiceID).Scan(&publicGrant); err != nil {
 		t.Fatal(err)
 	}
-	if err = d.RevokeVisitorGrant(ctx, public.ID, r.ActorID, publicGrant, now); !errors.Is(err, ErrProjectManaged) {
+	if err = d.RevokeServiceGrant(ctx, public.ServiceID, r.ActorID, publicGrant, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("configured local public team grant revoked directly", err)
 	}
 	r.ExpectedRevision = status.Revision
@@ -120,10 +127,10 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 	if _, err = d.RealizeLocalProjectService(ctx, local); err != nil {
 		t.Fatal("restart after access removal", err)
 	}
-	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.visitor_grants WHERE public_url_id=$1 AND kind='team' AND revoked_at IS NULL`, public.ID).Scan(&count); err != nil || count != 0 {
+	if err = d.pool.QueryRow(ctx, `SELECT count(*) FROM control.visitor_grants WHERE service_id=$1 AND kind='team' AND revoked_at IS NULL`, public.ServiceID).Scan(&count); err != nil || count != 0 {
 		t.Fatal("restart restored removed team access", count, err)
 	}
-	if _, err = d.GetProjectPublicMetadata(ctx, r.TeamID, r.ProjectKey, member.IdentityID, now); !errors.Is(err, ErrPublicURLAccess) {
+	if _, err = d.GetProjectPublicMetadata(ctx, r.TeamID, r.ProjectKey, member.IdentityID, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("removed team access still exposed local public metadata", err)
 	}
 	local.SourceFingerprint = strings.Repeat("b", 64)
@@ -135,34 +142,65 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 func TestIntegrationAppliedProjectLocalEphemeralRealizationAfterExpiry(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "local_ephemeral")
 	r := oidcRouteRequest(t, d, now)
-	r.Ephemeral = true
-	first := createTestPublicURL(t, d, r, now)
-	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "ephemeral", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout", ActorID: r.ActingIdentityID, PublicURLID: first.ID, Configuration: ProjectServiceConfiguration{Target: "app", PublicURL: &ProjectServicePublicURL{Ephemeral: true}, Access: &ProjectServiceAccess{Team: true}}, Now: now}
-	if _, err := d.RealizeLocalProjectService(t.Context(), local); err != nil {
+	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "ephemeral", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout", ActorID: r.ActingIdentityID, Configuration: ProjectServiceConfiguration{Target: "app", Public: new(true), Ephemeral: true, Access: &ProjectServiceAccess{Team: true}}, Now: now}
+	first, err := d.RealizeLocalProjectService(t.Context(), local)
+	if err != nil {
 		t.Fatal(err)
 	}
-	r.IdempotencyKey = "replacement"
-	r.RequestDigest = sha256.Sum256([]byte("replacement"))
-	r.CanonicalHostname = strings.Replace(r.CanonicalHostname, "demo.", "other.", 1)
-	second := createTestPublicURL(t, d, r, now.Add(time.Second))
-	local.PublicURLID = second.ID
-	if _, err := d.RealizeLocalProjectService(t.Context(), local); !errors.Is(err, ErrProjectManaged) {
+	local.Configuration.Hostname = "other." + first.Hostname
+	if _, err := d.RealizeLocalProjectService(t.Context(), local); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("healthy local binding was silently replaced", err)
 	}
-	if first.ExpiresAt == nil {
-		t.Fatal("ephemeral URL has no deadline")
+	// idle ephemeral services expire through the same owner as service runs.
+	expiredAt := now.Add(2*time.Minute + time.Second)
+	if _, err := d.ExpireServiceRuns(t.Context(), expiredAt); err != nil {
+		t.Fatal("runtime expiry failed", err)
 	}
-	if count, err := d.DeleteExpiredEphemeralPublicURLs(t.Context(), *first.ExpiresAt); err != nil || count != 1 {
-		t.Fatal("runtime expiry did not remove exactly the old URL", count, err)
+	var deleted bool
+	if err := d.pool.QueryRow(t.Context(), `SELECT deleted_at IS NOT NULL FROM control.services WHERE id=$1`, first.ServiceID).Scan(&deleted); err != nil || !deleted {
+		t.Fatal("runtime expiry did not delete the old ephemeral service", deleted, err)
 	}
-	local.Now = *first.ExpiresAt
+	local.Now, local.Configuration.Hostname = expiredAt, ""
 	realized, err := d.RealizeLocalProjectService(t.Context(), local)
-	if err != nil || realized.ServiceID != second.ID {
+	if err != nil || realized.ServiceID == first.ServiceID || realized.Hostname != first.Hostname {
 		t.Fatal("expired worktree binding prevented restart", err)
 	}
 	var active int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.visitor_grants WHERE public_url_id=$1 AND kind='team' AND revoked_at IS NULL`, first.ID).Scan(&active); err != nil || active != 0 {
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.visitor_grants WHERE service_id=$1 AND kind='team' AND revoked_at IS NULL`, first.ServiceID).Scan(&active); err != nil || active != 0 {
 		t.Fatal("expiry replacement left the old team grant active", err)
+	}
+}
+
+func TestIntegrationAppliedProjectLocalPublicationRequirements(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "local_publication_requirements")
+	r := appliedProjectRequest(t, d, now)
+	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: r.ProjectKey, SourceFingerprint: r.SourceFingerprint,
+		Service: "web", WorktreeKey: "checkout", ActorID: r.ActorID, Now: now}
+	var id string
+	var trustRevision int64
+	for _, step := range []struct {
+		require   *bool
+		want      bool
+		ephemeral bool
+	}{
+		{new(true), true, true},
+		{nil, true, true},
+		{new(false), false, false},
+	} {
+		local.Configuration = ProjectServiceConfiguration{Target: "app", Ephemeral: step.ephemeral, RequirePostQuantum: step.require}
+		realized, err := d.RealizeLocalProjectService(t.Context(), local)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := controlstatedb.New(d.pool).GetService(t.Context(), realized.ServiceID)
+		if err != nil || row.RequirePostQuantum != step.want || row.Ephemeral != step.ephemeral || row.ExpiresAt.Valid {
+			t.Fatal("direct publication settings were dropped, reset, or given an implicit hard expiry", err)
+		}
+		if id == "" {
+			id, trustRevision = row.ID, row.TrustRevision
+		} else if row.ID != id || row.TrustRevision != trustRevision {
+			t.Fatal("visitor TLS or ephemeral settings changed service identity or target trust")
+		}
 	}
 }
 
@@ -185,18 +223,18 @@ func TestIntegrationAppliedProjectManagedDeploymentGrantsAndSafeMetadata(t *test
 			publicID = s.ServiceID
 		}
 	}
-	if err = d.DeleteService(t.Context(), publicID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
+	if err = d.DeleteService(t.Context(), publicID, r.ActorID, observedServiceDeletion(t, d, publicID), now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("public service deletion succeeded", err)
 	}
-	if _, err = d.GetPublicURL(t.Context(), r.ActorID, publicID); err == nil {
-		t.Fatal("service became a public URL")
+	if !strings.HasPrefix(publicID, "svc_") {
+		t.Fatal("HTTP declaration did not produce an ordinary service")
 	}
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.teams SET kind='organization' WHERE id=$1`, r.TeamID); err != nil {
 		t.Fatal(err)
 	}
 	member := addAuthorityMember(t, d, now, r.ActorID, r.TeamID, "metadata-reader", TeamRoleMember)
 	projection, err := d.GetProjectPublicMetadata(t.Context(), r.TeamID, r.ProjectKey, member.IdentityID, now)
-	if !errors.Is(err, ErrPublicURLAccess) || len(projection.Services) != 0 {
+	if !errors.Is(err, ErrServiceAccess) || len(projection.Services) != 0 {
 		t.Fatal("managed access granted public URL metadata permission", projection, err)
 	}
 	encoded, _ := json.Marshal(projection)
@@ -209,7 +247,7 @@ func TestIntegrationAppliedProjectManagedDeploymentGrantsAndSafeMetadata(t *test
 		t.Fatal("visitor read full configuration", err)
 	}
 	outsider := finalVisitorIdentity(t, d, now, "projection-outsider@example.test")
-	if _, err = d.GetProjectPublicMetadata(t.Context(), r.TeamID, r.ProjectKey, outsider, now); !errors.Is(err, ErrPublicURLAccess) {
+	if _, err = d.GetProjectPublicMetadata(t.Context(), r.TeamID, r.ProjectKey, outsider, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("ungranted visitor read project source", err)
 	}
 	e, err := testDeploymentPublisherEnrollment(d, t.Context(), r.TeamID, r.ProjectKey, "production", r.ActorID, 1, time.Hour, now)

@@ -3,11 +3,11 @@
   "protocol_version": 1,
   "role": "publisher",
   "credential": "credential",
-  "publisher_connection": {
-    "publish_run_id": "publish_run_1",
-    "public_url_id": "public_url_1",
-    "publish_run_number": 2,
-    "publisher_connection_id": "publisher_connection_1",
+  "service_connection": {
+    "service_id": "svc_1234567890123456789012",
+    "service_run_id": "srun_1234567890123456789012",
+    "run_number": 2,
+    "publisher_connection_id": "pc_1234567890123456789012",
     "connection_slot": 1,
     "connection_assignment_revision": 3,
     "relay_service_id": "relay_service_1"

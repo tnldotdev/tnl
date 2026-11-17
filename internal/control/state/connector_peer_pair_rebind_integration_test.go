@@ -13,6 +13,8 @@ func TestIntegrationConnectorPeerPairRenewalRetainsOwnerWithoutChangingCarrier(t
 	for slot := range pair.Relays {
 		f.claim(t, pair, slot, f.now)
 	}
+	// delivery follows the completed claims on the synthetic clock.
+	f.now = f.now.Add(time.Second)
 	binding, err := f.binding(t, pair, f.now)
 	if err != nil {
 		t.Fatal(err)

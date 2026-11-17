@@ -19,6 +19,166 @@ class Client:
     binding: str
 
 
+@pytest.mark.parametrize("phase", ["create", "close"])
+def test_factory_budget_does_not_wait_forever_for_application_callbacks(phase: str) -> None:
+    async def scenario() -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+        callbacks: list[asyncio.Task[object]] = []
+        until = asyncio.get_running_loop().time() + 0.08
+
+        async def callback() -> Client:
+            current = asyncio.current_task()
+            assert current is not None
+            callbacks.append(current)
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                await release.wait()
+            return Client("a")
+
+        async def acquire() -> tuple[Hashable, int]:
+            return "a", 1
+
+        async def close(_value: Client) -> None:
+            if phase == "close":
+                await callback()
+
+        factory = _Factory(
+            acquire,
+            create=lambda _: callback() if phase == "create" else Client("a"),
+            close=close,
+            shutdown_deadline=lambda: until,
+        )
+        getter = asyncio.create_task(factory())
+        if phase == "create":
+            await entered.wait()
+        else:
+            await getter
+        try:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(factory.aclose(), 1)
+            assert factory._shutdown_until == until
+            assert factory._closing is None
+            assert callbacks and not callbacks[0].done()
+            if phase == "create":
+                with pytest.raises(TimeoutError):
+                    await getter
+            with pytest.raises(TimeoutError):
+                await factory.aclose()
+            assert len(callbacks) == 1
+        finally:
+            release.set()
+            await asyncio.gather(*callbacks, getter, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("phase", ["create", "close"])
+@pytest.mark.parametrize("grouped", [False, True])
+def test_callback_failure_after_shutdown_cancellation_is_retained(
+    phase: str, grouped: bool
+) -> None:
+    async def scenario() -> None:
+        entered, completed = asyncio.Event(), asyncio.Event()
+        failure = RuntimeError("application rollback failed")
+        independent: BaseException = (
+            BaseExceptionGroup("application cleanup", [asyncio.CancelledError(), failure])
+            if grouped
+            else failure
+        )
+        callbacks: list[asyncio.Task[object]] = []
+
+        async def callback() -> Client:
+            task = asyncio.current_task()
+            assert task is not None
+            callbacks.append(task)
+            entered.set()
+            try:
+                await asyncio.Future[None]()
+                raise AssertionError("callback must be interrupted")
+            except asyncio.CancelledError:
+                completed.set()
+                raise independent from None
+
+        async def acquire() -> tuple[Hashable, str]:
+            return "a", "a"
+
+        async def close(_client: Client) -> None:
+            if phase == "close":
+                await callback()
+
+        factory = _Factory(
+            acquire,
+            create=lambda _: callback() if phase == "create" else Client("a"),
+            close=close,
+            shutdown_deadline=lambda: asyncio.get_running_loop().time() + 0.03,
+        )
+        getter = asyncio.create_task(factory())
+        if phase == "create":
+            await entered.wait()
+        else:
+            await getter
+        try:
+            with pytest.raises(BaseException) as caught:
+                await asyncio.wait_for(factory.aclose(), 1)
+            assert completed.is_set() and callbacks[0].done()
+            assert isinstance(caught.value, BaseExceptionGroup), caught.value
+            assert independent in caught.value.exceptions
+            assert any(isinstance(error, TimeoutError) for error in caught.value.exceptions)
+            with pytest.raises(BaseException) as retried:
+                await factory.aclose()
+            assert retried.value is caught.value
+            assert len(callbacks) == 1
+            if phase == "create":
+                with pytest.raises(BaseException) as creation:
+                    await getter
+                assert creation.value is caught.value
+        finally:
+            await asyncio.gather(getter, *callbacks, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_all_completed_callback_failures_survive_concurrent_close_and_retry() -> None:
+    async def scenario() -> None:
+        key = "a"
+        failures = {"a": RuntimeError("a rollback"), "b": RuntimeError("b rollback")}
+
+        async def acquire() -> tuple[Hashable, str]:
+            return key, key
+
+        async def close(client: Client) -> None:
+            try:
+                await asyncio.Future[None]()
+            except asyncio.CancelledError:
+                raise failures[client.binding] from None
+
+        def leaves(error: BaseException) -> list[BaseException]:
+            if isinstance(error, BaseExceptionGroup):
+                return [leaf for child in error.exceptions for leaf in leaves(child)]
+            return [error]
+
+        factory = _Factory(
+            acquire,
+            create=Client,
+            close=close,
+            shutdown_deadline=lambda: asyncio.get_running_loop().time() + 0.03,
+        )
+        await factory()
+        key = "b"
+        await factory()
+        results = await asyncio.gather(factory.aclose(), factory.aclose(), return_exceptions=True)
+        for error in results:
+            assert isinstance(error, BaseExceptionGroup)
+            assert all(failure in leaves(error) for failure in failures.values())
+        with pytest.raises(BaseExceptionGroup) as retried:
+            await factory.aclose()
+        assert all(failure in leaves(retried.value) for failure in failures.values())
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("failed", [False, True])
 def test_factory_close_keeps_native_capabilities_until_deployment_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed: bool

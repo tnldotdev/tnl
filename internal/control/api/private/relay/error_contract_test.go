@@ -16,15 +16,13 @@ func TestRelayStoreProblemsUseDeclaredCodes(t *testing.T) {
 		controlstate.ErrRelayLeaseStale,
 		controlstate.ErrRelayTransportCertificateLeaseStale,
 		controlstate.ErrRelayTransportCertificateNotFound,
-		controlstate.ErrConnectionAssignmentStale,
-		controlstate.ErrPublishRunStale,
-		controlstate.ErrPublisherConnectionAlreadyClaimed,
-		controlstate.ErrPublisherConnectionCredential,
 		credentials.ErrInvalidPublisherConnectionCredential,
 		controlstate.ErrRelayDraining,
 		controlstate.ErrRelayConnectionCapacity,
 		controlstate.ErrPublisherConnectionRelayService,
-		controlstate.ErrPublisherConnectionUnavailable,
+		controlstate.ErrServiceAccess,
+		controlstate.ErrPublisherIdentity,
+		controlstate.ErrGuestTrialSpent,
 		errors.New("unexpected database error"),
 	} {
 		status, code, detail := storeProblem(err, func(error) {})

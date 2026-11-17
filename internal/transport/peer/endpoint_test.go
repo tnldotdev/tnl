@@ -70,6 +70,72 @@ func TestPeerEndpointConnectorRoles(t *testing.T) {
 	}
 }
 
+func TestPeerEndpointEmptyRelaySlotDoesNotHideInstalledUnprobedSibling(t *testing.T) {
+	for _, installed := range []int{RelayA, RelayB} {
+		t.Run(map[int]string{RelayA: "installed-a-empty-b", RelayB: "empty-a-installed-b"}[installed], func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			slots := [pathCount]*CarrierSlot{NewCarrierSlot(), NewCarrierSlot()}
+			carrier, remote := memoryPair()
+			defer remote.Close()
+			if err := slots[installed].Install(carrier); err != nil {
+				t.Fatal(err)
+			}
+			// direct is installed too, but no peer sends any probe reply.
+			// installation alone must not make it a speculative fallback.
+			direct := NewCarrierSlot()
+			directCarrier, directRemote := memoryPair()
+			defer directRemote.Close()
+			if err := direct.Install(directCarrier); err != nil {
+				t.Fatal(err)
+			}
+			key := [32]byte{7}
+			endpoint, err := New(ctx, Config{Key: key, Role: 0,
+				Paths: [pathCount]Carrier{slots[RelayA], slots[RelayB]}, Direct: direct})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer endpoint.Close()
+			// keep the production probe interval and timeout. the remote carriers
+			// never answer probes, so scheduling cannot manufacture healthy paths.
+			for _, index := range []int{RelayA, RelayB, Direct} {
+				if endpoint.PathHealthy(index) {
+					t.Fatal("an installed or empty carrier manufactured probe evidence", index)
+				}
+			}
+			payload := []byte("opaque inner packet")
+			if n, err := endpoint.WriteTo(payload, endpoint.RemoteAddr()); err != nil || n != len(payload) {
+				t.Fatal("packet write failed before carrier selection", n, err)
+			}
+			if got := endpoint.ActivePath(); got != installed {
+				t.Fatalf("selected path %d with only relay %d installed and no probe evidence", got, installed)
+			}
+			for {
+				frame, err := remote.Receive(ctx)
+				if err != nil {
+					t.Fatal("installed relay did not receive the real framed write", err)
+				}
+				packet, err := tunnelv1.VerifyPeerPacketFrame(frame, key)
+				if err != nil || packet.Path != uint8(installed) || packet.Sender != 0 || packet.BindingGeneration != 1 {
+					t.Fatal("selected carrier changed the authenticated packet scope", packet, err)
+				}
+				if packet.Kind == tunnelv1.PeerProbe {
+					continue
+				}
+				if packet.Kind != tunnelv1.PeerData || !bytes.Equal(packet.Payload, payload) {
+					t.Fatal("selected relay changed the real packet payload", packet)
+				}
+				break
+			}
+			for _, index := range []int{RelayA, RelayB, Direct} {
+				if endpoint.PathHealthy(index) {
+					t.Fatal("successful queueing was mistaken for signed probe health", index)
+				}
+			}
+		})
+	}
+}
+
 func TestPeerConnectorFrameMACGolden(t *testing.T) {
 	// fixed v1 frames use key 01 followed by 31 zero bytes. the MAC input is
 	// the connector_peer domain, NUL, then canonical packet bytes, independent of

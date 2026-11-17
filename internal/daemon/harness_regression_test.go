@@ -22,7 +22,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 )
 
 func TestRuntimeTopologyRetainsRelayUDPThroughPublisherDrain(t *testing.T) {
@@ -231,7 +231,7 @@ func TestPublisherObserverNeverWaitsForReaders(t *testing.T) {
 		for range producers {
 			group.Go(func() {
 				for range perProducer {
-					_ = handle.observe(publisher.Event{Type: publisher.EventReady})
+					_ = handle.observe(publisherservice.RunStatus{Ready: true})
 				}
 			})
 		}
@@ -253,11 +253,37 @@ func TestPublisherObserverNeverWaitsForReaders(t *testing.T) {
 	if _, err := handle.events.next(ctx, &cursor); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if err := handle.observe(publisher.Event{Type: publisher.EventDraining}); err != nil {
+	if err := handle.observe(publisherservice.RunStatus{Draining: true}); err != nil {
 		t.Fatalf("abandoned observer affected publisher: %v", err)
 	}
 	if got := len(handle.observedEvents()); got != producers*perProducer+1 {
 		t.Fatalf("recorded %d observations after cancellation", got)
+	}
+}
+
+func TestPublisherReadinessFailureDetailsIdentifyRunAndBoundHistory(t *testing.T) {
+	handle := &integrationPublisher{run: integrationPublisherRun{
+		serviceID: "svc_selected", runID: "srun_selected", number: 7, hostname: "selected.example.test",
+	}}
+	for index := range 20 {
+		_ = handle.observe(publisherservice.RunStatus{
+			LastCheck: time.Unix(int64(index), 0).UTC(), TargetHealthy: true, ConfigurationCurrent: true,
+			Connected: [2]bool{true, index > 15},
+		})
+	}
+	details := handle.readinessFailureDetails()
+	for _, fact := range []string{"service_id=svc_selected", "service_run_id=srun_selected", "run_number=7", "hostname=selected.example.test", "omitted=4"} {
+		if !strings.Contains(details, fact) {
+			t.Fatal("readiness diagnostics lost the selected run or history bound", fact, details)
+		}
+	}
+	if strings.Count(details, "ConfigurationCurrent:") != 16 ||
+		strings.Contains(details, time.Unix(0, 0).UTC().String()) ||
+		!strings.Contains(details, time.Unix(19, 0).UTC().String()) {
+		t.Fatal("readiness diagnostics did not retain only the latest observations", details)
+	}
+	if len(handle.observedEvents()) != 20 {
+		t.Fatal("bounded diagnostics discarded the observer's original evidence")
 	}
 }
 

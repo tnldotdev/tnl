@@ -7,10 +7,12 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
@@ -49,6 +51,9 @@ func requestConnectorPair[T any](ctx context.Context, call func() (T, error)) (r
 	// an uncertain reply repeats this exact signed request, not a new owner or
 	// timestamp. the caller's bounded preparation/renewal context is the ceiling.
 	for {
+		if cause := context.Cause(ctx); cause != nil {
+			return result, errors.Join(err, cause)
+		}
 		result, err = call()
 		if err == nil || !connectorTemporary(err) {
 			return result, err
@@ -58,7 +63,7 @@ func requestConnectorPair[T any](ctx context.Context, call func() (T, error)) (r
 		case <-ctx.Done():
 			timer.Stop()
 			var zero T
-			return zero, context.Cause(ctx)
+			return zero, errors.Join(err, context.Cause(ctx))
 		case <-timer.C:
 		}
 	}
@@ -78,6 +83,9 @@ func prepareConnectorPair(ctx context.Context, control Control, signer Signer, r
 	}
 	key, until, err := validateConnectorPair(ctx, signer, run, body, pair, started, nil)
 	if err != nil {
+		if _, materialErr := validateConnectorPairMaterial(signer, run, pair); materialErr == nil {
+			return pair, key, started.Add(pair.ExpiresAt.Sub(pair.ObservedAt)), body, err
+		}
 		return controlv1.ConnectorPeerPair{}, [32]byte{}, time.Time{}, body, err
 	}
 	return pair, key, until, body, nil
@@ -120,9 +128,10 @@ func validateConnectorPair(ctx context.Context, signer Signer, run Run, body con
 	frameKey, frameKeyErr := connectorPairSecret(pair.SessionKey)
 	_, idErr := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId)
 	duration := pair.ExpiresAt.Sub(pair.ObservedAt)
-	until := started.Add(duration)
+	until, deadlineErr := controloutage.LocalDeadline(started, pair.ObservedAt, pair.ExpiresAt, time.Now())
 	if keyErr != nil || frameKeyErr != nil || idErr != nil || !opaqueid.Valid(pair.PairId, "cpp_") || pair.DeliveryGeneration < 1 || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID || pair.RunNumber != int64(run.RunNumber) || pair.TrustRevision != run.TrustRevision || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId || !visitorsubject.Equal(pair.Subject, signer.Subject) ||
-		pair.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) || len(pair.Relays) != 2 {
+		deadlineErr != nil || duration > 5*time.Minute || len(pair.Relays) != 2 ||
+		previous != nil && pair.ObservedAt.Before(previous.ObservedAt) {
 		return key, time.Time{}, ErrServiceConnection
 	}
 	for slot, relay := range pair.Relays {
@@ -135,6 +144,21 @@ func validateConnectorPair(ctx context.Context, signer Signer, run Run, body con
 		return [32]byte{}, time.Time{}, ErrServiceConnection
 	}
 	return key, until, nil
+}
+
+// immutable ownership material may be retained for negative cleanup even when
+// the positive setup deadline has elapsed. this never installs serving state.
+func validateConnectorPairMaterial(signer Signer, run Run, pair controlv1.ConnectorPeerPair) ([32]byte, error) {
+	key, err := connectorPairSecret(pair.SessionKey)
+	deliveryKey, deliveryErr := connectorPairSecret(pair.Key)
+	_, deliveryIDErr := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId)
+	if err != nil || deliveryErr != nil || deliveryIDErr != nil || key == deliveryKey ||
+		!opaqueid.Valid(pair.PairId, "cpp_") || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID ||
+		pair.RunNumber != int64(run.RunNumber) || run.PairReady == nil || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId ||
+		!visitorsubject.Equal(pair.Subject, signer.Subject) {
+		return [32]byte{}, ErrServiceConnection
+	}
+	return key, nil
 }
 
 // awaitConnectorPublisher repeats the original signed create only to observe the
@@ -185,10 +209,155 @@ type connectorRelayLeg struct {
 	transport       tunnel.Transport
 	until           time.Time
 	relay           controlv1.ConnectorPeerPairRelay
+	closeOnce       sync.Once
+	closeErr        error
 }
 
 func (l *connectorRelayLeg) Close() error {
-	return errors.Join(l.carrier.Close(), l.packets.Close(), l.session.Close())
+	l.closeOnce.Do(func() {
+		// stop transport i/o before joining borrowed packet registrations.
+		if l.session != nil {
+			l.closeErr = errors.Join(l.closeErr, l.session.Close())
+		}
+		if l.carrier != nil {
+			l.closeErr = errors.Join(l.closeErr, l.carrier.Close())
+		}
+		if l.packets != nil {
+			l.closeErr = errors.Join(l.closeErr, l.packets.Close())
+		}
+	})
+	return l.closeErr
+}
+
+func connectorCleanupFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &CleanupError{Err: err}
+}
+
+type connectorAttemptStage uint8
+
+const (
+	connectorAttemptProof connectorAttemptStage = iota
+	connectorAttemptConnect
+	connectorAttemptCapability
+	connectorAttemptHello
+	connectorAttemptActivation
+)
+
+type connectorCandidateFailure struct {
+	stage    connectorAttemptStage
+	cause    error
+	cleanup  error
+	canceled bool
+}
+
+// the leg owner records at most two dial candidates or one activation. alternative
+// transports are not independent relay slots or arbitrary joined error children.
+type connectorLegAttemptError struct {
+	candidates [2]connectorCandidateFailure
+	count      int
+	context    error
+	cleanup    error
+}
+
+func (e *connectorLegAttemptError) Unwrap() []error {
+	causes := []error{ErrServiceConnection}
+	for _, cause := range []error{e.context, e.cleanup} {
+		if cause != nil {
+			causes = append(causes, cause)
+		}
+	}
+	for _, candidate := range e.candidates[:e.count] {
+		for _, cause := range []error{candidate.cause, candidate.cleanup} {
+			if cause != nil {
+				causes = append(causes, cause)
+			}
+		}
+	}
+	return causes
+}
+
+func (e *connectorLegAttemptError) Error() string { return errors.Join(e.Unwrap()...).Error() }
+
+func (e *connectorLegAttemptError) disposition(authenticated bool) reconnectDisposition {
+	if connectorRetryVeto(e) || e.context != nil && !connectorAttemptTemporary(e.context) {
+		return terminateConnection
+	}
+	retry, stale := authenticated, false
+	for _, candidate := range e.candidates[:e.count] {
+		if candidate.stage != connectorAttemptConnect && candidate.stage != connectorAttemptHello && candidate.stage != connectorAttemptActivation {
+			return terminateConnection
+		}
+		if candidate.canceled {
+			continue
+		}
+		normalReplyEnd := (candidate.stage == connectorAttemptHello || candidate.stage == connectorAttemptActivation) &&
+			tunnel.ConnectorReplyEndedNormally(candidate.cause)
+		if connectorReconnectError(candidate.cause) == rebindConnection {
+			stale = true
+		} else if connectorAttemptTemporary(candidate.cause) || normalReplyEnd {
+			retry = true
+		} else if candidate.stage != connectorAttemptConnect || !connectorSingleConnectFailure(candidate.cause) {
+			return terminateConnection
+		}
+	}
+	if stale {
+		return rebindConnection
+	}
+	if retry {
+		return retryAttempt
+	}
+	return terminateConnection
+}
+
+// an unclassified pre-session failure may be an unavailable alternate, but
+// cannot supply retry evidence or hide a second independently failed operation.
+func connectorSingleConnectFailure(err error) bool {
+	if err == nil || connectorRetryVeto(err) {
+		return false
+	}
+	switch cause := err.(type) {
+	case *tunnel.ProtocolError, *failure.Error, interface{ FailureReason() failure.Reason }:
+		return false
+	case interface{ Unwrap() []error }:
+		children := cause.Unwrap()
+		return len(children) == 1 && connectorSingleConnectFailure(children[0])
+	case interface{ Unwrap() error }:
+		if child := cause.Unwrap(); child != nil {
+			return connectorSingleConnectFailure(child)
+		}
+	}
+	return true
+}
+
+func connectorCanceledCandidate(err error) bool {
+	if err == context.Canceled {
+		return true
+	}
+	if err == nil || connectorRetryVeto(err) {
+		return false
+	}
+	if connectorAttemptTemporary(err) || muxsession.NormalSessionCloseOnly(err) {
+		return true
+	}
+	switch cause := err.(type) {
+	case interface{ Unwrap() []error }:
+		children := cause.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !connectorCanceledCandidate(child) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return connectorCanceledCandidate(cause.Unwrap())
+	}
+	return false
 }
 
 func connectorLegProof(signer Signer, pair controlv1.ConnectorPeerPair, slot int) (tunnelv1.ConnectorPairLegProof, error) {
@@ -228,7 +397,7 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 			return leg, nil
 		}
 		if leg != nil {
-			_ = leg.Close()
+			err = errors.Join(err, connectorCleanupFailure(leg.Close()))
 		}
 		if ctx.Err() != nil {
 			return nil, errors.Join(err, context.Cause(ctx))
@@ -240,7 +409,7 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, context.Cause(ctx)
+			return nil, errors.Join(err, context.Cause(ctx))
 		case <-timer.C:
 		}
 	}
@@ -273,15 +442,21 @@ func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 		return nil, err
 	}
 	if err := activateConnectorLeg(ctx, l, replacement, initial); err != nil {
-		_ = l.Close()
-		return nil, err
+		return nil, connectorActivationFailure(ctx, l, err)
 	}
 	return l, nil
 }
 
+func connectorActivationFailure(ctx context.Context, l *connectorRelayLeg, err error) error {
+	cleanup := connectorCleanupFailure(l.Close())
+	return &connectorLegAttemptError{count: 1,
+		candidates: [2]connectorCandidateFailure{{stage: connectorAttemptActivation, cause: err}},
+		context:    context.Cause(ctx), cleanup: cleanup}
+}
+
 // dialConnectorLeg obtains the relay's source claim without selecting packet
 // forwarding. pending bindings must wait for publisher installation first.
-func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int, replacement *connectorLegReplacement, initial tunnelv1.ConnectorHandoffID) (*connectorRelayLeg, error) {
+func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int, replacement *connectorLegReplacement, initial tunnelv1.ConnectorHandoffID) (_ *connectorRelayLeg, retErr error) {
 	if (replacement == nil) == (initial == (tunnelv1.ConnectorHandoffID{})) {
 		return nil, ErrServiceConnection
 	}
@@ -297,9 +472,9 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 		tcpConnector = muxsession.TLSYamuxConnector{TLSConfig: roots}
 	}
 	type result struct {
-		leg   *connectorRelayLeg
-		outer muxsession.Session
-		err   error
+		leg    *connectorRelayLeg
+		outer  muxsession.Session
+		failed connectorCandidateFailure
 	}
 	results := make(chan result, 2)
 	race, cancel := context.WithCancel(ctx)
@@ -310,26 +485,34 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 			next := func() result {
 				proof, err := connectorLegProof(signer, pair, slot)
 				if err != nil {
-					return result{err: err}
+					return result{failed: connectorCandidateFailure{stage: connectorAttemptProof, cause: err}}
 				}
 				outer, err := connector.Connect(race, muxsession.Endpoint{Address: pair.Relays[slot].RelayAddress, ServerName: pair.Relays[slot].TlsServerName})
 				if err != nil {
-					return result{err: err}
+					failed := connectorCandidateFailure{stage: connectorAttemptConnect, cause: err}
+					if outer != nil {
+						failed.cleanup = connectorCleanupFailure(outer.Close())
+					}
+					return result{failed: failed}
+				}
+				if outer == nil {
+					return result{failed: connectorCandidateFailure{stage: connectorAttemptCapability, cause: peer.ErrConfiguration}}
 				}
 				if transport == tunnel.TransportQUIC {
 					packets, ok := outer.(muxsession.DatagramSession)
 					if !ok || !packets.SupportsDatagrams() {
-						return result{err: errors.Join(peer.ErrConfiguration, outer.Close())}
+						return result{failed: connectorCandidateFailure{stage: connectorAttemptCapability, cause: peer.ErrConfiguration, cleanup: connectorCleanupFailure(outer.Close())}}
 					}
 				}
 				started := time.Now()
 				session, receipt, err := tunnel.DialConnector(race, outer, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Connector, ConnectorPairLegProof: &proof}, pair.DeliveryId)
 				if err != nil {
-					return result{err: err}
+					return result{failed: connectorCandidateFailure{stage: connectorAttemptHello, cause: err}}
 				}
 				return result{leg: &connectorRelayLeg{session: session, proof: proof, receipt: receipt, transport: transport, until: started.Add(receipt.ExpiresAt.Sub(receipt.ObservedAt)), relay: pair.Relays[slot]}, outer: outer}
 			}()
-			config.telemetry.RelayAttempt(race, transport, time.Since(startedAttempt), next.err)
+			next.failed.canceled = race.Err() != nil && ctx.Err() == nil && connectorCanceledCandidate(next.failed.cause)
+			config.telemetry.RelayAttempt(race, transport, time.Since(startedAttempt), errors.Join(next.failed.cause, next.failed.cleanup))
 			results <- next
 		}()
 	}
@@ -340,14 +523,14 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 	timer := time.NewTimer(250 * time.Millisecond)
 	defer timer.Stop()
 	var winner result
-	var failures error
+	attempt := &connectorLegAttemptError{}
 	stopped := ctx.Done()
 	for remaining > 0 {
 		select {
 		case <-stopped:
 			stopped = nil
 			cancel()
-			failures = errors.Join(failures, context.Cause(ctx))
+			attempt.context = context.Cause(ctx)
 		case <-timer.C:
 			if !fallbackStarted && winner.leg == nil {
 				fallbackStarted = true
@@ -361,10 +544,11 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 					winner = next
 					cancel()
 				} else {
-					_ = next.leg.session.Close()
+					attempt.cleanup = errors.Join(attempt.cleanup, connectorCleanupFailure(next.leg.Close()))
 				}
 			} else {
-				failures = errors.Join(failures, next.err)
+				attempt.candidates[attempt.count] = next.failed
+				attempt.count++
 				if !fallbackStarted && winner.leg == nil && ctx.Err() == nil {
 					fallbackStarted = true
 					remaining++
@@ -373,31 +557,39 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 			}
 		}
 	}
+	attempt.context = context.Cause(ctx)
 	if winner.leg == nil {
-		return nil, errors.Join(ErrServiceConnection, failures)
+		causes := []error{attempt.context, attempt.cleanup}
+		for _, candidate := range attempt.candidates[:attempt.count] {
+			causes = append(causes, candidate.cause, candidate.cleanup)
+		}
+		if cause := context.Cause(ctx); cause != nil && failure.Only(errors.Join(causes...), cause) {
+			return nil, cause
+		}
+		return nil, attempt
 	}
 	l := winner.leg
+	if attempt.disposition(true) != retryAttempt {
+		attempt.cleanup = errors.Join(attempt.cleanup, connectorCleanupFailure(l.Close()))
+		return nil, attempt
+	}
+	owned := false
+	defer func() {
+		if !owned {
+			retErr = errors.Join(retErr, connectorCleanupFailure(l.Close()))
+		}
+	}()
 	if l.transport == tunnel.TransportTLSTCP {
 		config.telemetry.Record(telemetryv1.Fallback, telemetryv1.TlsTcp, telemetryv1.Succeeded, 0)
 	}
 	hello, err := tunnelv1.ParseConnectorHelloNonce(l.proof.Nonce)
 	if err != nil {
-		_ = l.session.Close()
 		return nil, err
 	}
 	l.selectedHandoff = tunnelv1.InitialConnectorActivation(hello).SelectedHandoff()
 	if replacement == nil {
 		l.selectedHandoff = initial
 	}
-	owned := false
-	defer func() {
-		if !owned {
-			if l.packets != nil {
-				_ = l.packets.Close()
-			}
-			_ = l.session.Close()
-		}
-	}()
 	if ctx.Err() != nil || !l.until.After(time.Now()) {
 		return nil, errors.Join(ErrServiceConnection, context.Cause(ctx))
 	}
@@ -408,14 +600,14 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 		}
 		l.until = earliestConnectorDeadline(l.until, previous.until)
 	}
-	l.packets, failures = peer.NewSharedSession(lifetime, winner.outer)
-	if failures != nil {
-		return nil, failures
+	l.packets, err = peer.NewSharedSession(lifetime, winner.outer)
+	if err != nil {
+		return nil, err
 	}
 	id, _ := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId)
-	l.carrier, failures = l.packets.Register(peer.PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: id, Generation: uint64(pair.DeliveryGeneration)}, Key: key, Role: 0, Path: uint8(slot)}, true)
-	if failures != nil {
-		return nil, failures
+	l.carrier, err = l.packets.Register(peer.PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: id, Generation: uint64(pair.DeliveryGeneration)}, Key: key, Role: 0, Path: uint8(slot)}, true)
+	if err != nil {
+		return nil, err
 	}
 	owned = true
 	return l, nil
@@ -443,4 +635,4 @@ func (c connectorLegCarrier) Send(ctx context.Context, b []byte) error { return 
 func (c connectorLegCarrier) Receive(ctx context.Context) ([]byte, error) {
 	return c.carrier.Receive(ctx)
 }
-func (c connectorLegCarrier) Close() error { return errors.Join(c.carrier.Close(), c.session.Close()) }
+func (c connectorLegCarrier) Close() error { return c.connectorRelayLeg.Close() }

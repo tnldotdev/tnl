@@ -32,55 +32,73 @@ func privateRelayID(prefix string) string { return prefix + strings.Repeat("a", 
 
 type privateClaimControlStub struct {
 	ControlClient
-	claims     atomic.Int64
-	claim      func()
-	disconnect func()
+	claims        atomic.Int64
+	ready         atomic.Int64
+	claim         func()
+	disconnect    func(context.Context, string, relayv1.ServicePublisherConnectionTransition)
+	source        netip.Addr
+	claimErr      error
+	readyErr      error
+	beforeReady   func()
+	disconnectErr error
 }
 
 func (c *privateClaimControlStub) ClaimServicePublisherConnection(_ context.Context, id string, body relayv1.ServicePublisherConnectionClaim) (relayv1.ServicePublisherConnection, error) {
+	if c.source.IsValid() && body.ObservedSourceIp != c.source.Unmap().String() {
+		return relayv1.ServicePublisherConnection{}, errors.New("relay changed the accepted publisher source")
+	}
 	if c.claims.Add(1) == 1 && c.claim != nil {
 		c.claim()
+	}
+	if c.claimErr != nil {
+		return relayv1.ServicePublisherConnection{}, c.claimErr
 	}
 	return relayv1.ServicePublisherConnection{ServiceId: body.ServiceId, ServiceRunId: body.ServiceRunId, RunNumber: body.RunNumber,
 		PublisherConnectionId: id, ConnectionAssignmentRevision: body.ConnectionAssignmentRevision, RelayServiceId: "relay-a"}, nil
 }
 
-func (*privateClaimControlStub) ReadyServicePublisherConnection(context.Context, string, relayv1.ServicePublisherConnectionTransition) (relayv1.ServicePublisherConnection, error) {
-	return relayv1.ServicePublisherConnection{}, nil
+func (c *privateClaimControlStub) ReadyServicePublisherConnection(_ context.Context, id string, body relayv1.ServicePublisherConnectionTransition) (relayv1.ServicePublisherConnection, error) {
+	c.ready.Add(1)
+	if c.beforeReady != nil {
+		c.beforeReady()
+	}
+	return relayv1.ServicePublisherConnection{ServiceId: privateRelayID(opaqueid.ServicePrefix), ServiceRunId: body.ServiceRunId, RunNumber: body.RunNumber,
+		PublisherConnectionId: id, ConnectionAssignmentRevision: body.ConnectionAssignmentRevision, RelayServiceId: "relay-a"}, c.readyErr
 }
 
-func (c *privateClaimControlStub) DisconnectServicePublisherConnection(context.Context, string, relayv1.ServicePublisherConnectionTransition) error {
+func (c *privateClaimControlStub) DisconnectServicePublisherConnection(ctx context.Context, id string, body relayv1.ServicePublisherConnectionTransition) error {
 	if c.disconnect != nil {
-		c.disconnect()
+		c.disconnect(ctx, id, body)
 	}
-	return nil
+	return c.disconnectErr
 }
 
 func TestPrivateClaimReservesOwnerBeforeControl(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	t.Cleanup(unblock)
-	client := &privateClaimControlStub{claim: func() { close(entered); <-release }}
-	controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "process", RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}}
+	source := netip.MustParseAddr("192.0.2.1")
+	client := &privateClaimControlStub{claim: func() { close(entered); <-release }, source: source}
+	controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "process", RelayLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}}
 	registry := NewServiceRegistry()
-	acceptor := &ServicePublisherAcceptor{Select: func(string) (ServicePublisherTarget, bool) {
+	acceptor := &PublisherAcceptor{selectTarget: func(string) (ServicePublisherTarget, bool) {
 		return ServicePublisherTarget{Control: controller, Registry: registry}, true
 	}}
 	ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 1,
 		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionSlot: 0, ConnectionAssignmentRevision: 1, RelayServiceID: "relay-a"}
 	message := tunnelv1.Message{Role: tunnelv1.Publisher, ServiceConnection: &ref, Credential: "credential"}
 	type result struct {
-		claim *privateClaim
+		claim *publisherClaim
 		err   error
 	}
 	first := make(chan result, 1)
-	go func() { claim, err := acceptor.claim(t.Context(), message); first <- result{claim, err} }()
+	go func() { claim, err := acceptor.claim(t.Context(), message, source); first <- result{claim, err} }()
 	relayAwait(t, entered)
 	duplicates := func() {
 		t.Helper()
 		done := make(chan error, 8)
 		for range 8 {
-			go func() { _, err := acceptor.claim(t.Context(), message); done <- err }()
+			go func() { _, err := acceptor.claim(t.Context(), message, source); done <- err }()
 		}
 		for range 8 {
 			if err := relayAwait(t, done); err == nil {
@@ -101,21 +119,112 @@ func TestPrivateClaimReservesOwnerBeforeControl(t *testing.T) {
 	disconnecting, finish := make(chan struct{}), make(chan struct{})
 	unblockDisconnect := sync.OnceFunc(func() { close(finish) })
 	t.Cleanup(unblockDisconnect)
-	client.disconnect = func() { close(disconnecting); <-finish }
+	client.disconnect = func(context.Context, string, relayv1.ServicePublisherConnectionTransition) {
+		close(disconnecting)
+		<-finish
+	}
 	outer := &PublisherAcceptor{readyDelta: func(int) {}, connectionExited: func(bool) {}}
 	done := make(chan error, 1)
-	go func() { done <- owner.claim.serve(t.Context(), nil, nil, outer, func(error) {}) }()
+	go func() { done <- owner.claim.serve(t.Context(), nil, nil, outer, nil, func(error) {}) }()
 	relayAwait(t, disconnecting)
 	duplicates()
 	unblockDisconnect()
 	if err := relayAwait(t, done); err == nil {
 		t.Fatal("missing tunnel session was accepted")
 	}
-	recovered, err := acceptor.claim(t.Context(), message)
+	recovered, err := acceptor.claim(t.Context(), message, source)
 	if err != nil {
 		t.Fatalf("failed handshake retained local owner: %v", err)
 	}
 	registry.release(recovered)
+}
+
+func TestServicePublisherClaimRequiresObservedSource(t *testing.T) {
+	client := &privateClaimControlStub{source: netip.MustParseAddr("192.0.2.1")}
+	controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: "relay-a",
+		RelayId: "relay-a-1", RelayRunId: "process", RelayLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}}
+	ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 1,
+		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 1, RelayServiceID: "relay-a"}
+	for _, source := range []netip.Addr{{}, netip.IPv4Unspecified(), netip.IPv6Unspecified(), netip.MustParseAddr("fe80::1%en0")} {
+		if _, err := controller.claimServiceConnection(t.Context(), ref, "credential", source); err == nil {
+			t.Fatal("missing or invalid publisher source reached control", source)
+		}
+	}
+	if client.claims.Load() != 0 {
+		t.Fatal("invalid publisher source reached control")
+	}
+	if _, err := controller.claimServiceConnection(t.Context(), ref, "credential", netip.MustParseAddr("::ffff:192.0.2.1")); err != nil {
+		t.Fatal("valid observed source was not normalized", err)
+	}
+	if client.claims.Load() != 1 {
+		t.Fatal("valid source did not reach the exact claim")
+	}
+}
+
+func TestServicePublisherAcceptRequiresPinnedSourceAndRechecksAfterClaim(t *testing.T) {
+	for _, mode := range []string{"missing peer", "unbound UDP", "changed during claim"} {
+		t.Run(mode, func(t *testing.T) {
+			peer := &connectorSourcePeer{}
+			peer.move("192.0.2.1:443")
+			var disconnected atomic.Int64
+			client := &privateClaimControlStub{source: netip.MustParseAddr("192.0.2.1"),
+				claim:      func() { peer.move("192.0.2.2:443") },
+				disconnect: func(context.Context, string, relayv1.ServicePublisherConnectionTransition) { disconnected.Add(1) }}
+			controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{
+				RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "process",
+				RelayLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}}
+			registry := NewServiceRegistry()
+			selectTarget := func(string) (ServicePublisherTarget, bool) {
+				return ServicePublisherTarget{Control: controller, Registry: registry}, true
+			}
+			acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Select: selectTarget})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix),
+				ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 1,
+				PublisherConnectionID:        privateRelayID(opaqueid.PublisherConnectionPrefix),
+				ConnectionAssignmentRevision: 1, RelayServiceID: "relay-a"}
+			hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
+				Role: tunnelv1.Publisher, Credential: "credential", ServiceConnection: &ref}
+			session, done, err := dialPrivateClaim(t, func(ctx context.Context, outer muxsession.Session) error {
+				switch mode {
+				case "missing peer":
+					return acceptor.Accept(ctx, struct{ muxsession.Session }{outer})
+				case "unbound UDP":
+					return acceptor.Accept(ctx, struct {
+						muxsession.Session
+						muxsession.AcceptedPeer
+					}{outer, peer})
+				default:
+					return acceptor.Accept(ctx, struct {
+						muxsession.Session
+						*connectorSourcePeer
+					}{outer, peer})
+				}
+			}, hello)
+			if err == nil || session != nil {
+				t.Fatal("untrusted or changed publisher source was admitted")
+			}
+			if err := relayAwait(t, done); err == nil {
+				t.Fatal("source rejection lost its error")
+			}
+			wantClaims := int64(0)
+			if mode == "changed during claim" {
+				wantClaims = 1
+			}
+			if client.claims.Load() != wantClaims || disconnected.Load() != wantClaims || client.ready.Load() != 0 {
+				t.Fatal("source rejection reached readiness or lost exact-claim cleanup", client.claims.Load(), disconnected.Load(), client.ready.Load())
+			}
+			// rejected handshakes must release their pending local reservation.
+			client.claim = nil
+			claim, err := acceptor.claim(t.Context(), hello, client.source)
+			if err != nil {
+				t.Fatal("source rejection retained its local claim", err)
+			}
+			registry.release(claim)
+		})
+	}
 }
 
 func privateRelayPair(t *testing.T, hello tunnelv1.Message) (*tunnel.Session, *tunnel.Session) {
@@ -180,7 +289,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionSlot: 0, ConnectionAssignmentRevision: 2, RelayServiceID: "relay-a"}
 	publisher, relayPublisher := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Publisher, Credential: "assigned-publisher", ServiceConnection: &ref})
 	paths := newStreamLifetime(relayPublisher)
-	lease := relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute), ConnectionCapacity: 4}
+	lease := relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: "relay-process", RelayRunId: privateRelayID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 4, ServingUntil: time.Now().Add(time.Minute), ConnectionCapacity: 4}
 	registry := NewServiceRegistry()
 	metrics := observability.New("relay")
 	registry.Instrument(metrics)
@@ -193,7 +302,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	forwarder, err := NewForwardingAcceptor(ForwardingAcceptorConfig{Registry: NewRegistry(), ServiceRegistry: registry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets, StreamCapacity: 2, Observer: metrics, StreamsDelta: metrics.AddRelayStreams, StreamRejected: metrics.ObserveRelayStreamRejection})
+	forwarder, err := NewForwardingAcceptor(ForwardingAcceptorConfig{ServiceRegistry: registry, CurrentLease: func() relayv1.RelayLease { return lease }, ClusterSecrets: secrets, StreamCapacity: 2, Observer: metrics, StreamsDelta: metrics.AddRelayStreams, StreamRejected: metrics.ObserveRelayStreamRejection})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,15 +311,15 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
 		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 7, DestinationPort: 25443},
 		SourceIP:      "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute)},
-		ConnectionSlot: 0, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt}
+		ConnectionSlot: 0, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, ServingUntil: lease.ServingUntil}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	forwarded := relayWorker(t, cancel, func() error {
-		incoming, err := relayIngress.AcceptInternalForwardingStream(ctx)
+		incoming, err := relayIngress.AcceptServiceForwardingStream(ctx)
 		if err != nil {
 			return err
 		}
-		return forwarder.forward(ctx, incoming)
+		return forwarder.forwardService(ctx, incoming)
 	})
 	publisherDone := relayWorker(t, func() { _ = publisher.Close() }, func() error {
 		incoming, err := publisher.AcceptServiceForwardingStream(ctx)
@@ -248,11 +357,11 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	_ = relayAwait(t, publisherDone)
 	header.ConnectionAssignmentRevision++
 	denied := relayWorker(t, cancel, func() error {
-		incoming, err := relayIngress.AcceptInternalForwardingStream(ctx)
+		incoming, err := relayIngress.AcceptServiceForwardingStream(ctx)
 		if err != nil {
 			return err
 		}
-		return forwarder.forward(ctx, incoming)
+		return forwarder.forwardService(ctx, incoming)
 	})
 	if _, err := ingress.OpenServiceForwardingStream(ctx, header); err == nil {
 		t.Fatal("stale private assignment admitted")

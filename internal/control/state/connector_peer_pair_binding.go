@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"net/netip"
 	"time"
@@ -14,6 +15,7 @@ import (
 // installation reporting, and observation. it contains no delivery secret.
 type connectorPeerBinding struct {
 	subject                             VisitorSubject
+	publicKey                           ed25519.PublicKey
 	relays                              [2]ConnectorPeerPairRelay
 	source                              netip.Addr
 	claimsCurrent                       bool
@@ -25,14 +27,14 @@ type connectorPeerBinding struct {
 func (d *Database) connectorPeerPairBinding(ctx context.Context, tx pgx.Tx, run controlstatedb.ControlServiceRun, pair controlstatedb.ControlConnectorPeerPair, now time.Time) (b connectorPeerBinding, err error) {
 	started := time.Now()
 	checkedNow := func() time.Time { return now.Add(time.Since(started)) }
-	subject, _, sessionUntil, err := d.connectorPeerSessionAuthority(ctx, tx, run, pair, now)
+	subject, key, sessionUntil, err := d.connectorPeerSessionAuthority(ctx, tx, run, pair, now)
 	if err != nil {
 		return b, err
 	}
 	if run.State != "ready" {
 		return b, ErrServiceAccess
 	}
-	b.subject = subject
+	b.subject, b.publicKey = subject, key
 	ready, err := connectorPairReadySelection(ctx, tx, run.ID, run.ServiceID, run.RunNumber, now)
 	if err != nil {
 		return b, err
@@ -56,7 +58,7 @@ func (d *Database) connectorPeerPairBinding(ctx context.Context, tx pgx.Tx, run 
 		}
 	}
 	b.expiresAt = sessionUntil
-	b.recheckAt = minTime(b.expiresAt, minTime(leases[0].LeaseExpiresAt.Time, leases[1].LeaseExpiresAt.Time))
+	b.recheckAt = minTime(b.expiresAt, minTime(leases[0].ServingUntil.Time, leases[1].ServingUntil.Time))
 	claims, err := q.ReadConnectorPeerBindingClaims(ctx, controlstatedb.ReadConnectorPeerBindingClaimsParams{PairID: pair.ID, DeliveryGeneration: pair.DeliveryGeneration})
 	if err != nil {
 		return b, err
@@ -83,7 +85,7 @@ func (d *Database) connectorPeerPairBinding(ctx context.Context, tx pgx.Tx, run 
 		claimUntil = minTime(claimUntil, claim.ConfirmedUntil.Time)
 	}
 	if b.source.IsValid() {
-		if err := d.serviceHTTPSourceAllowed(ctx, q, run.ServiceID, b.source); err != nil {
+		if _, err := d.serviceHTTPSourcePolicy(ctx, q, run.ServiceID, b.source); err != nil {
 			return connectorPeerBinding{}, err
 		}
 	}

@@ -24,10 +24,10 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherlocal "github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/zalando/go-keyring"
@@ -50,8 +50,8 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 		TeamId: f.identity.teamID, Source: &testProjectSource, Deployment: "production",
 		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol, "restricted": protocol},
 		Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{
-			"web":        {Target: "app", Protocol: &protocol, PublicUrl: &controlv1.ProjectServicePublicURL{Access: &controlv1.ProjectPublicAccess{Mode: &mode}}},
-			"restricted": {Target: "app", Protocol: &protocol, PublicUrl: &controlv1.ProjectServicePublicURL{Access: &controlv1.ProjectPublicAccess{Mode: &restricted}}},
+			"web":        {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}},
+			"restricted": {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &restricted}}},
 		}},
 	})
 	if err != nil || applied.Deployments == nil {
@@ -92,15 +92,29 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 	t.Cleanup(func() { http.DefaultTransport = original })
 	ready := make(chan string, 1)
 	var recovering atomic.Bool
-	options := publisherlocal.Options{Directory: directory, StateDir: stateDir, Publications: true, AttachPublication: func(_ context.Context, _ publisherapp.Service, cfg *publisher.Config) error {
+	options := publisherlocal.Options{Directory: directory, StateDir: stateDir, Publications: true, AttachPublication: func(_ context.Context, _ publisherapp.Service, cfg *publisherservice.RunConfig) error {
 		quic, tcp := f.connectors()
 		cfg.TransportTLS = f.roots.Clone()
-		cfg.DrainTime, cfg.FallbackDelay = time.Second, 10*time.Millisecond
-		cfg.QUICConnector, cfg.TCPConnector = quic, tcp
-		cfg.Observe = func(event publisher.Event) error {
-			if event.Type == publisher.EventReady && recovering.Load() {
+		cfg.DrainTime = time.Second
+		cfg.RelayQUIC, cfg.RelayTCP = quic, tcp
+		var preparation controlv1.ServiceRunPreparation
+		prepared, onReady := cfg.Prepared, cfg.Ready
+		cfg.Prepared = func(run controlv1.ServiceRunPreparation) error {
+			preparation = run
+			if prepared != nil {
+				return prepared(run)
+			}
+			return nil
+		}
+		cfg.Ready = func() error {
+			if onReady != nil {
+				if err := onReady(); err != nil {
+					return err
+				}
+			}
+			if recovering.Load() {
 				select {
-				case ready <- event.PublicURL:
+				case ready <- serviceHTTPAddress(preparation):
 				default:
 				}
 			}
@@ -198,16 +212,16 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			}
 			var stderr synchronizedBuffer
 			command.Stderr = &stderr
-			if err := command.Start(); err != nil {
+			stopDescendants := isolateIntegrationCommand(t, command)
+			process, err := startOwnedCommand(command, nil)
+			if err != nil {
 				t.Fatal(err)
 			}
-			joined := make(chan error, 1)
-			go func() { joined <- command.Wait() }()
-			stopped := false
 			defer func() {
-				if !stopped {
-					_ = command.Process.Kill()
-					<-joined
+				defer stopDescendants()
+				_ = stdin.Close()
+				if err := process.shutdown(3*time.Second, 3*time.Second); err != nil {
+					t.Error("SDK subprocess cleanup", err)
 				}
 			}()
 			lines := make(chan string, 1)
@@ -271,8 +285,23 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 				}
 			}
 			var id string
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT id FROM control.public_urls WHERE canonical_hostname=$1`, strings.TrimPrefix(result.URL, "https://")).Scan(&id); err != nil {
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT service_id FROM control.service_endpoints WHERE hostname=$1`, strings.TrimPrefix(result.URL, "https://")).Scan(&id); err != nil {
 				t.Fatal(err)
+			}
+			if variant == "bun" || variant == "fetch" || variant == "python" {
+				declaration, _, err := f.identity.routes.GetServiceConfiguration(t.Context(), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if declaration == nil || declaration.Http == nil {
+					t.Fatal("SDK request limits were not saved in its service declaration")
+				}
+				limits := declaration.Http.Limits
+				if limits == nil || limits.Total == nil || *limits.Total != 10 ||
+					limits.Concurrency == nil || *limits.Concurrency != 2 ||
+					limits.Rate == nil || limits.Rate.Count != 100 || limits.Rate.Per != "1s" {
+					t.Fatal("SDK request limits did not reach native service preparation", limits)
+				}
 			}
 			if variant == "node" {
 				savedID, savedURL = id, result.URL
@@ -285,21 +314,20 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			}
 			_ = stdin.Close()
 			select {
-			case err := <-joined:
-				stopped = true
-				if err != nil {
+			case <-process.done:
+				if err := process.result(); err != nil {
 					t.Fatal("SDK cleanup failed", stderr.String())
 				}
 			case <-ctx.Done():
 				t.Fatal("SDK cleanup did not join", stderr.String())
 			}
-			var lifecycle string
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT lifecycle_state FROM control.public_urls WHERE id=$1`, id).Scan(&lifecycle); err != nil {
+			var enabled, deleted bool
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT enabled, deleted_at IS NOT NULL FROM control.services WHERE id=$1`, id).Scan(&enabled, &deleted); err != nil {
 				t.Fatal(err)
 			}
 			named := variant == "node" || variant == "node-restart" || variant == "node-restricted"
-			if named && lifecycle != "enabled" || !named && lifecycle != "deleted" {
-				t.Fatal("SDK cleanup changed wrong URL lifetime", lifecycle)
+			if named && (!enabled || deleted) || !named && !deleted {
+				t.Fatal("SDK cleanup changed wrong service lifetime", enabled, deleted)
 			}
 		})
 	}
@@ -363,16 +391,35 @@ func newSDKLostReplyProxy(t *testing.T, owner publisherprotocol.Endpoint, ready 
 			mu.Unlock()
 			if response.StatusCode == 200 && !dropped.Swap(true) {
 				var proof sdkLostReplyEvidence
-				select {
-				case proof.url = <-ready:
-					visited, content, visitErr := visitor.requestURLContext(r.Context(), http.MethodGet, proof.url, nil)
-					proof.body, proof.err = string(content), visitErr
-					if visited != nil {
-						proof.status = visited.StatusCode
+				var registration publisherprotocol.Registration
+				proof.err = json.Unmarshal(data, &registration)
+				tick := time.NewTicker(publisherapp.LeaseDuration / 4)
+			awaitVisitor:
+				for proof.err == nil {
+					// the proxy owns this artificial acknowledgment delay. keep
+					// the accepted registration alive until the SDK can recover it.
+					renewCtx, cancel := context.WithTimeout(r.Context(), publisherapp.LeaseDuration/4)
+					proof.err = publisherprotocol.Call(renewCtx, owner, http.MethodPost, "/v1/renew", registration, nil)
+					cancel()
+					if proof.err != nil {
+						break
 					}
-				case <-r.Context().Done():
-					proof.err = r.Context().Err()
+					select {
+					case proof.url = <-ready:
+						visitCtx, cancel := context.WithTimeout(r.Context(), publisherapp.LeaseDuration/2)
+						visited, content, visitErr := visitor.requestURLContext(visitCtx, http.MethodGet, proof.url, nil)
+						cancel()
+						proof.body, proof.err = string(content), visitErr
+						if visited != nil {
+							proof.status = visited.StatusCode
+						}
+						break awaitVisitor
+					case <-tick.C:
+					case <-r.Context().Done():
+						proof.err = r.Context().Err()
+					}
 				}
+				tick.Stop()
 				mu.Lock()
 				evidence.url, evidence.body, evidence.status, evidence.err = proof.url, proof.body, proof.status, proof.err
 				mu.Unlock()

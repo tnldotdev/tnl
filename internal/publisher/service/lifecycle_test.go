@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -44,6 +45,12 @@ type lifecycleControl struct {
 	reports                             chan controlv1.ServiceRunHeartbeat
 }
 
+func (*lifecycleControl) ControlURL() string { return "https://control.example.test" }
+
+func (*lifecycleControl) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
+	return controlv1.ControlDiscovery{BrowserLoginAvailable: new(true)}, nil
+}
+
 func (f *lifecycleControl) ReportServiceRunObservations(_ context.Context, service, run string, number int64, token credentials.ServiceRunToken, _ serviceaudit.Batch) error {
 	if service != f.prep.ServiceId || run != f.prep.ServiceRunId || number != f.prep.RunNumber || token.String() != f.setup.RunToken {
 		return ErrPrivateStream
@@ -57,11 +64,15 @@ func (f *lifecycleControl) ReadPublisherVisitorPolicy(_ context.Context, body co
 	}
 	now := time.Now()
 	revision := int64(1)
+	port := 0
 	if f.approved != nil {
 		revision = f.approved.TrustRevision
+		if f.approved.Protocol == controlv1.ServiceProtocolHTTP {
+			port = 443
+		}
 	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, SnapshotRequired: body.AfterRevision == 0, Policy: controlv1.VisitorPolicySnapshot{
-		Resource: body.Resource, Issuer: "https://control.example.test", Hostname: f.prep.Hostname, Port: f.prep.ServicePort, Enabled: true,
+		Resource: body.Resource, Issuer: "https://control.example.test", Hostname: f.prep.Hostname, Port: port, Enabled: true,
 		VisitorPolicyRevision: 1, MetadataRevision: revision, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime),
 		VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "lifecycle", PublicKey: ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)).Public().(ed25519.PublicKey)}},
 	}}, nil
@@ -82,11 +93,11 @@ func (*lifecycleControl) ConfirmConnectorPeerPairPrepared(context.Context, strin
 	return ErrPrivateStream
 }
 
-func (f *lifecycleControl) GetPublisherService(context.Context, string) (controlv1.Service, error) {
+func (f *lifecycleControl) GetPublisherService(context.Context, string, string) (controlv1.Service, error) {
 	if f.approved != nil {
 		return *f.approved, nil
 	}
-	return controlv1.Service{Id: f.prep.ServiceId, TeamId: f.prep.TeamId, Enabled: true, Protocol: controlv1.ServiceProtocol("tcp"), TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: f.prep.Hostname, Port: f.prep.ServicePort}}, nil
+	return controlv1.Service{Id: f.prep.ServiceId, TeamId: f.prep.TeamId, Enabled: true, Protocol: controlv1.ServiceProtocol("tcp"), TrustRevision: 1, EndpointRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: f.prep.Hostname, Port: 25443}}, nil
 }
 
 func (f *lifecycleControl) PrepareServiceRun(_ context.Context, id, key, token string, declared controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {
@@ -142,17 +153,24 @@ func (f *lifecycleControl) HeartbeatServiceRun(_ context.Context, id, run string
 	if !health.Healthy && state == "ready" {
 		state = "starting"
 	}
+	endpointRevision := int64(1)
+	publicReady := false
+	if f.approved != nil {
+		endpointRevision = f.approved.EndpointRevision
+		publicReady = f.approved.Endpoint != nil && f.approved.Endpoint.Public && state == "ready"
+	}
 	return controlv1.ServiceRunState{ServiceId: id, ServiceRunId: run, RunNumber: f.prep.RunNumber,
 		Healthy: &health.Healthy, StreamCapacity: &health.StreamCapacity, ActiveStreams: &health.ActiveStreams,
+		EndpointRevision: endpointRevision, PublicEndpointReady: publicReady,
 		PublisherConnections: connections,
-		PublisherExpiresAt:   time.Now().Add(time.Minute), State: state}, nil
+		ObservedAt:           time.Now(), PublisherExpiresAt: time.Now().Add(time.Minute), State: state}, nil
 }
 
 func (f *lifecycleControl) CloseServiceRun(_ context.Context, id, run string, token credentials.ServiceRunToken) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closes++
-	if id != f.prep.ServiceId || run != f.prep.ServiceRunId || token.String() != f.setup.RunToken {
+	if id != f.prep.ServiceId || run != f.prep.ServiceRunId || token.String() != f.prep.RunToken {
 		f.bad = errors.New("close used another run")
 	}
 	return nil
@@ -184,10 +202,12 @@ func lifecycleFixture(t *testing.T) (RunConfig, *lifecycleControl) {
 	f := &lifecycleControl{prep: p.Preparation, setup: controlv1.ServiceRunSetup{
 		ServiceId: service, ServiceRunId: p.Preparation.ServiceRunId,
 		RunNumber: p.Preparation.RunNumber, RunToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		VisitorSourceKey:     bytes.Repeat([]byte{1}, 32),
 		PublisherConnections: []controlv1.ConnectionAssignment{bound.connections[0], bound.connections[1]},
 	}}
+	f.prep.RunToken = f.setup.RunToken
 	base := RunConfig{Control: f, Access: func(context.Context) (string, error) { return "scoped-publisher-token", nil },
-		Identity: identity, ServiceID: service, Metadata: controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocol("tcp")}, Target: "127.0.0.1:5432", HeartbeatInterval: 5 * time.Millisecond, Healthy: func(context.Context) bool { return true }}
+		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service, Metadata: controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocol("tcp")}, Target: "127.0.0.1:5432", HeartbeatInterval: 5 * time.Millisecond, Healthy: func(context.Context) bool { return true }}
 	database, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +280,7 @@ func TestPrivateLifecycleRejectsUnapprovedProtocolOrTrustBeforePreparingRun(t *t
 	for _, name := range []string{"protocol", "stale-revision", "invalid-trust"} {
 		t.Run(name, func(t *testing.T) {
 			config, f := lifecycleFixture(t)
-			approved, _ := f.GetPublisherService(t.Context(), "")
+			approved, _ := f.GetPublisherService(t.Context(), config.ServiceID, "")
 			approved.TrustRevision = 2
 			f.approved = &approved
 			switch name {

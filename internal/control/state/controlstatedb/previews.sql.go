@@ -11,41 +11,38 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const addPreviewPublicURL = `-- name: AddPreviewPublicURL :one
-INSERT INTO control.preview_public_urls (
-    preview_id, team_id, public_url_id, added_at
+const addPreviewService = `-- name: AddPreviewService :one
+INSERT INTO control.preview_services (
+    preview_id, team_id, service_id, added_at
 )
 SELECT p.id, p.team_id, u.id, $1::timestamptz
 FROM control.previews p
-JOIN control.public_urls u ON u.id = $2 AND u.team_id = p.team_id
+JOIN control.services u ON u.id = $2 AND u.team_id = p.team_id
 WHERE p.id = $3
   AND p.created_by_identity_id = $4
-  AND u.mutation_revision = $5
-  AND u.lifecycle_state = 'enabled'
-ON CONFLICT (preview_id, public_url_id) DO UPDATE SET
-    added_at = control.preview_public_urls.added_at
-RETURNING public_url_id
+  AND u.enabled AND u.deleted_at IS NULL AND u.protocol='http'
+ON CONFLICT (preview_id, service_id) DO UPDATE SET
+    added_at = control.preview_services.added_at
+RETURNING service_id
 `
 
-type AddPreviewPublicURLParams struct {
-	AddedAt                  pgtype.Timestamptz
-	PublicURLID              string
-	PreviewID                string
-	IdentityID               string
-	ExpectedMutationRevision int64
+type AddPreviewServiceParams struct {
+	AddedAt    pgtype.Timestamptz
+	ServiceID  string
+	PreviewID  string
+	IdentityID pgtype.Text
 }
 
-func (q *Queries) AddPreviewPublicURL(ctx context.Context, arg AddPreviewPublicURLParams) (string, error) {
-	row := q.db.QueryRow(ctx, addPreviewPublicURL,
+func (q *Queries) AddPreviewService(ctx context.Context, arg AddPreviewServiceParams) (string, error) {
+	row := q.db.QueryRow(ctx, addPreviewService,
 		arg.AddedAt,
-		arg.PublicURLID,
+		arg.ServiceID,
 		arg.PreviewID,
 		arg.IdentityID,
-		arg.ExpectedMutationRevision,
 	)
-	var public_url_id string
-	err := row.Scan(&public_url_id)
-	return public_url_id, err
+	var service_id string
+	err := row.Scan(&service_id)
+	return service_id, err
 }
 
 const createPreview = `-- name: CreatePreview :one
@@ -54,13 +51,13 @@ INSERT INTO control.previews (
 ) VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (team_id, created_by_identity_id, idempotency_key)
 DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled
+RETURNING id, schema_version, team_id, guest_id, created_by_identity_id, created_at, team_access_enabled
 `
 
 type CreatePreviewParams struct {
 	ID                  string
-	TeamID              string
-	CreatedByIdentityID string
+	TeamID              pgtype.Text
+	CreatedByIdentityID pgtype.Text
 	IdempotencyKey      string
 	CreatedAt           pgtype.Timestamptz
 }
@@ -68,8 +65,9 @@ type CreatePreviewParams struct {
 type CreatePreviewRow struct {
 	ID                  string
 	SchemaVersion       int16
-	TeamID              string
-	CreatedByIdentityID string
+	TeamID              pgtype.Text
+	GuestID             pgtype.Text
+	CreatedByIdentityID pgtype.Text
 	CreatedAt           pgtype.Timestamptz
 	TeamAccessEnabled   bool
 }
@@ -87,6 +85,7 @@ func (q *Queries) CreatePreview(ctx context.Context, arg CreatePreviewParams) (C
 		&i.ID,
 		&i.SchemaVersion,
 		&i.TeamID,
+		&i.GuestID,
 		&i.CreatedByIdentityID,
 		&i.CreatedAt,
 		&i.TeamAccessEnabled,
@@ -95,18 +94,19 @@ func (q *Queries) CreatePreview(ctx context.Context, arg CreatePreviewParams) (C
 }
 
 const getPreview = `-- name: GetPreview :one
-SELECT id, schema_version, team_id, created_by_identity_id, created_at, team_access_enabled, demo_publish_run_id
+SELECT id, schema_version, team_id, guest_id, created_by_identity_id, created_at, team_access_enabled, demo_service_run_id
 FROM control.previews WHERE id = $1
 `
 
 type GetPreviewRow struct {
 	ID                  string
 	SchemaVersion       int16
-	TeamID              string
-	CreatedByIdentityID string
+	TeamID              pgtype.Text
+	GuestID             pgtype.Text
+	CreatedByIdentityID pgtype.Text
 	CreatedAt           pgtype.Timestamptz
 	TeamAccessEnabled   bool
-	DemoPublishRunID    pgtype.Text
+	DemoServiceRunID    pgtype.Text
 }
 
 func (q *Queries) GetPreview(ctx context.Context, id string) (GetPreviewRow, error) {
@@ -116,32 +116,33 @@ func (q *Queries) GetPreview(ctx context.Context, id string) (GetPreviewRow, err
 		&i.ID,
 		&i.SchemaVersion,
 		&i.TeamID,
+		&i.GuestID,
 		&i.CreatedByIdentityID,
 		&i.CreatedAt,
 		&i.TeamAccessEnabled,
-		&i.DemoPublishRunID,
+		&i.DemoServiceRunID,
 	)
 	return i, err
 }
 
-const listPreviewPublicURLs = `-- name: ListPreviewPublicURLs :many
-SELECT public_url_id FROM control.preview_public_urls
-WHERE preview_id = $1 ORDER BY public_url_id
+const listPreviewServices = `-- name: ListPreviewServices :many
+SELECT service_id FROM control.preview_services
+WHERE preview_id = $1 ORDER BY service_id
 `
 
-func (q *Queries) ListPreviewPublicURLs(ctx context.Context, previewID string) ([]string, error) {
-	rows, err := q.db.Query(ctx, listPreviewPublicURLs, previewID)
+func (q *Queries) ListPreviewServices(ctx context.Context, previewID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listPreviewServices, previewID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var items []string
 	for rows.Next() {
-		var public_url_id string
-		if err := rows.Scan(&public_url_id); err != nil {
+		var service_id string
+		if err := rows.Scan(&service_id); err != nil {
 			return nil, err
 		}
-		items = append(items, public_url_id)
+		items = append(items, service_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -150,16 +151,17 @@ func (q *Queries) ListPreviewPublicURLs(ctx context.Context, previewID string) (
 }
 
 const lockPreviewForTeamAccess = `-- name: LockPreviewForTeamAccess :one
-SELECT id, team_id, created_by_identity_id, team_access_enabled, demo_publish_run_id
+SELECT id, team_id, guest_id, created_by_identity_id, team_access_enabled, demo_service_run_id
 FROM control.previews WHERE id = $1 FOR NO KEY UPDATE
 `
 
 type LockPreviewForTeamAccessRow struct {
 	ID                  string
-	TeamID              string
-	CreatedByIdentityID string
+	TeamID              pgtype.Text
+	GuestID             pgtype.Text
+	CreatedByIdentityID pgtype.Text
 	TeamAccessEnabled   bool
-	DemoPublishRunID    pgtype.Text
+	DemoServiceRunID    pgtype.Text
 }
 
 func (q *Queries) LockPreviewForTeamAccess(ctx context.Context, id string) (LockPreviewForTeamAccessRow, error) {
@@ -168,46 +170,47 @@ func (q *Queries) LockPreviewForTeamAccess(ctx context.Context, id string) (Lock
 	err := row.Scan(
 		&i.ID,
 		&i.TeamID,
+		&i.GuestID,
 		&i.CreatedByIdentityID,
 		&i.TeamAccessEnabled,
-		&i.DemoPublishRunID,
+		&i.DemoServiceRunID,
 	)
 	return i, err
 }
 
 const otherPreviewForTeamAccess = `-- name: OtherPreviewForTeamAccess :one
-SELECT other.preview_id FROM control.preview_public_urls AS other
-WHERE other.public_url_id = $1
+SELECT other.preview_id FROM control.preview_services AS other
+WHERE other.service_id = $1
   AND other.preview_id <> $2 LIMIT 1
 `
 
 type OtherPreviewForTeamAccessParams struct {
-	PublicURLID string
-	PreviewID   string
+	ServiceID string
+	PreviewID string
 }
 
 func (q *Queries) OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error) {
-	row := q.db.QueryRow(ctx, otherPreviewForTeamAccess, arg.PublicURLID, arg.PreviewID)
+	row := q.db.QueryRow(ctx, otherPreviewForTeamAccess, arg.ServiceID, arg.PreviewID)
 	var preview_id string
 	err := row.Scan(&preview_id)
 	return preview_id, err
 }
 
-const otherTeamAccessForPublicURL = `-- name: OtherTeamAccessForPublicURL :one
+const otherTeamAccessForService = `-- name: OtherTeamAccessForService :one
 SELECT p.id FROM control.previews AS p
-JOIN control.preview_public_urls AS included ON included.preview_id = p.id
-WHERE included.public_url_id = $1
+JOIN control.preview_services AS included ON included.preview_id = p.id
+WHERE included.service_id = $1
   AND p.id <> $2
   AND p.team_access_enabled = true LIMIT 1
 `
 
-type OtherTeamAccessForPublicURLParams struct {
-	PublicURLID string
-	PreviewID   string
+type OtherTeamAccessForServiceParams struct {
+	ServiceID string
+	PreviewID string
 }
 
-func (q *Queries) OtherTeamAccessForPublicURL(ctx context.Context, arg OtherTeamAccessForPublicURLParams) (string, error) {
-	row := q.db.QueryRow(ctx, otherTeamAccessForPublicURL, arg.PublicURLID, arg.PreviewID)
+func (q *Queries) OtherTeamAccessForService(ctx context.Context, arg OtherTeamAccessForServiceParams) (string, error) {
+	row := q.db.QueryRow(ctx, otherTeamAccessForService, arg.ServiceID, arg.PreviewID)
 	var id string
 	err := row.Scan(&id)
 	return id, err

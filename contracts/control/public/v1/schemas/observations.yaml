@@ -34,7 +34,7 @@ schemas:
     properties:
       event_id: { type: string, pattern: "^sae_([A-Za-z0-9]{22}|[A-Za-z0-9]{64})$" }
       service_id: { type: string, maxLength: 128 }
-      service_kind: { type: string, enum: [public_url, service] }
+      service_kind: { type: string, enum: [service] }
       event_type:
         type: string
         enum: [connection.open, connection.close, http.decision]
@@ -60,6 +60,12 @@ schemas:
         }
       visitor_connection_id: { type: string }
       source_ip: { type: string }
+      routing_authority:
+        description: Signed routing authority for an ingress HTTP selection denial; verified during ingestion and not saved in service history.
+        type: string
+        format: byte
+        maxLength: 1368
+        x-go-type-skip-optional-pointer: true
       outcome:
         type: string
         enum: [allowed, denied, failed, forwarded, closed]

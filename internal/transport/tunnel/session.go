@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -57,14 +58,15 @@ type AuthenticateWithResultFunc func(context.Context, tunnelv1.Message) (*tunnel
 
 // Session is an authenticated tunnelv1 session over an arbitrary transport.
 type Session struct {
-	transport           muxsession.Session
-	control             muxsession.Stream
-	role                tunnelv1.PeerRole
-	publisherConnection *tunnelv1.PublisherConnectionRef
-	serviceConnection   *tunnelv1.ServicePublisherConnectionRef
-	connectorLeg        *tunnelv1.ConnectorPairLegProof
-	connectorControl    sync.Mutex
-	connectorActivated  bool
+	transport          muxsession.Session
+	control            muxsession.Stream
+	role               tunnelv1.PeerRole
+	serviceConnection  *tunnelv1.ServicePublisherConnectionRef
+	connectorLeg       *tunnelv1.ConnectorPairLegProof
+	connectorControl   sync.Mutex
+	connectorActivated bool
+	capacityMu         sync.Mutex
+	capacityRequests   map[string]*serviceCapacity
 
 	closeOnce sync.Once
 	closeErr  error
@@ -94,26 +96,43 @@ func DialConnector(ctx context.Context, transport muxsession.Session, hello tunn
 		return nil, tunnelv1.ConnectorPairLegAccepted{}, errors.New("tunnel: connector hello is required")
 	}
 	result := dial(ctx, transport, hello, expectedDeliveryID, true)
-	return result.session, result.receipt, errors.Join(result.err, result.cleanupErr)
+	if result.cleanupErr != nil {
+		result.cleanupErr = &SessionCleanupError{Err: result.cleanupErr}
+	}
+	err := errors.Join(result.err, result.cleanupErr)
+	if err != nil {
+		err = controlContextError(ctx, err)
+	}
+	if result.stoppedBy != nil && result.cleanupErr == nil && controlBudgetUnspent(ctx) &&
+		failure.Only(context.Cause(ctx), result.stoppedBy) {
+		return result.session, result.receipt, &connectorControlInterruption{
+			err: err, cause: result.stoppedBy, phase: connectorStopHello,
+		}
+	}
+	return result.session, result.receipt, connectorReplyResult(err,
+		result.replyEndedNormally && result.cleanupErr == nil && muxsession.NormalSessionCloseOnly(err))
 }
 
 // dial owns the failed handshake's transport cleanup. keep its error separate
 // so a transport race can recover from a rejection but never lose failed Close.
 type dialResult struct {
-	session    *Session
-	receipt    tunnelv1.ConnectorPairLegAccepted
-	err        error
-	cleanupErr error
+	session            *Session
+	receipt            tunnelv1.ConnectorPairLegAccepted
+	err                error
+	cleanupErr         error
+	replyEndedNormally bool
+	stoppedBy          error
 }
 
 func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message, expectedDeliveryID string, native bool) (result dialResult) {
 	if transport == nil {
 		return dialResult{err: errors.New("tunnel: transport session is required")}
 	}
+	closeTransport := sync.OnceValue(transport.Close)
 	defer func() {
 		if result.err != nil {
 			result.err = controlContextError(ctx, result.err)
-			result.cleanupErr = transport.Close()
+			result.cleanupErr = closeTransport()
 		}
 	}()
 	if !native && hello.Role == tunnelv1.Connector {
@@ -128,33 +147,53 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 		}
 	}
 	started := time.Now()
-	control, err := transport.OpenStream(ctx)
+	setupCtx := ctx
+	if hello.Role == tunnelv1.Publisher {
+		var cancel context.CancelFunc
+		setupCtx, cancel = context.WithTimeout(ctx, handshakeTimeout)
+		defer cancel()
+	}
+	control, err := transport.OpenStream(setupCtx)
 	if err != nil {
 		return dialResult{err: fmt.Errorf("tunnel: open control stream: %w", err)}
 	}
-	finish, err := setupDeadline(ctx, control)
+	var interrupted *controlDeadlineStop
+	if native {
+		interrupted = new(controlDeadlineStop)
+	}
+	finish, err := setupDeadlineObserved(setupCtx, control, interrupted)
 	if err != nil {
 		return dialResult{err: err}
 	}
 	defer func() {
-		result.err = errors.Join(result.err, finish(result.err == nil))
+		finishErr := finish(result.err == nil)
+		result.err = errors.Join(result.err, finishErr)
+		if result.stoppedBy != nil && !failure.Only(finishErr, result.stoppedBy) {
+			result.stoppedBy = nil
+		}
 		if result.err != nil {
 			result.session = nil
 			result.receipt = tunnelv1.ConnectorPairLegAccepted{}
 		}
 	}()
 	if err := tunnelv1.WriteControl(control, hello); err != nil {
-		return dialResult{err: fmt.Errorf("tunnel: write hello: %w", err)}
+		return dialResult{err: fmt.Errorf("tunnel: write hello: %w", err), stoppedBy: interrupted.operationCause(err)}
 	}
 	response, err := tunnelv1.ReadControl(control)
 	if err != nil {
-		return dialResult{err: fmt.Errorf("tunnel: read hello response: %w", err)}
+		return dialResult{err: fmt.Errorf("tunnel: read hello response: %w", err),
+			replyEndedNormally: native && connectorReplySessionEnded(transport, err),
+			stoppedBy:          interrupted.operationCause(err)}
 	}
 	if response.Type == tunnelv1.Error {
+		rejection := &ProtocolError{Code: response.Code}
+		if hello.Role == tunnelv1.Publisher {
+			return dialResult{err: errors.Join(rejection, acknowledgePublisherRejection(setupCtx, transport, control, closeTransport))}
+		}
 		if native {
 			_ = control.CloseWrite()
 		}
-		return dialResult{err: &ProtocolError{Code: response.Code}}
+		return dialResult{err: rejection}
 	}
 	if response.Type != tunnelv1.HelloAccepted {
 		return dialResult{err: errors.New("tunnel: unexpected hello response")}
@@ -189,9 +228,10 @@ func AcceptWithResult(ctx context.Context, transport muxsession.Session, authent
 	}
 	setupCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
+	closeTransport := sync.OnceValue(transport.Close)
 	defer func() {
 		if err != nil {
-			err = errors.Join(controlContextError(ctx, err), transport.Close())
+			err = errors.Join(controlContextError(ctx, err), closeTransport())
 		}
 	}()
 	control, err := transport.AcceptStream(setupCtx)
@@ -229,6 +269,9 @@ func AcceptWithResult(ctx context.Context, transport muxsession.Session, authent
 		if errors.As(authErr, &protocolError) && validAuthenticationError(protocolError.Code) {
 			code = protocolError.Code
 		}
+		if hello.Role == tunnelv1.Publisher {
+			return nil, tunnelv1.Message{}, errors.Join(authErr, rejectPublisherHello(setupCtx, control, code, closeTransport))
+		}
 		if writeProtocolError(control, code) == nil && hello.Role == tunnelv1.Connector {
 			drainConnectorRejection(setupCtx, control)
 		}
@@ -244,10 +287,6 @@ func AcceptWithResult(ctx context.Context, transport muxsession.Session, authent
 
 func authenticatedSession(transport muxsession.Session, control muxsession.Stream, hello tunnelv1.Message) *Session {
 	s := &Session{transport: transport, control: control, role: hello.Role}
-	if hello.PublisherConnection != nil {
-		ref := *hello.PublisherConnection
-		s.publisherConnection = &ref
-	}
 	if hello.ServiceConnection != nil {
 		ref := *hello.ServiceConnection
 		s.serviceConnection = &ref
@@ -326,142 +365,20 @@ func (s *Session) HandlePublisherDrain(ctx context.Context, drain func(context.C
 	return nil
 }
 
-// IncomingVisitorStream is a visitor stream awaiting an accept or reject response.
-type IncomingVisitorStream struct {
-	owner  context.Context
-	Stream muxsession.Stream
-	Header tunnelv1.VisitorStreamHeader
-
-	response *replyStream
-}
-
-// AcceptVisitorStream reads the next stream header without accepting its assignment identity.
-func (s *Session) AcceptVisitorStream(ctx context.Context) (*IncomingVisitorStream, error) {
-	stream, err := s.acceptStream(ctx, "visitor")
-	if err != nil {
-		return nil, err
-	}
-	header, initial, err := tunnelv1.ReadVisitorOpening(stream)
-	if err != nil {
-		_ = (&replyStream{Stream: stream}).forwardRejection(ctx, tunnelv1.InvalidMessage)
-		_ = stream.Close()
-		return nil, &StreamHeaderError{Kind: "visitor", Err: err}
-	}
-	reply := newReplyStream(stream, initial, header.ConfirmBeforeBytes)
-	if ref := s.publisherConnection; ref != nil && header.AccessPending {
-		reply.promotion = tunnelv1.AdmissionHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PublisherPromotion,
-			VisitorConnectionID: header.VisitorConnectionID, PublicURLID: header.PublicURLID, PublishRunID: header.PublishRunID,
-			PublishRunNumber: header.PublishRunNumber, PublisherConnectionID: header.PublisherConnectionID,
-			ConnectionAssignmentRevision: header.ConnectionAssignmentRevision, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID}
-	}
-	return &IncomingVisitorStream{
-		owner:  ctx,
-		Stream: reply, Header: header, response: reply,
-	}, nil
-}
-
-// Accept acknowledges the visitor stream and clears its setup deadline.
-func (r *IncomingVisitorStream) Accept() error {
-	return r.response.respond(r.Context(), tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted})
-}
-
-// Reject rejects the visitor stream with a stable protocol code.
-func (r *IncomingVisitorStream) Reject(code tunnelv1.ErrorCode) error {
-	return r.response.respond(r.Context(), tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
-}
-
-// Promote carries the publisher's current authorization decision on this exact
-// stream. the bound responder survives connection wrappers used by the publisher.
-func (r *IncomingVisitorStream) Promote(ctx context.Context) error {
-	return r.response.promote(ctx, r.response.promotion)
-}
-
-// CloseWrite ends the return frames before a TLS owner closes its connection.
-// cancellation remains stream-local and includes contended writer acquisition.
-func (r *IncomingVisitorStream) CloseWrite(ctx context.Context) error {
-	return r.response.end(ctx)
-}
-
-func (s *Session) AcceptInternalForwardingStream(ctx context.Context) (InternalForwardingRequest, error) {
-	stream, err := s.acceptStream(ctx, "internal forwarding")
-	if err != nil {
-		return nil, err
-	}
-	header, service, initial, err := tunnelv1.ReadForwardingOpening(stream)
-	if err != nil {
-		_ = (&replyStream{Stream: stream}).forwardRejection(ctx, tunnelv1.InvalidMessage)
-		_ = stream.Close()
-		return nil, &StreamHeaderError{Kind: "internal forwarding", Err: err}
-	}
-	reply := newReplyStream(stream, initial, service != nil || header.ConfirmBeforeBytes)
-	response := reply
-	if service != nil {
-		return &IncomingServiceForwardingStream{owner: ctx, stream: reply, Header: *service, response: response}, nil
-	}
-	return &IncomingPublicForwardingStream{owner: ctx, stream: reply, Header: header, response: response}, nil
-}
-
-// InternalForwardingRequest narrows the decoded wire union before forwarding.
-// each concrete request shares its pointer-owned responder with the decoded
-// stream, so copies and projections cannot acknowledge a stream twice.
-type InternalForwardingRequest interface {
-	internalForwardingRequest()
-	Context() context.Context
-	Stream() muxsession.Stream
-	Accept() error
-	Reject(tunnelv1.ErrorCode) error
-}
-
-type IncomingPublicForwardingStream struct {
-	owner    context.Context
-	stream   muxsession.Stream
-	Header   tunnelv1.InternalForwardingHeader
-	response *replyStream
-}
-
-func (*IncomingPublicForwardingStream) internalForwardingRequest()  {}
-func (*IncomingServiceForwardingStream) internalForwardingRequest() {}
-
-func (r *IncomingPublicForwardingStream) Stream() muxsession.Stream { return r.stream }
-
-func (r *IncomingPublicForwardingStream) TakeInitial() []byte { return r.response.takeInitial() }
-
-func (r *IncomingPublicForwardingStream) Context() context.Context {
-	return incomingContext(r.owner, r.Header.TraceContext)
-}
-
-func (r *IncomingPublicForwardingStream) Accept() error {
-	return r.response.respond(r.Context(), tunnelv1.StreamResponse{Type: tunnelv1.StreamAccepted})
-}
-
-func (r *IncomingPublicForwardingStream) Reject(code tunnelv1.ErrorCode) error {
-	return r.response.respond(r.Context(), tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: code})
-}
-
-func (r *IncomingPublicForwardingStream) ForwardRejection(code tunnelv1.ErrorCode) error {
-	return r.response.forwardRejection(r.Context(), code)
-}
-
-func (r *IncomingPublicForwardingStream) Promote(h tunnelv1.AdmissionHeader) error {
-	if !r.Header.AccessPending || h != r.Header.Admission() {
-		return tunnelv1.ErrReturnFrame
-	}
-	return r.response.promote(r.Context(), h)
-}
-
 // IncomingServiceForwardingStream carries one decoded service request.
 // publisher acceptance also binds it to the claimed connection. callers check
 // the relay lease and PROXY source before permitting application bytes.
 type IncomingServiceForwardingStream struct {
 	owner    context.Context
+	session  *Session
 	stream   muxsession.Stream
 	Header   tunnelv1.ServiceForwardingHeader
 	response *replyStream
 }
 
 func (s *Session) AcceptServiceForwardingStream(ctx context.Context) (*IncomingServiceForwardingStream, error) {
-	if s == nil || s.role != tunnelv1.Publisher || s.serviceConnection == nil {
-		return nil, errors.New("tunnel: claimed service publisher connection is required")
+	if s == nil || s.role != tunnelv1.Ingress && (s.role != tunnelv1.Publisher || s.serviceConnection == nil) {
+		return nil, errors.New("tunnel: ingress or claimed service publisher connection is required")
 	}
 	stream, err := s.acceptStream(ctx, "service forwarding")
 	if err != nil {
@@ -493,7 +410,7 @@ func (s *Session) readServiceForwardingStream(ctx context.Context, stream muxses
 		_ = stream.Close()
 		return nil, &StreamHeaderError{Kind: "service forwarding", Err: err}
 	}
-	if ServiceForwardingRef(header) != *s.serviceConnection {
+	if s.role == tunnelv1.Publisher && (s.serviceConnection == nil || ServiceForwardingRef(header) != *s.serviceConnection) {
 		_ = (&replyStream{Stream: stream}).forwardRejection(ctx, tunnelv1.StaleConnectionAssignment)
 		_ = stream.Close()
 		return nil, &StreamHeaderError{Kind: "service forwarding", Err: errors.New("claimed assignment changed")}
@@ -503,17 +420,25 @@ func (s *Session) readServiceForwardingStream(ctx context.Context, stream muxses
 		_ = stream.Close()
 		return nil, &StreamHeaderError{Kind: "service forwarding", Err: err}
 	}
-	reply := newReplyStream(stream, initial, true)
-	return &IncomingServiceForwardingStream{owner: ctx, stream: reply, Header: header, response: reply}, nil
-}
-
-// Context retains the receiver's process context and adopts only the untrusted
-// telemetry parent of this visitor, independently of every other mux stream.
-func (r *IncomingVisitorStream) Context() context.Context {
-	return incomingContext(r.owner, r.Header.TraceContext)
+	if len(initial) != 0 {
+		_ = (&replyStream{Stream: stream}).forwardRejection(ctx, tunnelv1.InvalidMessage)
+		_ = stream.Close()
+		return nil, &StreamHeaderError{Kind: "service forwarding", Err: errors.New("visitor bytes preceded service acceptance")}
+	}
+	reply := newReplyStream(stream)
+	return &IncomingServiceForwardingStream{owner: ctx, session: s, stream: reply, Header: header, response: reply}, nil
 }
 
 func (r *IncomingServiceForwardingStream) Stream() muxsession.Stream { return r.stream }
+
+// RequestCapacity asks the sender of this exact stream to reserve capacity.
+// visitor access is checked separately by the publisher.
+func (r *IncomingServiceForwardingStream) RequestCapacity(ctx context.Context) error {
+	if r == nil || r.session == nil {
+		return &ProtocolError{Code: tunnelv1.Unavailable}
+	}
+	return r.session.RequestServiceCapacity(ctx, r.Header)
+}
 
 func (r *IncomingServiceForwardingStream) Context() context.Context {
 	return incomingContext(r.owner, r.Header.TraceContext)
@@ -581,8 +506,15 @@ func setHandshakeDeadline(ctx context.Context, connection net.Conn) error {
 }
 
 func setupDeadline(ctx context.Context, connection net.Conn) (func(bool) error, error) {
+	return setupDeadlineObserved(ctx, connection, nil)
+}
+
+func setupDeadlineObserved(ctx context.Context, connection net.Conn, interruptedBy *controlDeadlineStop) (func(bool) error, error) {
 	setupCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	if err := context.Cause(setupCtx); err != nil {
+		if deadline, ok := setupCtx.Deadline(); !ok || deadline.After(time.Now()) {
+			interruptedBy.beforeIO(err)
+		}
 		cancel()
 		return nil, err
 	}
@@ -593,6 +525,7 @@ func setupDeadline(ctx context.Context, connection net.Conn) (func(bool) error, 
 	}
 	interrupted := make(chan struct{})
 	stop := context.AfterFunc(setupCtx, func() {
+		interruptedBy.interrupt(context.Cause(setupCtx), deadline)
 		_ = connection.SetDeadline(time.Now())
 		close(interrupted)
 	})

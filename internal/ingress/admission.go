@@ -45,8 +45,8 @@ func admissionDefaults(config *Config) error {
 }
 
 // admission classes share the short ClientHello inspection stage, not their
-// long-lived capacity. map keys exist only while admitted.
-func (s *Server) admitClass(kind connectionKind, key string) (release func(), rejected string) {
+// long-lived capacity. per-run budgets belong to trafficAdmission.
+func (s *Server) admitClass(kind connectionKind) (release func(), rejected string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {
@@ -59,9 +59,6 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 		limit, resource = s.config.MaxConnections, "public_connections"
 	case pendingConnection:
 		limit, resource = s.config.Pending.Connections, "denied_connections"
-		if s.byDenied[key] >= s.config.Pending.PublicURLConnections {
-			return nil, "denied_public_url_connections"
-		}
 	case controlConnection:
 		limit, resource = s.config.MaxControlConnections, "control_connections"
 	case relayConnection:
@@ -74,28 +71,11 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	}
 	s.admitted[kind]++
 	s.reportAdmittedLocked()
-	if kind == visitorConnection {
-		s.byPublicURL[key]++
-	} else if kind == pendingConnection {
-		s.byDenied[key]++
-	}
 	return sync.OnceFunc(func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.admitted[kind]--
 		s.reportAdmittedLocked()
-		var counts map[string]int
-		if kind == visitorConnection {
-			counts = s.byPublicURL
-		} else if kind == pendingConnection {
-			counts = s.byDenied
-		}
-		if counts != nil {
-			counts[key]--
-			if counts[key] == 0 {
-				delete(counts, key)
-			}
-		}
 	}), ""
 }
 

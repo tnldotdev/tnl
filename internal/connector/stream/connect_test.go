@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
 	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
@@ -58,6 +59,7 @@ type connectorFixture struct {
 	ctx                   context.Context
 	workers               sync.WaitGroup
 	peers                 map[string]*fixtureConnectorPeer
+	peerCloseErr          error
 	activationConflict    [2]atomic.Bool
 	rejected              [2]atomic.Int64
 	helloNonces           [2][][]byte
@@ -68,6 +70,7 @@ type connectorFixture struct {
 	tlsGate               *fixtureTLSGate
 	drainRejections       bool
 	rejectionClosing      chan struct{}
+	visitorReadResult     func(context.Context, error)
 }
 
 func connectorID(t *testing.T, prefix string) string {
@@ -90,7 +93,11 @@ func (*connectorFixture) Close(context.Context) error { return nil }
 func (f *connectorFixture) VisitorPermission(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: f.run.ServiceID}, Hostname: f.run.Endpoint.Hostname, Port: f.run.Endpoint.Port, ServiceTrustRevision: &f.run.TrustRevision, VisitorToken: "signed-fixture-visitor-permission", ExpiresAt: f.expires}, nil
+	port := 0
+	if f.run.Protocol == "http" {
+		port = 443
+	}
+	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: f.run.ServiceID}, Hostname: f.run.Endpoint.Hostname, Port: port, ServiceTrustRevision: &f.run.TrustRevision, VisitorToken: "signed-fixture-visitor-permission", ExpiresAt: f.expires}, nil
 }
 func (f *connectorFixture) ResolveService(context.Context, string) (Run, error) {
 	if f.denied.Load() {
@@ -127,7 +134,10 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(root)
 	serverTLS := &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13}
-	ctx, cancel := context.WithCancel(t.Context())
+	// testing cancels t.Context before cleanup callbacks. fixture resources
+	// remain owned until the connector has joined its actual terminal work.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(t.Context()))
+	serving, stopServing := context.WithCancel(t.Context())
 	f.ctx, f.peers = ctx, make(map[string]*fixtureConnectorPeer)
 	workers := &f.workers
 	t.Cleanup(func() {
@@ -140,25 +150,26 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		}
 		f.mu.Unlock()
 		workers.Wait()
+		f.mu.Lock()
+		closeErr := f.peerCloseErr
+		f.mu.Unlock()
+		if closeErr != nil {
+			t.Errorf("fixture peer session cleanup: %v", closeErr)
+		}
 	})
 	var listeners [2]net.Listener
 	var datagrams [2]*muxsession.QUICListener
 	for slot := range uint8(2) {
-		var listener net.Listener
+		// reserve UDP even for TCP fallback: the connector races both transports,
+		// so an unrelated QUIC listener must not acquire this fixture's address.
+		listener, packet, err := transporttest.ListenTCPUDP()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = listener.Close(); _ = packet.Close() })
 		var udp *muxsession.QUICListener
 		if transport == "quic" {
-			var packet net.PacketConn
-			listener, packet, err = transporttest.ListenTCPUDP()
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = listener.Close(); _ = packet.Close() })
 			udp, err = muxsession.ListenQUICPacket(packet, serverTLS, muxsession.QUICConfig{Config: fixtureDatagramConfig()})
-		} else {
-			listener, err = net.Listen("tcp", "127.0.0.1:0")
-			if err == nil {
-				t.Cleanup(func() { _ = listener.Close() })
-			}
 		}
 		if err != nil {
 			t.Fatal(err)
@@ -220,11 +231,14 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		})
 	}
 	go func() {
-		f.serveErr = Serve(ctx, listener, configuration)
+		f.serveErr = Serve(serving, listener, configuration)
 		close(f.finished)
 	}()
 	t.Cleanup(func() {
-		cancel()
+		// stop the connector first. its fixture publisher/control and packet
+		// carriers remain live until the real terminal exchanges and retirement
+		// return; the outer fixture cleanup then cancels and joins them.
+		stopServing()
 		select {
 		case <-f.finished:
 			var reload *MetadataReloadError
@@ -266,6 +280,16 @@ func TestOpaquePreflightVerifiesTLSBeforeReadyWithoutApplicationBytes(t *testing
 			if invalid {
 				if reason, ok := failure.ReasonOf(f.serveErr); !ok || reason != failure.ConnectionTLSRejected {
 					t.Fatal("TLS rejection lost its failure boundary", f.serveErr)
+				}
+				f.mu.Lock()
+				count := len(f.peers)
+				retired := true
+				for _, peer := range f.peers {
+					retired = retired && peer.retired
+				}
+				f.mu.Unlock()
+				if count != 1 || !retired {
+					t.Fatal("accepted partial preparation did not retire its exact authenticated pair", count, retired)
 				}
 			}
 		})
@@ -413,7 +437,14 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 	})
 }
 
-func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, native *fixtureConnectorPeer) {
+func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, native *fixtureConnectorPeer) (result error) {
+	var visitor *connectorfixture.JoinedVisitor
+	defer func() {
+		result = errors.Join(result, raw.Close())
+		if visitor != nil {
+			visitor.Join(result)
+		}
+	}()
 	stream := net.Conn(raw)
 	_ = stream.SetDeadline(time.Now().Add(3 * time.Second))
 	entry, initial, err := tunnelv1.ReadConnectorPeerVisitorOpening(stream)
@@ -435,13 +466,24 @@ func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, n
 	}
 	f.mu.Lock()
 	_, replay := native.seen[entry.VisitorConnectionID]
-	native.seen[entry.VisitorConnectionID] = struct{}{}
+	if !replay {
+		visitor = connectorfixture.NewJoinedVisitor(ctx, entry, f.expires, raw.Close)
+		native.seen[entry.VisitorConnectionID] = visitor
+	}
 	f.mu.Unlock()
 	if replay {
 		return
 	}
+	ctx = visitor.Context
+	interrupted := make(chan struct{})
+	stopVisitor := context.AfterFunc(ctx, func() { defer close(interrupted); _ = raw.Close() })
+	defer func() {
+		if !stopVisitor() {
+			<-interrupted
+		}
+	}()
 	if err := tunnelv1.WriteConnectorPeerVisitorAccepted(raw, entry.VisitorConnectionID); err != nil {
-		return
+		return err
 	}
 	if len(initial) != 0 {
 		return // production connector preparation sends an empty initial block.
@@ -458,17 +500,20 @@ func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, n
 		select {
 		case <-gate.release:
 		case <-ctx.Done():
-			return
+			return context.Cause(ctx)
 		}
 	}
 	switch run.Protocol {
 	case "postgres":
 		var request [8]byte
-		if _, err := io.ReadFull(stream, request[:]); err != nil || request != targettransport.PostgresSSLRequest {
-			return
+		if _, err := io.ReadFull(stream, request[:]); err != nil {
+			return err
+		}
+		if request != targettransport.PostgresSSLRequest {
+			return ErrServiceConnection
 		}
 		if _, err := stream.Write([]byte{'S'}); err != nil {
-			return
+			return err
 		}
 	case "mysql":
 		// protocol-10 greeting with CLIENT_PROTOCOL_41, CLIENT_SSL and secure
@@ -481,27 +526,37 @@ func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, n
 		payload = append(payload, []byte("abcdefghijkl\x00")...)
 		greeting := append([]byte{byte(len(payload)), 0, 0, 0}, payload...)
 		if _, err := stream.Write(greeting); err != nil {
-			return
+			return err
 		}
 		if _, err := targettransport.ReadMySQLPacket(stream, 64<<10); err != nil {
-			return
+			return err
 		}
 	}
-	secure := tls.Server(stream, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.NoClientCert})
-	if secure.HandshakeContext(ctx) != nil {
-		return
+	secure := tls.Server(&fixtureVisitorTLSConn{Conn: stream, ctx: ctx, readResult: f.visitorReadResult}, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.NoClientCert})
+	if err := secure.HandshakeContext(ctx); err != nil {
+		return err
 	}
+	defer func() { result = errors.Join(result, secure.Close()) }()
 	_ = stream.SetDeadline(time.Time{})
 	if f.target != "" {
 		target, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", f.target)
 		if err != nil {
-			return
+			return err
 		}
-		defer target.Close()
-		stop := context.AfterFunc(ctx, func() { _ = target.Close(); _ = stream.Close() })
-		defer stop()
-		_, _ = streamcopy.Copy(secure, target)
-		return
+		var physical sync.Once
+		var closeErr error
+		closeTarget := func() { physical.Do(func() { closeErr = target.Close() }) }
+		stopped := make(chan struct{})
+		stop := context.AfterFunc(ctx, func() { defer close(stopped); closeTarget(); _ = stream.Close() })
+		defer func() {
+			closeTarget()
+			if !stop() {
+				<-stopped
+			}
+			result = errors.Join(result, closeErr)
+		}()
+		_, err = streamcopy.Copy(secure, target)
+		return err
 	}
 	buffer := make([]byte, 4096)
 	for {
@@ -509,11 +564,14 @@ func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, n
 		if n > 0 {
 			f.application.Add(1)
 			if _, err := secure.Write(buffer[:n]); err != nil {
-				return
+				return err
 			}
 		}
 		if err != nil {
-			return
+			if err == io.EOF {
+				return nil
+			}
+			return err
 		}
 	}
 }
@@ -564,6 +622,9 @@ func TestManagedConnectorReadinessAcrossReachabilityAndProtocols(t *testing.T) {
 					t.Run(fmt.Sprintf("public=%v/%s/%s/%s", public, protocol, transport, outcome), func(t *testing.T) {
 						f := newConfiguredConnectorFixture(t, transport, "", func(f *connectorFixture, c *Config) {
 							c.Protocol, f.run.Protocol = protocol, protocol
+							if protocol == "http" {
+								f.run.Endpoint.Port = 443
+							}
 							f.run.Endpoint.Public = public
 							f.wantStartupError = outcome != "ready"
 							f.wrongCertificate.Store(outcome == "wrong-tls")
@@ -861,6 +922,9 @@ func TestConnectorPreservesNativeBytesForHTTPAndTCP(t *testing.T) {
 			f := newConfiguredConnectorFixture(t, "quic", "", func(f *connectorFixture, configuration *Config) {
 				configuration.Protocol, configuration.TrustRevision = protocol, 2
 				f.run.Protocol, f.run.TrustRevision = protocol, 2
+				if protocol == "http" {
+					f.run.Endpoint.Port = 443
+				}
 			})
 			local := f.local(t)
 			// deliberately not HTTP or a TLS handshake: omitted TLS must carry

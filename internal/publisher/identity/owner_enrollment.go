@@ -14,40 +14,35 @@ import (
 // enrollmentSelection names one exact owner scope, not a reusable grant policy.
 type enrollmentSelection struct {
 	kind, team, id, namespace string
-	publicURL                 *controlv1.PublicURL
 }
 
-func (s enrollmentSelection) matches(kind, team string, publicURL, service, domain, namespace *string) bool {
+func (s enrollmentSelection) matches(kind, team string, service, domain, namespace *string) bool {
 	if kind != s.kind || team != s.team {
 		return false
 	}
 	switch s.kind {
-	case "saved_public_url":
-		return publicURL != nil && *publicURL == s.id
 	case "service":
-		return service != nil && *service == s.id
+		return service != nil && *service == s.id && domain == nil && namespace == nil
 	case "namespace":
-		return domain != nil && *domain == s.id && namespace != nil && *namespace == s.namespace && publicURL == nil
+		return domain != nil && *domain == s.id && namespace != nil && *namespace == s.namespace && service == nil
 	}
 	return false
 }
 
 // ensureSelectedEnrollment keeps selection, pending-key recovery, and promotion
 // under one scope lock. explicit namespace setup alone also records a default;
-// saved URLs select their serving resource, while service trust stays above it.
-func ensureSelectedEnrollment(ctx context.Context, state *clientstate.Store, control OwnerControl, services ServiceControl, authority EnrollmentAuthority, scope enrollmentSelection) (*Native, authorityv1.PublisherEnrollmentResult, error) {
-	if state == nil || control == nil || authority == nil {
+// exact-service setup selects its saved service, while trust stays above it.
+func ensureSelectedEnrollment(ctx context.Context, state *clientstate.Store, control OwnerControl, nativeControl NativeControl, authority EnrollmentAuthority, scope enrollmentSelection) (*Native, authorityv1.PublisherEnrollmentResult, error) {
+	if state == nil || control == nil || nativeControl.Services == nil || authority == nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
-	selection, key := "project", "owner-url:"+scope.id
+	selection, key := "project", "project-publisher:service:"+scope.id
 	request := controlv1.CreatePublisherEnrollmentRequest{TeamId: scope.team, Name: "tnl", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled}
 	switch scope.kind {
-	case "saved_public_url":
-		request.PublicUrlId = &scope.id
 	case "service":
-		key, request.ServiceId = "project-publisher:service:"+scope.id, &scope.id
+		request.ServiceId = &scope.id
 	case "namespace":
-		selection, key, request.DomainId = "namespace", namespaceScope(scope.team, scope.id), &scope.id
+		selection, key, request.DomainId = "namespace", namespaceScope(scope.team, scope.id, scope.namespace), &scope.id
 	default:
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
@@ -64,10 +59,10 @@ func ensureSelectedEnrollment(ctx context.Context, state *clientstate.Store, con
 	var identity authorityv1.PublisherEnrollmentResult
 	if found {
 		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID ||
-			!scope.matches(string(identity.Kind), identity.TeamId, identity.PublicUrlId, identity.ServiceId, identity.DomainId, identity.Namespace) {
+			!scope.matches(string(identity.Kind), identity.TeamId, identity.ServiceId, identity.DomainId, identity.Namespace) {
 			return nil, identity, ErrScope
 		}
-		native, identity, err = LoadNative(ctx, state, NativeControl{PublicURLControl: control, Services: services}, authority, identity.ClientId)
+		native, identity, err = LoadNative(ctx, state, nativeControl, authority, identity.ClientId)
 		if err != nil {
 			return nil, identity, err
 		}
@@ -84,7 +79,7 @@ func ensureSelectedEnrollment(ctx context.Context, state *clientstate.Store, con
 			if err != nil {
 				return nil, identity, err
 			}
-			if !scope.matches(string(enrollment.Kind), enrollment.TeamId, enrollment.PublicUrlId, enrollment.ServiceId, enrollment.DomainId, enrollment.Namespace) ||
+			if !scope.matches(string(enrollment.Kind), enrollment.TeamId, enrollment.ServiceId, enrollment.DomainId, enrollment.Namespace) ||
 				scope.kind == "namespace" && !enrollment.ExpiresAt.After(time.Now()) {
 				return nil, identity, ErrScope
 			}
@@ -93,18 +88,15 @@ func ensureSelectedEnrollment(ctx context.Context, state *clientstate.Store, con
 				return nil, identity, err
 			}
 		}
-		native, identity, err = EnrollNative(ctx, state, NativeControl{PublicURLControl: control, Services: services}, authority, string(pending.EnrollmentSecret))
+		native, identity, err = EnrollNative(ctx, state, nativeControl, authority, string(pending.EnrollmentSecret))
 		if err != nil {
 			return nil, identity, err
 		}
 	}
-	if !scope.matches(string(identity.Kind), identity.TeamId, identity.PublicUrlId, identity.ServiceId, identity.DomainId, identity.Namespace) {
+	if !scope.matches(string(identity.Kind), identity.TeamId, identity.ServiceId, identity.DomainId, identity.Namespace) {
 		return nil, identity, ErrScope
 	}
-	switch scope.kind {
-	case "saved_public_url":
-		err = native.SelectPublicURL(*scope.publicURL)
-	case "namespace":
+	if scope.kind == "namespace" {
 		if _, err = native.Access(ctx); err == nil {
 			err = saveDefaultNamespace(ctx, state, identity)
 		}

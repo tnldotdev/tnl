@@ -118,7 +118,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 			metadata = postgresLoadMetadata(t)
 			target = postgresLoadTarget
 		}
-		service, err := authenticated.Control.CreateService(ctx, person.PersonalTeamId, fmt.Sprintf("connect-%d", index), key, metadata)
+		service, err := authenticated.Control.CreateService(ctx, person.PersonalTeamId, fmt.Sprintf("connect-%d", index), key, metadata, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +126,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		if err != nil {
 			t.Fatal(err)
 		}
-		native, identity, err := publisheridentity.EnrollNative(ctx, profile, publisheridentity.NativeControl{PublicURLControl: authenticated.Control, Services: authenticated.Control}, authenticated.Authority, enrollment.EnrollmentKey)
+		native, identity, err := publisheridentity.EnrollNative(ctx, profile, publisheridentity.NativeControl{Services: authenticated.Control}, authenticated.Authority, enrollment.EnrollmentKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +142,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		ready, done := make(chan struct{}), make(chan error, 1)
 		publishers.Go(func() {
 			err := publisherservice.Publish(publishCtx, publisherservice.RunConfig{
-				Control: authenticated.Control, State: profile, Access: native.Access, Identity: identity,
+				Control: authenticated.Control, State: profile, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
 				ServiceID: service.Id, Target: target, StreamCapacity: 256,
 				Metadata:  controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
 				Ready:     func() error { close(ready); return nil },

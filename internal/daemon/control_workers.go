@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -40,6 +41,24 @@ func (d *daemon) startControlWorkers(
 		return err
 	}
 	d.database = database
+	if err := database.ConfigureControlOutageTolerance(cfg.ControlOutageTolerance); err != nil {
+		return err
+	}
+	if len(cfg.IngressIPv4Addresses) > 1 || len(cfg.IngressIPv6Addresses) > 1 {
+		return errors.New("provision primary ingress pool: configure at most one ingress IPv4 and one ingress IPv6 address")
+	}
+	if len(cfg.IngressIPv4Addresses)+len(cfg.IngressIPv6Addresses) != 0 {
+		ipv4, ipv6 := "", ""
+		if len(cfg.IngressIPv4Addresses) != 0 {
+			ipv4 = cfg.IngressIPv4Addresses[0]
+		}
+		if len(cfg.IngressIPv6Addresses) != 0 {
+			ipv6 = cfg.IngressIPv6Addresses[0]
+		}
+		if err := database.EnsurePrimaryIngressPool(ctx, ipv4, ipv6, time.Now()); err != nil {
+			return fmt.Errorf("provision primary ingress pool: %w", err)
+		}
+	}
 	ports, err := cfg.ServicePortInventory()
 	if err != nil {
 		return err
@@ -50,20 +69,14 @@ func (d *daemon) startControlWorkers(
 	database.Instrument(metrics)
 	metrics.RegisterDatabase(database.PrometheusMetrics)
 	d.start("observe service port capacity", func() error { return maintenance.RunPortPoolMetrics(lifetime, database, metrics) })
-	d.start("expire saved publish runs", func() error {
-		return maintenance.RunExpiredPublishRunCleanup(lifetime, database, metrics)
+	d.start("expire service runs", func() error {
+		return maintenance.RunServiceRunCleanup(lifetime, database, metrics)
 	})
 	d.start("clean up connector peer pairs", func() error {
 		return maintenance.RunConnectorPeerPairCleanup(lifetime, database, metrics)
 	})
-	d.start("clean up ephemeral public URLs", func() error {
-		return maintenance.RunEphemeralPublicURLCleanup(lifetime, database, metrics)
-	})
-	d.start("forget expired guest credentials", func() error {
+	d.start("forget expired guest private state", func() error {
 		return maintenance.RunGuestPrivateStateCleanup(lifetime, database, metrics)
-	})
-	d.start("clean up routing history", func() error {
-		return maintenance.RunRoutingHistoryCleanup(lifetime, database, metrics)
 	})
 	d.start("clean up service audit", func() error { return maintenance.RunServiceAuditCleanup(lifetime, database, metrics) })
 	d.start("clean up workload history", func() error { return maintenance.RunWorkloadCleanup(lifetime, database, metrics) })
@@ -84,7 +97,7 @@ func (d *daemon) startControlWorkers(
 		dns.DNSVerifier
 		dns.ChallengeVerifier
 	}
-	var routeDNSChallenges certificates.PublicURLDNSChallenges
+	var serviceDNSChallenges certificates.ServiceDNSChallenges
 	var relayDNSChallenges certificates.RelayDNSChallenges
 	dnsConfig := dns.Config{
 		ManagedDomain: cfg.ManagedDomain, ManagedZoneID: cfg.Route53ManagedZoneID,
@@ -110,7 +123,7 @@ func (d *daemon) startControlWorkers(
 			}
 		}
 		if cfg.DNSAutomationEnabled() {
-			routeDNSChallenges, err = dns.NewChallengeManager(database, dnsProvider, dnsVerifier, dnsConfig)
+			serviceDNSChallenges, err = dns.NewChallengeManager(database, dnsProvider, dnsVerifier, dnsConfig)
 			if err != nil {
 				return err
 			}
@@ -137,20 +150,20 @@ func (d *daemon) startControlWorkers(
 		if err != nil {
 			return err
 		}
-		for index := range cfg.PublicURLCertificateWorkers {
-			publicURLWorkerID, err := opaqueid.New(opaqueid.PublicURLCertificateWorkerPrefix)
+		for index := range cfg.ServiceCertificateWorkers {
+			serviceWorkerID, err := opaqueid.New(opaqueid.ServiceCertificateWorkerPrefix)
 			if err != nil {
-				return fmt.Errorf("create public URL certificate worker identity: %w", err)
+				return fmt.Errorf("create service certificate worker identity: %w", err)
 			}
-			publicURLWorker, err := certificates.NewPublicURLWorker(database, certificates.PublicURLConfig{
-				WorkerID: publicURLWorkerID, Profile: cfg.ACMEProfile,
-				HTTPClient: acmeHTTPClient, DNSChallenges: routeDNSChallenges, Observer: metrics,
+			serviceWorker, err := certificates.NewServiceWorker(database, certificates.ServiceConfig{
+				WorkerID: serviceWorkerID, Profile: cfg.ACMEProfile,
+				HTTPClient: acmeHTTPClient, DNSChallenges: serviceDNSChallenges, Observer: metrics,
 			})
 			if err != nil {
 				return err
 			}
-			d.start(fmt.Sprintf("run public URL certificate worker %d", index+1), func() error {
-				return publicURLWorker.Run(lifetime)
+			d.start(fmt.Sprintf("run service certificate worker %d", index+1), func() error {
+				return serviceWorker.Run(lifetime)
 			})
 		}
 		if relayDNSChallenges != nil {

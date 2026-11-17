@@ -122,3 +122,33 @@ func TestMetadataReloadClassificationAndSafeFormatting(t *testing.T) {
 		}
 	}
 }
+
+func TestMetadataReloadOnlyRecognizesPureCauses(t *testing.T) {
+	reload := &MetadataReloadError{}
+	var absent *MetadataReloadError
+	for _, test := range []struct {
+		name string
+		err  error
+		pure bool
+	}{
+		{name: "nil"},
+		{name: "typed-nil", err: absent},
+		{name: "pure", err: reload, pure: true},
+		{name: "wrapped", err: fmt.Errorf("runner: %w", reload), pure: true},
+		{name: "joined-metadata", err: errors.Join(reload, fmt.Errorf("observation: %w", &MetadataReloadError{})), pure: true},
+		{name: "joined-cancellation", err: errors.Join(reload, context.Canceled)},
+		{name: "independent-connection-failure", err: errors.Join(reload, ErrServiceConnection)},
+		{name: "owned-cleanup", err: &CleanupError{Err: reload}},
+		{name: "session-cleanup", err: &tunnel.SessionCleanupError{Err: reload}},
+		{name: "transport-cleanup", err: &muxsession.QUICTransportCloseError{Err: reload}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := MetadataReloadOnly(test.err); got != test.pure {
+				t.Error("metadata continuation changed the meaning of a cause", got, test.pure)
+			}
+			if test.err != nil && test.err != absent && !IsMetadataReload(test.err) {
+				t.Error("broad stream recognition changed instead of the continuation rule")
+			}
+		})
+	}
+}

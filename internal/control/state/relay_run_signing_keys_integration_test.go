@@ -35,8 +35,22 @@ func TestIntegrationRelayRunSigningKeyRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// a current process remains bound long after the superseded-key horizon.
+	renewed, err := d.RenewRelay(t.Context(), RelayRenewal{RelayLeaseIdentity: current.RelayLeaseIdentity}, now.Add(time.Second), 48*time.Hour)
+	if err != nil || renewed.RelayLeaseIdentity != current.RelayLeaseIdentity ||
+		!renewed.RegisteredAt.Equal(current.RegisteredAt) {
+		t.Fatal("current serving process could not renew its existing binding", err)
+	}
+	current = renewed
+	if _, err := d.RenewRelay(t.Context(), RelayRenewal{RelayLeaseIdentity: current.RelayLeaseIdentity},
+		current.ServingUntil, 24*time.Hour); !errors.Is(err, ErrRelayLeaseStale) {
+		t.Fatal("relay serving expiry accepted a renewal", err)
+	}
+	// the current key remains bound after serving authority expires, not just
+	// while its longer liveness lease or the superseded-key horizon is current.
 	longRunning := now.Add(25 * time.Hour)
+	if !current.ServingUntil.Before(longRunning) || !current.LeaseExpiresAt.After(longRunning) {
+		t.Fatal("fixture did not separate retained key, serving authority, and liveness")
+	}
 	if removed, err := d.CleanupRelayRunSigningKeys(t.Context(), longRunning, 1); err != nil || removed != 0 {
 		t.Fatalf("current run was removed after 25h: %d %v", removed, err)
 	}
@@ -48,8 +62,11 @@ func TestIntegrationRelayRunSigningKeyRetention(t *testing.T) {
 	if _, err := d.RegisterRelay(t.Context(), bad, longRunning, time.Hour); !errors.Is(err, ErrRelayRegistrationConflict) {
 		t.Fatal("current run changed its key after 25h", err)
 	}
-	if _, err := d.RenewRelay(t.Context(), RelayRenewal{RelayLeaseIdentity: current.RelayLeaseIdentity}, longRunning, 24*time.Hour); err != nil {
-		t.Fatal(err)
+	if _, err := d.RenewRelay(t.Context(), RelayRenewal{RelayLeaseIdentity: current.RelayLeaseIdentity}, longRunning, 24*time.Hour); !errors.Is(err, ErrRelayLeaseStale) {
+		t.Fatal("retained key or longer liveness lease revived expired serving authority", err)
+	}
+	if key, superseded := relayRunKeyBinding(t, d, a.RelayID, a.RelayRunID); !bytes.Equal(key, a.PeerSigningPublicKey) || superseded != nil {
+		t.Fatal("rejected renewal changed the retained current key")
 	}
 	replacedAt := now.Add(49 * time.Hour)
 	b := a

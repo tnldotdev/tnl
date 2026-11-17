@@ -66,7 +66,7 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 			TLSServerName: registration.TLSServerName, InternalRelayAddress: registration.InternalRelayAddress,
 			InternalNetworks: registration.InternalNetworks, ConnectionCapacity: registration.ConnectionCapacity,
 			StreamCapacity: registration.StreamCapacity, RegisteredAt: registeredAt,
-			RenewedAt: registeredAt, LeaseExpiresAt: registeredAt.Add(leaseDuration),
+			RenewedAt: registeredAt, LeaseExpiresAt: registeredAt.Add(leaseDuration), ServingUntil: registeredAt.Add(leaseDuration),
 		}, nil
 	}}
 	body := relayv1.RelayRegistration{
@@ -148,44 +148,43 @@ func TestClaimPublisherConnectionParsesCredentialAndExactIdentity(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got controlstate.PublisherConnectionClaimRequest
+	var gotConnection, gotService, gotRun, gotCredential string
+	var gotNumber, gotRevision int64
+	var gotSource netip.Addr
+	var gotLease controlstate.RelayLeaseIdentity
 	claimCalls := 0
-	store := &relayStoreStub{claimPublisherConnection: func(
-		_ context.Context,
-		request controlstate.PublisherConnectionClaimRequest,
-		_ time.Time,
-	) (controlstate.ClaimedPublisherConnection, error) {
-		got = request
+	store := &relayStoreStub{claimServicePublisherConnection: func(
+		_ context.Context, connection, service, run string, number, revision int64, secret string, source netip.Addr, lease controlstate.RelayLeaseIdentity, _ time.Time,
+	) (controlstate.ServicePublisherConnection, error) {
+		gotConnection, gotService, gotRun, gotNumber, gotRevision = connection, service, run, number, revision
+		gotCredential, gotSource, gotLease = secret, source, lease
 		claimCalls++
-		return controlstate.ClaimedPublisherConnection{
-			ConnectionAssignmentIdentity: request.ConnectionAssignmentIdentity,
-			RelayLeaseIdentity:           request.RelayLeaseIdentity, ClaimID: request.ClaimID,
-			RelayAddress: "relay.example:443", TLSServerName: "relay.example", State: "connected",
-			PublisherConnectionCredentialExpiresAt: time.Now().Add(time.Minute), ConnectedAt: time.Now(),
+		return controlstate.ServicePublisherConnection{
+			ConnectionID: connection, ServiceID: service, RunID: run, RunNumber: number,
+			Revision: revision, RelayServiceID: "relay-service-1",
 		}, nil
 	}}
-	body := relayv1.PublisherConnectionClaim{
-		PublishRunId: "session-1", PublicUrlId: "route-1", PublishRunNumber: 3,
-		PublisherConnectionId: "connection-1", ConnectionSlot: 1, ConnectionAssignmentRevision: 2,
-		RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1",
-		RelayLeaseRevision: 4, ClaimId: "claim-1", PublisherConnectionCredential: credential.String(),
+	body := relayv1.ServicePublisherConnectionClaim{
+		ServiceId: "svc_0123456789abcdefghijkl", ServiceRunId: "srun_0123456789abcdefghijkl", RunNumber: 3,
+		ConnectionAssignmentRevision: 2, RelayId: "relay-1", RelayRunId: "run-1",
+		RelayLeaseRevision: 4, Credential: credential.String(), ObservedSourceIp: "192.0.2.1",
 	}
-	target := "/internal/v1/publisher-connections/connection-1/claim"
+	target := "/internal/v1/private-publisher-connections/pc_0123456789abcdefghijkl/claim"
 	response := serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, target, body)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	if got.PublishRunID != "session-1" || got.PublicURLID != "route-1" || got.PublishRunNumber != 3 ||
-		got.PublisherConnectionID != "connection-1" || got.ConnectionSlot != 1 ||
-		got.ConnectionAssignmentRevision != 2 || got.ConnectionAssignmentIdentity.RelayServiceID != "relay-service-1" ||
-		got.RelayID != "relay-1" || got.RelayRunID != "run-1" || got.RelayLeaseRevision != 4 ||
-		got.ClaimID != "claim-1" || got.CredentialDigest != [32]byte(wantDigest) {
-		t.Fatalf("claim request = %#v", got)
+	digest, err := credentials.ParsePublisherConnectionCredential(credentials.PublisherConnectionCredential(gotCredential))
+	if err != nil || digest != wantDigest ||
+		gotConnection != "pc_0123456789abcdefghijkl" || gotService != body.ServiceId || gotRun != body.ServiceRunId ||
+		gotNumber != 3 || gotRevision != 2 || gotSource.String() != body.ObservedSourceIp ||
+		gotLease.RelayID != body.RelayId || gotLease.RelayRunID != body.RelayRunId || gotLease.RelayLeaseRevision != 4 {
+		t.Fatalf("claim request = connection=%q service=%q run=%q number=%d revision=%d source=%v lease=%+v credential=%v", gotConnection, gotService, gotRun, gotNumber, gotRevision, gotSource, gotLease, err)
 	}
-	body.PublisherConnectionId = "connection-2"
+	body.ServiceRunId = "invalid"
 	response = serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, target, body)
 	if response.Code != http.StatusBadRequest || claimCalls != 1 {
-		t.Fatalf("mismatched path status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
+		t.Fatalf("invalid run status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
 	}
 }
 
@@ -201,35 +200,32 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 		problemType string
 	}{
 		{name: "relay lease stale", err: controlstate.ErrRelayLeaseStale, status: http.StatusConflict, problemType: "relay_lease_stale"},
-		{name: "stale assignment", err: controlstate.ErrConnectionAssignmentStale, status: http.StatusConflict, problemType: "stale_connection_assignment"},
-		{name: "duplicate connection", err: controlstate.ErrPublisherConnectionAlreadyClaimed, status: http.StatusConflict, problemType: "publisher_connection_already_claimed"},
-		{name: "credential", err: controlstate.ErrPublisherConnectionCredential, status: http.StatusUnauthorized, problemType: "invalid_publisher_connection_credential"},
+		{name: "credential", err: credentials.ErrInvalidPublisherConnectionCredential, status: http.StatusUnauthorized, problemType: "invalid_publisher_connection_credential"},
 		{name: "draining", err: controlstate.ErrRelayDraining, status: http.StatusServiceUnavailable, problemType: "relay_draining"},
 		{name: "capacity", err: controlstate.ErrRelayConnectionCapacity, status: http.StatusServiceUnavailable, problemType: "relay_connection_capacity_exhausted"},
-		{name: "unavailable", err: controlstate.ErrPublisherConnectionUnavailable, status: http.StatusConflict, problemType: "publisher_connection_unavailable"},
+		{name: "wrong relay service", err: controlstate.ErrPublisherConnectionRelayService, status: http.StatusConflict, problemType: "publisher_connection_unavailable"},
 		{name: "internal", err: errors.New("private database failure"), status: http.StatusInternalServerError, problemType: "internal"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := &relayStoreStub{claimPublisherConnection: func(
-				context.Context, controlstate.PublisherConnectionClaimRequest, time.Time,
-			) (controlstate.ClaimedPublisherConnection, error) {
-				return controlstate.ClaimedPublisherConnection{}, test.err
+			store := &relayStoreStub{claimServicePublisherConnection: func(
+				context.Context, string, string, string, int64, int64, string, netip.Addr, controlstate.RelayLeaseIdentity, time.Time,
+			) (controlstate.ServicePublisherConnection, error) {
+				return controlstate.ServicePublisherConnection{}, test.err
 			}}
-			body := relayv1.PublisherConnectionClaim{
-				PublishRunId: "session-1", PublicUrlId: "route-1", PublishRunNumber: 1,
-				PublisherConnectionId: "connection-1", ConnectionSlot: 0, ConnectionAssignmentRevision: 1,
-				RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1",
-				RelayLeaseRevision: 1, ClaimId: "claim-1", PublisherConnectionCredential: credential.String(),
+			body := relayv1.ServicePublisherConnectionClaim{
+				ServiceId: "svc_0123456789abcdefghijkl", ServiceRunId: "srun_0123456789abcdefghijkl", RunNumber: 1,
+				ConnectionAssignmentRevision: 1, RelayId: "relay-1", RelayRunId: "run-1",
+				RelayLeaseRevision: 1, Credential: credential.String(), ObservedSourceIp: "192.0.2.1",
 			}
 			response := serveRelayJSON(
 				t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost,
-				"/internal/v1/publisher-connections/connection-1/claim", body,
+				"/internal/v1/private-publisher-connections/pc_0123456789abcdefghijkl/claim", body,
 			)
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
 			}
-			wire, err := relayv1.ParseClaimPublisherConnectionResponse(response.Result())
+			wire, err := relayv1.ParseClaimServicePublisherConnectionResponse(response.Result())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -237,7 +233,7 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = client.ClaimPublisherConnection(t.Context(), body.PublisherConnectionId, body)
+			_, err = client.ClaimServicePublisherConnection(t.Context(), "pc_0123456789abcdefghijkl", body)
 			var direct *serverhttp.ProblemError
 			if !errors.As(err, &direct) || direct.Status != wire.StatusCode() || wire.ApplicationproblemJSONDefault == nil ||
 				direct.Type != wire.ApplicationproblemJSONDefault.Type || direct.Title != wire.ApplicationproblemJSONDefault.Title ||
@@ -308,13 +304,11 @@ func assertRelayProblemType(t *testing.T, response *httptest.ResponseRecorder, w
 type relayStoreStub struct {
 	serviceConnectionStore
 	connectorPeerLegStore
-	registerRelay                 func(context.Context, controlstate.RelayRegistration, time.Time, time.Duration) (controlstate.RelayLease, error)
-	renewRelay                    func(context.Context, controlstate.RelayRenewal, time.Time, time.Duration) (controlstate.RelayLease, error)
-	beginRelayDrain               func(context.Context, controlstate.RelayLeaseIdentity, time.Time, time.Time) (controlstate.RelayLease, error)
-	getRelayTransportCertificate  func(context.Context, controlstate.RelayLeaseIdentity, time.Time) (controlstate.RelayTransportCertificate, error)
-	claimPublisherConnection      func(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
-	markPublisherConnectionReady  func(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error)
-	disconnectPublisherConnection func(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time, bool) (controlstate.ClaimedPublisherConnection, error)
+	registerRelay                   func(context.Context, controlstate.RelayRegistration, time.Time, time.Duration) (controlstate.RelayLease, error)
+	renewRelay                      func(context.Context, controlstate.RelayRenewal, time.Time, time.Duration) (controlstate.RelayLease, error)
+	beginRelayDrain                 func(context.Context, controlstate.RelayLeaseIdentity, time.Time, time.Time) (controlstate.RelayLease, error)
+	getRelayTransportCertificate    func(context.Context, controlstate.RelayLeaseIdentity, time.Time) (controlstate.RelayTransportCertificate, error)
+	claimServicePublisherConnection func(context.Context, string, string, string, int64, int64, string, netip.Addr, controlstate.RelayLeaseIdentity, time.Time) (controlstate.ServicePublisherConnection, error)
 }
 
 func (s *relayStoreStub) RegisterRelay(
@@ -341,20 +335,8 @@ func (s *relayStoreStub) GetRelayTransportCertificate(
 	return s.getRelayTransportCertificate(ctx, identity, now)
 }
 
-func (s *relayStoreStub) ClaimPublisherConnection(
-	ctx context.Context, request controlstate.PublisherConnectionClaimRequest, now time.Time,
-) (controlstate.ClaimedPublisherConnection, error) {
-	return s.claimPublisherConnection(ctx, request, now)
-}
-
-func (s *relayStoreStub) MarkPublisherConnectionReady(
-	ctx context.Context, request controlstate.PublisherConnectionClaimRequest, now time.Time,
-) (controlstate.ClaimedPublisherConnection, error) {
-	return s.markPublisherConnectionReady(ctx, request, now)
-}
-
-func (s *relayStoreStub) DisconnectPublisherConnection(
-	ctx context.Context, request controlstate.PublisherConnectionClaimRequest, now time.Time, unexpected bool,
-) (controlstate.ClaimedPublisherConnection, error) {
-	return s.disconnectPublisherConnection(ctx, request, now, unexpected)
+func (s *relayStoreStub) ClaimServicePublisherConnection(
+	ctx context.Context, connection, service, run string, number, revision int64, credential string, source netip.Addr, lease controlstate.RelayLeaseIdentity, now time.Time,
+) (controlstate.ServicePublisherConnection, error) {
+	return s.claimServicePublisherConnection(ctx, connection, service, run, number, revision, credential, source, lease, now)
 }

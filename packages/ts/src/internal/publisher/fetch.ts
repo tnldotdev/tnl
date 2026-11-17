@@ -1,15 +1,22 @@
 import { once } from "node:events";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { TnlError } from "../../errors.js";
 import type { FetchHandler } from "./fetch_types.js";
+import type { LocalHTTPServer } from "./register.js";
+
+const copies = new WeakMap<Server, Set<Promise<void>>>();
 
 // the owned HTTP listener adapts Fetch requests without a framework or child publisher.
 export async function createFetchServer(handler: FetchHandler): Promise<Server> {
   if (typeof handler !== "function") throw new TnlError("sdk.configuration_invalid");
+  const workers = new Set<Promise<void>>();
   const server = createServer((incoming, outgoing) => {
-    void serveFetch(handler, incoming, outgoing);
+    const worker = serveFetch(handler, incoming, outgoing);
+    workers.add(worker);
+    void worker.finally(() => workers.delete(worker));
   });
+  copies.set(server, workers);
   // Fetch handlers have no portable socket takeover in Node or Bun.
   server.on("upgrade", (_request, socket) => {
     socket.end("HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
@@ -33,13 +40,23 @@ export async function createFetchServer(handler: FetchHandler): Promise<Server> 
   return server;
 }
 
+export async function joinFetchServer(server: LocalHTTPServer): Promise<void> {
+  if (server instanceof Server) await Promise.all(copies.get(server) ?? []);
+}
+
 async function serveFetch(
   handler: FetchHandler,
   incoming: IncomingMessage,
   outgoing: ServerResponse,
 ): Promise<void> {
   const controller = new AbortController();
-  outgoing.once("close", () => controller.abort());
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  outgoing.once("close", () => {
+    controller.abort();
+    // releasing the reader interrupts tnl's pending copy without waiting for
+    // an arbitrary application's stream cancellation callback.
+    reader?.releaseLock();
+  });
   try {
     const host = incoming.headers.host;
     if (
@@ -69,7 +86,16 @@ async function serveFetch(
       signal: controller.signal,
       ...(body === undefined ? {} : { duplex: "half" }),
     } as RequestInit & { duplex?: "half" });
-    const response = await handler(request);
+    const interrupted = Promise.withResolvers<never>();
+    const interrupt = () => interrupted.reject(controller.signal.reason);
+    controller.signal.addEventListener("abort", interrupt, { once: true });
+    let response: Response;
+    try {
+      response = await Promise.race([handler(request), interrupted.promise]);
+    } finally {
+      controller.signal.removeEventListener("abort", interrupt);
+    }
+    if (controller.signal.aborted) return;
     if (!(response instanceof Response)) throw new TnlError("sdk.response_invalid");
     for (const [name, value] of response.headers) {
       if (name !== "set-cookie") outgoing.setHeader(name, value);
@@ -81,7 +107,7 @@ async function serveFetch(
       outgoing.end();
       return;
     }
-    const reader = response.body.getReader();
+    reader = response.body.getReader();
     try {
       for (;;) {
         const result = await reader.read();
@@ -94,6 +120,7 @@ async function serveFetch(
       reader.releaseLock();
     }
   } catch {
+    if (outgoing.destroyed) return;
     if (!outgoing.headersSent) outgoing.writeHead(500).end("handler failed\n");
     else outgoing.destroy();
   }

@@ -34,7 +34,7 @@ x-runtime: &runtime
         -tnl-runtime-load-public-urls='${PUBLIC_URLS:-4}' \
         -tnl-runtime-load-start-parallel='${START_PARALLEL:-4}' \
         -tnl-runtime-load-ready-timeout='${READY_TIMEOUT:-30s}' \
-        -tnl-runtime-load-public-url-certificate-workers='${PUBLIC_URL_CERTIFICATE_WORKERS:-8}' \
+        -tnl-runtime-load-service-certificate-workers='${SERVICE_CERTIFICATE_WORKERS:-8}' \
         -tnl-runtime-load-rps='${RPS:-16}' \
         -tnl-runtime-load-workers='${WORKERS:-128}' \
         -tnl-runtime-load-queue='${QUEUE:-8}' \
@@ -200,6 +200,18 @@ services:
       default:
         aliases: [control, control.split.integration.test]
 
+  ingress-address:
+    <<: *runtime
+    cpus: "0.5"
+    mem_limit: 64m
+    memswap_limit: 64m
+    command: [/usr/sbin/haproxy, -W, -db, -f, /etc/haproxy/haproxy.cfg]
+    volumes:
+      - ./ingress-address.cfg:/etc/haproxy/haproxy.cfg:ro
+    networks:
+      default:
+        aliases: [ingress]
+
   ingress-a:
     <<: *runtime
     cap_add: [NET_ADMIN]
@@ -211,7 +223,7 @@ services:
       SEPARATED_COMPONENT: ingress-a
     networks:
       default:
-        aliases: [ingress, ingress-a-separated.split.integration.test]
+        aliases: [ingress-a-separated.split.integration.test]
 
   ingress-b:
     <<: *runtime
@@ -224,7 +236,7 @@ services:
       SEPARATED_COMPONENT: ingress-b
     networks:
       default:
-        aliases: [ingress, ingress-b-separated.split.integration.test]
+        aliases: [ingress-b-separated.split.integration.test]
 
   relay-a:
     <<: *runtime

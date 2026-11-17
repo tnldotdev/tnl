@@ -39,7 +39,7 @@ func TestApplyCapturesPortableTargetTrustSeparateFromVisitorTrust(t *testing.T) 
 	address := config.Target("https://127.0.0.1:8443")
 	hostname := "target.internal"
 	source := string(ca)
-	project := Project{Root: root, Config: config.TNL{Services: config.Services{"api": {Tunnel: &config.Tunnel{}, Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{Hostname: &hostname, CA: &source}}}}}}
+	project := Project{Root: root, Config: config.TNL{Services: config.Services{"api": {Public: new(true), Target: &config.ServiceTarget{Type: "address", Address: &address, TLS: &config.TargetTLS{Hostname: &hostname, CA: &source}}}}}}
 	snapshot, err := project.CaptureTargetTrust(t.Context(), "api", "")
 	if err != nil || snapshot.Hostname != hostname || len(snapshot.CAPEM) == 0 || snapshot.Validate() != nil {
 		t.Fatalf("captured target trust: %+v: %v", snapshot, err)

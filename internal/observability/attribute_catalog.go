@@ -32,10 +32,9 @@ func VocabularyAttributes() []AttributeDefinition {
 	for _, k := range []attributeKey{CloudProvider, CloudRegion, CloudAvailabilityZone} {
 		add(k, PolicyResource, "known operator-declared cloud fact; no metadata discovery")
 	}
-	for _, k := range []attributeKey{TeamID, ReportedDeploymentID, ReplicaKey, DeploymentID, PublisherIdentityID, ServiceID, PublicURLID} {
-		add(k, PolicyScoped, "authenticated stable identity; instrument allowlist required; service_id and public_url_id are mutually exclusive")
+	for _, k := range []attributeKey{TeamID, ReportedDeploymentID, ReplicaKey, DeploymentID, PublisherIdentityID, ServiceID} {
+		add(k, PolicyScoped, "authenticated stable identity; instrument allowlist required")
 	}
-	add(ServiceKindKey, PolicyScoped, "service or public URL; service wire value normalizes to service", Service.String(), PublicURL.String())
 	add(Component, PolicyBounded, "component performing this work; independent of process role", "control", "authority", "private_ingress", "private_relay", "ingress", "relay", "publisher", "client", "accounts", "collector")
 	add(ServiceProtocol, PolicyBounded, "service application protocol", "http", "postgres", "mysql", "tcp", "kubernetes")
 	add(targetProvider, PolicyBounded, "publisher target discovery provider", "aws")
@@ -61,9 +60,9 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(ErrorType, PolicyTraceLog, "exact owned failure.Reason, diagnostic code, or closed tunnel.<code>; unknown errors use "+string(failure.Unexpected), errorTypeValues()...)
 	add(State, PolicyBounded, "closed per-instrument readiness or state-machine value")
 	add(Event, PolicyBounded, "closed lifecycle event; bound is an SDK listener, registered is a native registration transition, and publication_ready is native routability; company reconciliation uses busy, completed, and partial_failed; status/watch readers do not emit transitions", events[1:]...)
-	add(CertificateKind, PolicyBounded, "certificate worker domain", "public_url", "relay", "service", "control", "service_queue")
-	add(DNSKind, PolicyBounded, "DNS worker domain", "authority", "public_url", "service", "public_url_challenge", "service_challenge", "relay_challenge")
-	add(CleanupKind, PolicyBounded, "cleanup domain", "expired_publish_runs", "ephemeral_public_urls", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads")
+	add(CertificateKind, PolicyBounded, "certificate worker domain", "relay", "service", "control", "service_queue")
+	add(DNSKind, PolicyBounded, "DNS worker domain", "authority", "service", "service_challenge", "relay_challenge")
+	add(CleanupKind, PolicyBounded, "cleanup domain", "service_runs", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads")
 	add(CapacityResource, PolicyBounded, "admission capacity domain", admissionResources...)
 	add(HTTPMethod, PolicyBounded, "standard HTTP method; unknown methods normalize to _OTHER", "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH", "_OTHER")
 	add(HTTPStatus, PolicyBounded, "HTTP response status code, 100 through 599")
@@ -72,10 +71,10 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(TLSKeyExchange, PolicyBounded, "negotiated TLS key exchange", "X25519MLKEM768", "SecP256r1MLKEM768", "SecP384r1MLKEM1024", "MLKEM1024", "X25519", "CurveP256", "CurveP384", "CurveP521", "other")
 	add(TLSResumed, PolicyBounded, "whether this TLS handshake resumed a session", "true", "false")
 	add(ResponseOrigin, PolicyBounded, "component authoring the HTTP response", "tnl", "local_service")
-	for _, k := range []attributeKey{VisitorConnectionID, RequestID, PublishRunID, PublishRunNumber, PublisherConnectionID, GrantID, ActorID, Revision, ImageHash, WorkloadSessionID, WorkloadRunID, WorkloadRunAttempt, WorkloadCheckRunID} {
+	for _, k := range []attributeKey{VisitorConnectionID, RequestID, ServiceRunID, ServiceRunNumber, PublisherConnectionID, GrantID, ActorID, Revision, ImageHash, WorkloadSessionID, WorkloadRunID, WorkloadRunAttempt, WorkloadCheckRunID} {
 		add(k, PolicyTraceLog, "high-churn correlation only; prohibited as a metric dimension")
 	}
-	for _, k := range []attributeKey{connectionClass, providerKey, publicURLPurpose, domainKind, certificatePlan, ingresspool, databasePurpose, signalKey} {
+	for _, k := range []attributeKey{connectionClass, providerKey, domainKind, certificatePlan, ingresspool, databasePurpose, signalKey} {
 		add(k, PolicyBounded, "closed domain value supplied by the owning semantic observer")
 	}
 	slices.SortFunc(out, func(a, b AttributeDefinition) int { return strings.Compare(string(a.Key), string(b.Key)) })
@@ -97,7 +96,7 @@ func errorTypeValues() []string {
 	return slices.Compact(values)
 }
 
-var admissionResources = []string{"client_hello_connections", "public_connections", "public_url_connections", "denied_connections", "denied_public_url_connections", "control_connections", "relay_tcp_connections", "publisher_connections", "relay_streams", "process_connection_rate", "source_connection_rate", "source_connections", "public_url_connection_rate", "public_url_connection_total", "pending_source_capacity", "pending_source_connections", "pending_public_url_connections", "pending_source_rate", "pending_public_url_rate", "traffic_keys", "traffic_bandwidth", "invalid_traffic_projection", "other"}
+var admissionResources = []string{"client_hello_connections", "public_connections", "service_connections", "denied_connections", "control_connections", "relay_tcp_connections", "publisher_connections", "relay_streams", "process_connection_rate", "source_connection_rate", "source_connections", "pending_source_capacity", "pending_source_connections", "pending_service_connections", "pending_source_rate", "traffic_keys", "traffic_bandwidth", "invalid_traffic_projection", "other"}
 
 var attributeValues = func() map[Key][]string {
 	out := make(map[Key][]string)

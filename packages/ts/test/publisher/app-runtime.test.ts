@@ -8,38 +8,152 @@ import { assert, afterEach, expect, onTestFinished, test, vi } from "vitest";
 import * as z from "zod";
 import {
   createPreparedService,
+  parseAssignment,
+  reportFrameworkTarget,
   runtimeRequest,
   startRuntime,
 } from "../../dist/internal/publisher/app.js";
 import { TnlError } from "../../dist/errors.js";
 import { startTestBootstrap } from "../helpers/bootstrap.js";
-import { createProjectFixture, testPublicProject } from "../helpers/project.js";
+import {
+  createProjectFixture,
+  testPrivateAssignment,
+  testPublicProject,
+} from "../helpers/project.js";
 import { invocationIDSchema } from "../../dist/internal/values.js";
 import { parseEndpoint, type RuntimeEndpoint } from "../../dist/internal/publisher/local.js";
 import { withProcessEnvironment } from "../helpers/environment.js";
+import { closeFramework } from "../../dist/internal/publisher/framework.js";
 
 afterEach(() => vi.useRealTimers());
 
-test("publication telemetry opt-out stays on its own preparation", async () => {
-  vi.stubEnv("TNL_NO_TELEMETRY", "0");
-  const requests: unknown[] = [];
-  const dependencies = {
+test.each([false, true])(
+  "framework cleanup distinguishes an observed registration failure from independent cleanup (%s)",
+  async (independent) => {
+    const listener = createServer();
+    await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    const primary = new TnlError("sdk.listener_failed");
+    const cleanup = new Error("independent unregister failure");
+    let unregisters = 0;
+    const handle = await createPreparedService({}, "vite", {
+      start: async () => testEndpoint,
+      request: async (_endpoint, name) => {
+        if (name === "prepare") return assignment();
+        if (name === "register") throw primary;
+        if (name === "unregister") {
+          unregisters++;
+          if (independent) throw cleanup;
+        }
+        return undefined;
+      },
+    });
+    try {
+      await expect(handle.register(listener)).rejects.toBe(primary);
+      if (independent) {
+        await expect(closeFramework(handle, primary)).rejects.toMatchObject({
+          code: "sdk.cleanup_failed",
+          errors: [primary, { code: "sdk.cleanup_failed", errors: [primary, cleanup] }],
+        });
+      } else {
+        await expect(closeFramework(handle, primary)).resolves.toBeUndefined();
+        await expect(handle.close()).rejects.toBe(primary);
+      }
+      expect(unregisters).toBe(1);
+      expect(listener.listening).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+    }
+  },
+);
+
+test.each(["node", "bun", "vite", "next"] as const)(
+  "%s default and explicit telemetry choices stay independent across owner rediscovery",
+  async (framework) => {
+    vi.stubEnv("TNL_NO_TELEMETRY", undefined);
+    const requests: unknown[] = [];
+    let failRegistration = false;
+    const dependencies = {
+      start: async () => testEndpoint,
+      request: async (_endpoint: RuntimeEndpoint, operation: string, body?: unknown) => {
+        if (operation === "prepare") {
+          requests.push(body);
+          return assignment();
+        }
+        if (operation === "register" && failRegistration) {
+          failRegistration = false;
+          throw new TnlError("sdk.registration_stale");
+        }
+        return undefined;
+      },
+    };
+    const disabled = await createPreparedService({ telemetry: false }, framework, dependencies);
+    onTestFinished(() => disabled.close());
+    const enabled = await createPreparedService({}, framework, dependencies);
+    onTestFinished(() => enabled.close());
+    const explicitlyEnabled = await createPreparedService(
+      { telemetry: true },
+      framework,
+      dependencies,
+    );
+    onTestFinished(() => explicitlyEnabled.close());
+    expect(requests).toHaveLength(3);
+    expect(requests[0]).toMatchObject({ telemetry_disabled: true });
+    expect(requests[1]).toMatchObject({ telemetry_disabled: false });
+    expect(requests[2]).toMatchObject({ telemetry_disabled: false });
+    vi.stubEnv("TNL_NO_TELEMETRY", "true");
+    failRegistration = true;
+    await reportFrameworkTarget(disabled, "http://127.0.0.1:3200");
+    failRegistration = true;
+    await reportFrameworkTarget(enabled, "http://127.0.0.1:3201");
+    failRegistration = true;
+    await reportFrameworkTarget(explicitlyEnabled, "http://127.0.0.1:3202");
+    expect(requests).toHaveLength(6);
+    expect(requests[3]).toMatchObject({ telemetry_disabled: true });
+    expect(requests[4]).toMatchObject({ telemetry_disabled: false });
+    expect(requests[5]).toMatchObject({ telemetry_disabled: false });
+  },
+);
+
+test("close joins pending registration and preserves independent operation and cleanup failures", async () => {
+  const listener = createServer();
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const entered = Promise.withResolvers<void>();
+  const cleanup = new Error("native cleanup unavailable");
+  let operation: Error | undefined;
+  const handle = await createPreparedService({}, "node", {
     start: async () => testEndpoint,
-    request: async (_endpoint: RuntimeEndpoint, operation: string, body?: unknown) => {
-      if (operation === "prepare") {
-        requests.push(body);
-        return assignment();
+    request: async (_endpoint, name, _body, signal) => {
+      if (name === "prepare") return assignment();
+      if (name === "unregister") throw cleanup;
+      if (name === "register") {
+        if (signal === undefined) throw new Error("registration has no lifetime");
+        entered.resolve();
+        return new Promise<never>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              operation = new Error("independent registration failure", { cause: signal.reason });
+              reject(operation);
+            },
+            { once: true },
+          );
+        });
       }
       return undefined;
     },
-  };
-  const disabled = await createPreparedService({ telemetry: false }, "node", dependencies);
-  const enabled = await createPreparedService({ telemetry: true }, "node", dependencies);
-  onTestFinished(() => disabled.close());
-  onTestFinished(() => enabled.close());
-  expect(requests).toHaveLength(2);
-  expect(requests[0]).toMatchObject({ telemetry_disabled: true });
-  expect(requests[1]).toMatchObject({ telemetry_disabled: false });
+  });
+  try {
+    const registering = handle.register(listener);
+    const registrationError = registering.catch((cause: unknown) => cause);
+    await entered.promise;
+    const closing = await handle.close().catch((cause: unknown) => cause);
+    expect(closing).toMatchObject({ code: "sdk.cleanup_failed", errors: [operation, cleanup] });
+    expect(await registrationError).toBe(operation);
+    expect(operation?.message).toBe("independent registration failure");
+    expect(listener.listening).toBe(true);
+  } finally {
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+  }
 });
 
 test("an optional preparation that finishes after its deadline releases its reservation", async () => {
@@ -67,6 +181,64 @@ test("an optional preparation that finishes after its deadline releases its rese
   expect(request.mock.calls.map(([, name]) => name)).toEqual(["prepare", "unregister"]);
   expect(process.listenerCount("beforeExit")).toBe(beforeExitListeners);
 });
+
+test.each(["confirmed", "independent failure"] as const)(
+  "late preparation compensation carries the original stop deadline with %s",
+  async (outcome) => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const controller = new AbortController();
+    const entered = Promise.withResolvers<void>();
+    const reply = Promise.withResolvers<void>();
+    const stopped = new TnlError("sdk.dev_unavailable");
+    const cleanup = new Error("independent compensation failure");
+    let compensation: unknown;
+    let cleanupSignal: AbortSignal | undefined;
+    const preparing = createPreparedService(
+      {},
+      "vite",
+      {
+        start: async () => testEndpoint,
+        request: async (_endpoint, name, value, signal) => {
+          if (name === "prepare") {
+            entered.resolve();
+            await reply.promise;
+            return assignment();
+          }
+          if (name === "unregister") {
+            compensation = value;
+            cleanupSignal = signal;
+            if (outcome === "independent failure") throw cleanup;
+          }
+          return undefined;
+        },
+      },
+      () => {},
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    try {
+      await entered.promise;
+      const firstStop = Date.now();
+      controller.abort(stopped);
+      await vi.advanceTimersByTimeAsync(1_000);
+      reply.resolve();
+      const result = await preparing;
+      expect(compensation).toMatchObject({
+        shutdown_deadline: new Date(firstStop + 10_000).toISOString(),
+      });
+      expect(cleanupSignal?.aborted).toBe(false);
+      expect(timeout).toHaveBeenLastCalledWith(9_000);
+      if (outcome === "independent failure")
+        expect(result).toMatchObject({ code: "sdk.cleanup_failed", errors: [stopped, cleanup] });
+      else expect(result).toBe(stopped);
+    } finally {
+      reply.resolve();
+      await preparing;
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
 
 test("independent SDK copies share preparation and framework callbacks through close and reprepare", async () => {
   const first = await import("../../dist/internal/publisher/app.js");
@@ -261,23 +433,124 @@ function assignment(registration = "a") {
   };
 }
 
+function deferredAssignment() {
+  return {
+    ...assignment(),
+    hostname: "",
+    public_url: "",
+    project: { namespace: "", services: {}, dev: true },
+  };
+}
+
+test("acquisition can acknowledge a registration before its selected endpoint exists", () => {
+  expect(parseAssignment(deferredAssignment())).toEqual({
+    registrationID: assignment().registration_id,
+    service: "api",
+    hostname: undefined,
+    publicURL: undefined,
+    project: { namespace: "", services: {}, dev: true },
+  });
+});
+
+test.each([
+  ["hostname without metadata", { hostname: "api.member.example" }],
+  ["public URL without hostname", { public_url: "https://api.member.example" }],
+  ["hidden selected endpoint", { project: testPrivateAssignment().project }],
+  ["secret acquisition field", { access_token: "private-secret" }],
+] as const)("rejects deferred acquisition with %s", (_name, change) => {
+  expect(() => parseAssignment({ ...deferredAssignment(), ...change })).toThrow(
+    expect.objectContaining({
+      code: "sdk.response_invalid",
+      message: expect.not.stringContaining("private-secret"),
+    }),
+  );
+});
+
 test("private HTTP preparation has no public address or browser-visible target", async () => {
+  const selected = testPrivateAssignment();
   const handle = await createPreparedService({ service: "api" }, "node", {
     start: async () => testEndpoint,
     request: async (_endpoint, operation) =>
       operation === "prepare"
         ? {
             ...assignment(),
-            hostname: "",
+            hostname: selected.hostname,
             public_url: "",
-            project: { namespace: "", services: {}, dev: true },
+            project: selected.project,
           }
         : undefined,
   });
-  expect(handle.hostname).toBeUndefined();
+  expect(handle.hostname).toBe(selected.hostname);
   expect(handle.publicURL).toBeUndefined();
-  expect(handle.services).toEqual({});
+  expect(handle.services).toEqual(selected.project.services);
+  expect(JSON.stringify(handle)).not.toMatch(
+    /target|owner|registration_id|capability|token|directory/,
+  );
   await handle.close();
+});
+
+test.each([
+  ["deferred acquisition shape at preparation", deferredAssignment()],
+  ["missing hostname", { hostname: "" }],
+  ["mismatched hostname", { hostname: "other.member.example" }],
+  ["private public URL", { public_url: "https://api.member.example" }],
+  ["secret assignment field", { access_token: "private-secret" }],
+  ["missing selected endpoint", { project: { namespace: "", services: {}, dev: true } }],
+  [
+    "mismatched metadata URL",
+    {
+      project: {
+        ...testPrivateAssignment().project,
+        services: {
+          api: {
+            ...testPrivateAssignment().project.services.api,
+            url: "https://other.member.example",
+          },
+        },
+      },
+    },
+  ],
+  [
+    "secret endpoint field",
+    {
+      project: {
+        ...testPrivateAssignment().project,
+        services: {
+          api: {
+            ...testPrivateAssignment().project.services.api,
+            target: "http://private-secret:3000",
+          },
+        },
+      },
+    },
+  ],
+  [
+    "zero HTTP port",
+    {
+      project: {
+        ...testPrivateAssignment().project,
+        services: { api: { ...testPrivateAssignment().project.services.api, port: 0 } },
+      },
+    },
+  ],
+  ["public endpoint without public URL", { project: testPublicProject(true) }],
+] as const)("rejects private preparation with %s", async (_name, change) => {
+  const selected = testPrivateAssignment();
+  await expect(
+    createPreparedService({ service: "api" }, "node", {
+      start: async () => testEndpoint,
+      request: async () => ({
+        ...assignment(),
+        hostname: selected.hostname,
+        public_url: "",
+        project: selected.project,
+        ...change,
+      }),
+    }),
+  ).rejects.toMatchObject({
+    code: "sdk.response_invalid",
+    message: expect.not.stringContaining("private-secret"),
+  });
 });
 
 test("preparation exposes only public metadata and registers an actual port-0 Node listener", async () => {

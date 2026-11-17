@@ -21,7 +21,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
@@ -236,7 +235,7 @@ func runSeparatedApp(t *testing.T, ctx context.Context, component string) {
 
 type separatedPublishers struct {
 	URLs               []string
-	Ready              []publisher.Event
+	Runs               []benchworkload.ServiceRun
 	Fallbacks          int64
 	Activation         []time.Duration
 	ActivationDuration time.Duration
@@ -291,15 +290,16 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 		Transport: transport, Parallel: 4, StartParallel: max(1, *runtimeLoadStartParallel/len(separatedNames("publishers"))),
 		Concurrency: runtimeLoadAdmission.PublisherConcurrency, RateRequests: rateRequests,
 		ReadyTimeout: *runtimeLoadReadyTimeout, StopTimeout: 10 * time.Second, DrainTime: time.Second,
+		TraceStartup: *runtimeLoadTrace,
 		OnActivationFailure: func(index int) {
 			if err := captureSeparatedPublisherFailure(inspect, index); err != nil {
 				t.Logf("publisher failure snapshot: %v", err)
 			}
 		},
-		Observe: func(index int, event publisher.Event) error {
-			if event.Type == publisher.EventTransportFallback {
+		ObserveTransport: func(index int, observation benchworkload.TransportObservation) error {
+			if observation.FirstFallback {
 				fallbacks.Add(1)
-				t.Logf("publisher_transport index=%d event=%s transport=%s", index, event.Type, event.Transport)
+				t.Logf("publisher_transport index=%d slot=%d fallback=true transport=%s", index, observation.Slot, observation.Transport)
 			}
 			return nil
 		},
@@ -326,17 +326,17 @@ func runSeparatedPublishers(t *testing.T, ctx context.Context, count, rate, shar
 		case <-monitor.Done():
 		}
 	}()
-	result := separatedPublishers{URLs: make([]string, count), Ready: make([]publisher.Event, count)}
+	result := separatedPublishers{URLs: make([]string, count), Runs: make([]benchworkload.ServiceRun, count)}
 	started := time.Now()
 	ready, err := group.Start(monitor, separatedPublisherIndexes(t, shard))
 	result.ActivationDuration = time.Since(started)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, route := range ready {
-		result.Activation = append(result.Activation, route.Activation)
-		result.Ready[route.Index], result.URLs[route.Index] = route.Ready, route.Ready.PublicURL
-		t.Logf("separated_activation index=%d launch_to_ready=%s", route.Index, route.Activation)
+	for _, service := range ready {
+		result.Activation = append(result.Activation, service.Activation)
+		result.Runs[service.Index], result.URLs[service.Index] = service.Run, service.Run.URL()
+		t.Logf("separated_activation index=%d launch_to_ready=%s", service.Index, service.Activation)
 	}
 	t.Logf("separated_activation_total=%s", time.Since(started))
 	result.Fallbacks = fallbacks.Load()

@@ -5,6 +5,7 @@ import * as z from "zod";
 import {
   createProjectFixture,
   temporaryDirectory,
+  testPrivateAssignment,
   testPublicProject,
   withCurrentDirectory,
 } from "../helpers/project.js";
@@ -31,6 +32,7 @@ vi.mock("../../dist/internal/publisher/app.js", async (importOriginal) => {
       framework: Parameters<typeof actual.createPreparedService>[1],
       signal?: AbortSignal,
     ) => {
+      let closeRequested = false;
       const prepared = await actual.createPreparedService(
         options,
         framework,
@@ -38,14 +40,45 @@ vi.mock("../../dist/internal/publisher/app.js", async (importOriginal) => {
           start: async () => JSON.parse(process.env.APP_TEST_ENDPOINT ?? "null"),
           request: actual.runtimeRequest,
         },
-        () => {},
+        () => {
+          closeRequested = true;
+        },
         signal,
       );
-      onTestFinished(() => prepared.close());
+      onTestFinished(async () => {
+        // the framework observes its own close result; teardown only joins it.
+        if (closeRequested) await Promise.allSettled([prepared.close()]);
+        else await prepared.close();
+      });
       return prepared;
     },
   };
 });
+
+test.each(["default", "option-off", "environment-off"] as const)(
+  "Next sends its %s telemetry choice through normal preparation",
+  async (choice) => {
+    const bootstrap = await startTestBootstrap();
+    await withProcessEnvironment(
+      {
+        ...bootstrap.environment,
+        TNL_NO_TELEMETRY: choice === "environment-off" ? "true" : undefined,
+        __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200",
+      },
+      async () => {
+        await withTnl({}, choice === "option-off" ? { telemetry: false } : {})(
+          developmentPhase,
+          context,
+        );
+        expect(bootstrap.requests[0]?.body).toMatchObject({
+          framework: "next",
+          telemetry_disabled: choice !== "default",
+        });
+        expect(bootstrap.requests.some(({ path }) => path === "/v1/register")).toBe(true);
+      },
+    );
+  },
+);
 
 test.each([
   [401, "runtime.authentication_required"],
@@ -205,6 +238,22 @@ const developmentPhase = "phase-development-server";
 const context: NextConfigContext = { defaultConfig: {} };
 
 describe("withTnl", () => {
+  test("allows the connector-only canonical origin without enabling public access", async () => {
+    const selected = testPrivateAssignment();
+    const bootstrap = await startTestBootstrap({ responseBody: JSON.stringify(selected) });
+    await withProcessEnvironment(
+      { ...bootstrap.environment, __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3200" },
+      async () => {
+        const result = await withTnl({ allowedDevOrigins: ["existing.example"] })(
+          developmentPhase,
+          context,
+        );
+        expect(result.allowedDevOrigins).toEqual(["existing.example", selected.hostname]);
+        expect(JSON.parse(result.env?.TNL_PROJECT_RUNTIME ?? "null")).toEqual(selected.project);
+      },
+    );
+  });
+
   test("allows entry and mounted service aliases in development", async () => {
     const bootstrap = await startTestBootstrap({
       responseBody: JSON.stringify(testAliasAssignment()),

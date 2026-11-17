@@ -26,11 +26,17 @@ type nativeIngressControl struct {
 	relays       []ingressv1.ServiceRelay
 }
 
+func (c nativeIngressControl) ReadIngressServices(context.Context, string, ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error) {
+	now := time.Now()
+	return ingressv1.IngressServices{ObservedAt: now, ValidUntil: now.Add(30 * time.Second), Runs: []ingressv1.IngressServiceRun{}}, nil
+}
+
 func (c nativeIngressControl) AdmitPublicServiceVisitor(_ context.Context, _ string, claim ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
 	if claim.DestinationPort != c.port || claim.ObservedSourceIp != "127.0.0.1" {
 		return ingressv1.PublicServiceVisitorAdmission{}, ingress.ErrServiceAdmission
 	}
-	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: c.relays}, nil
+	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: c.relays,
+		Traffic: ingressv1.IngressTrafficLimits{Connections: 32, Rate: 20, RatePerNs: int64(time.Second), Burst: 40, UploadBytes: 8 << 20, DownloadBytes: 16 << 20}}, nil
 }
 func (c nativeIngressControl) PublicServiceVisitorStatus(context.Context, string, ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
 	return ingressv1.PublicServiceVisitorStatus{State: ingressv1.PublicServiceVisitorAllowed, ValidUntil: time.Now().Add(time.Minute)}, nil
@@ -41,6 +47,9 @@ func (c nativeIngressControl) ClosePublicServiceVisitor(context.Context, string,
 func (c nativeIngressControl) PromotePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error {
 	return nil
 }
+func (c nativeIngressControl) ClosedServiceRuns(context.Context, string, ingressv1.ServiceRunClosureLookup) (ingressv1.ServiceRunClosures, error) {
+	return ingressv1.ServiceRunClosures{Closed: []ingressv1.ServiceRunReference{}}, nil
+}
 
 type nativeIngressForwarder struct {
 	t       *testing.T
@@ -50,7 +59,7 @@ type nativeIngressForwarder struct {
 	visitor func() servicestream.Authentication
 }
 
-func (f nativeIngressForwarder) OpenPrivate(ctx context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
+func (f nativeIngressForwarder) OpenService(ctx context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserveCapacity func(context.Context) error) (net.Conn, error) {
 	if header.PublicService == nil || header.PublicService.DestinationPort != f.port || header.Validate() != nil {
 		return nil, ingress.ErrServiceAdmission
 	}
@@ -105,23 +114,17 @@ func managedIngressListener(t *testing.T, managed servicestream.Stream, visitors
 		}
 		return value
 	}
-	lease := ingressv1.IngressLease{IngressId: "native", IngressRunId: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
+	lease := ingressv1.IngressLease{IngressId: "native", IngressRunId: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute)}
 	control := nativeIngressControl{port: port, service: id(opaqueid.ServicePrefix), run: id(opaqueid.ServiceRunPrefix)}
 	for index := range 2 {
-		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: id(opaqueid.PublisherConnectionPrefix), ConnectionSlot: index, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[index], RelayId: []string{"relay-a", "relay-b"}[index], RelayRunId: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:9445", LeaseExpiresAt: lease.LeaseExpiresAt})
+		control.relays = append(control.relays, ingressv1.ServiceRelay{PublisherConnectionId: id(opaqueid.PublisherConnectionPrefix), ConnectionSlot: index, ConnectionAssignmentRevision: 1, RelayServiceId: []string{"a", "b"}[index], RelayId: []string{"relay-a", "relay-b"}[index], RelayRunId: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, InternalRelayAddress: "127.0.0.1:9445", ServingUntil: lease.ServingUntil})
 	}
 	var workers sync.WaitGroup
 	forwarder := nativeIngressForwarder{t: t, server: managed, workers: &workers, port: uint16(port)}
 	if len(visitors) != 0 {
 		forwarder.visitor = visitors[0]
 	}
-	connector, err := ingress.NewPublicServices(ingress.PublicServicesConfig{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }})
-	if err != nil {
-		_ = front.Close()
-		_ = backend.Close()
-		t.Fatal(err)
-	}
-	server, err := ingress.New(backend, ingress.Config{PublicServicesOnly: true, PublicServices: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
+	server, err := ingress.New(backend, ingress.Config{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +164,7 @@ func managedIngressListener(t *testing.T, managed servicestream.Stream, visitors
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_ = server.Drain(ctx)
-		_ = connector.Close()
+		_ = server.Close()
 		if err := <-done; err != nil {
 			t.Error(err)
 		}

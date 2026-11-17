@@ -62,13 +62,13 @@ func (q *Queries) ActiveWebhookEndpoints(ctx context.Context, arg ActiveWebhookE
 }
 
 const readyWebhookReceivers = `-- name: ReadyWebhookReceivers :many
-SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.public_url_id, t.publish_run_number, e.fingerprint
+SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.service_id, t.publish_run_number, e.fingerprint
 FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE e.name = ?1 AND t.server_origin = ?2
   AND t.primary_project_root = ?3 AND t.integration_namespace = ?4
   AND e.service = t.service
   AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?5
-  AND t.public_url_id <> '' AND t.publish_run_number > 0
+  AND t.service_id IS NOT NULL AND t.publish_run_number > 0
 ORDER BY t.id
 `
 
@@ -87,7 +87,7 @@ type ReadyWebhookReceiversRow struct {
 	IntegrationNamespace sql.NullString
 	Hostname             sql.NullString
 	Target               sql.NullString
-	PublicURLID          sql.NullString
+	ServiceID            sql.NullString
 	PublishRunNumber     sql.NullInt64
 	Fingerprint          []byte
 }
@@ -114,7 +114,7 @@ func (q *Queries) ReadyWebhookReceivers(ctx context.Context, arg ReadyWebhookRec
 			&i.IntegrationNamespace,
 			&i.Hostname,
 			&i.Target,
-			&i.PublicURLID,
+			&i.ServiceID,
 			&i.PublishRunNumber,
 			&i.Fingerprint,
 		); err != nil {
@@ -178,17 +178,20 @@ func (q *Queries) RegisterWebhookEndpoint(ctx context.Context, arg RegisterWebho
 const webhookReceiverCurrent = `-- name: WebhookReceiverCurrent :one
 SELECT count(*) FROM local_tunnels
 WHERE id = ?1 AND server_origin = ?2 AND target = ?3
-  AND public_url_id = ?4 AND publish_run_number = ?5
-  AND state = 'ready' AND stopped_at IS NULL AND lease_expires_at > ?6
+  AND primary_project_root = ?4 AND integration_namespace = ?5
+  AND service_id = ?6 AND publish_run_number = ?7
+  AND state = 'ready' AND stopped_at IS NULL AND lease_expires_at > ?8
 `
 
 type WebhookReceiverCurrentParams struct {
-	TunnelID         string
-	ServerOrigin     string
-	Target           sql.NullString
-	PublicURLID      sql.NullString
-	PublishRunNumber sql.NullInt64
-	Now              int64
+	TunnelID             string
+	ServerOrigin         string
+	Target               sql.NullString
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	ServiceID            sql.NullString
+	PublishRunNumber     sql.NullInt64
+	Now                  int64
 }
 
 func (q *Queries) WebhookReceiverCurrent(ctx context.Context, arg WebhookReceiverCurrentParams) (int64, error) {
@@ -196,7 +199,9 @@ func (q *Queries) WebhookReceiverCurrent(ctx context.Context, arg WebhookReceive
 		arg.TunnelID,
 		arg.ServerOrigin,
 		arg.Target,
-		arg.PublicURLID,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
+		arg.ServiceID,
 		arg.PublishRunNumber,
 		arg.Now,
 	)

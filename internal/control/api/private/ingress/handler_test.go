@@ -8,14 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
-	"sync"
 	"testing"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
-	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
@@ -46,6 +43,24 @@ func TestHandlerRequiresClusterSecret(t *testing.T) {
 	}
 }
 
+func TestRetiredRoutingAndPolicyEndpointsAreNotServed(t *testing.T) {
+	h := testIngressHandler(t, &ingressStoreStub{}, time.Now(), nil)
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/internal/v1/ingresses/ingress-1/routing-table/snapshot"},
+		{http.MethodGet, "/internal/v1/ingresses/ingress-1/routing-table/events"},
+		{http.MethodPost, "/internal/v1/ingresses/ingress-1/visitor-policy"},
+		{http.MethodPost, "/internal/v1/ingresses/ingress-1/public-url-recovery/9/observed"},
+	} {
+		t.Run(route.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			h.ServeHTTP(response, authenticatedIngressRequest(route.method, route.path, nil))
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("retired endpoint = %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
 	var got controlstate.IngressRegistration
@@ -65,7 +80,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 				IngressLeaseRevision: 7,
 			},
 			ProtocolVersion: registration.ProtocolVersion, ConnectionCapacity: registration.ConnectionCapacity,
-			RegisteredAt: registeredAt, RenewedAt: registeredAt, LeaseExpiresAt: registeredAt.Add(leaseDuration),
+			RegisteredAt: registeredAt, RenewedAt: registeredAt, LeaseExpiresAt: registeredAt.Add(leaseDuration), ServingUntil: registeredAt.Add(leaseDuration),
 		}, nil
 	}}
 	body := ingressv1.IngressRegistration{
@@ -116,128 +131,37 @@ func TestIngressRegistrationRequiresExplicitBoundedPortInventory(t *testing.T) {
 	}
 }
 
-func TestIngressRoutingTableEventsUseExactLeaseAndLongPoll(t *testing.T) {
+func TestObserveServiceRecoveryUsesExactIngressLease(t *testing.T) {
 	now := time.Now().UTC()
-	hashed, err := ippolicy.Hash([32]byte{1}, netip.MustParsePrefix("192.0.2.0/24"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	event := controlstate.IngressRoutingTableEvent{
-		RoutingTableRevision: 12, Kind: "public_url_upsert", PublicURLID: "route-1", PublishRunNumber: 3,
-		CanonicalHostname: "example.test", EntryRevision: 4, PublicUrlExpiresAt: timePointer(now.Add(time.Minute)),
-		CreatedAt: now,
-		Projection: controlstate.IngressRoutingTableProjection{
-			PublishRunID: "session-1", PublicURLID: "route-1", PublishRunNumber: 3,
-			CanonicalHostname: "example.test", PolicyRevision: 4, IPPolicy: controlstate.IPPolicyHashedAllowlist,
-			AllowedIPHashes: []ippolicy.Entry{hashed}, IPPolicyKey: [32]byte{1},
-			PublicUrlExpiresAt: now.Add(time.Minute),
-			PublisherConnections: []controlstate.IngressRoutingTablePublisherConnection{{
-				ConnectionSlot: 0, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 2,
-				RelayServiceID: "relay-service-1", RelayID: "relay-1", RelayRunID: "run-relay-1",
-				RelayLeaseRevision: 5, InternalRelayAddress: "relay.internal:8443",
-				TLSServerName: "relay.internal", LeaseExpiresAt: now.Add(time.Minute),
-			}},
-		},
-	}
-	var mutex sync.Mutex
-	calls := 0
-	store := &ingressStoreStub{readRoutingEvents: func(
-		_ context.Context,
-		identity controlstate.IngressLeaseIdentity,
-		after uint64,
-		limit int,
-		_ time.Time,
-	) (controlstate.IngressRoutingTablePage, error) {
-		mutex.Lock()
-		defer mutex.Unlock()
-		calls++
-		if identity.IngressID != "ingress-1" || identity.IngressRunID != "run-1" ||
-			identity.IngressLeaseRevision != 7 || after != 11 || limit != 8 {
-			t.Fatalf("routing request = %#v, after %d, limit %d", identity, after, limit)
-		}
-		if calls == 1 {
-			return controlstate.IngressRoutingTablePage{ThroughRevision: 11, NextRevision: 11}, nil
-		}
-		return controlstate.IngressRoutingTablePage{
-			ThroughRevision: 12, NextRevision: 12, Events: []controlstate.IngressRoutingTableEvent{event},
-		}, nil
-	}}
-	h, err := NewHandler(Config{
-		Store: store, ClusterSecrets: testIngressSecrets(t), LeaseDuration: 30 * time.Second,
-		RoutingPollInterval: time.Millisecond,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	target := "/internal/v1/ingresses/ingress-1/routing-table/events?ingress_run_id=run-1&ingress_lease_revision=7&after=11&limit=8&wait=1s"
-	request := authenticatedIngressRequest(http.MethodGet, target, nil)
-	response := httptest.NewRecorder()
-	h.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
-	}
-	var page ingressv1.IngressRoutingTablePage
-	decodeIngressResponse(t, response, &page)
-	if calls != 2 || page.NextRevision != 12 || len(page.Events) != 1 ||
-		page.Events[0].Entry.PublishRunId != "session-1" ||
-		len(page.Events[0].Entry.PublisherConnections) != 1 {
-		t.Fatalf("routing page after %d calls = %#v", calls, page)
-	}
-	if page.Events[0].Entry.AllowedIpHashes[0].Digest != hashed.Digest ||
-		page.Events[0].Entry.PublisherConnections[0].RelayId != "relay-1" {
-		t.Fatalf("routing entry = %#v", page.Events[0].Entry)
-	}
-
-}
-
-func TestIngressRoutingEventsRequireResnapshotAfterCompaction(t *testing.T) {
-	store := &ingressStoreStub{readRoutingEvents: func(
-		context.Context, controlstate.IngressLeaseIdentity, uint64, int, time.Time,
-	) (controlstate.IngressRoutingTablePage, error) {
-		return controlstate.IngressRoutingTablePage{
-			ThroughRevision: 20, RetainedAfterRevision: 15, ResnapshotRequired: true,
-		}, nil
-	}}
-	h := testIngressHandler(t, store, time.Now(), nil)
-	request := authenticatedIngressRequest(
-		http.MethodGet,
-		"/internal/v1/ingresses/ingress-1/routing-table/events?ingress_run_id=run-1&ingress_lease_revision=7&after=11&wait=0s",
-		nil,
-	)
-	response := httptest.NewRecorder()
-	h.ServeHTTP(response, request)
-	if response.Code != http.StatusConflict {
-		t.Fatalf("resnapshot status = %d, want %d: %s", response.Code, http.StatusConflict, response.Body.String())
-	}
-	assertIngressProblemType(t, response, "https://tnl.dev/p/routing-table-resnapshot-required")
-}
-
-func TestObservePublicURLRecoveryUsesExactIngressLease(t *testing.T) {
-	now := time.Now().UTC()
+	ref := controlstate.ServiceRunReference{ServiceID: "svc_0123456789abcdefghijkl", RunID: "srun_0123456789abcdefghijkl", RunNumber: 3}
+	const visitor = "vc_0123456789abcdefghijkl"
 	var gotIdentity controlstate.IngressLeaseIdentity
 	store := &ingressStoreStub{observeRecovery: func(
 		_ context.Context,
 		identity controlstate.IngressLeaseIdentity,
-		publicURLID string,
-		publishRunNumber, recoveryEpisodeID uint64,
+		run controlstate.ServiceRunReference,
+		connection string,
+		recoveryEpisodeID uint64,
 		observedAt time.Time,
-	) (controlstate.PublicURLRecoveryObservation, error) {
+		evidence []byte,
+		deliveredAt time.Time,
+	) (controlstate.ServiceRecoveryObservation, error) {
 		gotIdentity = identity
-		if publicURLID != "route-1" || publishRunNumber != 3 || recoveryEpisodeID != 9 || !observedAt.Equal(now) {
-			t.Fatalf("recovery request = %q, %d, %d, %v", publicURLID, publishRunNumber, recoveryEpisodeID, observedAt)
+		if run != ref || connection != visitor || recoveryEpisodeID != 9 || !observedAt.Equal(now) || !deliveredAt.Equal(now) || !bytes.Equal(evidence, []byte("exact-source-evidence")) {
+			t.Fatalf("recovery request = %+v, %q, %d, %v", run, connection, recoveryEpisodeID, observedAt)
 		}
-		return controlstate.PublicURLRecoveryObservation{
-			RecoveryEpisodeID: recoveryEpisodeID, PublicURLID: publicURLID, PublishRunNumber: publishRunNumber,
+		return controlstate.ServiceRecoveryObservation{
+			ServiceRunReference: run, RecoveryEpisodeID: recoveryEpisodeID,
 			OpenedAt: now.Add(-time.Second), ObservedAt: now, ObservedSeconds: 1,
 		}, nil
 	}}
-	body := ingressv1.PublicURLRecoveryObservationRequest{
+	body := ingressv1.ServiceRecoveryObservationRequest{
 		IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 7,
-		PublicUrlId: "route-1", PublishRunNumber: 3, ObservedAt: now,
+		ServiceId: ref.ServiceID, ServiceRunId: ref.RunID, RunNumber: ref.RunNumber, VisitorConnectionId: visitor, ObservedAt: now, SourceEvidence: []byte("exact-source-evidence"),
 	}
 	response := serveIngressJSON(
 		t, testIngressHandler(t, store, now, nil), http.MethodPost,
-		"/internal/v1/ingresses/ingress-1/public-url-recovery/9/observed", body,
+		"/internal/v1/ingresses/ingress-1/service-recovery/9/observed", body,
 	)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
@@ -356,18 +280,18 @@ func assertIngressProblemType(t *testing.T, response *httptest.ResponseRecorder,
 	}
 }
 
-func timePointer(value time.Time) *time.Time { return &value }
-
 type ingressStoreStub struct {
-	visitorPolicyStore
 	publicServiceStore
 	serviceAuditStore
+	readIngressServices func(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.IngressServices, error)
 	registerIngress     func(context.Context, controlstate.IngressRegistration, time.Time, time.Duration) (controlstate.IngressLease, error)
 	renewIngress        func(context.Context, controlstate.IngressRenewal, time.Time, time.Duration) (controlstate.IngressLease, error)
 	beginIngressDrain   func(context.Context, controlstate.IngressLeaseIdentity, time.Time, time.Time) (controlstate.IngressLease, error)
-	readRoutingSnapshot func(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.IngressRoutingTableSnapshot, error)
-	readRoutingEvents   func(context.Context, controlstate.IngressLeaseIdentity, uint64, int, time.Time) (controlstate.IngressRoutingTablePage, error)
-	observeRecovery     func(context.Context, controlstate.IngressLeaseIdentity, string, uint64, uint64, time.Time) (controlstate.PublicURLRecoveryObservation, error)
+	observeRecovery     func(context.Context, controlstate.IngressLeaseIdentity, controlstate.ServiceRunReference, string, uint64, time.Time, []byte, time.Time) (controlstate.ServiceRecoveryObservation, error)
+}
+
+func (s *ingressStoreStub) ReadIngressServices(ctx context.Context, identity controlstate.IngressLeaseIdentity, now time.Time) (controlstate.IngressServices, error) {
+	return s.readIngressServices(ctx, identity, now)
 }
 
 func (s *ingressStoreStub) RegisterIngress(
@@ -388,24 +312,15 @@ func (s *ingressStoreStub) BeginIngressDrain(
 	return s.beginIngressDrain(ctx, identity, now, deadline)
 }
 
-func (s *ingressStoreStub) ReadIngressRoutingTableSnapshot(
-	ctx context.Context, identity controlstate.IngressLeaseIdentity, now time.Time,
-) (controlstate.IngressRoutingTableSnapshot, error) {
-	return s.readRoutingSnapshot(ctx, identity, now)
-}
-
-func (s *ingressStoreStub) ReadIngressRoutingTableEvents(
-	ctx context.Context, identity controlstate.IngressLeaseIdentity, after uint64, limit int, now time.Time,
-) (controlstate.IngressRoutingTablePage, error) {
-	return s.readRoutingEvents(ctx, identity, after, limit, now)
-}
-
-func (s *ingressStoreStub) ObservePublicURLRecovery(
+func (s *ingressStoreStub) ObserveServiceRecovery(
 	ctx context.Context,
 	identity controlstate.IngressLeaseIdentity,
-	publicURLID string,
-	publishRunNumber, recoveryEpisodeID uint64,
+	run controlstate.ServiceRunReference,
+	visitor string,
+	recoveryEpisodeID uint64,
 	observedAt time.Time,
-) (controlstate.PublicURLRecoveryObservation, error) {
-	return s.observeRecovery(ctx, identity, publicURLID, publishRunNumber, recoveryEpisodeID, observedAt)
+	evidence []byte,
+	now time.Time,
+) (controlstate.ServiceRecoveryObservation, error) {
+	return s.observeRecovery(ctx, identity, run, visitor, recoveryEpisodeID, observedAt, evidence, now)
 }

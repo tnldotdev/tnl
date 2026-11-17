@@ -37,7 +37,7 @@ paths:
     get:
       operationId: getAdminServerStatus
       tags: [administration]
-      description: Read control, ingress, relay, and maintenance observations using an administrator's control session. These observations do not renew process leases.
+      description: Read canonical service and service run counts plus ingress and relay lease observations using an administrator's control session. Prepared runs are not counted as starting runs. These observations do not renew process leases.
       summary: Read control, ingress, and relay status
       security:
         - bearerAuth: []
@@ -98,7 +98,7 @@ paths:
     get:
       operationId: listMaintenanceControls
       tags: [administration]
-      description: Read the administrator-controlled gates for public URL creation, publish run creation, and certificate issuance. Reading a gate does not change it.
+      description: Read the administrator-controlled gates for service creation, service run creation, and certificate issuance. Reading a gate does not change it.
       summary: List maintenance controls
       security:
         - bearerAuth: []

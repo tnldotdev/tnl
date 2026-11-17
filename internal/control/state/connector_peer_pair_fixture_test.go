@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"net/netip"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -20,24 +22,33 @@ type connectorPairFixture struct {
 	leases  map[string]RelayLease
 }
 
-func newConnectorPairFixture(t *testing.T) connectorPairFixture {
+func newConnectorPairFixture(t *testing.T, retainedPublicPort ...bool) connectorPairFixture {
 	t.Helper()
-	f := newConnectorPairRunFixture(t)
-	return connectorPairFixtureFromRun(t, f)
+	d, now, _, leases := newConnectorPairPrerequisites(t)
+	return connectorPairFixtureInDatabase(t, d, now, leases, retainedPublicPort...)
 }
 
-func connectorPairFixtureFromRun(t *testing.T, f publishRunFixture) connectorPairFixture {
+func connectorPairFixtureInDatabase(t *testing.T, d *Database, now time.Time, leases map[string]RelayLease, retainedPublicPort ...bool) connectorPairFixture {
 	t.Helper()
-	d, now := f.database, f.now
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	visitor := WithControlPrincipal(t.Context(), principal)
-	actor := oidcRouteRequest(t, d, now)
-	service, err := d.CreateServiceAt(visitor, actor.TeamID, principal.IdentityID, "observations", "observations", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	member := session.Identity.Memberships[0]
+	service, err := d.CreateServiceAt(visitor, member.TeamID, principal.IdentityID, "observations", "observations", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment := publisherEnrollment(t, d, actor, PublisherScope{TeamID: actor.TeamID, Kind: "service", ServiceID: service.ID}, now)
+	if len(retainedPublicPort) != 0 && retainedPublicPort[0] {
+		testutil.SeedServicePort(t, d.pool, service.ID, 20000, now)
+	}
+	enrollment, err := d.IssuePublisherEnrollment(t.Context(), CreatePublisherEnrollmentRequest{
+		Scope: PublisherScope{TeamID: member.TeamID, Kind: "service", ServiceID: service.ID},
+		Name:  "test", Kind: "installed", EditorID: principal.IdentityID, EditorMembershipID: member.ID,
+		PolicyRevision: uint64(member.PolicyRevision), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +57,7 @@ func connectorPairFixtureFromRun(t *testing.T, f publishRunFixture) connectorPai
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "observations", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(t.Context(), service.ID, publisher, "observations", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,8 +67,8 @@ func connectorPairFixtureFromRun(t *testing.T, f publishRunFixture) connectorPai
 	}
 	installPrivateTestCertificate(t, d, prepared, run, now)
 	for _, slot := range run.Connections {
-		lease := f.leases[slot.RelayServiceID].RelayLeaseIdentity
-		if _, err := d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
+		if _, err := d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
@@ -77,8 +88,8 @@ func connectorPairFixtureFromRun(t *testing.T, f publishRunFixture) connectorPai
 	}
 	request := ConnectorPeerPairRequest{ServiceID: service.ID, ServiceRunID: run.RunID, RunNumber: run.RunNumber,
 		PublisherIdentityID: publisher.ID, IdempotencyKey: "observations", Subject: VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: principal.IdentityID, DeviceID: device.ID},
-		Source: DeviceTokenSource{DeviceID: device.ID}, Action: "create", RequestedAt: now, ExpectedRelays: testConnectorPairRelays(run, f.leases)}
-	fixed := connectorPairFixture{d: d, now: now, visitor: visitor, run: run, request: request, key: key, leases: f.leases}
+		Source: DeviceTokenSource{DeviceID: device.ID}, Action: "create", RequestedAt: now, ExpectedRelays: testConnectorPairRelays(run, leases)}
+	fixed := connectorPairFixture{d: d, now: now, visitor: visitor, run: run, request: request, key: key, leases: leases}
 	fixed.sign(t, &fixed.request)
 	return fixed
 }

@@ -1,129 +1,109 @@
 package state
 
 import (
-	"encoding/json"
-	"reflect"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestIntegrationRoutingSnapshotSelectsLatestBeforeFiltering(t *testing.T) {
-	type event struct {
-		kind    IngressRoutingTableEventKind
-		version uint64
-		ttl     time.Duration
-	}
-	for _, tc := range []struct {
-		name    string
-		events  []event
-		through int
-		want    []int // one-based positions in events, independent of SQL row order.
-	}{
-		{
-			name:    "route tombstone suppresses live history",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLTombstone, 1, time.Hour}},
-			through: 2,
-		},
-		{
-			name:    "expiration boundary suppresses live history",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 1, 0}},
-			through: 2,
-		},
-		{
-			name:    "expired entry suppresses live history",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 1, -time.Second}},
-			through: 2,
-		},
-		{
-			name:    "pool sibling tombstone preserves route",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}, {IngressPublicURLTombstone, 2, time.Hour}},
-			through: 3, want: []int{1},
-		},
-		{
-			name:    "route tombstone preserves pool sibling",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}, {IngressPublicURLTombstone, 1, time.Hour}},
-			through: 3, want: []int{2},
-		},
-		{
-			name:    "new publish run number preserves healthy pool sibling",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}},
-			through: 2, want: []int{1, 2},
-		},
-		{
-			name:    "future version excluded",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}, {IngressPublicURLUpsert, 2, time.Hour}},
-			through: 1, want: []int{1},
-		},
-		{
-			name:    "future tombstone excluded",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}, {IngressPublicURLTombstone, 1, time.Hour}},
-			through: 1, want: []int{1},
-		},
-		{
-			name:    "empty published history",
-			events:  []event{{IngressPublicURLUpsert, 1, time.Hour}},
-			through: 0,
-		},
+	// admission reads current service runs and slots instead of replaying a
+	// routing projection. an older ready row must never revive unavailable work.
+	for _, name := range []string{
+		"ready", "closed", "publisher expiry boundary", "certificate expiry boundary",
+		"relay expiry boundary", "healthy surviving relay", "first readiness needs both relays",
+		"unhealthy", "replacement not ready", "replacement ready", "another hostname",
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newPublishRunFixture(t)
-			ingress := registerTestIngress(t, f.database, f.now)
-			queries := controlstatedb.New(f.database.pool)
-			var stored []IngressRoutingTableEvent
-			for index, item := range tc.events {
-				expires := f.now.Add(item.ttl)
-				projection := IngressRoutingTableProjection{
-					PublicURLID: f.setup.PublicURLID, PublishRunID: f.setup.PublishRunID,
-					CanonicalHostname: f.request.CertificateIdentifiers[0], PublishRunNumber: item.version,
-					PolicyRevision: uint64(index + 1), PublicUrlExpiresAt: expires,
-				}
-				payload, err := json.Marshal(projection)
-				if err != nil {
-					t.Fatal(err)
-				}
-				revision, err := queries.InsertIngressRoutingTableEvent(t.Context(), controlstatedb.InsertIngressRoutingTableEventParams{
-					EventKind: string(item.kind), PublicURLID: projection.PublicURLID, PublishRunNumber: int64(item.version),
-					CanonicalHostname: projection.CanonicalHostname, EntryRevision: int64(index + 1),
-					Projection: payload, PublicUrlExpiresAt: timestamptz(expires), CreatedAt: timestamptz(f.now),
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				stored = append(stored, IngressRoutingTableEvent{
-					RoutingTableRevision: uint64(revision), Kind: item.kind, PublicURLID: projection.PublicURLID,
-					PublishRunNumber: item.version, CanonicalHostname: projection.CanonicalHostname,
-					EntryRevision: uint64(index + 1), Projection: projection, PublicUrlExpiresAt: &expires, CreatedAt: f.now,
-				})
+		t.Run(name, func(t *testing.T) {
+			f := newServicePublicationFixture(t)
+			installPrivateTestCertificate(t, f.database, f.prepared, f.run, f.now)
+			if name == "first readiness needs both relays" {
+				f.readyConnection(t, 0, f.now)
+			} else {
+				f.readyConnections(t, f.now)
 			}
-			// select a high-water revision explicitly, including older boundaries,
-			// to exercise snapshot selection independently of event publication.
-			var through uint64
-			if tc.through != 0 {
-				through = stored[tc.through-1].RoutingTableRevision
-			}
-			if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.ingress_routing_table_clock SET current_revision = $1`, through); err != nil {
+			ready, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token,
+				f.now, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+			if err != nil {
 				t.Fatal(err)
 			}
-			snapshot, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, f.now)
-			if err != nil || snapshot.RoutingTableRevision != through || len(snapshot.Entries) != len(tc.want) {
-				t.Fatalf("snapshot revision=%d routes=%d, want revision=%d routes=%d: %v", snapshot.RoutingTableRevision, len(snapshot.Entries), through, len(tc.want), err)
-			}
-			expected := make(map[uint64]IngressRoutingTableEvent, len(tc.want))
-			for _, index := range tc.want {
-				item := stored[index-1]
-				expected[item.RoutingTableRevision] = item
-			}
-			for _, got := range snapshot.Entries {
-				want, ok := expected[got.RoutingTableRevision]
-				if !ok || got.Kind != want.Kind || got.PublicURLID != want.PublicURLID || got.PublishRunNumber != want.PublishRunNumber ||
-					got.CanonicalHostname != want.CanonicalHostname || got.EntryRevision != want.EntryRevision ||
-					!reflect.DeepEqual(got.Projection, want.Projection) || !got.CreatedAt.Equal(want.CreatedAt) ||
-					got.PublicUrlExpiresAt == nil || !got.PublicUrlExpiresAt.Equal(*want.PublicUrlExpiresAt) {
-					t.Fatalf("unexpected snapshot event revision=%d kind=%s version=%d", got.RoutingTableRevision, got.Kind, got.PublishRunNumber)
+			want := true
+			hostname := f.prepared.Hostname
+			at := f.now
+			switch name {
+			case "closed":
+				if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
+					t.Fatal(err)
 				}
-				delete(expected, got.RoutingTableRevision)
+				want = false
+			case "publisher expiry boundary":
+				at, want = ready.ExpiresAt, false
+			case "certificate expiry boundary":
+				if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET certificate_expires_at=$2 WHERE id=$1`, f.run.RunID, at); err != nil {
+					t.Fatal(err)
+				}
+				want = false
+			case "relay expiry boundary":
+				at = at.Add(time.Second)
+				if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET lease_expires_at=$1`, at); err != nil {
+					t.Fatal(err)
+				}
+				want = false
+			case "healthy surviving relay":
+				slot := f.run.Connections[0]
+				if _, err := f.database.DisconnectServicePublisherConnection(t.Context(), slot.PublisherConnectionID,
+					f.run.RunID, f.run.RunNumber, slot.Revision, f.leases[slot.RelayServiceID].RelayLeaseIdentity, at, true); err != nil {
+					t.Fatal(err)
+				}
+			case "first readiness needs both relays":
+				if ready.State != "starting" {
+					t.Fatal("one initial connection made the service ready", ready)
+				}
+				want = false
+			case "unhealthy":
+				if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token,
+					at, ServiceRunHealth{Healthy: false, StreamCapacity: 64}); err != nil {
+					t.Fatal(err)
+				}
+				want = false
+			case "replacement not ready", "replacement ready":
+				previous := f.run
+				if err := f.database.CloseServiceRun(t.Context(), f.service.ID, previous.RunID, previous.Token, at); err != nil {
+					t.Fatal(err)
+				}
+				f.start(t, "replacement", at.Add(time.Second))
+				at = at.Add(time.Second)
+				if f.run.RunID == previous.RunID || f.run.RunNumber <= previous.RunNumber {
+					t.Fatal("replacement reused the old run tuple", f.run)
+				}
+				want = name == "replacement ready"
+				if want {
+					installPrivateTestCertificate(t, f.database, f.prepared, f.run, at)
+					f.readyConnections(t, at)
+					if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token,
+						at, ServiceRunHealth{Healthy: true, StreamCapacity: 64}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			case "another hostname":
+				hostname, want = "other.example.test", false
+			}
+			tx, err := f.database.pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(t.Context())
+			id, number, until, err := selectRoutableServiceRun(t.Context(), tx, f.service.ID, hostname, at)
+			if !want {
+				if !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatalf("unavailable service selected historical readiness: run=%s number=%d err=%v", id, number, err)
+				}
+				return
+			}
+			if err != nil || id != f.run.RunID || number != f.run.RunNumber || !until.After(at) {
+				t.Fatalf("selection lost the current live tuple: run=%s number=%d until=%s err=%v", id, number, until, err)
 			}
 		})
 	}

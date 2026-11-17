@@ -3,53 +3,36 @@ package state
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-// this is a bounded database workload, not a lease-cadence or soak test. the
-// certificate fixture signs local test material; no visitors, DNS, or ACME
-// network calls are involved. all logical leases last one hour.
+// this is a bounded database workload, not a cadence or soak test. certificate
+// material is signed locally; ingress observers read complete routing snapshots.
 func TestLoadSteadyState(t *testing.T) {
 	setupStarted := time.Now()
 	f := newControlLoadFixture(t)
 	sessions := readySteadyLoadSessions(t, f)
-	historyRevision := seedLoadRoutingHistory(t, f, 2, f.history)
 	var ingresses [2]IngressLease
 	for index := range ingresses {
 		lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
-			IngressID: fmt.Sprintf("load-ingress-%d", index), IngressRunID: "load-run", ProtocolVersion: 1,
-			ConnectionCapacity: uint64(f.routes),
+			IngressID: fmt.Sprintf("load-ingress-%d", index), IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
+			HTTPS: true, IngressPoolID: PrimaryIngressPoolID, ConnectionCapacity: uint64(max(64, f.routes)),
 		}, f.now, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
 		ingresses[index] = lease
 	}
-	initial, err := f.database.ReadIngressRoutingTableSnapshot(t.Context(), ingresses[0].IngressLeaseIdentity, f.now)
-	if err != nil || len(initial.Entries) != f.routes || initial.RoutingTableRevision != uint64(historyRevision) {
-		t.Fatalf("initial snapshot: routes=%d want=%d: %v", len(initial.Entries), f.routes, err)
-	}
-	byID := make(map[string]PublishRunSetup, f.routes)
-	for _, session := range sessions {
-		byID[session.setup.PublicURLID] = session.setup
-	}
-	for _, event := range initial.Entries {
-		setup, ok := byID[event.PublicURLID]
-		if !ok || event.Kind != IngressPublicURLUpsert || event.PublishRunNumber != setup.PublishRunNumber || event.EntryRevision != uint64(f.history) ||
-			event.Projection.PublishRunID != setup.PublishRunID || len(event.Projection.PublisherConnections) != 2 {
-			t.Fatalf("initial snapshot: unexpected route %s", event.PublicURLID)
-		}
-		delete(byID, event.PublicURLID)
-	}
 	t.Logf("setup_ready=%d relays=4 ingresses=2 setup_elapsed=%s (no injected SQL delay)", len(sessions), time.Since(setupStarted))
-
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
 	var heartbeats atomic.Int64
 	f.startMetrics(t)
 	started := time.Now()
@@ -57,14 +40,9 @@ func TestLoadSteadyState(t *testing.T) {
 		t.Logf("heartbeats=%d/%d workers=64 elapsed=%s", heartbeats.Load(), 3*f.routes, time.Since(started))
 		f.logStats(t)
 	}()
-	defer workers.stop()
 	var first sync.Once
 	var firstErr error
-	fail := func(err error) {
-		first.Do(func() { firstErr = err; cancel() })
-	}
-	// each public URL belongs to one workflow, so its three heartbeats advance its
-	// logical time monotonically even when workflows progress at different rates.
+	fail := func(err error) { first.Do(func() { firstErr = err; cancel() }) }
 	start := make(chan struct{})
 	var work sync.WaitGroup
 	work.Add(64)
@@ -72,25 +50,27 @@ func TestLoadSteadyState(t *testing.T) {
 		workers.Go(func() {
 			defer work.Done()
 			<-start
-			control := f.controls[worker%2]
 			for sweep := range 3 {
 				for index := worker; index < len(sessions) && ctx.Err() == nil; index += 64 {
 					session := sessions[index]
 					callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-					setup, err := control.HeartbeatPublishRun(callCtx, session.authentication(), f.now.Add(time.Duration(sweep+1)*time.Second), time.Hour, time.Hour)
+					run, err := f.controls[worker%2].HeartbeatServiceRun(callCtx, session.service.ID,
+						session.run.RunID, session.run.Token, f.now.Add(time.Duration(sweep+1)*time.Second),
+						ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 					stop()
 					if err != nil {
-						fail(fmt.Errorf("heartbeat route=%s sweep=%d: %w", session.setup.PublicURLID, sweep+1, err))
+						fail(fmt.Errorf("heartbeat service=%s sweep=%d: %w", session.service.ID, sweep+1, err))
 						return
 					}
-					if setup.PublicURLID != session.setup.PublicURLID || setup.PublishRunNumber != session.setup.PublishRunNumber ||
-						setup.PublishRunID != session.setup.PublishRunID || setup.State != PublishRunReady || setup.ReadyAt == nil {
-						fail(fmt.Errorf("heartbeat changed ready session %s", session.setup.PublicURLID))
+					if run.ServiceID != session.service.ID || run.RunID != session.run.RunID ||
+						run.RunNumber != session.run.RunNumber || run.State != "ready" || len(run.Connections) != 2 {
+						fail(fmt.Errorf("heartbeat changed ready service %s", session.service.ID))
 						return
 					}
-					for slot, connection := range setup.PublisherConnections {
-						if connection.ConnectionAssignmentIdentity != session.setup.PublisherConnections[slot].ConnectionAssignmentIdentity || connection.State != PublisherConnectionReady {
-							fail(fmt.Errorf("heartbeat changed ready assignment route=%s slot=%d", setup.PublicURLID, slot))
+					for slot, connection := range run.Connections {
+						expected := session.run.Connections[slot]
+						if connection.PublisherConnectionID != expected.PublisherConnectionID || connection.Revision != expected.Revision || connection.State != "ready" {
+							fail(fmt.Errorf("heartbeat changed service=%s slot=%d", session.service.ID, slot))
 							return
 						}
 					}
@@ -99,134 +79,106 @@ func TestLoadSteadyState(t *testing.T) {
 			}
 		})
 	}
-	now := f.now.Add(3 * time.Second)
 	workDone := make(chan struct{})
 	workers.Go(func() { work.Wait(); close(workDone) })
+	now := f.now.Add(3 * time.Second)
 	for index, ingress := range ingresses {
 		workers.Go(func() {
 			<-start
-			if err := observeSteadyLoad(t, ctx, f.controls[index], ingress.IngressLeaseIdentity, initial, now, workDone); err != nil {
-				fail(fmt.Errorf("routing/renewal ingress=%d: %w", index, err))
+			if err := observeSteadyLoad(t, ctx, f.controls[index], ingress.IngressLeaseIdentity, sessions, now, workDone); err != nil {
+				fail(fmt.Errorf("admission/renewal ingress=%d: %w", index, err))
 			}
 		})
 	}
 	close(start)
 	workers.Wait()
-	if firstErr != nil {
-		t.Fatal(firstErr)
-	}
-	if ctx.Err() != nil {
-		t.Fatal(ctx.Err())
+	if firstErr != nil || ctx.Err() != nil {
+		t.Fatalf("steady workload: %v (context %v)", firstErr, ctx.Err())
 	}
 	if heartbeats.Load() != int64(3*f.routes) {
 		t.Fatal("incomplete heartbeat workload")
 	}
-	t.Logf("mixed_workload_elapsed=%s", time.Since(started))
-	// verify every durable run, not only successful calls or a global count.
-	verificationStarted := time.Now()
-	verified := 0
-	defer func() {
-		t.Logf("verified_runs=%d/%d verification_elapsed=%s", verified, len(sessions), time.Since(verificationStarted))
-	}()
+	// verify every durable tuple, not just successful calls or a global count.
+	expected := make(map[string]ServiceRunState, len(sessions))
 	for _, session := range sessions {
-		byID[session.setup.PublicURLID] = session.setup
+		expected[session.service.ID] = session.run
 	}
-	callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-	defer stop()
-	rows, err := f.database.pool.Query(callCtx, `
-		SELECT public_url_id, publish_run_number, id,
-		    (state='ready' AND closed_at IS NULL AND publisher_expires_at > $1) IS TRUE
-		FROM control.publish_runs`, now)
+	rows, err := f.database.pool.Query(ctx, `SELECT service_id,run_number,id,
+		(state='ready' AND healthy AND closed_at IS NULL AND publisher_expires_at>$1) IS TRUE
+		FROM control.service_runs`, now)
 	if err != nil {
-		t.Fatalf("verify runs: %v", err)
+		t.Fatal(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var publicURLID, sessionID string
-		var version uint64
-		var valuesMatch bool
-		if err := rows.Scan(&publicURLID, &version, &sessionID, &valuesMatch); err != nil {
-			t.Fatalf("verify run: %v", err)
+		var service, id string
+		var number int64
+		var live bool
+		if err := rows.Scan(&service, &number, &id, &live); err != nil {
+			t.Fatal(err)
 		}
-		expected, ok := byID[publicURLID]
-		if !ok || version != expected.PublishRunNumber || sessionID != expected.PublishRunID || !valuesMatch {
-			t.Fatalf("unexpected run public_url_id=%s number=%d run=%s expected=%t values_match=%t", publicURLID, version, sessionID, ok, valuesMatch)
+		run, found := expected[service]
+		if !found || run.RunID != id || run.RunNumber != number || !live {
+			t.Fatalf("unexpected durable service tuple: service=%s run=%s number=%d live=%t", service, id, number, live)
 		}
-		delete(byID, publicURLID)
-		verified++
+		delete(expected, service)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("verify runs: %v", err)
-	}
-	if len(byID) != 0 {
-		t.Fatalf("missing runs: verified=%d want=%d", verified, len(sessions))
+	if err := rows.Err(); err != nil || len(expected) != 0 {
+		t.Fatalf("incomplete durable verification: missing=%d err=%v", len(expected), err)
 	}
 	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
 }
 
-func readySteadyLoadSessions(t *testing.T, f *controlLoadFixture) []publishRunFixture {
+func readySteadyLoadSessions(t *testing.T, f *controlLoadFixture) []servicePublicationFixture {
 	t.Helper()
 	return readyLoadSessions(t, f, time.Hour, time.Hour)
 }
 
-func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, credentialLifetime time.Duration) []publishRunFixture {
+func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, credentialLifetime time.Duration) []servicePublicationFixture {
 	t.Helper()
-	var sessions []publishRunFixture
+	sessions := make([]servicePublicationFixture, 0, f.routes)
 	started := time.Now()
 	defer func() { t.Logf("ready_setup_completed=%d/%d elapsed=%s", len(sessions), f.routes, time.Since(started)) }()
-	// use the untraced setup pool and stay serial: the certificate helper claims
-	// the oldest pending ACME order and expects it to be the one just created.
 	for index := range f.routes {
-		request := f.request(index)
-		setup, err := f.database.CreatePublishRun(t.Context(), request, f.now, publisherLease, credentialLifetime)
-		if err != nil {
-			t.Fatal(err)
-		}
-		leases := make(map[string]RelayLease)
+		session := servicePublicationFixture{database: f.database, now: f.now, service: f.services[index],
+			publisher: f.publishers[index], leases: make(map[string]RelayLease)}
 		for service, choices := range f.leases {
-			leases[service] = choices[index%2]
+			session.leases[service] = choices[index%len(choices)]
 		}
-		session := publishRunFixture{database: f.database, now: f.now, request: request, setup: setup, leases: leases}
-		work := createPlanIssuanceWork(t, f.database, f.now, session.authentication(), session.certificatePlan(), true, func(work *ACMEOrderWork) {
-			for index := range work.Authorizations {
-				work.Authorizations[index].AuthorizationURL += "/" + setup.PublishRunID
-				work.Authorizations[index].ChallengeURL += "/" + setup.PublishRunID
+		session.start(t, "load", f.now)
+		installPrivateTestCertificate(t, f.database, session.prepared, session.run, f.now)
+		session.readyConnections(t, f.now)
+		for range f.history {
+			ready, err := f.database.HeartbeatServiceRun(t.Context(), session.service.ID, session.run.RunID,
+				session.run.Token, f.now, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+			if err != nil || ready.State != "ready" || len(ready.Connections) != 2 {
+				t.Fatal("service fixture did not become ready", ready, err)
 			}
-		})
-		if _, err := f.database.MarkPublicURLCertificateInstalled(t.Context(), session.authentication(), work.ID, *work.NotAfter, f.now); err != nil {
+			ready.Token = session.run.Token
+			session.run = ready
+		}
+		// synthetic initial deadlines keep these finite workloads separate from
+		// real-clock cadence tests. later heartbeats use the production lifetime.
+		until := f.now.Add(publisherLease)
+		if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`, session.run.RunID, until); err != nil {
 			t.Fatal(err)
 		}
-		for slot := range setup.PublisherConnections {
-			claimTestConnection(t, session, slot, f.now)
+		if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_connection_slots SET credential_expires_at=$2 WHERE service_run_id=$1`,
+			session.run.RunID, f.now.Add(credentialLifetime)); err != nil {
+			t.Fatal(err)
 		}
-		ready := readyTestServingRun(t, session, f.now)
-		if !ready.Routable {
-			t.Fatalf("ready route=%s routable=%t", setup.PublicURLID, ready.Routable)
+		session.run.ExpiresAt = until
+		for index := range session.run.Connections {
+			session.run.Connections[index].CredentialExpiresAt = f.now.Add(credentialLifetime)
 		}
 		sessions = append(sessions, session)
 	}
 	return sessions
 }
 
-// one actor per ingress drains delta pages promptly, renewing and sampling a
-// live snapshot initially and once a second. A final observation after writes
-// finish verifies the fully drained history against the final snapshot.
-func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ingress IngressLeaseIdentity, initial IngressRoutingTableSnapshot, now time.Time, workDone <-chan struct{}) error {
-	expected := make(map[string]IngressRoutingTableEvent, len(initial.Entries))
-	entries := make(map[string]uint64, len(initial.Entries))
-	for _, event := range initial.Entries {
-		expected[event.PublicURLID], entries[event.PublicURLID] = event, event.EntryRevision
-	}
-	cursor := initial.RoutingTableRevision
-	highWater := initial.RoutingTableRevision
-	var nextObservation time.Time
-	var renewals, events, snapshots int
-	started := time.Now()
-	defer func() {
-		t.Logf("ingress=%s renewals=%d routing_events=%d snapshots=%d cursor=%d elapsed=%s", ingress.IngressID, renewals, events, snapshots, cursor, time.Since(started))
-	}()
-	tick := time.NewTicker(10 * time.Millisecond)
-	defer tick.Stop()
+func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ingress IngressLeaseIdentity, sessions []servicePublicationFixture, now time.Time, workDone <-chan struct{}) error {
+	var admissions, renewals int
+	defer func() { t.Logf("ingress=%s admissions=%d renewals=%d", ingress.IngressID, admissions, renewals) }()
 	for ctx.Err() == nil {
 		finished := false
 		select {
@@ -235,88 +187,58 @@ func observeSteadyLoad(t *testing.T, ctx context.Context, control *Database, ing
 		default:
 		}
 		callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-		page, err := control.ReadIngressRoutingTableEvents(callCtx, ingress, cursor, MaximumIngressRoutingTablePageSize, now)
+		runs, err := readLoadServiceRuns(callCtx, control, ingress, now)
 		stop()
 		if err != nil {
-			return fmt.Errorf("events after=%d: %w", cursor, err)
+			return err
 		}
-		if page.ResnapshotRequired || page.ThroughRevision < highWater {
-			return fmt.Errorf("unexpected routing history reset after=%d through=%d high_water=%d", cursor, page.ThroughRevision, highWater)
-		}
-		highWater = page.ThroughRevision
-		for _, event := range page.Events {
-			if event.RoutingTableRevision != cursor+1 || event.EntryRevision != entries[event.PublicURLID]+1 {
-				return fmt.Errorf("missing or unordered event after=%d got=%d route=%s entry=%d", cursor, event.RoutingTableRevision, event.PublicURLID, event.EntryRevision)
-			}
-			if err := checkSteadyLoadProjection(event, expected[event.PublicURLID], now); err != nil {
+		for _, session := range sessions {
+			err := observeLoadService(runs, session, now)
+			if err != nil {
 				return err
 			}
-			cursor, entries[event.PublicURLID] = event.RoutingTableRevision, event.EntryRevision
-			events++
+			admissions++
 		}
-		if page.NextRevision != cursor || cursor > page.ThroughRevision || page.More != (cursor < page.ThroughRevision) || (page.More && len(page.Events) == 0) {
-			return fmt.Errorf("inconsistent routing cursor=%d next=%d through=%d", cursor, page.NextRevision, page.ThroughRevision)
+		callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
+		lease, err := control.RenewIngress(callCtx, IngressRenewal{IngressLeaseIdentity: ingress}, now, time.Hour)
+		stop()
+		if err != nil || lease.IngressLeaseIdentity != ingress || !lease.LeaseExpiresAt.After(now) {
+			return fmt.Errorf("ingress renewal changed identity or expired: %v", err)
 		}
-		if !time.Now().Before(nextObservation) || (finished && !page.More) {
-			callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-			lease, err := control.RenewIngress(callCtx, IngressRenewal{IngressLeaseIdentity: ingress, RoutingTableRevision: cursor}, now, time.Hour)
-			stop()
-			if err != nil {
-				return fmt.Errorf("renew: %w", err)
-			}
-			if lease.IngressLeaseIdentity != ingress || !lease.LeaseExpiresAt.After(now) {
-				return fmt.Errorf("renew changed ingress identity or expired its lease")
-			}
-			renewals++
-			callCtx, stop = context.WithTimeout(ctx, 20*time.Second)
-			snapshot, err := control.ReadIngressRoutingTableSnapshot(callCtx, ingress, now)
-			stop()
-			if err != nil {
-				return fmt.Errorf("snapshot: %w", err)
-			}
-			snapshots++
-			if len(snapshot.Entries) != len(expected) || snapshot.RoutingTableRevision < highWater {
-				return fmt.Errorf("snapshot routes=%d want=%d revision=%d high_water=%d", len(snapshot.Entries), len(expected), snapshot.RoutingTableRevision, highWater)
-			}
-			highWater = snapshot.RoutingTableRevision
-			nextObservation = time.Now().Add(time.Second)
-			seen := make(map[string]bool, len(expected))
-			for _, event := range snapshot.Entries {
-				if seen[event.PublicURLID] || event.EntryRevision < entries[event.PublicURLID] {
-					return fmt.Errorf("duplicate or stale snapshot route=%s entry=%d", event.PublicURLID, event.EntryRevision)
-				}
-				seen[event.PublicURLID] = true
-				if err := checkSteadyLoadProjection(event, expected[event.PublicURLID], now); err != nil {
-					return err
-				}
-			}
-			if finished && !page.More {
-				if cursor != snapshot.RoutingTableRevision || cursor != initial.RoutingTableRevision+uint64(3*len(expected)) {
-					return fmt.Errorf("final routing cursor=%d snapshot=%d want=%d", cursor, snapshot.RoutingTableRevision, initial.RoutingTableRevision+uint64(3*len(expected)))
-				}
-				for _, event := range snapshot.Entries {
-					if event.EntryRevision != expected[event.PublicURLID].EntryRevision+3 || event.EntryRevision != entries[event.PublicURLID] {
-						return fmt.Errorf("final snapshot/event history mismatch route=%s entry=%d", event.PublicURLID, event.EntryRevision)
-					}
-				}
-				return nil
-			}
+		renewals++
+		if finished {
+			return nil
 		}
-		if !page.More {
-			select {
-			case <-ctx.Done():
-			case <-tick.C:
-			}
+		select {
+		case <-ctx.Done():
+		case <-workDone:
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 	return ctx.Err()
 }
 
-func checkSteadyLoadProjection(event, expected IngressRoutingTableEvent, now time.Time) error {
-	if event.Kind != IngressPublicURLUpsert || event.PublicURLID != expected.PublicURLID || event.PublishRunNumber != expected.PublishRunNumber ||
-		event.CanonicalHostname != expected.CanonicalHostname || event.Projection.PublishRunID != expected.Projection.PublishRunID ||
-		!event.Projection.PublicUrlExpiresAt.After(now) || !reflect.DeepEqual(event.Projection.PublisherConnections, expected.Projection.PublisherConnections) {
-		return fmt.Errorf("routing projection lost ready session or assignment identity route=%s revision=%d", event.PublicURLID, event.RoutingTableRevision)
+func observeLoadService(runs map[string]IngressServiceRun, session servicePublicationFixture, now time.Time) error {
+	admission, err := loadServiceRun(runs, session, now)
+	if err != nil {
+		return err
+	}
+	if admission.ServiceID != session.service.ID || admission.RunID != session.run.RunID ||
+		admission.RunNumber != session.run.RunNumber || !admission.ValidUntil.After(now) || len(admission.Relays) != 2 {
+		return fmt.Errorf("admission changed ready service %s", session.service.ID)
+	}
+	for _, relay := range admission.Relays {
+		matched := false
+		for _, slot := range session.run.Connections {
+			lease := session.leases[slot.RelayServiceID]
+			matched = matched || relay.PublisherConnectionID == slot.PublisherConnectionID &&
+				relay.ConnectionAssignmentRevision == slot.Revision && relay.ConnectionSlot == slot.ConnectionSlot &&
+				relay.RelayServiceID == slot.RelayServiceID && relay.RelayID == lease.RelayID &&
+				relay.RelayRunID == lease.RelayRunID && relay.RelayLeaseRevision == int64(lease.RelayLeaseRevision)
+		}
+		if !matched {
+			return fmt.Errorf("admission changed a connected relay for service %s", session.service.ID)
+		}
 	}
 	return nil
 }

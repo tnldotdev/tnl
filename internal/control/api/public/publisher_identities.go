@@ -1,7 +1,9 @@
 package public
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -24,8 +27,8 @@ type PublisherIdentityStore interface {
 	RevokePublisherIdentity(context.Context, string, string, string, time.Time) error
 	RevokePublisherGrant(context.Context, string, string, string, string, time.Time) error
 	AuthenticatePublisherAccess(context.Context, string, string, time.Time) (controlstate.PublisherIdentity, error)
-	AllocatePublisherPublicURL(context.Context, controlstate.PublisherIdentity, string, string, []string, []byte, time.Time, controlstate.PublisherPublicURLOptions) (controlstate.PublicURL, error)
-	PublisherMayStartRun(context.Context, controlstate.PublisherIdentity, string) (bool, error)
+	AllocatePublisherService(context.Context, controlstate.PublisherIdentity, controlstate.AllocateServiceRequest, time.Time) (controlstate.ServiceRecord, error)
+	DeletePublisherService(context.Context, controlstate.PublisherIdentity, string, time.Time) error
 }
 
 func publisherProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
@@ -68,10 +71,10 @@ func (h *handler) publisherEditor(w http.ResponseWriter, r *http.Request, team s
 	return nil, controlstate.Membership{}, "", false
 }
 
-func publisherScope(team string, url, domain, private *string) (controlstate.PublisherScope, bool) {
+func publisherScope(team string, domain, service *string) (controlstate.PublisherScope, bool) {
 	s := controlstate.PublisherScope{TeamID: team}
 	selected := 0
-	for _, value := range []*string{url, domain, private} {
+	for _, value := range []*string{domain, service} {
 		if value != nil {
 			selected++
 		}
@@ -79,13 +82,9 @@ func publisherScope(team string, url, domain, private *string) (controlstate.Pub
 	if selected != 1 {
 		return s, false
 	}
-	if private != nil {
-		s.Kind, s.ServiceID = "service", *private
-		return s, opaqueid.Valid(*private, opaqueid.ServicePrefix)
-	}
-	if url != nil {
-		s.Kind, s.PublicURLID = "saved_public_url", *url
-		return s, opaqueid.Valid(*url, opaqueid.PublicURLPrefix)
+	if service != nil {
+		s.Kind, s.ServiceID = "service", *service
+		return s, opaqueid.Valid(*service, opaqueid.ServicePrefix)
 	}
 	s.Kind, s.DomainID = "namespace", *domain
 	return s, opaqueid.Valid(*domain, opaqueid.DomainPrefix)
@@ -93,13 +92,13 @@ func publisherScope(team string, url, domain, private *string) (controlstate.Pub
 
 func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Request) {
 	var b controlv1.CreatePublisherEnrollmentRequest
-	if decodeJSON(w, r, &b) != nil || !b.Kind.Valid() || !naming.ValidServiceName(b.Name) {
+	if !decodePublisherIssuance(w, r, &b) || !b.Kind.Valid() || !naming.ValidServiceName(b.Name) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher enrollment")
 		return
 	}
-	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.ServiceId)
+	s, valid := publisherScope(b.TeamId, b.DomainId, b.ServiceId)
 	if !valid || s.Kind == "namespace" && !h.config.DNSAutomation {
-		writeProblem(w, 400, controlv1.InvalidRequest, "select a saved URL or an automated HTTP namespace")
+		writeProblem(w, 400, controlv1.InvalidRequest, "select a service or an automated namespace")
 		return
 	}
 	store, m, editor, ok := h.publisherEditor(w, r, b.TeamId)
@@ -107,6 +106,12 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	request := controlstate.CreatePublisherEnrollmentRequest{Scope: s, Name: b.Name, Kind: string(b.Kind), EditorID: editor, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: time.Now()}
+	protocols, valid := publisherProtocolsInput(b.Protocols)
+	if !valid || s.Kind != "service" && protocols != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "select a nonempty set of supported publisher protocols")
+		return
+	}
+	request.Protocols = protocols
 	if b.Ownership != nil {
 		request.Ownership = string(*b.Ownership)
 	}
@@ -116,9 +121,7 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	result := controlv1.PublisherEnrollment{Id: e.ID, EnrollmentKey: e.Key, ExpiresAt: e.Until, TeamId: s.TeamID, Kind: controlv1.PublisherEnrollmentKind(s.Kind)}
-	if e.Scope.PublicURLID != "" {
-		result.PublicUrlId = &e.Scope.PublicURLID
-	}
+	result.Protocols = publisherProtocolsResponse(e.Protocols)
 	if e.Scope.ServiceID != "" {
 		result.ServiceId = &e.Scope.ServiceID
 	}
@@ -134,8 +137,12 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 
 func publisherGrantResponse(g controlstatedb.ControlPublisherGrant) controlv1.PublisherGrant {
 	r := controlv1.PublisherGrant{Id: g.ID, Kind: controlv1.PublisherGrantKind(g.Kind), CreatedAt: g.CreatedAt.Time}
-	if g.PublicURLID.Valid {
-		r.PublicUrlId = &g.PublicURLID.String
+	r.Protocols = publisherProtocolsResponse(g.Protocols)
+	if g.TeamID.Valid {
+		r.TeamId = g.TeamID.String
+	}
+	if g.GuestID.Valid {
+		r.GuestId = g.GuestID.String
 	}
 	if g.ServiceID.Valid {
 		r.ServiceId = &g.ServiceID.String
@@ -185,7 +192,14 @@ func (h *handler) ListPublisherIdentities(w http.ResponseWriter, r *http.Request
 			return
 		}
 		i := record.Identity
-		p := controlv1.PublisherIdentity{Id: i.ID, Name: i.Name, Kind: controlv1.PublisherIdentityKind(i.Kind), CreatedAt: i.CreatedAt.Time, Grants: []controlv1.PublisherGrant{}}
+		p := controlv1.PublisherIdentity{Id: i.ID, Name: i.Name,
+			Kind: controlv1.PublisherIdentityKind(i.Kind), CreatedAt: i.CreatedAt.Time, Grants: []controlv1.PublisherGrant{}}
+		if i.TeamID.Valid {
+			p.TeamId = i.TeamID.String
+		}
+		if i.GuestID.Valid {
+			p.GuestId = i.GuestID.String
+		}
 		p.Ownership = controlv1.PublisherIdentityOwnership(i.Ownership)
 		p.Runtime = runtimeResponse(record.Runtime)
 		if i.OwnerMembershipID.Valid {
@@ -207,13 +221,13 @@ func (h *handler) ListPublisherIdentities(w http.ResponseWriter, r *http.Request
 
 func (h *handler) CreatePublisherGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublisherIdentityID) {
 	var b controlv1.CreatePublisherGrantRequest
-	if decodeJSON(w, r, &b) != nil {
+	if !decodePublisherIssuance(w, r, &b) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher grant")
 		return
 	}
-	s, valid := publisherScope(b.TeamId, b.PublicUrlId, b.DomainId, b.ServiceId)
+	s, valid := publisherScope(b.TeamId, b.DomainId, b.ServiceId)
 	if !valid || s.Kind == "namespace" && !h.config.DNSAutomation {
-		writeProblem(w, 400, controlv1.InvalidRequest, "select a saved URL or an automated HTTP namespace")
+		writeProblem(w, 400, controlv1.InvalidRequest, "select a service or an automated namespace")
 		return
 	}
 	store, m, editor, ok := h.publisherEditor(w, r, b.TeamId)
@@ -225,7 +239,12 @@ func (h *handler) CreatePublisherGrant(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	now := time.Now()
-	grant, err := store.CreatePublisherGrant(r.Context(), controlstate.CreatePublisherGrantRequest{PublisherIdentityID: id, Scope: s, EditorID: editor, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), ExpiresAt: b.ExpiresAt, Now: now})
+	protocols, valid := publisherProtocolsInput(b.Protocols)
+	if !valid || s.Kind != "service" && protocols != nil {
+		writeProblem(w, 400, controlv1.InvalidRequest, "select a nonempty set of supported publisher protocols")
+		return
+	}
+	grant, err := store.CreatePublisherGrant(r.Context(), controlstate.CreatePublisherGrantRequest{PublisherIdentityID: id, Scope: s, EditorID: editor, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), ExpiresAt: b.ExpiresAt, Now: now, Protocols: protocols})
 	if err != nil {
 		publisherProblem(r.Context(), w, "create publisher grant", err)
 		return
@@ -243,6 +262,48 @@ func (h *handler) CreatePublisherGrant(w http.ResponseWriter, r *http.Request, i
 		}
 	}
 	writeProblem(w, 503, controlv1.Unavailable, "created grant could not be read")
+}
+
+func decodePublisherIssuance(w http.ResponseWriter, r *http.Request, target any) bool {
+	var raw json.RawMessage
+	if decodeJSON(w, r, &raw) != nil || httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), target) != nil {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
+		return false
+	}
+	value, present := fields["protocols"]
+	return !present || !bytes.Equal(bytes.TrimSpace(value), []byte("null"))
+}
+
+func publisherProtocolsInput(input *controlv1.PublisherServiceProtocols) ([]string, bool) {
+	if input == nil {
+		return nil, true
+	}
+	if len(*input) == 0 || len(*input) > 5 {
+		return nil, false
+	}
+	result, seen := make([]string, 0, len(*input)), make(map[controlv1.ServiceProtocol]bool)
+	for _, protocol := range *input {
+		if !protocol.Valid() || seen[protocol] {
+			return nil, false
+		}
+		seen[protocol] = true
+		result = append(result, string(protocol))
+	}
+	return result, true
+}
+
+func publisherProtocolsResponse(values []string) *controlv1.PublisherServiceProtocols {
+	if values == nil {
+		return nil
+	}
+	result := make(controlv1.PublisherServiceProtocols, len(values))
+	for index, value := range values {
+		result[index] = controlv1.ServiceProtocol(value)
+	}
+	return &result
 }
 
 func (h *handler) RevokePublisherIdentity(w http.ResponseWriter, r *http.Request, id controlv1.PublisherIdentityID, params controlv1.RevokePublisherIdentityParams) {

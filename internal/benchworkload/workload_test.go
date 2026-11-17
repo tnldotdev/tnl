@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 )
 
 func TestPacedOffersDoNotBackpressureOrExtendWindow(t *testing.T) {
@@ -321,8 +321,8 @@ func TestPublisherStartupBoundsAndUnexpectedExit(t *testing.T) {
 		defer cancel()
 		var active, peak atomic.Int64
 		fail := make(chan struct{})
-		g := &Publishers{config: PublisherConfig{Parallel: 1, StartParallel: 2, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second}, ctx: ctx, cancel: cancel, failures: make(chan error, 1), namespace: "example.test"}
-		g.run = func(ctx context.Context, config publisher.Config) error {
+		g := &Publishers{config: PublisherConfig{Parallel: 1, StartParallel: 2, ReadyTimeout: 30 * time.Second, StopTimeout: 10 * time.Second}, ctx: ctx, cancel: cancel, failures: make(chan error, 1), prepare: benchmarkTestPreparation}
+		g.run = func(ctx context.Context, config publisherservice.RunConfig) error {
 			current := active.Add(1)
 			for old := peak.Load(); current > old; old = peak.Load() {
 				if peak.CompareAndSwap(old, current) {
@@ -331,7 +331,9 @@ func TestPublisherStartupBoundsAndUnexpectedExit(t *testing.T) {
 			}
 			time.Sleep(time.Second)
 			active.Add(-1)
-			_ = config.Observe(publisher.Event{Type: publisher.EventReady, PublicURL: "https://" + config.Hostname})
+			if err := benchmarkTestReady(config); err != nil {
+				return err
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -375,10 +377,10 @@ func TestCancellationDoesNotHideJoinedCloseFailure(t *testing.T) {
 	}
 }
 
-func TestAssignmentsPartitionRoutesAndBalanceBudgets(t *testing.T) {
+func TestAssignmentsPartitionServicesAndBalanceBudgets(t *testing.T) {
 	seen := make(map[int]bool)
 	for worker := range 6 {
-		for _, index := range PublicURLIndexes(43, 6, worker) {
+		for _, index := range ServiceIndexes(43, 6, worker) {
 			if seen[index] {
 				t.Fatal("duplicate route")
 			}

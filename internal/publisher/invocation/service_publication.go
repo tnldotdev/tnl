@@ -37,16 +37,18 @@ func SigningIdentity(ctx context.Context, profile *clientstate.Store, id string)
 	return identity, ed25519.PrivateKey(saved.SigningKey), nil
 }
 
-// private publication never reserves a hostname or asks for a visitor certificate.
-// only the person's session creates saved state; runs use the exact signed grant.
+// only the person's session creates saved state; every protocol then publishes
+// through its exact service grant and the shared service-run owner.
 func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePresentation) (result error) {
+	ctx, shutdownDeadline, _, joinShutdown := publicationShutdown(ctx)
+	defer joinShutdown()
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	protocol, err := privatePublishProtocol(flags.Protocol)
 	if err != nil {
 		return err
 	}
-	if protocol == controlv1.ServiceProtocolHTTP && !flags.ConfiguredPrivate || flags.Demo {
-		return publisherCLIError("private HTTP requires a configured service without publicURL; select tcp, mysql, or postgres for an opaque target")
+	if flags.Demo {
+		return publisherCLIError("service publication requires a configured server")
 	}
 	if flags.System && !flags.Install || flags.ServiceName != "" && !flags.Install || flags.SystemStateDir != "" && !flags.Install || flags.ServerCAFile != "" && !flags.Install {
 		return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
@@ -238,7 +240,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 					placement.WorktreeLabel = &label
 				}
 				service, err = authenticated.Control.CreateServiceAt(ctx, current.team.Id, name, key, placement,
-					controlv1.ServiceMetadata{Protocol: protocol, TargetTls: publisheridentity.ServiceTargetTLS(trust), TrustRevision: 1})
+					controlv1.ServiceMetadata{Protocol: protocol, TargetTls: publisheridentity.ServiceTargetTLS(trust), TrustRevision: 1}, nil)
 				if err != nil {
 					return err
 				}
@@ -303,6 +305,21 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		if approved.Source == nil || approved.Source.ProjectKey != source.Key || approved.Source.SourceFingerprint != source.Fingerprint || approved.Source.Service != flags.Service || approved.Source.WorktreeKey != project.LocalWorktreeKey() {
 			return failure.Wrap("select local service publisher", failure.PublisherGrantMismatch, errors.New("grant differs from local publication identity"))
 		}
+		effective, err := project.EffectiveService(flags.Service)
+		if err != nil {
+			return err
+		}
+		traffic, err := config.ResolveTrafficSelection(effective.Traffic)
+		if err != nil {
+			return err
+		}
+		if flags.Traffic == nil {
+			flags.Traffic = traffic
+		}
+	}
+	native, err = native.WithTraffic(flags.Traffic)
+	if err != nil {
+		return err
 	}
 	// a scoped, ad-hoc publisher uses its saved target trust unless the caller
 	// made an explicit local declaration. explicit plaintext is a constraint too.
@@ -323,11 +340,18 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	}
 	job := installedjobs.Job{TelemetryDisabled: flags.TelemetryDisabled, Kind: installedjobs.KindService, ID: installedjobs.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
 		ServiceID: *identity.ServiceId, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Target: target, Protocol: config.ProtocolName(protocol), Trust: trust, ServerCAPEM: serverCAPEM,
-		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool}
-	job.Limits = flags.Limits
+		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool, Endpoint: approved.Endpoint,
+		StreamCapacity: flags.StreamCapacity, Traffic: flags.Traffic}
 	job.PreferredRegions = flags.PreferredRegions
 	if flags.Service != "" {
 		job.Project, job.ProjectService = &project.Project, flags.Service
+		effective, err := project.EffectiveService(flags.Service)
+		if err != nil {
+			return err
+		}
+		if effective.HTTP != nil && effective.HTTP.Readiness != nil {
+			job.ReadinessPath = effective.HTTP.Readiness.Path
+		}
 	}
 	if flags.Install {
 		if flags.ServiceName != "" {
@@ -342,34 +366,64 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		}
 		return output.Installed(jobs, job.ID)
 	}
-	if output.Starting != nil {
-		output.Starting()
+	root := flags.ProjectRoot
+	if root == "" {
+		root, err = currentProjectRoot(ctx)
+		if err != nil {
+			return err
+		}
 	}
-	emit := func(state string) error {
-		return output.Event(ServiceEvent{State: state, ServiceID: job.ServiceID, Name: name, Target: target, Hostname: approved.Endpoint.Hostname, Port: approved.Endpoint.Port})
-	}
-	if err := emit("starting"); err != nil {
+	tunnel, err := database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish,
+		Server: server, Project: root, Service: flags.Service, Target: target, ServiceProtocol: approved.Protocol, ServiceID: approved.Id})
+	if err != nil {
 		return err
 	}
+	ctx = tunnel.Context()
+	defer func() {
+		finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), shutdownDeadline())
+		defer cancel()
+		result = errors.Join(result, tunnel.Finish(finish, result))
+	}()
+	presentation := servicePresentation(output, approved, target)
+	if err := presentation.starting(tunnel.ID(), target); err != nil {
+		return err
+	}
+	settings := flags.Inspection
+	if flags.InspectionMode != "" {
+		settings = config.MergeInspection(settings, &config.Inspection{Mode: &flags.InspectionMode})
+	}
+	policy, err := config.ResolveInspection(settings, string(protocol))
+	if err != nil {
+		return err
+	}
+	recorder, err := NewInspectionRecorder(ctx, tunnel, root, flags.Service, config.InspectionMode(policy.Mode), settings)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), shutdownDeadline())
+		defer cancel()
+		result = errors.Join(result, recorder.Close(finish))
+	}()
 	if selected != 0 {
-		stopRuntime, err := startDeployedPublisher(ctx, native, server)
+		stopRuntime, err := startDeployedPublisher(ctx, native, server, shutdownDeadline)
 		if err != nil {
 			return err
 		}
 		defer func() { result = errors.Join(result, stopRuntime()) }()
 	}
-	err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{Telemetry: flags.Telemetry, Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
-		PreferredRegions: job.PreferredRegions,
-		Ready: func() error {
-			if output.Ready != nil {
-				output.Ready()
-			}
-			return emit("ready")
-		}})
-	if err != nil && !(context.Cause(ctx) == context.Canceled && failure.Only(err, context.Canceled)) {
-		return failure.Wrap("publish service", failure.TunnelUnavailable, errors.Join(err, context.Cause(ctx)))
+	cfg := publisherservice.RunConfig{Telemetry: flags.Telemetry, Control: native, State: profile, Access: native.Access,
+		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
+		ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: job.StreamCapacity,
+		PreferredRegions: job.PreferredRegions, InspectionMode: policy.Mode, ObserveSummary: SummaryObservation(recorder),
+		ProjectRoot: root, ProjectService: flags.Service}
+	cfg.ShutdownDeadline = shutdownDeadline
+	if flags.TelemetryDisabled {
+		cfg.Telemetry = nil
 	}
-	return emit("stopped")
+	return RunServiceCLI(ctx, tunnel, approved, cfg, presentation, func(ctx context.Context, cfg publisherservice.RunConfig) error {
+		return targetplan.PublishPrivate(ctx, job.TargetPlan(), cfg)
+	})
 }
 
 func CaptureServiceTargetTrust(ctx context.Context, flags ServiceOptions, protocol controlv1.ServiceProtocol, target string) (*targettrust.Snapshot, error) {

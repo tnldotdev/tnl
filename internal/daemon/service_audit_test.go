@@ -43,11 +43,11 @@ func (c *leaseAuditClient) IngestServiceObservations(ctx context.Context, lease 
 func TestIngressAuditRenewalRetainsBoundLeaseAcrossRetries(t *testing.T) {
 	c := &leaseAuditClient{first: make(chan struct{}), retry: make(chan struct{})}
 	a := &ingressServiceAudit{ctx: t.Context(), client: c, metrics: observability.New("ingress")}
-	lease := ingressv1.IngressLease{IngressId: "ingress-a", IngressRunId: "process-a", IngressLeaseRevision: 3, LeaseExpiresAt: time.Now().Add(time.Minute)}
+	lease := ingressv1.IngressLease{IngressId: "ingress-a", IngressRunId: "process-a", IngressLeaseRevision: 3, ServingUntil: time.Now().Add(time.Minute)}
 	if err := a.bind(lease); err != nil {
 		t.Fatal(err)
 	}
-	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: "url_0123456789ABCDEFGHIJKL", ServiceKind: "public_url", EventType: "connection.open", OccurredAt: time.Now(), RunID: "pr_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", Outcome: "forwarded"}
+	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: "svc_0123456789ABCDEFGHIJKL", ServiceKind: "service", EventType: "connection.open", OccurredAt: time.Now(), RunID: "srun_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", SourceIP: "192.0.2.44", Outcome: "forwarded"}
 	if !a.Observe(o) {
 		t.Fatal("observation rejected")
 	}
@@ -55,7 +55,7 @@ func TestIngressAuditRenewalRetainsBoundLeaseAcrossRetries(t *testing.T) {
 	// closing forces the short batch immediately without waiting for its timer.
 	go func() { done <- a.queue.Close(t.Context()) }()
 	<-c.first
-	lease.LeaseExpiresAt = lease.LeaseExpiresAt.Add(time.Minute)
+	lease.ServingUntil = lease.ServingUntil.Add(time.Minute)
 	if err := a.bind(lease); err != nil {
 		t.Fatal("renewal replaced queue", err)
 	}

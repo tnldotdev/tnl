@@ -14,8 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitorcert"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
@@ -56,7 +57,7 @@ func (ShareTokenSource) visitorTokenSource() {}
 func (ShareTokenSource) String() string      { return "share visitor token source" }
 func (ShareTokenSource) GoString() string    { return "share visitor token source" }
 
-type ShareSessionTokenSource struct{ ShareID, Secret string }
+type ShareSessionTokenSource struct{ ShareID, Secret, RunID string }
 
 func (ShareSessionTokenSource) visitorTokenSource() {}
 func (ShareSessionTokenSource) String() string      { return "share session token source" }
@@ -93,30 +94,6 @@ func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scop
 	}
 	q := controlstatedb.New(tx)
 	switch scope.Kind {
-	case visitorscope.PublicURL:
-		row, err := lockVisitorURL(ctx, q, scope.ID)
-		if err != nil {
-			return resource, err
-		}
-		if row.Purpose != "app" && row.Purpose != "alias" && row.Purpose != "demo" || row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(now) {
-			return resource, ErrVisitorPermission
-		}
-		resource.TeamID, resource.Hostname, resource.Port, resource.Anonymous = row.TeamID, row.CanonicalHostname, 443, row.AccessMode == "anonymous"
-		if row.ExpiresAt.Valid {
-			resource.ExpiresAt = row.ExpiresAt.Time
-		}
-		deadline, err := q.GuestPublicURLServingDeadline(ctx, controlstatedb.GuestPublicURLServingDeadlineParams{PublicURLID: scope.ID, Now: timestamptz(now)})
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return resource, err
-		}
-		if err == nil {
-			if !deadline.Valid || !deadline.Time.After(now) {
-				return resource, ErrVisitorPermission
-			}
-			if resource.ExpiresAt.IsZero() || deadline.Time.Before(resource.ExpiresAt) {
-				resource.ExpiresAt = deadline.Time
-			}
-		}
 	case visitorscope.Service:
 		if err := lockServiceAdmission(ctx, tx, scope.ID); err != nil {
 			return resource, err
@@ -125,13 +102,26 @@ func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scop
 		if err != nil {
 			return resource, err
 		}
-		if !row.Enabled || row.DeletedAt.Valid || row.CertificateHostname == "" || !row.ServicePort.Valid || row.ServicePort.Int32 < 1024 || row.ServicePort.Int32 > 65535 {
+		if !row.Enabled || row.DeletedAt.Valid || !row.ServicePort.Valid || !serviceendpoint.Valid(row.Protocol, row.CertificateHostname, int(row.ServicePort.Int32), row.Public) {
 			return resource, ErrVisitorPermission
 		}
-		resource.TeamID, resource.Hostname, resource.Port = row.TeamID, row.CertificateHostname, uint16(row.ServicePort.Int32)
+		resource.TeamID, resource.Hostname, resource.Port = row.TeamID.String, row.CertificateHostname, serviceendpoint.PermissionPort(row.Protocol)
+		if row.ExpiresAt.Valid {
+			resource.ExpiresAt = row.ExpiresAt.Time
+		}
+		if row.GuestID.Valid {
+			deadline, err := q.GuestServiceServingDeadline(ctx, controlstatedb.GuestServiceServingDeadlineParams{ServiceID: scope.ID, Now: timestamptz(now)})
+			if err != nil || !deadline.Valid || !deadline.Time.After(now) {
+				if err != nil {
+					return resource, publisherLookupError(err, ErrVisitorPermission)
+				}
+				return resource, ErrVisitorPermission
+			}
+			resource.ExpiresAt = minTime(resource.ExpiresAt, deadline.Time)
+		}
 	}
 	var err error
-	resource.Revision, err = q.ReadVisitorPolicyRevision(ctx, controlstatedb.ReadVisitorPolicyRevisionParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID})
+	resource.Revision, err = q.ReadVisitorPolicyRevision(ctx, scope.ID)
 	return resource, err
 }
 
@@ -156,7 +146,11 @@ func (d *Database) IssueVisitorToken(ctx context.Context, issuer string, scope v
 // retry the whole preparation decision, including current source authority and
 // key retention. a repeatable-read serialization failure rolls back every write.
 func retryVisitorPreparation[T any](ctx context.Context, now time.Time, work func(time.Time) (T, error)) (result T, err error) {
-	for attempt := range 8 {
+	return retryVisitorPreparationWithLockAttempts(ctx, now, 8, work)
+}
+
+func retryVisitorPreparationWithLockAttempts[T any](ctx context.Context, now time.Time, lockAttempts int, work func(time.Time) (T, error)) (result T, err error) {
+	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
 			now = time.Now()
 		}
@@ -164,10 +158,17 @@ func retryVisitorPreparation[T any](ctx context.Context, now time.Time, work fun
 		var pgErr *pgconn.PgError
 		// the first PostgreSQL match owns classification. a malformed nil match
 		// never permits retry, even if a later joined cause is retryable.
-		if !errors.As(err, &pgErr) || pgErr == nil || pgErr.Code != "40001" && pgErr.Code != "40P01" && pgErr.Code != "55P03" || attempt == 7 {
+		if !errors.As(err, &pgErr) || pgErr == nil || pgErr.Code != "40001" && pgErr.Code != "40P01" && pgErr.Code != "55P03" {
 			return result, err
 		}
-		timer := time.NewTimer(time.Duration(attempt+1) * 5 * time.Millisecond)
+		limit := 8
+		if pgErr.Code == "55P03" {
+			limit = lockAttempts
+		}
+		if attempt+1 >= limit {
+			return result, err
+		}
+		timer := time.NewTimer(min(time.Duration(attempt+1)*5*time.Millisecond, 50*time.Millisecond))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -176,7 +177,6 @@ func retryVisitorPreparation[T any](ctx context.Context, now time.Time, work fun
 		case <-timer.C:
 		}
 	}
-	return result, err
 }
 
 func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
@@ -231,9 +231,10 @@ func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer stri
 // visitorAuthority keeps the permission and its proof key from one locked source
 // decision. connector preparation consumes these facts without reauthenticating.
 type visitorAuthority struct {
-	Permission     visitortoken.Permission
-	PublicKey      ed25519.PublicKey
-	ConnectorUntil time.Time
+	Permission              visitortoken.Permission
+	PublicKey               ed25519.PublicKey
+	ConnectorUntil          time.Time
+	WorkloadCredentialUntil time.Time
 }
 
 func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, source VisitorTokenSource, clock authorizationClock) (result visitorAuthority, retErr error) {
@@ -266,22 +267,30 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 			if err != nil {
 				return result, err
 			}
-			principal, preview, browserDeadline = facts.Principal, facts.PreviewID, facts.ExpiresAt
+			principal, browserDeadline = facts.Principal, facts.ExpiresAt
 		}
-		if !opaqueid.Valid(principal.IdentityID, opaqueid.IdentityPrefix) || !opaqueid.Valid(principal.SessionID, opaqueid.ControlSessionPrefix) {
-			return result, ErrVisitorPermission
-		}
-		session, err := q.GetVisitorParentSession(ctx, principal.SessionID)
+		parentUntil, err := currentVisitorParentSession(ctx, tx, principal, now)
 		if err != nil {
-			return result, publisherLookupError(err, ErrVisitorPermission)
-		}
-		if session.IdentityID != principal.IdentityID || session.RevokedAt.Valid || !session.AccessExpiresAt.Time.After(now) || !session.RefreshExpiresAt.Time.After(now) {
-			return result, ErrVisitorPermission
+			return result, err
 		}
 		if browser, ok := supplied.(BrowserTokenSource); ok {
 			preview = browser.PreviewID
 		}
 		decision, err := q.VisitorPermission(ctx, controlstatedb.VisitorPermissionParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID, IdentityID: principal.IdentityID, ControlSessionID: principal.SessionID, PreviewID: preview, Now: timestamptz(now)})
+		_, deviceSource := supplied.(DeviceTokenSource)
+		if errors.Is(err, pgx.ErrNoRows) && scope.Kind == visitorscope.Service && !deviceSource {
+			http, httpErr := d.serviceHTTPIdentityPermission(WithControlPrincipal(ctx, principal), tx, scope.ID, principal.IdentityID, now)
+			if httpErr != nil {
+				return result, httpErr
+			}
+			_, browserSession := supplied.(BrowserSessionTokenSource)
+			if http.VisitAllowed && (http.Reason != "anonymous" || browserSession) {
+				err = nil
+				if http.ExpiresAt != nil {
+					decision.ExpiresAt = timestamptz(*http.ExpiresAt)
+				}
+			}
+		}
 		if errors.Is(err, pgx.ErrNoRows) && resource.Anonymous {
 			// a valid signed-in person may visit an explicitly anonymous URL.
 			// malformed, revoked, or expired source credentials already failed.
@@ -295,7 +304,7 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		} else if err != nil {
 			return result, publisherLookupError(err, ErrVisitorPermission)
 		}
-		until = minTime(session.AccessExpiresAt.Time, session.RefreshExpiresAt.Time)
+		until = parentUntil
 		if !browserDeadline.IsZero() {
 			until = minTime(until, browserDeadline)
 		}
@@ -351,6 +360,7 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		subject = visitortoken.Workload{SessionID: workloadSource.ID, KeySHA256: digest}
 		result.PublicKey = ed25519.PublicKey(workloadSource.PublicKey)
 		result.ConnectorUntil = minTime(until, now.Add(WorkloadLease))
+		result.WorkloadCredentialUntil = visitorcert.WorkloadDeadline(now, workloadSource.ExpiresAt)
 	case RegisteredKeyTokenSource:
 		if scope.Kind != visitorscope.Service {
 			return result, ErrVisitorPermission
@@ -382,64 +392,20 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 	case ShareTokenSource, ShareSessionTokenSource:
 		var shareID, sourceSecret string
 		var session bool
+		runID := ""
 		switch value := supplied.(type) {
 		case ShareTokenSource:
 			shareID, sourceSecret = value.ShareID, value.Secret
 		case ShareSessionTokenSource:
 			shareID, sourceSecret, session = value.ShareID, value.Secret, true
+			runID = value.RunID
 		}
-		if scope.Kind != visitorscope.PublicURL || !opaqueid.Valid(shareID, opaqueid.SharePrefix) || len(sourceSecret) != 43 {
+		if scope.Kind != visitorscope.Service {
 			return result, ErrVisitorPermission
 		}
-		secret, err := base64.RawURLEncoding.Strict().DecodeString(sourceSecret)
-		if err != nil || len(secret) != 32 {
-			return result, ErrVisitorPermission
-		}
-		digest := sha256.Sum256(secret)
-		var stored []byte
-		var issuerID, guestID string
-		err = tx.QueryRow(ctx, `SELECT share.secret_digest,share.expires_at,share.created_by_identity_id,COALESCE(share.guest_id,'') FROM control.shares share
-		    JOIN control.share_public_urls included ON included.share_id=share.id AND included.public_url_id=$2
-		    WHERE share.id=$1 AND share.revoked_at IS NULL AND share.expires_at>$3
-		    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$3)) FOR SHARE OF share`, shareID, scope.ID, now).Scan(&stored, &until, &issuerID, &guestID)
+		until, err = d.shareVisitorPermission(ctx, tx, scope.ID, runID, shareID, sourceSecret, session, now)
 		if err != nil {
-			return result, publisherLookupError(err, ErrVisitorPermission)
-		}
-		if session {
-			var deadline time.Time
-			err := tx.QueryRow(ctx, `SELECT expires_at FROM control.share_cookies
-			    WHERE token_digest=$1 AND share_id=$2 AND public_url_id=$3 AND expires_at>$4 FOR SHARE`, digest[:], shareID, scope.ID, now).Scan(&deadline)
-			if err != nil {
-				return result, publisherLookupError(err, ErrVisitorPermission)
-			}
-			until = minTime(until, deadline)
-		} else if subtle.ConstantTimeCompare(stored, digest[:]) != 1 {
-			return result, ErrVisitorPermission
-		}
-		if guestID == "" {
-			// a share depends on the issuer retaining management authority, not
-			// merely holding an unrelated visitor grant on the same resource.
-			var authorized bool
-			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_urls url
-			    JOIN control.teams team ON team.id=url.team_id AND team.deleted_at IS NULL
-			    JOIN control.identities person ON person.id=$2 AND person.disabled_at IS NULL
-			    JOIN control.team_memberships member ON member.team_id=url.team_id AND member.identity_id=person.id
-			    WHERE url.id=$1 AND control.active_membership(member.id,$3)
-			    AND control.active_team_subject(url.team_id,person.id,$3)
-			    AND ((url.public_url_scope='member' AND member.id=url.membership_id)
-			        OR (url.public_url_scope='shared' AND member.role IN ('owner','admin'))))`, scope.ID, issuerID, now).Scan(&authorized)
-			if err != nil {
-				return result, err
-			}
-			if !authorized {
-				return result, ErrVisitorPermission
-			}
-		} else {
-			var deadline time.Time
-			if err := tx.QueryRow(ctx, `SELECT expires_at FROM control.guest_trials WHERE id=$1`, guestID).Scan(&deadline); err != nil {
-				return result, err
-			}
-			until = minTime(until, deadline)
+			return result, err
 		}
 		subject = visitortoken.Share{ShareID: shareID}
 	case GrantTokenSource:
@@ -450,35 +416,24 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		if err != nil {
 			return result, err
 		}
-		var creator, session, kind string
-		err = tx.QueryRow(ctx, `SELECT created_by_identity_id,COALESCE(control_session_id,''),expires_at,kind FROM control.service_http_grants
-		    WHERE id=$1 AND service_id=$2 AND secret_digest=$3 AND revoked_at IS NULL AND expires_at>$4 FOR SHARE`, grantID, scope.ID, digest[:], now).Scan(&creator, &session, &until, &kind)
+		grant, err := currentServiceHTTPGrantAuthority(ctx, tx, scope.ID, grantID, now)
 		if err != nil {
-			return result, publisherLookupError(err, ErrVisitorPermission)
+			return result, err
 		}
-		if session != "" {
-			parent, err := q.GetVisitorParentSession(ctx, session)
-			if err != nil {
-				return result, publisherLookupError(err, ErrVisitorPermission)
-			}
-			if parent.IdentityID != creator || parent.RevokedAt.Valid || !parent.AccessExpiresAt.Time.After(now) || !parent.RefreshExpiresAt.Time.After(now) {
-				return result, ErrVisitorPermission
-			}
-			until = minTime(until, minTime(parent.AccessExpiresAt.Time, parent.RefreshExpiresAt.Time))
+		if subtle.ConstantTimeCompare(grant.secretDigest, digest[:]) != 1 {
+			return result, ErrVisitorPermission
 		}
-		decision, err := q.VisitorPermission(ctx, controlstatedb.VisitorPermissionParams{ResourceKind: "service", ResourceID: scope.ID, IdentityID: creator, ControlSessionID: session, Now: timestamptz(now)})
-		if err != nil {
-			return result, publisherLookupError(err, ErrVisitorPermission)
-		}
-		if decision.ExpiresAt.Valid && decision.ExpiresAt.InfinityModifier == 0 {
-			until = minTime(until, decision.ExpiresAt.Time)
-		}
-		subject = visitortoken.Grant{GrantID: grantID, Kind: kind}
+		subject, until = grant.subject, grant.expiresAt
 		explicitLifetime = true
 	default:
 		return result, ErrVisitorPermission
 	}
 	if !until.After(clock.current()) {
+		if _, workload := source.(WorkloadTokenSource); workload {
+			// the source can expire after its locked read while the selected
+			// service is checked. retain the source denial at this later fence.
+			return result, ErrWorkloadDenied
+		}
 		return result, ErrVisitorPermission
 	}
 	result.Permission = resource.permission(subject, until, now)
@@ -505,7 +460,6 @@ func visitorRefreshDigest(credential string) (string, [32]byte, error) {
 
 type browserTokenFacts struct {
 	Principal ControlPrincipal
-	PreviewID string
 	ExpiresAt time.Time
 }
 
@@ -516,62 +470,29 @@ func (d *Database) browserTokenFacts(ctx context.Context, tx pgx.Tx, scope visit
 	if err != nil {
 		return result, ErrVisitorPermission
 	}
-	q := controlstatedb.New(tx)
-	if scope.Kind == visitorscope.Service {
-		err := tx.QueryRow(ctx, `SELECT session.control_session_id,parent.identity_id,LEAST(session.expires_at,parent.refresh_expires_at)
-		    FROM control.service_http_browser_sessions session JOIN control.control_sessions parent ON parent.id=session.control_session_id
-		    WHERE session.service_id=$1 AND session.cookie_digest=$2
-		    AND session.revoked_at IS NULL AND session.expires_at>$3 AND parent.revoked_at IS NULL
-		    AND parent.refresh_expires_at>$3 FOR SHARE OF session,parent`, scope.ID, digest, now).Scan(&result.Principal.SessionID, &result.Principal.IdentityID, &result.ExpiresAt)
-		return result, publisherLookupError(err, ErrVisitorPermission)
-	}
-	if scope.Kind != visitorscope.PublicURL {
+	if scope.Kind != visitorscope.Service {
 		return result, ErrVisitorPermission
 	}
-	row, err := q.LockBrowserAccessSession(ctx, digest)
-	if err != nil {
-		return result, publisherLookupError(err, ErrVisitorPermission)
-	}
-	if row.RevokedAt.Valid || !row.ExpiresAt.Time.After(now) {
-		return result, ErrVisitorPermission
-	}
-	var bound bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.browser_session_run_bindings WHERE session_digest=$1 AND public_url_id=$2)`, digest, scope.ID).Scan(&bound)
-	if err != nil {
-		return result, err
-	}
-	if !bound {
-		return result, ErrVisitorPermission
-	}
-	if d.storageKey == nil {
-		return result, ErrVisitorPermission
-	}
-	access, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(digest), row.AccessCiphertext)
-	if err != nil {
-		return result, err
-	}
-	accessID, tokenDigest, err := credentials.ParseAccessToken(credentials.AccessToken(access))
-	if err != nil {
-		return result, ErrVisitorPermission
-	}
-	parent, err := q.LockVisitorControlSession(ctx, accessID.String())
-	if err != nil {
-		return result, publisherLookupError(err, ErrVisitorPermission)
-	}
-	if parent.IdentityID != row.IdentityID || parent.RevokedAt.Valid || !credentials.SecretHashMatches(parent.AccessTokenDigest, tokenDigest) || !parent.AccessExpiresAt.Time.After(now) {
-		return result, ErrVisitorPermission
-	}
-	result.Principal = ControlPrincipal{SessionID: parent.ID, IdentityID: parent.IdentityID}
-	result.PreviewID, result.ExpiresAt = row.PreviewID.String, row.ExpiresAt.Time
-	if row.ParentControlSessionID.Valid {
-		original, err := q.GetVisitorParentSession(ctx, row.ParentControlSessionID.String)
-		if err != nil {
-			return result, publisherLookupError(err, ErrVisitorPermission)
-		}
-		if original.IdentityID != row.IdentityID || original.RevokedAt.Valid || !original.RefreshExpiresAt.Time.After(now) {
-			return result, ErrVisitorPermission
-		}
-		result.ExpiresAt = minTime(result.ExpiresAt, original.RefreshExpiresAt.Time)
-	}
-	return result, nil
+	err = tx.QueryRow(ctx, `SELECT browser.control_session_id,parent.identity_id,
+	    LEAST(browser.expires_at,parent.access_expires_at,parent.refresh_expires_at,original.refresh_expires_at)
+	    FROM control.service_http_browser_sessions browser
+	    JOIN control.control_sessions parent ON parent.id=browser.control_session_id
+	    JOIN control.identities person ON person.id=parent.identity_id AND person.disabled_at IS NULL
+	    LEFT JOIN control.control_sessions original ON original.id=browser.parent_control_session_id AND original.identity_id=parent.identity_id
+	    WHERE browser.token_digest=$2 AND browser.revoked_at IS NULL AND browser.expires_at>$3
+	    AND parent.revoked_at IS NULL AND parent.access_expires_at>$3 AND parent.refresh_expires_at>$3
+	    AND (browser.parent_control_session_id IS NULL OR original.revoked_at IS NULL AND original.refresh_expires_at>$3)
+	    AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
+	        JOIN control.service_runs run ON run.service_id=bound.service_id
+	        WHERE bound.session_digest=browser.token_digest AND bound.service_id=$1 AND bound.consumed_at IS NOT NULL
+	        AND bound.revoked_at IS NULL AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
+	        AND run.publisher_expires_at>$3 AND run.certificate_expires_at>$3
+	        AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
+	            run.publisher_grant_id,run.service_id,$3) permission
+	            JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
+	            JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
+	                AND signing.publisher_identity_id=run.publisher_identity_id
+	                AND (grant_record.kind='service' OR signing.retired_at IS NULL)))
+	    FOR SHARE OF browser,parent`, scope.ID, digest, now).Scan(&result.Principal.SessionID, &result.Principal.IdentityID, &result.ExpiresAt)
+	return result, publisherLookupError(err, ErrVisitorPermission)
 }

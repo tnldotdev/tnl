@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -23,19 +24,20 @@ func privateLifecycleHeader() tunnelv1.ServiceForwardingHeader {
 		ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 3,
 		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2,
 		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 8443},
-		SourceIP:      "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute),
+		SourceIP:      "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().UTC().Add(time.Minute),
 	}, ConnectionSlot: 1, RelayServiceID: "relay-a", RelayID: "relay-process", RelayRunID: privateRelayID(opaqueid.RelayRunPrefix),
-		RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute)}
+		RelayLeaseRevision: 4, ServingUntil: time.Now().UTC().Add(time.Minute)}
 }
 
 func TestPrivateCandidateRequiresEveryAssignmentAndLeaseField(t *testing.T) {
 	header := privateLifecycleHeader()
+	now := header.ExpiresAt.Add(-time.Minute)
 	lease := relayv1.RelayLease{RelayServiceId: header.RelayServiceID, RelayId: header.RelayID, RelayRunId: header.RelayRunID,
-		RelayLeaseRevision: int64(header.RelayLeaseRevision), LeaseExpiresAt: header.LeaseExpiresAt}
+		RelayLeaseRevision: int64(header.RelayLeaseRevision), ServingUntil: header.ServingUntil}
 	connection := &serviceConnection{ref: tunnel.ServiceForwardingRef(header), lease: lease}
 	registry := NewServiceRegistry()
 	registry.connections[header.PublisherConnectionID] = connection
-	if got, ok := registry.candidate(header, lease, time.Now()); !ok || got != connection {
+	if got, ok := registry.candidate(header, lease, now); !ok || got != connection {
 		t.Fatal("exact private assignment was not selected")
 	}
 	for _, field := range []string{"ServiceID", "ServiceRunID", "RunNumber", "PublisherConnectionID", "ConnectionSlot", "ConnectionAssignmentRevision", "RelayServiceID", "RelayID", "RelayRunID", "RelayLeaseRevision"} {
@@ -57,7 +59,7 @@ func TestPrivateCandidateRequiresEveryAssignmentAndLeaseField(t *testing.T) {
 				} else {
 					value.SetUint(value.Uint() + 1)
 				}
-				if got, ok := registry.candidate(changed, lease, time.Now()); ok || got != nil {
+				if got, ok := registry.candidate(changed, lease, now); ok || got != nil {
 					t.Fatal("changed private identity was selected")
 				}
 			})
@@ -68,26 +70,32 @@ func TestPrivateCandidateRequiresEveryAssignmentAndLeaseField(t *testing.T) {
 		"process":  func(l *relayv1.RelayLease) { l.RelayId += "other" },
 		"run":      func(l *relayv1.RelayLease) { l.RelayRunId += "other" },
 		"revision": func(l *relayv1.RelayLease) { l.RelayLeaseRevision++ },
-		"expired":  func(l *relayv1.RelayLease) { l.LeaseExpiresAt = time.Now().Add(-time.Second) },
+		"expired":  func(l *relayv1.RelayLease) { l.ServingUntil = now },
 		"draining": func(l *relayv1.RelayLease) { l.Draining = true },
 	} {
 		t.Run("lease/"+name, func(t *testing.T) {
 			changed := lease
 			mutate(&changed)
-			if _, ok := registry.candidate(header, changed, time.Now()); ok {
+			if _, ok := registry.candidate(header, changed, now); ok {
 				t.Fatal("stale lease selected")
 			}
 		})
 	}
 	// private forwarding requires both the copied deadline and the current lease.
-	expired := header
-	expired.LeaseExpiresAt = time.Now().Add(-time.Second)
-	if _, ok := registry.candidate(expired, lease, time.Now()); ok {
-		t.Fatal("expired private projection selected")
+	for _, boundary := range []string{"run", "copied lease"} {
+		expired := header
+		if boundary == "run" {
+			expired.ExpiresAt = now
+		} else {
+			expired.ServingUntil = now
+		}
+		if _, ok := registry.candidate(expired, lease, now); ok {
+			t.Fatal("expired service forwarding authority selected", boundary)
+		}
 	}
 	// a claim from another process cannot be rescued by a current header/lease.
 	connection.lease.RelayId = "other-process"
-	if _, ok := registry.candidate(header, lease, time.Now()); ok {
+	if _, ok := registry.candidate(header, lease, now); ok {
 		t.Fatal("claim process identity ignored")
 	}
 }
@@ -96,7 +104,7 @@ func TestPrivateClaimRejectsChangedAndMissingResponseIdentity(t *testing.T) {
 	ref := tunnel.ServiceForwardingRef(privateLifecycleHeader())
 	claimed := relayv1.ServicePublisherConnection{ServiceId: ref.ServiceID, ServiceRunId: ref.ServiceRunID, RunNumber: int64(ref.RunNumber),
 		PublisherConnectionId: ref.PublisherConnectionID, ConnectionAssignmentRevision: int64(ref.ConnectionAssignmentRevision), RelayServiceId: ref.RelayServiceID}
-	if err := validatePrivateClaim(ref, claimed); err != nil {
+	if err := validateServiceClaim(ref, claimed); err != nil {
 		t.Fatal(err)
 	}
 	for i := range reflect.TypeOf(claimed).NumField() {
@@ -116,7 +124,7 @@ func TestPrivateClaimRejectsChangedAndMissingResponseIdentity(t *testing.T) {
 				} else {
 					value.SetInt(value.Int() + 1)
 				}
-				if err := validatePrivateClaim(ref, changed); err == nil {
+				if err := validateServiceClaim(ref, changed); err == nil {
 					t.Fatal("changed control identity accepted")
 				}
 			})
@@ -124,19 +132,31 @@ func TestPrivateClaimRejectsChangedAndMissingResponseIdentity(t *testing.T) {
 	}
 }
 
-func privateLifecycleFixture(t *testing.T) (*serviceConnection, *tunnel.Session, *ServiceRegistry, tunnelv1.ServiceForwardingHeader) {
+func privateLifecycleFixture(t *testing.T, observers ...RegistryObserver) (*serviceConnection, *tunnel.Session, *ServiceRegistry, tunnelv1.ServiceForwardingHeader) {
 	t.Helper()
 	header := privateLifecycleHeader()
-	ref := tunnel.ServiceForwardingRef(header)
-	publisher, relay := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
-		Role: tunnelv1.Publisher, Credential: "private-publisher", ServiceConnection: &ref})
-	c := &serviceConnection{ref: ref, paths: newStreamLifetime(relay)}
+	c, publisher := serviceConnectionFixture(t, header)
 	registry := NewServiceRegistry()
+	if len(observers) != 0 {
+		registry.Instrument(observers[0])
+	}
 	if err := registry.insert(c); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = registry.Close() })
 	return c, publisher, registry, header
+}
+
+func serviceConnectionFixture(t *testing.T, header tunnelv1.ServiceForwardingHeader) (*serviceConnection, *tunnel.Session) {
+	t.Helper()
+	ref := tunnel.ServiceForwardingRef(header)
+	publisher, relay := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
+		Role: tunnelv1.Publisher, Credential: "service-publisher", ServiceConnection: &ref})
+	lease := relayv1.RelayLease{RelayServiceId: header.RelayServiceID, RelayId: header.RelayID, RelayRunId: header.RelayRunID,
+		RelayLeaseRevision: int64(header.RelayLeaseRevision), ServingUntil: header.ServingUntil}
+	c := &serviceConnection{ref: ref, lease: lease, paths: newStreamLifetime(relay)}
+	t.Cleanup(func() { _ = c.paths.Close() })
+	return c, publisher
 }
 
 func openPrivateLifecycle(ctx context.Context, c *serviceConnection, h tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
@@ -212,7 +232,8 @@ func TestPrivateLifecycleDrainJoinsAlreadyClosedConnection(t *testing.T) {
 }
 
 func TestPrivateLifecycleDrainKeepsAdmittedStreamAndReleasesOnce(t *testing.T) {
-	c, publisher, registry, header := privateLifecycleFixture(t)
+	metrics := observability.New("relay")
+	c, publisher, registry, header := privateLifecycleFixture(t, metrics)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	peer := make(chan *tunnel.IncomingServiceForwardingStream, 1)
@@ -220,6 +241,9 @@ func TestPrivateLifecycleDrainKeepsAdmittedStreamAndReleasesOnce(t *testing.T) {
 		incoming, err := publisher.AcceptServiceForwardingStream(ctx)
 		if err != nil {
 			return err
+		}
+		if !reflect.DeepEqual(incoming.Header, header) {
+			return errors.New("publisher received another service forwarding identity")
 		}
 		peer <- incoming
 		return incoming.Accept()
@@ -234,14 +258,21 @@ func TestPrivateLifecycleDrainKeepsAdmittedStreamAndReleasesOnce(t *testing.T) {
 	if err := relayAwait(t, accepted); err != nil {
 		t.Fatal(err)
 	}
+	if connections, streams := registry.Load(); connections != 1 || streams != 1 {
+		t.Fatal("active stream load differs from the registered connection", connections, streams)
+	}
 	waiting := &waitingDrainContext{Context: ctx, waiting: make(chan struct{})}
 	drained := relayWorker(t, func() { _ = c.paths.Close() }, func() error { return registry.Drain(waiting) })
 	relayAwait(t, waiting.waiting)
+	assertRelayOperation(t, metrics, "RelayDrain", "success", 0)
 	if _, err := openPrivateLifecycle(ctx, c, header); !errors.Is(err, ErrDraining) {
 		t.Fatalf("draining open=%v", err)
 	}
-	if err := registry.insert(c); err == nil {
-		t.Fatal("draining registry accepted assignment")
+	if err := registry.insert(c); !errors.Is(err, ErrDraining) {
+		t.Fatalf("draining insert=%v", err)
+	}
+	if _, ok := registry.candidate(header, c.lease, time.Now()); ok {
+		t.Fatal("draining registry selected a publisher connection")
 	}
 	if _, err := stream.Write([]byte("live")); err != nil {
 		t.Fatal(err)
@@ -263,8 +294,9 @@ func TestPrivateLifecycleDrainKeepsAdmittedStreamAndReleasesOnce(t *testing.T) {
 	if err := relayAwait(t, drained); err != nil {
 		t.Fatal(err)
 	}
-	if _, s := registry.Load(); s != 0 {
-		t.Fatal("stream accounting retained")
+	assertRelayOperation(t, metrics, "RelayDrain", "success", 1)
+	if connections, streams := registry.Load(); connections != 1 || streams != 0 {
+		t.Fatal("drain changed registration load or retained stream capacity", connections, streams)
 	}
 }
 
@@ -309,6 +341,38 @@ func TestPrivateLifecycleDrainRejectsLatePendingAcknowledgement(t *testing.T) {
 type countedCloseConn struct {
 	net.Conn
 	closes atomic.Int64
+}
+
+type failedStreamCleanup struct {
+	net.Conn
+	failure error
+}
+
+func (c failedStreamCleanup) Close() error { return errors.Join(c.Conn.Close(), c.failure) }
+
+func TestStreamLifetimeCanceledDrainPreservesIndependentCleanupFailure(t *testing.T) {
+	c, _, registry, _ := privateLifecycleFixture(t)
+	left, right := net.Pipe()
+	defer right.Close()
+	cleanupErr := errors.New("physical visitor cleanup failed")
+	if err := c.paths.beginOpen(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.paths.finishOpen(failedStreamCleanup{Conn: left, failure: cleanupErr}, nil); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := registry.Drain(ctx)
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, cleanupErr) {
+		t.Fatal("canceled drain hid independent physical cleanup failure", err)
+	}
+	if err := registry.Close(); !errors.Is(err, cleanupErr) {
+		t.Fatal("joined registry close lost cached cleanup failure", err)
+	}
+	if n, s := registry.Load(); n != 0 || s != 0 {
+		t.Fatal("completed close retained registrations or stream capacity", n, s)
+	}
 }
 
 func (c *countedCloseConn) Close() error { c.closes.Add(1); return c.Conn.Close() }

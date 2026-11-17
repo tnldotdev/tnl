@@ -17,7 +17,7 @@ func tokenFixture(t *testing.T) (ed25519.PrivateKey, Permission, View, time.Time
 	t.Helper()
 	now := time.Unix(1_800_000_000, 0).UTC()
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("k", ed25519.SeedSize)))
-	permission := Permission{Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, Hostname: "preview.example.test", Port: 443,
+	permission := Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}, Hostname: "preview.example.test", Port: 443,
 		VisitorPolicyRevision: 7, Subject: Browser{IdentityID: "ident_" + strings.Repeat("A", 22), SessionID: "cs_" + strings.Repeat("B", 22)}, ExpiresAt: now.Add(RenewableLifetime)}
 	view := View{Issuer: "https://control.example.test", Scope: permission.Scope, Hostname: permission.Hostname, Port: permission.Port,
 		VisitorPolicyRevision: permission.VisitorPolicyRevision, ObservedAt: now, ValidUntil: now.Add(PolicyLifetime)}.WithVerificationKeys(map[string]ed25519.PublicKey{"key-one": key.Public().(ed25519.PublicKey)})
@@ -58,13 +58,18 @@ func TestVerificationEvidenceAndPolicySnapshotsCannotBeForgedOrMutated(t *testin
 }
 
 func TestVisitorTokensUseExactCurrentResourceAndServer(t *testing.T) {
-	key, permission, view, now := tokenFixture(t)
-	for _, kind := range []visitorscope.Kind{visitorscope.PublicURL, visitorscope.Service} {
-		t.Run(string(kind), func(t *testing.T) {
-			if kind == visitorscope.Service {
-				permission.Scope, permission.Port = visitorscope.Scope{Kind: kind, ID: "svc_" + strings.Repeat("A", 22)}, 5432
-				view.Scope, view.Port = permission.Scope, permission.Port
-			}
+	for _, endpoint := range []struct {
+		name string
+		port uint16
+	}{
+		{"shared HTTPS", 443},
+		{"dedicated HTTPS", 8443},
+		{"non-HTTP", 5432},
+		{"connector-only", 0},
+	} {
+		t.Run(endpoint.name, func(t *testing.T) {
+			key, permission, view, now := tokenFixture(t)
+			permission.Port, view.Port = endpoint.port, endpoint.port
 			token := issueToken(t, key, permission, view, now)
 			got, err := VerifyBearer(token, view, now.Add(time.Second))
 			if err != nil || got.Facts().Scope != permission.Scope || got.Facts().Subject != permission.Subject || !got.Facts().ExpiresAt.Equal(permission.ExpiresAt) {
@@ -83,20 +88,14 @@ func TestVisitorTokensUseExactCurrentResourceAndServer(t *testing.T) {
 				},
 				"revision":       func(v *View) { v.VisitorPolicyRevision++ },
 				"older-revision": func(v *View) { v.VisitorPolicyRevision-- },
-				"kind": func(v *View) {
-					if v.Scope.Kind == visitorscope.PublicURL {
-						v.Scope = visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}
-					} else {
-						v.Scope = visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
-						v.Port = 443
-					}
-				},
-				"missing-key": func(v *View) { *v = v.WithVerificationKeys(nil) },
+				"retired-kind":   func(v *View) { v.Scope.Kind = "public_url" },
+				"retired-ID":     func(v *View) { v.Scope.ID = "url_" + strings.Repeat("A", 22) },
+				"missing-key":    func(v *View) { *v = v.WithVerificationKeys(nil) },
 				"wrong-key": func(v *View) {
 					*v = v.WithVerificationKeys(map[string]ed25519.PublicKey{"key-one": ed25519.NewKeyFromSeed([]byte(strings.Repeat("x", 32))).Public().(ed25519.PublicKey)})
 				},
 				"expired-policy":     func(v *View) { v.ValidUntil = now.Add(time.Second) },
-				"oversized-lease":    func(v *View) { v.ValidUntil = now.Add(PolicyLifetime + time.Nanosecond) },
+				"empty-lease":        func(v *View) { v.ValidUntil = v.ObservedAt },
 				"future-observation": func(v *View) { v.ObservedAt = now.Add(2 * time.Second) },
 			} {
 				t.Run(name, func(t *testing.T) {
@@ -108,6 +107,48 @@ func TestVisitorTokensUseExactCurrentResourceAndServer(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestPrivateServiceZeroPortIsExactNotWildcard(t *testing.T) {
+	key, permission, view, now := tokenFixture(t)
+	permission.Port = 0
+	view.Port = 0
+	token := issueToken(t, key, permission, view, now)
+	verified, err := VerifyBearer(token, view, now)
+	if err != nil || verified.Facts().Port != 0 {
+		t.Fatal("private service identity could not authorize a connector", err)
+	}
+	for _, port := range []uint16{443, 5432, 25443} {
+		changed := view
+		changed.Port = port
+		if _, err := VerifyBearer(token, changed, now); err == nil {
+			t.Fatal("zero-port permission matched another port", port)
+		}
+		if err := CheckCurrent(verified, changed, now); err == nil {
+			t.Fatal("verified zero-port permission survived a binding change", port)
+		}
+	}
+	changed := view
+	changed.Scope.ID = "svc_" + strings.Repeat("B", 22)
+	if _, err := VerifyBearer(token, changed, now); err == nil {
+		t.Fatal("zero-port permission matched another service")
+	}
+}
+
+func TestVisitorTokensNeverSignRetiredScopes(t *testing.T) {
+	for _, scope := range []visitorscope.Scope{
+		{Kind: "public_url", ID: "url_" + strings.Repeat("A", 22)},
+		{Kind: "public_url", ID: "svc_" + strings.Repeat("A", 22)},
+		{Kind: visitorscope.Service, ID: "url_" + strings.Repeat("A", 22)},
+	} {
+		for _, port := range []uint16{0, 443, 5432} {
+			key, permission, view, now := tokenFixture(t)
+			permission.Scope, permission.Port = scope, port
+			if _, err := Sign(view.Issuer, "key-one", key, permission, now); !errors.Is(err, ErrToken) {
+				t.Fatalf("retired scope %+v at port %d did not fail closed: %v", scope, port, err)
+			}
+		}
 	}
 }
 
@@ -141,6 +182,18 @@ func TestTokenExpiryIsIndependentOfPolicyFreshness(t *testing.T) {
 	}
 	if _, err := VerifyBearer(token, view, now.Add(-time.Second)); err == nil {
 		t.Fatal("future token accepted")
+	}
+}
+
+func TestVisitorTokenFutureIssuanceStillRequiresItsAuthorityClock(t *testing.T) {
+	key, permission, view, now := tokenFixture(t)
+	issuedAt := now.Add(time.Second)
+	token := issueToken(t, key, permission, view, issuedAt)
+	if _, err := VerifyBearer(token, view, now); !errors.Is(err, ErrToken) {
+		t.Fatal("token issued after the current authority time was accepted", err)
+	}
+	if _, err := VerifyBearer(token, view, issuedAt); err != nil {
+		t.Fatal("token remained unavailable after its real issuance time", err)
 	}
 }
 
@@ -209,7 +262,9 @@ func TestTokenClaimsAreClosedBoundedAndNeverLegacyCredentials(t *testing.T) {
 		"wrong-type":       sign(payload, "JWT"),
 		"unknown-field":    sign(append([]byte(`{"extra":true,`), payload[1:]...), Type),
 		"duplicate":        sign(append([]byte(`{"version":1,`), payload[1:]...), Type),
-		"duplicate-scope":  sign([]byte(strings.Replace(string(payload), `"kind":"public_url"`, `"kind":"public_url","kind":"public_url"`, 1)), Type),
+		"duplicate-scope":  sign([]byte(strings.Replace(string(payload), `"kind":"service"`, `"kind":"service","kind":"service"`, 1)), Type),
+		"retired-scope":    sign([]byte(strings.Replace(string(payload), `"kind":"service"`, `"kind":"public_url"`, 1)), Type),
+		"retired-ID":       sign([]byte(strings.Replace(string(payload), `"svc_`+strings.Repeat("A", 22)+`"`, `"url_`+strings.Repeat("A", 22)+`"`, 1)), Type),
 		"unknown-variant":  sign([]byte(strings.Replace(string(payload), `"kind":"browser"`, `"kind":"publisher"`, 1)), Type),
 		"mixed-variant":    sign([]byte(strings.Replace(string(payload), `"identity_id":`, `"device_id":"vdev_`+strings.Repeat("A", 22)+`","identity_id":`, 1)), Type),
 		"wrong-subject":    sign([]byte(strings.Replace(string(payload), `"ident_`+strings.Repeat("A", 22)+`"`, `"pub_`+strings.Repeat("A", 22)+`"`, 1)), Type),

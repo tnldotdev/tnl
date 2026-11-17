@@ -2,21 +2,85 @@ package state
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"slices"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
 // publisher authentication authorizes the exact prepared run and captured
 // endpoint. the service's WebPKI certificate authenticates connector visitor TLS.
 func (d *Database) StartServiceRun(ctx context.Context, service, id string, number int64, publisher PublisherIdentity, now time.Time) (result ServiceRunState, retErr error) {
-	if _, err := checkedServiceRunBinding(service, id, number); err != nil || !servicePublisherMatches(publisher, service) {
+	clock := newAuthorizationClock(now)
+	if _, err := checkedServiceRunBinding(service, id, number); err != nil || !servicePublisherSelectionMatches(publisher, service) {
 		return result, ErrServiceAccess
 	}
+	first, err := d.startServiceRunAttempt(ctx, service, id, number, publisher, clock)
+	// the attempt's rollback has joined before this decision. no publisher,
+	// service, placement or reservation lock crosses into system cleanup.
+	if !serviceRunCapacityOnly(err) || len(first.capacityRelays) == 0 {
+		return first.ServiceRunState, err
+	}
+	if _, cleanupErr := d.expireServiceRunCandidates(ctx, clock, first.capacityRelays); cleanupErr != nil {
+		return result, errors.Join(err, cleanupErr)
+	}
+	// retry only this preparation, with the same entry clock and issuance
+	// budget. a busy candidate can leave the original capacity denial intact.
+	retried, err := d.startServiceRunAttempt(ctx, service, id, number, publisher, clock)
+	return retried.ServiceRunState, err
+}
+
+type serviceRunStartAttempt struct {
+	ServiceRunState
+	capacityRelays []string
+}
+
+// capacity is the only retryable start outcome. a joined rollback or SQL error
+// must not gain system cleanup authority just by containing a capacity sentinel.
+func serviceRunCapacityOnly(err error) bool {
+	var insufficient, capacity int
+	var inspect func(error) bool
+	inspect = func(cause error) bool {
+		switch cause {
+		case ErrInsufficientRelayServices:
+			insufficient++
+			return true
+		case errRelayPlacementCapacity:
+			capacity++
+			return true
+		case nil:
+			return false
+		}
+		if joined, ok := cause.(interface{ Unwrap() []error }); ok {
+			children := joined.Unwrap()
+			if len(children) == 0 {
+				return false
+			}
+			for _, child := range children {
+				if !inspect(child) {
+					return false
+				}
+			}
+			return true
+		}
+		if wrapped, ok := cause.(interface{ Unwrap() error }); ok {
+			return inspect(wrapped.Unwrap())
+		}
+		return false
+	}
+	return inspect(err) && insufficient == 1 && capacity == 1
+}
+
+func (d *Database) startServiceRunAttempt(ctx context.Context, service, id string, number int64, publisher PublisherIdentity, clock authorizationClock) (result serviceRunStartAttempt, retErr error) {
+	now := clock.entered
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -30,59 +94,142 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if err != nil {
 		return result, err
 	}
+	if err = d.guestServiceSource(ctx, q, endpoint.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
+		return result, err
+	}
 	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: id, ServiceID: service})
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if run.RunNumber != number || run.PublisherIdentityID != publisher.ID || run.PublisherGrantID != publisher.GrantID || run.PublisherKeyID != publisher.KeyID || run.ClosedAt.Valid || len(run.CertificateIdentifiers) == 0 || !run.PublisherExpiresAt.Time.After(now) {
+	if run.RunNumber != number || run.PublisherIdentityID != publisher.ID || run.PublisherGrantID != publisher.GrantID || run.PublisherKeyID != publisher.KeyID || run.ClosedAt.Valid || len(run.CertificateIdentifiers) == 0 || !run.PublisherExpiresAt.Time.After(clock.current()) {
 		return result, ErrServiceAccess
 	}
-	if run.CertificateHostname != endpoint.CertificateHostname || run.CertificateDomainID != endpoint.DomainID || run.ServicePort != endpoint.ServicePort {
+	if run.Protocol != endpoint.Protocol || run.RequirePostQuantum != endpoint.RequirePostQuantum {
 		return result, ErrServiceAccess
 	}
-	plan, err := serviceCertificatePlan(ctx, tx, endpoint, publisher.ID, now)
+	prepared := serviceRunLifecycleState(run.State) == serviceRunPrepared
+	plan, err := serviceRunCertificatePlan(ctx, tx, run)
 	if err != nil || plan.CacheKey != run.CertificateCacheKey || plan.Scope != run.CertificateScope || !slices.Equal(plan.Identifiers, run.CertificateIdentifiers) {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
-	if _, err = q.GetServiceRunPublisherIdentity(ctx, controlstatedb.GetServiceRunPublisherIdentityParams{ID: id, ServiceID: service, RunNumber: number, PublisherIdentityID: publisher.ID, PublisherGrantID: publisher.GrantID, PublisherKeyID: publisher.KeyID, Now: timestamptz(now)}); err != nil {
+	if _, err = q.GetServiceRunPublisherIdentity(ctx, controlstatedb.GetServiceRunPublisherIdentityParams{ID: id, ServiceID: service, RunNumber: number, PublisherIdentityID: publisher.ID, PublisherGrantID: publisher.GrantID, PublisherKeyID: publisher.KeyID, Now: timestamptz(clock.current())}); err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	permission, err := serviceRunPublisherPermission(ctx, tx, run, clock.current())
+	if err != nil {
+		return result, err
 	}
 	seed, err := d.serviceAssignmentSeed(run)
 	if err != nil {
 		return result, err
 	}
-	token, digest, err := credentials.NewServiceRunToken()
-	if err != nil {
-		return result, err
+	token, digest := serviceRunCredential(seed, run.ID)
+	until := now.Add(45 * time.Second)
+	if !prepared && run.PublisherExpiresAt.Time.After(until) {
+		until = run.PublisherExpiresAt.Time
 	}
-	if serviceRunLifecycleState(run.State) == serviceRunPrepared {
+	if permission.Valid {
+		until = minTime(until, permission.Time)
+	}
+	if !until.After(clock.current()) {
+		return result, ErrServiceAccess
+	}
+	if prepared {
 		key, err := q.GetPublisherKey(ctx, controlstatedb.GetPublisherKeyParams{ID: publisher.KeyID, PublisherIdentityID: publisher.ID})
-		if err != nil || key.RetiredAt.Valid || !run.PreparationExpiresAt.Time.After(now) {
+		if err != nil || key.RetiredAt.Valid || !run.PreparationExpiresAt.Time.After(clock.current()) {
 			return result, errors.Join(ErrServiceAccess, err)
 		}
-		placements, err := selectRelayServicePlacements(ctx, q, now, run.PreferredRegions...)
+		if err := requireNewServiceWork(ctx, q, MaintenanceControlServiceRunCreation); err != nil {
+			return result, err
+		}
+		placements, err := selectRelayServicePlacements(ctx, q, clock.current(), run.PreferredRegions...)
 		if err != nil {
+			if serviceRunCapacityOnly(err) {
+				// reuse placement's eligibility owner under the locks already
+				// held by this attempt; callers cannot supply these service IDs.
+				eligible, _, lookupErr := availableRelayServicePlacements(ctx, q, clock.current())
+				if lookupErr != nil {
+					return result, errors.Join(err, lookupErr)
+				}
+				for _, relay := range eligible {
+					result.capacityRelays = append(result.capacityRelays, relay.relayServiceID)
+				}
+				// a placement wait spends the original authority and issuance
+				// budgets even when no slot was available. an expired caller
+				// must not turn that capacity miss into system cleanup.
+				if _, permissionErr := serviceRunPublisherPermission(ctx, tx, run, clock.current()); permissionErr != nil {
+					return result, errors.Join(err, permissionErr)
+				}
+				if !until.After(clock.current()) {
+					return result, errors.Join(err, ErrServiceAccess)
+				}
+			}
 			return result, err
 		}
 		if err = insertServiceRunSlots(ctx, q, seed, run, placements, now); err != nil {
-			return result, err
-		}
-		if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET state='starting',started_at=$2,run_token_digest=$3,publisher_expires_at=$4 WHERE id=$1`, id, now, digest[:], now.Add(45*time.Second)); err != nil {
 			return result, err
 		}
 		run.State = string(serviceRunStarting)
 	} else if !serviceRunLifecycleState(run.State).active() {
 		return result, ErrServiceAccess
 	}
-	if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET run_token_digest=$2,publisher_expires_at=$3 WHERE id=$1`, id, digest[:], now.Add(45*time.Second)); err != nil {
+	servingUntil := now.Add(d.servingTolerance())
+	if permission.Valid {
+		servingUntil = minTime(servingUntil, permission.Time)
+	}
+	if run.CertificateExpiresAt.Valid {
+		servingUntil = minTime(servingUntil, run.CertificateExpiresAt.Time)
+	}
+	if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET run_token_digest=$2,publisher_expires_at=$3,state=$4,started_at=COALESCE(started_at,$5),serving_observed_at=$5,serving_until=$6 WHERE id=$1`, id, digest[:], until, run.State, now, servingUntil); err != nil {
 		return result, err
 	}
+	run.PublisherExpiresAt = timestamptz(until)
+	run.ServingObservedAt, run.ServingUntil = timestamptz(now), timestamptz(servingUntil)
+	run, err = boundGuestServingAuthority(ctx, q, run, clock.current())
+	if err != nil {
+		return result, err
+	}
+	until = run.PublisherExpiresAt.Time
 	connections, err := privateAssignments(ctx, q, seed, run)
 	if err != nil {
 		return result, err
 	}
-	result = ServiceRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), State: run.State, ExpiresAt: now.Add(45 * time.Second), Connections: connections}
-	return result, tx.Commit(ctx)
+	if _, err = tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		return result, err
+	}
+	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
+		return result, err
+	}
+	if err = d.guestServiceSource(ctx, q, run.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
+		return result, err
+	}
+	if !until.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) || prepared && !run.PreparationExpiresAt.Time.After(clock.current()) {
+		return result, ErrServiceAccess
+	}
+	result.ServiceRunState = ServiceRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), State: run.State, ExpiresAt: until, ObservedAt: run.ServingObservedAt.Time, ServingUntil: run.ServingUntil.Time, Connections: connections}
+	result.VisitorSourceKey, err = visitortoken.ServiceVisitorSourceKey(digest[:], id, uint64(number))
+	if err != nil {
+		return result, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return result, err
+	}
+	if prepared {
+		d.activity.metrics.Load().ObservePlacement("create", observability.PlacementPlaced)
+	}
+	return result, nil
+}
+
+// preparation and start return the same exact-run credential. only start stores
+// its digest and admits active-run operations; preparation permits cleanup only.
+func serviceRunCredential(seed credentials.AssignmentSeed, runID string) (credentials.ServiceRunToken, [32]byte) {
+	mac := hmac.New(sha256.New, []byte(seed))
+	_, _ = mac.Write([]byte("service-run-token/" + runID))
+	secret := mac.Sum(nil)
+	token := credentials.ServiceRunToken(base64.RawURLEncoding.EncodeToString(secret))
+	digest := sha256.Sum256(secret)
+	clear(secret)
+	return token, digest
 }
 
 func insertServiceRunSlots(ctx context.Context, q *controlstatedb.Queries, seed credentials.AssignmentSeed, run controlstatedb.ControlServiceRun, placements [2]relayServicePlacement, now time.Time) error {

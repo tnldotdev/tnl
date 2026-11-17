@@ -171,6 +171,16 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			var err error
+			if request.ShutdownDeadline != nil {
+				if operation != "unregister" || request.ShutdownDeadline.IsZero() {
+					Problem(w, errors.New("shutdown deadline requires unregister"))
+					return
+				}
+				if err := s.Manager.LimitShutdown(request.RegistrationID, request.Owner, request.Target, *request.ShutdownDeadline); err != nil {
+					Problem(w, err)
+					return
+				}
+			}
 			switch operation {
 			case "register":
 				if grant.Scope != "app" {

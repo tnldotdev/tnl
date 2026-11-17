@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-// OAuthCallback identifies the exact local publish run that started a login.
+// OAuthCallback identifies the exact local service run that started a login.
 type OAuthCallback struct {
 	TunnelID string
 	Path     string
@@ -22,12 +23,12 @@ type OAuthCallbackScope struct {
 	IntegrationScope IntegrationScope
 }
 
-// OAuthRedirectOrigin is the exact public URL and run that started login. an
+// OAuthRedirectOrigin is the exact service and run that started login. an
 // alias origin is independent of the local app tunnel receiving the callback.
 type OAuthRedirectOrigin struct {
-	Hostname         string
-	PublicURLID      string
-	PublishRunNumber uint64
+	Hostname  string
+	ServiceID string
+	RunNumber uint64
 }
 
 type OAuthCallbackDestination struct {
@@ -48,7 +49,8 @@ func (d *Database) SaveOAuthCallback(ctx context.Context, input SaveOAuthCallbac
 	if err := scope.IntegrationScope.Validate(); err != nil {
 		return err
 	}
-	if scope.Server == "" || scope.Hostname == "" || input.State == "" || len(input.State) > 8192 || destination.TunnelID == "" || destination.Path == "" || origin.PublicURLID == "" || origin.PublishRunNumber == 0 || origin.PublishRunNumber > 1<<63-1 {
+	if scope.Server == "" || scope.Hostname == "" || input.State == "" || len(input.State) > 8192 || destination.TunnelID == "" || destination.Path == "" ||
+		!opaqueid.Valid(origin.ServiceID, opaqueid.ServicePrefix) || origin.RunNumber == 0 || origin.RunNumber > 1<<63-1 {
 		return errors.New("incomplete OAuth callback")
 	}
 	digest := sha256.Sum256([]byte(input.State))
@@ -56,7 +58,7 @@ func (d *Database) SaveOAuthCallback(ctx context.Context, input SaveOAuthCallbac
 	if err := d.queries.ExpireOAuthCallbacks(ctx, now.UnixNano()); err != nil {
 		return fmt.Errorf("expire OAuth callbacks: %w", err)
 	}
-	if err := d.queries.ExpireOAuthAliasReturns(ctx, now.UnixNano()); err != nil {
+	if err := d.queries.ExpireOAuthReturns(ctx, now.UnixNano()); err != nil {
 		return err
 	}
 	count, err := d.queries.SaveOAuthCallback(ctx, clientstatedb.SaveOAuthCallbackParams{
@@ -64,7 +66,7 @@ func (d *Database) SaveOAuthCallback(ctx context.Context, input SaveOAuthCallbac
 		PrimaryProjectRoot: scope.IntegrationScope.primaryProjectRoot(), IntegrationNamespace: scope.IntegrationScope.namespace(),
 		StateDigest: digest[:], TunnelID: destination.TunnelID,
 		CallbackPath: destination.Path, CallbackQuery: destination.Query, ExpiresAt: now.Add(10 * time.Minute).UnixNano(),
-		PublicURLID: origin.PublicURLID, PublishRunNumber: int64(origin.PublishRunNumber), Now: now.UnixNano(),
+		ServiceID: origin.ServiceID, RunNumber: int64(origin.RunNumber), Now: now.UnixNano(),
 		OriginHostname: origin.Hostname,
 	})
 	if err != nil {
@@ -77,7 +79,7 @@ func (d *Database) SaveOAuthCallback(ctx context.Context, input SaveOAuthCallbac
 }
 
 // ConsumeOAuthCallback atomically removes one mapping and checks its tunnel is
-// still ready. a callback for a stopped or replaced publish run cannot be sent
+// still ready. a callback for a stopped or replaced service run cannot be sent
 // to a different app merely because the hostname was reused.
 func (d *Database) ConsumeOAuthCallback(ctx context.Context, server, hostname, state, path string) (OAuthCallback, OAuthRedirectOrigin, error) {
 	if server == "" || hostname == "" || state == "" || len(state) > 8192 || path == "" {
@@ -90,8 +92,15 @@ func (d *Database) ConsumeOAuthCallback(ctx context.Context, server, hostname, s
 	}
 	defer tx.Rollback()
 	queries := clientstatedb.New(tx)
+	now := d.now().UTC().UnixNano()
+	// acquire the write transaction before reading the callback. competing
+	// consumers must see the committed deletion rather than upgrade a stale read.
+	if err := queries.ExpireOAuthCallbacks(ctx, now); err != nil {
+		return OAuthCallback{}, OAuthRedirectOrigin{}, err
+	}
+	now = d.now().UTC().UnixNano()
 	row, err := queries.GetCurrentOAuthCallback(ctx, clientstatedb.GetCurrentOAuthCallbackParams{
-		ServerOrigin: server, Hostname: hostname, StateDigest: digest[:], CallbackPath: path, Now: d.now().UTC().UnixNano(),
+		ServerOrigin: server, Hostname: hostname, StateDigest: digest[:], CallbackPath: path, Now: now,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return OAuthCallback{}, OAuthRedirectOrigin{}, sql.ErrNoRows
@@ -108,59 +117,78 @@ func (d *Database) ConsumeOAuthCallback(ctx context.Context, server, hostname, s
 	if count != 1 {
 		return OAuthCallback{}, OAuthRedirectOrigin{}, sql.ErrNoRows
 	}
-	if row.OriginHostname != "" && row.OriginHostname != row.Hostname.String {
-		count, err := queries.SaveOAuthAliasReturn(ctx, clientstatedb.SaveOAuthAliasReturnParams{
-			ServerOrigin: server, Hostname: row.OriginHostname, StateDigest: digest[:], CallbackPath: row.CallbackPath,
-			PublicURLID: row.PublicURLID, PublishRunNumber: row.PublishRunNumber, ExpiresAt: row.ExpiresAt,
-			Now: d.now().UTC().UnixNano(),
-		})
-		if err != nil {
-			return OAuthCallback{}, OAuthRedirectOrigin{}, err
-		}
-		if count != 1 {
-			return OAuthCallback{}, OAuthRedirectOrigin{}, errors.New("alias callback return state is full")
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return OAuthCallback{}, OAuthRedirectOrigin{}, err
-	}
 	origin := row.OriginHostname
 	if origin == "" {
 		origin = row.Hostname.String
 	}
+	count, err = queries.SaveOAuthReturn(ctx, clientstatedb.SaveOAuthReturnParams{
+		ServerOrigin: server, Hostname: origin, StateDigest: digest[:], CallbackPath: row.CallbackPath,
+		TunnelID: row.TunnelID, PrimaryProjectRoot: row.PrimaryProjectRoot, IntegrationNamespace: row.IntegrationNamespace,
+		ServiceID: row.OriginServiceID, RunNumber: row.OriginRunNumber, ExpiresAt: row.ExpiresAt,
+		Now: now,
+	})
+	if err != nil {
+		return OAuthCallback{}, OAuthRedirectOrigin{}, err
+	}
+	if count != 1 {
+		return OAuthCallback{}, OAuthRedirectOrigin{}, errors.New("OAuth callback return state is full")
+	}
+	if err := tx.Commit(); err != nil {
+		return OAuthCallback{}, OAuthRedirectOrigin{}, err
+	}
 	return OAuthCallback{TunnelID: row.TunnelID, Path: row.CallbackPath}, OAuthRedirectOrigin{
-		Hostname:    origin,
-		PublicURLID: row.PublicURLID, PublishRunNumber: uint64(row.PublishRunNumber),
+		Hostname:  origin,
+		ServiceID: row.OriginServiceID, RunNumber: uint64(row.OriginRunNumber),
 	}, nil
 }
 
-// AdmitAliasOAuthReturn binds the browser's final callback hop to the alias run
+// AdmitOAuthReturn binds the browser's final callback hop to the service run
 // that started login. unknown states are ordinary app requests; a known return
 // never falls through to a replacement run, including after it was consumed.
-func (d *Database) AdmitAliasOAuthReturn(ctx context.Context, server, hostname, state, path, publicURLID string, number uint64) error {
+func (d *Database) AdmitOAuthReturn(ctx context.Context, server, hostname, state, path, serviceID string, number uint64) error {
+	consume, err := d.PrepareOAuthReturn(ctx, server, hostname, state, path, serviceID, number)
+	if err != nil || consume == nil {
+		return err
+	}
+	return consume(ctx)
+}
+
+// PrepareOAuthReturn validates a final return without spending it. the returned
+// claim rechecks current destination ownership atomically when consumed, after
+// reversible request admission. a known claim never becomes an unknown state.
+func (d *Database) PrepareOAuthReturn(ctx context.Context, server, hostname, state, path, serviceID string, number uint64) (func(context.Context) error, error) {
 	if state == "" || len(state) > 8192 {
-		return nil
+		return nil, nil
 	}
 	digest := sha256.Sum256([]byte(state))
-	row, err := d.queries.GetOAuthAliasReturn(ctx, clientstatedb.GetOAuthAliasReturnParams{ServerOrigin: server, Hostname: hostname, StateDigest: digest[:]})
+	row, err := d.queries.GetOAuthReturn(ctx, clientstatedb.GetOAuthReturnParams{ServerOrigin: server, Hostname: hostname, StateDigest: digest[:]})
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if row.CallbackPath != path {
-		return nil
+		return nil, nil
 	}
-	count, err := d.queries.ConsumeOAuthAliasReturn(ctx, clientstatedb.ConsumeOAuthAliasReturnParams{
+	if row.ServiceID != serviceID || number == 0 || number > 1<<63-1 || row.RunNumber != int64(number) ||
+		row.ConsumedAt.Valid || row.ExpiresAt <= d.now().UTC().UnixNano() {
+		return nil, sql.ErrNoRows
+	}
+	claim := clientstatedb.ConsumeOAuthReturnParams{
 		ServerOrigin: server, Hostname: hostname, StateDigest: digest[:], CallbackPath: path,
-		PublicURLID: publicURLID, PublishRunNumber: int64(number), Now: sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true},
-	})
-	if err != nil {
-		return err
+		ServiceID: serviceID, RunNumber: int64(number), CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt,
 	}
-	if count != 1 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return func(ctx context.Context) error {
+		current := claim
+		current.Now = sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true}
+		count, err := d.queries.ConsumeOAuthReturn(ctx, current)
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return sql.ErrNoRows
+		}
+		return nil
+	}, nil
 }

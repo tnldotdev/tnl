@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -19,10 +21,13 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -53,6 +58,7 @@ type PublisherConfig struct {
 	QUICDisablePathMTUDiscovery bool
 	QUICQlog                    bool
 	QUICKeepAlive               time.Duration
+	TraceStartup                bool
 	Parallel                    int
 	Concurrency                 int
 	RateRequests                int
@@ -62,14 +68,37 @@ type PublisherConfig struct {
 	DrainTime                 time.Duration
 	OnFailure                 func()
 	OnActivationFailure       func(index int)
-	Observe                   func(int, publisher.Event) error
+	ObserveTransport          func(int, TransportObservation) error
 	Report                    func(index int, err error)
 }
 
-type PublishedPublicURL struct {
-	Index      int             `json:"index"`
-	Ready      publisher.Event `json:"ready"`
-	Activation time.Duration   `json:"activation"`
+// service run measurements contain publication identity, never run credentials.
+type ServiceRun struct {
+	ServiceID string                    `json:"service_id"`
+	RunID     string                    `json:"service_run_id"`
+	Number    int64                     `json:"run_number"`
+	Endpoint  controlv1.ServiceEndpoint `json:"endpoint"`
+}
+
+func (r ServiceRun) Valid() bool {
+	return opaqueid.Valid(r.ServiceID, opaqueid.ServicePrefix) && opaqueid.Valid(r.RunID, opaqueid.ServiceRunPrefix) &&
+		r.Number > 0 && r.Endpoint.Public && r.Endpoint.Port == 443 &&
+		serviceendpoint.Valid("http", r.Endpoint.Hostname, r.Endpoint.Port, r.Endpoint.Public)
+}
+
+func (r ServiceRun) URL() string { return "https://" + r.Endpoint.Hostname }
+
+type PublishedService struct {
+	Index      int           `json:"index"`
+	Run        ServiceRun    `json:"run"`
+	Activation time.Duration `json:"activation"`
+}
+
+type TransportObservation struct {
+	Slot          uint8            `json:"connection_slot"`
+	Transport     tunnel.Transport `json:"transport"`
+	PreferredTCP  bool             `json:"preferred_tcp"`
+	FirstFallback bool             `json:"first_fallback"`
 }
 
 type ShutdownResult struct {
@@ -79,26 +108,25 @@ type ShutdownResult struct {
 	Timings                       []time.Duration `json:"timings"`
 }
 
-type publicURLProcess struct {
+type serviceProcess struct {
 	index  int
 	cancel context.CancelFunc
 	done   chan struct{}
-	err    error              // published by closing done
-	ready  PublishedPublicURL // published by the activation channel
+	err    error            // published by closing done
+	ready  PublishedService // published by the activation channel
 }
 
 type Publishers struct {
 	config      PublisherConfig
-	base        publisher.Config
-	namespace   string
+	base        publisherservice.RunConfig
 	database    *clientstate.Database
 	ctx         context.Context
 	cancel      context.CancelFunc
-	processes   []*publicURLProcess
+	processes   []*serviceProcess
 	failures    chan error
 	failureOnce sync.Once
-	run         func(context.Context, publisher.Config) error
-	prepare     func(context.Context, publisher.Config) (publisher.Config, func(context.Context) error, error)
+	run         func(context.Context, publisherservice.RunConfig) error
+	prepare     func(context.Context, int, publisherservice.RunConfig) (publisherservice.RunConfig, func(context.Context) error, error)
 }
 
 func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers, retErr error) {
@@ -132,6 +160,10 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 			return nil, fmt.Errorf("no usable saved login for %s; run tnl auth login --server=%s", config.Server, config.Server)
 		}
 	}
+	declaration, target, trust, err := benchmarkDeclaration(config)
+	if err != nil {
+		return nil, err
+	}
 	authenticate := auth.Authenticate
 	var auth *auth.Client
 	authCtx, cancelAuth := context.WithTimeout(ctx, 2*time.Minute)
@@ -150,7 +182,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	}
 	managedDomain := auth.Discovery.ManagedDomain
 	if managedDomain == "" {
-		return nil, errors.New("server has no managed domain for benchmark public URLs")
+		return nil, errors.New("server has no managed domain for benchmark services")
 	}
 	if config.Domain != "" && managedDomain != config.Domain {
 		return nil, errors.New("configured domain differs from control discovery")
@@ -191,15 +223,17 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 	if err != nil {
 		return nil, err
 	}
-	var prepare func(context.Context, publisher.Config) (publisher.Config, func(context.Context) error, error)
-	var publicationControl publisher.PublicURLControlClient = auth.Control
+	var prepare func(context.Context, int, publisherservice.RunConfig) (publisherservice.RunConfig, func(context.Context) error, error)
+	namespace := membership.ManagedLabel + "." + domain.CanonicalDomain
 	if config.Ephemeral {
-		namespace := membership.ManagedLabel + "." + domain.CanonicalDomain
 		native, _, err := publisheridentity.EnsureNamespace(ctx, store, auth.Control, auth.Authority, team.Id, domain.Id, namespace)
 		if err != nil {
 			return nil, err
 		}
-		prepare = func(ctx context.Context, cfg publisher.Config) (publisher.Config, func(context.Context) error, error) {
+		// supply explicit service capabilities to the existing namespace key;
+		// neither allocation nor worker selection issues a replacement grant.
+		native.Services, native.Allocations = auth.Control, auth.Control
+		prepare = func(ctx context.Context, _ int, cfg publisherservice.RunConfig) (publisherservice.RunConfig, func(context.Context) error, error) {
 			worker, err := native.Fork()
 			if err != nil {
 				return cfg, nil, err
@@ -208,77 +242,146 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 			if err != nil {
 				return cfg, nil, err
 			}
-			request := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: cfg.Target}
-			mode := controlv1.Anonymous
-			request.AccessMode = &mode
-			if cfg.AllowedIPPrefixes != nil {
-				prefixes := slices.Clone(cfg.AllowedIPPrefixes)
-				request.Ip = &prefixes
-			}
-			publicURL, err := worker.Allocate(ctx, request)
+			request := controlv1.AllocateServiceRequest{InvocationId: invocation, Configuration: declaration}
+			service, cleanup, err := allocateBenchmarkService(ctx, worker, request)
 			if err != nil {
-				return cfg, nil, err
+				return cfg, cleanup, err
 			}
-			cfg.Control, cfg.AssignedPublicURL = worker, &publicURL
-			cfg.Identity, cfg.Audit = worker, worker
-			cfg.Hostname, cfg.TeamID, cfg.DomainID = publicURL.CanonicalHostname, publicURL.TeamId, publicURL.DomainId
-			cfg.Purpose, cfg.PublicURLScope, cfg.PolicyRevision = publicURL.Purpose, publicURL.PublicUrlScope, uint64(publicURL.PolicyRevision)
-			if publicURL.MembershipId != nil {
-				cfg.MembershipID = *publicURL.MembershipId
+			if err := validateBenchmarkService(service, team.Id, domain.Id, "", true, trust); err != nil {
+				return cfg, cleanup, err
 			}
-			if publicURL.AllowedIpPrefixes != nil {
-				cfg.AllowedIPPrefixes = slices.Clone(*publicURL.AllowedIpPrefixes)
-			}
-			return cfg, func(ctx context.Context) error { return worker.DeletePublicURL(ctx, publicURL.Id) }, nil
+			return bindBenchmarkService(cfg, worker, service), cleanup, nil
 		}
-		publicationControl = native
 	} else {
-		// enroll the exact saved URL before publisher.Run acquires identity and
-		// certificate locks. certificate keys remain publisher-scoped.
-		prepare = func(ctx context.Context, cfg publisher.Config) (publisher.Config, func(context.Context) error, error) {
-			publicURL, err := auth.Control.GetPublicURLByHostname(ctx, cfg.TeamID, cfg.Hostname)
-			if errors.Is(err, clientcontrol.ErrNotFound) {
-				mode := cfg.AccessMode
-				key := sha256.Sum256([]byte(cfg.Hostname))
-				publicURL, err = auth.Control.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{TeamId: cfg.TeamID, DomainId: cfg.DomainID, MembershipId: &cfg.MembershipID, CanonicalHostname: cfg.Hostname, PublicUrlScope: cfg.PublicURLScope, Purpose: cfg.Purpose, Target: cfg.Target, AccessMode: &mode, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}, fmt.Sprintf("benchmark-%x", key))
+		prepare = func(ctx context.Context, index int, cfg publisherservice.RunConfig) (publisherservice.RunConfig, func(context.Context) error, error) {
+			prefix := config.HostnamePrefix
+			if prefix == "" {
+				prefix = "tnl-load"
 			}
+			name := fmt.Sprintf("%s-r%06d", prefix, index)
+			hostname := name + "." + namespace
+			desired := declaration
+			desired.Name, desired.Hostname, desired.DomainId = &name, &hostname, &domain.Id
+			key := sha256.Sum256([]byte(team.Id + "\x00" + hostname))
+			service, err := auth.Control.CreateService(ctx, team.Id, name, fmt.Sprintf("benchmark-%x", key), controlv1.ServiceMetadata{}, &desired)
 			if err != nil {
 				return cfg, nil, err
 			}
-			native, identity, err := publisheridentity.EnsureOwner(ctx, store, auth.Control, auth.Authority, publicURL)
+			if err := validateBenchmarkService(service, team.Id, domain.Id, hostname, false, trust); err != nil {
+				return cfg, nil, err
+			}
+			native, _, err := publisheridentity.EnsureServiceOwner(ctx, store, auth.Control, auth.Authority, service)
 			if err != nil {
 				return cfg, nil, err
 			}
-			cfg.Control, cfg.PublisherIdentityID = native, identity.ClientId
-			cfg.Identity, cfg.Audit = native, native
-			return cfg, nil, nil
+			return bindBenchmarkService(cfg, native, service), nil, nil
 		}
 	}
 	groupCtx, cancel := context.WithCancel(ctx)
-	limits := applicationlimits.Limits{Concurrency: config.Concurrency}
-	if config.RateRequests > 0 {
-		limits.RateRequests, limits.RatePer, limits.RateBurst = config.RateRequests, time.Second, config.RateRequests
+	base := publisherservice.RunConfig{State: store, Target: target, DrainTime: config.DrainTime, TransportTLS: config.RelayTLS}
+	if diagnostic := benchmarkQUICConfig(config.QUICDisablePathMTUDiscovery, config.QUICQlog, config.QUICKeepAlive); diagnostic.Config != nil {
+		base.RelayQUIC = muxsession.OwnedQUICConnector{TLSConfig: config.RelayTLS, Config: diagnostic}
 	}
 	return &Publishers{config: config, database: database, ctx: groupCtx, cancel: cancel,
-		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
-		prepare: prepare,
-		base: publisher.Config{Control: publicationControl, ControlURL: auth.ServerEndpoint, State: store, Target: config.Target, DrainTime: config.DrainTime,
-			VisitorControl: auth.Control, BrowserControl: auth.Control, Shares: auth.Control,
-			Limits:    limits,
-			Ephemeral: config.Ephemeral,
-			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
-			PolicyRevision: uint64(team.PolicyRevision), AccessMode: controlv1.Anonymous, AllowedIPPrefixes: config.AllowedIPPrefixes,
-			TransportTLS:  config.RelayTLS,
-			QUICConfig:    benchmarkQUICConfig(config.QUICDisablePathMTUDiscovery, config.QUICQlog, config.QUICKeepAlive),
-			FallbackDelay: 250 * time.Millisecond},
+		failures: make(chan error, 1), run: publisherservice.Publish, prepare: prepare, base: base,
 	}, nil
+}
+
+type benchmarkServiceAllocator interface {
+	AllocateService(context.Context, controlv1.AllocateServiceRequest) (controlv1.Service, error)
+	CleanupServiceAllocation(context.Context, controlv1.AllocateServiceRequest) error
+}
+
+func allocateBenchmarkService(ctx context.Context, native benchmarkServiceAllocator, request controlv1.AllocateServiceRequest) (controlv1.Service, func(context.Context) error, error) {
+	// capture the wire request before allocation so later input changes cannot
+	// change the invocation, declaration, or fixed deadline passed to cleanup.
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return controlv1.Service{}, nil, err
+	}
+	var original controlv1.AllocateServiceRequest
+	if err := json.Unmarshal(encoded, &original); err != nil {
+		return controlv1.Service{}, nil, err
+	}
+	service, err := native.AllocateService(ctx, original)
+	return service, func(cleanup context.Context) error {
+		return native.CleanupServiceAllocation(cleanup, original)
+	}, err
+}
+
+func benchmarkDeclaration(config PublisherConfig) (controlv1.ProjectServiceConfiguration, string, *targettrust.Snapshot, error) {
+	declaration := controlv1.ProjectServiceConfiguration{
+		Protocol: new(controlv1.ServiceProtocolHTTP), Public: new(true), Ephemeral: &config.Ephemeral,
+		Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: new(controlv1.VisitorAccessMode("anonymous"))}},
+	}
+	origin, err := targetsyntax.NormalizeTarget(config.Target)
+	if err != nil {
+		return declaration, "", nil, err
+	}
+	address, err := url.Parse(origin)
+	if err != nil {
+		return declaration, "", nil, err
+	}
+	declaration.Target = address.Host
+	var trust *targettrust.Snapshot
+	if address.Scheme == "https" {
+		desired, err := targettrust.NewDeclaration(address.Hostname(), nil)
+		if err != nil {
+			return declaration, "", nil, err
+		}
+		snapshot, err := desired.Snapshot()
+		if err != nil {
+			return declaration, "", nil, err
+		}
+		trust = snapshot
+		declaration.TargetTls = &controlv1.ProjectTargetTLS{Hostname: desired.Hostname, Digest: desired.Digest}
+	}
+	if config.AllowedIPPrefixes != nil {
+		if len(config.AllowedIPPrefixes) == 0 {
+			return declaration, "", nil, errors.New("benchmark IP policy must not be empty when supplied")
+		}
+		prefixes := slices.Clone(config.AllowedIPPrefixes)
+		declaration.Http.Access.Ip = &prefixes
+	}
+	if config.Concurrency < 0 || config.RateRequests < 0 {
+		return declaration, "", nil, errors.New("benchmark HTTP request limits must not be negative")
+	}
+	if config.Concurrency > 0 || config.RateRequests > 0 {
+		declaration.Http.Limits = &controlv1.ProjectHTTPApplicationLimits{}
+		if config.Concurrency > 0 {
+			declaration.Http.Limits.Concurrency = &config.Concurrency
+		}
+		if config.RateRequests > 0 {
+			declaration.Http.Limits.Rate = &controlv1.ProjectApplicationRate{Count: config.RateRequests, Per: "1s", Burst: &config.RateRequests}
+		}
+	}
+	return declaration, address.Host, trust, nil
+}
+
+func validateBenchmarkService(service controlv1.Service, team, domain, hostname string, ephemeral bool, trust *targettrust.Snapshot) error {
+	if !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) || service.TeamId != team || service.DomainId == nil || *service.DomainId != domain ||
+		!service.Enabled || service.Ephemeral != ephemeral || service.Protocol != controlv1.ServiceProtocolHTTP ||
+		service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port != 443 ||
+		!serviceendpoint.Valid("http", service.Endpoint.Hostname, service.Endpoint.Port, service.Endpoint.Public) ||
+		hostname != "" && service.Endpoint.Hostname != hostname {
+		return publisheridentity.ErrScope
+	}
+	return publisheridentity.MatchServiceDeclaration(service, "http", trust)
+}
+
+func bindBenchmarkService(cfg publisherservice.RunConfig, native *publisheridentity.Native, service controlv1.Service) publisherservice.RunConfig {
+	cfg.Control, cfg.Access, cfg.ServiceID = native, native.Access, service.Id
+	cfg.PublisherIdentityID, cfg.PublisherGrantID, cfg.PublisherKeyID = native.PublisherIdentityID(), native.PublisherGrantID(), native.PublisherKeyID()
+	cfg.Metadata = publisheridentity.ServiceMetadata(service)
+	cfg.Metadata.Endpoint = service.Endpoint
+	return cfg
 }
 
 func benchmarkQUICConfig(disablePathMTUDiscovery, trace bool, keepAlive time.Duration) muxsession.QUICConfig {
 	if !disablePathMTUDiscovery && !trace && keepAlive == 0 {
 		return muxsession.QUICConfig{}
 	}
-	config := &quic.Config{DisablePathMTUDiscovery: disablePathMTUDiscovery, KeepAlivePeriod: keepAlive}
+	config := &quic.Config{EnableDatagrams: true, DisablePathMTUDiscovery: disablePathMTUDiscovery, KeepAlivePeriod: keepAlive}
 	if trace {
 		config.Tracer = qlog.DefaultConnectionTracer
 	}
@@ -288,12 +391,12 @@ func benchmarkQUICConfig(disablePathMTUDiscovery, trace bool, keepAlive time.Dur
 func (g *Publishers) Failures() <-chan error { return g.failures }
 func (g *Publishers) Started() int           { return len(g.processes) }
 
-// Start returns any ready results collected before failure, then cancels the
+// start returns any ready results collected before failure, then cancels the
 // group. the coordinator must call Close even after partial activation and
 // call lifecycle methods serially.
-func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPublicURL, error) {
+func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedService, error) {
 	type activation struct {
-		process *publicURLProcess
+		process *serviceProcess
 		err     error
 	}
 	parallel := g.config.StartParallel
@@ -302,68 +405,73 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPubli
 	}
 	activated := make(chan activation, parallel)
 	start := func(index int) {
-		publicURLCtx, cancel := context.WithCancel(g.ctx)
-		process := &publicURLProcess{index: index, cancel: cancel, done: make(chan struct{})}
+		serviceCtx, cancel := context.WithCancel(g.ctx)
+		process := &serviceProcess{index: index, cancel: cancel, done: make(chan struct{})}
 		g.processes = append(g.processes, process)
-		cfg := g.base
-		prefix := g.config.HostnamePrefix
-		if prefix == "" {
-			prefix = "tnl-load"
-		}
-		cfg.Hostname = fmt.Sprintf("%s-r%06d.%s", prefix, index, g.namespace)
-		if g.config.Report != nil {
-			cfg.Logf = func(format string, args ...any) {
-				g.config.Report(index, fmt.Errorf(format, args...))
-			}
-		}
-		transport := g.config.Transport
-		if transport == TransportMixed {
-			if index%2 == 0 {
-				transport = TransportQUIC
-			} else {
-				transport = TransportTCP
-			}
-		}
-		if transport == TransportQUIC {
-			cfg.TCPConnector = disabledConnector{}
-		}
-		if transport == TransportTCP {
-			cfg.QUICConnector = disabledConnector{}
-		}
 		go func() {
 			began := time.Now()
 			ready := make(chan struct{})
-			var once sync.Once
-			cfg.Observe = func(event publisher.Event) error {
-				if g.config.Observe != nil {
-					if err := g.config.Observe(index, event); err != nil {
-						return err
-					}
-				}
-				if event.Type == publisher.EventReady {
-					once.Do(func() {
-						process.ready = PublishedPublicURL{Index: index, Ready: event, Activation: time.Since(began)}
-						close(ready)
-					})
-				}
-				return nil
+			var startup *publisherStartupTrace
+			if g.config.TraceStartup {
+				startup = &publisherStartupTrace{}
 			}
 			go func() {
+				cfg := g.base
 				var cleanup func(context.Context) error
 				if g.prepare != nil {
 					var err error
-					cfg, cleanup, err = g.prepare(publicURLCtx, cfg)
+					cfg, cleanup, err = g.prepare(serviceCtx, index, cfg)
 					process.err = err
 				}
 				if process.err == nil {
-					process.err = g.run(publicURLCtx, cfg)
+					runCtx, stop := context.WithCancelCause(serviceCtx)
+					var run ServiceRun
+					cfg.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
+						if cfg.Metadata.Endpoint == nil || preparation.ServiceId != cfg.ServiceID || preparation.Hostname != cfg.Metadata.Endpoint.Hostname || run.RunID != "" {
+							return errors.New("benchmark preparation changed the selected service endpoint")
+						}
+						run = ServiceRun{ServiceID: preparation.ServiceId, RunID: preparation.ServiceRunId, Number: preparation.RunNumber, Endpoint: *cfg.Metadata.Endpoint}
+						if !run.Valid() {
+							return errors.New("benchmark preparation has invalid service run identity")
+						}
+						return nil
+					}
+					cfg.Ready = sync.OnceValue(func() error {
+						if !run.Valid() {
+							return errors.New("benchmark readiness preceded a validated service run")
+						}
+						process.ready = PublishedService{Index: index, Run: run, Activation: time.Since(began)}
+						close(ready)
+						return nil
+					})
+					connect := cfg.Connect
+					if connect == nil {
+						connect = func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
+							return bound.ConnectSlot(ctx, slot, options)
+						}
+					}
+					cfg.Connect = g.observeConnections(index, connect, stop)
+					switch g.cohort(index) {
+					case TransportQUIC:
+						cfg.RelayTCP = disabledConnector{}
+					case TransportTCP:
+						cfg.RelayQUIC = disabledConnector{}
+					}
+					if startup != nil {
+						cfg = observePublisherStartup(cfg, startup)
+					}
+					process.err = g.run(runCtx, cfg)
+					if cause := context.Cause(runCtx); cause != nil && !failure.Only(cause, context.Canceled) {
+						process.err = errors.Join(process.err, cause)
+					}
+					stop(nil)
 				}
 				if cleanup != nil {
 					cleanupCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
 					process.err = errors.Join(process.err, cleanup(cleanupCtx))
 					stop()
 				}
-				if publicURLCtx.Err() == nil {
+				if serviceCtx.Err() == nil {
 					process.err = fmt.Errorf("publisher %d exited unexpectedly: %w", index, errors.Join(errors.New("publisher exited"), process.err))
 					g.failureOnce.Do(func() {
 						g.failures <- process.err
@@ -382,13 +490,16 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPubli
 				err = fmt.Errorf("publisher %d readiness exceeded %s", index, g.config.ReadyTimeout)
 			case <-ctx.Done():
 				err = ctx.Err()
-			case <-publicURLCtx.Done():
-				err = publicURLCtx.Err()
+			case <-serviceCtx.Done():
+				err = serviceCtx.Err()
+			}
+			if err != nil && startup != nil {
+				err = fmt.Errorf("%w; startup_observation=%s", err, startup.failureJSON())
 			}
 			activated <- activation{process, err}
 		}()
 	}
-	var result []PublishedPublicURL
+	var result []PublishedService
 	next, active := 0, 0
 	var firstErr error
 	var capture sync.Once
@@ -425,21 +536,71 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPubli
 	return result, firstErr
 }
 
-// Stop leaves public URLs running until their bounded shutdown slot is available.
+func (g *Publishers) cohort(index int) TransportChoice {
+	if g.config.Transport != TransportMixed {
+		return g.config.Transport
+	}
+	if index%2 == 0 {
+		return TransportQUIC
+	}
+	return TransportTCP
+}
+
+func (g *Publishers) observeConnections(index int, connect func(context.Context, *publisherservice.Bound, uint8, publisherservice.ConnectOptions) (publisherservice.SlotSession, error), stop context.CancelCauseFunc) func(context.Context, *publisherservice.Bound, uint8, publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
+	var fallback sync.Once
+	return func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
+		switch g.cohort(index) {
+		case TransportQUIC:
+			options.PreferTCP = false
+		case TransportTCP:
+			options.PreferTCP = true
+		}
+		session, err := connect(ctx, bound, slot, options)
+		if err == nil && session == nil {
+			err = errors.New("benchmark connection returned no claimed slot session")
+		}
+		if err != nil {
+			if session != nil {
+				if cleanupErr := session.Close(); cleanupErr != nil {
+					err = errors.Join(err, cleanupErr)
+					stop(err)
+				}
+			}
+			if g.config.Report != nil && !failure.Only(err, context.Canceled) {
+				g.config.Report(index, err)
+			}
+			return nil, err
+		}
+		observation := TransportObservation{Slot: slot, Transport: session.Transport(), PreferredTCP: options.PreferTCP}
+		if g.cohort(index) == TransportAuto && observation.Transport == tunnel.TransportTLSTCP && !options.PreferTCP {
+			fallback.Do(func() { observation.FirstFallback = true })
+		}
+		if g.config.ObserveTransport != nil {
+			if err := g.config.ObserveTransport(index, observation); err != nil {
+				err = errors.Join(err, session.Close())
+				stop(err)
+				return nil, err
+			}
+		}
+		return session, nil
+	}
+}
+
+// stop leaves service runs active until their bounded shutdown slot is available.
 func (g *Publishers) Stop(ctx context.Context, indexes []int) (ShutdownResult, error) {
 	result := ShutdownResult{StartedAt: time.Now()}
 	wanted := make(map[int]bool, len(indexes))
 	for _, index := range indexes {
 		wanted[index] = true
 	}
-	var selected []*publicURLProcess
+	var selected []*serviceProcess
 	for _, process := range g.processes {
 		if wanted[process.index] {
 			selected = append(selected, process)
 		}
 	}
 	durations := make([]time.Duration, len(selected))
-	errorsByPublicURL := make([]error, len(selected))
+	errorsByService := make([]error, len(selected))
 	var workers sync.WaitGroup
 	var firstFailure sync.Once
 	parallel := min(g.config.Parallel, len(selected))
@@ -453,13 +614,13 @@ func (g *Publishers) Stop(ctx context.Context, indexes []int) (ShutdownResult, e
 				select {
 				case <-process.done:
 					if process.err != nil && !failure.Only(process.err, context.Canceled) {
-						errorsByPublicURL[i] = fmt.Errorf("stop publisher %d: %w", process.index, process.err)
+						errorsByService[i] = fmt.Errorf("stop publisher %d: %w", process.index, process.err)
 					}
 				case <-stopCtx.Done():
-					errorsByPublicURL[i] = fmt.Errorf("stop publisher %d: %w", process.index, stopCtx.Err())
+					errorsByService[i] = fmt.Errorf("stop publisher %d: %w", process.index, stopCtx.Err())
 				}
 				cancel()
-				if errorsByPublicURL[i] != nil && g.config.OnFailure != nil {
+				if errorsByService[i] != nil && g.config.OnFailure != nil {
 					firstFailure.Do(g.config.OnFailure)
 				}
 				durations[i] = time.Since(started)
@@ -470,14 +631,14 @@ func (g *Publishers) Stop(ctx context.Context, indexes []int) (ShutdownResult, e
 	result.Duration = time.Since(result.StartedAt)
 	result.Timings = durations
 	result.Attempts = len(selected)
-	for _, err := range errorsByPublicURL {
+	for _, err := range errorsByService {
 		if err != nil {
 			result.Failures++
 		} else {
 			result.Successes++
 		}
 	}
-	return result, errors.Join(errorsByPublicURL...)
+	return result, errors.Join(errorsByService...)
 }
 
 func (g *Publishers) Close(ctx context.Context) (ShutdownResult, error) {

@@ -23,7 +23,9 @@ import (
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 var (
@@ -210,6 +212,9 @@ func deploymentDatabaseConnectorStop(err error) bool {
 	if err == context.Canceled || err == clientcontrol.ErrNotFound || err == connectorstream.ErrServiceConnection {
 		return true
 	}
+	if denial, ok := err.(*tunnel.ProtocolError); ok {
+		return denial != nil && denial.Code == tunnelv1.Unauthenticated
+	}
 	switch wrapped := err.(type) {
 	case interface{ Unwrap() []error }:
 		for _, child := range wrapped.Unwrap() {
@@ -243,6 +248,10 @@ func TestDeploymentDatabaseConnectorStopPreservesFailures(t *testing.T) {
 		{"joined failure", errors.Join(revoked, unrelated), false},
 		{"cancelled failure", errors.Join(context.Canceled, unrelated), false},
 		{"cleanup denial", errors.Join(revoked, &connectorstream.CleanupError{Err: denied}), false},
+		{"relay denial", &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}, true},
+		{"relay cleanup denial", &connectorstream.CleanupError{Err: &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}}, false},
+		{"relay denial with physical failure", errors.Join(&tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}, unrelated), false},
+		{"unavailable relay", &tunnel.ProtocolError{Code: tunnelv1.Unavailable}, false},
 		{"different denial", &clientcontrol.ProblemError{Status: http.StatusUnauthorized, Problem: controlv1.Problem{Code: controlv1.Forbidden}}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

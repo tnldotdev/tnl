@@ -13,6 +13,13 @@ import (
 // admission must separately retain and check its concrete physical owner and C.
 type ConnectorGuard struct{ guard *Guard }
 
+// ConnectorPolicyRefusal identifies an existing admission refused by a current
+// authenticated policy. a stale snapshot or a closed guard is not this decision.
+type ConnectorPolicyRefusal struct{}
+
+func (*ConnectorPolicyRefusal) Error() string { return "current policy refuses connector permission" }
+func (*ConnectorPolicyRefusal) Unwrap() error { return visitortoken.ErrPolicy }
+
 type connectorPermission struct {
 	metadata int64
 }
@@ -66,17 +73,24 @@ func (n *ConnectorGuard) Current() (time.Time, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	if _, active := l.guards[g]; !active || !g.allowedLocked(now) {
+	_, active := l.guards[g]
+	allowed := g.allowedLocked(now)
+	if !active || !allowed {
+		// policy installation fences use before invoking stop callbacks unlocked.
+		// retain that exact refusal even when an i/o check overtakes its callback;
+		// cancellation alone does not establish this provenance.
+		if l.phase == leaseCurrent && now.Before(l.update.View.ValidUntil) && (g.policyRefused || active && !allowed) {
+			return time.Time{}, &ConnectorPolicyRefusal{}
+		}
 		return time.Time{}, visitortoken.ErrPolicy
 	}
 	view := l.update.View
-	until := earlier(view.ValidUntil, view.LocalDeadline(g.permission.Facts().ExpiresAt))
+	until := earlier(view.ValidUntil, g.permissionUntil)
+	if !g.parentUntil.IsZero() {
+		until = earlier(until, g.parentUntil)
+	}
 	if g.renewable && g.permission.Facts().VisitorPolicyRevision != view.VisitorPolicyRevision {
 		until = earlier(until, g.confirmedUntil)
-	}
-	if workload, ok := g.permission.Facts().Subject.(visitortoken.Workload); ok {
-		parent, _ := view.Workload(workload.SessionID)
-		until = earlier(until, view.LocalDeadline(parent.ExpiresAt))
 	}
 	return until, nil
 }

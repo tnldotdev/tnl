@@ -6,6 +6,9 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 const (
@@ -17,11 +20,12 @@ const (
 var ErrVisitorSourceProof = errors.New("visitor source proof is invalid")
 
 // VisitorSourceAuthority delegates source attestation, never visitor permission
-// or capacity. control binds one ingress process to one exact public URL run.
+// or capacity. control binds one ingress process to one exact service run.
 type VisitorSourceAuthority struct {
-	PublicURLID           string `json:"public_url_id"`
-	PublishRunID          string `json:"publish_run_id"`
-	PublishRunNumber      uint64 `json:"publish_run_number"`
+	ServiceID             string `json:"service_id"`
+	ServiceRunID          string `json:"service_run_id"`
+	RunNumber             uint64 `json:"run_number"`
+	EndpointRevision      int64  `json:"endpoint_revision"`
 	IngressID             string `json:"ingress_id"`
 	IngressRunID          string `json:"ingress_run_id"`
 	IngressLeaseRevision  uint64 `json:"ingress_lease_revision"`
@@ -31,9 +35,10 @@ type VisitorSourceAuthority struct {
 }
 
 func (a VisitorSourceAuthority) ValidBinding() bool {
-	return validIdentifier(a.PublicURLID) && validIdentifier(a.PublishRunID) && a.PublishRunNumber > 0 &&
-		validIdentifier(a.IngressID) && validIdentifier(a.IngressRunID) && a.IngressLeaseRevision > 0 &&
-		a.VisitorPolicyRevision > 0 && a.ValidUntil > 0
+	return opaqueid.Valid(a.ServiceID, opaqueid.ServicePrefix) &&
+		opaqueid.Valid(a.ServiceRunID, opaqueid.ServiceRunPrefix) && a.RunNumber > 0 &&
+		validIdentifier(a.IngressID) && opaqueid.Valid(a.IngressRunID, opaqueid.IngressRunPrefix) &&
+		a.EndpointRevision > 0 && a.IngressLeaseRevision > 0 && a.VisitorPolicyRevision > 0 && a.ValidUntil > 0
 }
 
 func (a VisitorSourceAuthority) SigningBytes() ([]byte, error) {
@@ -71,16 +76,15 @@ func ReadVisitorSourceAuthority(wire []byte) (VisitorSourceAuthority, error) {
 	return authority, nil
 }
 
-// VisitorSourceBinding supplies the exact outer stream identity and the original
-// PROXY v2 endpoints. the relay cannot choose another identity or rewrite either
-// endpoint without invalidating the proof.
+// VisitorSourceBinding supplies the exact service stream identity and original
+// PROXY v2 endpoints. a relay cannot substitute an identity or endpoint.
 type VisitorSourceBinding struct {
-	PublicURLID      string         `json:"public_url_id"`
-	PublishRunID     string         `json:"publish_run_id"`
-	PublishRunNumber uint64         `json:"publish_run_number"`
-	VisitorID        string         `json:"visitor_connection_id"`
-	Source           netip.AddrPort `json:"source"`
-	Destination      netip.AddrPort `json:"destination"`
+	ServiceID           string         `json:"service_id"`
+	ServiceRunID        string         `json:"service_run_id"`
+	RunNumber           uint64         `json:"run_number"`
+	VisitorConnectionID string         `json:"visitor_connection_id"`
+	Source              netip.AddrPort `json:"source"`
+	Destination         netip.AddrPort `json:"destination"`
 }
 
 func (b VisitorSourceBinding) valid() bool {
@@ -88,21 +92,25 @@ func (b VisitorSourceBinding) valid() bool {
 		return endpoint.IsValid() && endpoint.Port() != 0 && endpoint.Addr().Zone() == "" &&
 			!endpoint.Addr().IsUnspecified() && !endpoint.Addr().Is4In6()
 	}
-	return validIdentifier(b.PublicURLID) && validIdentifier(b.PublishRunID) && b.PublishRunNumber > 0 &&
-		validIdentifier(b.VisitorID) && validEndpoint(b.Source) && validEndpoint(b.Destination)
+	return opaqueid.Valid(b.ServiceID, opaqueid.ServicePrefix) &&
+		opaqueid.Valid(b.ServiceRunID, opaqueid.ServiceRunPrefix) && b.RunNumber > 0 &&
+		opaqueid.Valid(b.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) &&
+		validEndpoint(b.Source) && validEndpoint(b.Destination)
 }
 
 // VisitorSourceProof travels once in ingress-created PROXY v2 metadata. relays
 // preserve those bytes; it is independent of transport choice and capacity.
 type VisitorSourceProof struct {
-	Authority VisitorSourceAuthority `json:"authority"`
-	Sequence  uint64                 `json:"sequence"`
-	MAC       []byte                 `json:"mac,omitempty"`
+	Authority  VisitorSourceAuthority `json:"authority"`
+	Sequence   uint64                 `json:"sequence"`
+	ObservedAt int64                  `json:"observed_at_us"`
+	MAC        []byte                 `json:"mac,omitempty"`
 }
 
 func (p VisitorSourceProof) SigningBytes(binding VisitorSourceBinding) ([]byte, error) {
 	if !binding.valid() || !p.Authority.ValidBinding() || len(p.Authority.MAC) != 32 || p.Sequence == 0 ||
-		p.Authority.PublicURLID != binding.PublicURLID || p.Authority.PublishRunID != binding.PublishRunID || p.Authority.PublishRunNumber != binding.PublishRunNumber {
+		p.ObservedAt <= 0 || time.UnixMicro(p.ObservedAt).Unix() >= p.Authority.ValidUntil ||
+		p.Authority.ServiceID != binding.ServiceID || p.Authority.ServiceRunID != binding.ServiceRunID || p.Authority.RunNumber != binding.RunNumber {
 		return nil, ErrVisitorSourceProof
 	}
 	p.MAC = nil
@@ -113,7 +121,8 @@ func (p VisitorSourceProof) SigningBytes(binding VisitorSourceBinding) ([]byte, 
 }
 
 func (p VisitorSourceProof) MarshalBinary() ([]byte, error) {
-	if !p.Authority.ValidBinding() || len(p.Authority.MAC) != 32 || len(p.MAC) != 32 || p.Sequence == 0 {
+	if !p.Authority.ValidBinding() || len(p.Authority.MAC) != 32 || len(p.MAC) != 32 || p.Sequence == 0 ||
+		p.ObservedAt <= 0 || time.UnixMicro(p.ObservedAt).Unix() >= p.Authority.ValidUntil {
 		return nil, ErrVisitorSourceProof
 	}
 	wire, err := json.Marshal(p)

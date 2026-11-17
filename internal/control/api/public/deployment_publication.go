@@ -2,17 +2,17 @@ package public
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type DeploymentPublicationStore interface {
-	GetDeploymentPublication(context.Context, controlstate.DeploymentScope, string, string, time.Time) (controlstate.DeploymentPublication, error)
-	AllocateDeploymentPublication(context.Context, controlstate.AllocateDeploymentPublicationRequest) (controlstate.PublicURL, error)
+	GetDeploymentPublication(context.Context, controlstate.DeploymentScope, string, string, time.Time) (controlstate.ServiceRecord, error)
+	AllocateDeploymentPublication(context.Context, controlstate.AllocateDeploymentPublicationRequest) (controlstate.ServiceRecord, error)
 }
 
 func (h *handler) deploymentPublicationPrincipal(w http.ResponseWriter, r *http.Request, team, project string) (controlstate.DeploymentScope, bool) {
@@ -43,19 +43,7 @@ func (h *handler) GetDeploymentPublication(w http.ResponseWriter, r *http.Reques
 		deploymentProblem(r.Context(), w, "resolve deployment publication", err)
 		return
 	}
-	var limits *controlv1.ProjectPublicLimits
-	if result.Limits != nil {
-		data, err := json.Marshal(result.Limits)
-		if err != nil {
-			writeControlStateProblem(r.Context(), w, "encode publication limits", err)
-			return
-		}
-		if err = json.Unmarshal(data, &limits); err != nil {
-			writeControlStateProblem(r.Context(), w, "encode publication limits", err)
-			return
-		}
-	}
-	writeJSON(w, 200, controlv1.DeploymentPublication{PublicUrl: publicURLResponse(result.PublicURL), Limits: limits})
+	writeJSON(w, 200, serviceaccess.Service(result))
 }
 
 func (h *handler) AllocateDeploymentPublication(w http.ResponseWriter, r *http.Request, project, deployment string, params controlv1.AllocateDeploymentPublicationParams) {
@@ -67,14 +55,14 @@ func (h *handler) AllocateDeploymentPublication(w http.ResponseWriter, r *http.R
 		writeProblem(w, 409, controlv1.Conflict, "temporary publication requires automated DNS")
 		return
 	}
-	b, prefixes, mode, binding, ok := publisherAllocationInput(w, r)
+	b, ok := publisherAllocationInput(w, r)
 	if !ok {
 		return
 	}
-	u, err := h.dependencies.DeploymentPublication.AllocateDeploymentPublication(r.Context(), controlstate.AllocateDeploymentPublicationRequest{DeploymentScope: scope, Deployment: deployment, Invocation: b.InvocationId, Target: b.Target, Prefixes: prefixes, Binding: binding, Options: controlstate.PublisherPublicURLOptions{AccessMode: mode, RequirePostQuantum: b.RequirePostQuantum != nil && *b.RequirePostQuantum}, Now: time.Now()})
+	service, err := h.dependencies.DeploymentPublication.AllocateDeploymentPublication(r.Context(), controlstate.AllocateDeploymentPublicationRequest{DeploymentScope: scope, Deployment: deployment, AllocateServiceRequest: b, Now: time.Now()})
 	if err != nil {
 		deploymentProblem(r.Context(), w, "allocate deployment publication", err)
 		return
 	}
-	writeJSON(w, 201, publicURLResponse(u))
+	writeJSON(w, 201, serviceaccess.Service(service))
 }

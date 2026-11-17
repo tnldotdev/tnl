@@ -1,112 +1,166 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"fmt"
+	"io"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-var ErrPublicURLRecoveryEpisodeStale = errors.New("controlstate: route recovery episode is stale")
+var ErrServiceRecoveryEpisodeStale = errors.New("controlstate: service recovery episode is stale")
 
-// PublicURLRecoveryObservation is one stored public URL recovery measurement.
-type PublicURLRecoveryObservation struct {
+type ServiceRecoveryObservation struct {
+	ServiceRunReference
 	RecoveryEpisodeID uint64
-	PublicURLID       string
-	PublishRunNumber  uint64
 	OpenedAt          time.Time
 	ObservedAt        time.Time
 	ObservedSeconds   float64
 }
 
-// ObservePublicURLRecovery closes one open episode and updates its cumulative
-// histogram in a transaction. repeating an observed episode is safe.
-func (d *Database) ObservePublicURLRecovery(
-	ctx context.Context,
-	ingressIdentity IngressLeaseIdentity,
-	publicURLID string,
-	publishRunNumber uint64,
-	recoveryEpisodeID uint64,
-	observedAt time.Time,
-) (result PublicURLRecoveryObservation, retErr error) {
-	if err := validateIngressLeaseIdentity(ingressIdentity); err != nil {
-		return PublicURLRecoveryObservation{}, err
+// callers hold the service and run locks. repeated losses share the first open
+// episode; readiness alone never completes a first-publisher-byte measurement.
+func openServiceRecoveryEpisode(ctx context.Context, q *controlstatedb.Queries, run controlstatedb.ControlServiceRun, now time.Time) error {
+	if !run.ReadyAt.Valid || !activeServiceRun(run, now) {
+		return nil
 	}
-	if !validStateText(publicURLID) {
-		return PublicURLRecoveryObservation{}, errors.New("controlstate: recovery route ID is invalid")
-	}
-	if _, ok := positiveInt64(publishRunNumber); !ok {
-		return PublicURLRecoveryObservation{}, errors.New("controlstate: recovery publish run number is invalid")
-	}
-	if _, ok := positiveInt64(recoveryEpisodeID); !ok {
-		return PublicURLRecoveryObservation{}, errors.New("controlstate: recovery episode ID is invalid")
-	}
-	if err := d.requireOpen(); err != nil {
-		return PublicURLRecoveryObservation{}, err
-	}
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return PublicURLRecoveryObservation{}, fmt.Errorf("controlstate: observe route recovery: begin transaction: %w", err)
-	}
-	defer rollback(ctx, tx, "observe route recovery", &retErr)()
-	queries := controlstatedb.New(tx)
-	if _, err := lockCurrentIngressLease(ctx, queries, ingressIdentity, observedAt); err != nil {
-		return PublicURLRecoveryObservation{}, err
-	}
-	episode, err := queries.LockPublicURLRecoveryEpisode(ctx, positive(recoveryEpisodeID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return PublicURLRecoveryObservation{}, ErrPublicURLRecoveryEpisodeStale
-	}
-	if err != nil {
-		return PublicURLRecoveryObservation{}, fmt.Errorf("controlstate: observe route recovery: lock episode: %w", err)
-	}
-	if episode.PublicURLID != publicURLID || !matchesPositiveInt64(episode.PublishRunNumber, publishRunNumber) || !episode.OpenedAt.Valid {
-		return PublicURLRecoveryObservation{}, ErrPublicURLRecoveryEpisodeStale
-	}
-	if episode.State == "observed" && episode.ObservedAt.Valid && episode.RecoverySeconds.Valid {
-		if err := tx.Commit(ctx); err != nil {
-			return PublicURLRecoveryObservation{}, fmt.Errorf("controlstate: observe route recovery: commit retry: %w", err)
-		}
-		return recoveryObservation(episode), nil
-	}
-	if episode.State != "open" || observedAt.Before(episode.OpenedAt.Time) {
-		return PublicURLRecoveryObservation{}, ErrPublicURLRecoveryEpisodeStale
-	}
-	seconds := observedAt.Sub(episode.OpenedAt.Time).Seconds()
-	episode, err = queries.ObservePublicURLRecoveryEpisode(ctx, controlstatedb.ObservePublicURLRecoveryEpisodeParams{
-		ObservedAt: timestamptz(observedAt), ObservedSeconds: float8(seconds),
-		RecoveryEpisodeID: positive(recoveryEpisodeID), PublicURLID: publicURLID, PublishRunNumber: positive(publishRunNumber),
+	return q.OpenServiceRecoveryEpisode(ctx, controlstatedb.OpenServiceRecoveryEpisodeParams{
+		ServiceID: run.ServiceID, ServiceRunID: run.ID, RunNumber: run.RunNumber, OpenedAt: timestamptz(now),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return PublicURLRecoveryObservation{}, ErrPublicURLRecoveryEpisodeStale
-	}
-	if err != nil {
-		return PublicURLRecoveryObservation{}, fmt.Errorf("controlstate: observe route recovery: close episode: %w", err)
-	}
-	if _, err := queries.UpdatePublicURLRecoveryHistogram(ctx, controlstatedb.UpdatePublicURLRecoveryHistogramParams{
-		ObservedSeconds: seconds, UpdatedAt: timestamptz(observedAt),
-	}); err != nil {
-		return PublicURLRecoveryObservation{}, fmt.Errorf("controlstate: observe route recovery: update histogram: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return PublicURLRecoveryObservation{}, fmt.Errorf("controlstate: observe route recovery: commit: %w", err)
-	}
-	if d.activity != nil {
-		d.activity.metrics.Load().ObserveRecoveryDuration(time.Duration(seconds * float64(time.Second)))
-	}
-	return recoveryObservation(episode), nil
 }
 
-func recoveryObservation(episode controlstatedb.ControlPublicUrlRecoveryEpisode) PublicURLRecoveryObservation {
-	return PublicURLRecoveryObservation{
-		RecoveryEpisodeID: uint64(episode.ID), PublicURLID: episode.PublicURLID,
-		PublishRunNumber: uint64(episode.PublishRunNumber), OpenedAt: episode.OpenedAt.Time,
-		ObservedAt: episode.ObservedAt.Time, ObservedSeconds: episode.RecoverySeconds.Float64,
+// ingress reports only a successful write to its visitor. native admission or
+// original signed source evidence binds the reporter, run and visitor.
+// check the lease at delivery time, never at the sender's earlier timestamp.
+func (d *Database) ObserveServiceRecovery(ctx context.Context, lease IngressLeaseIdentity, ref ServiceRunReference, visitor string, episodeID uint64, observedAt time.Time, sourceEvidence []byte, now time.Time) (result ServiceRecoveryObservation, retErr error) {
+	clock := newAuthorizationClock(now)
+	observedAt = observedAt.UTC().Truncate(time.Microsecond)
+	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) ||
+		observedAt.IsZero() || now.IsZero() || observedAt.After(now.Add(time.Second)) || observedAt.Before(now.Add(-serviceObservationDeliveryGrace)) || len(sourceEvidence) > 2048 {
+		return result, ErrServiceRecoveryEpisodeStale
 	}
+	if _, err := checkedServiceRunBinding(ref.ServiceID, ref.RunID, ref.RunNumber); err != nil {
+		return result, ErrServiceRecoveryEpisodeStale
+	}
+	id, ok := positiveInt64(episodeID)
+	if !ok {
+		return result, ErrServiceRecoveryEpisodeStale
+	}
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer rollback(ctx, tx, "observe service recovery", &retErr)()
+	q := controlstatedb.New(tx)
+	currentLease, err := lockCurrentIngressLease(ctx, q, lease, clock.current())
+	if err != nil {
+		return result, err
+	}
+	episode, err := q.LockServiceRecoveryEpisode(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, ErrServiceRecoveryEpisodeStale
+	}
+	if err != nil {
+		return result, err
+	}
+	if episode.ServiceID != ref.ServiceID || episode.ServiceRunID != ref.RunID || episode.RunNumber != ref.RunNumber ||
+		observedAt.Before(episode.OpenedAt.Time) || episode.State == "canceled" {
+		return result, ErrServiceRecoveryEpisodeStale
+	}
+	var admitted bool
+	if len(sourceEvidence) != 0 {
+		admitted, err = verifyHTTPRecoverySource(ctx, tx, lease, ref, visitor, sourceEvidence, observedAt)
+	} else {
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_service_visitors
+		WHERE visitor_connection_id=$1 AND service_id=$2 AND service_run_id=$3 AND run_number=$4
+		AND ingress_id=$5 AND ingress_run_id=$6 AND ingress_lease_revision=$7
+		AND created_at<=$8 AND valid_until>=$8)`, visitor, ref.ServiceID, ref.RunID, ref.RunNumber,
+			lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), observedAt).Scan(&admitted)
+	}
+	if err != nil {
+		return result, err
+	}
+	if !admitted {
+		return result, ErrServiceRecoveryEpisodeStale
+	}
+	committed := false
+	if episode.State == "open" {
+		seconds := observedAt.Sub(episode.OpenedAt.Time).Seconds()
+		episode, err = q.ObserveServiceRecoveryEpisode(ctx, controlstatedb.ObserveServiceRecoveryEpisodeParams{
+			RecoveryEpisodeID: id, ObservedAt: timestamptz(observedAt), ObservedSeconds: float8(seconds),
+		})
+		if err != nil {
+			return result, err
+		}
+		if err = q.UpdateServiceRecoveryHistogram(ctx, controlstatedb.UpdateServiceRecoveryHistogramParams{
+			ObservedSeconds: seconds, UpdatedAt: timestamptz(now),
+		}); err != nil {
+			return result, err
+		}
+		committed = true
+	}
+	result = ServiceRecoveryObservation{ServiceRunReference: ref, RecoveryEpisodeID: episodeID,
+		OpenedAt: episode.OpenedAt.Time, ObservedAt: episode.ObservedAt.Time, ObservedSeconds: episode.RecoverySeconds.Float64}
+	if !currentLease.LeaseExpiresAt.Time.After(clock.current()) {
+		return ServiceRecoveryObservation{}, ErrIngressLeaseStale
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return ServiceRecoveryObservation{}, err
+	}
+	if committed && d.activity != nil {
+		d.activity.metrics.Load().ObserveRecoveryDuration(time.Duration(result.ObservedSeconds * float64(time.Second)))
+	}
+	return result, nil
+}
+
+func verifyHTTPRecoverySource(ctx context.Context, tx pgx.Tx, lease IngressLeaseIdentity, ref ServiceRunReference, visitor string, evidence []byte, observedAt time.Time) (bool, error) {
+	metadata, remaining, err := proxyproto.Decode(bytes.NewReader(evidence))
+	if err != nil || metadata.Destination.Port() != 443 || metadata.VisitorSourceProof == "" {
+		return false, nil
+	}
+	trailing, err := io.ReadAll(remaining)
+	if err != nil || len(trailing) != 0 {
+		return false, nil
+	}
+	proof, err := tunnelv1.ReadVisitorSourceProof([]byte(metadata.VisitorSourceProof))
+	if err != nil || proof.Authority.IngressID != lease.IngressID || proof.Authority.IngressRunID != lease.IngressRunID ||
+		proof.Authority.IngressLeaseRevision != lease.IngressLeaseRevision {
+		return false, nil
+	}
+	var digest []byte
+	var ready time.Time
+	err = tx.QueryRow(ctx, `SELECT run.run_token_digest,run.ready_at FROM control.service_runs run
+		JOIN control.services service ON service.id=run.service_id AND service.protocol='http'
+		WHERE run.id=$1 AND run.service_id=$2 AND run.run_number=$3 AND run.ready_at IS NOT NULL`,
+		ref.RunID, ref.ServiceID, ref.RunNumber).Scan(&digest, &ready)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	master, err := visitortoken.ServiceVisitorSourceKey(digest, ref.RunID, uint64(ref.RunNumber))
+	if err != nil || observedAt.Before(ready) {
+		return false, nil
+	}
+	// a delayed first response may follow a normal routing refresh. authenticate
+	// the signed original socket observation, not a backdated or renewed proof.
+	// this records a measurement; it grants no access or serving deadline.
+	at := time.UnixMicro(proof.ObservedAt)
+	if at.Before(ready) || at.After(observedAt) {
+		return false, nil
+	}
+	binding := tunnelv1.VisitorSourceBinding{ServiceID: ref.ServiceID, ServiceRunID: ref.RunID, RunNumber: uint64(ref.RunNumber),
+		VisitorConnectionID: visitor, Source: metadata.Source, Destination: metadata.Destination}
+	return visitortoken.VerifyVisitorSource(master, proof, binding, proof.Authority.VisitorPolicyRevision, at) == nil, nil
 }
 
 func float8(value float64) pgtype.Float8 {

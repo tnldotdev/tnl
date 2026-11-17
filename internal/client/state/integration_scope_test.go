@@ -18,7 +18,7 @@ func TestIntegrationScopeRejectsMalformedComponentsAtStateBoundaries(t *testing.
 	const server = "https://control.example.test"
 	project := t.TempDir()
 	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
-		Command: TunnelCommandPublish, Server: server, Target: "3000", Project: project, ServiceProtocol: controlv1.Http,
+		Command: TunnelCommandPublish, Server: server, Target: "3000", Project: project, ServiceProtocol: controlv1.ServiceProtocolHTTP,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestIntegrationScopeRejectsMalformedComponentsAtStateBoundaries(t *testing.
 			assertInvalid(scope.Validate())
 			if !scope.IsZero() {
 				_, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish, Server: server,
-					Target: "3000", Project: project, ServiceProtocol: controlv1.Http, IntegrationScope: scope})
+					Target: "3000", Project: project, ServiceProtocol: controlv1.ServiceProtocolHTTP, IntegrationScope: scope})
 				assertInvalid(err)
 			}
 			assertInvalid(tunnel.SetIntegrationScope(t.Context(), scope))
@@ -107,19 +107,16 @@ func TestIntegrationScopeMatchesBothComponentsAndServer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		id, err := opaqueid.New(opaqueid.ServicePrefix)
+		if err != nil {
+			t.Fatal(err)
+		}
 		tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish, Server: fixture.server,
-			Target: "3000", Project: t.TempDir(), Service: "api", ServiceProtocol: controlv1.Http, IntegrationScope: fixture.scope})
+			Target: "3000", Project: t.TempDir(), Service: "api", ServiceID: id, ServiceProtocol: controlv1.ServiceProtocolHTTP, IntegrationScope: fixture.scope})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = tunnel.Finish(t.Context(), nil) })
-		id, err := opaqueid.New(opaqueid.PublicURLPrefix)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := tunnel.SetPublicURL(t.Context(), id, "api."+fixture.scope.Namespace); err != nil {
-			t.Fatal(err)
-		}
 		if err := tunnel.SetProvisioning(t.Context(), 1); err != nil {
 			t.Fatal(err)
 		}
@@ -171,7 +168,7 @@ func TestIntegrationScopeMatchesBothComponentsAndServer(t *testing.T) {
 	}
 	for index, fixture := range fixtures {
 		input := SaveOAuthCallbackInput{Scope: OAuthCallbackScope{Server: fixture.server, Hostname: "oauth.member.example.test", IntegrationScope: fixture.scope},
-			Origin:      OAuthRedirectOrigin{PublicURLID: receivers[0].PublicURLID, PublishRunNumber: 1},
+			Origin:      OAuthRedirectOrigin{ServiceID: receivers[0].ServiceID, RunNumber: 1},
 			Destination: OAuthCallbackDestination{TunnelID: tunnels[0].ID(), Path: "/callback"}, State: "opaque-state" + strings.Repeat("-other", index)}
 		err := database.SaveOAuthCallback(t.Context(), input)
 		if index == 0 && err != nil || index != 0 && err == nil {
@@ -181,5 +178,23 @@ func TestIntegrationScopeMatchesBothComponentsAndServer(t *testing.T) {
 	if _, err := database.db.ExecContext(t.Context(), `INSERT INTO webhook_owners (server_origin, primary_project_root, integration_namespace, name, tunnel_id) VALUES (?, ?, ?, 'event', ?)`,
 		server, base.PrimaryProjectRoot, base.Namespace, tunnels[0].ID()); err == nil {
 		t.Fatal("duplicate owner bypassed the explicit scope's unique constraint")
+	}
+	current, err := database.WebhookReceiverCurrent(t.Context(), receivers[0])
+	if err != nil || !current || receivers[0].ServiceID == "" {
+		t.Fatalf("service-backed webhook receiver was not current: %+v, %v", receivers[0], err)
+	}
+	wrong := receivers[0]
+	wrong.ServiceID = receivers[1].ServiceID
+	if current, err := database.WebhookReceiverCurrent(t.Context(), wrong); err != nil || current {
+		t.Fatalf("same target admitted another service ID: %t, %v", current, err)
+	}
+	if err := tunnels[0].SetIntegrationScope(t.Context(), fixtures[1].scope); err != nil {
+		t.Fatal(err)
+	}
+	if current, err := database.WebhookReceiverCurrent(t.Context(), receivers[0]); err != nil || current {
+		t.Fatalf("receiver remained current after project reassignment: %t, %v", current, err)
+	}
+	if _, err := database.ExclusiveWebhookReceiver(t.Context(), server, base, "event", digests[0]); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("selected webhook retained a reassigned receiver: %v", err)
 	}
 }

@@ -26,44 +26,56 @@ func (q *Queries) ClearAliasRun(ctx context.Context, arg ClearAliasRunParams) er
 
 const markAliasRunReady = `-- name: MarkAliasRunReady :execrows
 INSERT INTO alias_publish_runs (alias_id, owner, tunnel_id, selection_revision,
-    public_url_id, publish_run_number, target_public_url_id, target_publish_run_number)
+    service_id, run_number, target_service_id, target_run_number)
 SELECT a.id, ?1, t.id, a.selection_revision, ?2,
-    ?3, t.public_url_id, t.publish_run_number
+    ?3, t.service_id, t.publish_run_number
 FROM project_aliases a JOIN alias_declarations d ON d.alias_id = a.id
 JOIN local_tunnels t ON t.id = d.tunnel_id
 WHERE a.id = ?4 AND a.selection_revision = ?5
     AND t.id = ?6 AND t.project_root = a.selected_project_root
+    AND t.server_origin = a.server_origin AND t.primary_project_root = a.primary_project_root
+    AND t.integration_namespace = d.integration_namespace
+    AND t.primary_project_root = ?7
+    AND t.integration_namespace = ?8
     AND d.fingerprint = a.fingerprint AND t.service = a.service
-    AND t.public_url_id = ?7 AND t.publish_run_number = ?8
-    AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?9
+    AND t.service_id = ?9 AND t.publish_run_number = ?10
+    AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?11
+    AND EXISTS (SELECT 1 FROM integration_url_leases p
+        WHERE p.server_origin = a.server_origin AND p.hostname = a.hostname
+          AND p.service_id = ?2 AND p.run_number = ?3
+          AND p.expires_at > ?11)
 ON CONFLICT(alias_id) DO UPDATE SET owner = excluded.owner, tunnel_id = excluded.tunnel_id,
-    selection_revision = excluded.selection_revision, public_url_id = excluded.public_url_id,
-    publish_run_number = excluded.publish_run_number, target_public_url_id = excluded.target_public_url_id,
-    target_publish_run_number = excluded.target_publish_run_number
+    selection_revision = excluded.selection_revision, service_id = excluded.service_id,
+    run_number = excluded.run_number, target_service_id = excluded.target_service_id,
+    target_run_number = excluded.target_run_number
 `
 
 type MarkAliasRunReadyParams struct {
-	Owner                  string
-	PublicURLID            string
-	PublishRunNumber       int64
-	AliasID                string
-	SelectionRevision      int64
-	TunnelID               string
-	TargetPublicURLID      sql.NullString
-	TargetPublishRunNumber sql.NullInt64
-	Now                    int64
+	Owner                string
+	ServiceID            string
+	RunNumber            int64
+	AliasID              string
+	SelectionRevision    int64
+	TunnelID             string
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	TargetServiceID      sql.NullString
+	TargetRunNumber      sql.NullInt64
+	Now                  int64
 }
 
 func (q *Queries) MarkAliasRunReady(ctx context.Context, arg MarkAliasRunReadyParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, markAliasRunReady,
 		arg.Owner,
-		arg.PublicURLID,
-		arg.PublishRunNumber,
+		arg.ServiceID,
+		arg.RunNumber,
 		arg.AliasID,
 		arg.SelectionRevision,
 		arg.TunnelID,
-		arg.TargetPublicURLID,
-		arg.TargetPublishRunNumber,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
+		arg.TargetServiceID,
+		arg.TargetRunNumber,
 		arg.Now,
 	)
 	if err != nil {
@@ -98,17 +110,18 @@ func (q *Queries) RecordAliasFailure(ctx context.Context, arg RecordAliasFailure
 const statusAliases = `-- name: StatusAliases :many
 SELECT a.id, a.server_origin, a.primary_project_root, a.team_id, a.membership_id, a.namespace, a.name, a.hostname, a.service, a.fingerprint, a.selected_project_root, a.selection_revision, a.failure_reason, COALESCE(p.expires_at, 0) AS publisher_expires_at,
     COALESCE(r.tunnel_id, '') AS run_tunnel_id,
-    COALESCE(r.public_url_id, '') AS public_url_id, COALESCE(r.publish_run_number, 0) AS publish_run_number,
+    COALESCE(r.service_id, '') AS service_id, COALESCE(r.run_number, 0) AS run_number,
     COALESCE(r.selection_revision, 0) AS run_revision, COALESCE(t.state, '') AS target_state,
     COALESCE(t.project_root, '') AS target_project, COALESCE(t.lease_expires_at, 0) AS target_expires_at,
-    COALESCE(t.stopped_at, 0) AS target_stopped_at, COALESCE(t.public_url_id, '') AS target_public_url_id,
-    COALESCE(t.publish_run_number, 0) AS target_publish_run_number,
-    COALESCE(r.target_public_url_id, '') AS run_target_public_url_id,
-    COALESCE(r.target_publish_run_number, 0) AS run_target_publish_run_number
+    COALESCE(t.stopped_at, 0) AS target_stopped_at, COALESCE(t.service_id, '') AS target_service_id,
+    COALESCE(t.publish_run_number, 0) AS target_run_number,
+    COALESCE(r.target_service_id, '') AS run_target_service_id,
+    COALESCE(r.target_run_number, 0) AS run_target_run_number
 FROM project_aliases a
 LEFT JOIN alias_publish_runs r ON r.alias_id = a.id
 LEFT JOIN local_tunnels t ON t.id = r.tunnel_id
 LEFT JOIN integration_url_leases p ON p.server_origin = a.server_origin AND p.hostname = a.hostname
+    AND p.service_id = r.service_id AND p.run_number = r.run_number
 WHERE ?1 = '' OR a.primary_project_root = ?1 OR a.selected_project_root = ?1
     OR EXISTS (SELECT 1 FROM alias_declarations declaration JOIN local_tunnels tunnel ON tunnel.id = declaration.tunnel_id
       WHERE declaration.alias_id = a.id AND tunnel.project_root = ?1)
@@ -116,32 +129,32 @@ ORDER BY a.server_origin, a.primary_project_root, a.namespace, a.name
 `
 
 type StatusAliasesRow struct {
-	ID                        string
-	ServerOrigin              string
-	PrimaryProjectRoot        string
-	TeamID                    string
-	MembershipID              string
-	Namespace                 string
-	Name                      string
-	Hostname                  string
-	Service                   string
-	Fingerprint               []byte
-	SelectedProjectRoot       string
-	SelectionRevision         int64
-	FailureReason             string
-	PublisherExpiresAt        int64
-	RunTunnelID               string
-	PublicURLID               string
-	PublishRunNumber          int64
-	RunRevision               int64
-	TargetState               string
-	TargetProject             string
-	TargetExpiresAt           int64
-	TargetStoppedAt           int64
-	TargetPublicURLID         string
-	TargetPublishRunNumber    int64
-	RunTargetPublicURLID      string
-	RunTargetPublishRunNumber int64
+	ID                  string
+	ServerOrigin        string
+	PrimaryProjectRoot  string
+	TeamID              string
+	MembershipID        string
+	Namespace           string
+	Name                string
+	Hostname            string
+	Service             string
+	Fingerprint         []byte
+	SelectedProjectRoot string
+	SelectionRevision   int64
+	FailureReason       string
+	PublisherExpiresAt  int64
+	RunTunnelID         string
+	ServiceID           string
+	RunNumber           int64
+	RunRevision         int64
+	TargetState         string
+	TargetProject       string
+	TargetExpiresAt     int64
+	TargetStoppedAt     int64
+	TargetServiceID     string
+	TargetRunNumber     int64
+	RunTargetServiceID  string
+	RunTargetRunNumber  int64
 }
 
 func (q *Queries) StatusAliases(ctx context.Context, projectRoot interface{}) ([]StatusAliasesRow, error) {
@@ -169,17 +182,17 @@ func (q *Queries) StatusAliases(ctx context.Context, projectRoot interface{}) ([
 			&i.FailureReason,
 			&i.PublisherExpiresAt,
 			&i.RunTunnelID,
-			&i.PublicURLID,
-			&i.PublishRunNumber,
+			&i.ServiceID,
+			&i.RunNumber,
 			&i.RunRevision,
 			&i.TargetState,
 			&i.TargetProject,
 			&i.TargetExpiresAt,
 			&i.TargetStoppedAt,
-			&i.TargetPublicURLID,
-			&i.TargetPublishRunNumber,
-			&i.RunTargetPublicURLID,
-			&i.RunTargetPublishRunNumber,
+			&i.TargetServiceID,
+			&i.TargetRunNumber,
+			&i.RunTargetServiceID,
+			&i.RunTargetRunNumber,
 		); err != nil {
 			return nil, err
 		}

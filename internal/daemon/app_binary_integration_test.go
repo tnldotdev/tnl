@@ -17,6 +17,7 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 )
@@ -31,11 +32,11 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			defer cancel()
 			inspect := inspectStandaloneTestDatabase(t, fixture.databaseURL)
 			rows, err := inspect.QueryContext(ctx, `
-				SELECT run.state, run.certificate_installed_at IS NOT NULL, slot.connection_slot, slot.state
-				FROM control.publish_runs AS run
-				JOIN control.public_urls AS public_url ON public_url.id = run.public_url_id
-				LEFT JOIN control.publish_run_connection_slots AS slot ON slot.publish_run_id = run.id
-				WHERE public_url.canonical_hostname = $1 ORDER BY run.publish_run_number, slot.connection_slot`,
+				SELECT run.state, run.certificate_expires_at IS NOT NULL, slot.connection_slot, slot.state
+				FROM control.service_runs AS run
+				JOIN control.service_endpoints AS endpoint ON endpoint.service_id = run.service_id
+				LEFT JOIN control.service_connection_slots AS slot ON slot.service_run_id = run.id
+				WHERE endpoint.hostname = $1 ORDER BY run.run_number, slot.connection_slot`,
 				"app-led-binary.routes.127.0.0.1.nip.io")
 			if err == nil {
 				for rows.Next() {
@@ -53,7 +54,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			} else {
 				t.Logf("read publisher diagnostic: %v", err)
 			}
-			for _, table := range []string{"public_urls", "publisher_identities", "publisher_enrollments", "previews", "preview_public_urls"} {
+			for _, table := range []string{"services", "publisher_identities", "publisher_enrollments", "previews", "preview_services"} {
 				var count int
 				if err := inspect.QueryRowContext(ctx, "SELECT count(*) FROM control."+table).Scan(&count); err == nil {
 					t.Logf("app-led %s=%d", table, count)
@@ -64,7 +65,7 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 	})
 	project := t.TempDir()
 	initializeIntegrationBinaryProject(t, project, "app-led")
-	configuration := []byte(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","services":{"api":{}},"deployments":{"local":{"targets":{"api":{"name":"app-led-binary","public_url":{"access":"anonymous"}}}}}}}`)
+	configuration := []byte(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","services":{"api":{}},"deployments":{"local":{"targets":{"api":{"name":"app-led-binary","public":true,"http":{"access":"anonymous"}}}}}}}`)
 	if err := os.WriteFile(filepath.Join(project, "tnl.json"), configuration, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -127,16 +128,24 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		if status := request("prepare", publisherprotocol.Prepare{Version: 1, Directory: project, Service: "api", Framework: "node", Owner: owner, PID: os.Getpid()}, &assigned); status != http.StatusOK {
 			t.Fatalf("prepare status %d", status)
 		}
+		if assigned.Version != 1 || assigned.Service != "api" || assigned.RegistrationID == "" ||
+			assigned.Hostname == "" || assigned.PublicURL != "https://"+assigned.Hostname ||
+			len(assigned.Project.Services) != 1 || assigned.Project.Services["api"].URL != assigned.PublicURL ||
+			!assigned.Project.Services["api"].Public {
+			t.Fatalf("prepare lost the selected public app endpoint: service=%q registration=%t hostname=%q public_url=%q metadata=%+v",
+				assigned.Service, assigned.RegistrationID != "", assigned.Hostname, assigned.PublicURL, assigned.Project.Services)
+		}
 		registration := publisherprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner, Target: app.URL}
 		if status := request("register", registration, nil); status != http.StatusNoContent {
 			t.Fatalf("register status %d", status)
 		}
 		// renewal belongs to the app. keep the fixture's registration current
 		// while certificate issuance and public readiness finish.
-		stopRenewal, renewalDone := make(chan struct{}), make(chan struct{})
+		renewalCtx, cancelRenewal := context.WithCancel(t.Context())
+		renewalDone := make(chan struct{})
 		var renewalOnce sync.Once
 		stop := func() {
-			renewalOnce.Do(func() { close(stopRenewal) })
+			renewalOnce.Do(cancelRenewal)
 			<-renewalDone
 		}
 		t.Cleanup(stop)
@@ -146,21 +155,17 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			defer ticker.Stop()
 			for {
 				select {
-				case <-stopRenewal:
+				case <-renewalCtx.Done():
 					return
 				case <-ticker.C:
-					payload, _ := json.Marshal(publisherprotocol.Registration{Version: 1, RegistrationID: assigned.RegistrationID, Owner: owner})
-					call, err := http.NewRequest(http.MethodPost, endpoint.Url+"/v1/renew", bytes.NewReader(payload))
-					if err != nil {
+					// renewal carries the exact target as well as the owner
+					// and registration; a rejected renewal cannot be ignored.
+					if err := publisherprotocol.Call(renewalCtx, endpoint, http.MethodPost, "/v1/renew", registration, nil); err != nil {
+						if renewalCtx.Err() == nil || !failure.Only(err, renewalCtx.Err()) {
+							t.Errorf("renew app registration: %v", err)
+						}
 						return
 					}
-					call.Header.Set("Content-Type", "application/json")
-					call.Header.Set("Authorization", "Bearer "+endpoint.Capability)
-					response, err := client.Do(call)
-					if err != nil {
-						return
-					}
-					_ = response.Body.Close()
 				}
 			}
 		}()
@@ -192,16 +197,17 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 		})
 		runIntegrationBinaryCommand(t, project, fixture.environment, fixture.tnlPath,
 			"wait", "--service", "api", "--timeout", "30s", "--output=json")
+		// join renewal before unregistering the ownership it keeps alive.
+		stop()
 		if status := request("unregister", registration, nil); status != http.StatusNoContent {
 			t.Fatalf("unregister status %d", status)
 		}
-		stop()
 		waitForIntegrationCondition(t, 15*time.Second, func(ctx context.Context) (bool, error) {
 			snapshot, err := state.SnapshotProject(ctx, project)
 			return err == nil && len(snapshot.Tunnels) == 0, err
 		})
-		if tunnel.PublicURLID == "" {
-			t.Fatal("publication has no saved public URL")
+		if tunnel.ServiceID == "" {
+			t.Fatal("publication has no saved service")
 		}
 		if index == 1 {
 			// a replaced app cannot reclaim its old registration.

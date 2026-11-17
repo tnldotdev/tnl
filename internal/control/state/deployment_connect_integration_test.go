@@ -122,7 +122,7 @@ func newDeploymentConnectFixture(t *testing.T) deploymentConnectFixture {
 	publisher := enrollAppliedDeployment(t, d, project, enrollment, now)
 	assignment := publisher.assignments.Services[0]
 	access := deploymentAssignmentAccess(t, d, publisher, assignment, now)
-	prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "deployment-connect", now, ServiceMetadata{Protocol: "postgres", PublisherPool: true, TrustRevision: assignment.TrustRevision})
+	prepared, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "deployment-connect", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "postgres", PublisherPool: true, TrustRevision: assignment.TrustRevision}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func newDeploymentConnectFixture(t *testing.T) deploymentConnectFixture {
 	installPrivateTestCertificate(t, d, prepared, run, now)
 	for _, slot := range run.Connections {
 		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-		if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, assignment.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+		if _, err = d.ClaimServicePublisherConnection(t.Context(), slot.PublisherConnectionID, assignment.ServiceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = d.ReadyServicePublisherConnection(t.Context(), slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {

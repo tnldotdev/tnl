@@ -71,7 +71,15 @@ class FakeNative(NativeRuntime):
                 raise NativeUnavailable()
             return self.snapshot()
         if operation == "unregister":
-            assert payload == self.registration
+            assert payload is not None
+            deadline = payload["shutdown_deadline"]
+            assert isinstance(deadline, str)
+            from datetime import UTC, datetime
+
+            assert 0 < (datetime.fromisoformat(deadline) - datetime.now(UTC)).total_seconds() <= 10
+            assert {
+                key: value for key, value in payload.items() if key != "shutdown_deadline"
+            } == self.registration
             self.events.append("unregister")
         return None
 
@@ -162,6 +170,7 @@ def test_invocation_status_matches_the_exact_native_tunnel() -> None:
         "process_id": 1,
         "server": "https://control.example",
         "project": "/project",
+        "service_id": "svc_" + "A" * 22,
         "publish_run_number": 1,
         "started_at": value["observed_at"],
         "updated_at": value["observed_at"],
@@ -178,6 +187,8 @@ def test_invocation_status_matches_the_exact_native_tunnel() -> None:
     for changed in (
         {**publication, "tunnel_id": "another-tunnel"},
         {**publication, "service": "another-service"},
+        {**publication, "service_id": "url_" + "A" * 22},
+        {**publication, "public_url_id": "url_" + "A" * 22},
     ):
         with pytest.raises(InvalidResponse):
             parse_status(
@@ -229,6 +240,61 @@ def test_default_selection_omits_credentials_and_explicit_file_is_sent_only_to_n
         ) as tunnel:
             assert tunnel._payload["publisher_identity_id"] == _publisher
             assert "publisher_credential_file" not in tunnel._payload
+
+    asyncio.run(scenario())
+
+
+def test_asgi_default_and_explicit_telemetry_choices_survive_owner_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TNL_NO_TELEMETRY", raising=False)
+
+    class RecordingNative(FakeNative):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.choices: list[object] = []
+            self.recovered = asyncio.Event()
+
+        async def request(
+            self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
+        ) -> object:
+            if operation == "publications/register":
+                assert payload is not None
+                self.choices.append(payload["telemetry_disabled"])
+            result = await super().request(endpoint, operation, payload)
+            if operation == "publications/register" and len(self.choices) == 2:
+                self.recovered.set()
+            return result
+
+    async def scenario() -> None:
+        async def endpoint(request: Request) -> PlainTextResponse:
+            return PlainTextResponse("app")
+
+        enabled_native, disabled_native, environment_native = (
+            RecordingNative(),
+            RecordingNative(),
+            RecordingNative(),
+        )
+        monkeypatch.setattr(_asgi, "_native", enabled_native)
+        async with await start_publication(tnl.handler(endpoint)) as enabled:
+            monkeypatch.setattr(_asgi, "_native", disabled_native)
+            async with await start_publication(tnl.handler(endpoint), telemetry=False) as disabled:
+                monkeypatch.setenv("TNL_NO_TELEMETRY", "true")
+                monkeypatch.setattr(_asgi, "_native", environment_native)
+                async with await start_publication(tnl.handler(endpoint)) as environment:
+                    # status loss drives actual owner rediscovery after the
+                    # process environment has changed for the enabled sibling.
+                    natives = (enabled_native, disabled_native, environment_native)
+                    for native in natives:
+                        native.fail_status = True
+                    async with asyncio.timeout(2):
+                        await asyncio.gather(*(native.recovered.wait() for native in natives))
+                    assert enabled_native.choices == [False, False]
+                    assert disabled_native.choices == [True, True]
+                    assert environment_native.choices == [True, True]
+                    assert all(native.starts == 2 for native in natives)
+                    assert enabled.url == disabled.url == environment.url == _public_url
+                assert enabled_native.choices == [False, False]
 
     asyncio.run(scenario())
 
@@ -287,10 +353,18 @@ def test_lifespan_precedes_registration_and_close_joins_websockets(
                 await receive()
 
         async with await start_publication(
-            app, publisher_identity_id=_publisher, access="anonymous", limits=tnl.Limits(requests=2)
+            app,
+            publisher_identity_id=_publisher,
+            access="anonymous",
+            limits=tnl.Limits(requests=7, concurrency=2, rate=tnl.RateLimit(requests=3, per="1s")),
         ) as tunnel:
             assert tunnel.url == _public_url
             assert tunnel._payload["publisher_identity_id"] == _publisher
+            assert tunnel._payload["limits"] == {
+                "total": 7,
+                "concurrency": 2,
+                "rate": {"count": 3, "per": "1s"},
+            }
             assert events.index("startup") < events.index("register")
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -431,6 +505,14 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
     native = FailingNative([])
     monkeypatch.setattr(_asgi, "_native", native)
     servers: list[_asgi._OwnedServer] = []
+    tunnels: list[_asgi.Publication] = []
+    original_start = _asgi.Publication.start
+
+    async def start(tunnel: _asgi.Publication) -> None:
+        tunnels.append(tunnel)
+        await original_start(tunnel)
+
+    monkeypatch.setattr(_asgi.Publication, "start", start)
     start_asgi = _asgi._start_asgi
 
     async def capture(
@@ -448,9 +530,9 @@ def test_asgi_setup_preserves_publication_and_cleanup_failures(
                 pytest.fail("publication failure was accepted")
         codes = [error.code for error in caught.value.exceptions if isinstance(error, tnl.TnlError)]
         assert codes == ["sdk.publication_failed", "sdk.request_rejected"]
-        tunnel = servers[0].tunnel
-        assert tunnel is not None and not tunnel._serve_task.done()
-        assert not tunnel._server.should_exit
+        tunnel = tunnels[0]
+        assert tunnel._serve_task.done()
+        assert tunnel._server.should_exit and not tunnel._close_complete
         native.fail_cleanup = False
         await tunnel.aclose()
         assert tunnel._serve_task.done()

@@ -51,7 +51,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity, member := owner.Identity.Identity.ID, owner.Identity.Memberships[0]
-	service, err := d.CreateServiceAt(ctx, member.TeamID, identity, "peer-claim", "peer-claim", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(ctx, member.TeamID, identity, "peer-claim", "peer-claim", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		}
 		leases[id], keys[id] = lease, private
 	}
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "peer-claim", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "peer-claim", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 	managedcert.Install(t, d, prepared, run, now)
 	for _, slot := range run.Connections {
 		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
@@ -265,7 +265,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 			t.Fatal(err)
 		}
 		wireLease := relayv1.RelayLease{RelayServiceId: assigned.RelayServiceID, RelayId: assigned.RelayID,
-			RelayRunId: assigned.RelayRunID, RelayLeaseRevision: int64(assigned.RelayLeaseRevision), LeaseExpiresAt: assigned.LeaseExpiresAt}
+			RelayRunId: assigned.RelayRunID, RelayLeaseRevision: int64(assigned.RelayLeaseRevision), LeaseExpiresAt: assigned.LeaseExpiresAt, ServingUntil: assigned.ServingUntil}
 		return wireLease, proof, ed25519.Sign(keys[assigned.RelayServiceID], claimMessage)
 	}
 	lease0, proof0, signed0 := proofFor(pair, 0)

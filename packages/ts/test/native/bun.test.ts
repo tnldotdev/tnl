@@ -44,7 +44,7 @@ test(
       [firstEntry],
       {
         cwd: await temporaryDirectory("tnl-bun-first-"),
-        env: { ...a.environment, NODE_ENV: "development" },
+        env: { ...a.environment, NODE_ENV: "development", TNL_NO_TELEMETRY: undefined },
       },
       project("first"),
     );
@@ -53,7 +53,7 @@ test(
       [secondEntry],
       {
         cwd: await temporaryDirectory("tnl-bun-second-"),
-        env: { ...b.environment, NODE_ENV: "development" },
+        env: { ...b.environment, NODE_ENV: "development", TNL_NO_TELEMETRY: "true" },
       },
       project("second"),
     );
@@ -62,7 +62,16 @@ test(
       waitForBootstrapRequest(a, 1, 20_000, first.assertRunning),
       waitForBootstrapRequest(b, 1, 20_000, second.assertRunning),
     ]);
-    expect(a.requests[0]?.body).toMatchObject({ version: 1, framework: "bun" });
+    expect(a.requests[0]?.body).toMatchObject({
+      version: 1,
+      framework: "bun",
+      telemetry_disabled: false,
+    });
+    expect(b.requests[0]?.body).toMatchObject({
+      version: 1,
+      framework: "bun",
+      telemetry_disabled: true,
+    });
     expect(firstTarget.path).toBe("/v1/register");
     const firstURL = (firstTarget.body as { target: string }).target;
     const secondURL = (secondTarget.body as { target: string }).target;

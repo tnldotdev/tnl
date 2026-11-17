@@ -2,12 +2,14 @@ package requestlimit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -16,25 +18,17 @@ import (
 // visitor connections. private and public HTTP use the same admission counter.
 type HTTP struct{ admission *Budget }
 
+func (l *HTTP) Limits() applicationlimits.Limits {
+	if l == nil {
+		return applicationlimits.Limits{}.Defaults(false)
+	}
+	return l.admission.Limits()
+}
+
 func NewHTTP(input *controlv1.ProjectHTTPApplicationLimits) (*HTTP, error) {
-	var limits applicationlimits.Limits
-	if input != nil {
-		if input.Total != nil {
-			limits.Requests = *input.Total
-		}
-		if input.Concurrency != nil {
-			limits.Concurrency = *input.Concurrency
-		}
-		if input.Rate != nil {
-			period, err := time.ParseDuration(input.Rate.Per)
-			if err != nil {
-				return nil, err
-			}
-			limits.RateRequests, limits.RatePer = input.Rate.Count, period
-			if input.Rate.Burst != nil {
-				limits.RateBurst = *input.Rate.Burst
-			}
-		}
+	limits, err := ParseLimits(input)
+	if err != nil {
+		return nil, err
 	}
 	admission, err := New(limits)
 	if err != nil {
@@ -43,22 +37,103 @@ func NewHTTP(input *controlv1.ProjectHTTPApplicationLimits) (*HTTP, error) {
 	return &HTTP{admission: admission}, nil
 }
 
+// ParseLimits validates an explicit HTTP budget without applying defaults.
+func ParseLimits(input *controlv1.ProjectHTTPApplicationLimits) (applicationlimits.Limits, error) {
+	var limits applicationlimits.Limits
+	if input != nil {
+		if input.Total != nil {
+			if *input.Total < 1 {
+				return limits, errors.New("request limit must be positive")
+			}
+			limits.Requests = *input.Total
+		}
+		if input.Concurrency != nil {
+			if *input.Concurrency < 1 {
+				return limits, errors.New("concurrency limit must be positive")
+			}
+			limits.Concurrency = *input.Concurrency
+		}
+		if input.Rate != nil {
+			period, err := time.ParseDuration(input.Rate.Per)
+			if err != nil || period <= 0 || input.Rate.Count < 1 {
+				return limits, errors.New("request rate requires a positive count and period")
+			}
+			limits.RateRequests, limits.RatePer = input.Rate.Count, period
+			if input.Rate.Burst != nil {
+				if *input.Rate.Burst < 1 {
+					return limits, errors.New("request rate burst must be positive")
+				}
+				limits.RateBurst = *input.Rate.Burst
+			}
+		}
+	}
+	return limits, limits.Validate()
+}
+
 // admit holds one run-wide request slot until the returned release is called.
 func (l *HTTP) Admit(w http.ResponseWriter, r *http.Request) (func(), bool) {
-	if l == nil {
-		return func() {}, true
+	reservation, ok := l.Reserve(w, r)
+	if !ok {
+		return nil, false
 	}
-	release, status, retry := l.admission.Acquire(r.Context())
+	return reservation.Finish, true
+}
+
+// completed belongs to the exact application budget shared by every HTTP path.
+func (l *HTTP) Completed() <-chan struct{} {
+	if l == nil {
+		return nil
+	}
+	return l.admission.Completed()
+}
+
+// reserve permits refund only before application forwarding. finish and refund
+// are mutually exclusive, including when deferred cleanup races cancellation.
+func (l *HTTP) Reserve(w http.ResponseWriter, r *http.Request) (*Reservation, bool) {
+	if l == nil {
+		return &Reservation{}, true
+	}
+	reservation, status, retry := l.admission.Reserve(r.Context())
 	if status != 0 {
 		if retry > 0 {
 			w.Header().Set("Retry-After", fmt.Sprint(RetryAfterSeconds(retry)))
 		}
-		w.Header().Set("Connection", "close")
+		if r.ProtoMajor == 1 {
+			w.Header().Set("Connection", "close")
+		}
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
-		http.Error(w, "HTTP request limit reached", status)
+		switch {
+		case status == http.StatusTooManyRequests:
+			diagnostic.WriteHTTP(w, r, diagnostic.RequestRateLimited, "")
+		case retry == 0:
+			diagnostic.WriteHTTP(w, r, diagnostic.RequestBudgetExhausted, "")
+		default:
+			diagnostic.WriteHTTP(w, r, diagnostic.RequestLimitReached, "saturated")
+		}
 		return nil, false
 	}
-	return release, true
+	return reservation, true
+}
+
+type Reservation struct {
+	budget *Budget
+	once   sync.Once
+}
+
+func (r *Reservation) Finish() {
+	r.once.Do(func() {
+		if r.budget != nil {
+			r.budget.leave()
+		}
+	})
+}
+
+func (r *Reservation) Refund() {
+	r.once.Do(func() {
+		if r.budget != nil {
+			r.budget.Refund()
+		}
+	})
 }
 
 // Budget owns admission for one run, not one visitor connection.
@@ -86,6 +161,14 @@ func (a *Budget) Completed() <-chan struct{}       { return a.completed }
 // acquire has no wait queue. cancellation cannot leave a held concurrency slot.
 // release is idempotent so cancellation and normal cleanup may race safely.
 func (a *Budget) Acquire(ctx context.Context) (func(), int, time.Duration) {
+	reservation, status, retry := a.Reserve(ctx)
+	if status != 0 {
+		return nil, status, retry
+	}
+	return reservation.Finish, 0, 0
+}
+
+func (a *Budget) Reserve(ctx context.Context) (*Reservation, int, time.Duration) {
 	if ctx.Err() != nil {
 		return nil, http.StatusServiceUnavailable, time.Second
 	}
@@ -93,13 +176,12 @@ func (a *Budget) Acquire(ctx context.Context) (func(), int, time.Duration) {
 	if status != 0 {
 		return nil, status, retry
 	}
-	var once sync.Once
-	release := func() { once.Do(a.leave) }
+	reservation := &Reservation{budget: a}
 	if ctx.Err() != nil {
-		a.Refund()
+		reservation.Refund()
 		return nil, http.StatusServiceUnavailable, time.Second
 	}
-	return release, 0, 0
+	return reservation, 0, 0
 }
 
 // refund is used only before application forwarding, when promotion fails or

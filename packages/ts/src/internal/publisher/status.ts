@@ -5,6 +5,7 @@ import {
   hostnameSchema,
   httpsOriginSchema,
   invocationIDSchema,
+  serviceIDSchema,
   timestampSchema,
 } from "../values.js";
 
@@ -19,7 +20,7 @@ const publicationSchema = z.strictObject({
   project: textSchema,
   service: textSchema.exactOptional(),
   service_protocol: textSchema.exactOptional(),
-  public_url_id: textSchema.exactOptional(),
+  service_id: serviceIDSchema.exactOptional(),
   publish_run_number: runNumberSchema.exactOptional(),
   public_port: runNumberSchema.exactOptional(),
   hostname: textSchema.exactOptional(),

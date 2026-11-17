@@ -16,19 +16,15 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/filelock"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/observability"
+	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
-
-type DiscoveryClient interface {
-	Discovery(context.Context) (controlv1.ControlDiscovery, error)
-}
 
 type PublisherClients struct {
 	publisheridentity.NativeControl
-	Discovery DiscoveryClient
+	Discovery publisherdeployment.ServerDiscovery
 }
 
 type ClientFactory func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error)
@@ -49,7 +45,7 @@ func Clients(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, 
 		return PublisherClients{}, nil, err
 	}
 	authority, err := clientauthority.New(job.Server, httpClient, "")
-	return PublisherClients{NativeControl: publisheridentity.NativeControl{PublicURLControl: control, Services: control, Runtime: control}, Discovery: control}, authority, err
+	return PublisherClients{NativeControl: publisheridentity.NativeControl{Services: control, Runtime: control}, Discovery: control}, authority, err
 }
 
 type Engine struct {
@@ -59,41 +55,45 @@ type Engine struct {
 	// own registry and credentials. the system publisher service leaves it empty.
 	UserJobs   []UserJobRunner
 	Clients    ClientFactory
-	Publish    func(context.Context, publisher.Config) error
-	Connect    func(context.Context, Job, *clienttelemetry.Collector, func() error) error
-	Deployment func(context.Context, Job, *clienttelemetry.Collector, func(int64, bool) error) error
+	Connect    func(context.Context, Job, *clienttelemetry.Collector, func() error, func() time.Time, context.Context) error
+	Deployment func(context.Context, Job, *clienttelemetry.Collector, func(int64, bool) error, func() time.Time, context.Context) error
 	Observe    func(Job, Status) error
 	// Initialize runs local desired-state setup while holding service.lock,
 	// before any worker starts. it must not contact remote services.
-	Initialize   func(context.Context) error
-	PollInterval time.Duration
-	RetryMin     time.Duration
-	RetryMax     time.Duration
-	DrainTime    time.Duration
+	Initialize       func(context.Context) error
+	PollInterval     time.Duration
+	RetryMin         time.Duration
+	RetryMax         time.Duration
+	DrainTime        time.Duration
+	ShutdownDeadline func() time.Time
+	// shutdown context is an expiry fence, not the canceled work context.
+	// descendants inherit it before stopping so an earlier parent expiry can
+	// interrupt already-active cleanup without another deadline getter call.
+	ShutdownContext context.Context
 }
 
 // UserJobRunner owns its own registry and reconciliation. Serve joins its
 // workers before returning when the shared user-login context is canceled.
-type UserJobRunner interface{ Serve(context.Context) error }
+type UserJobRunner interface {
+	Serve(context.Context, func() time.Time, context.Context) error
+}
 
 type worker struct {
 	revision uint64
 	cancel   context.CancelFunc
 	done     chan struct{}
+	err      error
 }
 
 // Serve runs every enabled job after boot. failures and drain waits belong to
 // individual workers; the reconciler never waits on a target or control server.
 // callers must keep Registry open until Serve returns, including its drain join.
-func (e Engine) Serve(ctx context.Context) error {
+func (e Engine) Serve(ctx context.Context) (result error) {
 	if e.Registry == nil {
 		return ErrUnsafeState
 	}
 	if e.Clients == nil {
 		e.Clients = Clients
-	}
-	if e.Publish == nil {
-		e.Publish = publisher.Run
 	}
 	if e.PollInterval == 0 {
 		e.PollInterval = 200 * time.Millisecond
@@ -105,11 +105,24 @@ func (e Engine) Serve(ctx context.Context) error {
 		e.RetryMax = time.Minute
 	}
 	if e.DrainTime == 0 {
-		e.DrainTime = 30 * time.Second
+		e.DrainTime = 10 * time.Second
 	}
 	if e.PollInterval < time.Millisecond || e.RetryMin < time.Millisecond || e.RetryMax < e.RetryMin || e.RetryMax > 5*time.Minute || e.DrainTime < 0 || e.DrainTime > time.Minute {
 		return ErrScope
 	}
+	var joinShutdown func() error
+	parentDeadline := e.ShutdownDeadline
+	e.ShutdownDeadline = func() time.Time {
+		until := time.Now().Add(e.DrainTime)
+		if parentDeadline != nil {
+			if parent := parentDeadline(); !parent.IsZero() && parent.Before(until) {
+				until = parent
+			}
+		}
+		return observability.ShutdownDeadline(ctx, until)
+	}
+	e.ShutdownDeadline, e.ShutdownContext, joinShutdown = installedShutdown(ctx, e.DrainTime, e.ShutdownDeadline, e.ShutdownContext)
+	defer func() { result = errors.Join(result, joinShutdown()) }()
 	if err := e.Registry.validate(); err != nil {
 		return err
 	}
@@ -132,25 +145,42 @@ func (e Engine) Serve(ctx context.Context) error {
 	userDone := make(chan error, len(e.UserJobs))
 	var userWorkers sync.WaitGroup
 	for _, runner := range e.UserJobs {
-		userWorkers.Go(func() { userDone <- runner.Serve(userCtx) })
+		userWorkers.Go(func() { userDone <- runner.Serve(userCtx, e.ShutdownDeadline, e.ShutdownContext) })
 	}
-	defer func() { cancelUser(); userWorkers.Wait() }()
-	workers := map[string]*worker{}
 	defer func() {
+		e.ShutdownDeadline()
+		cancelUser()
+		userWorkers.Wait()
+		for range e.UserJobs {
+			err := <-userDone
+			if err != nil && !failure.Only(err, context.Canceled) {
+				result = errors.Join(result, err)
+			}
+		}
+	}()
+	workers := map[string]*worker{}
+	var stopping atomic.Bool
+	defer func() {
+		stopping.Store(true)
+		e.ShutdownDeadline()
+		cancelUser()
 		for _, w := range workers {
 			w.cancel()
 		}
 		for _, w := range workers {
 			<-w.done
+			result = errors.Join(result, w.err)
 		}
 		// record the joined boundary with a fresh revision, including local stops.
-		finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		finish, cancel := context.WithDeadline(e.ShutdownContext, e.ShutdownDeadline())
 		defer cancel()
 		jobs, err := e.Registry.List(finish)
 		if err == nil {
 			for _, job := range jobs {
-				_ = e.Registry.status(finish, job.ID, job.Revision, Status{State: JobStopped})
+				result = errors.Join(result, e.status(finish, job, Status{State: JobStopped}))
 			}
+		} else {
+			result = errors.Join(result, err)
 		}
 	}()
 	for {
@@ -159,6 +189,8 @@ func (e Engine) Serve(ctx context.Context) error {
 		}
 		select {
 		case err := <-userDone:
+			// retain this result for the joined final collection too.
+			userDone <- err
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -183,6 +215,9 @@ func (e Engine) Serve(ctx context.Context) error {
 				}
 				select {
 				case <-w.done:
+					if w.err != nil {
+						return w.err
+					}
 					delete(workers, job.ID)
 					w = nil
 				default:
@@ -202,7 +237,14 @@ func (e Engine) Serve(ctx context.Context) error {
 			workerCtx, cancel := context.WithCancel(ctx)
 			w = &worker{revision: job.Revision, cancel: cancel, done: make(chan struct{})}
 			workers[job.ID] = w
-			go func() { defer close(w.done); e.run(workerCtx, job) }()
+			jobEngine := e
+			jobEngine.ShutdownDeadline = func() time.Time {
+				if stopping.Load() || ctx.Err() != nil {
+					return e.ShutdownDeadline()
+				}
+				return time.Time{}
+			}
+			go func() { defer close(w.done); w.err = jobEngine.run(workerCtx, job) }()
 		}
 		if err := wait(ctx, e.PollInterval); err != nil {
 			return nil
@@ -210,16 +252,22 @@ func (e Engine) Serve(ctx context.Context) error {
 	}
 }
 
-func (e Engine) run(ctx context.Context, job Job) {
+func (e Engine) run(ctx context.Context, job Job) (result error) {
+	var joinShutdown func() error
+	e.ShutdownDeadline, e.ShutdownContext, joinShutdown = installedShutdown(ctx, e.DrainTime, e.ShutdownDeadline, e.ShutdownContext)
+	defer func() { result = errors.Join(result, joinShutdown()) }()
 	if job.TelemetryDisabled {
 		e.Telemetry = nil
 	}
 	var runtime *processidentity.Owner
 	defer func() {
 		if runtime != nil {
-			finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			finish, cancel := context.WithDeadline(e.ShutdownContext, e.ShutdownDeadline())
 			defer cancel()
-			_ = runtime.Stop(finish)
+			result = errors.Join(result, runtime.Stop(finish))
+		}
+		if ctx.Err() != nil && failure.Only(result, context.Canceled) {
+			result = nil
 		}
 	}()
 	backoff := e.RetryMin
@@ -227,11 +275,22 @@ func (e Engine) run(ctx context.Context, job Job) {
 	for ctx.Err() == nil {
 		attempts++
 		if err := e.status(ctx, job, Status{State: JobStarting, Attempts: attempts}); err != nil {
-			return
+			return err
 		}
-		ready, err := e.attempt(ctx, job, attempts, &runtime)
+		attemptEngine := e
+		attemptEngine.ShutdownDeadline = func() time.Time {
+			if ctx.Err() != nil {
+				return e.ShutdownDeadline()
+			}
+			// a retried service run does not stop the installed job.
+			return time.Time{}
+		}
+		ready, err := attemptEngine.attempt(ctx, job, attempts, &runtime)
 		if ctx.Err() != nil {
-			return
+			if err != nil && !failure.Only(err, context.Canceled) {
+				return err
+			}
+			return nil
 		}
 		if ready {
 			backoff = e.RetryMin
@@ -240,18 +299,21 @@ func (e Engine) run(ctx context.Context, job Job) {
 		// bad grants and settings wait for local Start rather than hammering control.
 		if blockedFailure(err) {
 			status.State = JobBlocked
-			_ = e.status(ctx, job, status)
+			if observeErr := e.status(ctx, job, status); observeErr != nil {
+				return errors.Join(err, observeErr)
+			}
 			<-ctx.Done()
-			return
+			return nil
 		}
 		if err := e.status(ctx, job, status); err != nil {
-			return
+			return err
 		}
 		if err := wait(ctx, backoff+time.Duration(rand.Int64N(int64(backoff/4)+1))); err != nil {
-			return
+			return nil
 		}
 		backoff = min(e.RetryMax, backoff*2)
 	}
+	return nil
 }
 
 func blockedFailure(err error) bool {
@@ -279,7 +341,7 @@ func safeFailure(err error) string {
 		return "publisher authorization rejected"
 	}
 	if errors.Is(err, clientcontrol.ErrNotFound) {
-		return "saved URL unavailable"
+		return "service unavailable"
 	}
 	if reason, ok := failure.ReasonOf(err); ok {
 		return string(reason)
@@ -303,7 +365,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 				state = JobReady
 			}
 			return e.status(ctx, job, Status{State: state, Attempts: attempts, ObservedRevision: revision})
-		})
+		}, e.ShutdownDeadline, e.ShutdownContext)
 		return ready.Load(), err
 	}
 	if job.Kind == KindConnector {
@@ -314,17 +376,87 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		err := e.Connect(ctx, job, e.Telemetry, func() error {
 			ready.Store(true)
 			return e.Registry.status(ctx, job.ID, job.Revision, Status{State: JobReady, Attempts: attempts})
-		})
+		}, e.ShutdownDeadline, e.ShutdownContext)
 		return ready.Load(), err
 	}
 	return e.publishJob(ctx, job, attempts, runtime)
 }
 
+// installedShutdown starts the job's budget on its first stop and caps it at the
+// supervisor's original deadline only when that supervisor is also stopping.
+func installedShutdown(ctx context.Context, duration time.Duration, parent func() time.Time, parentFence context.Context) (func() time.Time, context.Context, func() error) {
+	if duration == 0 {
+		duration = 10 * time.Second
+	}
+	if parentFence == nil {
+		parentFence = context.WithoutCancel(ctx)
+	}
+	cleanup, expire := context.WithCancelCause(parentFence)
+	var mu sync.Mutex
+	var until time.Time
+	closed := false
+	var timer *time.Timer
+	var timerDone chan struct{}
+	stopTimer := func() {
+		if timer != nil {
+			if timer.Stop() {
+				close(timerDone)
+			}
+			<-timerDone
+			timer, timerDone = nil, nil
+		}
+	}
+	deadline := func() time.Time {
+		var outer time.Time
+		if parent != nil {
+			outer = parent()
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		previous := until
+		if until.IsZero() {
+			until = time.Now().Add(duration)
+		}
+		if !outer.IsZero() && outer.Before(until) {
+			until = outer
+		}
+		if !closed && !until.Equal(previous) {
+			stopTimer()
+			done := make(chan struct{})
+			timerDone = done
+			timer = time.AfterFunc(time.Until(until), func() {
+				defer close(done)
+				expire(context.DeadlineExceeded)
+			})
+		}
+		if !closed && !time.Now().Before(until) {
+			expire(context.DeadlineExceeded)
+		}
+		return until
+	}
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { defer close(done); deadline() })
+	return deadline, cleanup, func() error {
+		deadline()
+		if !stop() {
+			<-done
+		}
+		mu.Lock()
+		stopTimer()
+		closed = true
+		mu.Unlock()
+		cause := context.Cause(cleanup)
+		expire(context.Canceled)
+		return cause
+	}
+}
+
 func (e Engine) status(ctx context.Context, job Job, status Status) error {
-	if err := e.Registry.status(ctx, job.ID, job.Revision, status); err != nil {
+	applied, err := e.Registry.updateStatus(ctx, job.ID, job.Revision, status)
+	if err != nil {
 		return err
 	}
-	if e.Observe != nil {
+	if applied && e.Observe != nil {
 		return e.Observe(job, status)
 	}
 	return nil

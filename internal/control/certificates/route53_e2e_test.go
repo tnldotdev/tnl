@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"flag"
@@ -25,7 +24,6 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil"
-	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 )
 
 const route53ACMEStagingDirectory = "https://acme-staging-v02.api.letsencrypt.org/directory"
@@ -33,7 +31,7 @@ const route53ACMEStagingDirectory = "https://acme-staging-v02.api.letsencrypt.or
 var route53TestZoneID = flag.String("tnl-route53-zone-id", "", "staging Route 53 hosted zone ID for the opt-in DNS-01 test")
 
 // TestIntegrationRoute53StagingACME uses a fresh DNS name in the existing
-// tnl.wtf zone. A disposable control database exercises the actual public URL
+// tnl.wtf zone. A disposable control database exercises the service
 // certificate worker; only this test's TXT record is written to Route 53.
 func TestIntegrationRoute53StagingACME(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierRoute53)
@@ -75,45 +73,17 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	session, err := controltest.Session(ctx, database, "test.tnl.wtf", time.Hour, 24*time.Hour, now)
-	if err != nil {
-		t.Fatal(err)
+	prepared, run := serviceCertificateRun(t, database, "test.tnl.wtf", now)
+	identifiers := prepared.CertificatePlan.Identifiers
+	if len(identifiers) != 1 || identifiers[0] != prepared.Hostname {
+		t.Fatalf("expected exact-host service certificate plan: %#v", prepared.CertificatePlan)
 	}
-	member := session.Identity.Memberships[0]
-	principal, err := database.AuthenticateAccessToken(ctx, session.AccessToken, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	domains, err := database.ListTeamDomains(ctx, session.Identity.Identity.ID, member.TeamID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	namespace := member.ManagedLabel + ".test.tnl.wtf"
-	challengeName := "_acme-challenge." + namespace
+	hostname := identifiers[0]
+	challengeName := "_acme-challenge." + hostname
 	if record, err := route53SmokeTXT(ctx, route53Client, *route53TestZoneID, challengeName); err != nil || record != nil {
 		t.Fatalf("fresh challenge name already exists or is unreadable: present=%t error=%v", record != nil, err)
 	}
 	t.Cleanup(func() { cleanupRoute53SmokeTXT(t, route53Client, *route53TestZoneID, challengeName) })
-	hostname := "api." + namespace
-	publicURL, err := database.CreatePublicURL(ctx, controlstate.CreatePublicURLRequest{
-		TeamID: member.TeamID, DomainID: domains[0].ID, ActingIdentityID: session.Identity.Identity.ID,
-		IdempotencyKey: "ci", RequestDigest: sha256.Sum256([]byte(hostname)), CanonicalHostname: hostname,
-		Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember, Purpose: controlstate.PublicURLPurposeApp, MembershipID: member.ID,
-		DNSState: controlstate.PublicURLDNSPending, PolicyRevision: 1,
-	}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	identifiers := []string{"*." + namespace, namespace}
-	run, err := database.CreatePublishRun(ctx, controlstate.PublishRunRequest{
-		PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, MembershipID: publicURL.MembershipID, ActingIdentityID: session.Identity.Identity.ID,
-		RetrySecret: principal.RetrySecret[:], IdempotencyKey: "ci-run", RequestDigest: sha256.Sum256([]byte("ci-run")), PolicyRevision: 1,
-		CertificateCacheKey: namespace, CertificateScope: namespace, CertificateIdentifiers: identifiers,
-		CertificateChallenge: "dns-01", ExpectedMutationRevision: publicURL.MutationRevision,
-	}, now, time.Hour, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
 	account, err := database.EnsureACMEAccount(ctx, route53ACMEStagingDirectory, "ci@tnl.dev", now)
 	if err != nil {
 		t.Fatal(err)
@@ -132,11 +102,8 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	issuance, err := database.CreateCertificateIssuance(ctx, controlstate.CreateCertificateIssuanceRequest{
-		Authentication: controlstate.PublishRunAuthentication{PublicURLID: publicURL.ID, PublishRunID: run.PublishRunID,
-			PublishRunNumber: run.PublishRunNumber, PublishRunToken: run.PublishRunToken},
-		DirectoryURL: account.DirectoryURL, IdempotencyKey: "ci-issuance", RequestDigest: sha256.Sum256(csr), CSRDER: csr,
-	}, now)
+	issuance, err := database.CreateServiceCertificateIssuance(ctx, run.ServiceID, run.RunID, run.Token,
+		account.DirectoryURL, "ci-issuance", run.RunNumber, csr, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,20 +114,28 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &authorizationRecordingStore{Database: database}
-	worker, err := NewPublicURLWorker(store, PublicURLConfig{
+	worker, err := NewServiceWorker(store, ServiceConfig{
 		WorkerID: "route53_ci", Profile: "tlsserver", HTTPClient: httpClient,
 		DNSChallenges: dnsChallenges, PollInterval: time.Second, IdleInterval: time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("one ACME staging order for %s", namespace)
+	t.Logf("one ACME staging order for %s", hostname)
 	certificateReady := false
 	for ctx.Err() == nil {
+		if time.Until(run.ExpiresAt) < 35*time.Second {
+			renewed, err := database.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, time.Now().UTC(),
+				controlstate.ServiceRunHealth{StreamCapacity: 1})
+			if err != nil {
+				t.Fatalf("renew service run while issuing certificate: %v", err)
+			}
+			run.ExpiresAt = renewed.ExpiresAt
+		}
 		if _, err := worker.processOne(ctx); err != nil {
 			t.Fatal(err)
 		}
-		current, err := database.GetCertificateIssuance(ctx, issuance.ID, run.PublishRunToken, time.Now())
+		current, err := database.GetServiceCertificateIssuance(ctx, run.ServiceID, run.RunID, run.Token, issuance.ID, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -177,10 +152,8 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, hostname := range []string{namespace, "api." + namespace} {
-				if err := leaf.VerifyHostname(hostname); err != nil {
-					t.Fatalf("issued certificate for %s: %v", hostname, err)
-				}
+			if err := leaf.VerifyHostname(hostname); err != nil {
+				t.Fatalf("issued certificate for %s: %v", hostname, err)
 			}
 			if count := orders.count.Load(); count != 1 {
 				t.Fatalf("ACME new orders = %d, want exactly one", count)
@@ -194,19 +167,17 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 			if !pendingCleanup {
 				t.Fatal("certificate was not available before DNS cleanup")
 			}
-			if _, err := database.MarkPublicURLCertificateInstalled(ctx, controlstate.PublishRunAuthentication{
-				PublicURLID: publicURL.ID, PublishRunID: run.PublishRunID,
-				PublishRunNumber: run.PublishRunNumber, PublishRunToken: run.PublishRunToken,
-			}, issuance.ID, leaf.NotAfter, time.Now()); err != nil {
+			if err := database.MarkServiceCertificateInstalled(ctx, run.ServiceID, run.RunID, run.Token,
+				issuance.ID, run.RunNumber, leaf.NotAfter, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			certificateReady = true
-			t.Logf("ACME staging certificate ready for %s before DNS cleanup after %s", namespace, time.Since(issuance.CreatedAt).Round(time.Second))
+			t.Logf("ACME staging certificate ready for %s before DNS cleanup after %s", hostname, time.Since(issuance.CreatedAt).Round(time.Second))
 		case "installed":
 			if !certificateReady {
 				t.Fatal("certificate was installed before the early-ready check")
 			}
-			cleaned := len(store.saved) != 0 && len(store.saved[len(store.saved)-1].Authorizations) == 2
+			cleaned := len(store.saved) != 0 && len(store.saved[len(store.saved)-1].Authorizations) == 1
 			if cleaned {
 				for _, authorization := range store.saved[len(store.saved)-1].Authorizations {
 					cleaned = cleaned && authorization.State == "complete" && authorization.CleanupCompletedAt != nil
@@ -217,7 +188,7 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 				if err != nil || record != nil || orders.count.Load() != 1 {
 					t.Fatalf("DNS cleanup or one-order budget: TXT present=%t orders=%d error=%v", record != nil, orders.count.Load(), err)
 				}
-				t.Logf("ACME staging certificate issued for %s with one order and DNS cleanup complete after %s", namespace, time.Since(issuance.CreatedAt).Round(time.Second))
+				t.Logf("ACME staging certificate issued for %s with one order and DNS cleanup complete after %s", hostname, time.Since(issuance.CreatedAt).Round(time.Second))
 				return
 			}
 		case "failed", "canceled":
@@ -227,14 +198,14 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 					cause = saved.LastError
 				}
 			}
-			t.Fatalf("ACME staging issuance for %s ended in %s: %s", namespace, current.State, cause)
+			t.Fatalf("ACME staging issuance for %s ended in %s: %s", hostname, current.State, cause)
 		}
 		select {
 		case <-ctx.Done():
 		case <-time.After(time.Second):
 		}
 	}
-	t.Fatalf("ACME staging issuance for %s did not finish: %v", namespace, ctx.Err())
+	t.Fatalf("ACME staging issuance for %s did not finish: %v", hostname, ctx.Err())
 }
 
 type singleStagingOrderTransport struct {

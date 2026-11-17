@@ -159,13 +159,17 @@ func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPai
 }
 
 func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
-	f := newConnectorPairRunFixture(t)
-	d, now, ctx := f.database, f.now, t.Context()
+	d, now, _, leases := newConnectorPairPrerequisites(t)
+	ctx := t.Context()
+	const servingAllowance = 90 * time.Second
+	if err := d.ConfigureControlOutageTolerance(servingAllowance); err != nil {
+		t.Fatal(err)
+	}
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	visitor := WithControlPrincipal(ctx, principal)
 	actor := oidcRouteRequest(t, d, now)
-	service, err := d.CreateServiceAt(visitor, actor.TeamID, principal.IdentityID, "pair", "pair", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+	service, err := d.CreateServiceAt(visitor, actor.TeamID, principal.IdentityID, "pair", "pair", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +182,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "pair", now, ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	prepared, err := d.PrepareServiceRun(ctx, service.ID, publisher, "pair", now, ServiceRunRequest{Metadata: ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,16 +213,27 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, slot := range run.Connections {
-		lease := f.leases[slot.RelayServiceID].RelayLeaseIdentity
-		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
+		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, service.ID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if state, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil || state.State != "ready" {
+	ready, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0})
+	if err != nil || ready.State != "ready" {
 		t.Fatal("service run is not ready", err)
+	}
+	wantServingUntil := now.Add(servingAllowance)
+	if !ready.ExpiresAt.Equal(now.Add(45*time.Second)) || !ready.ObservedAt.Equal(now) || !ready.ServingUntil.Equal(wantServingUntil) {
+		t.Fatal("serving allowance changed run liveness or its fixed serving deadline")
+	}
+	var savedLiveness, savedServing, certificateUntil time.Time
+	if err := d.pool.QueryRow(ctx, `SELECT publisher_expires_at,serving_until,certificate_expires_at FROM control.service_runs WHERE id=$1`, run.RunID).
+		Scan(&savedLiveness, &savedServing, &certificateUntil); err != nil ||
+		!savedLiveness.Equal(ready.ExpiresAt) || !savedServing.Equal(wantServingUntil) || !certificateUntil.Equal(now.Add(time.Hour)) {
+		t.Fatal("ready run did not persist its independent liveness, serving, and certificate bounds", err)
 	}
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -230,7 +245,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	}
 	request := ConnectorPeerPairRequest{ServiceID: service.ID, ServiceRunID: run.RunID, RunNumber: run.RunNumber,
 		PublisherIdentityID: publisher.ID, IdempotencyKey: "one", Subject: VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: principal.IdentityID, DeviceID: device.ID}, Source: DeviceTokenSource{DeviceID: device.ID},
-		Action: "create", RequestedAt: now, ExpectedRelays: testConnectorPairRelays(run, f.leases)}
+		Action: "create", RequestedAt: now, ExpectedRelays: testConnectorPairRelays(run, leases)}
 	sign := func(r *ConnectorPeerPairRequest) {
 		t.Helper()
 		message, err := r.proof().Message()
@@ -244,8 +259,30 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ID == "" || first.Key == "" || first.DeliveryGeneration < 1 || !first.ExpiresAt.After(now) || first.ExpiresAt.After(run.ExpiresAt) || first.Relays[0].RelayLease.RelayServiceID == first.Relays[1].RelayLease.RelayServiceID {
-		t.Fatal("pair escaped its exact ready run and two distinct leases")
+	if first.ID == "" || first.Key == "" || first.DeliveryGeneration < 1 ||
+		first.ServiceID != service.ID || first.ServiceRunID != run.RunID || first.RunNumber != run.RunNumber ||
+		first.PublisherIdentityID != publisher.ID || first.Subject != request.Subject || first.Relays != request.ExpectedRelays ||
+		first.Relays[0].RelayLease.RelayServiceID == first.Relays[1].RelayLease.RelayServiceID {
+		t.Fatal("pair escaped its exact ready run, enrolled subject, or two distinct leases")
+	}
+	// the run's serving allowance is earlier than the device's two-minute cap,
+	// but later than publisher liveness. neither boundary may replace the other.
+	t.Logf("pair bounds: liveness=%s serving=%s certificate=%s pair=%s",
+		savedLiveness, savedServing, certificateUntil, first.ExpiresAt)
+	if !first.ExpiresAt.Equal(wantServingUntil) || !first.ExpiresAt.After(savedLiveness) ||
+		first.ExpiresAt.After(certificateUntil) || first.ExpiresAt.After(now.Add(2*time.Minute)) {
+		t.Fatal("pair did not retain the earlier fixed serving bound independently of run liveness")
+	}
+	var savedParent string
+	var savedPublicKey []byte
+	var savedExpiry, accessUntil, refreshUntil time.Time
+	if err := d.pool.QueryRow(ctx, `SELECT pair.parent_control_session_id,pair.owner_public_key,pair.expires_at,
+		parent.access_expires_at,parent.refresh_expires_at FROM control.connector_peer_pairs pair
+		JOIN control.control_sessions parent ON parent.id=pair.parent_control_session_id WHERE pair.id=$1`, first.ID).
+		Scan(&savedParent, &savedPublicKey, &savedExpiry, &accessUntil, &refreshUntil); err != nil ||
+		savedParent != principal.SessionID || !bytes.Equal(savedPublicKey, public) || !savedExpiry.Equal(wantServingUntil) ||
+		first.ExpiresAt.After(accessUntil) || first.ExpiresAt.After(refreshUntil) {
+		t.Fatal("pair lost its exact saved session, enrolled key, or parent expiry bounds", err)
 	}
 	assertNativeDeliveryID(t, d, first)
 	t.Run("stable owner replacement", func(t *testing.T) { assertNativeStateStableOwners(t, d, visitor, request, private, run, now) })
@@ -270,8 +307,8 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = d.pool.Exec(ctx, `INSERT INTO control.connector_peer_pairs (id,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,parent_control_session_id,owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
-		SELECT $2,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,$3,parent_control_session_id,owner_key,idempotency_key,request_digest,key_digest,key_ciphertext,$4,storage_key_id,slots,nextval('control.connector_peer_delivery_generation'),created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at FROM control.connector_peer_pairs WHERE id=$1`, first.ID, id, fmt.Sprintf("collision-%s", id), duplicate)
+		_, err = d.pool.Exec(ctx, `INSERT INTO control.connector_peer_pairs (id,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,parent_control_session_id,owner_key,idempotency_key,owner_public_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
+		SELECT $2,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,$3,parent_control_session_id,owner_key,idempotency_key,owner_public_key,request_digest,key_digest,key_ciphertext,$4,storage_key_id,slots,nextval('control.connector_peer_delivery_generation'),created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at FROM control.connector_peer_pairs WHERE id=$1`, first.ID, id, fmt.Sprintf("collision-%s", id), duplicate)
 		if err == nil {
 			t.Fatal("database accepted duplicate or zero delivery identifier")
 		}
@@ -285,7 +322,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	}
 	// a cluster-authenticated caller with the lease ID and public key still
 	// cannot claim this leg without the process's private key.
-	publicOnly := f.leases[first.Relays[0].RelayLease.RelayServiceID].PeerSigningPublicKey
+	publicOnly := leases[first.Relays[0].RelayLease.RelayServiceID].PeerSigningPublicKey
 	if _, err := d.ClaimConnectorPeerPairLeg(ctx, first.Relays[0].RelayLease, sourceIP, leg0,
 		ed25519.Sign(ed25519.NewKeyFromSeed(publicOnly), claimMessage), now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("public lease key authorized a connector peer leg", err)
@@ -408,7 +445,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	clipped, err := d.PrepareConnectorPeerPair(visitor, request, now)
-	if err != nil || clipped.ExpiresAt.After(grantDeadline) || clipped.ID != first.ID || clipped.DeliveryGeneration != first.DeliveryGeneration {
+	if err != nil || !clipped.ExpiresAt.Equal(grantDeadline) || clipped.ID != first.ID || clipped.DeliveryGeneration != first.DeliveryGeneration {
 		t.Fatal("retry outlived the publisher grant's earlier deadline", err)
 	}
 	var savedDeadline time.Time
@@ -547,19 +584,32 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	if _, err := d.pool.Exec(ctx, `UPDATE control.service_connection_slots SET connection_assignment_revision=connection_assignment_revision-1 WHERE publisher_connection_id=$1`, first.Relays[0].PublisherConnectionID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.pool.Exec(ctx, `UPDATE control.relay_leases SET lease_expires_at=$2 WHERE relay_id=$1`, first.Relays[0].RelayLease.RelayID, now.Add(time.Millisecond)); err != nil {
+	relayServingUntil := now.Add(2 * time.Second)
+	if _, err := d.pool.Exec(ctx, `UPDATE control.relay_leases SET lease_expires_at=$2,serving_until=$3 WHERE relay_id=$1`,
+		first.Relays[0].RelayLease.RelayID, now.Add(time.Millisecond), relayServingUntil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.PrepareConnectorPeerPair(visitor, request, now.Add(time.Second)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("expired relay lease recovered pair", err)
 	}
-	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testConnectorLegProof(t, second, 0, now.Add(time.Second), private), now.Add(time.Second)); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("expired relay lease recovered relay key", err)
+	// new pair preparation needs a live lease; an exact retained relay claim
+	// instead uses its confirmed serving bound, never an open-ended allowance.
+	if claim, err := testClaimConnectorPeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP,
+		testConnectorLegProof(t, second, 0, now.Add(time.Second), private), now.Add(time.Second)); err != nil ||
+		claim.PairID != second.ID || claim.DeliveryGeneration != second.DeliveryGeneration || claim.DeliveryID != second.DeliveryID ||
+		claim.Key != second.Key || claim.SourceIP != sourceIP || !claim.ExpiresAt.Equal(relayServingUntil) {
+		t.Fatal("retained relay claim lost exact source or escaped its serving bound after liveness expiry", err)
 	}
-	if err := d.RevokeVisitorDevice(visitor, principal.IdentityID, device.ID, now); err != nil {
+	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP,
+		testConnectorLegProof(t, second, 0, relayServingUntil, private), relayServingUntil); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("expired relay serving authority recovered relay key", err)
+	}
+	revokedAt := now.Add(time.Second + time.Microsecond)
+	if err := d.RevokeVisitorDevice(visitor, principal.IdentityID, device.ID, revokedAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, testConnectorLegProof(t, second, 0, now.Add(5*time.Microsecond), private), now.Add(5*time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP,
+		testConnectorLegProof(t, second, 0, revokedAt, private), revokedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked connector subject recovered relay key", err)
 	}
 	if _, err := d.PrepareConnectorPeerPair(visitor, request, now); err == nil {
@@ -583,6 +633,10 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *testing.T) {
 	d, now, _, leases := newConnectorPairPrerequisites(t)
 	ctx := t.Context()
+	const servingAllowance = 3 * time.Minute
+	if err := d.ConfigureControlOutageTolerance(servingAllowance); err != nil {
+		t.Fatal(err)
+	}
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
 	r = selectedProjectRequest(r, "production")
@@ -616,7 +670,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	}
 	access := deploymentAssignmentAccess(t, d, replica, assignment, now)
 	prep, err := d.PrepareServiceRun(ctx, serviceID, access.PublisherIdentity, "peer-pair", now,
-		ServiceMetadata{Protocol: assignment.Configuration.Protocol, PublisherPool: true, TrustRevision: assignment.TrustRevision})
+		ServiceRunRequest{Metadata: ServiceMetadata{Protocol: assignment.Configuration.Protocol, PublisherPool: true, TrustRevision: assignment.TrustRevision}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,7 +681,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	installPrivateTestCertificate(t, d, prep, run, now)
 	for _, slot := range run.Connections {
 		lease := leases[slot.RelayServiceID].RelayLeaseIdentity
-		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, serviceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, lease, now); err != nil {
+		if _, err := d.ClaimServicePublisherConnection(ctx, slot.PublisherConnectionID, serviceID, run.RunID, run.RunNumber, slot.Revision, slot.Credential, netip.MustParseAddr("127.0.0.1"), lease, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := d.ReadyServicePublisherConnection(ctx, slot.PublisherConnectionID, run.RunID, run.RunNumber, slot.Revision, lease, now); err != nil {
@@ -650,6 +704,18 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	originalWorkload := workload
+	checkWorkload := func(leaseUntil time.Time) {
+		t.Helper()
+		if workload.ID == "" || workload.Credential == "" || workload.ID != originalWorkload.ID ||
+			workload.Subject != originalWorkload.Subject || workload.Subject != workloadSubject(workload.ID) ||
+			workload.Credential != originalWorkload.Credential || workload.ExpiresAt == nil ||
+			!workload.ExpiresAt.Equal(now.Add(time.Hour)) || !workload.IdentityExpiresAt.Equal(now.Add(5*time.Minute)) ||
+			!workload.LeaseExpiresAt.Equal(leaseUntil) || len(workload.ServiceIDs) != 1 || workload.ServiceIDs[0] != serviceID {
+			t.Fatal("workload renewal changed fixed identity, selected service, or current permission deadline")
+		}
+	}
+	checkWorkload(now.Add(90 * time.Second))
 	request := ConnectorPeerPairRequest{ServiceID: serviceID, ServiceRunID: run.RunID, RunNumber: run.RunNumber,
 		PublisherIdentityID: access.PublisherIdentity.ID, Subject: workload.Subject, Source: WorkloadTokenSource{Credential: workload.Credential}, IdempotencyKey: "workload",
 		Action: "create", RequestedAt: now, ExpectedRelays: testConnectorPairRelays(run, leases)}
@@ -662,6 +728,17 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if err != nil || !pair.ExpiresAt.After(shortRelayDeadline) || pair.ExpiresAt.After(workload.LeaseExpiresAt) {
 		t.Fatal("workload pair outlived confirmed authority", err)
 	}
+	checkPair := func(current ConnectorPeerPair, until time.Time) {
+		t.Helper()
+		if current.ID == "" || current.Key == "" || current.DeliveryGeneration < 1 ||
+			current.ServiceID != serviceID || current.ServiceRunID != run.RunID || current.RunNumber != run.RunNumber ||
+			current.PublisherIdentityID != access.PublisherIdentity.ID || current.Subject != originalWorkload.Subject ||
+			current.Relays != request.ExpectedRelays || current.Relays[0].RelayLease.RelayServiceID == current.Relays[1].RelayLease.RelayServiceID ||
+			!current.ExpiresAt.Equal(until) {
+			t.Fatal("workload pair changed its exact subject, service, run, two relays, or serving bound")
+		}
+	}
+	checkPair(pair, now.Add(90*time.Second))
 	proof := testConnectorLegProof(t, pair, 0, now, private)
 	t.Run("stable owner replacement", func(t *testing.T) { assertNativeStateStableOwners(t, d, ctx, request, private, run, now) })
 	if t.Failed() {
@@ -721,6 +798,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if workload, err = d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(31*time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	checkWorkload(now.Add(121 * time.Second))
 	unchanged, err := d.PrepareConnectorPeerPair(ctx, request, now.Add(31*time.Second))
 	if err != nil || unchanged.ID != pair.ID || unchanged.Key != pair.Key || unchanged.DeliveryID != pair.DeliveryID || unchanged.DeliveryGeneration != pair.DeliveryGeneration || !unchanged.ExpiresAt.Equal(pair.ExpiresAt) {
 		t.Fatal("creation retry extended pair after parent leases renewed", err)
@@ -737,6 +815,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if err != nil || firstRenewal.ID != pair.ID || firstRenewal.Key != pair.Key || firstRenewal.DeliveryID != pair.DeliveryID || firstRenewal.DeliveryGeneration != pair.DeliveryGeneration || !firstRenewal.ExpiresAt.After(pair.ExpiresAt) {
 		t.Fatal("fresh recheck did not extend the pair after the first run heartbeat", err)
 	}
+	checkPair(firstRenewal, now.Add(121*time.Second))
 	if !firstRenewal.PublisherPreparedUntil.Equal(report.BindingExpiresAt) {
 		t.Fatal("pair renewal advanced the publisher's old installation report")
 	}
@@ -746,6 +825,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if workload, err = d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(62*time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	checkWorkload(now.Add(152 * time.Second))
 	uncertain, err := d.RenewConnectorPeerPair(ctx, "https://control.example.test", renew, now.Add(63*time.Second))
 	if err != nil || !uncertain.ExpiresAt.Equal(firstRenewal.ExpiresAt) || uncertain.DeliveryID != pair.DeliveryID || uncertain.DeliveryGeneration != pair.DeliveryGeneration {
 		t.Fatal("replayed renewal silently extended the serving deadline", err)
@@ -760,8 +840,11 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if err != nil || secondRenewal.ID != pair.ID || secondRenewal.Key != pair.Key || secondRenewal.DeliveryID != pair.DeliveryID || secondRenewal.DeliveryGeneration != pair.DeliveryGeneration || !secondRenewal.ExpiresAt.After(firstRenewal.ExpiresAt) {
 		t.Fatal("second fresh recheck did not extend inner pair lifetime", err)
 	}
-	var lastAuthorized time.Time
-	if err := d.pool.QueryRow(ctx, `SELECT last_authorized_at FROM control.connector_peer_pairs WHERE id=$1`, pair.ID).Scan(&lastAuthorized); err != nil || !lastAuthorized.Equal(renew.RequestedAt) || secondRenewal.ExpiresAt.After(lastAuthorized.Add(5*time.Minute)) {
+	checkPair(secondRenewal, now.Add(152*time.Second))
+	var lastAuthorized, savedPairUntil time.Time
+	if err := d.pool.QueryRow(ctx, `SELECT last_authorized_at,expires_at FROM control.connector_peer_pairs WHERE id=$1`, pair.ID).
+		Scan(&lastAuthorized, &savedPairUntil); err != nil || !lastAuthorized.Equal(renew.RequestedAt) ||
+		!savedPairUntil.Equal(now.Add(152*time.Second)) || secondRenewal.ExpiresAt.After(lastAuthorized.Add(5*time.Minute)) {
 		t.Fatal("pair outlived its last successful authorization", err)
 	}
 	beforeRetry := connectorPairSavedAuthority(t, d, pair.ID)
@@ -776,13 +859,27 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if afterRetry := connectorPairSavedAuthority(t, d, pair.ID); !bytes.Equal(beforeRetry, afterRetry) {
 		t.Fatal("rejected workload or pair rollback changed stored authority")
 	}
-	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(90*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
+	heartbeat, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(90*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !heartbeat.ExpiresAt.Equal(now.Add(135*time.Second)) || !heartbeat.ServingUntil.Equal(now.Add(90*time.Second+servingAllowance)) {
+		t.Fatal("publisher heartbeat coupled liveness to workload pair serving authority")
 	}
 	if workload, err = d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(93*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	late := now.Add(106 * time.Second)
+	checkWorkload(now.Add(183 * time.Second))
+	// the pair's last +64s authorization is capped by the +62s workload lease
+	// (+152s), not the old +60s publisher liveness (+105s). later parent
+	// renewals keep replacement possible without extending the existing pair.
+	late := now.Add(153 * time.Second)
+	if !late.After(heartbeat.ExpiresAt) || !late.Before(heartbeat.ServingUntil) || !late.Before(workload.LeaseExpiresAt) {
+		t.Fatal("expiry fixture did not retain current parent serving authority beyond run liveness")
+	}
+	t.Logf("workload bounds: pair=%s current_permission=%s identity=%s publisher_liveness=%s publisher_serving=%s",
+		secondRenewal.ExpiresAt, workload.LeaseExpiresAt, workload.IdentityExpiresAt, heartbeat.ExpiresAt, heartbeat.ServingUntil)
+	beforeExpiry := connectorPairSavedAuthority(t, d, pair.ID)
 	renew.RequestedAt = late
 	message, err = renew.proof().Message()
 	if err != nil {
@@ -798,6 +895,9 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if _, err := d.PrepareConnectorPeerPair(ctx, request, late); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("expired creation proof revived the old delivery", err)
 	}
+	if !bytes.Equal(beforeExpiry, connectorPairSavedAuthority(t, d, pair.ID)) {
+		t.Fatal("declined expiry proofs changed the saved owner or parent authority")
+	}
 	replacement := request
 	replacement.Action, replacement.RequestedAt = "replace", late
 	replacement.PreviousPairID, replacement.PreviousGeneration = pair.ID, pair.DeliveryGeneration
@@ -810,6 +910,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if err != nil || newPair.ID == pair.ID || newPair.Key == pair.Key || newPair.DeliveryID == pair.DeliveryID || newPair.DeliveryGeneration <= pair.DeliveryGeneration {
 		t.Fatal("fresh signed replacement did not recover after expiry", err)
 	}
+	checkPair(newPair, now.Add(183*time.Second))
 	if err := d.RevokeWorkloadSession(ctx, workload.ID, workload.Credential, late.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}

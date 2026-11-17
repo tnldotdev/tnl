@@ -42,6 +42,7 @@ func TestIntegrationPrivateServiceHeartbeatReports(t *testing.T) {
 		}
 		return row
 	}
+	var current ServiceRunState
 	for _, tc := range []struct {
 		name       string
 		report     ServiceRunHealth
@@ -64,6 +65,7 @@ func TestIntegrationPrivateServiceHeartbeatReports(t *testing.T) {
 				t.Fatalf("heartbeat readiness=%s, want %s", state.State, tc.state)
 			}
 			selectable(t, tc.selectable, now)
+			current = state
 		})
 	}
 	for _, tc := range []struct {
@@ -97,11 +99,39 @@ func TestIntegrationPrivateServiceHeartbeatReports(t *testing.T) {
 	if snapshot(t) != before {
 		t.Fatal("wrong credential changed durable health, readiness or lease")
 	}
-	if _, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now.Add(45*time.Second), unhealthy); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("expired publisher lease accepted a report", err)
+	// liveness stops new selection, but the same publisher may recover before
+	// its confirmed serving authority expires. the new report still owns health.
+	now = current.ExpiresAt
+	if !current.ServingUntil.After(now) {
+		t.Fatal("fixture did not separate publisher liveness from serving authority")
 	}
-	if snapshot(t) != before {
-		t.Fatal("expired publisher report revived readiness or lease")
+	selectable(t, false, now)
+	current = heartbeat(t, unhealthy, now)
+	if current.RunID != run.RunID || current.RunNumber != run.RunNumber || current.State != "starting" ||
+		!current.ObservedAt.Equal(now) || !current.ServingUntil.After(current.ExpiresAt) {
+		t.Fatal("liveness recovery replaced the run or revived unhealthy readiness", current)
 	}
-	selectable(t, false, now.Add(45*time.Second))
+	selectable(t, false, now)
+	now = now.Add(time.Second)
+	healthy := ServiceRunHealth{Healthy: true, StreamCapacity: 7, ActiveStreams: 4}
+	current = heartbeat(t, healthy, now)
+	if current.RunID != run.RunID || current.RunNumber != run.RunNumber || current.State != "ready" {
+		t.Fatal("healthy recovery lost the existing publisher run", current)
+	}
+	selectable(t, true, now)
+
+	// actual authority expiry rejects both reports without changing durable
+	// health, readiness, liveness, or the serving deadline.
+	before = snapshot(t)
+	for _, at := range []time.Time{current.ServingUntil, current.ServingUntil.Add(time.Second)} {
+		for _, report := range []ServiceRunHealth{unhealthy, healthy} {
+			if _, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, at, report); !errors.Is(err, ErrServiceAccess) {
+				t.Fatal("expired serving authority accepted a report", err)
+			}
+			if snapshot(t) != before {
+				t.Fatal("expired publisher report revived readiness or authority")
+			}
+		}
+		selectable(t, false, at)
+	}
 }

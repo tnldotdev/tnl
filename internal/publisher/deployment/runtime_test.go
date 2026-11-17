@@ -11,6 +11,7 @@ import (
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -60,7 +61,7 @@ func deploymentFixture(t *testing.T) (*deploymentControl, ed25519.PrivateKey) {
 	deployment := "cloud"
 	return &deploymentControl{expires: time.Now().Add(time.Second), acks: make(chan controlv1.DeploymentPublisherAcknowledgement, 100), assignment: controlv1.DeploymentPublisherAssignments{
 		Member: controlv1.DeploymentPublisherIdentity{DeploymentId: "deployment-one", DeploymentName: deployment, ProjectKey: "project-one", PublisherIdentityId: "publisher-one", KeyId: "key-one", TeamId: "team-one"}, Revision: 1, ConfigurationHash: strings.Repeat("a", 64),
-		Services: []controlv1.DeploymentPublisherServiceAssignment{{Service: "db", ServiceId: "private-one", GrantId: "exact-grant", ServiceKind: "service", Configuration: controlv1.ProjectServiceConfiguration{Target: "db.internal:5432"}}},
+		Services: []controlv1.DeploymentPublisherServiceAssignment{{Service: "db", ServiceId: "private-one", GrantId: "exact-grant", Configuration: controlv1.ProjectServiceConfiguration{Target: "db.internal:5432"}}},
 	}}, key
 }
 func receive(t *testing.T, channel <-chan string) string {
@@ -80,7 +81,7 @@ func TestReconcileJoinsOldAssignmentBeforeStartingReplacement(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- (Runtime{Control: control, Member: control.assignment.Member, Private: key, PollInterval: time.Millisecond,
-			Publish: func(ctx context.Context, service controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+			Publish: func(ctx context.Context, service controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 				events <- "start:" + service.Configuration.Target
 				health(true)
 				<-ctx.Done()
@@ -122,7 +123,7 @@ func TestWorkerMeasurementsKeepAcceptedDeploymentAndReplicaScope(t *testing.T) {
 	identities := make(chan observability.Identity, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- (Runtime{Control: control, Member: member, Private: key, Deployment: report, PollInterval: time.Millisecond, Publish: func(ctx context.Context, a controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+		done <- (Runtime{Control: control, Member: member, Private: key, Deployment: report, PollInterval: time.Millisecond, Publish: func(ctx context.Context, a controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 			identities <- observability.IdentityFromContext(ctx)
 			health(true)
 			<-ctx.Done()
@@ -131,7 +132,7 @@ func TestWorkerMeasurementsKeepAcceptedDeploymentAndReplicaScope(t *testing.T) {
 	}()
 	select {
 	case id := <-identities:
-		if id.TeamID != member.TeamId || id.DeploymentID != member.DeploymentId || id.PublisherIdentityID != member.PublisherIdentityId || id.ReportedDeploymentID != report.DeploymentId || id.ReplicaKey != report.ReplicaKey || id.ServiceID != "private-one" || id.PublicURLID != "" {
+		if id.TeamID != member.TeamId || id.DeploymentID != member.DeploymentId || id.PublisherIdentityID != member.PublisherIdentityId || id.ReportedDeploymentID != report.DeploymentId || id.ReplicaKey != report.ReplicaKey || id.ServiceID != "private-one" {
 			t.Fatal("worker lost accepted deployment scope", id)
 		}
 	case err := <-done:
@@ -153,7 +154,7 @@ func TestLeaseExpiryStopsWorkersWhenAssignmentPollingFails(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- (Runtime{Control: control, Member: control.assignment.Member, Private: key, PollInterval: time.Millisecond,
-			Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+			Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 				events <- "start"
 				health(true)
 				<-ctx.Done()
@@ -172,8 +173,10 @@ func TestLeaseExpiryStopsWorkersWhenAssignmentPollingFails(t *testing.T) {
 		t.Fatal(got)
 	}
 	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
+	// this fixture also fails the independent process stop; lease expiry
+	// must join the worker without discarding that separate failure.
+	if err := <-done; !failure.Only(err, clientcontrol.ErrUnavailable) {
+		t.Fatal("lease expiry lost or replaced the process stop failure", err)
 	}
 }
 
@@ -185,7 +188,7 @@ func TestSelectorRenameDoesNotRestartPublication(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- (Runtime{Control: control, Member: member, Private: key, PollInterval: time.Millisecond, Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+		done <- (Runtime{Control: control, Member: member, Private: key, PollInterval: time.Millisecond, Publish: func(ctx context.Context, _ controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 			events <- "start"
 			health(true)
 			<-ctx.Done()
@@ -231,7 +234,7 @@ func TestRevokedServiceGrantRefreshesAssignmentsWithoutLosingDeployment(t *testi
 	var attempts atomic.Int32
 	done := make(chan error, 1)
 	go func() {
-		done <- (Runtime{Control: control, Member: member, Private: key, PollInterval: time.Millisecond, Publish: func(ctx context.Context, a controlv1.DeploymentPublisherServiceAssignment, health func(bool)) error {
+		done <- (Runtime{Control: control, Member: member, Private: key, PollInterval: time.Millisecond, Publish: func(ctx context.Context, a controlv1.DeploymentPublisherServiceAssignment, health func(bool), _ func() time.Time) error {
 			if attempts.Add(1) == 1 {
 				return clientcontrol.ErrUnauthenticated
 			}

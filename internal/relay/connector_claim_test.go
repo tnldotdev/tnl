@@ -20,7 +20,7 @@ func TestConnectorClaimStaleRelayRequiresRebindingWithoutDelivery(t *testing.T) 
 		{"process restart", func(lease *relayv1.RelayLease) { lease.RelayRunId = "replacement-run" }},
 		{"lease replacement", func(lease *relayv1.RelayLease) { lease.RelayLeaseRevision++ }},
 		{"draining", func(lease *relayv1.RelayLease) { lease.Draining = true }},
-		{"expired", func(lease *relayv1.RelayLease) { lease.LeaseExpiresAt = time.Now().Add(-time.Second) }},
+		{"expired", func(lease *relayv1.RelayLease) { lease.ServingUntil = time.Now().Add(-time.Second) }},
 	} {
 		for _, stage := range []string{"before claim", "during claim"} {
 			t.Run(change.name+"/"+stage, func(t *testing.T) {

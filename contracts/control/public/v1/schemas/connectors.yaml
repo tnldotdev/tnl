@@ -213,6 +213,88 @@ schemas:
         }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
       visitor_permission: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse" }
+  ConnectorPeerPairRetireRequest:
+    type: object
+    additionalProperties: false
+    description: "Negative-only proof for the exact path service/pair and stored run, publisher, delivery identifier, and original owner key. Both the original enrolled-key signature and stable session-key MAC are required. The source, key snapshot, and session key are never supplied by the caller. Network rebind does not change this proof scope. Reuse the identical body after reply loss; neither a new timestamp nor a new key can confirm an earlier uncertain retirement."
+    required:
+      [
+        service_run_id,
+        run_number,
+        publisher_identity_id,
+        delivery_id,
+        idempotency_key,
+        requested_at,
+        session_proof,
+        signature,
+      ]
+    properties:
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number:
+        {
+          type: string,
+          pattern: "^[1-9][0-9]*$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
+      publisher_identity_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }
+      delivery_id:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{21}[AQgw]$"
+        description: Canonical unpadded base64url of the exact nonzero 16-byte stable delivery identifier.
+      idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      requested_at: { type: string, format: date-time }
+      session_proof:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+        description: Domain-separated HMAC-SHA256 from ConnectorPeerPairRetireProof.SessionProof using the existing stable session key, never a relay delivery key.
+      signature:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{85}[AQgw]$"
+        description: Ed25519 signature by the original enrolled key over ConnectorPeerPairRetireProof.Message, including the raw session MAC.
+  ConnectorPeerPairRetirement:
+    type: object
+    additionalProperties: false
+    description: Exact committed negative-only retirement. The scope must match the request, disposition must be retired, and owner_revision must be 2. It proves neither publisher observation nor remote join or terminal-result consumption.
+    required:
+      [
+        service_id,
+        service_run_id,
+        run_number,
+        publisher_identity_id,
+        pair_id,
+        delivery_id,
+        idempotency_key,
+        disposition,
+        owner_revision,
+        retirement,
+      ]
+    properties:
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number:
+        {
+          type: string,
+          pattern: "^[1-9][0-9]*$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
+      publisher_identity_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }
+      pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      delivery_id: { type: string, pattern: "^[A-Za-z0-9_-]{21}[AQgw]$" }
+      idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      disposition:
+        $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairDisposition"
+        const: retired
+      owner_revision:
+        {
+          type: string,
+          pattern: "^2$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "owner_revision,string" },
+        }
+      retirement:
+        $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRetirementObservation"
   ConnectorPeerPairRebindPhase:
     type: string
     enum: [inspect, prepare, activate, abort]

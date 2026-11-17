@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +15,7 @@ import (
 )
 
 func observation() Observation {
-	return Observation{EventID: NewID(), ServiceID: "url_0123456789ABCDEFGHIJKL", ServiceKind: "public_url", RunID: "pr_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", SourceIP: "192.0.2.1", EventType: "http.decision", OccurredAt: time.Now().UTC(), Outcome: "allowed"}
+	return Observation{EventID: NewID(), ServiceID: "svc_0123456789ABCDEFGHIJKL", ServiceKind: "service", RunID: "srun_0123456789ABCDEFGHIJKL", RunNumber: 1, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", SourceIP: "192.0.2.1", EventType: "http.decision", OccurredAt: time.Now().UTC(), Outcome: "allowed"}
 }
 
 func TestQueueBoundsIncludeInFlightAndJoinedShutdown(t *testing.T) {
@@ -88,7 +89,7 @@ func TestQueueRetriesStableIDsAndFlushesOnClose(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(batches) != 2 || len(batches[0].Events) != 1 || batches[0].Events[0] != batches[1].Events[0] {
+	if len(batches) != 2 || len(batches[0].Events) != 1 || !reflect.DeepEqual(batches[0].Events[0], batches[1].Events[0]) {
 		t.Fatalf("unstable retry: %+v", batches)
 	}
 	if q.Observe(observation()) {
@@ -131,7 +132,7 @@ func TestHTTPReporterDoesNotExposeSecretsInErrors(t *testing.T) {
 	}))
 	defer s.Close()
 	report := HTTPReporter(s.Client(), func(context.Context) (Destination, error) {
-		return Destination{URL: s.URL + "/" + secret, Bearer: secret, PublishRunNumber: 1}, nil
+		return Destination{URL: s.URL + "/" + secret, Bearer: secret, RunNumber: 1}, nil
 	})
 	err := report(t.Context(), Batch{Events: []Observation{observation()}})
 	if err == nil || strings.Contains(err.Error(), secret) {
@@ -234,7 +235,7 @@ func TestQueueIsolatesPermanentRejectionAndRetriesStableAcknowledgements(t *test
 				accepted, duplicates := 0, 0
 				for _, o := range batch.Events {
 					if previous, ok := stored[o.EventID]; ok {
-						if previous != o {
+						if !reflect.DeepEqual(previous, o) {
 							t.Error("retry changed event facts")
 						}
 						duplicates++

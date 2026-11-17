@@ -3,50 +3,18 @@ package public
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
 
-	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	"github.com/tnldotdev/tnl/internal/region"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func publishRunTrafficSelection(w http.ResponseWriter, r *http.Request) (*trafficlimits.Selection, []string, bool) {
-	var raw json.RawMessage
-	if r.Body == nil || r.Body == http.NoBody {
-		return nil, nil, true
+func trafficSelection(s *controlv1.TrafficSelection) *trafficlimits.Selection {
+	if s == nil {
+		return nil
 	}
-	if err := decodeJSON(w, r, &raw); err != nil {
-		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publish-run request")
-		return nil, nil, false
-	}
-	var body *controlv1.CreatePublishRunRequest
-	if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), &body); err != nil || body == nil || trafficHasNull(raw) {
-		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publish-run request")
-		return nil, nil, false
-	}
-	var preferences []string
-	if body.PreferredRegions != nil {
-		var err error
-		preferences, err = region.Preferences(*body.PreferredRegions)
-		if err != nil {
-			writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, region.ErrPreference.Error())
-			return nil, nil, false
-		}
-	}
-	if body.Traffic == nil {
-		return nil, preferences, true
-	}
-	s := body.Traffic
-	selection := &trafficlimits.Selection{Connections: s.Connections, Rate: s.Rate, RatePer: s.RatePer,
+	return &trafficlimits.Selection{Connections: s.Connections, Rate: s.Rate, RatePer: s.RatePer,
 		Burst: s.Burst, UploadBytes: s.UploadBytes, DownloadBytes: s.DownloadBytes,
 		TotalConnections: s.TotalConnections, TotalUploadBytes: s.TotalUploadBytes, TotalDownloadBytes: s.TotalDownloadBytes}
-	if err := selection.Validate(); err != nil {
-		writeControlStateProblem(r.Context(), w, "select publish-run traffic limits", controlstate.ErrTrafficSelection)
-		return nil, nil, false
-	}
-	return selection, preferences, true
 }
 
 func trafficHasNull(raw json.RawMessage) bool {

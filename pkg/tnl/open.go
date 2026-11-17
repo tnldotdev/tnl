@@ -1,4 +1,4 @@
-// package tnl publishes an application-owned HTTP handler through one ad-hoc URL.
+// package tnl publishes an application-owned HTTP handler as an ephemeral service.
 package tnl
 
 import (
@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/adhoc"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -21,6 +21,7 @@ import (
 type RateLimit struct {
 	Requests int
 	Per      time.Duration
+	Burst    int
 }
 
 type Limits struct {
@@ -30,6 +31,8 @@ type Limits struct {
 }
 
 type Options struct {
+	// NoTelemetry opts this publication out without changing saved preferences.
+	NoTelemetry             bool
 	RequirePostQuantum      bool
 	EnrollmentKey           string
 	PublisherIdentityID     string
@@ -42,26 +45,28 @@ type Options struct {
 	IP                      []string
 	Limits                  Limits
 	StateProtection         StateProtection
+	// expiresat is an optional fixed service deadline, not a renewable duration.
+	ExpiresAt *time.Time
 }
 
-// Tunnel owns its local listener, publish run, and temporary public URL.
+// Tunnel owns its local listener, service run, and exact service allocation.
 type Tunnel struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	mu     sync.Mutex
-	url    string
-	id     string
-	err    error
-	close  sync.Once
+	cancel  context.CancelFunc
+	done    chan struct{}
+	mu      sync.Mutex
+	service controlv1.Service
+	err     error
+	close   sync.Once
 }
 
-// Open binds an HTTP handler and returns after its allocated public URL is routable.
+// Open binds an HTTP handler and returns after its service is routable.
+// visitors need current permission unless AccessMode is explicitly anonymous.
 func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, error) {
 	if handler == nil {
 		return nil, errors.New("an HTTP handler is required")
 	}
 	limits := applicationlimits.Limits{Requests: options.Limits.Requests, RateRequests: options.Limits.Rate.Requests,
-		RatePer: options.Limits.Rate.Per, Concurrency: options.Limits.Concurrency}
+		RatePer: options.Limits.Rate.Per, RateBurst: options.Limits.Rate.Burst, Concurrency: options.Limits.Concurrency}
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
@@ -83,7 +88,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	serveDone := make(chan error, 1)
 	go func() {
 		err := local.Serve(listener)
-		if errors.Is(err, http.ErrServerClosed) {
+		if failure.Only(err, http.ErrServerClosed) {
 			err = nil
 		}
 		serveDone <- err
@@ -91,50 +96,39 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 			cancel()
 		}
 	}()
-	ready := make(chan publisher.Event, 1)
+	ready := make(chan struct{}, 1)
 	go func() {
-		result := adhoc.Run(runCtx, adhoc.Options{
-			RequirePostQuantum: options.RequirePostQuantum,
-			ControlURL:         serverURL, HTTPClient: options.HTTPClient, State: profile,
-			Publisher: native, InvocationID: invocationID,
-			Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
-			OnAllocated: func(publicURL controlv1.PublicURL) error {
-				tunnel.mu.Lock()
-				tunnel.id, tunnel.url = publicURL.Id, "https://"+publicURL.CanonicalHostname
-				tunnel.mu.Unlock()
-				return nil
-			},
-			Observe: func(event publisher.Event) error {
-				if event.Type == publisher.EventReady {
-					select {
-					case ready <- event:
-					default:
-					}
-				}
-				return nil
-			},
+		result := runHTTPPublication(runCtx, local, serveDone, func(deadline func() time.Time) error {
+			return runSDKPublication(runCtx, state, options, adhoc.Options{
+				RequirePostQuantum: options.RequirePostQuantum,
+				ControlURL:         serverURL, HTTPClient: options.HTTPClient, State: profile,
+				Publisher: native, InvocationID: invocationID, ExpiresAt: options.ExpiresAt,
+				Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
+				OnAllocated: func(service controlv1.Service) error {
+					tunnel.mu.Lock()
+					tunnel.service = cloneService(service)
+					tunnel.mu.Unlock()
+					return nil
+				},
+				Ready: func() error {
+					ready <- struct{}{}
+					return nil
+				},
+				ShutdownDeadline: deadline,
+			})
 		})
-		shutdownCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		shutdownErr := shutdownHTTP(shutdownCtx, local, serveDone)
-		stop()
-		result = errors.Join(result, shutdownErr, state.Close())
+		result = errors.Join(result, state.Close())
 		tunnel.mu.Lock()
 		tunnel.err = result
 		tunnel.mu.Unlock()
 		close(tunnel.done)
 	}()
 	select {
-	case event := <-ready:
+	case <-ready:
 		if ctx.Err() != nil {
 			return nil, errors.Join(context.Cause(ctx), tunnel.Close())
 		}
-		tunnel.mu.Lock()
-		valid := event.PublicURLID == tunnel.id && event.PublicURL == tunnel.url && event.PublishRunNumber > 0
-		tunnel.mu.Unlock()
-		if valid {
-			return tunnel, nil
-		}
-		return nil, errors.Join(errors.New("ready publish run does not match the ad-hoc allocation"), tunnel.Close())
+		return tunnel, nil
 	case <-tunnel.done:
 		if ctx.Err() != nil {
 			return nil, errors.Join(context.Cause(ctx), tunnel.Wait())
@@ -146,6 +140,47 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	case <-ctx.Done():
 		return nil, errors.Join(context.Cause(ctx), tunnel.Close())
 	}
+}
+
+// runHTTPPublication owns the local HTTP listener and one shutdown deadline.
+// native cleanup and HTTP drain spend the same remaining time. the timer closes
+// owned sockets even while publication cleanup is still joining its workers.
+func runHTTPPublication(ctx context.Context, server *http.Server, served <-chan error, publish func(func() time.Time) error) error {
+	started, stopped := make(chan struct{}), make(chan struct{})
+	deadline := sync.OnceValue(func() time.Time {
+		until := time.Now().Add(10 * time.Second)
+		close(started)
+		return until
+	})
+	canceled := make(chan struct{})
+	stopCancellation := context.AfterFunc(ctx, func() { defer close(canceled); deadline() })
+	defer func() {
+		if !stopCancellation() {
+			<-canceled
+		}
+	}()
+	forced := make(chan error, 1)
+	go func() {
+		select {
+		case <-started:
+			timer := time.NewTimer(time.Until(deadline()))
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				forced <- errors.Join(context.DeadlineExceeded, server.Close())
+			case <-stopped:
+				forced <- nil
+			}
+		case <-stopped:
+			forced <- nil
+		}
+	}()
+	result := publish(deadline)
+	shutdown, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline())
+	result = errors.Join(result, shutdownHTTP(shutdown, server, served))
+	cancel()
+	close(stopped)
+	return errors.Join(result, <-forced)
 }
 
 // shutdownHTTP bounds graceful shutdown, closes remaining connections on timeout,
@@ -161,10 +196,30 @@ func shutdownHTTP(ctx context.Context, server *http.Server, served <-chan error)
 func (t *Tunnel) URL() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.url
+	if t.service.Endpoint == nil {
+		return ""
+	}
+	return "https://" + t.service.Endpoint.Hostname
 }
 
-// Close drains publication and removes the public URL. repeated calls are safe.
+// Service returns a separate snapshot of the allocated ordinary service.
+func (t *Tunnel) Service() controlv1.Service {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return cloneService(t.service)
+}
+
+// Endpoint returns the allocated shared-443 public service endpoint.
+func (t *Tunnel) Endpoint() controlv1.ServiceEndpoint {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.service.Endpoint == nil {
+		return controlv1.ServiceEndpoint{}
+	}
+	return *t.service.Endpoint
+}
+
+// Close drains publication and removes the exact service. repeated calls are safe.
 func (t *Tunnel) Close() error {
 	if t == nil {
 		return nil

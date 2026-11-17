@@ -14,29 +14,54 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func startIntegrationURLWorker(t *testing.T, worker integrations.Publisher) <-chan publisher.Event {
+func startIntegrationURLWorker(t *testing.T, worker integrations.Publisher) <-chan controlv1.ServiceRunPreparation {
 	t.Helper()
+	ready := make(chan controlv1.ServiceRunPreparation, 8)
 	prepare := worker.Prepare
 	worker.Prepare = func(ctx context.Context) (integrations.Snapshot, error) {
 		snapshot, err := prepare(ctx)
 		if err != nil {
 			return snapshot, err
 		}
-		snapshot.Config, err = prepareIntegrationPublisher(ctx, snapshot.Config)
-		return snapshot, err
+		var binding controlv1.ServiceRunPreparation
+		prepared, onReady := snapshot.Config.Prepared, snapshot.Config.Ready
+		snapshot.Config.Prepared = func(run controlv1.ServiceRunPreparation) error {
+			if prepared != nil {
+				if err := prepared(run); err != nil {
+					return err
+				}
+			}
+			binding = run
+			return nil
+		}
+		snapshot.Config.Ready = func() error {
+			if onReady != nil {
+				if err := onReady(); err != nil {
+					return err
+				}
+			}
+			select {
+			case ready <- binding:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return snapshot, nil
 	}
-	ready := make(chan publisher.Event, 4)
-	worker.Report = func(event publisher.Event, err error) {
+	report := worker.Report
+	worker.Report = func(available bool, err error) {
+		if report != nil {
+			report(available, err)
+		}
 		if err != nil {
 			t.Logf("integration URL worker: %v", err)
-		}
-		if event.Type == publisher.EventReady {
-			ready <- event
 		}
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -53,20 +78,20 @@ func startIntegrationURLWorker(t *testing.T, worker integrations.Publisher) <-ch
 	return ready
 }
 
-func waitIntegrationURLWorkerReady(t *testing.T, ready <-chan publisher.Event) publisher.Event {
+func waitIntegrationURLWorkerReady(t *testing.T, ready <-chan controlv1.ServiceRunPreparation) controlv1.ServiceRunPreparation {
 	t.Helper()
 	select {
 	case event := <-ready:
 		return event
 	case <-time.After(45 * time.Second):
 		t.Fatal("integration URL did not become ready")
-		return publisher.Event{}
+		return controlv1.ServiceRunPreparation{}
 	}
 }
 
 func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T) {
 	fixture := newStandalonePublishFixture(t, "alias-oauth")
-	state, err := clientstate.Open(t.Context(), filepath.Join(fixture.owner.directory, "state"))
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(fixture.owner.directory, "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,22 +103,22 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		t.Fatal(err)
 	}
 	quic, tcp := fixture.connectors()
-	oauthConfig := fixture.identity.publisherConfig("", quic, tcp)
-	oauthConfig.Purpose = controlv1.Oauth
+	oauthService, oauthConfig := fixture.identity.prepareService(t, "", quic, tcp, controlv1.ProjectServiceConfiguration{})
 	oauthConfig.Handler = integrations.OAuthHandler(state, server, oauthHost, nil)
 	oauthReady := startIntegrationURLWorker(t, integrations.Publisher{State: state, Store: store, Server: server, Hostname: oauthHost,
 		Prepare: func(context.Context) (integrations.Snapshot, error) {
-			return integrations.Snapshot{Config: oauthConfig}, nil
+			return integrations.Snapshot{Config: oauthConfig, Service: oauthService}, nil
 		}})
 	waitIntegrationURLWorkerReady(t, oauthReady)
 	primary := filepath.Join(t.TempDir(), "main")
 	group := clientstate.IntegrationScope{PrimaryProjectRoot: primary, Namespace: namespace}
 	scope := clientstate.AliasScope{Server: server, ProjectKey: primary, TeamID: fixture.identity.teamID, MembershipID: fixture.identity.membershipID, Namespace: namespace, Name: "review"}
 	aliasHost := "review." + namespace
+	aliasService, aliasBase := fixture.identity.prepareService(t, "", quic, tcp, controlv1.ProjectServiceConfiguration{Hostname: &aliasHost})
 	type app struct {
 		name, project string
 		callbacks     chan string
-		ready         <-chan publisher.Event
+		ready         <-chan controlv1.ServiceRunPreparation
 	}
 	apps := make([]app, 0, 2)
 	for _, name := range []string{"main", "feature"} {
@@ -114,25 +139,25 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		}))
 		t.Cleanup(target.Close)
 		project := filepath.Join(filepath.Dir(primary), name)
+		hostname := "api-" + name + "." + namespace
+		saved, config := fixture.identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{Hostname: &hostname})
 		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server,
-			Project: project, Service: "api", Target: target.URL, IntegrationScope: group})
+			Project: project, Service: "api", ServiceID: saved.Id, ServiceProtocol: "http", Target: target.URL, IntegrationScope: group})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
-		config := fixture.identity.publisherConfig(target.URL, quic, tcp)
-		config.Hostname = "api-" + name + "." + namespace
-		config.ObserveResponse = integrations.Observer(state, server, oauthHost, group, tunnel.ID())
-		config.Observe = func(event publisher.Event) error {
-			switch event.Type {
-			case publisher.EventPublicURLAssigned:
-				return tunnel.SetPublicURL(t.Context(), event.PublicURLID, event.Hostname)
-			case publisher.EventProvisioning:
-				return tunnel.SetProvisioning(t.Context(), event.PublishRunNumber)
-			case publisher.EventReady:
-				return tunnel.SetReady(t.Context(), event.PublicURL, event.PublishRunNumber)
-			}
-			return nil
+		observe := integrations.Observer(state, server, oauthHost, group, tunnel.ID())
+		config.HTTPResponseHooks = func(run publisherservice.HTTPRun) httpstream.ResponseHooks {
+			return httpstream.ResponseHooks{Observe: func(response *http.Response) error { return observe(response, run) }}
+		}
+		var binding controlv1.ServiceRunPreparation
+		config.Prepared = func(run controlv1.ServiceRunPreparation) error {
+			binding = run
+			return tunnel.SetProvisioning(t.Context(), uint64(run.RunNumber))
+		}
+		config.Ready = func() error {
+			return tunnel.SetReady(t.Context(), serviceHTTPAddress(binding), uint64(binding.RunNumber))
 		}
 		parent := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 		waitForPublisherReady(t, parent)
@@ -141,16 +166,17 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		aliasConfig := fixture.identity.publisherConfig(target.URL, quic, tcp)
-		aliasConfig.PreserveSavedPublicURLTarget = true
-		aliasConfig.Purpose = controlv1.Alias
-		aliasConfig.Hostname, aliasConfig.ObserveResponse = aliasHost, config.ObserveResponse
-		worker := integrations.AliasPublisher(state, store, selection, tunnel.ID(), aliasConfig, nil)
+		aliasConfig := aliasBase
+		aliasConfig.Target = strings.TrimPrefix(target.URL, "http://")
+		aliasConfig.HTTPResponseHooks = config.HTTPResponseHooks
+		worker := integrations.AliasPublisher(state, store, selection, tunnel.ID(), func(context.Context) (integrations.Snapshot, error) {
+			return integrations.Snapshot{Config: aliasConfig, Service: aliasService}, nil
+		}, nil)
 		apps = append(apps, app{name: name, project: project, callbacks: callbacks, ready: startIntegrationURLWorker(t, worker)})
 	}
 	first := waitIntegrationURLWorkerReady(t, apps[0].ready)
-	waitForReadyPublisherConnections(t, fixture.inspect, first.PublicURLID, first.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForReadyPublisherConnections(t, fixture.inspect, first.ServiceId, first.RunNumber, 2)
+	waitForAppliedServiceRouting(t, fixture.inspect, first.ServiceRunId, fixture.process.metricsAddress)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -190,11 +216,11 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		t.Fatal(err)
 	}
 	second := waitIntegrationURLWorkerReady(t, apps[1].ready)
-	if second.PublicURLID != first.PublicURLID || second.PublishRunNumber <= first.PublishRunNumber {
+	if second.ServiceId != first.ServiceId || second.ServiceRunId == first.ServiceRunId || second.RunNumber <= first.RunNumber {
 		t.Fatal("handoff did not replace the alias publish run")
 	}
-	waitForReadyPublisherConnections(t, fixture.inspect, second.PublicURLID, second.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	waitForReadyPublisherConnections(t, fixture.inspect, second.ServiceId, second.RunNumber, 2)
+	waitForAppliedServiceRouting(t, fixture.inspect, second.ServiceRunId, fixture.process.metricsAddress)
 	if _, body := visit("https://" + aliasHost + "/"); body != "feature" {
 		t.Fatal("forced handoff did not reach the selected worktree")
 	}
@@ -206,13 +232,18 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		t.Fatal(err)
 	}
 	third := waitIntegrationURLWorkerReady(t, apps[0].ready)
-	waitForReadyPublisherConnections(t, fixture.inspect, third.PublicURLID, third.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
+	if third.ServiceId != first.ServiceId || third.ServiceRunId == first.ServiceRunId ||
+		third.ServiceRunId == second.ServiceRunId || third.RunNumber <= second.RunNumber {
+		t.Fatal("release did not prepare a newer run of the same alias service")
+	}
+	waitForReadyPublisherConnections(t, fixture.inspect, third.ServiceId, third.RunNumber, 2)
+	waitForAppliedServiceRouting(t, fixture.inspect, third.ServiceRunId, fixture.process.metricsAddress)
 	if _, body := visit("https://" + aliasHost + "/"); body != "main" {
 		t.Fatal("release did not restore the primary checkout")
 	}
-	saved, err := fixture.identity.routes.GetPublicURL(t.Context(), third.PublicURLID)
-	if err != nil || saved.Target != "" || saved.Purpose != controlv1.Alias || saved.Ephemeral {
-		t.Fatalf("alias handoff exposed a worktree target or changed saved URL identity: %+v, %v", saved, err)
+	saved, err := fixture.identity.routes.GetService(t.Context(), third.ServiceId)
+	declaration, _, declarationErr := fixture.identity.routes.GetServiceConfiguration(t.Context(), third.ServiceId)
+	if err != nil || declarationErr != nil || declaration == nil || declaration.Target != "app" || saved.Id != aliasService.Id || saved.Ephemeral || saved.Endpoint == nil || saved.Endpoint.Hostname != aliasHost {
+		t.Fatalf("alias handoff exposed a worktree target or changed saved service identity: %+v, %v, %v", saved, err, declarationErr)
 	}
 }

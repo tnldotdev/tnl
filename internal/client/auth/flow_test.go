@@ -521,8 +521,8 @@ func TestAuthenticateReusesOrRefreshesSavedSessionForControlRequests(t *testing.
 				switch request.URL.Path {
 				case "/v1/auth/refresh":
 					return jsonResponse(200, issued), nil
-				case "/v1/public-urls/public_url_1":
-					return jsonResponse(200, controlv1.PublicURL{Id: "public_url_1", CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000"}), nil
+				case "/v1/services/svc_0123456789ABCDEFGHIJKL":
+					return jsonResponse(200, controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Endpoint: &controlv1.ServiceEndpoint{Hostname: "demo.example", Port: 443, Public: true}}), nil
 				case "/v1/identity":
 					return jsonResponse(200, authorityv1.IdentityContext{Identity: authorityv1.Identity{Id: "identity_1", DisplayName: "Test"}, PersonalTeamId: "team_1"}), nil
 				default:
@@ -534,9 +534,9 @@ func TestAuthenticateReusesOrRefreshesSavedSessionForControlRequests(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			publicURL, err := client.Control.GetPublicURL(t.Context(), "public_url_1")
-			if err != nil || publicURL.Id != "public_url_1" || publicURL.CanonicalHostname != "demo.example" || publicURL.Target != "http://127.0.0.1:3000" {
-				t.Fatalf("authenticated public_url: %#v, %v", publicURL, err)
+			service, err := client.Control.GetService(t.Context(), "svc_0123456789ABCDEFGHIJKL")
+			if err != nil || service.Id != "svc_0123456789ABCDEFGHIJKL" || service.Endpoint == nil || service.Endpoint.Hostname != "demo.example" {
+				t.Fatalf("authenticated service: %#v, %v", service, err)
 			}
 			identity, err := client.Authority.IdentityContext(t.Context())
 			if err != nil || identity.Identity.Id != "identity_1" || identity.PersonalTeamId != "team_1" {
@@ -550,7 +550,7 @@ func TestAuthenticateReusesOrRefreshesSavedSessionForControlRequests(t *testing.
 			if len(requests) != count {
 				t.Fatalf("requests=%d want=%d", len(requests), count)
 			}
-			assertAuthRequest(t, requests[count-2], http.MethodGet, testControlOrigin+"/v1/public-urls/public_url_1", want.AccessToken, nil)
+			assertAuthRequest(t, requests[count-2], http.MethodGet, testControlOrigin+"/v1/services/svc_0123456789ABCDEFGHIJKL", want.AccessToken, nil)
 			assertAuthRequest(t, requests[count-1], http.MethodGet, testControlOrigin+"/v1/identity", want.AccessToken, nil)
 			if refresh {
 				assertAuthRequest(t, requests[1], http.MethodPost, testControlOrigin+"/v1/auth/refresh", "", authorityv1.RefreshControlSessionRequest{RefreshToken: old.RefreshToken})
@@ -639,10 +639,10 @@ func TestExplicitAccessTokenDoesNotUseOrChangeSavedLogin(t *testing.T) {
 			old := storedSession(issuedSession(t))
 			explicit := issuedSession(t).AccessToken
 			f := newAuthFixture(t, func(request *http.Request) (*http.Response, error) {
-				if request.URL.Path != "/v1/public-urls/public_url_1" {
+				if request.URL.Path != "/v1/services/svc_0123456789ABCDEFGHIJKL" {
 					return nil, errors.New("unexpected authentication request")
 				}
-				return jsonResponse(200, controlv1.PublicURL{Id: "public_url_1"}), nil
+				return jsonResponse(200, controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL"}), nil
 			})
 			f.save(t, old)
 			config := f.config
@@ -660,15 +660,15 @@ func TestExplicitAccessTokenDoesNotUseOrChangeSavedLogin(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				publicURL, err := client.Control.GetPublicURL(t.Context(), "public_url_1")
-				if err != nil || publicURL.Id != "public_url_1" {
-					t.Fatalf("explicit authenticated public_url: %v", err)
+				service, err := client.Control.GetService(t.Context(), "svc_0123456789ABCDEFGHIJKL")
+				if err != nil || service.Id != "svc_0123456789ABCDEFGHIJKL" {
+					t.Fatalf("explicit authenticated service: %v", err)
 				}
 				requests := f.transport.snapshot()
 				if len(requests) != 2 {
 					t.Fatalf("requests=%d", len(requests))
 				}
-				assertAuthRequest(t, requests[1], http.MethodGet, testControlOrigin+"/v1/public-urls/public_url_1", explicit, nil)
+				assertAuthRequest(t, requests[1], http.MethodGet, testControlOrigin+"/v1/services/svc_0123456789ABCDEFGHIJKL", explicit, nil)
 			}
 			f.assertSession(t, old)
 			if _, found, err := f.config.State.SavedServer(t.Context()); found || err != nil {

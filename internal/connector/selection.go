@@ -13,7 +13,7 @@ import (
 )
 
 type connectInventoryReader interface {
-	ListAvailableServices(context.Context) ([]controlv1.Service, error)
+	ListAvailableServices(context.Context, controlv1.ServiceAccessPath) ([]controlv1.ServiceSummary, error)
 }
 
 type ServiceReader interface {
@@ -23,45 +23,52 @@ type ServiceReader interface {
 }
 
 // Select resolves the visitor's exact local/applied binding before inventory.
-func Select(ctx context.Context, control ServiceReader, project clientproject.Project, name, team string) (controlv1.Service, error) {
+func Select(ctx context.Context, control ServiceReader, project clientproject.Project, name, team string) (controlv1.ServiceSummary, error) {
 	key, err := ConfiguredService(project, name)
 	if err != nil {
-		return controlv1.Service{}, err
+		return controlv1.ServiceSummary{}, err
 	}
-	localID := ""
+	boundID := ""
 	if key != "" {
 		if config.SelectedDeployment(project.Config) == "local" {
 			source := project.LocalPublicationIdentity()
 			params := controlv1.GetLocalProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey()}
 			bound, err := control.GetLocalProjectService(ctx, source.Key, key, params)
 			if errors.Is(err, clientcontrol.ErrNotFound) {
-				return controlv1.Service{}, failure.Wrap("find local service", failure.LocalServiceUnavailable, err)
+				return controlv1.ServiceSummary{}, failure.Wrap("find local service", failure.LocalServiceUnavailable, err)
 			}
 			if err != nil {
-				return controlv1.Service{}, err
+				return controlv1.ServiceSummary{}, err
 			}
-			if bound.Service != key || bound.WorktreeKey != params.WorktreeKey || bound.ServiceKind != controlv1.LocalProjectServiceServiceKindService || bound.ServiceId == "" || bound.Metadata == nil {
-				return controlv1.Service{}, failure.Wrap("find local service", failure.ServerResponseInvalid, errors.New("control returned another local project service"))
+			if bound.Service != key || bound.WorktreeKey != params.WorktreeKey || bound.ServiceId == "" || bound.Metadata == nil {
+				return controlv1.ServiceSummary{}, failure.Wrap("find local service", failure.ServerResponseInvalid, errors.New("control returned another local project service"))
 			}
-			localID = bound.ServiceId
+			boundID = bound.ServiceId
 		} else {
 			source, err := project.SourceIdentity(ctx)
 			if err != nil {
-				return controlv1.Service{}, failure.Wrap("identify applied project service", failure.ProjectConfigInvalid, err)
+				return controlv1.ServiceSummary{}, failure.Wrap("identify applied project service", failure.ProjectConfigInvalid, err)
 			}
-			return control.GetProjectService(ctx, source.Key, key, controlv1.GetProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, Deployment: config.SelectedDeployment(project.Config)})
+			bound, err := control.GetProjectService(ctx, source.Key, key, controlv1.GetProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, Deployment: config.SelectedDeployment(project.Config)})
+			if err != nil {
+				return controlv1.ServiceSummary{}, err
+			}
+			if bound.Id == "" {
+				return controlv1.ServiceSummary{}, failure.Wrap("find applied service", failure.ServerResponseInvalid, errors.New("control returned no applied service identity"))
+			}
+			boundID = bound.Id
 		}
 	}
-	services, err := control.ListAvailableServices(ctx)
+	services, err := control.ListAvailableServices(ctx, controlv1.ServiceAccessPathConnector)
 	if err != nil {
-		return controlv1.Service{}, err
+		return controlv1.ServiceSummary{}, err
 	}
-	if localID != "" {
-		service, err := serviceIDSelection(services, localID, team)
-		if err != nil {
+	if boundID != "" {
+		service, err := serviceIDSelection(services, boundID, team)
+		if err != nil && config.SelectedDeployment(project.Config) == "local" {
 			return service, failure.Wrap("select local service", failure.LocalServiceUnavailable, err)
 		}
-		return service, nil
+		return service, err
 	}
 	return SelectService(services, name, team)
 }
@@ -70,22 +77,14 @@ func Select(ctx context.Context, control ServiceReader, project clientproject.Pr
 // reject overlapping aliases rather than choosing a map iteration's first match.
 func ConfiguredService(project clientproject.Project, name string) (string, error) {
 	selected := ""
-	publicMatch := false
 	for key, service := range project.Config.Services {
 		if key != name && config.ServiceName(key, service) != name {
-			continue
-		}
-		if isConnectPublicURL(project.Config, service) {
-			publicMatch = true
 			continue
 		}
 		if selected != "" {
 			return "", publisherCLIError("configured service name is ambiguous; use an unambiguous service key or --no-config with the service ID")
 		}
 		selected = key
-	}
-	if publicMatch {
-		return "", publisherCLIError("configured name selects a public URL service; use its HTTPS URL or --no-config with an exact service ID")
 	}
 	if selected == "" && project.Declared != nil {
 		if _, declared := project.Declared.Services[name]; declared {
@@ -96,13 +95,13 @@ func ConfiguredService(project clientproject.Project, name string) (string, erro
 }
 
 // SelectService selects an exact ID before considering unambiguous names.
-func SelectService(services []controlv1.Service, name, team string) (controlv1.Service, error) {
+func SelectService(services []controlv1.ServiceSummary, name, team string) (controlv1.ServiceSummary, error) {
 	for _, service := range services {
 		if service.Id == name && (team == "" || team == service.TeamId) {
 			return service, nil
 		}
 	}
-	var selected controlv1.Service
+	var selected controlv1.ServiceSummary
 	for _, service := range services {
 		if (service.Id == name || service.Name == name) && (team == "" || team == service.TeamId) {
 			if selected.Id != "" && selected.Id != service.Id {
@@ -117,16 +116,11 @@ func SelectService(services []controlv1.Service, name, team string) (controlv1.S
 	return selected, nil
 }
 
-func serviceIDSelection(services []controlv1.Service, id, team string) (controlv1.Service, error) {
+func serviceIDSelection(services []controlv1.ServiceSummary, id, team string) (controlv1.ServiceSummary, error) {
 	for _, service := range services {
 		if service.Id == id && (team == "" || service.TeamId == team) {
 			return service, nil
 		}
 	}
-	return controlv1.Service{}, failure.Wrap("select service ID", failure.ServerResourceNotFound, errors.New("service ID is absent from visitor inventory"))
-}
-
-// only local public_url bindings use the app's public URL lifecycle.
-func isConnectPublicURL(configuration config.TNL, service config.Service) bool {
-	return config.SelectedDeployment(configuration) == "local" && config.IsPublicService(service)
+	return controlv1.ServiceSummary{}, failure.Wrap("select service ID", failure.ServerResourceNotFound, errors.New("service ID is absent from visitor inventory"))
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 )
 
 func TestWebhookProviderSourcesAreCachedAndMeasuredWithoutURLs(t *testing.T) {
@@ -34,9 +35,17 @@ func TestWebhookProviderSourcesAreCachedAndMeasuredWithoutURLs(t *testing.T) {
 		len(body.Source.Ranges) != 5 || first.Header().Get("Cache-Control") != "public, max-age=900" || first.Header().Get("ETag") == "" {
 		t.Fatalf("provider response = %d, source=%+v, error=%v", first.Code, body.Source, err)
 	}
+	window, err := ippolicy.ReadProviderWindow(first.Header())
+	if err != nil {
+		t.Fatal("provider response omitted its authoritative freshness window", err)
+	}
 	notModified := request("resend", first.Header().Get("ETag"))
 	if notModified.Code != http.StatusNotModified || notModified.Body.Len() != 0 || notModified.Header().Get("ETag") != first.Header().Get("ETag") {
 		t.Fatalf("conditional response = %d, %q", notModified.Code, notModified.Body.String())
+	}
+	unchanged, err := ippolicy.ReadProviderWindow(notModified.Header())
+	if err != nil || !unchanged.CheckedAt.Equal(window.CheckedAt) || !unchanged.ValidUntil.Equal(window.ValidUntil) {
+		t.Fatal("304 renewed or omitted the provider's actual freshness boundary", unchanged, err)
 	}
 	unknown := request("svix", "")
 	if unknown.Code != http.StatusNotFound || unknown.Header().Get("Cache-Control") == "public, max-age=900" {

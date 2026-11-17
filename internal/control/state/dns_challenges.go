@@ -16,7 +16,6 @@ var ErrDNSChallengeNotFound = errors.New("controlstate: DNS challenge not found"
 
 type DNSChallengeContext struct {
 	Subject               CertificateSubject `json:"-"`
-	PublicURLID           string
 	ServiceID             string
 	TeamID                string
 	DomainID              string
@@ -90,7 +89,7 @@ func (d *Database) dnsChallengeSubject(ctx context.Context, ownerID, authorizati
 	if err != nil {
 		return CertificateSubject{}, fmt.Errorf("read DNS challenge subject: %w", err)
 	}
-	subject, err := certificateSubject(row.PublicURLID, row.PublishRunID, row.PublishRunNumber, row.ServiceID, row.ServiceRunID, row.ServiceRunNumber)
+	subject, err := certificateSubject(row.ServiceID, row.ServiceRunID, row.ServiceRunNumber)
 	if err != nil {
 		return CertificateSubject{}, ErrDNSChallengeNotFound
 	}
@@ -115,22 +114,10 @@ func (d *Database) GetDNSChallengeContextForSubject(ctx context.Context, subject
 }
 
 func dnsChallengeContext(ctx context.Context, queries *controlstatedb.Queries, subject CertificateSubject, authorizationID string) (DNSChallengeContext, error) {
-	var row controlstatedb.GetDNSChallengeContextRow
-	var err error
-	privateID := ""
-	switch subject.Kind {
-	case CertificateSubjectPublicURL:
-		row, err = queries.GetDNSChallengeContext(ctx, controlstatedb.GetDNSChallengeContextParams{PublicURLID: subject.ID, AuthorizationID: authorizationID})
-	case CertificateSubjectService:
-		private, privateErr := queries.GetPrivateDNSChallengeContext(ctx, controlstatedb.GetPrivateDNSChallengeContextParams{ServiceID: subject.ID, AuthorizationID: authorizationID})
-		err = privateErr
-		if err == nil {
-			privateID = private.ServiceID
-			row = controlstatedb.GetDNSChallengeContextRow{TeamID: private.TeamID, DomainID: private.DomainID.String, DnsAuthorityReference: private.DnsAuthorityReference, CanonicalHostname: private.CanonicalHostname, CanonicalDomain: private.CanonicalDomain, AuthorizationID: private.AuthorizationID, Identifier: private.Identifier, ChallengeDigest: private.ChallengeDigest, PresentationReference: private.PresentationReference, State: private.State}
-		}
-	default:
+	if !subject.Valid() || !validStateText(authorizationID) {
 		return DNSChallengeContext{}, ErrDNSChallengeNotFound
 	}
+	row, err := queries.GetPrivateDNSChallengeContext(ctx, controlstatedb.GetPrivateDNSChallengeContextParams{ServiceID: subject.ID, AuthorizationID: authorizationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DNSChallengeContext{}, ErrDNSChallengeNotFound
 	}
@@ -151,9 +138,9 @@ func dnsChallengeContext(ctx context.Context, queries *controlstatedb.Queries, s
 		return DNSChallengeContext{}, fmt.Errorf("controlstate: list DNS challenge presentations: %w", err)
 	}
 	result := DNSChallengeContext{
-		Subject:     subject,
-		PublicURLID: row.PublicURLID, TeamID: row.TeamID, DomainID: row.DomainID,
-		ServiceID:             privateID,
+		Subject: subject,
+		TeamID:  row.TeamID.String, DomainID: row.DomainID.String,
+		ServiceID:             row.ServiceID,
 		DNSAuthorityReference: row.DnsAuthorityReference.String, CanonicalDomain: row.CanonicalDomain,
 		AuthorizationID: row.AuthorizationID, Identifier: row.Identifier,
 		PresentationReference: row.PresentationReference.String, State: state,
@@ -176,7 +163,8 @@ func dnsChallengeContext(ctx context.Context, queries *controlstatedb.Queries, s
 // after the callback returns, releasing its lock; connection loss releases
 // it too. the callback can still read through the pooled runtime connections.
 func (d *Database) WithDNSRecordLock(ctx context.Context, recordName string, run func() error) (retErr error) {
-	base := strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(recordName), "."), "_acme-challenge.")
+	recordName = strings.TrimSuffix(strings.ToLower(recordName), ".")
+	base := strings.TrimPrefix(recordName, "_acme-challenge.")
 	if canonical, err := naming.CanonicalizeHostname(base); err != nil || canonical != base || run == nil {
 		return errors.New("controlstate: invalid DNS challenge lock")
 	}
@@ -200,7 +188,7 @@ func (d *Database) WithDNSRecordLock(ctx context.Context, recordName string, run
 		return fmt.Errorf("controlstate: begin DNS challenge lock: %w", err)
 	}
 	defer rollback(ctx, tx, "DNS challenge lock", &retErr)()
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "tnl:dns-record:"+base); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "tnl:dns-record:"+recordName); err != nil {
 		return fmt.Errorf("controlstate: lock DNS challenge: %w", err)
 	}
 	return run()

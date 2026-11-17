@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -22,7 +24,7 @@ func sessionAllowed(until time.Time) (visitorfixture.HTTPDecision, error) {
 func prepareSessionControl(t *testing.T, control *visitorfixture.HTTPControl) (*Policy, *Tokens) {
 	t.Helper()
 	control.Init()
-	policy, err := PreparePolicy(t.Context(), control, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: visitorfixture.PublicURLID}, "pr_0123456789abcdefghijkl", 1, "fixture-run-token", nil)
+	policy, err := PreparePolicy(t.Context(), control, visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("S", 22)}, "srun_"+strings.Repeat("R", 22), 1, "fixture-run-token", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +60,9 @@ func TestBrowserAndShareSessionsReprepareWithoutExpiredVisitorCookie(t *testing.
 				return sessionAllowed(time.Unix(0, deadline.Load()))
 			}}
 			policy, tokens := prepareSessionControl(t, control)
-			access := &Browser{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: visitorfixture.PublicURLID},
-				Policy: policy, Tokens: tokens}
+			access := &Browser{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("S", 22)},
+				RunID: "srun_" + strings.Repeat("R", 22), Number: 1, Token: credentials.ServiceRunToken("fixture-run-token"),
+				Client: struct{ BrowserClient }{}, Policy: policy, Tokens: tokens}
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if access.Handle(w, r) {
 					return
@@ -80,7 +83,28 @@ func TestBrowserAndShareSessionsReprepareWithoutExpiredVisitorCookie(t *testing.
 			if share {
 				cookie = ShareCookieName + "=shr_0123456789abcdefghijkl." + secret
 			}
-			_ = control.Credential(t, secret, share)
+			kind, shareID := "browser_session", ""
+			input := visitorfixture.HTTPSource{BrowserCookieSecret: &secret}
+			source := visitorfixture.BrowserSource(secret)
+			if share {
+				kind, shareID = "share_session", "shr_0123456789abcdefghijkl"
+				input = visitorfixture.HTTPSource{ShareId: &shareID, ShareCookieSecret: &secret}
+				encoded, err := json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: shareID, Secret: secret})
+				if err != nil {
+					t.Fatal(err)
+				}
+				source = encoded
+			}
+			control.Mu.Lock()
+			control.Sources[kind+":"+shareID+":"+secret], control.Allowed[kind+":"+shareID+":"+secret] = input, true
+			control.Mu.Unlock()
+			permission, err := control.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: access.Subject.ID}, Source: source})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := access.PrepareToken(t.Context(), source, permission, time.Now().Add(30*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
 			tokens.mu.Lock()
 			for _, source := range tokens.sources {
 				source.used = time.Now().Add(-6 * time.Minute)

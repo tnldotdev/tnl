@@ -105,12 +105,42 @@ func (*preparedPermissionStop) Error() string {
 	return "the prepared stream finished its permission work"
 }
 
+// only this visitor's idle authority timer produces this cause. an entered
+// renewal's deadline or an actual parent deadline remains its own failure.
+type preparedPermissionExpiry struct {
+	owner *PreparedConnector
+	until time.Time
+	cause error
+}
+
+func (*preparedPermissionExpiry) Error() string { return "the prepared stream's permission expired" }
+func (e *preparedPermissionExpiry) Unwrap() error {
+	if e.cause != nil {
+		return e.cause
+	}
+	return context.DeadlineExceeded
+}
+
+// the idle worker observed its immutable parent stop, not a renewal result.
+// direct callers still receive that exact serving failure through Unwrap.
+type preparedPermissionOwnerStop struct {
+	owner    *PreparedConnector
+	lifetime context.Context
+}
+
+func (e *preparedPermissionOwnerStop) Error() string { return e.Unwrap().Error() }
+func (e *preparedPermissionOwnerStop) Unwrap() error { return context.Cause(e.lifetime) }
+
 // PrepareConnector consumes a source-prepared opening without RPC or signing.
 // setup retains the caller's original preparation deadline; lifetime owns the
 // promoted stream after preparation succeeds. stopping setup cannot close it.
 // the publisher independently checks the signed token, exact relay-attested
 // pair, current policy and C.
 func PrepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry) (_ *PreparedConnector, result error) {
+	return prepareConnector(lifetime, setup, session, run, entry, func() {})
+}
+
+func prepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry, accepted func()) (_ *PreparedConnector, result error) {
 	setup, finish := observability.ClientOperation(setup, "connector.visitor_setup")
 	defer func() { finish(result) }()
 	ctx := lifetime
@@ -138,8 +168,14 @@ func PrepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 		}
 		raw = selected
 	}
+	var rawClose sync.Once
+	var rawCloseErr error
+	closeRaw := func() error {
+		rawClose.Do(func() { rawCloseErr = raw.Close() })
+		return rawCloseErr
+	}
 	setupDone := make(chan struct{})
-	stopSetup := context.AfterFunc(setup, func() { defer close(setupDone); _ = raw.Close() })
+	stopSetup := context.AfterFunc(setup, func() { defer close(setupDone); _ = closeRaw() })
 	setupStopped := false
 	defer func() {
 		if !setupStopped && !stopSetup() {
@@ -149,7 +185,7 @@ func PrepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 	owned := false
 	defer func() {
 		if !owned {
-			_ = raw.Close()
+			result = errors.Join(result, closeRaw())
 		}
 	}()
 	deadline, _ := setup.Deadline()
@@ -168,6 +204,7 @@ func PrepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 	if err := tunnelv1.ReadConnectorPeerVisitorAccepted(raw, entry.VisitorConnectionID); err != nil {
 		return nil, err
 	}
+	accepted()
 	var connection net.Conn = raw
 	if run.Protocol == "tcp" {
 		trust := run.ServiceTLS.Clone()
@@ -201,7 +238,12 @@ func PrepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 }
 
 func (p *PreparedConnector) closePhysical() error {
-	p.physicalOnce.Do(func() { p.physicalErr = p.conn.Close() })
+	p.physicalOnce.Do(func() {
+		p.physicalErr = p.conn.Close()
+		if _, secured := p.conn.(*tls.Conn); secured && p.stdio != nil {
+			p.physicalErr = p.stdio.tlsCloseResult(p.physicalErr)
+		}
+	})
 	return p.physicalErr
 }
 
@@ -284,11 +326,23 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 		wait := ctx
 		stopWait := func() {}
 		if !until.IsZero() {
-			wait, stopWait = context.WithDeadline(ctx, until)
+			wait, stopWait = context.WithDeadlineCause(ctx, until, &preparedPermissionExpiry{owner: p, until: until})
 		}
 		select {
 		case <-wait.Done():
 			if cause := context.Cause(wait); !failure.Only(cause, p.permissionStop) {
+				switch authority := cause.(type) {
+				case *connectorAuthorityExpiry:
+					// only an idle wait borrows the owning watcher's stop. an
+					// entered renewal below retains its entire operation result.
+					cause = &preparedPermissionExpiry{owner: p, until: until, cause: authority}
+				case *preparedPermissionExpiry:
+					// the idle timer retains its separate exact expiry provenance.
+				default:
+					if p.ctx.Err() != nil {
+						cause = &preparedPermissionOwnerStop{owner: p, lifetime: p.ctx}
+					}
+				}
 				p.mu.Lock()
 				p.permissionErr = cause
 				p.mu.Unlock()
@@ -439,13 +493,17 @@ func (p *PreparedConnector) Forward(ctx context.Context, local net.Conn) (result
 		}
 	}()
 	closed := make(chan struct{})
-	stop := context.AfterFunc(life, func() { defer close(closed); _ = local.Close(); _ = p.closePhysical() })
+	var localOnce sync.Once
+	var localErr error
+	closeLocal := func() error { localOnce.Do(func() { localErr = local.Close() }); return localErr }
+	stop := context.AfterFunc(life, func() { defer close(closed); _ = closeLocal(); _ = p.closePhysical() })
 	defer func() {
+		_ = closeLocal()
 		if !stop() {
 			<-closed
 		}
+		result = errors.Join(result, localErr)
 	}()
-	defer local.Close()
 	defer func() { p.finish(); result = errors.Join(result, p.closeErr) }()
 	_, err := streamcopy.Copy(local, &preparedConnectorUse{owner: p, ctx: life})
 	return err

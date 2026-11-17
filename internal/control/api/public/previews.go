@@ -7,7 +7,6 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -79,10 +78,10 @@ func (h *handler) GetPreview(response http.ResponseWriter, request *http.Request
 	}
 }
 
-func (h *handler) AddPreviewPublicURL(response http.ResponseWriter, request *http.Request, previewID controlv1.PreviewID) {
-	var body controlv1.AddPreviewPublicURLRequest
-	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.PublicUrlId == "" {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid preview public URL")
+func (h *handler) AddPreviewService(response http.ResponseWriter, request *http.Request, previewID controlv1.PreviewID) {
+	var body controlv1.AddPreviewServiceRequest
+	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.ServiceId == "" {
+		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid preview service")
 		return
 	}
 	principal, ok := h.authorizeReads(response, request)
@@ -93,46 +92,17 @@ func (h *handler) AddPreviewPublicURL(response http.ResponseWriter, request *htt
 	if !ok {
 		return
 	}
-	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), body.PublicUrlId)
-	if errors.Is(err, controlstate.ErrPublicURLNotFound) {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-		return
-	}
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "read preview public URL", err)
-		return
-	}
-	if publicURL.TeamID != preview.TeamID {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-		return
-	}
-	prefixes := make([]string, len(publicURL.AllowedIPPrefixes))
-	for index, prefix := range publicURL.AllowedIPPrefixes {
-		prefixes[index] = prefix.String()
-	}
-	decision, ok := h.authorizeExistingRouteMutation(response, request, principal, authorization.Request{
-		Operation: authorization.OperationPublicURLUpdate, TeamID: publicURL.TeamID,
-		PublicURLMembershipID: publicURL.MembershipID, DomainID: publicURL.DomainID,
-		CanonicalHostname: publicURL.CanonicalHostname, PublicURLScope: authorization.PublicURLScope(publicURL.PublicURLScope),
-		Target: publicURL.Target, AllowedIPPrefixes: prefixes, Ephemeral: publicURL.Ephemeral,
-		PublicURLID: publicURL.ID, PublicURLMutationRevision: publicURL.MutationRevision,
-	})
-	if !ok {
-		return
-	}
-	updated, err := h.previews.AddPreviewPublicURL(request.Context(), controlstate.AddPreviewPublicURLRequest{
-		PreviewID: preview.ID, PublicURLID: publicURL.ID, TeamID: decision.TeamID, IdentityID: decision.IdentityID,
-		PolicyRevision:           decision.PolicyRevision,
-		ExpectedMutationRevision: publicURL.MutationRevision,
+	updated, err := h.previews.AddPreviewService(request.Context(), controlstate.AddPreviewServiceRequest{
+		PreviewID: preview.ID, ServiceID: body.ServiceId, TeamID: preview.TeamID, IdentityID: principal.identityID,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(request.Context(), response, "add preview public URL", err)
+		writeControlStateProblem(request.Context(), response, "add preview service", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, previewResponse(updated))
 }
 
-func (h *handler) readPreview(response http.ResponseWriter, request *http.Request, id string, principal publicURLReadPrincipal) (controlstate.Preview, bool) {
+func (h *handler) readPreview(response http.ResponseWriter, request *http.Request, id string, principal controlReadPrincipal) (controlstate.Preview, bool) {
 	if h.previews == nil {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "previews are unavailable")
 		return controlstate.Preview{}, false
@@ -153,7 +123,7 @@ func previewResponse(preview controlstate.Preview) controlv1.Preview {
 	return controlv1.Preview{
 		SchemaVersion: controlv1.ReviewSchemaVersion(preview.SchemaVersion),
 		Id:            preview.ID, TeamId: preview.TeamID, CreatedAt: preview.CreatedAt,
-		PublicUrlIds:      preview.PublicURLIDs,
+		ServiceIds:        preview.ServiceIDs,
 		TeamAccessEnabled: &preview.TeamAccessEnabled,
 	}
 }

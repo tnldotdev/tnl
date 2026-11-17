@@ -28,8 +28,8 @@ paths:
     get:
       operationId: listConnectorPeerPairs
       tags: [service-runs]
-      summary: List connector pair candidates for the current service run
-      description: Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+      summary: Reconcile candidates and explicit retirements for an exact service run
+      description: "Authenticate the exact stored started-run token. Current serving permission is required for positive candidates and owner-authority observations; a candidate still needs independent delivery preparation. After serving permission revocation, run closure, or retained service/owner deletion, the exact token can read only explicit retired dispositions within existing pair retention windows. No key, subject, source address, or serving authority is returned by that negative-only read. An omitted pair, absent owner_authority, empty page, or backend error never proves retirement. Restart from the first page on each pass; pagination is not a snapshot or retirement acknowledgment. Listing changes no state or deadline."
       security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
@@ -42,7 +42,7 @@ paths:
           schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       responses:
         "200":
-          description: At most 64 candidate references, ordered by pair ID
+          description: At most 64 explicit pair dispositions, ordered by pair ID
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairCandidates" }

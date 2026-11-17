@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -27,7 +30,7 @@ func TestStatusSnapshotIncludesDirectAndNamedPublicationCursor(t *testing.T) {
 	}
 	project := projectConfiguration{Project: clientproject.Project{Root: projectRoot, Config: config.TNL{Services: config.Services{"web": {}}}}}
 	for _, service := range []string{"", "web"} {
-		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: "https://control.example", Project: projectRoot, Service: service, Target: "http://127.0.0.1:3000", ServiceProtocol: controlv1.PublicURLServiceProtocol("http")})
+		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: "https://control.example", Project: projectRoot, Service: service, Target: "http://127.0.0.1:3000", ServiceProtocol: controlv1.ServiceProtocolHTTP})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,6 +86,19 @@ func TestStatusAllKeepsIndependentProjectCursors(t *testing.T) {
 func TestStatusKeepsLocalFactsWhenControlIsUnavailable(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	project := t.TempDir()
+	state, err := clientstate.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+		Command: clientstate.TunnelCommandPublish, Server: "https://127.0.0.1:1", Project: project,
+		ServiceID: "svc_0123456789abcdefghijkl", Target: "http://127.0.0.1:3000",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
 	var output bytes.Buffer
 	if err := runStatus(t.Context(), statusCommand{Output: statusOutputJSON, Scope: "both", StateDir: root, Project: project, Configuration: projectConfiguration{Project: clientproject.Project{Root: project}}, ServerURL: "https://127.0.0.1:1"}, &output); err != nil {
 		t.Fatal(err)
@@ -96,6 +112,10 @@ func TestStatusKeepsLocalFactsWhenControlIsUnavailable(t *testing.T) {
 	}
 	if result.Projects[0].Local.Snapshot.Cursor == "" || result.Projects[0].Server.CheckedAt.IsZero() {
 		t.Fatalf("missing source timestamps/cursor: %s", output.String())
+	}
+	if len(result.Projects[0].Local.Tunnels.Tunnels) != 1 || result.Projects[0].Local.Tunnels.Tunnels[0].ServiceID != "svc_0123456789abcdefghijkl" ||
+		result.Projects[0].Server.Reason != "control API or signed-in session unavailable" {
+		t.Fatalf("offline status lost the local service or skipped its server read: %s", output.String())
 	}
 }
 
@@ -114,13 +134,113 @@ func TestStatusDefaultsToBothAndKeepsLocalFactsWithAnUnreachableServer(t *testin
 	}
 }
 
-func TestServerInventoryOnlyShowsThisProjectsIDsAndDoesNotGuessRunState(t *testing.T) {
-	open := "run_ours"
-	items := statusURLsForProject([]controlv1.PublicURL{
-		{Id: "url_other", CanonicalHostname: "other.example"},
-		{Id: "url_ours", CanonicalHostname: "ours.example", LifecycleState: controlv1.Enabled, OpenPublishRunId: &open},
-	}, map[string]bool{"url_ours": true})
-	if len(items) != 1 || items[0].Hostname != "ours.example" || items[0].OpenRunID != open || items[0].RunState != "unavailable (control has no publish run status read)" {
-		t.Fatalf("scoped server inventory = %+v", items)
+func TestStatusServicesForProjectPreservesFactsWithoutGuessingLifecycle(t *testing.T) {
+	created := time.Date(2026, time.November, 14, 12, 0, 0, 0, time.UTC)
+	run, number := "sr_0123456789abcdefghijkl", int64(37)
+	httpEndpoint := &controlv1.ServiceEndpoint{Hostname: "web.example.test", Public: true, Port: 443}
+	connectorEndpoint := &controlv1.ServiceEndpoint{Hostname: "database.example.test", Public: false, Port: 0}
+	reservedEndpoint := &controlv1.ServiceEndpoint{Hostname: "reserved.example.test", Public: false, Port: 15432}
+	services := []controlv1.ServiceSummary{
+		{Id: "svc_other", Name: "other"},
+		{Id: "svc_web", Name: "web", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, CreatedAt: created, Endpoint: httpEndpoint, ServiceRunId: &run, RunNumber: &number},
+		{Id: "svc_database", Name: "database", Protocol: controlv1.Postgres, Enabled: true, CreatedAt: created, Endpoint: connectorEndpoint},
+		{Id: "svc_reserved", Name: "reserved", Protocol: controlv1.Postgres, CreatedAt: created, Endpoint: reservedEndpoint},
+		{Id: "svc_no_endpoint", Name: "no-endpoint", Protocol: controlv1.Tcp, Enabled: true, CreatedAt: created},
+		{Id: "svc_web", Name: "duplicate"},
+	}
+	ids := map[string]bool{"svc_web": true, "svc_database": true, "svc_reserved": true, "svc_no_endpoint": true, "svc_not_visible": true}
+	items := statusServicesForProject(services, ids)
+	want := []statusServerService{
+		{ServiceID: "svc_web", Name: "web", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, CreatedAt: created, Endpoint: httpEndpoint,
+			ServiceRunID: &run, RunNumber: &number, PublisherObservation: "ready_publisher_hint"},
+		{ServiceID: "svc_database", Name: "database", Protocol: controlv1.Postgres, Enabled: true, CreatedAt: created, Endpoint: connectorEndpoint, PublisherObservation: "no_ready_publisher_observed"},
+		{ServiceID: "svc_reserved", Name: "reserved", Protocol: controlv1.Postgres, CreatedAt: created, Endpoint: reservedEndpoint, PublisherObservation: "no_ready_publisher_observed"},
+		{ServiceID: "svc_no_endpoint", Name: "no-endpoint", Protocol: controlv1.Tcp, Enabled: true, CreatedAt: created, PublisherObservation: "no_ready_publisher_observed"},
+	}
+	if !reflect.DeepEqual(items, want) || !reflect.DeepEqual(ids, map[string]bool{"svc_not_visible": true}) {
+		t.Fatalf("scoped service inventory = %+v, remaining IDs = %v", items, ids)
+	}
+}
+
+func TestStatusServiceJSONUsesFreshV1ServiceFacts(t *testing.T) {
+	run, number := "sr_fixture", int64(37)
+	services := statusServicesForProject([]controlv1.ServiceSummary{
+		{Id: "svc_ready", ServiceRunId: &run, RunNumber: &number, Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443}},
+		{Id: "svc_saved", Protocol: controlv1.Postgres, Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 0}},
+	}, map[string]bool{"svc_ready": true, "svc_saved": true})
+	encoded, err := json.Marshal(statusResult{SchemaVersion: 1, Scope: "server", Projects: []projectStatus{{Project: "/project",
+		Server: &statusServer{Available: true, Services: services},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		SchemaVersion int `json:"schema_version"`
+		Projects      []struct {
+			Server map[string]json.RawMessage `json:"server"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SchemaVersion != 1 || len(decoded.Projects) != 1 {
+		t.Fatalf("fresh status schema = %s", encoded)
+	}
+	server := decoded.Projects[0].Server
+	if _, legacy := server["public_urls"]; legacy {
+		t.Fatalf("status retained a second inventory: %s", encoded)
+	}
+	var inventory []map[string]json.RawMessage
+	if err := json.Unmarshal(server["services"], &inventory); err != nil || len(inventory) != 2 {
+		t.Fatalf("service inventory = %s: %v", encoded, err)
+	}
+	if string(inventory[0]["service_id"]) != `"svc_ready"` || string(inventory[0]["service_run_id"]) != `"sr_fixture"` ||
+		string(inventory[0]["run_number"]) != `"37"` || string(inventory[0]["publisher_observation"]) != `"ready_publisher_hint"` {
+		t.Fatalf("ready-publisher hint changed its meaning or run number: %s", encoded)
+	}
+	if string(inventory[1]["publisher_observation"]) != `"no_ready_publisher_observed"` ||
+		inventory[1]["service_run_id"] != nil || inventory[1]["run_number"] != nil {
+		t.Fatalf("absence of a hint invented a service run: %s", encoded)
+	}
+	for _, item := range inventory {
+		for _, key := range []string{"public_url_id", "updated_at", "lifecycle_state", "open_publish_run_id", "next_publish_run_number", "next_run_number", "publish_run_state", "run_state", "ready", "routable"} {
+			if _, exists := item[key]; exists {
+				t.Fatalf("status invented unavailable lifecycle facts (%s): %s", key, encoded)
+			}
+		}
+	}
+}
+
+func TestStatusServiceHumanOutputUsesHintsAndIndependentEndpointFacts(t *testing.T) {
+	run, number := "sr_fixture", int64(37)
+	services := statusServicesForProject([]controlv1.ServiceSummary{
+		{Id: "svc_ready", Name: "web", Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, ServiceRunId: &run, RunNumber: &number,
+			Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443}},
+		{Id: "svc_saved", Name: "database", Protocol: controlv1.Postgres,
+			Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 0}},
+		{Id: "svc_no_endpoint", Name: "private", Protocol: controlv1.Tcp},
+	}, map[string]bool{"svc_ready": true, "svc_saved": true, "svc_no_endpoint": true})
+	var output bytes.Buffer
+	if err := writeHumanFrame(&output, "tnl status", "1 project", "", statusServiceBlocks(services)...); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	normalized := strings.Join(strings.Fields(strings.ReplaceAll(got, "|", " ")), " ")
+	for _, fragment := range []string{"+--[ tnl status ]--", "server enabled", "server disabled", "service ID svc_ready", "protocol postgres",
+		"ready publisher hint; not a selected visitor run", "service run ID hint sr_fixture", "run number hint 37",
+		"no ready publisher observed", "public false", "endpoint port 443", "endpoint port 0", "endpoint not reported"} {
+		if !strings.Contains(normalized, fragment) {
+			t.Fatalf("status human output missing %q:\n%s", fragment, got)
+		}
+	}
+	for _, fragment := range []string{"public URL ID", "open publish run", "next publish run", "publish run state", "server updated at"} {
+		if strings.Contains(got, fragment) {
+			t.Fatalf("status human output retained %q:\n%s", fragment, got)
+		}
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if len(line) > 72 {
+			t.Fatalf("status bypassed renderer width: %q", line)
+		}
 	}
 }

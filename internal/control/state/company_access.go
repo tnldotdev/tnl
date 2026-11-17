@@ -328,7 +328,7 @@ func (d *Database) ProvisionCompanyEligibility(ctx context.Context, token string
 }
 
 func (d *Database) createManagedCompanyMember(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, c controlstatedb.ControlIdentityConnection, r ProvisionCompanyEligibilityRequest, now time.Time) error {
-	occupied, err := q.TeamSharedNameInUse(ctx, controlstatedb.TeamSharedNameInUseParams{TeamID: r.TeamID, Label: r.MemberSlug})
+	occupied, err := q.TeamSharedNameInUse(ctx, controlstatedb.TeamSharedNameInUseParams{TeamID: text(r.TeamID), Label: r.MemberSlug})
 	if err != nil {
 		return err
 	}
@@ -498,21 +498,19 @@ func closeInactiveCompanySubjects(ctx context.Context, tx pgx.Tx, q *controlstat
 	if err != nil {
 		return err
 	}
-	pending := pendingIngressRoutingTableEvents{}
 	for _, member := range members {
-		if err = closeMembershipPublishRuns(ctx, q, &pending, team, member, false, now, "company_eligibility_changed"); err != nil {
+		if err = closeMembershipServiceRuns(ctx, tx, q, team, member, now); err != nil {
 			return err
 		}
 	}
-	rows, err = tx.Query(ctx, `SELECT p.id,COALESCE(g.service_id,'') FROM control.publisher_identities p LEFT JOIN control.publisher_grants g ON g.publisher_identity_id=p.id WHERE p.team_id=$1 AND p.ownership='member' AND NOT control.active_membership(p.owner_membership_id,$2) ORDER BY p.id,g.id`, team, now)
+	rows, err = tx.Query(ctx, `SELECT p.id FROM control.publisher_identities p WHERE p.team_id=$1 AND p.ownership='member' AND NOT control.active_membership(p.owner_membership_id,$2) ORDER BY p.id`, team, now)
 	if err != nil {
 		return err
 	}
-	type publication struct{ id, service string }
-	var publishers []publication
+	var publishers []string
 	for rows.Next() {
-		var p publication
-		if err = rows.Scan(&p.id, &p.service); err != nil {
+		var p string
+		if err = rows.Scan(&p); err != nil {
 			rows.Close()
 			return err
 		}
@@ -524,23 +522,9 @@ func closeInactiveCompanySubjects(ctx context.Context, tx pgx.Tx, q *controlstat
 		return err
 	}
 	for _, p := range publishers {
-		if p.service != "" {
-			err = closeRevokedPrivatePublication(ctx, tx, q, p.service, p.id, "", now)
-			if err != nil {
-				return err
-			}
+		if err = closePublisherServiceRuns(ctx, tx, q, p, "", now); err != nil {
+			return err
 		}
-	}
-	// public routing changes commit with the authorization mutation.
-	for _, p := range publishers {
-		if p.service == "" {
-			if err = closeRevokedPublicPublications(ctx, tx, q, p.id, "", now); err != nil {
-				return err
-			}
-		}
-	}
-	if err = pending.publish(ctx, q); err != nil {
-		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.public_service_visitors visitor SET closed_at=COALESCE(visitor.closed_at,$2) FROM control.services service WHERE service.id=visitor.service_id AND service.team_id=$1 AND visitor.identity_id IS NOT NULL AND NOT control.active_team_subject($1,visitor.identity_id,$2)`, team, now)
 	return err

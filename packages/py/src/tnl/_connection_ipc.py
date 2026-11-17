@@ -11,6 +11,7 @@ import socket
 import stat
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -42,6 +43,8 @@ class OwnerIPC:
         self._filename = filename
         self._identity: dict[str, object] | None = None
         self._expiry_lock = threading.Lock()
+        self._interrupt_lock = threading.Lock()
+        self._interrupts: dict[str, Callable[[], None]] = {}
         try:
             self._load()
             self.connections = [
@@ -161,6 +164,7 @@ class OwnerIPC:
         request_handle: str | None = None,
         selection: dict[str, object] | None = None,
         preview: bool = False,
+        interrupted: Callable[[], bool] | None = None,
     ) -> object:
         if self.creator_pid != os.getpid():
             self.discard_inherited()
@@ -177,7 +181,16 @@ class OwnerIPC:
                     raise ValueError("closed capability")
                 if self.expires <= datetime.now(UTC):
                     self._load()
-            connection = self.available.get(timeout=max(0.001, deadline - time.monotonic()))
+            while connection is None:
+                if self.closed or interrupted is not None and interrupted():
+                    raise _failure()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("owner IPC deadline")
+                try:
+                    connection = self.available.get(timeout=min(0.05, remaining))
+                except queue.Empty:
+                    continue
             if self.closed:
                 raise ValueError("closed capability")
             connection.timeout = max(0.001, deadline - time.monotonic())
@@ -196,6 +209,12 @@ class OwnerIPC:
                     peer.shutdown(socket.SHUT_RDWR)
                 except OSError:
                     pass
+
+            if request_handle is not None:
+                with self._interrupt_lock:
+                    self._interrupts[request_handle] = interrupt
+                    if self.closed or interrupted is not None and interrupted():
+                        interrupt()
 
             watchdog = threading.Timer(max(0, deadline - time.monotonic()), interrupt)
             watchdog.daemon = True
@@ -237,6 +256,9 @@ class OwnerIPC:
             if connection is not None:
                 connection.close()
         finally:
+            if request_handle is not None:
+                with self._interrupt_lock:
+                    self._interrupts.pop(request_handle, None)
             if watchdog is not None:
                 watchdog.cancel()
                 watchdog.join()
@@ -251,8 +273,18 @@ class OwnerIPC:
             return
         with self._expiry_lock:
             self.closed = True
+        with self._interrupt_lock:
+            for interrupt in self._interrupts.values():
+                interrupt()
         for connection in self.connections:
             connection.close()
+
+    def interrupt(self, request_handle: str) -> None:
+        """interrupt one exchange without closing a sibling's IPC."""
+        with self._interrupt_lock:
+            interrupt = self._interrupts.get(request_handle)
+            if interrupt is not None:
+                interrupt()
 
     def discard_inherited(self) -> None:
         # HTTPConnection.close can acquire an inherited buffered-reader lock

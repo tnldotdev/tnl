@@ -16,9 +16,6 @@ import (
 
 func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 	for _, test := range []struct{ name, kind, mutation string }{
-		{"suspended-url", "saved_public_url", `UPDATE control.public_urls SET lifecycle_state='suspended',suspended_at=$2 WHERE id=$1`},
-		{"deleted-url", "saved_public_url", `UPDATE control.public_urls SET lifecycle_state='deleted',deleted_at=$2,request_digest_ciphertext=NULL,request_digest_storage_key_id=NULL WHERE id=$1`},
-		{"released-url-domain", "saved_public_url", `UPDATE control.domains SET state='released',released_at=$2 WHERE id=(SELECT domain_id FROM control.public_urls WHERE id=$1)`},
 		{"disabled-service", "service", `UPDATE control.services SET enabled=false WHERE id=$1`},
 		{"deleted-service", "service", `UPDATE control.services SET deleted_at=$2 WHERE id=$1`},
 		{"released-service-domain", "service", `UPDATE control.domains SET state='released',released_at=$2 WHERE id=(SELECT domain_id FROM control.services WHERE id=$1)`},
@@ -30,11 +27,8 @@ func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 			scope := PublisherScope{TeamID: r.TeamID, Kind: test.kind}
 			var resource string
 			switch test.kind {
-			case "saved_public_url":
-				u := createTestPublicURL(t, d, r, now)
-				scope.PublicURLID, resource = u.ID, u.ID
 			case "service":
-				s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "runtime-service", "runtime-service", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
+				s, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "runtime-service", "runtime-service", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
@@ -50,14 +52,13 @@ func TestVisitorTokenResponseServiceTrustRevision(t *testing.T) {
 	if response := visitorTokenResponse(issued); response.ServiceTrustRevision == nil || *response.ServiceTrustRevision != 3 {
 		t.Fatal("service permission omitted its current metadata revision")
 	}
-	issued.Permission.Scope.Kind = visitorscope.PublicURL
-	if response := visitorTokenResponse(issued); response.ServiceTrustRevision != nil {
-		t.Fatal("public URL permission included a service metadata revision")
+	issued.Permission.Scope = visitorscope.Scope{Kind: visitorscope.Kind("public_url"), ID: "url_" + strings.Repeat("A", 22)}
+	if issued.Permission.Scope.Valid() {
+		t.Fatal("retired public URL resource remained a visitor authority")
 	}
 }
 
 type serviceBrowserTokenStore struct {
-	PublicURLStore
 	ServiceHTTPStore
 	refreshed, issued bool
 	err               error
@@ -88,12 +89,75 @@ func TestVisitorTokenRefreshesServiceBrowserBeforeIssuingPermission(t *testing.T
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &serviceBrowserTokenStore{err: test.err}
-			h := &handler{store: store, dependencies: Stores{VisitorTokens: store, ServiceHTTP: store}}
+			h := &handler{dependencies: Stores{VisitorTokens: store, ServiceHTTP: store}}
 			request := httptest.NewRequest(http.MethodPost, "/v1/visitor-tokens", strings.NewReader(`{"resource":{"kind":"service","id":"svc_`+strings.Repeat("A", 22)+`"},"source":{"kind":"browser_session","secret":"`+strings.Repeat("B", 43)+`"}}`))
 			response := httptest.NewRecorder()
 			h.IssueVisitorToken(response, request)
 			if response.Code != test.status || !store.refreshed || store.issued != (test.err == nil) {
 				t.Fatal("service permission did not follow browser refresh", response.Code, store.refreshed, store.issued)
+			}
+		})
+	}
+}
+
+type guestShareVisitorIssuer struct {
+	scope  visitorscope.Scope
+	source controlstate.VisitorTokenSource
+	calls  int
+	deny   bool
+}
+
+func (s *guestShareVisitorIssuer) IssueVisitorToken(_ context.Context, _ string, scope visitorscope.Scope, source controlstate.VisitorTokenSource, now time.Time) (controlstate.IssuedVisitorToken, error) {
+	s.calls++
+	s.scope, s.source = scope, source
+	if s.deny {
+		return controlstate.IssuedVisitorToken{}, controlstate.ErrVisitorPermission
+	}
+	return controlstate.IssuedVisitorToken{Token: visitortoken.Token("prepared"),
+		ServiceTrustRevision: 3, Permission: visitortoken.Permission{Scope: scope, Hostname: "demo.guest.example", Port: 443,
+			VisitorPolicyRevision: 4, ExpiresAt: now.Add(time.Minute)}}, nil
+}
+
+func TestGuestShareVisitorTokensUseOrdinaryCurrentSourceAuthority(t *testing.T) {
+	for _, kind := range []string{"share", "share_session"} {
+		t.Run(kind, func(t *testing.T) {
+			service, share := guestAPIID(t, opaqueid.ServicePrefix), guestAPIID(t, opaqueid.SharePrefix)
+			store, human := &guestShareVisitorIssuer{}, &guestHumanAuthorizer{}
+			trials := guestAPIStore(t)
+			trials.lookupErr = errors.New("trial lookup must not be used by share visitors")
+			h := &handler{guests: trials, authorizer: human, dependencies: Stores{VisitorTokens: store}}
+			body := `{"resource":{"kind":"service","id":"` + service + `"},"source":{"kind":"` + kind +
+				`","share_id":"` + share + `","secret":"` + strings.Repeat("B", 43) + `"}}`
+			issue := func(withTrialBearer bool) *httptest.ResponseRecorder {
+				r := httptest.NewRequest(http.MethodPost, "/v1/visitor-tokens", strings.NewReader(body))
+				if withTrialBearer {
+					r.Header.Set("Authorization", "Bearer guest-token")
+				}
+				w := httptest.NewRecorder()
+				h.IssueVisitorToken(w, r)
+				return w
+			}
+			if w := issue(false); w.Code != 200 || store.calls != 1 || human.reads != 0 || store.scope != (visitorscope.Scope{Kind: visitorscope.Service, ID: service}) {
+				t.Fatal("valid guest share was denied or converted to trial/human authentication", w.Code)
+			}
+			switch source := store.source.(type) {
+			case controlstate.ShareTokenSource:
+				if kind != "share" || source.ShareID != share {
+					t.Fatal("share source changed before current authority was checked")
+				}
+			case controlstate.ShareSessionTokenSource:
+				if kind != "share_session" || source.ShareID != share {
+					t.Fatal("share-session source changed before current authority was checked")
+				}
+			default:
+				t.Fatal("share visitor source was replaced")
+			}
+			store.deny = true
+			if w := issue(false); w.Code != 403 || store.calls != 2 {
+				t.Fatal("visitor token reused stale share authority", w.Code)
+			}
+			if w := issue(true); w.Code != 400 || store.calls != 2 || human.reads != 0 {
+				t.Fatal("trial bearer broadened a share visitor's authority", w.Code)
 			}
 		})
 	}

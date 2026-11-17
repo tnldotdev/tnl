@@ -44,11 +44,11 @@ func newConnectorBindingFixture(t *testing.T) *connectorBindingFixture {
 	t.Helper()
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, ed25519.SeedSize))
 	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
-	lease := relayv1.RelayLease{RelayServiceId: "relay-a", RelayId: "process-a", RelayRunId: "relay-run", RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute), PeerSigningPublicKey: &public}
+	lease := relayv1.RelayLease{RelayServiceId: "relay-a", RelayId: "process-a", RelayRunId: "relay-run", RelayLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute), PeerSigningPublicKey: &public}
 	proof := tunnelv1.ConnectorPairLegProof{PairID: "cpp_1234567890123456789012", DeliveryGeneration: 1, ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 1, PublisherIdentityID: "pub_1234567890123456789012", ConnectionSlot: 0, PublisherConnectionID: "pc_1234567890123456789012", AssignmentRevision: 1, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 1, RequestedAt: time.Now(), Nonce: make([]byte, 32), Signature: make([]byte, 64)}
 	ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: proof.ServiceID, ServiceRunID: proof.ServiceRunID, RunNumber: 1, PublisherConnectionID: proof.PublisherConnectionID, ConnectionSlot: 0, ConnectionAssignmentRevision: 1, RelayServiceID: lease.RelayServiceId}
 	outer := newForwardingTestSession()
-	packets, err := newConnectorPacketSession(t.Context(), outer)
+	packets, err := newConnectorPacketSession(t.Context(), outer, packetStreamReader)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -306,6 +306,7 @@ func (h *handler) AcceptInvitation(response http.ResponseWriter, request *http.R
 }
 
 func (h *handler) ListTeamDomains(response http.ResponseWriter, request *http.Request, teamID authorityv1.TeamID) {
+	response.Header().Set("Cache-Control", "no-store")
 	principal, ok := h.authenticateControlRequest(response, request)
 	if !ok {
 		return

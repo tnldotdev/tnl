@@ -200,10 +200,10 @@ INSERT INTO local_tunnels (
     project_root,
     service,
     service_protocol,
+    service_id,
     hostname,
     target,
     framework,
-    public_url_id,
     publish_run_number,
     state,
     started_at,
@@ -221,19 +221,19 @@ INSERT INTO local_tunnels (
     ?5,
     nullif(?6, ''),
     ?7,
+    ?8,
     NULL,
-    nullif(?8, ''),
-    NULL,
+    nullif(?9, ''),
     NULL,
     NULL,
     'starting',
-    ?9,
-    ?9,
-    ?9,
     ?10,
-    NULL,
+    ?10,
+    ?10,
     ?11,
-    ?12
+    NULL,
+    ?12,
+    ?13
 )
 `
 
@@ -245,6 +245,7 @@ type InsertTunnelParams struct {
 	ProjectRoot          string
 	Service              interface{}
 	ServiceProtocol      string
+	ServiceID            sql.NullString
 	Target               interface{}
 	Now                  int64
 	LeaseExpiresAt       int64
@@ -261,6 +262,7 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 		arg.ProjectRoot,
 		arg.Service,
 		arg.ServiceProtocol,
+		arg.ServiceID,
 		arg.Target,
 		arg.Now,
 		arg.LeaseExpiresAt,
@@ -271,7 +273,7 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 }
 
 const listOpenTunnels = `-- name: ListOpenTunnels :many
-SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, service_id, primary_project_root, integration_namespace, hostname, target, framework, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
 FROM local_tunnels
 WHERE stopped_at IS NULL
 ORDER BY started_at, id
@@ -294,12 +296,12 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.ProjectRoot,
 			&i.Service,
 			&i.ServiceProtocol,
+			&i.ServiceID,
 			&i.PrimaryProjectRoot,
 			&i.IntegrationNamespace,
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,
-			&i.PublicURLID,
 			&i.PublishRunNumber,
 			&i.State,
 			&i.StartedAt,
@@ -323,7 +325,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 }
 
 const listOpenTunnelsForProject = `-- name: ListOpenTunnelsForProject :many
-SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, service_id, primary_project_root, integration_namespace, hostname, target, framework, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
 FROM local_tunnels
 WHERE stopped_at IS NULL AND project_root = ?1
 ORDER BY started_at, id
@@ -346,12 +348,12 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 			&i.ProjectRoot,
 			&i.Service,
 			&i.ServiceProtocol,
+			&i.ServiceID,
 			&i.PrimaryProjectRoot,
 			&i.IntegrationNamespace,
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,
-			&i.PublicURLID,
 			&i.PublishRunNumber,
 			&i.State,
 			&i.StartedAt,
@@ -475,35 +477,6 @@ type SetTunnelProvisioningParams struct {
 
 func (q *Queries) SetTunnelProvisioning(ctx context.Context, arg SetTunnelProvisioningParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setTunnelProvisioning, arg.PublishRunNumber, arg.Now, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const setTunnelPublicURL = `-- name: SetTunnelPublicURL :execrows
-UPDATE local_tunnels
-SET public_url_id = ?1,
-    hostname = ?2,
-    state = 'provisioning',
-    updated_at = ?3
-WHERE id = ?4 AND stopped_at IS NULL
-`
-
-type SetTunnelPublicURLParams struct {
-	PublicURLID sql.NullString
-	Hostname    sql.NullString
-	Now         int64
-	ID          string
-}
-
-func (q *Queries) SetTunnelPublicURL(ctx context.Context, arg SetTunnelPublicURLParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setTunnelPublicURL,
-		arg.PublicURLID,
-		arg.Hostname,
-		arg.Now,
-		arg.ID,
-	)
 	if err != nil {
 		return 0, err
 	}

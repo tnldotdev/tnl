@@ -108,25 +108,31 @@ func TestManagedDNSOwnerAttemptPreservesPersistedProviderFailure(t *testing.T) {
 		t.Run(map[bool]string{false: "saved", true: "save-failed"}[saveFails], func(t *testing.T) {
 			ctx, record := workerobservation.Start(t)
 			now := time.Now().UTC()
-			store := &managedDNSStoreStub{work: controlstate.ServiceEndpointDNSWork{Hostname: "api.example.test", OwnerID: "deployment", State: controlstate.PublicURLDNSPending, Attempts: 1, LastError: "old"}}
+			store := &managedDNSStoreStub{work: controlstate.ServiceEndpointDNSWork{
+				Hostname: "api.example.test", OwnerID: "deployment", PoolID: controlstate.PrimaryIngressPoolID,
+				Public: true, State: controlstate.ServiceEndpointDNSPending, Attempts: 1, LastError: "old",
+			}}
 			if saveFails {
 				store.saveErr = errors.New("private-provider-cause save")
 			}
 			provider := &providerStub{err: errors.New("private-provider-cause DNS")}
-			worker, err := New(store, provider, &verifierStub{publicURLVerified: true}, Config{WorkerID: "review", ManagedDomain: "example.test", ManagedZoneID: "zone", Observer: record.Owner})
+			worker, err := New(store, provider, &verifierStub{addressVerified: true}, Config{
+				WorkerID: "review", ManagedDomain: "example.test", ManagedZoneID: "zone",
+				IngressIPv4Addresses: []string{"192.0.2.10"}, Observer: record.Owner,
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			worker.now = func() time.Time { return now }
 			found, err := worker.processServiceEndpoint(ctx, now)
-			if !found || (err != nil) != saveFails || store.saves != 1 || store.saved.LastError != string(failure.ServerDNSFailed) || !store.saved.AvailableAt.After(now) || store.saved.State != controlstate.PublicURLDNSPending {
+			if !found || (err != nil) != saveFails || store.saves != 1 || store.saved.LastError != string(failure.ServerDNSFailed) || !store.saved.AvailableAt.After(now) || store.saved.State != controlstate.ServiceEndpointDNSPending {
 				t.Fatal("provider retry state lost", found, err, store.saved)
 			}
 			record.AssertFailure(t, "dns.service.attempt", "error", string(failure.ServerDNSFailed))
 			if !saveFails {
 				store.work = store.saved
 				provider.err = nil
-				if _, err := worker.processServiceEndpoint(ctx, now); err != nil || store.saved.LastError != "" || store.saved.State != controlstate.PublicURLDNSPublished {
+				if _, err := worker.processServiceEndpoint(ctx, now); err != nil || store.saved.LastError != "" || store.saved.State != controlstate.ServiceEndpointDNSPublished {
 					t.Fatal("retry did not recover", err, store.saved)
 				}
 			}

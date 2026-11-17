@@ -85,7 +85,7 @@ func (connectorClaim) GoString() string { return "connector claim" }
 func (a *ConnectorAcceptor) currentLease(proof tunnelv1.ConnectorPairLegProof) (relayv1.RelayLease, bool) {
 	lease := a.CurrentLease()
 	valid := lease.RelayServiceId == proof.RelayServiceID && lease.RelayId == proof.RelayID && lease.RelayRunId == proof.RelayRunID && lease.RelayLeaseRevision > 0 && uint64(lease.RelayLeaseRevision) == proof.RelayLeaseRevision &&
-		!lease.Draining && lease.LeaseExpiresAt.After(time.Now()) && lease.PeerSigningPublicKey != nil && *lease.PeerSigningPublicKey == base64.RawURLEncoding.EncodeToString(a.SigningKey.Public().(ed25519.PublicKey))
+		!lease.Draining && lease.ServingUntil.After(time.Now()) && lease.PeerSigningPublicKey != nil && *lease.PeerSigningPublicKey == base64.RawURLEncoding.EncodeToString(a.SigningKey.Public().(ed25519.PublicKey))
 	return lease, valid
 }
 
@@ -160,7 +160,7 @@ func (a *ConnectorAcceptor) serve(ctx context.Context, outer muxsession.Session,
 	if !valid || !present {
 		return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 	}
-	packets, err := newConnectorPacketSession(ctx, outer)
+	packets, err := newConnectorPacketSession(ctx, outer, packetStreamReader)
 	if err != nil {
 		return err
 	}

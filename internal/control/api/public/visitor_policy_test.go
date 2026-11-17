@@ -16,7 +16,7 @@ import (
 )
 
 type publisherPolicyStoreFixture struct {
-	Store
+	AdminStore
 	calls int
 }
 
@@ -34,7 +34,7 @@ func TestPublisherVisitorPolicyGeneratedMaximumRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := controlv1.PublisherVisitorPolicyRequest{
-		Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: "url_" + strings.Repeat("A", 22)},
+		Resource: controlv1.VisitorResourceScope{Kind: "service", Id: "svc_" + strings.Repeat("A", 22)},
 		RunId:    strings.Repeat("\x01", 64), RunNumber: math.MaxInt64, AfterRevision: math.MaxInt64,
 	}
 	raw, err := json.Marshal(body)
@@ -58,13 +58,14 @@ func TestPublisherVisitorPolicyGeneratedMaximumRequest(t *testing.T) {
 }
 
 func TestPublisherVisitorPolicyRejectsInvalidBodiesBeforeBackend(t *testing.T) {
-	base := `{"resource":{"kind":"public_url","id":"url_` + strings.Repeat("A", 22) + `"},"run_id":"run","run_number":"1","after_revision":"0"`
+	base := `{"resource":{"kind":"service","id":"svc_` + strings.Repeat("A", 22) + `"},"run_id":"run","run_number":"1","after_revision":"0"`
 	empty := base + `}`
 	for _, tc := range []struct {
 		name, body string
 		valid      bool
 	}{
 		{"valid request", empty, true},
+		{"retired resource", strings.Replace(strings.Replace(empty, `"kind":"service"`, `"kind":"public_url"`, 1), `"svc_`, `"url_`, 1), false},
 		{"null observations", base + `,"observed_allocations":null}`, false},
 		{"retired observations", base + `,"observed_allocations":[]}`, false},
 		{"at byte limit", empty + strings.Repeat(" ", maxPublisherVisitorPolicyRequestBytes-len(empty)), true},

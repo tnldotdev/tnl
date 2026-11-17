@@ -24,11 +24,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/localapi"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 )
 
@@ -39,7 +39,7 @@ type Options struct {
 	Publications      bool
 	Snapshot          io.Reader
 	TargetResolver    target.TargetResolver
-	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
+	AttachPublication func(context.Context, publisherapp.Service, *publisherservice.RunConfig) error
 }
 
 func ResolveProject(ctx context.Context, options Options) (clientproject.Project, string, error) {
@@ -253,7 +253,7 @@ type appRuntime struct {
 	prepared       map[string]appPreparation
 	// visitor and admission integration is attached before worker fencing wraps
 	// callbacks. this applies equally to SDK, named CLI and invocation workers.
-	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
+	AttachPublication func(context.Context, publisherapp.Service, *publisherservice.RunConfig) error
 }
 
 type appPreparationGate struct {
@@ -331,6 +331,10 @@ func Serve(ctx context.Context, options Options) (result error) {
 	if err != nil {
 		return err
 	}
+	processDeadline := a.manager.ShutdownDeadline
+	a.manager.ShutdownDeadline = sync.OnceValue(func() time.Time {
+		return observability.ShutdownDeadline(ctx, processDeadline())
+	})
 	a.workers.Manager = a.manager
 	a.manager.Cleanup = a.cleanupPreparation
 	a.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
@@ -344,12 +348,28 @@ func Serve(ctx context.Context, options Options) (result error) {
 	requestBase := observability.Independent(ctx)
 	server := &http.Server{Handler: a.handler(), BaseContext: func(net.Listener) context.Context { return requestBase }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: publisherprotocol.MaxBytes}
 	done := make(chan error, 1)
-	go func() { done <- server.Serve(listener) }()
+	served := make(chan struct{})
+	var serveError error
+	go func() { defer close(served); serveError = server.Serve(listener); done <- serveError }()
 	defer func() {
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		until := a.manager.ShutdownDeadline()
+		shutdown, cancel := context.WithDeadline(context.Background(), until)
 		defer cancel()
-		_ = server.Shutdown(shutdown)
-		_ = server.Close()
+		forced := make(chan error, 1)
+		stopForce := context.AfterFunc(shutdown, func() { forced <- errors.Join(context.DeadlineExceeded, server.Close()) })
+		// fence all registrations and start every drain before waiting for any
+		// one unregister HTTP request or publication to finish.
+		_ = listener.Close()
+		a.manager.Close()
+		result = errors.Join(result, server.Shutdown(shutdown))
+		if !stopForce() {
+			result = errors.Join(result, <-forced)
+		}
+		result = errors.Join(result, server.Close())
+		<-served
+		if !failure.Only(serveError, http.ErrServerClosed) && !failure.Only(serveError, net.ErrClosed) {
+			result = errors.Join(result, serveError)
+		}
 	}()
 	if err := publisherprotocol.WriteEndpoint(path, capabilities.Owner()); err != nil {
 		return err
@@ -398,7 +418,7 @@ func (a *appRuntime) cleanupPreparation(service publisherapp.Service) error {
 	preparation := a.prepared[service.RegistrationID]
 	a.mu.Unlock()
 	if preparation.configuration.Cleanup != nil {
-		return preparation.configuration.Cleanup()
+		return preparation.configuration.Cleanup(a.manager.PublicationCleanupContext(service.RegistrationID))
 	}
 	return nil
 }
@@ -430,19 +450,26 @@ func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prep
 	defer release()
 	finish := a.manager.BeginPreparation()
 	defer finish()
-	metadata, err := a.operations(a.project).Metadata(ctx)
+	metadata, err := a.operations(a.project).PrepareLocalService(ctx, name)
 	if err != nil {
 		return publisherprotocol.Assignment{}, err
 	}
 	if err := meta.Write(ctx, a.project.Root, metadata); err != nil {
 		return publisherprotocol.Assignment{}, err
 	}
-	selected := metadata.Services[name]
-	id, err := a.manager.Reserve(name, request.Owner, request.PID, selected.URL)
+	selected, found := metadata.Services[name]
+	if !found || selected.Protocol != "http" {
+		return publisherprotocol.Assignment{}, errors.New("preparation requires its selected HTTP endpoint")
+	}
+	publicURL := ""
+	if selected.Public {
+		publicURL = selected.URL
+	}
+	id, err := a.manager.Reserve(name, request.Owner, request.PID, publicURL)
 	if err != nil {
 		return publisherprotocol.Assignment{}, err
 	}
-	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
+	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: publicURL, Project: metadata.Public(true)}
 	a.mu.Lock()
 	if previous, found := a.prepared[id]; found && previous.telemetryDisabled != request.TelemetryDisabled {
 		a.mu.Unlock()
@@ -500,26 +527,22 @@ func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Leas
 	return registration, nil
 }
 
-func (a *appRuntime) workerConfiguration(ctx context.Context, service publisherapp.Service) (configuration publisherapp.Configuration, result error) {
+func (a *appRuntime) workerConfiguration(ctx context.Context, service publisherapp.Service) (publisherapp.Configuration, error) {
 	a.mu.Lock()
 	preparation, found := a.prepared[service.RegistrationID]
 	a.mu.Unlock()
 	if !found {
 		return publisherapp.Configuration{}, publisherapp.ErrRegistrationStale
 	}
+	if preparation.configuration.Service != nil {
+		return preparation.configuration, nil
+	}
 	operations := a.operations(preparation.project)
 	operations.Telemetry = a.Telemetry
 	if preparation.telemetryDisabled {
 		operations.Telemetry = nil
 	}
-	defer func() { configuration.Publisher.Telemetry = operations.Telemetry }()
-	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
-		return operations.ServiceConfiguration(ctx, service)
-	}
-	if preparation.configuration.Publisher.Control != nil {
-		return preparation.configuration, nil
-	}
-	return operations.PublicConfiguration(ctx, service)
+	return operations.ServiceConfiguration(ctx, service)
 }
 
 func (a *appRuntime) operations(project clientproject.Project) *invocation.ProjectRuntime {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -16,32 +17,31 @@ func TestClaimRejectsMalformedCredentialWithoutStoreCall(t *testing.T) {
 	for _, transport := range []string{"direct", "HTTP"} {
 		t.Run(transport, func(t *testing.T) {
 			calls := 0
-			store := &relayStoreStub{claimPublisherConnection: func(context.Context, controlstate.PublisherConnectionClaimRequest, time.Time) (controlstate.ClaimedPublisherConnection, error) {
+			store := &relayStoreStub{claimServicePublisherConnection: func(context.Context, string, string, string, int64, int64, string, netip.Addr, controlstate.RelayLeaseIdentity, time.Time) (controlstate.ServicePublisherConnection, error) {
 				calls++
-				return controlstate.ClaimedPublisherConnection{}, nil
+				return controlstate.ServicePublisherConnection{}, nil
 			}}
 			client, err := NewDirectClient(DirectConfig{Store: store, LeaseDuration: time.Minute})
 			if err != nil {
 				t.Fatal(err)
 			}
-			body := relayv1.PublisherConnectionClaim{
-				PublishRunId: "session-1", PublicUrlId: "route-1", PublishRunNumber: 1,
-				PublisherConnectionId: "connection-1", ConnectionSlot: 0, ConnectionAssignmentRevision: 1,
-				RelayServiceId: "service-1", RelayId: "relay-1", RelayRunId: "run-1", RelayLeaseRevision: 1,
-				ClaimId: "claim-1", PublisherConnectionCredential: "malformed",
+			body := relayv1.ServicePublisherConnectionClaim{
+				ServiceId: "svc_0123456789abcdefghijkl", ServiceRunId: "srun_0123456789abcdefghijkl", RunNumber: 1,
+				ConnectionAssignmentRevision: 1, RelayId: "relay-1", RelayRunId: "run-1", RelayLeaseRevision: 1,
+				Credential: "malformed", ObservedSourceIp: "192.0.2.1",
 			}
 			var status int
 			var problemType string
 			if transport == "direct" {
-				_, err = client.ClaimPublisherConnection(t.Context(), "connection-1", body)
+				_, err = client.ClaimServicePublisherConnection(t.Context(), "pc_0123456789abcdefghijkl", body)
 				var problem *serverhttp.ProblemError
 				if !errors.As(err, &problem) {
 					t.Fatalf("direct error = %v", err)
 				}
 				status, problemType = problem.Status, problem.Type
 			} else {
-				wire := serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, "/internal/v1/publisher-connections/connection-1/claim", body)
-				response, parseErr := relayv1.ParseClaimPublisherConnectionResponse(wire.Result())
+				wire := serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, "/internal/v1/private-publisher-connections/pc_0123456789abcdefghijkl/claim", body)
+				response, parseErr := relayv1.ParseClaimServicePublisherConnectionResponse(wire.Result())
 				if parseErr != nil {
 					t.Fatal(parseErr)
 				}

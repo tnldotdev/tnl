@@ -65,9 +65,25 @@ executables. CLI and connector
 suites also build the native client once and pass it with `-tnl-cli-binary`;
 individual tests do not rebuild it.
 
+To check one PostgreSQL-backed API boundary:
+
+```sh
+mise exec -- task go:test:integration:api PACKAGES=./internal/control/api/public RUN='^TestIntegrationCreateServiceDeclarationAPI$'
+```
+
+Omit `PACKAGES` to run the full API package set used by CI. A selected package
+run checks only that boundary, not the full API suite.
+
 CI downloads and verifies both Go modules before running checks. Only transient
 dependency downloads retry; tests do not. Go module caches are shared across
 build variants, while compiled caches stay separate for ordinary and race builds.
+
+Routine race CI runs the publisher service tree and the remaining packages in
+parallel so the longer service tests can start earlier. Run the same partitions
+with `mise exec -- task go:test:race:service` and
+`mise exec -- task go:test:race:rest`; the latter also compiles the public SDK
+example. `mise exec -- task go:test:race` still runs the complete routine suite.
+Both CI partitions must pass the `Go race` check.
 
 For warm PostgreSQL latency, run `mise exec -- task go:test:load:postgres`.
 It compares a direct database connection with the connector/publisher path using
@@ -97,6 +113,10 @@ mise exec -- task format
 OpenAPI sources live in `contracts/`. SQL sources live beside each state package's
 `sqlc.yaml`. [Generation tasks](tasks/generate.yml) list the generated paths.
 The tunnel protocol in `pkg/protocol/tunnelv1` is handwritten.
+
+SQL generation stages fresh output before replacing marked `sqlc` files, including
+removing output for retired queries. Handwritten files are preserved. Run
+`mise exec -- task generate:test` to check generation tooling.
 
 Hey API generates the browser and telemetry TypeScript validators. Its supported
 Zod resolvers keep closed request objects strict and JSON counters numeric; server

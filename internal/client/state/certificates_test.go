@@ -218,6 +218,7 @@ func TestCertificateCacheIsolationAndTransactionLocks(t *testing.T) {
 		{"same", "https://server.example", "team_1", plan, true},
 		{"other_plan", "https://server.example", "team_1", otherPlan, true},
 		{"other_team", "https://server.example", "team_2", plan, false},
+		{"teamless_publisher", "https://server.example", "", plan, false},
 		{"other_server", "https://other.example", "team_1", plan, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -104,7 +104,7 @@ func TestConnectorPermissionRenewalRejectsInvalidDeadlineBeforeGatesOrIO(t *test
 			}
 			writer.gate <- struct{}{}
 			defer func() { <-writer.gate }()
-			done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
+			done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
 			select {
 			case err := <-done:
 				if !errors.Is(err, want) || len(tracked.deadlines) != 0 || len(tracked.writes) != 0 {
@@ -122,7 +122,7 @@ func TestConnectorPermissionRenewalBlockedWriteKeepsDeadlineAndRetiresControl(t 
 	until := time.Now().Add(100 * time.Millisecond)
 	ctx, cancel := context.WithDeadline(t.Context(), until)
 	defer cancel()
-	done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
+	done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(ctx, connectorPermissionFixture()) })
 	if at := await(t, tracked.deadlines); !at.Equal(until) {
 		t.Fatal("renewal reset its original write deadline")
 	}
@@ -146,7 +146,7 @@ func TestConnectorPermissionRenewalBlockedWriteKeepsDeadlineAndRetiresControl(t 
 
 func TestConnectorPermissionCloseInterruptsBlockedRenewal(t *testing.T) {
 	writer, tracked := permissionDeadlinePair(t)
-	done := tunnelWorker(t, writer.Close, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
+	done := tunnelWorker(t, func() { _ = writer.Close() }, func() error { return writer.Renew(tunnelContext(t), connectorPermissionFixture()) })
 	await(t, tracked.writes)
 	closed := tunnelWorker(t, func() { _ = tracked.Stream.Reset(0) }, func() struct{} { writer.Close(); return struct{}{} })
 	select {

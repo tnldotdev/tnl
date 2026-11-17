@@ -9,8 +9,3 @@ sql:
         package: clientstatedb
         out: clientstatedb
         sql_package: database/sql
-        rename:
-          public_url_id: PublicURLID
-          target_public_url_id: TargetPublicURLID
-          run_target_public_url_id: RunTargetPublicURLID
-          origin_public_url_id: OriginPublicURLID

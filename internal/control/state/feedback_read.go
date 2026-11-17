@@ -27,12 +27,12 @@ func (d *Database) GetFeedback(ctx context.Context, id string) (FeedbackThread, 
 	return feedbackThreadFromRow(row), nil
 }
 
-func (d *Database) ListFeedbackForPage(ctx context.Context, previewID, publicURLID, pagePath, cursor string) (FeedbackThreadPage, error) {
-	return d.ListFeedbackForPublicURL(ctx, previewID, publicURLID, pagePath, "", cursor)
+func (d *Database) ListFeedbackForPage(ctx context.Context, previewID, serviceID, pagePath, cursor string) (FeedbackThreadPage, error) {
+	return d.ListFeedbackForService(ctx, previewID, serviceID, pagePath, "", cursor)
 }
 
-func (d *Database) ListFeedbackForPublicURL(ctx context.Context, previewID, publicURLID, pagePath, state, cursor string) (FeedbackThreadPage, error) {
-	if !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) || publicURLID == "" || pagePath != "" && !validFeedbackPath(pagePath) || state != "" && state != "open" && state != "resolved" ||
+func (d *Database) ListFeedbackForService(ctx context.Context, previewID, serviceID, pagePath, state, cursor string) (FeedbackThreadPage, error) {
+	if !opaqueid.Valid(previewID, opaqueid.PreviewPrefix) || !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) || pagePath != "" && !validFeedbackPath(pagePath) || state != "" && state != "open" && state != "resolved" ||
 		cursor != "" && !opaqueid.Valid(cursor, opaqueid.FeedbackPrefix) {
 		return FeedbackThreadPage{}, ErrFeedbackInvalid
 	}
@@ -45,7 +45,7 @@ func (d *Database) ListFeedbackForPublicURL(ctx context.Context, previewID, publ
 		return FeedbackThreadPage{}, fmt.Errorf("controlstate: read feedback cursor: %w", err)
 	}
 	rows, err := queries.ListFeedbackThreadsForPage(ctx, controlstatedb.ListFeedbackThreadsForPageParams{
-		PreviewID: previewID, PublicURLID: publicURLID, PagePath: pagePath, ThreadState: state, AfterID: cursor,
+		PreviewID: previewID, ServiceID: serviceID, PagePath: pagePath, ThreadState: state, AfterID: cursor,
 	})
 	if err != nil {
 		return FeedbackThreadPage{}, fmt.Errorf("controlstate: list page feedback: %w", err)
@@ -66,7 +66,7 @@ func (d *Database) ListFeedbackForTeam(ctx context.Context, teamID, cursor strin
 		return FeedbackThreadPage{}, fmt.Errorf("controlstate: read feedback cursor: %w", err)
 	}
 	rows, err := queries.ListFeedbackThreadsForTeam(ctx, controlstatedb.ListFeedbackThreadsForTeamParams{
-		TeamID: teamID, AfterID: cursor,
+		TeamID: text(teamID), AfterID: cursor,
 	})
 	if err != nil {
 		return FeedbackThreadPage{}, fmt.Errorf("controlstate: list team feedback: %w", err)
@@ -120,7 +120,7 @@ func (d *Database) ListFeedbackEventsForTeam(ctx context.Context, teamID string,
 		return FeedbackEventPage{}, fmt.Errorf("controlstate: read feedback cursor: %w", err)
 	}
 	rows, err := queries.ListFeedbackEventsForTeam(ctx, controlstatedb.ListFeedbackEventsForTeamParams{
-		TeamID: teamID, AfterCursor: int64(after),
+		TeamID: text(teamID), AfterCursor: int64(after),
 	})
 	if err != nil {
 		return FeedbackEventPage{}, fmt.Errorf("controlstate: list team feedback events: %w", err)

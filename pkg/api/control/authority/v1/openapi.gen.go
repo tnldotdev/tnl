@@ -124,11 +124,48 @@ func (e DomainKind) Valid() bool {
 	}
 }
 
+// Defines values for DomainReleaseBlocker.
+const (
+	Certificate       DomainReleaseBlocker = "certificate"
+	ChallengeCleanup  DomainReleaseBlocker = "challenge_cleanup"
+	Deployments       DomainReleaseBlocker = "deployments"
+	DnsAuthority      DomainReleaseBlocker = "dns_authority"
+	EndpointDns       DomainReleaseBlocker = "endpoint_dns"
+	Issuance          DomainReleaseBlocker = "issuance"
+	Services          DomainReleaseBlocker = "services"
+	UncertainIssuance DomainReleaseBlocker = "uncertain_issuance"
+)
+
+// Valid indicates whether the value is a known member of the DomainReleaseBlocker enum.
+func (e DomainReleaseBlocker) Valid() bool {
+	switch e {
+	case Certificate:
+		return true
+	case ChallengeCleanup:
+		return true
+	case Deployments:
+		return true
+	case DnsAuthority:
+		return true
+	case EndpointDns:
+		return true
+	case Issuance:
+		return true
+	case Services:
+		return true
+	case UncertainIssuance:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DomainState.
 const (
 	DomainStateFailed    DomainState = "failed"
 	DomainStatePending   DomainState = "pending"
 	DomainStateReady     DomainState = "ready"
+	DomainStateReleased  DomainState = "released"
 	DomainStateReleasing DomainState = "releasing"
 )
 
@@ -140,6 +177,8 @@ func (e DomainState) Valid() bool {
 	case DomainStatePending:
 		return true
 	case DomainStateReady:
+		return true
+	case DomainStateReleased:
 		return true
 	case DomainStateReleasing:
 		return true
@@ -322,37 +361,16 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Defines values for PublicURLScope.
-const (
-	PublicURLScopeMember PublicURLScope = "member"
-	PublicURLScopeShared PublicURLScope = "shared"
-)
-
-// Valid indicates whether the value is a known member of the PublicURLScope enum.
-func (e PublicURLScope) Valid() bool {
-	switch e {
-	case PublicURLScopeMember:
-		return true
-	case PublicURLScopeShared:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for PublisherEnrollmentResultKind.
 const (
-	Namespace      PublisherEnrollmentResultKind = "namespace"
-	SavedPublicUrl PublisherEnrollmentResultKind = "saved_public_url"
-	Service        PublisherEnrollmentResultKind = "service"
+	Namespace PublisherEnrollmentResultKind = "namespace"
+	Service   PublisherEnrollmentResultKind = "service"
 )
 
 // Valid indicates whether the value is a known member of the PublisherEnrollmentResultKind enum.
 func (e PublisherEnrollmentResultKind) Valid() bool {
 	switch e {
 	case Namespace:
-		return true
-	case SavedPublicUrl:
 		return true
 	case Service:
 		return true
@@ -408,7 +426,6 @@ func (e PublisherTokenResponseTokenType) Valid() bool {
 
 // Defines values for TeamFeedbackPolicyAuthors.
 const (
-	Anyone      TeamFeedbackPolicyAuthors = "anyone"
 	SignedIn    TeamFeedbackPolicyAuthors = "signed_in"
 	TeamMembers TeamFeedbackPolicyAuthors = "team_members"
 )
@@ -416,8 +433,6 @@ const (
 // Valid indicates whether the value is a known member of the TeamFeedbackPolicyAuthors enum.
 func (e TeamFeedbackPolicyAuthors) Valid() bool {
 	switch e {
-	case Anyone:
-		return true
 	case SignedIn:
 		return true
 	case TeamMembers:
@@ -654,11 +669,14 @@ type Domain struct {
 	CreatedAt         time.Time         `json:"created_at"`
 	Id                DomainID          `json:"id"`
 	Kind              DomainKind        `json:"kind"`
-	RequiredRecords   []DNSRecord       `json:"required_records"`
-	State             DomainState       `json:"state"`
-	TeamId            *TeamID           `json:"team_id,omitempty"`
-	UpdatedAt         time.Time         `json:"updated_at"`
-	VerifiedAt        *time.Time        `json:"verified_at,omitempty"`
+
+	// Release Current owner observations, not a release estimate. DNS authority release must be confirmed even after other blockers clear. Facts may change after observed_at.
+	Release         *DomainRelease `json:"release,omitempty"`
+	RequiredRecords []DNSRecord    `json:"required_records"`
+	State           DomainState    `json:"state"`
+	TeamId          *TeamID        `json:"team_id,omitempty"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	VerifiedAt      *time.Time     `json:"verified_at,omitempty"`
 }
 
 // DomainID defines model for DomainID.
@@ -672,6 +690,24 @@ type DomainPage struct {
 	Domains    []Domain  `json:"domains"`
 	NextCursor *DomainID `json:"next_cursor,omitempty"`
 }
+
+// DomainRelease Current owner observations, not a release estimate. DNS authority release must be confirmed even after other blockers clear. Facts may change after observed_at.
+type DomainRelease struct {
+	Blockers []DomainReleaseBlocker `json:"blockers"`
+
+	// CertificateExpiresAt Latest actual retained certificate expiry, including expired evidence. This is not the release completion time; unresolved work can block release beyond this date.
+	CertificateExpiresAt *time.Time `json:"certificate_expires_at,omitempty"`
+
+	// CompletionUnknown True until the DNS authority owner has durably confirmed final release. No universal quarantine duration or completion date is promised.
+	CompletionUnknown bool      `json:"completion_unknown"`
+	ObservedAt        time.Time `json:"observed_at"`
+
+	// ReleasedAt Present only after the DNS authority owner confirms final release.
+	ReleasedAt *time.Time `json:"released_at,omitempty"`
+}
+
+// DomainReleaseBlocker defines model for DomainReleaseBlocker.
+type DomainReleaseBlocker string
 
 // DomainState defines model for DomainState.
 type DomainState string
@@ -844,23 +880,18 @@ type Problem struct {
 // ProblemCode defines model for Problem.Code.
 type ProblemCode string
 
-// PublicURLID defines model for PublicURLID.
-type PublicURLID = ResourceID
-
-// PublicURLScope defines model for PublicURLScope.
-type PublicURLScope string
-
-// PublisherEnrollmentResult defines model for PublisherEnrollmentResult.
+// PublisherEnrollmentResult Enrolled publisher key and its exact grant. Exactly one of team_id or guest_id identifies its owner. A guest receives only an exact service grant, bounded by the trial's fixed expiry; enrollment grants no service management or connector permission.
 type PublisherEnrollmentResult struct {
-	ClientId    string                        `json:"client_id"`
-	DomainId    *string                       `json:"domain_id,omitempty"`
-	GrantId     string                        `json:"grant_id"`
-	KeyId       string                        `json:"key_id"`
-	Kind        PublisherEnrollmentResultKind `json:"kind"`
-	Namespace   *string                       `json:"namespace,omitempty"`
-	PublicUrlId *string                       `json:"public_url_id,omitempty"`
-	ServiceId   *ServiceID                    `json:"service_id,omitempty"`
-	TeamId      string                        `json:"team_id"`
+	ClientId  string                        `json:"client_id"`
+	DomainId  *string                       `json:"domain_id,omitempty"`
+	ExpiresAt *time.Time                    `json:"expires_at,omitempty"`
+	GrantId   string                        `json:"grant_id"`
+	GuestId   externalRef0.GuestID          `json:"guest_id,omitempty"`
+	KeyId     string                        `json:"key_id"`
+	Kind      PublisherEnrollmentResultKind `json:"kind"`
+	Namespace *string                       `json:"namespace,omitempty"`
+	ServiceId *externalRef0.ServiceID       `json:"service_id,omitempty"`
+	TeamId    string                        `json:"team_id,omitempty"`
 }
 
 // PublisherEnrollmentResultKind defines model for PublisherEnrollmentResult.Kind.
@@ -968,7 +999,7 @@ type Team struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
-// TeamFeedbackPolicy defines model for TeamFeedbackPolicy.
+// TeamFeedbackPolicy Feedback always requires a signed-in identity and current preview access. A team may additionally require current team membership.
 type TeamFeedbackPolicy struct {
 	Authors TeamFeedbackPolicyAuthors `json:"authors"`
 }
@@ -1116,8 +1147,8 @@ type BearerProblem = Problem
 
 // IssueControlBrowserHandoffJSONBody defines parameters for IssueControlBrowserHandoff.
 type IssueControlBrowserHandoffJSONBody struct {
-	PublicUrlId  string `json:"public_url_id"`
 	RefreshToken string `json:"refresh_token"`
+	ServiceId    string `json:"service_id"`
 }
 
 // RequestCompanyAdmissionJSONBody defines parameters for RequestCompanyAdmission.
@@ -1966,10 +1997,17 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 	ClaimTeamDomain(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, body ClaimTeamDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReleaseTeamDomain Release one custom domain
+	// ReleaseTeamDomain Begin releasing one custom domain
 	//
 	// Corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
 	ReleaseTeamDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTeamDomain Read one team domain and its current release observations
+	//
+	// Requires current team access. Includes a released custom domain's final owner confirmation without making it available for domain selection. A missing domain is not proof of completed release.
+	//
+	// Corresponds with GET /v1/teams/{team_id}/domains/{domain_id} (the `GetTeamDomain` operationId).
+	GetTeamDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetTeamDefaultDomain Select a ready default domain
 	//
@@ -3286,11 +3324,28 @@ func (c *Client) ClaimTeamDomain(ctx context.Context, teamId TeamID, params *Cla
 	return c.Client.Do(req)
 }
 
-// ReleaseTeamDomain Release one custom domain
+// ReleaseTeamDomain Begin releasing one custom domain
 //
 // Corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
 func (c *Client) ReleaseTeamDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReleaseTeamDomainRequest(c.Server, teamId, domainId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetTeamDomain Read one team domain and its current release observations
+//
+// Requires current team access. Includes a released custom domain's final owner confirmation without making it available for domain selection. A missing domain is not proof of completed release.
+//
+// Corresponds with GET /v1/teams/{team_id}/domains/{domain_id} (the `GetTeamDomain` operationId).
+func (c *Client) GetTeamDomain(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTeamDomainRequest(c.Server, teamId, domainId)
 	if err != nil {
 		return nil, err
 	}
@@ -6073,6 +6128,47 @@ func NewReleaseTeamDomainRequest(server string, teamId TeamID, domainId DomainID
 	return req, nil
 }
 
+// NewGetTeamDomainRequest constructs an http.Request for the GetTeamDomain method
+func NewGetTeamDomainRequest(server string, teamId TeamID, domainId DomainID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "domain_id", domainId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/domains/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewSetTeamDefaultDomainRequest constructs an http.Request for the SetTeamDefaultDomain method
 func NewSetTeamDefaultDomainRequest(server string, teamId TeamID, domainId DomainID) (*http.Request, error) {
 	var err error
@@ -7202,12 +7298,21 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/teams/{team_id}/domains (the `ClaimTeamDomain` operationId).
 	ClaimTeamDomainWithResponse(ctx context.Context, teamId TeamID, params *ClaimTeamDomainParams, body ClaimTeamDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimTeamDomainResponse, error)
 
-	// ReleaseTeamDomainWithResponse Release one custom domain
+	// ReleaseTeamDomainWithResponse Begin releasing one custom domain
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/teams/{team_id}/domains/{domain_id} (the `ReleaseTeamDomain` operationId).
 	ReleaseTeamDomainWithResponse(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*ReleaseTeamDomainResponse, error)
+
+	// GetTeamDomainWithResponse Read one team domain and its current release observations
+	//
+	// Requires current team access. Includes a released custom domain's final owner confirmation without making it available for domain selection. A missing domain is not proof of completed release.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/teams/{team_id}/domains/{domain_id} (the `GetTeamDomain` operationId).
+	GetTeamDomainWithResponse(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*GetTeamDomainResponse, error)
 
 	// SetTeamDefaultDomainWithResponse Select a ready default domain
 	//
@@ -9605,6 +9710,54 @@ func (r ReleaseTeamDomainResponse) ContentType() string {
 	return ""
 }
 
+type GetTeamDomainResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Domain
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTeamDomainResponse) GetJSON200() *Domain {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetTeamDomainResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTeamDomainResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTeamDomainResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTeamDomainResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTeamDomainResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type SetTeamDefaultDomainResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11221,7 +11374,7 @@ func (c *ClientWithResponses) ClaimTeamDomainWithResponse(ctx context.Context, t
 	return ParseClaimTeamDomainResponse(rsp)
 }
 
-// ReleaseTeamDomainWithResponse Release one custom domain
+// ReleaseTeamDomainWithResponse Begin releasing one custom domain
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -11232,6 +11385,21 @@ func (c *ClientWithResponses) ReleaseTeamDomainWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseReleaseTeamDomainResponse(rsp)
+}
+
+// GetTeamDomainWithResponse Read one team domain and its current release observations
+//
+// Requires current team access. Includes a released custom domain's final owner confirmation without making it available for domain selection. A missing domain is not proof of completed release.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/teams/{team_id}/domains/{domain_id} (the `GetTeamDomain` operationId).
+func (c *ClientWithResponses) GetTeamDomainWithResponse(ctx context.Context, teamId TeamID, domainId DomainID, reqEditors ...RequestEditorFn) (*GetTeamDomainResponse, error) {
+	rsp, err := c.GetTeamDomain(ctx, teamId, domainId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTeamDomainResponse(rsp)
 }
 
 // SetTeamDefaultDomainWithResponse Select a ready default domain
@@ -13081,6 +13249,39 @@ func ParseReleaseTeamDomainResponse(rsp *http.Response) (*ReleaseTeamDomainRespo
 	return response, nil
 }
 
+// ParseGetTeamDomainResponse parses an HTTP response from a GetTeamDomainWithResponse call
+func ParseGetTeamDomainResponse(rsp *http.Response) (*GetTeamDomainResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTeamDomainResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Domain
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseSetTeamDefaultDomainResponse parses an HTTP response from a SetTeamDefaultDomainWithResponse call
 func ParseSetTeamDefaultDomainResponse(rsp *http.Response) (*SetTeamDefaultDomainResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -13677,9 +13878,12 @@ type ServerInterface interface {
 	// ClaimTeamDomain Begin claiming one domain
 	// (POST /v1/teams/{team_id}/domains)
 	ClaimTeamDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, params ClaimTeamDomainParams)
-	// ReleaseTeamDomain Release one custom domain
+	// ReleaseTeamDomain Begin releasing one custom domain
 	// (DELETE /v1/teams/{team_id}/domains/{domain_id})
 	ReleaseTeamDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID)
+	// GetTeamDomain Read one team domain and its current release observations
+	// (GET /v1/teams/{team_id}/domains/{domain_id})
+	GetTeamDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID)
 	// SetTeamDefaultDomain Select a ready default domain
 	// (POST /v1/teams/{team_id}/domains/{domain_id}/default)
 	SetTeamDefaultDomain(w http.ResponseWriter, r *http.Request, teamId TeamID, domainId DomainID)
@@ -15620,6 +15824,41 @@ func (siw *ServerInterfaceWrapper) ReleaseTeamDomain(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetTeamDomain operation middleware
+func (siw *ServerInterfaceWrapper) GetTeamDomain(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "domain_id" -------------
+	var domainId DomainID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "domain_id", r.PathValue("domain_id"), &domainId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "domain_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTeamDomain(w, r, teamId, domainId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SetTeamDefaultDomain operation middleware
 func (siw *ServerInterfaceWrapper) SetTeamDefaultDomain(w http.ResponseWriter, r *http.Request) {
 
@@ -16207,6 +16446,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/domains", wrapper.ClaimTeamDomain)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}/default", wrapper.SetTeamDefaultDomain)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}", wrapper.ReleaseTeamDomain)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}", wrapper.GetTeamDomain)
 
 	return m
 }

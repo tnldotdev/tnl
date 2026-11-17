@@ -10,15 +10,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/control/maintenance"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
-	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -26,7 +27,28 @@ import (
 
 type auditProjectRuntimeFixture interface {
 	connectors() (muxsession.Connector, muxsession.Connector)
-	waitReady(*testing.T, *integrationPublisher) publisher.Event
+	waitReady(*testing.T, *integrationPublisher) controlv1.ServiceRunPreparation
+	waitReadyHostname(*testing.T, *integrationPublisher, string) controlv1.ServiceRunPreparation
+}
+
+type auditServiceHTTPControl struct {
+	*publisheridentity.Native
+	visited chan<- string
+}
+
+func (c auditServiceHTTPControl) ReportServiceRunObservations(ctx context.Context, service, run string, number int64, token credentials.ServiceRunToken, batch serviceaudit.Batch) error {
+	err := c.Native.ReportServiceRunObservations(ctx, service, run, number, token, batch)
+	if err == nil {
+		for _, event := range batch.Events {
+			if event.EventType == "connection.open" && event.Outcome == "allowed" {
+				select {
+				case c.visited <- event.VisitorConnectionID:
+				default:
+				}
+			}
+		}
+	}
+	return err
 }
 
 func TestIntegrationServiceAuditRuntimePublic(t *testing.T) {
@@ -49,45 +71,65 @@ func TestIntegrationServiceAuditRuntimePublic(t *testing.T) {
 				fixture, inspect, visitor, process, owner = f, f.inspect, f.visitor, f.ingress, f.owner
 				identity, pebbleLog = f.identity, f.pebble.logPath
 			}
-			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "audit response") }))
+			var applications atomic.Int32
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				applications.Add(1)
+				_, _ = io.WriteString(w, "audit response")
+			}))
 			cleanupIntegrationHTTPServer(t, target, owner)
 			quic, tcp := fixture.connectors()
-			config := identity.publisherConfig(target.URL, quic, tcp)
+			_, config := identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{})
 			visited := make(chan string, 1)
-			config.AdmitVisitor = func(_ context.Context, v publisher.Visitor) error {
-				if !v.Readiness {
-					select {
-					case visited <- v.Header.VisitorConnectionID:
-					default:
-					}
-				}
-				return nil
-			}
+			config.Control = auditServiceHTTPControl{Native: config.Control.(*publisheridentity.Native), visited: visited}
 			handle := startOwnedIntegrationPublisher(t, owner, config, func() string { return integrationPublisherDiagnostics(inspect, pebbleLog) })
 			ready := fixture.waitReady(t, handle)
-			r, _ := http.NewRequest(http.MethodGet, ready.PublicURL+"/never-audit-path?private-token=never-audit-query", nil)
+			r, _ := http.NewRequest(http.MethodGet, serviceHTTPAddress(ready)+"/never-audit-path?private-token=never-audit-query", nil)
 			response, body, err := visitor.request(r)
 			if err != nil || response.StatusCode != 200 || string(body) != "audit response" {
 				t.Fatalf("actual public visitor failed: %v", err)
 			}
+			visitor.transport.CloseIdleConnections()
+			_, deniedConfig := identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{
+				Hostname: new("denied-" + identity.hostname),
+				Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{
+					Ip: new([]string{"192.0.2.0/24"}),
+				}},
+			})
+			deniedHandle := startOwnedIntegrationPublisher(t, owner, deniedConfig, func() string { return integrationPublisherDiagnostics(inspect, pebbleLog) })
+			deniedReady := fixture.waitReadyHostname(t, deniedHandle, "denied-"+identity.hostname)
+			deniedRequest, _ := http.NewRequest(http.MethodGet, serviceHTTPAddress(deniedReady)+"/must-not-reach-target", nil)
+			if _, _, err := visitor.request(deniedRequest); err == nil {
+				t.Fatal("ingress completed HTTP for a source outside the IP policy")
+			}
+			if applications.Load() != 1 {
+				t.Fatal("a locally denied source reached the application", applications.Load())
+			}
+			// the publisher closes its run before ingress's final shutdown flush.
+			stopIntegrationPublisher(t, deniedHandle)
+			stopIntegrationPublisher(t, handle)
+			stopIntegrationProcess(t, process)
 			var visitorID string
 			select {
 			case visitorID = <-visited:
-			case <-time.After(time.Second):
-				t.Fatal("real HTTP request did not reach its visitor admission hook")
+			default:
+				t.Fatal("joined publisher did not flush its authorized connection")
 			}
-			visitor.transport.CloseIdleConnections()
-			// the publisher closes its run before ingress's final shutdown flush.
-			stopIntegrationPublisher(t, handle)
-			stopIntegrationProcess(t, process)
 			var pairs int
 			err = inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_audit_events opened JOIN control.service_audit_events closed
 		    ON closed.visitor_connection_id=opened.visitor_connection_id AND closed.service_id=opened.service_id AND closed.run_id=opened.run_id
-		    WHERE opened.service_id=$1 AND opened.event_type='connection.open' AND opened.outcome='forwarded'
+		    WHERE opened.service_id=$1 AND opened.event_type='connection.open' AND opened.outcome='allowed'
 		    AND closed.event_type='connection.close' AND opened.source_ip='127.0.0.1' AND closed.source_ip=opened.source_ip
-		    AND opened.visitor_connection_id=$2`, ready.PublicURLID, visitorID).Scan(&pairs)
+		    AND opened.visitor_connection_id=$2 AND opened.run_id=$3`, ready.ServiceId, visitorID, ready.ServiceRunId).Scan(&pairs)
 			if err != nil || pairs < 1 {
 				t.Fatalf("real public producer not flushed into audit: %d %v", pairs, err)
+			}
+			var denials int
+			err = inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_audit_events
+				WHERE service_id=$1 AND event_type='connection.open' AND outcome='denied' AND reason='ip_policy'
+				AND source_ip='127.0.0.1' AND run_id IS NULL AND publisher_identity_id IS NULL
+				AND actor_identity_id IS NULL AND device_id IS NULL`, deniedReady.ServiceId).Scan(&denials)
+			if err != nil || denials != 1 {
+				t.Fatal("joined ingress did not flush its run-less HTTP selection denial", denials, err)
 			}
 		})
 	}
@@ -99,7 +141,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 		t.Run(fmt.Sprintf("standalone=%t", standalone), func(t *testing.T) {
 			opened := make(chan privateObservation, 8)
 			f := newServiceRuntimeFixture(t, standalone, opened)
-			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "audit-private", "audit-private", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "audit-private", "audit-private", controlv1.ServiceMetadata{Protocol: controlv1.Tcp}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -107,7 +149,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.authority, e.EnrollmentKey)
+			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{Services: f.identity.routes}, f.identity.authority, e.EnrollmentKey)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,7 +158,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			pubCtx, stopPub := context.WithCancel(t.Context())
 			ready, pubDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				pubDone <- publisherservice.Publish(pubCtx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target.address,
+				pubDone <- publisherservice.Publish(pubCtx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target.address,
 					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 			}()
 			t.Cleanup(func() {
@@ -255,8 +297,8 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			}
 			if standalone {
 				oldID := serviceaudit.NewID()
-				_, err = f.inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,service_kind,event_type,occurred_at,received_at)
-				    VALUES($1,$2,$3,'service','connection.close',$4,$4)`, oldID, service.TeamId, service.Id, time.Now().Add(-serviceaudit.Retention-time.Hour))
+				_, err = f.inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,event_type,occurred_at,received_at)
+				    VALUES($1,$2,$3,'connection.close',$4,$4)`, oldID, service.TeamId, service.Id, time.Now().Add(-serviceaudit.Retention-time.Hour))
 				if err != nil {
 					t.Fatal(err)
 				}
