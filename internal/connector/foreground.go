@@ -279,7 +279,7 @@ func runConnectorLifecycle(ctx context.Context, listener net.Listener, job insta
 			return nil
 		})
 		_ = listener.Close()
-		if !connectorstream.IsMetadataReload(err) {
+		if !connectorstream.MetadataReloadOnly(err) {
 			return err
 		}
 		if lifecycle.starting != nil {
@@ -372,7 +372,7 @@ func connectorShutdownHandoff(parent context.Context) (context.Context, func(err
 		return original
 	})
 	return ctx, func(result error) {
-		if connectorstream.IsMetadataReload(result) {
+		if connectorstream.MetadataReloadOnly(result) {
 			return
 		}
 		mu.Lock()

@@ -11,6 +11,7 @@ import (
 
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
@@ -152,9 +153,23 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, p.Close(config.cleanup.context())) }()
+	defer func() {
+		if err := p.Close(config.cleanup.context()); err != nil {
+			result = errors.Join(result, &CleanupError{Err: err})
+		}
+	}()
 	finish(nil)
 	err = consume(p.ctx, p.Forward)
+	cause := context.Cause(p.ctx)
+	if MetadataReloadOnly(cause) {
+		// this owner supplied the exact stop observed by its consumer. omit
+		// the derived generic failure only for that clean retirement; an
+		// independent operation or unowned cancellation remains a failure.
+		if err == nil || MetadataReloadOnly(err) && failure.Only(err, cause) {
+			return errors.Join(cause, err)
+		}
+		return errors.Join(ErrServiceConnection, cause, err)
+	}
 	if ctx.Err() != nil {
 		if context.Cause(ctx) == context.Canceled {
 			return err // the consumer already joins its owned work and classifies its stop.
@@ -164,7 +179,7 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 	if p.ctx.Err() != nil {
 		// retain the established connection's retirement boundary regardless of
 		// which authority or transport worker ends it first, plus its exact cause.
-		return errors.Join(ErrServiceConnection, context.Cause(p.ctx), err)
+		return errors.Join(ErrServiceConnection, cause, err)
 	}
 	return err
 }

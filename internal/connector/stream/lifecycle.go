@@ -1,6 +1,11 @@
 package stream
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+)
 
 // MetadataReloadError ends a runner whose approved record is stale. callers
 // must clear readiness, fetch and approve current metadata, then start a new
@@ -21,6 +26,34 @@ func (MetadataReloadError) GoString() string { return metadataReloadMessage }
 func IsMetadataReload(err error) bool {
 	var reload *MetadataReloadError
 	return errors.As(err, &reload) && reload != nil
+}
+
+// MetadataReloadOnly permits metadata continuation only when every cause is a
+// metadata stop. cleanup reports remain failures even if they wrap metadata;
+// broad recognition through IsMetadataReload does not make a result clean.
+func MetadataReloadOnly(err error) bool {
+	switch cause := err.(type) {
+	case *MetadataReloadError:
+		return cause != nil
+	case *CleanupError, *tunnel.SessionCleanupError, *muxsession.QUICTransportCloseError:
+		return false
+	case interface{ Unwrap() []error }:
+		children := cause.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !MetadataReloadOnly(child) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		if child := cause.Unwrap(); child != nil {
+			return MetadataReloadOnly(child)
+		}
+	}
+	return false
 }
 
 func metadataReload(service string, approved, selected int64) error {

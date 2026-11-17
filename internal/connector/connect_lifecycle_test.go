@@ -40,7 +40,7 @@ func TestConnectStartsBeforeAuthorization(t *testing.T) {
 }
 
 func TestConnectMetadataLifecycle(t *testing.T) {
-	for _, scenario := range []string{"tls-on-off", "trust-revision", "public-to-private", "private-to-public", "wrapped", "joined", "revoked", "protocol-change", "protocol-constraint", "ordinary-error"} {
+	for _, scenario := range []string{"tls-on-off", "trust-revision", "public-to-private", "private-to-public", "wrapped", "joined", "joined-reloads", "revoked", "protocol-change", "protocol-constraint", "ordinary-error"} {
 		t.Run(scenario, func(t *testing.T) {
 			trust, err := targettrust.NewCache(nil).Capture(t.Context(), "", "localhost:443", config.TrustSource{CA: "system"})
 			if err != nil {
@@ -121,6 +121,8 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 						reload = fmt.Errorf("runner: %w", reload)
 					case "joined":
 						reload = errors.Join(reload, io.ErrClosedPipe)
+					case "joined-reloads":
+						reload = errors.Join(reload, fmt.Errorf("second metadata observation: %w", &connectorstream.MetadataReloadError{ServiceID: job.ServiceID, ApprovedRevision: 1, SelectedRevision: 2}))
 					case "ordinary-error":
 						reload = stop
 					}
@@ -142,6 +144,10 @@ func TestConnectMetadataLifecycle(t *testing.T) {
 			case "ordinary-error":
 				if !errors.Is(err, stop) || calls != 1 || reads != 0 {
 					t.Fatal("ordinary failure restarted the runner")
+				}
+			case "joined":
+				if !errors.Is(err, io.ErrClosedPipe) || !connectorstream.IsMetadataReload(err) || calls != 1 || reads != 0 {
+					t.Fatal("mixed metadata and cleanup failure restarted the runner or lost a cause", err)
 				}
 			default:
 				if !errors.Is(err, stop) || calls != 2 || reads != 1 {
