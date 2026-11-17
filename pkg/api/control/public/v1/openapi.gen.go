@@ -3769,17 +3769,19 @@ type ServiceCertificateInstalledRequest struct {
 
 // ServiceCertificateIssuance defines model for ServiceCertificateIssuance.
 type ServiceCertificateIssuance struct {
-	CertificatePem      *string                  `json:"certificate_pem,omitempty"`
-	CertificatePlan     CertificatePlan          `json:"certificate_plan"`
-	Id                  IssuanceID               `json:"id"`
-	NotAfter            *time.Time               `json:"not_after,omitempty"`
-	NotBefore           *time.Time               `json:"not_before,omitempty"`
-	PublisherIdentityId string                   `json:"publisher_identity_id"`
-	RetryAt             *time.Time               `json:"retry_at,omitempty"`
-	RunNumber           int64                    `json:"run_number,string"`
-	ServiceId           ServiceID                `json:"service_id"`
-	ServiceRunId        ServiceRunID             `json:"service_run_id"`
-	State               CertificateIssuanceState `json:"state"`
+	CertificatePem      *string         `json:"certificate_pem,omitempty"`
+	CertificatePlan     CertificatePlan `json:"certificate_plan"`
+	Id                  IssuanceID      `json:"id"`
+	NotAfter            *time.Time      `json:"not_after,omitempty"`
+	NotBefore           *time.Time      `json:"not_before,omitempty"`
+	PublisherIdentityId string          `json:"publisher_identity_id"`
+
+	// RetryAt Do not poll this pending issuance before this time. Usable certificate material can be installed and acknowledged immediately while DNS challenge cleanup continues.
+	RetryAt      *time.Time               `json:"retry_at,omitempty"`
+	RunNumber    int64                    `json:"run_number,string"`
+	ServiceId    ServiceID                `json:"service_id"`
+	ServiceRunId ServiceRunID             `json:"service_run_id"`
+	State        CertificateIssuanceState `json:"state"`
 }
 
 // ServiceClientCertificate defines model for ServiceClientCertificate.

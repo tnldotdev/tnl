@@ -213,7 +213,7 @@ func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.
 		}
 		delay := time.Second
 		if issuance.RetryAt != nil {
-			delay = max(100*time.Millisecond, min(5*time.Second, time.Until(*issuance.RetryAt)))
+			delay = max(100*time.Millisecond, time.Until(*issuance.RetryAt))
 		}
 		if err := waitCertificateRetry(ctx, delay); err != nil {
 			return current, err

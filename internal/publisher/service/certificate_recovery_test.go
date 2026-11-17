@@ -292,6 +292,93 @@ func TestServiceCertificatePendingPollingKeepsOriginalDeadline(t *testing.T) {
 	})
 }
 
+func TestServiceCertificateRetryAtIsNotBeforePolling(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		certificates, control, prepared := certificateRecoveryFixture(t)
+		started := time.Now()
+		deadline := started.Add(65 * time.Second)
+		var issued controlv1.ServiceCertificateIssuance
+		creates, polls, acknowledgments := 0, 0, 0
+		pending := func() controlv1.ServiceCertificateIssuance {
+			result := issued
+			result.State, result.CertificatePem, result.NotBefore, result.NotAfter = controlv1.CertificateIssuanceStatePending, nil, nil, nil
+			result.RetryAt = new(time.Now().Add(time.Minute))
+			return result
+		}
+		control.create = func(csr []byte, _ string) (controlv1.ServiceCertificateIssuance, error) {
+			creates++
+			var err error
+			issued, err = certificateFixtureIssuance(control.lifecycleControl, csr, nil)
+			return pending(), err
+		}
+		control.get = func(ctx context.Context, id string) (controlv1.ServiceCertificateIssuance, error) {
+			polls++
+			if elapsed := time.Since(started); elapsed != time.Minute {
+				t.Error("polled before the advertised not-before time", elapsed)
+			}
+			if until, ok := ctx.Deadline(); !ok || !until.Equal(deadline) || id != issued.Id {
+				t.Error("poll changed the original deadline or issuance", until, id)
+			}
+			return pending(), nil
+		}
+		control.installed = func(string, time.Time) error { acknowledgments++; return nil }
+		ctx, cancel := context.WithDeadline(t.Context(), deadline)
+		defer cancel()
+		if err := certificates.Maintain(ctx); !errors.Is(err, context.DeadlineExceeded) ||
+			creates != 1 || polls != 1 || acknowledgments != 0 || !time.Now().Equal(deadline) {
+			t.Fatal("not-before polling changed the owner budget or repeated pending work", creates, polls, acknowledgments, err)
+		}
+		certificateAssertNoMaterial(t, certificates, prepared)
+		lock, err := certificates.Cache.Lock(t.Context())
+		if err != nil {
+			t.Fatal("canceled poll retained its issuance lock", err)
+		}
+		if err := lock.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestServiceCertificateUsableMaterialDoesNotWaitForCleanupRetryAt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		certificates, control, prepared := certificateRecoveryFixture(t)
+		started := time.Now()
+		acknowledgments, polls := 0, 0
+		control.create = func(csr []byte, _ string) (controlv1.ServiceCertificateIssuance, error) {
+			issued, err := certificateFixtureIssuance(control.lifecycleControl, csr, nil)
+			issued.RetryAt = new(started.Add(time.Minute))
+			return issued, err
+		}
+		control.get = func(context.Context, string) (controlv1.ServiceCertificateIssuance, error) {
+			polls++
+			return controlv1.ServiceCertificateIssuance{}, errors.New("installable material did not need polling")
+		}
+		control.installed = func(string, time.Time) error {
+			acknowledgments++
+			return nil
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		certificates.Install = func(certificate tls.Certificate) error {
+			err := prepared.installManagedCertificate(certificate)
+			cancel()
+			return err
+		}
+		if err := certificates.Maintain(ctx); !errors.Is(err, context.Canceled) ||
+			acknowledgments != 1 || polls != 0 || !time.Now().Equal(started) {
+			t.Fatal("usable material waited for cleanup polling instead of exact acknowledgment and installation", acknowledgments, polls, err)
+		}
+		current, found, err := certificates.Cache.Current(t.Context(), certificates.Hostname)
+		if err != nil || !found {
+			t.Fatal("acknowledged material was not durably promoted", found, err)
+		}
+		serving, err := prepared.currentCertificate()
+		if err != nil || !bytes.Equal(serving.Certificate[0], current.Certificate.Certificate[0]) {
+			t.Fatal("usable acknowledged certificate was unavailable for visitor TLS", err)
+		}
+	})
+}
+
 func TestServiceCertificateTerminalFailureRetriesOnlyOnce(t *testing.T) {
 	for _, terminal := range []controlv1.CertificateIssuanceState{controlv1.CertificateIssuanceStateFailed, controlv1.CertificateIssuanceStateCanceled} {
 		t.Run(string(terminal), func(t *testing.T) {
