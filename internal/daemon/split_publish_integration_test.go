@@ -16,13 +16,17 @@ import (
 
 func TestIntegrationSplitPublishAndVisit(t *testing.T) {
 	fixture := newSplitPublishFixture(t, "split")
+	var targetRequests atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		targetRequests.Add(1)
 		response.Header().Set("X-Tnl-Integration", "split")
 		_, _ = io.WriteString(response, request.URL.RequestURI())
 	}))
 	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
+	// use only the publisher event: no applied-routing wait, warm-up request,
+	// or caller retry may make the first public request succeed.
 	ready := waitForPublisherReady(t, handle)
 
 	response, body, err := fixture.visitor.requestURL(http.MethodGet, serviceHTTPAddress(ready)+"/through-split?source=integration", nil)
@@ -34,6 +38,9 @@ func TestIntegrationSplitPublishAndVisit(t *testing.T) {
 		t.Fatalf("split visitor response = %s, headers %#v, body %q", response.Status, response.Header, body)
 	}
 	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
+	if len(response.TLS.VerifiedChains) == 0 || targetRequests.Load() != 1 {
+		t.Fatal("first split request did not use verified visitor TLS and exactly one target request", targetRequests.Load())
+	}
 	assertSplitRoutePlacement(t, fixture.inspect, ready.ServiceId, ready.RunNumber)
 	assertRuntimeOperations(t, []*integrationProcess{fixture.relayA.process, fixture.relayB.process}, map[string]uint64{
 		"RelayRegister": 2, "RelayRenewLease": 1, "RelayAdmitPublisherConnection": 2, "RelayOpenVisitorStream": 1,

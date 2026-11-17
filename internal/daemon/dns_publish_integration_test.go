@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,13 +57,16 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 		})
 		return ctx.Err()
 	})
+	var targetRequests atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		targetRequests.Add(1)
 		_, _ = io.WriteString(response, "real DNS publish")
 	}))
 	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 
 	quic, tcp := fixture.connectors()
 	finalizing := make(chan controlv1.ServiceCertificateIssuance, 1)
+	publicationStarted := time.Now()
 	_, config := fixture.identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{})
 	config.Control = &certificateObservingControlClient{
 		Native: config.Control.(*publisheridentity.Native),
@@ -84,7 +89,38 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	}
 	// finalizing can finish before the publisher's next poll; readiness must not
 	// wait for DNS challenge cleanup to finish.
-	ready := fixture.waitReady(t, handle)
+	ready := waitForPublisherReady(t, handle)
+	readyAt := time.Now()
+	// resolve the service name against the configured authoritative DNS, not
+	// the fixture's usual pinned ingress dial. only the disposable front port
+	// differs from public 443; DNS still selects its IP and TLS checks its name.
+	_, frontPort, err := net.SplitHostPort(fixture.publicIngressAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialer := &net.Dialer{Resolver: &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, dnsFixture.address)
+	}}}
+	fixture.visitor.transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		hostname, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		if hostname != ready.Hostname || port != "443" {
+			return nil, fmt.Errorf("unexpected first public destination %q", address)
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(hostname, frontPort))
+	}
+	first, body, err := fixture.visitor.requestURLContext(t.Context(), http.MethodGet, serviceHTTPAddress(ready), nil)
+	if err != nil {
+		t.Fatal("first configured-DNS request after Ready", err)
+	}
+	if first.StatusCode != http.StatusOK || string(body) != "real DNS publish" ||
+		first.TLS == nil || len(first.TLS.VerifiedChains) == 0 || targetRequests.Load() != 1 {
+		t.Fatal("first configured-DNS request did not reach the target once over verified TLS", first.Status, string(body), targetRequests.Load())
+	}
+	t.Logf("one service publication to Ready=%s, Ready to first configured-DNS HTTPS response=%s; local authoritative DNS, not global propagation",
+		readyAt.Sub(publicationStarted), time.Since(readyAt))
 	select {
 	case issuance := <-finalizing:
 		if issuance.CertificatePem != nil || issuance.NotBefore != nil || issuance.NotAfter != nil {

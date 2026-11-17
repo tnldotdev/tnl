@@ -34,6 +34,7 @@ type splitPublishFixture struct {
 	pebble                   integrationPebble
 	roots                    *tls.Config
 	controlConfig            daemonconfig.Config
+	publicIngressAddress     string
 	controlOptions           integrationProcessOptions
 	ingressConfig            daemonconfig.Config
 	control, ingress         *integrationProcess
@@ -180,7 +181,8 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		owner:          owner, databaseURL: databaseURL, inspect: inspect, pebble: pebble,
 		roots:         &tls.Config{RootCAs: relayRoots, MinVersion: tls.VersionTLS13},
 		controlConfig: controlConfig, controlOptions: controlOptions, ingressConfig: ingressConfig,
-		control: control, serviceHTTP: serviceHTTP,
+		publicIngressAddress: publicIngressAddress,
+		control:              control, serviceHTTP: serviceHTTP,
 		relayA: splitRelayFixture{config: relayAConfig, listeners: relayASockets}, relayB: splitRelayFixture{config: relayBConfig, listeners: relayBSockets},
 	}
 	f.relayA.process = f.startRelay(t, relayAConfig)
