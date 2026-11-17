@@ -186,6 +186,28 @@ describe("automatic browser/worker Go connector binding", () => {
     expect(f.events.at(-1)).toBe("runtime:close");
   });
 
+  test("portable fetch accepts a streamed upload without caller-supplied platform options", async () => {
+    fixture();
+    const remote = deployment();
+    try {
+      const connection = await remote.connect("web");
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("first\n"));
+          controller.enqueue(new TextEncoder().encode("last\n"));
+          controller.close();
+        },
+      });
+      const response = await connection.fetch("/upload", { method: "POST", body });
+      expect(await response.json()).toMatchObject({
+        method: "POST",
+        body: "first\nlast\n",
+      });
+    } finally {
+      await remote.close();
+    }
+  });
+
   test("PostgreSQL portable adapter only receives a stream after Go TLS setup", async () => {
     const f = fixture();
     const remote = deployment();

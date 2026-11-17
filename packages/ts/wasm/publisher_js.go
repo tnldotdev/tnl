@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -185,6 +186,8 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 	ready, closed := newPublisherDeferred(), newPublisherDeferred()
 	prepared.Config.CertificateStore = storage
 	prepared.Config.WebSocketOnly = true
+	// the host owns relay TLS; native TLS options cannot cross this boundary.
+	prepared.Config.RelayWebSocket = muxsession.WebSocketConnector{}
 	prepared.Config.Ready = func() error { ready.finish(nil); return nil }
 	handle := js.Global().Get("Object").New()
 	handle.Set("url", "https://"+prepared.Service.Endpoint.Hostname)

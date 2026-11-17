@@ -337,9 +337,13 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
             (async () => {
               let request: Request;
               try {
+                const requestOptions: RequestInit & { duplex?: "half" } = {
+                  ...init,
+                  ...(init?.body instanceof ReadableStream ? { duplex: "half" } : {}),
+                };
                 request = new Request(
                   input instanceof Request ? input : new URL(input.toString(), origin),
-                  init,
+                  requestOptions,
                 );
               } catch {
                 throw new TnlError("sdk.configuration_invalid");
