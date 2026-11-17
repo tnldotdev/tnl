@@ -139,7 +139,6 @@ without receiving that content. The publisher HTTP frontend and CLI compose
 those decisions with the same SQLite owner; a decision never outlives its original
 deadline while waiting for local state. There is no cross-machine feedback store.
 
-
 ## find the code
 
 ```text
