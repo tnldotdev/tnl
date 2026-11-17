@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -11,6 +12,84 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+type terminalBufferedReply struct {
+	muxsession.Stream
+	buffer bytes.Buffer
+}
+
+func (s *terminalBufferedReply) Write(data []byte) (int, error) { return s.buffer.Write(data) }
+
+func TestConnectorTerminalAbortBufferedResultNeedsActualDelivery(t *testing.T) {
+	for _, delivered := range []bool{false, true} {
+		t.Run(map[bool]string{false: "undelivered", true: "delivered"}[delivered], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				client, server := newMemoryPair(t)
+				writer, control := permissionControlPair(t, client, server)
+				started := time.Now()
+				until := started.Add(time.Second)
+				ctx, cancel := context.WithDeadline(t.Context(), until)
+				defer cancel()
+				done := make(chan terminalTestCall, 1)
+				go func() {
+					exchange, err := writer.Abort(ctx, tunnelv1.ConnectorVisitorTerminalKey{
+						VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", DeliveryGeneration: 7})
+					done <- terminalTestCall{exchange, err}
+				}()
+				message, err := tunnelv1.ReadConnectorControlMessage(control)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := message.(tunnelv1.ConnectorVisitorAbort).TerminalRequest()
+				buffered := &terminalBufferedReply{Stream: control}
+				responder := &ConnectorPermissionResponder{ctx: tunnelContext(t), stream: buffered, gate: make(chan struct{}, 1),
+					fail: func(failure *ConnectorControlFailure) { t.Error("buffered response failed", failure) }}
+				if err := responder.Result(ctx, terminalTestResult(request, tunnelv1.ConnectorTerminalAccepted)); err != nil {
+					t.Fatal("local response write did not succeed", err)
+				}
+				synctest.Wait()
+				select {
+				case result := <-done:
+					t.Fatal("a locally buffered result fabricated actual delivery", result)
+				default:
+				}
+				if delivered {
+					flushed := make(chan error, 1)
+					go func() {
+						_, err := io.Copy(control, &buffered.buffer)
+						flushed <- err
+					}()
+					message, err := tunnelv1.ReadConnectorControlMessage(control)
+					if err != nil {
+						t.Fatal(err)
+					}
+					observed, ok := message.(tunnelv1.ConnectorVisitorTerminalObserved)
+					if !ok || observed.TerminalRequest() != request || observed.Outcome != tunnelv1.ConnectorTerminalAccepted {
+						t.Fatal("delivered response lost its exact observation", message)
+					}
+					if err := <-flushed; err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					time.Sleep(time.Second)
+				}
+				got := <-done
+				if delivered {
+					if got.err != nil || !got.exchange.Matched || !got.exchange.ObservedWritten ||
+						got.exchange.Result.TerminalRequest() != request || !time.Now().Equal(started) {
+						t.Fatal("actual delivered response did not finish its matched exchange", got)
+					}
+				} else if !errors.Is(got.err, context.DeadlineExceeded) || got.exchange.Matched || got.exchange.ObservedWritten ||
+					!time.Now().Equal(until) || buffered.buffer.Len() == 0 {
+					t.Fatal("undelivered response lost its entered deadline or became observed", got)
+				}
+				if writer.Err() != nil || responder.closed {
+					t.Fatal("a missing visitor response silently stopped either control owner", writer.Err(), responder.closed)
+				}
+			})
+		})
+	}
+}
 
 func TestConnectorTerminalAbortDistinguishesIdleFromEnteredMissingResult(t *testing.T) {
 	for _, entered := range []bool{false, true} {
