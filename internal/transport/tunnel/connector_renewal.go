@@ -141,7 +141,7 @@ func (s *Session) HandleConnectorLegControl(ctx context.Context, activate func(c
 // discard the queued rejection. wait for the peer to close its rejected stream,
 // spending at most one second of the current control exchange's budget.
 func drainConnectorRejection(ctx context.Context, control muxsession.Stream) {
-	until := time.Now().Add(time.Second)
+	until := time.Now().Add(rejectionDrainTimeout)
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(until) {
 		until = deadline
 	}

@@ -128,10 +128,11 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 	if transport == nil {
 		return dialResult{err: errors.New("tunnel: transport session is required")}
 	}
+	closeTransport := sync.OnceValue(transport.Close)
 	defer func() {
 		if result.err != nil {
 			result.err = controlContextError(ctx, result.err)
-			result.cleanupErr = transport.Close()
+			result.cleanupErr = closeTransport()
 		}
 	}()
 	if !native && hello.Role == tunnelv1.Connector {
@@ -146,7 +147,13 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 		}
 	}
 	started := time.Now()
-	control, err := transport.OpenStream(ctx)
+	setupCtx := ctx
+	if hello.Role == tunnelv1.Publisher {
+		var cancel context.CancelFunc
+		setupCtx, cancel = context.WithTimeout(ctx, handshakeTimeout)
+		defer cancel()
+	}
+	control, err := transport.OpenStream(setupCtx)
 	if err != nil {
 		return dialResult{err: fmt.Errorf("tunnel: open control stream: %w", err)}
 	}
@@ -154,7 +161,7 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 	if native {
 		interrupted = new(controlDeadlineStop)
 	}
-	finish, err := setupDeadlineObserved(ctx, control, interrupted)
+	finish, err := setupDeadlineObserved(setupCtx, control, interrupted)
 	if err != nil {
 		return dialResult{err: err}
 	}
@@ -179,10 +186,14 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 			stoppedBy:          interrupted.operationCause(err)}
 	}
 	if response.Type == tunnelv1.Error {
+		rejection := &ProtocolError{Code: response.Code}
+		if hello.Role == tunnelv1.Publisher {
+			return dialResult{err: errors.Join(rejection, acknowledgePublisherRejection(setupCtx, transport, control, closeTransport))}
+		}
 		if native {
 			_ = control.CloseWrite()
 		}
-		return dialResult{err: &ProtocolError{Code: response.Code}}
+		return dialResult{err: rejection}
 	}
 	if response.Type != tunnelv1.HelloAccepted {
 		return dialResult{err: errors.New("tunnel: unexpected hello response")}
@@ -217,9 +228,10 @@ func AcceptWithResult(ctx context.Context, transport muxsession.Session, authent
 	}
 	setupCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
+	closeTransport := sync.OnceValue(transport.Close)
 	defer func() {
 		if err != nil {
-			err = errors.Join(controlContextError(ctx, err), transport.Close())
+			err = errors.Join(controlContextError(ctx, err), closeTransport())
 		}
 	}()
 	control, err := transport.AcceptStream(setupCtx)
@@ -256,6 +268,9 @@ func AcceptWithResult(ctx context.Context, transport muxsession.Session, authent
 		var protocolError *ProtocolError
 		if errors.As(authErr, &protocolError) && validAuthenticationError(protocolError.Code) {
 			code = protocolError.Code
+		}
+		if hello.Role == tunnelv1.Publisher {
+			return nil, tunnelv1.Message{}, errors.Join(authErr, rejectPublisherHello(setupCtx, control, code, closeTransport))
 		}
 		if writeProtocolError(control, code) == nil && hello.Role == tunnelv1.Connector {
 			drainConnectorRejection(setupCtx, control)

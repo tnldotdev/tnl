@@ -13,8 +13,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// this fixture models only session closure and ordered stream delivery. transport
-// half-close/reset behavior is tested against real QUIC and TLS/yamux elsewhere.
+// this fixture models session closure and ordered directional stream delivery.
+// transport half-close/reset behavior is tested against real quic and tls/yamux.
 type memoryPair struct {
 	mu       sync.Mutex
 	done     chan struct{}
@@ -46,17 +46,22 @@ func (s *memorySession) OpenStream(ctx context.Context) (muxsession.Stream, erro
 	if err := context.Cause(ctx); err != nil {
 		return nil, err
 	}
-	local, remote := net.Pipe()
-	s.streams = append(s.streams, local, remote)
-	left, right := &memoryStream{Conn: local, deadline: s.deadline}, &memoryStream{Conn: remote, deadline: s.deadline}
+	localRead, remoteWrite := net.Pipe()
+	remoteRead, localWrite := net.Pipe()
+	left := &memoryStream{Conn: localRead, writer: localWrite, deadline: s.deadline}
+	right := &memoryStream{Conn: remoteRead, writer: remoteWrite, deadline: s.deadline}
+	directions := new(sync.Mutex)
+	left.directions, right.directions = directions, directions
+	left.peer, right.peer = right, left
+	s.streams = append(s.streams, left, right)
 	_ = left.SetDeadline(s.deadline)
 	_ = right.SetDeadline(s.deadline)
 	select {
 	case s.peer.incoming <- right:
 		return left, nil
 	default:
-		_ = local.Close()
-		_ = remote.Close()
+		_ = left.Close()
+		_ = right.Close()
 		return nil, errors.New("memory fixture stream capacity exceeded")
 	}
 }
@@ -97,18 +102,77 @@ func (s *memorySession) Err() error {
 
 type memoryStream struct {
 	net.Conn
-	deadline time.Time
+	writer     net.Conn
+	deadline   time.Time
+	directions *sync.Mutex
+	peer       *memoryStream
+	readEnded  bool
+	writeEnded bool
+	closed     bool
 }
 
 func (s *memoryStream) SetDeadline(at time.Time) error {
 	if at.IsZero() || at.After(s.deadline) {
 		at = s.deadline
 	}
-	return s.Conn.SetDeadline(at)
+	return errors.Join(s.SetReadDeadline(at), s.SetWriteDeadline(at))
 }
 
-// the in-memory pipe has no half-close; admission frames are length-delimited.
-func (s *memoryStream) CloseWrite() error  { return nil }
+func (s *memoryStream) Write(p []byte) (int, error) {
+	if s.writer != nil {
+		return s.writer.Write(p)
+	}
+	return s.Conn.Write(p)
+}
+
+func (s *memoryStream) SetWriteDeadline(at time.Time) error {
+	if s.writer != nil {
+		s.directions.Lock()
+		defer s.directions.Unlock()
+		if s.writeEnded && !s.closed {
+			return nil
+		}
+		return s.writer.SetWriteDeadline(at)
+	}
+	return s.Conn.SetWriteDeadline(at)
+}
+
+func (s *memoryStream) SetReadDeadline(at time.Time) error {
+	if s.writer != nil {
+		s.directions.Lock()
+		defer s.directions.Unlock()
+		// unlike a tcp stream, a net.Pipe endpoint cannot change deadlines
+		// after its writer closes. this direction already has a known EOF.
+		if s.readEnded && !s.closed {
+			return nil
+		}
+	}
+	return s.Conn.SetReadDeadline(at)
+}
+
+func (s *memoryStream) CloseWrite() error {
+	if s.writer != nil {
+		s.directions.Lock()
+		defer s.directions.Unlock()
+		s.writeEnded = true
+		s.peer.readEnded = true
+		return s.writer.Close()
+	}
+	// single-pipe fixtures exercise a bounded read, not directional closure.
+	return nil
+}
+
+func (s *memoryStream) Close() error {
+	var writeErr error
+	if s.writer != nil {
+		s.directions.Lock()
+		defer s.directions.Unlock()
+		s.closed = true
+		writeErr = s.writer.Close()
+	}
+	return errors.Join(s.Conn.Close(), writeErr)
+}
+
 func (s *memoryStream) Reset(uint32) error { return s.Close() }
 
 func tunnelContext(t *testing.T) context.Context {
