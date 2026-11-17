@@ -232,11 +232,18 @@ func (p *connectorConnection) closePreparedForRetirement(prepared *PreparedConne
 	now := time.Now()
 	expired := !p.until.After(now) || !p.run.ValidUntil.After(now) || !p.permission.ExpiresAt.After(now)
 	p.mu.Unlock()
+	prepared.mu.Lock()
+	defer prepared.mu.Unlock()
+	// the permission worker was idle when this exact pair owner stopped. keep
+	// its serving cause for direct callers, but require only physical cleanup
+	// here. neither joined results nor an entered renewal get this provenance.
+	if stopped, ok := prepared.permissionErr.(*preparedPermissionOwnerStop); ok && stopped != nil &&
+		stopped.owner == prepared && stopped.lifetime == p.ctx && prepared.ctx == p.ctx && p.ctx.Err() != nil {
+		return prepared.closeErr
+	}
 	if !expired {
 		return result
 	}
-	prepared.mu.Lock()
-	defer prepared.mu.Unlock()
 	// Close still exposes expiry to its direct caller. only pair-owner
 	// retirement distinguishes this exact idle stop from failed cleanup.
 	// never inspect the physical error tree or an entered renewal's result.

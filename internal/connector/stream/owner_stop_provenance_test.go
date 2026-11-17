@@ -228,3 +228,59 @@ func TestConnectorOwnerStopKeepsIndependentFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestConnectorOwnerStopRejectsForeignAndJoinedObservations(t *testing.T) {
+	for _, source := range []string{"leg", "prepared"} {
+		for _, kind := range []string{"foreign owner", "foreign lifetime", "wrapped", "joined"} {
+			t.Run(source+"/"+kind, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					f := newOwnerStopFixture(t)
+					p := f.p
+					p.cancel(f.cause)
+					foreign, stopForeign := context.WithCancelCause(t.Context())
+					stopForeign(f.cause) // the same error pointer is not operation provenance.
+					independent := errors.New("independent joined idle observation")
+					var observation, required error
+					if source == "leg" {
+						marker := p.idleLegStop()
+						switch kind {
+						case "foreign owner":
+							marker = (&connectorConnection{ctx: p.ctx}).idleLegStop()
+						case "foreign lifetime":
+							marker = &connectorIdleLegStop{owner: p, lifetime: foreign}
+						}
+						observation = marker
+					} else {
+						prepared := ownerStopPrepared(t, p, &actionExpiryConn{})
+						synctest.Wait()
+						marker := &preparedPermissionOwnerStop{owner: prepared, lifetime: p.ctx}
+						switch kind {
+						case "foreign owner":
+							marker.owner = &PreparedConnector{}
+						case "foreign lifetime":
+							marker.lifetime = foreign
+						}
+						observation = marker
+						p.warm = &connectorUse{prepared: prepared}
+					}
+					required = observation
+					switch kind {
+					case "wrapped":
+						observation = fmt.Errorf("received operation: %w", observation)
+					case "joined":
+						observation = errors.Join(observation, independent)
+						required = independent
+					}
+					if source == "leg" {
+						p.recordLegRecoveryFailure(observation, context.Cause(p.ctx))
+					} else {
+						p.warm.prepared.permissionErr = observation
+					}
+					if err := p.Close(p.cleanup.context()); !errors.Is(err, required) {
+						t.Fatal("idle observation hid a foreign operation or independent failure", required, err)
+					}
+				})
+			})
+		}
+	}
+}

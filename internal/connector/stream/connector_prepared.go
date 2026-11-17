@@ -121,6 +121,16 @@ func (e *preparedPermissionExpiry) Unwrap() error {
 	return context.DeadlineExceeded
 }
 
+// the idle worker observed its immutable parent stop, not a renewal result.
+// direct callers still receive that exact serving failure through Unwrap.
+type preparedPermissionOwnerStop struct {
+	owner    *PreparedConnector
+	lifetime context.Context
+}
+
+func (e *preparedPermissionOwnerStop) Error() string { return e.Unwrap().Error() }
+func (e *preparedPermissionOwnerStop) Unwrap() error { return context.Cause(e.lifetime) }
+
 // PrepareConnector consumes a source-prepared opening without RPC or signing.
 // setup retains the caller's original preparation deadline; lifetime owns the
 // promoted stream after preparation succeeds. stopping setup cannot close it.
@@ -321,10 +331,17 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 		select {
 		case <-wait.Done():
 			if cause := context.Cause(wait); !failure.Only(cause, p.permissionStop) {
-				if authority, ok := cause.(*connectorAuthorityExpiry); ok {
+				switch authority := cause.(type) {
+				case *connectorAuthorityExpiry:
 					// only an idle wait borrows the owning watcher's stop. an
 					// entered renewal below retains its entire operation result.
 					cause = &preparedPermissionExpiry{owner: p, until: until, cause: authority}
+				case *preparedPermissionExpiry:
+					// the idle timer retains its separate exact expiry provenance.
+				default:
+					if p.ctx.Err() != nil {
+						cause = &preparedPermissionOwnerStop{owner: p, lifetime: p.ctx}
+					}
 				}
 				p.mu.Lock()
 				p.permissionErr = cause

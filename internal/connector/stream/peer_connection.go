@@ -298,7 +298,25 @@ func connectorOwnedCancellationOnly(err, cause error) bool {
 	return false
 }
 
+// only an idle maintenance guard produces this observation of its exact owner.
+// a received reply, entered call, or joined failure never acquires this marker.
+type connectorIdleLegStop struct {
+	owner    *connectorConnection
+	lifetime context.Context
+}
+
+func (e *connectorIdleLegStop) Error() string { return e.Unwrap().Error() }
+func (e *connectorIdleLegStop) Unwrap() error { return context.Cause(e.lifetime) }
+
+func (p *connectorConnection) idleLegStop() error {
+	return &connectorIdleLegStop{owner: p, lifetime: p.ctx}
+}
+
 func (p *connectorConnection) recordLegRecoveryFailure(err, canceled error) {
+	if stopped, ok := err.(*connectorIdleLegStop); ok && stopped != nil &&
+		stopped.owner == p && stopped.lifetime == p.ctx && p.ctx.Err() != nil {
+		return
+	}
 	if connectorOwnedCancellationOnly(err, canceled) {
 		return
 	}
@@ -961,7 +979,7 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 	defer timer.Stop()
 	select {
 	case <-p.ctx.Done():
-		return retirePath, context.Cause(p.ctx)
+		return retirePath, p.idleLegStop()
 	case <-binding.Done():
 		return retirePath, context.Cause(binding)
 	case <-leg.session.Done():
@@ -973,7 +991,7 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 	pair, until := p.pair, p.until
 	p.mu.Unlock()
 	if cause := context.Cause(p.ctx); cause != nil {
-		return retirePath, cause
+		return retirePath, p.idleLegStop()
 	}
 	call, stop := context.WithDeadline(binding, minConnectorCall(earliestConnectorDeadline(until, leg.until)))
 	defer stop()
@@ -989,7 +1007,7 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 		err = keyErr
 		if err == nil {
 			if cause := context.Cause(p.ctx); cause != nil {
-				return retirePath, cause
+				return retirePath, p.idleLegStop()
 			}
 			receipt, err = leg.session.RenewConnectorLeg(call, request, proof, leg.receipt)
 		}
