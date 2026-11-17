@@ -93,7 +93,6 @@ type Querier interface {
 	CreateControlSession(ctx context.Context, arg CreateControlSessionParams) error
 	CreateCustomDNSAuthority(ctx context.Context, arg CreateCustomDNSAuthorityParams) error
 	CreateCustomDomain(ctx context.Context, arg CreateCustomDomainParams) (ControlDomain, error)
-	CreateFeedbackThread(ctx context.Context, arg CreateFeedbackThreadParams) (ControlFeedbackThread, error)
 	// caller holds the trial and exact service and verifies the trial credential
 	// and observed source. publication permission alone never authorizes sharing.
 	CreateGuestShare(ctx context.Context, arg CreateGuestShareParams) (ControlShare, error)
@@ -134,8 +133,8 @@ type Querier interface {
 	ExpireConnectorPeerRebind(ctx context.Context, pairID string) (int64, error)
 	ExpireServiceConnectionSlot(ctx context.Context, arg ExpireServiceConnectionSlotParams) (int64, error)
 	ExpireTeamInvitations(ctx context.Context, arg ExpireTeamInvitationsParams) ([]string, error)
-	FeedbackEventHighWater(ctx context.Context) (int64, error)
 	FeedbackRunScope(ctx context.Context, arg FeedbackRunScopeParams) (FeedbackRunScopeRow, error)
+	FeedbackServiceScope(ctx context.Context, arg FeedbackServiceScopeParams) (FeedbackServiceScopeRow, error)
 	FenceIngressRun(ctx context.Context, arg FenceIngressRunParams) (int64, error)
 	FindDeploymentManagementRequest(ctx context.Context, arg FindDeploymentManagementRequestParams) (FindDeploymentManagementRequestRow, error)
 	FindDeploymentPublisherEnrollmentRequest(ctx context.Context, arg FindDeploymentPublisherEnrollmentRequestParams) (ControlDeploymentPublisherEnrollment, error)
@@ -174,9 +173,7 @@ type Querier interface {
 	GetDeploymentManagementGrant(ctx context.Context, grantID string) (ControlDeploymentManagementGrant, error)
 	GetDeploymentPublisherStatus(ctx context.Context, arg GetDeploymentPublisherStatusParams) (GetDeploymentPublisherStatusRow, error)
 	GetDeploymentServiceConfiguration(ctx context.Context, serviceID pgtype.Text) (GetDeploymentServiceConfigurationRow, error)
-	GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbackEventByActorKeyParams) (ControlFeedbackEvent, error)
 	GetFeedbackService(ctx context.Context, id string) (ControlService, error)
-	GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
 	GetGuestTrialByCredentialID(ctx context.Context, credentialID pgtype.Text) (ControlGuestTrial, error)
 	GetGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error)
 	GetIdentityContextIdentity(ctx context.Context, identityID string) (GetIdentityContextIdentityRow, error)
@@ -250,7 +247,6 @@ type Querier interface {
 	// after normal generation. storage guards fence those inline writers meanwhile.
 	InsertConnectorPeerPendingBinding(ctx context.Context, arg InsertConnectorPeerPendingBindingParams) (ControlConnectorPeerPendingBinding, error)
 	InsertDeviceLogin(ctx context.Context, arg InsertDeviceLoginParams) (int64, error)
-	InsertFeedbackEvent(ctx context.Context, arg InsertFeedbackEventParams) (ControlFeedbackEvent, error)
 	InsertGuestTrial(ctx context.Context, arg InsertGuestTrialParams) (ControlGuestTrial, error)
 	InsertPublisherAccess(ctx context.Context, arg InsertPublisherAccessParams) error
 	InsertPublisherAllocation(ctx context.Context, arg InsertPublisherAllocationParams) error
@@ -303,10 +299,6 @@ type Querier interface {
 	ListDeployments(ctx context.Context, arg ListDeploymentsParams) ([]ControlDeployment, error)
 	ListDiscoverablePreviews(ctx context.Context, arg ListDiscoverablePreviewsParams) ([]ListDiscoverablePreviewsRow, error)
 	ListDiscoverableProjects(ctx context.Context, arg ListDiscoverableProjectsParams) ([]ListDiscoverableProjectsRow, error)
-	ListFeedbackEventsForTeam(ctx context.Context, arg ListFeedbackEventsForTeamParams) ([]ControlFeedbackEvent, error)
-	ListFeedbackEventsForThread(ctx context.Context, arg ListFeedbackEventsForThreadParams) ([]ControlFeedbackEvent, error)
-	ListFeedbackThreadsForPage(ctx context.Context, arg ListFeedbackThreadsForPageParams) ([]ControlFeedbackThread, error)
-	ListFeedbackThreadsForTeam(ctx context.Context, arg ListFeedbackThreadsForTeamParams) ([]ControlFeedbackThread, error)
 	ListIdentityMembershipContexts(ctx context.Context, identityID string) ([]ListIdentityMembershipContextsRow, error)
 	ListIdentityTeamDomains(ctx context.Context, arg ListIdentityTeamDomainsParams) ([]ListIdentityTeamDomainsRow, error)
 	ListIdentityTeams(ctx context.Context, identityID string) ([]ListIdentityTeamsRow, error)
@@ -371,7 +363,6 @@ type Querier interface {
 	LockDeviceLoginByState(ctx context.Context, stateDigest []byte) (ControlDeviceLogin, error)
 	LockDeviceLoginCapacity(ctx context.Context) error
 	LockEligibleRelayLeases(ctx context.Context, arg LockEligibleRelayLeasesParams) ([]LockEligibleRelayLeasesRow, error)
-	LockFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error)
 	LockGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error)
 	LockIdentityBootstrap(ctx context.Context) error
 	LockIdentityConnection(ctx context.Context, arg LockIdentityConnectionParams) (ControlIdentityConnection, error)
@@ -471,7 +462,6 @@ type Querier interface {
 	ReadyServiceConnectionSlot(ctx context.Context, arg ReadyServiceConnectionSlotParams) (ControlServiceConnectionSlot, error)
 	ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams) (ControlServiceRun, error)
 	RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error)
-	RecordFeedbackActivity(ctx context.Context, arg RecordFeedbackActivityParams) error
 	RedeemPublisherEnrollment(ctx context.Context, arg RedeemPublisherEnrollmentParams) error
 	RedeemServiceHTTPBrowserHandoff(ctx context.Context, arg RedeemServiceHTTPBrowserHandoffParams) (RedeemServiceHTTPBrowserHandoffRow, error)
 	RegisterIngress(ctx context.Context, arg RegisterIngressParams) (ControlIngressLease, error)
@@ -492,7 +482,6 @@ type Querier interface {
 	RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRelayRow, error)
 	RenewServiceRun(ctx context.Context, arg RenewServiceRunParams) (ControlServiceRun, error)
 	ReplaceConnectorPeerPair(ctx context.Context, id string) (int64, error)
-	ReserveFeedbackEventCursor(ctx context.Context) (int64, error)
 	ReserveInvitedMemberSlug(ctx context.Context, arg ReserveInvitedMemberSlugParams) (string, error)
 	ReserveManagedLabel(ctx context.Context, arg ReserveManagedLabelParams) (string, error)
 	ResolveLoginTeam(ctx context.Context, selection string) (string, error)
@@ -568,7 +557,6 @@ type Querier interface {
 	TeamSharedNameInUse(ctx context.Context, arg TeamSharedNameInUseParams) (bool, error)
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)
 	UpdateDeviceLogin(ctx context.Context, arg UpdateDeviceLoginParams) error
-	UpdateFeedbackThreadState(ctx context.Context, arg UpdateFeedbackThreadStateParams) (ControlFeedbackThread, error)
 	// retain issued ready authority after closure so an offline owner cannot overlap
 	// its replacement. the run lock serializes readiness, heartbeat and settlement.
 	UpdateGuestServingAuthority(ctx context.Context, arg UpdateGuestServingAuthorityParams) (pgtype.Timestamptz, error)
