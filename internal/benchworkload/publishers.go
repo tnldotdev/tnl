@@ -97,7 +97,7 @@ type PublishedService struct {
 type TransportObservation struct {
 	Slot               uint8            `json:"connection_slot"`
 	Transport          tunnel.Transport `json:"transport"`
-	PreferredWebSocket bool             `json:"preferred_websocket"`
+	PreferredWebSocket bool             `json:"preferred_tcp"`
 	FirstFallback      bool             `json:"first_fallback"`
 }
 

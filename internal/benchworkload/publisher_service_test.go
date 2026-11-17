@@ -2,6 +2,7 @@ package benchworkload
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -18,6 +19,23 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestTransportObservationKeepsPreferenceJSONField(t *testing.T) {
+	body, err := json.Marshal(TransportObservation{PreferredWebSocket: true, Transport: tunnel.TransportWSS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["preferred_tcp"]) != "true" || string(fields["transport"]) != `"wss"` {
+		t.Fatal("benchmark transport observation changed its wire shape", string(body))
+	}
+	if _, renamed := fields["preferred_websocket"]; renamed {
+		t.Fatal("renamed the historical machine field")
+	}
+}
 
 func TestBenchmarkDeclarationKeepsRequestLimitsSeparateFromTrafficAndTargetTLS(t *testing.T) {
 	for _, target := range []string{"http://localhost:8080", "https://origin.example.test:8443"} {
