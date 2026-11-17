@@ -13,14 +13,18 @@ import (
 	"testing"
 	"time"
 
+	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -42,6 +46,18 @@ type nativeDefaultFaults struct {
 
 type nativeDefaultLeaseObservation struct {
 	reported, observed, until time.Time
+}
+
+func (f *nativeDefaultFaults) outageReady(now, sessionUntil time.Time) bool {
+	connectorDeadline := minTime(f.connectorUntil, minTime(f.runUntil, f.permissionUntil))
+	publisherDeadline := minTime(f.publisherOwnerUntil, f.tokenUntil)
+	earliest := minTime(connectorDeadline, publisherDeadline)
+	// leave ten seconds of margin before the unchanged 30-second inner QUIC
+	// idle timeout. both endpoints must reach real authority expiry first.
+	beforeIdle := f.publisherUntil.Add(20 * time.Second)
+	return f.connectorLease.reported.Equal(sessionUntil) && f.publisherOwnerLease.reported.Equal(sessionUntil) &&
+		f.publisherUntil.After(now.Add(10*time.Second)) && earliest.After(f.publisherUntil.Add(2*time.Second)) &&
+		connectorDeadline.Before(beforeIdle) && publisherDeadline.Before(beforeIdle)
 }
 
 func (o *nativeDefaultLeaseObservation) record(started, observed, reported time.Time) time.Time {
@@ -154,7 +170,12 @@ func (c defaultConnectorPublisherControl) DeliverConnectorPeerPair(ctx context.C
 
 func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	f := newServiceRuntimeFixtureTiming(t, false, nil, true)
+	// refresh near 40 seconds leaves an installation cap near 120 seconds;
+	// refresh after the 70-second healthy phase reaches the fixed 135-second cap.
+	const accessLifetime = 80 * time.Second
+	f := newServiceRuntimeFixtureTiming(t, false, nil, true, func(config *daemonconfig.Config, _ *http.Transport, _ *testCertificateAuthority) {
+		config.AccessTokenLifetime = accessLifetime
+	})
 	faults := new(nativeDefaultFaults)
 	target := startPrivateEchoTarget(t, f.owner)
 	key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
@@ -169,7 +190,67 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+	// only the outage connector uses this finite parent session. refresh rotates
+	// its credentials but cannot move the committed refresh expiry. publisher
+	// and sibling authority remain independent and long-lived.
+	outageState, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "outage-state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = outageState.Close() })
+	origin := f.controlConfig.ControlOrigin()
+	session, err := controltest.Session(t.Context(), f.database, f.controlConfig.ManagedDomain, accessLifetime, 135*time.Second, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Identity.Identity.ID != person.Identity.Id {
+		t.Fatal("outage session changed the visitor identity")
+	}
+	if err := controltest.SaveSession(t.Context(), outageState, origin, session); err != nil {
+		t.Fatal(err)
+	}
+	outageClient, err := clientauth.Authenticate(t.Context(), clientauth.Config{ServerEndpoint: origin, State: outageState, HTTPClient: f.publicHTTP, Diagnostics: io.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outageProfile, err := outageState.Server(t.Context(), origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := clientauthority.New(origin, f.publicHTTP, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshSession := func() clientstate.ControlSession {
+		t.Helper()
+		// use the same protected-state lock and single-use checkpoint as normal
+		// client refresh, so automatic refresh cannot race this fixture step.
+		lock, err := clientstate.LockControlSessionContext(t.Context(), outageProfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer lock.Close()
+		stored, found, err := outageProfile.ControlSession(t.Context())
+		if err != nil || !found || stored.RefreshPhase(time.Now()) != clientstate.RefreshAvailable {
+			t.Fatal("outage session is not refreshable", err)
+		}
+		if err := outageProfile.MarkControlSessionRefreshPending(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		response, err := authority.Refresh(t.Context(), credentials.RefreshToken(stored.RefreshToken))
+		if err != nil {
+			t.Fatal(err)
+		}
+		refreshed, err := clientauthority.ValidateControlSessionResponse(response, session.SessionID, session.RefreshExpiresAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := outageProfile.SaveControlSession(t.Context(), refreshed); err != nil {
+			t.Fatal(err)
+		}
+		return refreshed
+	}
+	control, err := connectorstream.NewControl(outageClient.Control, outageProfile, person.Identity.Id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,9 +326,15 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	faults.mu.Lock()
 	pairID, initial := faults.pair, faults.initial
 	faults.mu.Unlock()
-	var initialBinding string
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT concat(service_run_id,':',run_number,':',delivery_id,':',delivery_generation,':',encode(key_ciphertext,'hex'),':',slots::text) FROM control.connector_peer_pairs WHERE id=$1`, pairID).Scan(&initialBinding); err != nil {
+	var initialBinding, runID, deliveryID, parentSessionID string
+	var runNumber, deliveryGeneration int64
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT concat(service_run_id,':',run_number,':',delivery_id,':',delivery_generation,':',encode(key_ciphertext,'hex'),':',slots::text,':',parent_control_session_id),
+		service_run_id, run_number, encode(delivery_id,'hex'), delivery_generation, parent_control_session_id
+		FROM control.connector_peer_pairs WHERE id=$1`, pairID).Scan(&initialBinding, &runID, &runNumber, &deliveryID, &deliveryGeneration, &parentSessionID); err != nil {
 		t.Fatal(err)
+	}
+	if parentSessionID != session.SessionID {
+		t.Fatal("connector pair is not bound to the finite parent session")
 	}
 	// cross more than two full production 30-second lease cycles on this socket.
 	lastExchange := 0
@@ -259,6 +346,17 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		}
 		exchange(n)
 		lastExchange = n
+		if n == 8 {
+			// advance owner authority by more than 30 seconds without changing
+			// the pair. publisher delivery can observe this intermediate cap.
+			refreshSession()
+		}
+	}
+	// extend the same live session once more, after the publisher's intermediate
+	// installation. the fixed refresh expiry now caps all later credentials.
+	finalSession := refreshSession()
+	if !finalSession.AccessExpiresAt.Equal(session.RefreshExpiresAt) {
+		t.Fatal("final access credential did not reach the fixed session expiry")
 	}
 	// choose an actual renewal phase where installation expires before both
 	// endpoint owners and application permission. otherwise a permission expiry
@@ -272,15 +370,14 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		checks, latest, publisherUntil, publisherOwnerUntil = faults.renewals, faults.connectorUntil, faults.publisherUntil, faults.publisherOwnerUntil
 		runUntil, permissionUntil, tokenUntil = faults.runUntil, faults.permissionUntil, faults.tokenUntil
 		changed = faults.changedPair
-		remaining := minTime(latest, minTime(runUntil, minTime(permissionUntil, minTime(tokenUntil, publisherOwnerUntil))))
-		if publisherUntil.After(time.Now().Add(10*time.Second)) && remaining.After(publisherUntil.Add(2*time.Second)) {
+		if faults.outageReady(time.Now(), session.RefreshExpiresAt) {
 			faults.outage = true
 			faults.mu.Unlock()
 			break
 		}
 		faults.mu.Unlock()
 		if !time.Now().Before(phaseDeadline) {
-			t.Fatal("default renewal did not leave a retained-owner interval after installation expiry")
+			t.Fatal("default renewal did not leave a retained-owner interval between installation expiry and inner QUIC idleness")
 		}
 		select {
 		case <-time.After(time.Second):
@@ -292,7 +389,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	}
 	var binding string
 	var count int
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),min(concat(service_run_id,':',run_number,':',delivery_id,':',delivery_generation,':',encode(key_ciphertext,'hex'),':',slots::text)) FROM control.connector_peer_pairs WHERE service_id=$1`, service.Id).Scan(&count, &binding); err != nil || count != 1 || binding != initialBinding {
+	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),min(concat(service_run_id,':',run_number,':',delivery_id,':',delivery_generation,':',encode(key_ciphertext,'hex'),':',slots::text,':',parent_control_session_id)) FROM control.connector_peer_pairs WHERE service_id=$1`, service.Id).Scan(&count, &binding); err != nil || count != 1 || binding != initialBinding {
 		t.Fatal("default renewal replaced the exact connector owner", count, err)
 	}
 	target.mu.Lock()
@@ -308,6 +405,8 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		t.Fatal("default renewal reopened the target")
 	}
 	t.Logf("outage at=%s connector=%s run=%s permission=%s token=%s publisher delivery=%s publisher owner=%s", time.Now().Format(time.RFC3339Nano), latest.Format(time.RFC3339Nano), runUntil.Format(time.RFC3339Nano), permissionUntil.Format(time.RFC3339Nano), tokenUntil.Format(time.RFC3339Nano), publisherUntil.Format(time.RFC3339Nano), publisherOwnerUntil.Format(time.RFC3339Nano))
+	t.Logf("outage binding service=%s run=%s run_number=%d pair=%s delivery_hex=%s delivery_generation=%d device=%s parent_session=%s fixed_expiry=%s",
+		service.Id, runID, runNumber, pairID, deliveryID, deliveryGeneration, firstDevice.Subject.DeviceID, parentSessionID, session.RefreshExpiresAt.Format(time.RFC3339Nano))
 	if checks < 2 || changed || !latest.After(initial.Add(30*time.Second)) || publisherUntil.IsZero() || publisherOwnerUntil.IsZero() || runUntil.IsZero() || permissionUntil.IsZero() || tokenUntil.IsZero() {
 		t.Fatalf("default authority did not renew in place: checks=%d changed=%t", checks, changed)
 	}
@@ -439,6 +538,40 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		return defaultConnectorRevocationDenied(err) || errors.Is(err, connectorstream.ErrServiceConnection) ||
 			errors.As(err, &denial) && denial.Code == tunnelv1.Unauthenticated
 	})
+}
+
+func TestDefaultNativeOutagePhase(t *testing.T) {
+	now := time.Date(2026, time.November, 15, 12, 0, 0, 0, time.UTC)
+	until := now.Add(65 * time.Second)
+	for _, test := range []struct {
+		name   string
+		change func(*nativeDefaultFaults)
+		want   bool
+	}{
+		{"authority before idle", func(*nativeDefaultFaults) {}, true},
+		{"old connector credential", func(f *nativeDefaultFaults) { f.connectorLease.reported = until.Add(-time.Second) }, false},
+		{"old publisher observation", func(f *nativeDefaultFaults) { f.publisherOwnerLease.reported = until.Add(-time.Second) }, false},
+		{"insufficient startup interval", func(f *nativeDefaultFaults) { f.publisherUntil = now.Add(10 * time.Second) }, false},
+		{"permission before packet pause", func(f *nativeDefaultFaults) { f.tokenUntil = f.publisherUntil.Add(time.Second) }, false},
+		{"connector could idle first", func(f *nativeDefaultFaults) {
+			f.connectorUntil, f.runUntil, f.permissionUntil = until.Add(20*time.Second), until.Add(20*time.Second), until.Add(20*time.Second)
+		}, false},
+		{"publisher could idle first", func(f *nativeDefaultFaults) {
+			f.publisherOwnerUntil, f.tokenUntil = until.Add(20*time.Second), until.Add(20*time.Second)
+		}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := &nativeDefaultFaults{
+				connectorUntil: until, runUntil: until, permissionUntil: until, tokenUntil: until.Add(-time.Second),
+				publisherUntil: now.Add(50 * time.Second), publisherOwnerUntil: until,
+				connectorLease: nativeDefaultLeaseObservation{reported: until}, publisherOwnerLease: nativeDefaultLeaseObservation{reported: until},
+			}
+			test.change(f)
+			if got := f.outageReady(now, until); got != test.want {
+				t.Fatalf("outage ready = %t, want %t", got, test.want)
+			}
+		})
+	}
 }
 
 func TestDefaultNativeLeaseObservation(t *testing.T) {
