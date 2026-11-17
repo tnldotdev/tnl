@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -219,7 +220,7 @@ func TestValidateTNLScopesFixedAddressesToOneService(t *testing.T) {
 	}
 }
 
-func TestValidateTNLRejectsInvalidTargetsAndNormalizesIPAliases(t *testing.T) {
+func TestValidateTNLRejectsInvalidTargetsAndAcceptsIPAliases(t *testing.T) {
 	invalidTarget := Target("https://example.com")
 	for name, value := range map[string]TNL{
 		"target":             {Services: Services{"web": {Target: &ServiceTarget{Type: "address", Address: &invalidTarget}}}},
@@ -231,11 +232,18 @@ func TestValidateTNLRejectsInvalidTargetsAndNormalizesIPAliases(t *testing.T) {
 			}
 		})
 	}
-	for _, input := range [][]string{{"192.0.2.7/24", "192.0.2.0/24"}, {"192.0.2.1", "192.0.2.1/32"}} {
-		access := &Access{IP: input}
+	for _, test := range []struct{ input, want []string }{
+		{[]string{"192.0.2.7/24", "192.0.2.0/24"}, []string{"192.0.2.0/24"}},
+		{[]string{"192.0.2.1", "192.0.2.1/32"}, []string{"192.0.2.1/32"}},
+	} {
+		access := &Access{IP: slices.Clone(test.input)}
 		value := TNL{Services: Services{"web": {HTTP: &HTTPService{Access: access}}}}
-		if err := ValidateTNL(value); err != nil || len(access.IP) != 1 || access.VisitorMode() != "restricted" {
-			t.Fatalf("canonical aliases must collapse without granting anonymous access: %+v, %v", access, err)
+		if err := ValidateTNL(value); err != nil || !slices.Equal(access.IP, test.input) || access.VisitorMode() != "restricted" {
+			t.Fatalf("validation must accept aliases without rewriting caller policy: %+v, %v", access, err)
+		}
+		owned := *access
+		if err := owned.Validate(); err != nil || !slices.Equal(owned.IP, test.want) || !slices.Equal(access.IP, test.input) {
+			t.Fatalf("owned normalization must retain exact prefixes without changing source: %+v, %v", owned, err)
 		}
 	}
 }

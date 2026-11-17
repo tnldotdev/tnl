@@ -41,7 +41,9 @@ func (a Alias) DefinitionBytes(key string) ([]byte, [32]byte, error) {
 	}
 	if a.Access != nil {
 		policy := *a.Access
-		policy.IP = slices.Sorted(slices.Values(policy.IP))
+		if err := policy.Validate(); err != nil {
+			return nil, [32]byte{}, err
+		}
 		a.Access = &policy
 	}
 	encoded, err := json.Marshal(a)
@@ -77,7 +79,8 @@ func ValidateAliases(config TNL) error {
 			return fmt.Errorf("aliases.%s: %w", key, err)
 		}
 		if alias.Access != nil {
-			if err := alias.Access.Validate(); err != nil {
+			access := *alias.Access
+			if err := access.Validate(); err != nil {
 				return fmt.Errorf("aliases.%s.access: %w", key, err)
 			}
 		}

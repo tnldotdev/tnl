@@ -207,6 +207,13 @@ func ValidateTNL(config TNL) error {
 	hostnames := make(map[string]string)
 	for _, name := range names {
 		service := config.Services[name]
+		// access validation normalizes its receiver; project validation owns no
+		// caller policy, including when a later field or binding is invalid.
+		if service.HTTP != nil && service.HTTP.Access != nil {
+			http, access := *service.HTTP, *service.HTTP.Access
+			http.Access = &access
+			service.HTTP = &http
+		}
 		if service.Access != nil && !service.Access.Team {
 			return fmt.Errorf("services.%s.access requires team: true", name)
 		}
@@ -294,7 +301,8 @@ func ValidateRemoteHTTP(value *HTTPService) error {
 	return ValidateServiceHTTP(value)
 }
 
-// request policy is independent of the publisher's local or remote placement.
+// validates owned HTTP settings and normalizes their IP policy. read-only project
+// validation supplies a detached access value. placement does not change policy.
 func ValidateServiceHTTP(value *HTTPService) error {
 	if value == nil {
 		return nil

@@ -87,7 +87,9 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 			httpSettings := *service.HTTP
 			if httpSettings.Access != nil {
 				access := *httpSettings.Access
-				access.IP = slices.Sorted(slices.Values(access.IP))
+				if err := access.Validate(); err != nil {
+					return declaration, err
+				}
 				httpSettings.Access = &access
 			}
 			encoded, err := json.Marshal(httpSettings)

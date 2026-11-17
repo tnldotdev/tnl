@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -212,8 +213,11 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 		"target":            {"export default " + typeScriptServiceCase("api", "http", `{address: "https://example.com/path"}`), "services.api: target.address:"},
 		"raw SSH":           {"export default " + typeScriptServiceCase("shell", "ssh", `{inspection: {mode: "none"}, address: "sshd:22"}`), "use tcp for an existing sshd"},
 		"raw SSH TLS":       {`export default () => ({services: {shell: {protocol: ["s", "sh"].join("")}}, deployments: {local: {targets: {shell: {address: "sshd:22", tls: {hostname: "sshd", ca: "system"}}}}}});`, "use tcp for an existing sshd"},
-		"ip":                {"export default " + typeScriptServiceCase("api", "http", `{http: {access: {ip: ["192.0.2.7/24"]}}}`), "distinct canonical addresses or prefixes"},
-		"duplicate":         {"export default " + typeScriptServiceCase("api", "http", `{http: {access: {ip: ["192.0.2.1", "192.0.2.1/32"]}}}`), "distinct canonical addresses or prefixes"},
+		"invalid ip":        {"export default " + typeScriptServiceCase("api", "http", `{http: {access: {ip: ["invalid"]}}}`), "access.ip"},
+		"wide mapped ip":    {"export default " + typeScriptServiceCase("api", "http", `{http: {access: {ip: ["::ffff:192.0.2.7/95"]}}}`), "access.ip"},
+		"zoned ip":          {"export default " + typeScriptServiceCase("api", "http", `{http: {access: {ip: ["fe80::1%en0"]}}}`), "access.ip"},
+		"empty ip":          {"export default " + typeScriptServiceCase("api", "http", `{http: {access: {ip: []}}}`), "access.ip"},
+		"257 unique ips":    {"export default " + typeScriptServiceCase("api", "http", `{http: {access: {ip: Array.from({length: 257}, (_, i) => "2001:db8::" + i.toString(16))}}}`), "256 normalized"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tnl.config.ts")
@@ -222,6 +226,39 @@ func TestLoadAppliesStaticValidationToNestedServices(t *testing.T) {
 			}
 			if _, err := loadTypeScript(t.Context(), path, filepath.Dir(path), Worktree{}); err == nil || !strings.Contains(err.Error(), test.category) {
 				t.Fatalf("invalid TypeScript service error = %v, want %q", err, test.category)
+			}
+		})
+	}
+}
+
+func TestLoadNormalizesIPAliasesInNestedServices(t *testing.T) {
+	maximum := make([]string, 256)
+	for index := range maximum {
+		maximum[index] = fmt.Sprintf("192.0.2.%d/32", index)
+	}
+	slices.Sort(maximum)
+	for _, test := range []struct {
+		name, ip string
+		want     []string
+	}{
+		{"masked prefix", `["192.0.2.7/24"]`, []string{"192.0.2.0/24"}},
+		{"duplicate host", `["192.0.2.1", "192.0.2.1/32"]`, []string{"192.0.2.1/32"}},
+		{"mapped aliases and overlap", `["::ffff:192.0.2.1", "192.0.2.1/32", "192.0.2.7/24", "::ffff:192.0.2.8/120"]`, []string{"192.0.2.0/24", "192.0.2.1/32"}},
+		{"256 plus aliases", `[...Array.from({length: 256}, (_, i) => "192.0.2." + i), "::ffff:192.0.2.1", "192.0.2.1/32"]`, maximum},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "tnl.config.ts")
+			source := "export default " + typeScriptServiceCase("api", "http", `{http: {access: {ip: `+test.ip+`}}}`)
+			if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			value, err := loadTypeScript(t.Context(), path, filepath.Dir(path), Worktree{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			access := value.Deployments["local"].Targets["api"].HTTP.Access
+			if access == nil || !slices.Equal(access.IP, test.want) || access.VisitorMode() != "restricted" {
+				t.Fatal("TypeScript aliases lost canonical prefixes or granted access", access)
 			}
 		})
 	}

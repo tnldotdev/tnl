@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,43 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
+
+func TestDeclarationNormalizesOnlyItsOwnedAccess(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(map[bool]string{false: "valid", true: "invalid-after-access"}[invalid], func(t *testing.T) {
+			raw := []string{"198.51.100.9", "192.0.2.7/24", "::ffff:192.0.2.8/120"}
+			access := &config.Access{IP: slices.Clone(raw)}
+			http := &config.HTTPService{Access: access}
+			if invalid {
+				http.Limits = &config.WorkLimits{Concurrency: new(0)}
+			}
+			project := clientproject.Project{Config: config.TNL{Services: config.Services{"web": {HTTP: http}}}}
+			before, err := json.Marshal(project.Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+			if (err != nil) != invalid {
+				t.Fatalf("declaration error=%v, invalid=%t", err, invalid)
+			}
+			after, err := json.Marshal(project.Config)
+			if err != nil || string(before) != string(after) || !slices.Equal(access.IP, raw) {
+				t.Fatalf("declaration wrote through caller access: before=%s after=%s error=%v", before, after, err)
+			}
+			if invalid {
+				return
+			}
+			output := declaration.Services["web"].Http.Access
+			if output == nil || output.Ip == nil || !slices.Equal(*output.Ip, []string{"192.0.2.0/24", "198.51.100.9/32"}) {
+				t.Fatal("declaration lost canonical deduplication", output)
+			}
+			(*output.Ip)[0] = "203.0.113.0/24"
+			if !slices.Equal(access.IP, raw) {
+				t.Fatal("declaration result aliases its source")
+			}
+		})
+	}
+}
 
 func appliedTestContext() team.Context {
 	return team.NewContext(authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"}, authorityv1.Membership{Id: "membership_1", TeamId: "team_1", ManagedLabel: "member", MemberSlug: "member"}, []authorityv1.Domain{{Id: "domain_1", CanonicalDomain: "tnl.dev", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}, "")
@@ -140,7 +178,7 @@ func TestProjectDeclarationPreservesDirectSettingsPolicyLimitsAndGrantIntent(t *
 	if limits == nil || *limits.Total != 100 || limits.Rate.Count != 5 || limits.Rate.Per != "2m0s" || traffic == nil || *traffic.Connections != 8 || *traffic.UploadBytes != 1<<20 {
 		t.Fatalf("applied limits did not round-trip: %+v %+v", limits, traffic)
 	}
-	if *web.Http.Access.Ip == nil || (*web.Http.Access.Ip)[0] != "192.0.2.1" || project.Config.Services["web"].HTTP.Access.IP[0] != "198.51.100.1" {
+	if !slices.Equal(*web.Http.Access.Ip, []string{"192.0.2.1/32", "198.51.100.1/32"}) || !slices.Equal(project.Config.Services["web"].HTTP.Access.IP, []string{"198.51.100.1", "192.0.2.1"}) {
 		t.Fatal("applied IP policy is not normalized")
 	}
 	data, err := json.Marshal(declaration)

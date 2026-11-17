@@ -228,7 +228,9 @@ func (p Project) EffectiveService(name string) (ResolvedService, error) {
 		http.Paths = maps.Clone(http.Paths)
 		if http.Access != nil {
 			access := *http.Access
-			access.IP = slices.Clone(access.IP)
+			if err := access.Validate(); err != nil {
+				return ResolvedService{}, err
+			}
 			http.Access = &access
 		}
 		if http.Limits != nil {

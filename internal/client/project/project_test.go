@@ -1,6 +1,7 @@
 package project
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,46 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 )
+
+func TestEffectiveServiceNormalizesOnlyItsOwnedAccess(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(map[bool]string{false: "valid", true: "invalid-after-access"}[invalid], func(t *testing.T) {
+			raw := []string{"198.51.100.9", "192.0.2.7/24", "::ffff:192.0.2.8/120"}
+			access := &config.Access{IP: slices.Clone(raw)}
+			http := &config.HTTPService{Access: access}
+			if invalid {
+				http.Limits = &config.WorkLimits{Concurrency: new(0)}
+			}
+			project := Project{Config: config.TNL{Services: config.Services{
+				"api": {HTTP: http}, "web": {HTTP: &config.HTTPService{Access: access}},
+			}}}
+			before, err := json.Marshal(project.Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			effective, err := project.EffectiveService("api")
+			if (err != nil) != invalid {
+				t.Fatalf("effective service error=%v, invalid=%t", err, invalid)
+			}
+			after, err := json.Marshal(project.Config)
+			if err != nil || string(before) != string(after) || !slices.Equal(access.IP, raw) {
+				t.Fatalf("resolving wrote through source/sibling access: before=%s after=%s error=%v", before, after, err)
+			}
+			if invalid {
+				return
+			}
+			want := []string{"192.0.2.0/24", "198.51.100.9/32"}
+			if effective.HTTP.Access == access || !slices.Equal(effective.HTTP.Access.IP, want) || effective.HTTP.Access.VisitorMode() != "restricted" {
+				t.Fatal("effective service did not own its normalized restricted policy", effective.HTTP.Access)
+			}
+			effective.HTTP.Access.IP[0] = "203.0.113.0/24"
+			sibling, err := project.EffectiveService("web")
+			if err != nil || !slices.Equal(sibling.HTTP.Access.IP, want) || !slices.Equal(access.IP, raw) {
+				t.Fatal("resolved output changed source or sibling policy", sibling.HTTP, access, err)
+			}
+		})
+	}
+}
 
 func TestServicesShareOneModelAndSelectTheirOwnSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tnl.yml")
@@ -74,11 +115,14 @@ func TestServiceAccessPolicyIsIndependentForEachBinding(t *testing.T) {
 		name string
 		want []string
 		mode string
-	}{{"api", []string{"198.51.100.1"}, "restricted"}, {"none", nil, "restricted"}, {"public", nil, "anonymous"}} {
+	}{{"api", []string{"198.51.100.1/32"}, "restricted"}, {"none", nil, "restricted"}, {"public", nil, "anonymous"}} {
 		effective, err := project.EffectiveService(test.name)
 		if err != nil || effective.HTTP == nil || effective.HTTP.Access == nil || !slices.Equal(effective.HTTP.Access.IP, test.want) || effective.HTTP.Access.VisitorMode() != test.mode || effective.Public != nil {
 			t.Fatalf("service %s: HTTP=%#v, error=%v", test.name, effective.HTTP, err)
 		}
+	}
+	if !slices.Equal(project.Config.Services["api"].HTTP.Access.IP, []string{"198.51.100.1"}) {
+		t.Fatal("binding selection changed its source policy")
 	}
 }
 
