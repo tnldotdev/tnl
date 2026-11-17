@@ -1,0 +1,13 @@
+name: Prune Go build cache
+description: Remove build-cache entries unused for two hours before saving
+runs:
+  using: composite
+  steps:
+    - name: Prune old Go build-cache entries
+      shell: bash
+      run: |
+        # go refreshes entry mtimes at most hourly; keep two hours of use.
+        # executable entries are directories; prune each entry as a whole.
+        find "$(go env GOCACHE)" -mindepth 2 -maxdepth 2 \
+          \( -name '*-a' -o -name '*-d' \) -mmin +120 \
+          -exec rm -rf -- {} +
