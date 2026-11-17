@@ -92,7 +92,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go node pnpm python uv task aqua:goreleaser/goreleaser aqua:anchore/syft aqua:sigstore/cosign
+          tools: go node pnpm python uv task aqua:goreleaser/goreleaser aqua:anchore/syft aqua:sigstore/cosign aqua:WebAssembly/binaryen
           pnpm: true
 
       - name: Build draft release

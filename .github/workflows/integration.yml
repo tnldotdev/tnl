@@ -64,7 +64,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go task go:github.com/letsencrypt/pebble/v2/cmd/pebble ${{ matrix.suite == 'runtime:shard' && 'node pnpm bun python uv' || '' }}
+          tools: go task go:github.com/letsencrypt/pebble/v2/cmd/pebble ${{ matrix.suite == 'runtime:shard' && 'node pnpm bun python uv aqua:WebAssembly/binaryen' || '' }}
           go-cache: race
           pnpm: ${{ matrix.suite == 'runtime:shard' }}
 
@@ -102,6 +102,8 @@ jobs:
             shard: 1/1
           - suite: management-sdk
             shard: 1/1
+          - suite: connector-wasm
+            shard: 1/1
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,7 +113,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go node pnpm task ${{ (matrix.suite == 'connections' || matrix.suite == 'tcp-clients') && 'python uv' || '' }}
+          tools: go node pnpm task aqua:WebAssembly/binaryen ${{ (matrix.suite == 'connections' || matrix.suite == 'tcp-clients') && 'python uv' || '' }}
           go-cache: race
           pnpm: true
 
@@ -152,7 +154,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go node pnpm task go:github.com/letsencrypt/pebble/v2/cmd/pebble
+          tools: go node pnpm task go:github.com/letsencrypt/pebble/v2/cmd/pebble aqua:WebAssembly/binaryen
           go-cache: race
           pnpm: true
 

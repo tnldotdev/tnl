@@ -5,22 +5,9 @@ import "github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 // ConnectorPeerPairRebindProof adapts generated fields to the handwritten proof.
 // it verifies phase-specific shape, not source authentication or current authority.
 func ConnectorPeerPairRebindProof(serviceID, pairID string, body ConnectorPeerPairRebindRequest) (tunnelv1.ConnectorPeerPairRebindProof, error) {
-	if len(body.ExpectedRelays) > 2 || len(body.PathProofs) > 2 ||
-		body.Subject.Kind == VisitorSubjectKind(tunnelv1.VisitorHumanDevice) &&
-			(body.Subject.IdentityId == nil || body.Subject.DeviceId == nil || body.Subject.WorkloadSessionId != nil) ||
-		body.Subject.Kind == VisitorSubjectKind(tunnelv1.VisitorWorkloadSession) &&
-			(body.Subject.WorkloadSessionId == nil || body.Subject.IdentityId != nil || body.Subject.DeviceId != nil) {
+	subject, valid := connectorProofSubject(body.Subject)
+	if len(body.ExpectedRelays) > 2 || len(body.PathProofs) > 2 || !valid {
 		return tunnelv1.ConnectorPeerPairRebindProof{}, tunnelv1.ErrConnectorPeerPairRebindProof
-	}
-	subject := tunnelv1.VisitorSubject{Kind: string(body.Subject.Kind)}
-	if body.Subject.IdentityId != nil {
-		subject.IdentityID = *body.Subject.IdentityId
-	}
-	if body.Subject.DeviceId != nil {
-		subject.DeviceID = *body.Subject.DeviceId
-	}
-	if body.Subject.WorkloadSessionId != nil {
-		subject.WorkloadSessionID = *body.Subject.WorkloadSessionId
 	}
 	proof := tunnelv1.ConnectorPeerPairRebindProof{Phase: string(body.Phase), ServiceID: serviceID, PairID: pairID,
 		IdempotencyKey: body.IdempotencyKey, OperationID: body.OperationId, ExpectedGeneration: body.ExpectedGeneration,

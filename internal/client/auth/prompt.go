@@ -1,3 +1,5 @@
+//go:build !js
+
 package auth
 
 // Prompt contains the control-owned approval URL and code shown by the CLI.

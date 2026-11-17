@@ -343,7 +343,9 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		config.RelayQUIC = muxsession.DisabledConnector{}
 		config.Connectivity.DisableDirect = true
 	}
-	config.telemetry = config.Telemetry.BeginScope("connector")
+	if config.Telemetry != nil {
+		config.telemetry = config.Telemetry.BeginScope("connector")
+	}
 	config.Connectivity = config.telemetry.Connectivity(config.Connectivity)
 	life, cancelServing := context.WithCancelCause(context.WithoutCancel(ctx))
 	packetLife, cancelPackets := context.WithCancelCause(context.WithoutCancel(ctx))
@@ -1321,7 +1323,7 @@ func (p *connectorConnection) forwardUse(ctx context.Context, local net.Conn, us
 		}
 	}
 	if operation := stdioOperationFor(ctx); operation != nil {
-		if err := operation.activateWithAbort(use.prepared.stdio, func() error {
+		if err := use.prepared.bindOperation(operation, func() error {
 			err := p.terminalUse(use, context.Canceled)
 			if failure.Only(err, context.Canceled) {
 				return nil

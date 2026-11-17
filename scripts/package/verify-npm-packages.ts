@@ -116,13 +116,27 @@ for (const manager of ["npm", "pnpm"]) {
         "--eval",
         `
       import assert from 'node:assert/strict';
-      import {createRequire} from 'node:module';
-      const esm = await import('@tnldotdev/tnl');
-      const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
-      for (const root of [esm, cjs]) {
-        assert.equal('connect' in root.tnl || 'client' in root.tnl, false);
-        assert.throws(() => root.createClient({project:'team/project'}), error => error instanceof root.TnlError && error.code === 'sdk.connection_server_only');
-      }
+       import {createRequire} from 'node:module';
+       const esm = await import('@tnldotdev/tnl');
+       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
+       let transportAttempts = 0;
+       const unexpectedTransport = () => {
+         transportAttempts++;
+         throw new Error('unstarted portable clients must not acquire transport');
+       };
+       globalThis.fetch = unexpectedTransport;
+       globalThis.WebSocket = class {
+         constructor() { unexpectedTransport(); }
+       };
+       for (const root of [esm, cjs]) {
+         assert.equal('connect' in root.tnl || 'client' in root.tnl, false);
+         const app = root.createClient({project:'team/project', token:'private', services:{database:{protocol:'postgres'}}});
+         const deployment = app.deployment('production');
+         for (const method of ['connect', 'client', 'publish', 'close']) assert.equal(typeof deployment[method], 'function');
+         await deployment.close();
+         assert.throws(() => app.deployment('local'), error => error instanceof root.TnlError && error.code === 'sdk.capability_unsupported');
+       }
+       assert.equal(transportAttempts, 0);
     `,
       ],
       { cwd: consumer, stdio: "inherit" },

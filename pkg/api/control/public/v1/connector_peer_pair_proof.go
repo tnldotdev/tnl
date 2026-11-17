@@ -6,22 +6,9 @@ import "github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 // signing value. this is an adapter: tunnelv1 owns validation and v1 bytes.
 // neither source credentials nor signature bytes contribute to the proof.
 func ConnectorPeerPairProof(serviceID string, body ConnectorPeerPairRequest) (tunnelv1.ConnectorPeerPairProof, error) {
-	if len(body.ExpectedRelays) != 2 ||
-		body.Subject.Kind == VisitorSubjectKind(tunnelv1.VisitorHumanDevice) &&
-			(body.Subject.IdentityId == nil || body.Subject.DeviceId == nil || body.Subject.WorkloadSessionId != nil) ||
-		body.Subject.Kind == VisitorSubjectKind(tunnelv1.VisitorWorkloadSession) &&
-			(body.Subject.WorkloadSessionId == nil || body.Subject.IdentityId != nil || body.Subject.DeviceId != nil) {
+	subject, valid := connectorProofSubject(body.Subject)
+	if len(body.ExpectedRelays) != 2 || !valid {
 		return tunnelv1.ConnectorPeerPairProof{}, tunnelv1.ErrConnectorPeerPairProof
-	}
-	subject := tunnelv1.VisitorSubject{Kind: string(body.Subject.Kind)}
-	if body.Subject.IdentityId != nil {
-		subject.IdentityID = *body.Subject.IdentityId
-	}
-	if body.Subject.DeviceId != nil {
-		subject.DeviceID = *body.Subject.DeviceId
-	}
-	if body.Subject.WorkloadSessionId != nil {
-		subject.WorkloadSessionID = *body.Subject.WorkloadSessionId
 	}
 	proof := tunnelv1.ConnectorPeerPairProof{ServiceID: serviceID, ServiceRunID: body.ServiceRunId, RunNumber: body.RunNumber,
 		PublisherIdentityID: body.PublisherIdentityId, Subject: subject, Action: string(body.Action), IdempotencyKey: body.IdempotencyKey,
@@ -47,9 +34,33 @@ func ConnectorPeerPairProof(serviceID string, body ConnectorPeerPairRequest) (tu
 	return proof, nil
 }
 
+func connectorProofSubject(wire VisitorSubject) (tunnelv1.VisitorSubject, bool) {
+	subject := tunnelv1.VisitorSubject{Kind: string(wire.Kind)}
+	switch string(wire.Kind) {
+	case tunnelv1.VisitorHumanDevice:
+		if wire.IdentityId == nil || wire.DeviceId == nil || wire.WorkloadSessionId != nil || wire.GrantId != nil || wire.KeyId != nil {
+			return subject, false
+		}
+		subject.IdentityID, subject.DeviceID = *wire.IdentityId, *wire.DeviceId
+	case tunnelv1.VisitorWorkloadSession:
+		if wire.WorkloadSessionId == nil || wire.IdentityId != nil || wire.DeviceId != nil || wire.GrantId != nil || wire.KeyId != nil {
+			return subject, false
+		}
+		subject.WorkloadSessionID = *wire.WorkloadSessionId
+	case tunnelv1.VisitorRegisteredKey:
+		if wire.GrantId == nil || wire.KeyId == nil || wire.IdentityId != nil || wire.DeviceId != nil || wire.WorkloadSessionId != nil {
+			return subject, false
+		}
+		subject.GrantID, subject.KeyID = *wire.GrantId, *wire.KeyId
+	default:
+		return subject, false
+	}
+	return subject, subject.Validate() == nil
+}
+
 // ConnectorPeerPairProofMessage is pure signing input for a generated HTTP
-// request. callers sign the returned bytes with the enrolled device or
-// workload key before setting body.Signature.
+// request. callers sign the returned bytes with the enrolled human-device,
+// workload, or registered key before setting body.Signature.
 func ConnectorPeerPairProofMessage(serviceID string, body ConnectorPeerPairRequest) ([]byte, error) {
 	proof, err := ConnectorPeerPairProof(serviceID, body)
 	if err != nil {

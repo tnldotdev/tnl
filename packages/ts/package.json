@@ -31,15 +31,26 @@
     "THIRD_PARTY_LICENSES.txt"
   ],
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/wasm/wasm_exec.js"
+  ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "workerd": {
+        "types": "./dist/index.worker.d.ts",
+        "default": "./dist/index.worker.js"
+      },
+      "worker": {
+        "types": "./dist/index.browser.d.ts",
+        "default": "./dist/index.browser.js"
+      },
       "browser": {
+        "types": "./dist/index.browser.d.ts",
         "import": "./dist/index.browser.js",
         "require": "./dist/index.browser.js",
         "default": "./dist/index.browser.js"
       },
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.js",
       "default": "./dist/index.js"
@@ -76,7 +87,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm run clean && tsc --build tsconfig.management.json --force && tsc --project tsconfig.json && node ../../scripts/package/node-licenses.ts",
+    "build": "pnpm run clean && tsc --build tsconfig.management.json --force && tsc --project tsconfig.json && node ../../scripts/build/sdk-wasm.ts && node ../../scripts/package/node-licenses.ts",
     "clean": "node --input-type=module -e 'import {rmSync} from \"node:fs\"; rmSync(\"dist\", {recursive:true, force:true})'",
     "prepack": "pnpm run build"
   },

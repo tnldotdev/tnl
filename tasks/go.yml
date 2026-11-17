@@ -11,6 +11,15 @@ tasks:
     cmds:
       - govulncheck ./...
 
+  vulncheck:wasm:
+    desc: Scan the portable SDK, including its embedded certificate roots
+    env:
+      GOOS: js
+      GOARCH: wasm
+      CGO_ENABLED: "0"
+    cmds:
+      - govulncheck ./packages/ts/wasm
+
   test:
     desc: Run routine Go tests and compile the public SDK example
     cmds:
@@ -27,6 +36,46 @@ tasks:
       COUNT: '{{default "1" .COUNT}}'
     cmds:
       - go test {{.FLAGS}} {{.PACKAGES}} -run='{{.RUN}}' -count={{.COUNT}} -timeout=5m
+
+  test:wasm:
+    desc: Execute selected Go tests in the pinned JS/WASM runtime
+    requires:
+      vars: [PACKAGES]
+    vars:
+      RUN: '{{default "." .RUN}}'
+    env:
+      GOOS: js
+      GOARCH: wasm
+      CGO_ENABLED: "0"
+    cmds:
+      - go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=5m
+
+  test:wasm:browser:
+    desc: Execute selected Go/WASM tests in installed Google Chrome
+    requires:
+      vars: [PACKAGES]
+    vars:
+      RUN: '{{default "." .RUN}}'
+    env:
+      GOOS: js
+      GOARCH: wasm
+      CGO_ENABLED: "0"
+    cmds:
+      - go test -exec="node {{.ROOT_DIR}}/scripts/test/go-wasm-browser.ts" {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=5m
+
+  test:wasm:optimized:
+    desc: Execute selected Go tests after the SDK's Binaryen optimization
+    requires:
+      vars: [PACKAGES]
+    vars:
+      RUN: '{{default "." .RUN}}'
+      RUNTIME: '{{default "node" .RUNTIME}}'
+    env:
+      GOOS: js
+      GOARCH: wasm
+      CGO_ENABLED: "0"
+    cmds:
+      - go test -exec="node {{.ROOT_DIR}}/scripts/test/go-wasm-optimized.ts {{.RUNTIME}}" {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=5m
 
   test:coverage:
     desc: Produce a diagnostic Go coverage report

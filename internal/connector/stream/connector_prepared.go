@@ -26,6 +26,7 @@ import (
 type PreparedConnector struct {
 	ctx                context.Context
 	conn               net.Conn
+	raw                muxsession.Stream
 	mu                 sync.Mutex
 	stream             preparedStreamPhase
 	permission         preparedPermissionPhase
@@ -228,7 +229,7 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 		return nil, ErrServiceConnection
 	}
 	setupStopped = true
-	p := &PreparedConnector{ctx: ctx, conn: connection, stdio: selected, stream: streamPrepared{}, permission: permissionUsable{}, callbackDone: make(chan struct{}), permissionUntil: run.ValidUntil}
+	p := &PreparedConnector{ctx: ctx, conn: connection, raw: raw, stdio: selected, stream: streamPrepared{}, permission: permissionUsable{}, callbackDone: make(chan struct{}), permissionUntil: run.ValidUntil}
 	p.stop = context.AfterFunc(ctx, func() { defer close(p.callbackDone); _ = p.closePhysical() })
 	p.mu.Lock()
 	p.startPermissionWorkerLocked()
@@ -239,12 +240,46 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 
 func (p *PreparedConnector) closePhysical() error {
 	p.physicalOnce.Do(func() {
-		p.physicalErr = p.conn.Close()
-		if _, secured := p.conn.(*tls.Conn); secured && p.stdio != nil {
-			p.physicalErr = p.stdio.tlsCloseResult(p.physicalErr)
+		p.mu.Lock()
+		conn, selected := p.conn, p.stdio
+		p.mu.Unlock()
+		p.physicalErr = conn.Close()
+		if _, secured := conn.(*tls.Conn); secured && selected != nil {
+			p.physicalErr = selected.tlsCloseResult(p.physicalErr)
 		}
 	})
 	return p.physicalErr
+}
+
+// bindOperation also adopts the already TLS-verified warm TCP use. the wrapper
+// retains that exact connection and resets its existing multiplexed stream.
+func (p *PreparedConnector) bindOperation(operation *stdioOperation, abort func() error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closedLocked() || p.ctx.Err() != nil {
+		return ErrServiceConnection
+	}
+	if p.stdio == nil {
+		selected, err := operation.bind(&preparedOperationStream{Conn: p.conn, raw: p.raw})
+		if err != nil {
+			return err
+		}
+		p.conn, p.stdio = selected, selected
+	}
+	return operation.activateWithAbort(p.stdio, abort)
+}
+
+type preparedOperationStream struct {
+	net.Conn
+	raw muxsession.Stream
+}
+
+func (s *preparedOperationStream) Reset(code uint32) error { return s.raw.Reset(code) }
+func (s *preparedOperationStream) CloseWrite() error {
+	if writer, ok := s.Conn.(interface{ CloseWrite() error }); ok {
+		return writer.CloseWrite()
+	}
+	return errors.ErrUnsupported
 }
 
 func (p *PreparedConnector) finish() {

@@ -45,6 +45,11 @@ tasks:
     cmds:
       - pnpm build
 
+  wasm:build:
+    desc: Build the SDK's Go/WASM module and matching Go runtime
+    cmds:
+      - node scripts/build/sdk-wasm.ts
+
   check:
     desc: Build once and run JavaScript checks
     cmds:

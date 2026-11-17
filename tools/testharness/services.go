@@ -13,6 +13,8 @@ import (
 
 func startTestService(ctx context.Context, service string) ([]string, func() error, error) {
 	switch service {
+	case "connector-wasm":
+		return startPortableSDKDatabases(ctx)
 	case "deployment-database":
 		flags, closeControl, err := startTestService(ctx, "postgres")
 		if err != nil {

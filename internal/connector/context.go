@@ -20,6 +20,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorsession "github.com/tnldotdev/tnl/internal/connector/session"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -258,7 +259,8 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 	backend.telemetry = o.Telemetry
 	backend.shutdownDeadline = o.ShutdownDeadline
 	if request.Deployment != nil {
-		backend.deployment, err = newDeploymentConnection(*request.Deployment, nil)
+		r := request.Deployment
+		backend.deployment, err = connectorsession.NewDeployment(connectorsession.DeploymentOptions{Project: r.Project, Deployment: r.Name, Credential: r.Token}, nil)
 		if err != nil {
 			return err
 		}

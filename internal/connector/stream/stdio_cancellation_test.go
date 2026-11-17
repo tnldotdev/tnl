@@ -2,12 +2,14 @@ package stream
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -17,6 +19,90 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
+
+type stdioPhysicalWatch struct {
+	net.Conn
+	closed atomic.Int64
+}
+
+func (c *stdioPhysicalWatch) Close() error {
+	c.closed.Add(1)
+	return c.Conn.Close()
+}
+
+type stdioResetWatch struct {
+	muxsession.Stream
+	resets atomic.Int64
+	err    error
+}
+
+func (s *stdioResetWatch) Reset(code uint32) error {
+	s.resets.Add(1)
+	return errors.Join(s.Stream.Reset(code), s.err)
+}
+
+func TestStdioAbortJoinsCopyBeforeTerminalWithoutPhysicalClose(t *testing.T) {
+	for _, resetFailure := range []bool{false, true} {
+		t.Run(fmt.Sprint(resetFailure), func(t *testing.T) {
+			f := newOwnerTeardownFixture(t, true, false)
+			f.returnWrite.open()
+			f.cleanup.latch.open()
+			f.outbound.open()
+			physical := &stdioPhysicalWatch{Conn: f.prepared.conn}
+			raw := &stdioResetWatch{Stream: f.prepared.raw}
+			if resetFailure {
+				raw.err = errors.New("selected raw reset cleanup failed")
+			}
+			f.prepared.conn, f.prepared.raw = physical, raw
+			use := f.owner.warm
+			f.owner.warm = nil
+			ctx, cancel := context.WithCancelCause(f.ctx)
+			defer cancel(nil)
+			o := newStdioOperation(ctx, f.local)
+			copied, proceed, done := make(chan error, 1), make(chan struct{}), make(chan error, 1)
+			release := sync.OnceFunc(func() { close(proceed) })
+			defer release()
+			f.workers.Go(func() {
+				// hold the exact production boundary between joined local copy and
+				// the authenticated terminal exchange over the retained session.
+				result := f.owner.forwardUse(o.ctx, o.local, use, f.owner.run, use.entry)
+				copied <- result
+				<-proceed
+				result = f.owner.terminalUse(use, result)
+				o.complete()
+				done <- o.finish(result)
+			})
+			if _, err := io.WriteString(f.input, "request\n"); err != nil {
+				t.Fatal(err)
+			}
+			var request [8]byte
+			if _, err := io.ReadFull(f.remote, request[:]); err != nil || string(request[:]) != "request\n" {
+				t.Fatal("real visitor TLS did not carry the request", err)
+			}
+			cancel(context.Canceled)
+			if err := ownerTeardownAwait(t, f.ctx, copied); err == nil {
+				t.Fatal("aborted copy did not retain its stop evidence before terminal")
+			}
+			if physical.closed.Load() != 0 || raw.resets.Load() != 0 {
+				t.Fatal("local cancellation physically closed or reset visitor TLS before authenticated Abort",
+					physical.closed.Load(), raw.resets.Load())
+			}
+			release()
+			err := ownerTeardownAwait(t, f.ctx, done)
+			if resetFailure {
+				if !errors.Is(err, raw.err) {
+					t.Fatal("joined abort lost its exact raw reset cleanup failure", err)
+				}
+			} else if err != nil {
+				t.Fatal("ordinary caller abort did not join cleanly", err)
+			}
+			if raw.resets.Load() != 1 || physical.closed.Load() != 0 {
+				t.Fatal("abort did not perform exactly one raw reset without TLS close-notify",
+					raw.resets.Load(), physical.closed.Load())
+			}
+		})
+	}
+}
 
 func TestStdioOrdinaryCancellationJoinsOneStream(t *testing.T) {
 	for _, transport := range []string{"quic", "wss"} {
@@ -142,6 +228,10 @@ func TestStdioAbortOnlyAcceptsExactOperationEvidence(t *testing.T) {
 		errors.New("independent copy failure"), io.EOF, fmt.Errorf("output: %w", io.EOF),
 		syscall.EPIPE, syscall.ECONNRESET,
 		failure.Wrap("output", failure.TunnelUnavailable, net.ErrClosed),
+		&tls.RecordHeaderError{Msg: "independent TLS failure"},
+		ErrServiceConnection,
+		&CleanupError{Err: context.Canceled},
+		failure.Wrap("permission", failure.ServerDenied, context.Canceled),
 		(*os.PathError)(nil), &stdioCycle{}, &stdioPanicIs{}, muxsession.ErrClosed,
 	} {
 		if o.abortOnly(errors.Join(local, reset, independent)) {

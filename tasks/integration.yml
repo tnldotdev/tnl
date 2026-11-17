@@ -4,7 +4,7 @@ tasks:
   websocket:
     desc: Check installed Chrome WebSocket/yamux bytes and authentication against the native relay transport
     cmds:
-      - go test -race -v ./internal/transport/muxsession -run='^TestIntegrationWebSocketPortableClient$' -count=1 -timeout=1m -args -tnl-test-tier=integration
+      - go test -race -v ./internal/transport/muxsession -run='^TestIntegrationWebSocket(PortableClient|WASMClient|WorkerdClient)$' -count=1 -timeout=2m -args -tnl-test-tier=integration
 
   default:
     desc: Run PostgreSQL-backed integration boundaries
@@ -215,3 +215,11 @@ tasks:
       vars: [ZONE_ID]
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/certificates -run='^TestIntegrationRoute53StagingACME$' -count=1 -timeout=12m -args -tnl-test-tier=route53 -tnl-route53-zone-id='{{.ZONE_ID}}'
+
+  connector-wasm:
+    desc: Check the normal browser and Worker SDK against real control, WSS relays, and disposable databases
+    deps: [":js:build"]
+    vars:
+      RUNTIME: '{{default "all" .RUNTIME}}'
+    cmds:
+      - go -C tools/testharness run . connector-wasm -- go test -race -v ./internal/daemon -run='^TestIntegrationConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=integration -tnl-wasm-fixture-duration=7m -tnl-wasm-fixture-command='["node","scripts/test/portable-sdk.ts","--fixture","{fixture}","--runtime","{{.RUNTIME}}"]'

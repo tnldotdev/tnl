@@ -270,6 +270,60 @@ func TestTelemetryCollectionIsBoundedAndDoesNotWaitForIO(t *testing.T) {
 	}
 }
 
+func TestTelemetryCloseDrainsCurrentScopeMeasurements(t *testing.T) {
+	for _, status := range []int{http.StatusNoContent, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "state")
+			var delivered []api.Batch
+			c := collectorForTest(t, Config{Root: root, Client: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				var batch api.Batch
+				if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
+					return nil, err
+				}
+				delivered = append(delivered, batch)
+				return &http.Response{StatusCode: status, Body: http.NoBody}, nil
+			})}})
+			scope := c.BeginScope(api.TransportReportRoleConnector)
+			scope.Record(api.RelayConnect, api.Wss, api.Succeeded, time.Second)
+			c.Close(context.Background())
+			if len(delivered) != 1 || len(delivered[0].Events) != 1 {
+				t.Fatalf("close did not deliver the pending scope: %+v", delivered)
+			}
+			event, err := delivered[0].Events[0].Event.AsTransportEvent()
+			if err != nil || event.Payload.Role != api.TransportReportRoleConnector || len(event.Payload.Measurements) != 1 {
+				t.Fatal("invalid final scope report", event, err)
+			}
+			measurement := event.Payload.Measurements[0]
+			if measurement.Operation != api.RelayConnect || measurement.Path != api.Wss || measurement.Outcome != api.Succeeded || measurement.Count != 1 {
+				t.Fatal("pending measurement changed during close", measurement)
+			}
+			if c.BeginScope(api.TransportReportRoleConnector) != nil {
+				t.Fatal("closed collector admitted a new scope")
+			}
+			scope.Record(api.RelayConnect, api.Wss, api.Succeeded, time.Second)
+			scope.mu.Lock()
+			pending := scope.counts
+			scope.mu.Unlock()
+			if pending != [4][3][3][4]int64{} {
+				t.Fatal("closed collector admitted another observation")
+			}
+			database, err := clientstate.OpenWithOptions(t.Context(), root, clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			rows, err := database.PendingTelemetryEvents(t.Context(), 25)
+			want := 0
+			if status != http.StatusNoContent {
+				want = 1
+			}
+			if err != nil || len(rows) != want {
+				t.Fatalf("final report persistence: got %d, want %d: %v", len(rows), want, err)
+			}
+		})
+	}
+}
+
 func TestTelemetrySetupCanRetryAfterInvalidRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {

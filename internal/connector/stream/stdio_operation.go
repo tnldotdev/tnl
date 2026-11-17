@@ -12,7 +12,9 @@ import (
 
 	yamux "github.com/libp2p/go-yamux/v5"
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
 
 type stdioOperationKey struct{}
@@ -74,6 +76,12 @@ func (o *stdioOperation) serve(config Config) (result error) {
 		defer o.complete()
 		return forward(ctx, o.local)
 	})
+}
+
+func (o *stdioOperation) forward(connection *connectorConnection) (result error) {
+	defer func() { result = o.finish(result) }()
+	defer o.complete()
+	return connection.Forward(o.ctx, o.local)
 }
 
 func (o *stdioOperation) stop(cause error, caller bool) {
@@ -150,7 +158,7 @@ func (o *stdioOperation) finish(result error) error {
 	<-o.abortDone
 	o.cancel(o.cause)
 	o.mu.Lock()
-	result = errors.Join(append([]error{result, o.terminalErr}, o.failures...)...)
+	result = errors.Join(append([]error{result, o.terminalErr, o.cause}, o.failures...)...)
 	expected := o.expected && (!o.resetStarted || o.resetOK)
 	o.mu.Unlock()
 	if expected && context.Cause(o.caller) == context.Canceled && o.abortOnly(result) {
@@ -227,6 +235,17 @@ type stdioLocalConn struct {
 func (c *stdioLocalConn) abort(cause error) error {
 	if aborter, ok := c.Conn.(interface{ Abort(error) error }); ok {
 		return aborter.Abort(cause)
+	}
+	return c.Conn.Close()
+}
+
+func (c *stdioLocalConn) Close() error {
+	o := c.owner
+	o.mu.Lock()
+	expected, cause := o.expected && o.localClosing, o.cause
+	o.mu.Unlock()
+	if expected {
+		return c.abort(cause)
 	}
 	return c.Conn.Close()
 }
@@ -428,6 +447,8 @@ func (o *stdioOperation) abortOnly(err error) bool {
 			return false
 		}
 		switch typed := cause.(type) {
+		case *CleanupError, *tunnel.SessionCleanupError, *muxsession.QUICTransportCloseError, *failure.Error:
+			return false
 		case *stdioPreparedAbortError:
 			if typed == nil || typed.owner != o || typed.stream != o.selected {
 				return false

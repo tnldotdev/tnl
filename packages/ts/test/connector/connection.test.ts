@@ -244,12 +244,14 @@ describe("private connection snapshots", () => {
       parseConnectionSnapshot({ ...database, protocol: "tcp", host: "127.0.0.1" }),
     ).toThrow();
   });
-  test("browser deployment clients reject without loading native code", async () => {
+  test("browser clients accept portable configuration without loading a backend", async () => {
     const { tnl, createClient } = await import("../../src/index.browser.js");
     expect(Reflect.has(tnl, "connect")).toBe(false);
     expect(Reflect.has(tnl, "client")).toBe(false);
-    expect(() => createClient({ project: "team/project" })).toThrow(
-      expect.objectContaining({ code: "sdk.connection_server_only" }),
+    const client = createClient({ project: "team/project", token: "private" });
+    await client.deployment("production").close();
+    expect(() => client.deployment("local")).toThrow(
+      expect.objectContaining({ code: "sdk.capability_unsupported" }),
     );
   });
 });

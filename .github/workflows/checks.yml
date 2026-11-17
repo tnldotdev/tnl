@@ -44,7 +44,7 @@ jobs:
   javascript:
     name: JavaScript
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,15 +54,26 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go node pnpm bun task go:github.com/sqlc-dev/sqlc/cmd/sqlc
+          tools: >-
+            go node pnpm bun task go:github.com/sqlc-dev/sqlc/cmd/sqlc
+            go:golang.org/x/vuln/cmd/govulncheck aqua:WebAssembly/binaryen
           pnpm: true
           save-cache: true
 
       - name: Check packages
         run: task js:check
 
+      - name: Execute Go/WASM bridge tests
+        run: task go:test:wasm:optimized PACKAGES=./packages/ts/wasm RUNTIME=node
+
+      - name: Scan Go/WASM runtime dependencies
+        run: task go:vulncheck:wasm
+
       - name: Show toolbar test browser
         run: google-chrome --version
+
+      - name: Execute browser Go/WASM bridge tests
+        run: task go:test:wasm:optimized PACKAGES=./packages/ts/wasm RUNTIME=chrome
 
       - name: Test embedded toolbar
         run: task js:test:browser
@@ -84,7 +95,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go node pnpm python uv task aqua:goreleaser/goreleaser aqua:anchore/syft
+          tools: go node pnpm python uv task aqua:goreleaser/goreleaser aqua:anchore/syft aqua:WebAssembly/binaryen
           go-cache: build
           pnpm: true
 
@@ -98,7 +109,7 @@ jobs:
     name: ${{ matrix.framework }} ${{ matrix.version }}
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -124,7 +135,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: node pnpm
+          tools: go node pnpm aqua:WebAssembly/binaryen
           pnpm: true
 
       - name: Install test runner version

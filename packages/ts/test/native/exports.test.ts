@@ -1,9 +1,18 @@
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { build } from "esbuild";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 const directory = fileURLToPath(new URL("../../", import.meta.url));
+const compiler = join(
+  dirname(createRequire(import.meta.url).resolve("typescript/package.json")),
+  "bin/tsc",
+);
+const nativeInput =
+  /node:|internal\/(?:native\/|publisher\/|connector\/(?:client\.|connection[_.]|management\.|workload\/))|@vercel|undici/;
 
 test("import and require share errors, workload configuration, and deployment clients", () => {
   execFileSync(
@@ -41,7 +50,33 @@ test("import and require share errors, workload configuration, and deployment cl
   );
 });
 
-test("browser exports reject connections without loading native or provider modules", async () => {
+test.each(["browser", "worker", "workerd"])(
+  "%s consumers resolve portable declarations instead of native socket settings",
+  (condition) => {
+    execFileSync(
+      process.execPath,
+      [
+        compiler,
+        "--ignoreConfig",
+        "--strict",
+        "--skipLibCheck",
+        "--noEmit",
+        "--target",
+        "es2022",
+        "--module",
+        "nodenext",
+        "--lib",
+        "dom,dom.iterable,esnext",
+        "--customConditions",
+        condition,
+        "test/fixtures/portable-consumer.mts",
+      ],
+      { cwd: directory, stdio: "inherit", timeout: 10_000 },
+    );
+  },
+);
+
+test("browser exports construct portable clients without loading native or provider modules", async () => {
   execFileSync(
     process.execPath,
     [
@@ -56,7 +91,9 @@ test("browser exports reject connections without loading native or provider modu
     assert.equal(cjs.tnl, esm.tnl);
     assert.equal('connect' in esm.tnl, false);
     assert.equal('client' in esm.tnl, false);
-    assert.throws(() => esm.createClient({project:'team/project'}), e => e instanceof esm.TnlError && e.code === 'sdk.connection_server_only');
+    const app = esm.createClient({project:'team/project', token:'private'});
+    await app.deployment('production').close();
+    assert.throws(() => app.deployment('local'), e => e instanceof esm.TnlError && e.code === 'sdk.capability_unsupported');
   `,
     ],
     { cwd: directory },
@@ -73,12 +110,52 @@ test("browser exports reject connections without loading native or provider modu
       format: "iife",
       metafile: true,
     });
-    expect(
-      Object.keys(result.metafile.inputs).filter((input) =>
-        /internal\/(?:connector\/|native\/)|@vercel|undici/.test(input),
-      ),
-    ).toEqual([]);
+    expect(Object.keys(result.metafile.inputs).filter((input) => nativeInput.test(input))).toEqual(
+      [],
+    );
+    const output = result.outputFiles[0]?.text;
+    expect(output).toBeDefined();
+    if (output === undefined) throw new Error("missing browser bundle");
+    if (contents.startsWith("import")) expect(output).not.toContain("WebAssembly.instantiate");
+    const fetch = vi.fn(() => {
+      throw new Error("metadata must not fetch a WASM artifact");
+    });
+    const instantiate = vi.fn(() => {
+      throw new Error("metadata must not instantiate WASM");
+    });
+    const sandbox = {
+      fetch,
+      WebAssembly: { instantiate },
+      URL,
+      Request,
+      Response,
+      Headers,
+      AbortSignal,
+      TextEncoder,
+      TextDecoder,
+    };
+    runInNewContext(output, sandbox);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(instantiate).not.toHaveBeenCalled();
+    expect(Reflect.has(sandbox, "Go")).toBe(false);
   }
+  const portable = await build({
+    stdin: {
+      contents:
+        'import {createClient} from "@tnldotdev/tnl"; globalThis.app = createClient({project:"team/project", token:"private", services:{db:{protocol:"postgres"}}});',
+      resolveDir: directory,
+    },
+    bundle: true,
+    write: false,
+    splitting: true,
+    outdir: "unused",
+    platform: "browser",
+    format: "esm",
+    metafile: true,
+  });
+  expect(Object.keys(portable.metafile.inputs).filter((input) => nativeInput.test(input))).toEqual(
+    [],
+  );
   for (const contents of [
     'import {configureWorkload} from "@tnldotdev/tnl/workload"; configureWorkload({name:"worker", token:async()=>"secret"});',
     'globalThis.workload = require("@tnldotdev/tnl/workload");',

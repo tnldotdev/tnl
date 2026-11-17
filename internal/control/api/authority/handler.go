@@ -84,12 +84,12 @@ func (routes Routes) Matches(pattern string) bool {
 }
 
 type routeRegistrar struct {
-	*http.ServeMux
+	*serverhttp.CredentialCORSRouter
 	routes Routes
 }
 
 func (r routeRegistrar) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
-	r.ServeMux.HandleFunc(pattern, handler)
+	r.CredentialCORSRouter.HandleFunc(pattern, handler)
 	r.routes[pattern] = struct{}{}
 }
 
@@ -131,9 +131,16 @@ func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
 	}
 	routes := make(Routes)
-	authorityv1.HandlerWithOptions(h, authorityv1.StdHTTPServerOptions{
-		BaseRouter: routeRegistrar{ServeMux: mux, routes: routes}, ErrorHandlerFunc: parameterError,
+	// the existing signed assertion exchange also serves explicit deployment
+	// credentials. no cookie login, session refresh, enrollment, or rotation
+	// operation is exposed to cross-origin Fetch.
+	browserRouter := serverhttp.NewCredentialCORSRouter(mux, map[string]serverhttp.CredentialCORSHeaders{
+		"POST /v1/publisher-token": {Request: []string{"Content-Type"}},
 	})
+	authorityv1.HandlerWithOptions(h, authorityv1.StdHTTPServerOptions{
+		BaseRouter: routeRegistrar{CredentialCORSRouter: browserRouter, routes: routes}, ErrorHandlerFunc: parameterError,
+	})
+	routes["OPTIONS /v1/publisher-token"] = struct{}{}
 	return routes, nil
 }
 

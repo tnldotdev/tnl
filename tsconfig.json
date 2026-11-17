@@ -12,6 +12,8 @@
   },
   "include": [
     "internal/client/project/loader.ts",
+    "internal/transport/muxsession/testdata/websocket-wasm.ts",
+    "internal/transport/muxsession/testdata/websocket-workerd.ts",
     "packages/**/*.test.ts",
     "packages/ts/test/helpers/**/*.ts",
     "packages/ts/test/fixtures/**/*.ts",

@@ -1868,6 +1868,19 @@ Copyright 2009 The Go Authors.
 License text: [BSD-3-Clause-1]
 
 --------------------------------------------------------------------------------
+Package: golang.org/x/crypto/x509roots/fallback
+Version: v0.0.0-20261115193255-739070949446
+License: BSD-3-Clause
+Source: https://pkg.go.dev/golang.org/x/crypto/x509roots/fallback@v0.0.0-20261115193255-739070949446?tab=licenses
+
+LICENSE
+
+Copyright 2009 The Go Authors.
+
+Includes the module's generated NSS root certificate bundle and constraints.
+License text: [BSD-3-Clause-1]
+
+--------------------------------------------------------------------------------
 Package: golang.org/x/net
 Version: v0.62.0
 License: BSD-3-Clause

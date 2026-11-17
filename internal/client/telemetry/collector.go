@@ -1,3 +1,5 @@
+//go:build !js
+
 package telemetry
 
 import (
@@ -53,6 +55,35 @@ type Collector struct {
 	flightCancel context.CancelFunc
 	scopesMu     sync.Mutex
 	scopes       map[*Scope]struct{}
+}
+
+func (c *Collector) BeginScope(role api.TransportReportRole) *Scope {
+	if c == nil || !role.Valid() {
+		return nil
+	}
+	c.scopesMu.Lock()
+	defer c.scopesMu.Unlock()
+	if c.closed.Load() {
+		return nil
+	}
+	s := &Scope{collector: c, role: role, epoch: c.preference.Load().Epoch}
+	c.scopes[s] = struct{}{}
+	return s
+}
+
+func (c *Collector) scopePreference() (bool, int64) {
+	p := c.preference.Load()
+	// closing stops new observations separately; retained facts still use the
+	// current preference and epoch during the collector's final drain.
+	return p.Enabled, p.Epoch
+}
+
+func (c *Collector) scopeClosed() bool { return c.closed.Load() }
+
+func (c *Collector) removeScope(s *Scope) {
+	c.scopesMu.Lock()
+	delete(c.scopes, s)
+	c.scopesMu.Unlock()
 }
 
 func New(parent context.Context, cfg Config) (*Collector, error) {

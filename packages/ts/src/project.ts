@@ -2,6 +2,8 @@ import type { TnlProtocol } from "./config.js";
 import type { ProjectServiceMetadata, ServiceProtocol } from "./internal/project/runtime.js";
 import type { NativeTLSOptions } from "./internal/connector/snapshot.js";
 
+export type ServiceFacts = Readonly<Record<string, Readonly<{ protocol: ServiceProtocol }>>>;
+
 /** browser-safe addresses only; native credentials are returned by node methods. */
 export type TnlProtocolRegistry = {
   [Protocol in ServiceProtocol]: Omit<
@@ -37,6 +39,56 @@ export interface TnlConnectionRegistry {
     readonly kubeconfig: string;
     readonly context: string;
   };
+}
+
+/**
+ * a bounded application byte stream. writable.close sends EOF without discarding
+ * the response; close cancels and joins both I/O directions.
+ */
+export interface TnlStream {
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<Uint8Array>;
+  close(): Promise<void>;
+}
+
+/** the driver calls this after its mysql sslrequest and before credentials. */
+export interface TnlTLSStream extends TnlStream {
+  startTls(): Promise<void>;
+}
+
+export type TnlOpenStream<Stream extends TnlStream = TnlStream> = (
+  options?: Readonly<{ signal?: AbortSignal }>,
+) => Promise<Stream>;
+
+/**
+ * browser/worker capabilities, not native driver socket options. no loopback
+ * listener, filesystem kubeconfig, node socket, or application credentials.
+ * http, kubernetes, and postgres open verify tls in go before returning. mysql
+ * drivers must send sslrequest and await startTls before sending credentials.
+ * http and kubernetes fetch use only the selected service, with manual redirects.
+ *
+ * these contracts require a portable, stream-aware driver adapter. stock pg,
+ * mysql2, and filesystem-based kubernetes clients are not browser drivers.
+ * using node drivers in a worker additionally requires the platform's node
+ * compatibility mode and a driver-specific socket adapter; tnl supplies neither.
+ * tnl itself needs no node compatibility mode for these stream/fetch contracts.
+ *
+ * @example
+ * const getDatabase = deployment.client("db", {
+ *   create: ({ open }) => portableDriver({ open, user, password }),
+ *   close: (client) => client.close(),
+ * });
+ */
+export interface TnlStreamConnectionRegistry {
+  postgres: Readonly<{ open: TnlOpenStream }>;
+  mysql: Readonly<{ open: TnlOpenStream<TnlTLSStream> }>;
+  tcp: Readonly<{ open: TnlOpenStream }>;
+  http: Readonly<{ url: `https://${string}`; fetch: TnlFetch; open: TnlOpenStream }>;
+  kubernetes: Readonly<{
+    server: `https://${string}`;
+    fetch: TnlFetch;
+    open: TnlOpenStream;
+  }>;
 }
 
 /** callbacks adapt ordinary drivers without adding a driver-specific tnl wrapper. */

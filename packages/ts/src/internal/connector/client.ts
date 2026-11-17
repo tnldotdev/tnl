@@ -8,6 +8,7 @@ import type {
   TnlFetch,
   TnlNativeTLSOptions,
   TnlConnectionRegistry,
+  ServiceFacts,
 } from "../../project.js";
 import { clientFactory } from "./client_factory.js";
 import type { ConnectionSnapshot } from "./snapshot.js";
@@ -26,7 +27,7 @@ import type {
   PublicationSelection,
 } from "../publisher/publication.js";
 
-export type ServiceFacts = Readonly<Record<string, Readonly<{ protocol: ServiceProtocol }>>>;
+export type { ServiceFacts } from "../../project.js";
 type Names<Services extends ServiceFacts> = Extract<keyof Services, string>;
 type HTTPNames<Services extends ServiceFacts> = keyof Services extends never
   ? string

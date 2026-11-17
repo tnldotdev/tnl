@@ -11,6 +11,9 @@ export type TnlErrorCode =
   | "sdk.connection_unavailable"
   | "sdk.local_connection_unavailable"
   | "sdk.connection_server_only"
+  | "sdk.capability_unsupported"
+  | "sdk.wasm_unavailable"
+  | "sdk.wasm_invalid"
   | "sdk.client_closed"
   | "sdk.client_capacity"
   | "sdk.workload_required"
@@ -102,6 +105,23 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     retry: "after_change",
     message:
       "connector connections require Node.js or Bun; create a deployment client in server code",
+  },
+  "sdk.capability_unsupported": {
+    class: "invalid",
+    retry: "after_change",
+    message:
+      "this operation needs a native tnl process; use Node.js or Bun, or select a remote stream-backed connection",
+  },
+  "sdk.wasm_unavailable": {
+    class: "unavailable",
+    retry: "after_change",
+    message:
+      "the tnl Go/WASM connector could not start; check the packaged WASM files and runtime support",
+  },
+  "sdk.wasm_invalid": {
+    class: "internal",
+    retry: "after_change",
+    message: "the tnl Go/WASM connector returned an invalid result; check SDK compatibility",
   },
   "sdk.client_closed": {
     class: "invalid",

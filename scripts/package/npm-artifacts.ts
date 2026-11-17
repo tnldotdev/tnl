@@ -35,6 +35,19 @@ export const packageManifestSchema = z.looseObject({
 
 export type PackageManifest = z.infer<typeof packageManifestSchema>;
 
+// the lazy loader's assets are not export targets, but must travel with the SDK.
+export function assertWasmAssets(packedFiles: ReadonlySet<string>): void {
+  for (const file of [
+    "dist/wasm/tnl.wasm",
+    "dist/wasm/wasm_exec.js",
+    "dist/wasm/go-license.txt",
+    "dist/wasm/third-party-licenses.txt",
+    "dist/wasm/build.json",
+  ]) {
+    assert(packedFiles.has(file), `SDK is missing WASM asset ${file}`);
+  }
+}
+
 // check every conditional target, including declarations and browser/require branches
 // that a single Node import would not visit. the manifest owns the export inventory.
 export function assertExportTargets(
