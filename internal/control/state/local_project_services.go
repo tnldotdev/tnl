@@ -148,14 +148,37 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	if _, err = q.LockLocalTeamForMutation(ctx, r.TeamID); err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
+	member, err := serviceMembershipForActor(ctx, tx, r.TeamID, r.ActorID, time.Now())
+	if err != nil {
 		return result, err
+	}
+	if !member.administrator() {
+		// native local identities describe one canonical project directory, not
+		// the portable Git source used by apply. membership alone must not claim
+		// a team project's declarations or another implementer's local project.
+		if r.ProjectKey != "local-"+r.SourceFingerprint[:48] {
+			return result, ErrServiceAccess
+		}
+		var foreign bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.local_project_services
+			WHERE team_id=$1 AND project_key=$2 AND created_by_identity_id<>$3)`,
+			r.TeamID, r.ProjectKey, r.ActorID).Scan(&foreign); err != nil {
+			return result, err
+		}
+		if foreign {
+			return result, ErrServiceAccess
+		}
 	}
 	if err = checkLocalProjectSource(ctx, tx, r.TeamID, r.ProjectKey, r.SourceFingerprint); err != nil {
 		return result, err
 	}
 	project, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 	if err == nil {
+		// saved desired intent stays manager-owned, including a deliberately
+		// colliding local key. realization never grants apply/config access.
+		if !member.administrator() {
+			return result, ErrServiceAccess
+		}
 		if project.SourceFingerprint != r.SourceFingerprint {
 			return result, ErrProjectSourceConflict
 		}
@@ -183,6 +206,15 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		previous, e := q.LockService(ctx, entry.ServiceID.String)
 		if e != nil {
 			return result, e
+		}
+		if !member.administrator() {
+			owner, e := storedServiceSourceOwner(ctx, tx, previous, previous.DeletedAt.Valid)
+			if e != nil {
+				return result, e
+			}
+			if !owner.local || owner.scope != NamespaceScopeMember || owner.membership != member.id {
+				return result, ErrServiceAccess
+			}
 		}
 		if previous.DeletedAt.Valid {
 			// only runtime deletion of an ephemeral service releases this exact
