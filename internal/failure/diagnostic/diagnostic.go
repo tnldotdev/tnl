@@ -6,14 +6,12 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
-	"html"
 	"io"
-	"mime"
 	"net/http"
 	"strconv"
-	"strings"
 	"syscall"
 
+	"github.com/tnldotdev/tnl/internal/browserpage"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 )
 
@@ -214,11 +212,10 @@ func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, c
 	}
 	body := renderText("tnl", code, variant, definitionFor(code).Summary)
 	contentType := "text/plain; charset=utf-8"
-	if acceptsHTML(request.Header.Get("Accept")) {
+	if browserpage.AcceptsHTML(request.Header.Get("Accept")) {
 		body = renderHTML(code, variant)
 		contentType = "text/html; charset=utf-8"
-		response.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
-		response.Header().Set("Referrer-Policy", "no-referrer")
+		browserpage.Headers(response)
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Length", strconv.Itoa(len(body)))
@@ -264,54 +261,17 @@ func renderText(command string, code Code, caseID string, details ...string) str
 
 func renderHTML(code Code, caseID string) string {
 	definition := definitionFor(code)
-	url := HelpURL(code, caseID)
-	action := ""
+	var paragraphs []string
 	if len(definition.Actions.Visitor) != 0 {
-		action = "<p>" + html.EscapeString(definition.Actions.Visitor[0]) + "</p>"
+		paragraphs = append(paragraphs, definition.Actions.Visitor[0])
 	}
 	if variant := caseFor(code, caseID); variant != nil {
-		action += "<p>" + html.EscapeString(variant.Description) + " " + html.EscapeString(variant.Action) + "</p>"
+		paragraphs = append(paragraphs, variant.Description+" "+variant.Action)
 	}
-	return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light">
-<title>` + html.EscapeString(definition.Title) + ` - tnl</title>
-<style>
-html{background:#fff;color:#111;font-family:"Fira Code","SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;font-variant-ligatures:none}
-body{margin:0;padding:clamp(1.25rem,6vw,4rem);max-width:64ch;line-height:1.6}
-h1{font-size:1.35rem;line-height:1.3}code{font:inherit}
-a{color:inherit;text-underline-offset:.2em}
-a:focus-visible{outline:1px dashed #111;outline-offset:4px}
-</style>
-</head>
-<body>
-<main><h1>` + html.EscapeString(definition.Title) + `</h1>
-<p>` + html.EscapeString(definition.Summary) + `</p>
-` + action + `<p><code>` + html.EscapeString(string(code)) + `</code> · <a href="` + html.EscapeString(url) + `">help with this error</a></p></main>
-</body>
-</html>
-`
-}
-
-func acceptsHTML(accept string) bool {
-	for part := range strings.SplitSeq(accept, ",") {
-		mediaType, parameters, err := mime.ParseMediaType(strings.TrimSpace(part))
-		if err != nil || mediaType != "text/html" {
-			continue
-		}
-		quality, found := parameters["q"]
-		if !found {
-			return true
-		}
-		value, err := strconv.ParseFloat(quality, 64)
-		if err == nil && value > 0 {
-			return true
-		}
-	}
-	return false
+	return browserpage.MessageHTML(browserpage.Message{
+		Title: definition.Title, Summary: definition.Summary,
+		Paragraphs: paragraphs, Code: string(code), HelpURL: HelpURL(code, caseID),
+	})
 }
 
 func definitionFor(code Code) definition {

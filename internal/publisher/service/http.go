@@ -455,7 +455,7 @@ func (f HTTP) share(w http.ResponseWriter, r *http.Request) {
 		servicestream.DenyHTTP(w, r, servicestream.HTTPDecisionStatus(err))
 		return
 	}
-	httpaccess.ShareRedirect(w, redemption)
+	httpaccess.ShareRedirect(w, r, redemption)
 }
 
 var _ servicestream.HTTPFrontend = HTTP{}

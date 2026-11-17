@@ -5,14 +5,15 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"html/template"
 	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/browserpage"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
@@ -143,6 +144,7 @@ func deviceRandom() (string, error) {
 }
 
 func (h *handler) BeginDeviceBrowser(w http.ResponseWriter, r *http.Request, _ authorityv1.BeginDeviceBrowserParams) {
+	w = failureproblem.BrowserResponse(w, r)
 	if !h.deviceAvailable(r.Context(), w) {
 		return
 	}
@@ -155,8 +157,9 @@ func (h *handler) BeginDeviceBrowser(w http.ResponseWriter, r *http.Request, _ a
 	team := l.TeamID
 	if team == "" {
 		if !r.URL.Query().Has("team") {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_ = teamSelectionPage.Execute(w, code)
+			browserpage.Headers(w)
+			w.Header().Set("Content-Security-Policy", browserpage.FormSecurityPolicy)
+			_ = teamSelectionPage.Write(w, browserpage.Page{Title: "tnl sign-in", Content: code})
 			return
 		}
 		team, err = h.store.ResolveLoginTeam(r.Context(), r.URL.Query().Get("team"))
@@ -218,11 +221,30 @@ func (h *handler) deviceBinding(r *http.Request) ([]byte, error) {
 	return binding, nil
 }
 
-var approvalPage = template.Must(template.New("approval").Parse(`<!doctype html><html><head><title>approve tnl login</title></head><body><h1>approve tnl login</h1><p>signed in as {{.Name}}</p><p>only approve if your terminal shows this code: <strong>{{.Code}}</strong></p><form method="post" action="/v1/auth/device/approve"><input type="hidden" name="code" value="{{.Code}}"><input type="hidden" name="binding" value="{{.Binding}}"><button>approve login</button></form></body></html>`))
+var approvalPage = browserpage.New(`<p class="eyebrow">[ terminal sign-in ]</p>
+<h1>approve tnl login</h1>
+<p class="intro">Signed in as {{.Name}}.</p>
+<p>Only approve if your terminal shows this code:</p>
+<strong class="code">{{.Code}}</strong>
+<form method="post" action="/v1/auth/device/approve">
+<input type="hidden" name="code" value="{{.Code}}">
+<input type="hidden" name="binding" value="{{.Binding}}">
+<button type="submit">approve login</button>
+</form>`)
 
-var teamSelectionPage = template.Must(template.New("team").Parse(`<!doctype html><html><head><title>tnl sign-in</title></head><body><h1>choose a team</h1><form method="get" action="/v1/auth/device/approve"><input type="hidden" name="code" value="{{.}}"><label>team name (leave empty for personal sign-in)<input name="team" maxlength="63"></label><button>continue</button></form></body></html>`))
+var teamSelectionPage = browserpage.New(`<p class="eyebrow">[ terminal sign-in ]</p>
+<h1>choose a team</h1>
+<p class="intro muted">Sign in to tnl from your terminal.</p>
+<form method="get" action="/v1/auth/device/approve">
+<input type="hidden" name="code" value="{{.}}">
+<label for="team">team name</label>
+<input id="team" name="team" maxlength="63" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="team-hint">
+<p class="hint" id="team-hint">Leave empty for personal sign-in.</p>
+<button type="submit">continue</button>
+</form>`)
 
 func (h *handler) CompleteDeviceBrowser(w http.ResponseWriter, r *http.Request, _ authorityv1.CompleteDeviceBrowserParams) {
+	w = failureproblem.BrowserResponse(w, r)
 	if !h.deviceAvailable(r.Context(), w) {
 		return
 	}
@@ -269,11 +291,13 @@ func (h *handler) CompleteDeviceBrowser(w http.ResponseWriter, r *http.Request, 
 		h.deviceError(r.Context(), w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = approvalPage.Execute(w, struct{ Name, Code, Binding string }{identity.DisplayName, l.UserCode, base64.RawURLEncoding.EncodeToString(binding)})
+	browserpage.Headers(w)
+	w.Header().Set("Content-Security-Policy", browserpage.FormSecurityPolicy)
+	_ = approvalPage.Write(w, browserpage.Page{Title: "approve tnl login", Content: struct{ Name, Code, Binding string }{identity.DisplayName, l.UserCode, base64.RawURLEncoding.EncodeToString(binding)}})
 }
 
 func (h *handler) ApproveDeviceBrowser(w http.ResponseWriter, r *http.Request) {
+	w = failureproblem.BrowserResponse(w, r)
 	if !h.deviceAvailable(r.Context(), w) {
 		return
 	}
@@ -298,6 +322,10 @@ func (h *handler) ApproveDeviceBrowser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, serverhttp.ControlCookie(h.config.ControlURL, http.Cookie{Name: deviceCookie, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1}))
+	if browserpage.AcceptsHTML(r.Header.Get("Accept")) {
+		browserpage.WriteMessage(w, http.StatusOK, browserpage.Message{Title: "login approved", Summary: "Return to your terminal. You can close this tab."})
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte("login approved. return to your terminal.\n"))
 }

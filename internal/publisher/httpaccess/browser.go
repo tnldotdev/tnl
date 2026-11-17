@@ -5,13 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"html"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/browserpage"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -93,7 +92,11 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 	response.Header().Set("Referrer-Policy", "no-referrer")
 	if a.Client == nil || a.Subject.Kind != visitorscope.Service || !a.Subject.Valid() ||
 		!opaqueid.Valid(a.RunID, opaqueid.ServiceRunPrefix) || a.Number < 1 || a.Token == "" {
-		http.Error(response, "browser sign-in is unavailable", http.StatusServiceUnavailable)
+		if request.URL.Path == root+"session" {
+			http.Error(response, "browser sign-in is unavailable", http.StatusServiceUnavailable)
+		} else {
+			browserpage.Error(response, request, "browser sign-in is unavailable", http.StatusServiceUnavailable)
+		}
 		return true
 	}
 	switch {
@@ -103,12 +106,12 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 			path = "/"
 		}
 		if !validBrowserPath(path) {
-			http.Error(response, "invalid return path", http.StatusBadRequest)
+			browserpage.Error(response, request, "invalid return path", http.StatusBadRequest)
 			return true
 		}
 		endpoint, err := url.Parse(a.ControlURL + "/v1/browser/service-login")
 		if err != nil {
-			http.Error(response, "sign-in is unavailable", http.StatusServiceUnavailable)
+			browserpage.Error(response, request, "sign-in is unavailable", http.StatusServiceUnavailable)
 			return true
 		}
 		query := endpoint.Query()
@@ -128,12 +131,12 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 		ticket := strings.TrimPrefix(request.URL.Path, root+"handoff/")
 		raw, err := base64.RawURLEncoding.Strict().DecodeString(ticket)
 		if err != nil || len(raw) != 32 {
-			http.NotFound(response, request)
+			browserpage.Error(response, request, "404 page not found", http.StatusNotFound)
 			return true
 		}
 		shareID, shareSecret, shareErr := shareSessionCookie(request)
 		if shareErr != nil {
-			http.Error(response, "invalid share session", http.StatusForbidden)
+			browserpage.Error(response, request, "invalid share session", http.StatusForbidden)
 			return true
 		}
 		input := controlv1.ServiceBrowserRequest{RunNumber: a.Number, Secret: ticket}
@@ -142,16 +145,16 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 		}
 		result, err := a.Client.RedeemServiceBrowserHandoff(request.Context(), a.Subject.ID, a.RunID, a.Token, input)
 		if err != nil || !validBrowserPath(result.ReturnPath) {
-			http.Error(response, "browser sign-in expired", http.StatusForbidden)
+			browserpage.Error(response, request, "browser sign-in expired", http.StatusForbidden)
 			return true
 		}
 		if raw, err := base64.RawURLEncoding.Strict().DecodeString(result.CookieSecret); err != nil || len(raw) != 32 || !result.ExpiresAt.After(time.Now()) {
-			http.Error(response, "browser sign-in is unavailable", http.StatusServiceUnavailable)
+			browserpage.Error(response, request, "browser sign-in is unavailable", http.StatusServiceUnavailable)
 			return true
 		}
 		if result.Permission != nil {
 			if a.Tokens == nil || a.Policy == nil {
-				http.Error(response, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
+				browserpage.Error(response, request, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
 				return true
 			}
 			permission, verifyErr := a.Tokens.verify(*result.Permission, result.ExpiresAt)
@@ -187,11 +190,11 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 				result.Permission = &prepared
 			}
 			if err != nil {
-				http.Error(response, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
+				browserpage.Error(response, request, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
 				return true
 			}
 			if err := PermissionCookie(response, *result.Permission); err != nil {
-				http.Error(response, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
+				browserpage.Error(response, request, "browser visitor permission is unavailable", http.StatusServiceUnavailable)
 				return true
 			}
 		} else {
@@ -207,17 +210,13 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 		if result.NextUrl != nil {
 			parsed, err := url.Parse(*result.NextUrl)
 			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || len(*result.NextUrl) > 4096 {
-				http.Error(response, "invalid browser handoff", http.StatusServiceUnavailable)
+				browserpage.Error(response, request, "invalid browser handoff", http.StatusServiceUnavailable)
 				return true
 			}
 			next = *result.NextUrl
 		}
 		if result.Bridge != nil && *result.Bridge {
-			response.Header().Set("Content-Type", "text/html; charset=utf-8")
-			response.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'")
-			response.WriteHeader(http.StatusOK)
-			link := html.EscapeString(next)
-			_, _ = io.WriteString(response, `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=`+link+`"><title>tnl preview</title></head><body><a href="`+link+`">continue to the preview</a></body></html>`)
+			browserpage.Redirect(response, next)
 			return true
 		}
 		http.Redirect(response, request, next, http.StatusSeeOther)
@@ -225,12 +224,12 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 	case request.URL.Path == root+"renew" && request.Method == http.MethodGet:
 		path := request.URL.Query().Get("return")
 		if a.Tokens == nil || !validBrowserPath(path) || request.Header.Get(VisitorTokenHeader) != "" || request.Header.Get(ShareHeaderName) != "" {
-			http.Error(response, "invalid visitor renewal", http.StatusBadRequest)
+			browserpage.Error(response, request, "invalid visitor renewal", http.StatusBadRequest)
 			return true
 		}
 		shareID, secret, err := shareSessionCookie(request)
 		if err != nil {
-			http.Error(response, "invalid share session", http.StatusForbidden)
+			browserpage.Error(response, request, "invalid share session", http.StatusForbidden)
 			return true
 		}
 		var source json.RawMessage
@@ -239,12 +238,12 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 		} else {
 			source, err = browserSessionSource(request)
 			if err != nil {
-				http.Error(response, "invalid browser sign-in", http.StatusForbidden)
+				browserpage.Error(response, request, "invalid browser sign-in", http.StatusForbidden)
 				return true
 			}
 		}
 		if err != nil {
-			http.Error(response, "invalid visitor renewal", http.StatusBadRequest)
+			browserpage.Error(response, request, "invalid visitor renewal", http.StatusBadRequest)
 			return true
 		}
 		issue := func(source json.RawMessage) (controlv1.VisitorTokenResponse, error) {
@@ -266,12 +265,12 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 			if errors.Is(err, clientcontrol.ErrUnavailable) || errors.As(err, &problem) && problem != nil && problem.Status >= http.StatusInternalServerError {
 				status, message = http.StatusServiceUnavailable, "visitor permission is unavailable; retry"
 			}
-			http.Error(response, message, status)
+			browserpage.Error(response, request, message, status)
 			return true
 		}
 		result, err = a.PrepareSessionToken(request.Context(), source, result)
 		if err != nil || PermissionCookie(response, result) != nil {
-			http.Error(response, "visitor permission is unavailable", http.StatusServiceUnavailable)
+			browserpage.Error(response, request, "visitor permission is unavailable", http.StatusServiceUnavailable)
 			return true
 		}
 		http.Redirect(response, request, path, http.StatusSeeOther)
@@ -301,12 +300,12 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 		return true
 	case (request.URL.Path == root+"logout" || request.URL.Path == root+"switch") && request.Method == http.MethodPost:
 		if request.Header.Get("Origin") != "https://"+request.Host {
-			http.Error(response, "invalid logout origin", http.StatusForbidden)
+			browserpage.Error(response, request, "invalid logout origin", http.StatusForbidden)
 			return true
 		}
 		if cookie, err := request.Cookie(BrowserCookieName); err == nil {
 			if err := a.Client.RevokeServiceBrowserSession(request.Context(), a.Subject.ID, a.RunID, a.Token, controlv1.ServiceBrowserRequest{RunNumber: a.Number, Secret: cookie.Value}); err != nil {
-				http.Error(response, "could not sign out", http.StatusServiceUnavailable)
+				browserpage.Error(response, request, "could not sign out", http.StatusServiceUnavailable)
 				return true
 			}
 		}
@@ -318,7 +317,7 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 				path = "/"
 			}
 			if !validBrowserPath(path) {
-				http.Error(response, "invalid return path", http.StatusBadRequest)
+				browserpage.Error(response, request, "invalid return path", http.StatusBadRequest)
 				return true
 			}
 			http.Redirect(response, request, root+"login?switch=1&return="+url.QueryEscape(path), http.StatusSeeOther)
@@ -327,7 +326,7 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 		}
 		return true
 	default:
-		http.NotFound(response, request)
+		browserpage.Error(response, request, "404 page not found", http.StatusNotFound)
 		return true
 	}
 }

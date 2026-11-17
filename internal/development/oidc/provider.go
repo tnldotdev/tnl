@@ -9,7 +9,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
-	"html/template"
 	"net/http"
 	"net/url"
 	"sync"
@@ -17,6 +16,7 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/tnldotdev/tnl/internal/browserpage"
 )
 
 type Config struct {
@@ -57,23 +57,31 @@ func (p *Provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.json(w, map[string]any{"keys": []jose.JSONWebKey{p.key}})
 	case "GET /authorize":
 		if !p.validAuthorization(r.URL.Query()) {
-			http.Error(w, "invalid authorization", 400)
+			browserpage.Error(w, r, "invalid authorization", http.StatusBadRequest)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = loginPage.Execute(w, struct {
+		browserpage.Headers(w)
+		// a form submission redirects to the exact configured callback origin.
+		// browsers may apply form-action to that redirect as well as the post.
+		policy := browserpage.FormSecurityPolicy
+		if callback, err := url.Parse(r.URL.Query().Get("redirect_uri")); err == nil &&
+			(callback.Scheme == "http" || callback.Scheme == "https") && callback.Host != "" && callback.User == nil {
+			policy += " " + callback.Scheme + "://" + callback.Host
+		}
+		w.Header().Set("Content-Security-Policy", policy)
+		_ = loginPage.Write(w, browserpage.Page{Title: "local development sign-in", Content: struct {
 			Subject string
 			Fields  url.Values
-		}{p.config.Subject, r.URL.Query()})
+		}{p.config.Subject, r.URL.Query()}})
 	case "POST /authorize":
 		r.Body = http.MaxBytesReader(w, r.Body, 8192)
 		if r.ParseForm() != nil || !p.validAuthorization(r.PostForm) {
-			http.Error(w, "invalid authorization", 400)
+			browserpage.Error(w, r, "invalid authorization", http.StatusBadRequest)
 			return
 		}
 		var material [32]byte
 		if _, err := rand.Read(material[:]); err != nil {
-			http.Error(w, "random source unavailable", http.StatusServiceUnavailable)
+			browserpage.Error(w, r, "random source unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		code := base64.RawURLEncoding.EncodeToString(material[:])
@@ -86,7 +94,7 @@ func (p *Provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(p.grants) >= 1024 {
 			p.mu.Unlock()
-			http.Error(w, "too many pending logins", http.StatusTooManyRequests)
+			browserpage.Error(w, r, "too many pending logins", http.StatusTooManyRequests)
 			return
 		}
 		p.grants[code] = grant{r.PostForm.Get("code_challenge"), r.PostForm.Get("nonce"), r.PostForm.Get("redirect_uri"), now.Add(time.Minute)}
@@ -140,4 +148,11 @@ func (p *Provider) validAuthorization(q url.Values) bool {
 	return allowed && q.Get("client_id") == p.config.ClientID && q.Get("response_type") == "code" && q.Get("code_challenge_method") == "S256" && len(q.Get("code_challenge")) == 43 && len(q.Get("nonce")) == 43 && len(q.Get("state")) >= 32 && len(q.Encode()) <= 8192
 }
 
-var loginPage = template.Must(template.New("login").Parse(`<!doctype html><html><head><title>local tnl identity</title></head><body><h1>local development sign-in</h1><p>sign in as {{.Subject}}</p><form method="post" action="/authorize">{{range $key,$values := .Fields}}{{range $values}}<input type="hidden" name="{{$key}}" value="{{.}}">{{end}}{{end}}<button>sign in</button></form></body></html>`))
+var loginPage = browserpage.New(`<p class="eyebrow">[ development only ]</p>
+<h1>local development sign-in</h1>
+<p class="intro">Sign in as {{.Subject}}.</p>
+<p class="muted">This identity provider is for the local development stack, not production.</p>
+<form method="post" action="/authorize">
+{{range $key,$values := .Fields}}{{range $values}}<input type="hidden" name="{{$key}}" value="{{.}}">{{end}}{{end}}
+<button type="submit">sign in</button>
+</form>`)

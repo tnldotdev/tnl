@@ -40,9 +40,14 @@ func WriteWithDetails(response http.ResponseWriter, status int, code, title, det
 	}
 	requestID := NewRequestID()
 	response.Header().Set("Link", "<"+HelpURL(code, caseID)+">; rel=\"help\"")
-	httpjson.WriteProblem(response, status, Problem{
+	value := Problem{
 		Type: URL(code), Title: title, Status: status, Code: code, Detail: detail,
 		RequestID: requestID, Details: details,
-	})
+	}
+	if browser, ok := response.(*browserResponse); ok {
+		browser.write(value, HelpURL(code, caseID))
+	} else {
+		httpjson.WriteProblem(response, status, value)
+	}
 	return requestID
 }

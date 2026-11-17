@@ -1,51 +1,51 @@
 # architecture
 
-tnl connects visitors to apps and services running elsewhere. Control decides
-who may publish and connect. Ingress and relays carry connections. The publisher
-connects them to the app.
+tnl connects visitors to apps and services on another machine.
 
-This guide explains those paths and where their code lives. For setup and check
-commands, see [contributing](contributing.md). For terms and repository rules,
-see [AGENTS.md](AGENTS.md). Product and operator docs live in `../tnl.dev`.
+Use this guide to follow a connection or find the code to change.
+See [contributing](contributing.md) for setup and checks,
+[AGENTS.md](AGENTS.md) for project rules, and `../tnl.dev` for product docs.
+
+| Component | What it does                                                     |
+| --------- | ---------------------------------------------------------------- |
+| Control   | Checks permissions and stores server state in PostgreSQL.        |
+| Ingress   | Accepts public connections and picks a connected relay.          |
+| Relay     | Carries traffic between ingress or connectors and publishers.    |
+| Publisher | Runs as `tnl`, accepts visitor traffic, and connects to the app. |
+| Connector | Runs as `tnl`, opens a local port, and connects to a publisher.  |
+
+`tnld` runs the server roles. Its `standalone` mode runs control, ingress,
+and two logical relay services in one process. It still needs PostgreSQL.
+Ingress and relay never open the database themselves.
 
 ## how an app publishes a service
 
-An SDK tells the local `tnl` process which listener the app opened. `tnl` accepts
-the registration, then starts publishing in the background:
+The SDK tells the local `tnl` process where the app is listening.
+`tnl` then asks control to start a service run:
 
 ```text
 app + SDK             local tnl                 control
-    |-- bound listener -->|                        |
+    |-- app address ----->|                        |
     |<-- registered ------|                        |
     |                     |-- create service run ->|
     |                     |<-- run + assignments --|
-    |-- renew ownership ->|                        |
+    |-- still running --->|                        |
 ```
 
-Registration does not mean the service is routable. The publisher still needs
-permission, a certificate, and connections to its assigned relays. Public
-reachability is a separate endpoint setting. Certificate and relay setup are
-omitted from this diagram.
+Registration only means `tnl` accepted the app. Before visitors can connect,
+the publisher needs permission, a certificate, and ready relay connections.
+A public endpoint also needs ready ingress and DNS. Connector access can be
+ready first; waiting for DNS does not stop the run.
 
-A run can become ready for connector access before public DNS is published.
-The publisher announces a public endpoint as ready only after control confirms compatible
-ingress and published or explicitly unmanaged DNS at the captured endpoint
-revision. This separate readiness fact does not change the run's authority or
-stop its heartbeats while DNS is pending.
-
-The SDK renews the registration while the app is running. `publisher/app` manages
-registrations and stops the old publication before replacing it.
-`publisher/local` runs that manager and the local API.
-
-Service-backed app workers use the same local publication journal for every
-protocol. The worker joins publication work, drains inspection, and includes
-configuration cleanup failures before writing the terminal local observation.
-Local readiness does not require a public hostname or consume an ingress port.
+The SDK keeps the registration alive while the app runs. `publisher/app`
+stops and waits for the old publication before replacing it.
+`publisher/local` runs this manager and the local API. All protocols use the
+same service-run code.
 
 ## how visitors reach the app
 
-A public visitor connects through ingress and a relay. Visitor TLS passes
-through both and ends at the local `tnl` publisher:
+A public visitor connects through ingress and a relay. Neither can read the
+visitor's TLS traffic. That TLS connection ends at the publisher:
 
 ```text
 visitor        ingress         relay           tnl          target
@@ -59,70 +59,36 @@ visitor        ingress         relay           tnl          target
    |<-- TLS ------|              |              |             |
 ```
 
-Each `TLS` arrow carries bytes from the same visitor connection. If the target
-needs TLS, the publisher opens a separate TLS connection using the target's
-trust settings. Authentication between server roles does not replace visitor TLS.
+Each `TLS` arrow carries the same visitor connection. If the app needs TLS,
+the publisher opens a separate TLS connection to it.
 
-Ingress may try another eligible relay before sending the first visitor byte.
-After that byte, it never retries the connection against another relay.
+For HTTP, control sends routing and visitor policy ahead of requests. The
+publisher checks access locally, then reserves ingress capacity before
+forwarding. Ingress signs the visitor's socket addresses; the publisher checks
+that signature. A capacity reservation is not permission to visit.
 
-For HTTP, control supplies short-lived routing and visitor policy before requests
-arrive. Ingress selects a run from its routing table; the publisher checks each
-request's access locally. An allowed request then reserves ingress capacity
-through the same authenticated relay sessions:
+Prepared HTTP traffic can continue during a control outage until its last
+confirmed deadline: five minutes by default, or sooner if a credential,
+certificate, service, or parent session expires. A failed refresh adds no time.
+Native client certificates still need a current control check.
 
-```text
-visitor        ingress         relay         publisher       target
-   |-- request -->|-------------->|-------------->|             |
-   |              |              |          check access       |
-   |              |<-- reserve --|<-- capacity ---|             |
-   |              |-- reply ---->|-- reply ------>|             |
-   |              |              |               |-- request ->|
-```
+Ingress can try another relay only before sending the first visitor byte.
+Requests never trigger a control refresh or replay against another target.
+See `internal/ingress` for cache-miss and relay-replacement rules.
 
-The capacity reply does not grant visitor access. Ingress signs the original
-socket addresses for the exact run and visitor connection; the publisher checks
-that proof and rejects reuse. Neither operation writes a per-HTTP-visitor record
-to PostgreSQL. Prepared HTTP traffic can continue through a control outage only
-until its earliest confirmed serving deadline. Control defaults that allowance
-to five minutes from successful confirmation; earlier service, credential,
-certificate, and parent-session expiry still wins. Failed refreshes do not extend
-it. Short process-availability leases govern placement and replacement separately.
-Native client certificate access still asks control for current permission, then
-uses the same forwarding and capacity exchange.
+PostgreSQL, MySQL, and TCP do not call control for each query or message.
+Public Kubernetes checks control for each API request; connector Kubernetes
+checks its admitted permission locally. Long-running requests still expire.
 
-On a routing cache miss, ingress may keep the first HTTP connection within its
-original setup deadline until the next background snapshot arrives. A fresh miss
-is final. Installed endpoints do not wait, and no visitor triggers a control
-refresh or an application replay.
-
-If every relay opening fails before the first visitor byte, HTTP ingress may
-borrow replacement assignments for that same run from a background snapshot once.
-The visitor ID, signed source proof, capacity debit, and original setup deadline
-stay unchanged. Renewing a relay lease alone does not retry a failed assignment.
-
-PostgreSQL, MySQL, and TCP carry admitted traffic without a control call for each
-query or message. Public Kubernetes rechecks control for each API request;
-connector Kubernetes checks the visitor's admitted permission locally. Both
-retain authorization checks for long-running watches and upgrades.
-
-Ingress reports the first publisher byte in the background. For HTTP, the report
-carries the original signed socket observation, including its observation time;
-control verifies the exact run, visitor and ingress lease without requiring a
-visitor admission row. Native reports keep their control admission receipt.
-These reports record recovery measurements, not access or renewed authority.
-
-Public HTTP targets share a run-owned connection pool sized by the HTTP
-concurrency limit. Connector target sockets stay with their exact admission;
-they do not borrow another visitor's permission. Both paths use the same proxy
-for target routing, trust, response hooks, and dynamic target retirement.
-Closing an upgraded response retires its target slot without replaying its
-request or keeping that slot occupied until the service run stops.
+Public HTTP requests share a target connection pool for their service run.
+Connector sockets stay tied to the visitor that opened them. Both use the
+same target proxy. Recovery reports measure when traffic resumes; they do
+not grant or renew access.
 
 ### service access through a connector
 
-A local `tnl` connector reaches a service without ingress. It opens an encrypted
-peer session to the publisher, through a relay or over direct UDP when available:
+A connector reaches the publisher without ingress. It uses a relay, or direct
+UDP when available:
 
 ```text
 client       tnl connector      relay        publisher       target
@@ -134,100 +100,37 @@ client       tnl connector      relay        publisher       target
    |              |              |              |<-- response -|
 ```
 
-Control setup is omitted. The two delivery paths carry the same session; they
-do not send duplicate application requests. Relay delivery remains available
-when direct UDP is not. Changing paths does not replay a failed stream against
-another target.
+Both paths carry the same encrypted session. Changing paths does not duplicate
+requests or retry a failed stream against another target.
 
-A draining service run stops new visitor work and joins admitted sessions within
-their existing authority and the original drain deadline. For connector access,
-the connector reports completion only after both copy directions and its stream
-cleanup join. The publisher returns an exact matched result after its admission
-work joins; the connector then acknowledges that result. This exchange uses the
-existing authenticated control stream and grants no access or renewal. While
-access remains authorized, packet carriers remain until the exchange ends or the
-original deadline expires. A current denial prevents new completion exchanges;
-already-entered exchanges still require their matched result and observation.
-Unready openings close when drain starts. Explicit retirement revokes one exact
-connector pair; it does not prove response delivery, result observation, or
-remote cleanup. Missing confirmations do not extend the original deadlines.
+During shutdown, the connector and publisher wait for stream cleanup and
+acknowledge the result. Missing acknowledgments never extend the deadline.
+See `connector/stream` and `publisher/service/stream` for that exchange.
 
-A service can also have a public hostname and port, reached through ingress.
-That is **public endpoint access**, rather than **connector access**. Making an
-endpoint public does not remove its visitor access rules.
+A service may also have a public endpoint. HTTP services share ingress port 443
+by TLS hostname; other protocols get an allocated port. Connector ports are
+separate, local assignments. Changing a public endpoint does not stop authorized
+connector sessions or change target trust. Public access still requires the
+service's visitor permission.
 
-HTTP services share ingress 443 by exact TLS hostname. Other protocols use
-allocated ingress ports. Neither selects the connector's machine-local listener.
-Endpoint allocation and release advance `endpoint_revision`, not target trust;
-authorized runs and connector sessions survive those changes. Public admission
-still checks the current endpoint, and a retired port cannot select that service.
-Port quarantine captures outstanding certificate issuance by revision, so a late
-certificate can delay reuse without later connector renewals pinning capacity.
+## where state lives
 
-## who decides what
+`control/state` stores server state in PostgreSQL. It checks permissions in the
+same transaction that changes state. Certificate and DNS workers carry out
+work approved there.
 
-| Role      | Job                                                                                         |
-| --------- | ------------------------------------------------------------------------------------------- |
-| Control   | Stores identities, permissions, runs, relay assignments, leases, and certificate approvals. |
-| Ingress   | Selects a connected relay from current routing or native admission, and reserves capacity.  |
-| Relay     | Holds publisher connections and carries visitor streams.                                    |
-| Publisher | Publishes apps and services, ends visitor TLS, and connects to targets.                     |
-| Connector | Selects a service, opens local listeners, and connects to its publisher.                    |
+`client/state` stores local sessions, keys, certificates, project records, and
+locks in SQLite and private files. A saved credential is not proof of current
+permission.
 
-Control stores shared server state in PostgreSQL. Ingress and relay do not open
-that database. They enforce control-issued permissions and leases, along with
-their own capacity limits.
+Project configuration names services in `services` and supplies targets in
+`deployments.NAME.targets`. `tnl apply` updates the selected deployment without
+removing sibling deployments. Selecting `local` does not create a saved server
+deployment.
 
-The `standalone` role runs control, ingress, and two logical relay services in
-one `tnld` process. It still needs PostgreSQL.
-
-### server state and local state are different
-
-`control/state` checks permission in the transaction that changes state. Creating
-a run, for example, checks the current grant and locks the rows used to assign
-relays. Certificate and DNS workers carry out work approved there. Keep related
-checks, updates, and lock ordering together, not in separate HTTP handlers.
-
-`client/state` stores local sessions, publisher keys, pending certificate requests,
-certificate caches, project records, and locks. It uses SQLite and private files.
-A cached credential or certificate does not prove current permission to serve.
-
-### project declarations and deployment bindings
-
-Project configuration declares service names and protocols in `services`.
-`deployments.NAME.targets` supplies targets and publication settings for one
-selection. Selecting `local` resolves client-side targets; it does not create a
-saved server deployment.
-
-Apply reconciles the selected deployment and the project's logical declarations.
-It preserves sibling deployments, including those created through the management
-API. A declaration cannot remove or change the protocol of a retained binding.
-Control keeps each deployment's encrypted serving configuration and revision
-separate from the project's desired configuration and apply revision.
-
-Every binding refers to a service, independently of its protocol or reachability.
-Apply saves its deployment ownership, target trust, and visitor policy. An
-app-owned binding defers its listener to the application; installed workers need
-targets they can own and resolve. Both compose the service-run owner rather than
-another publication engine.
-
-Deployment credentials independently approve management, connections, named
-service publication, and temporary allocation. Control records temporary service
-provenance; service expiration and deletion own its lifetime. Native preparation
-narrows the credential to an exact service. Retiring a namespace must account for
-all service authority, not just public endpoints.
-
-SDK deployment handles compose connections and publications without sharing their
-credentials. Remote publication passes its captured registered credential through
-private invocation IPC and starts a configuration-free local publisher journal.
-Named local publication uses configured app preparation. Both use the existing
-registration manager and workers; registration and routability remain distinct.
-The SDK owns Fetch/ASGI adapter listeners, not supplied Node or Bun servers.
-
-Project status includes deployment identity so two bindings called `db` remain
-distinct. Project retirement removes all deployment bindings and local worktree
-realizations in the same transaction, while retaining the project's source
-identity and revision.
+Apps, foreground commands, and installed jobs all use the same service-run code.
+Management, publication, and connection permissions stay separate, even when
+one process uses all three.
 
 ## find the code
 
@@ -236,11 +139,11 @@ cmd/
   tnl/                 client flags, prompts, and output
   tnld/                server flags and role selection
 internal/
-  publisher/           service publication composition
+  publisher/           starts and manages publications
     app/               app registrations and replacement
-    local/             project-scoped local tnl process
+    local/             local tnl process for a project
     localapi/          native app and CLI registration API
-    invocation/        publication operations used by callers
+    invocation/        operations for publishing a service
     httpaccess/        shared HTTP policy and browser access
     requestlimit/      shared per-run HTTP request budgets
     service/           saved service runs and certificates
@@ -251,7 +154,7 @@ internal/
     target/            target selection and preparation
     browserapi/        generated browser API validators
     toolbar/           development-only browser assets
-  connector/           visitor-side service selection and connection
+  connector/           selects and connects to a service
     runtime/           listeners, renewal, and expiry
     stream/            encrypted connections to a publisher
     workload/          workload authentication
@@ -267,12 +170,13 @@ internal/
     telemetry/         bounded collection and delivery of client telemetry
   config/              project configuration types and validation
   serverhttp/          shared HTTP decoding, errors, cookies, and auth
-  naming/              shared names and validated identifiers
-  transport/           connection and multiplexing mechanics
+  naming/              checks shared names and IDs
+  transport/           carries connections and streams
   policy/ security/    shared policy and security code
   failure/             diagnostics and error contracts
   observability/       measurements and event vocabulary
   clioutput/           ASCII output renderer
+  browserpage/         standalone browser shell, styles, and bundled Fira Code
   testutil/            shared test-only fixtures
 contracts/             HTTP OpenAPI sources and other shared inputs
 pkg/
@@ -292,14 +196,8 @@ deploy/                deployment templates
 
 ## how packages fit together
 
-`scripts/generate` has its own private tooling workspace so Hey API resolves the
-TypeScript 6 compiler API it executes. Application and SDK checks stay on
-TypeScript 7. Generated source still belongs to its serving/runtime owner; the
-tooling workspace owns no product runtime or alternate schema authority.
-
-Commands handle arguments, prompts, and output. Reusable operations live below
-them. The packages running processes, runs, or streams start and stop their own
-work:
+Commands handle flags, prompts, and output. They call reusable operations.
+The code that starts a process, run, or stream also stops and waits for it:
 
 ```text
 commands and SDK adapters
@@ -314,14 +212,17 @@ processes, runs, and streams
 shared clients, values, transport, and contracts
 ```
 
-This is not a required chain of wrappers. Use a shared value or contract directly
-when that is all you need. A package in a child directory should not import its
-parent to reach a helper.
+Skip layers you do not need. Do not add wrappers just to follow this diagram.
+A child package must not import its parent to reach a helper.
+
+`browserpage` shares the layout and styles for device verification, sign-in,
+handoff, and error pages. It uses only bundled fonts and the standard library. The font is
+inside the CSS, so pages work without the app or a font endpoint. Each caller
+still handles permissions, redirects, status codes, and security headers.
 
 ### shared HTTP code
 
-Service HTTP frontends use shared authorization and request limits. Public
-endpoint and connector requests reach the same service-run owner:
+Public and connector HTTP requests use the same service code:
 
 ```text
 invocation + deployment --> publisher/service
@@ -331,24 +232,17 @@ invocation + deployment --> publisher/service
                                     +--> service/stream
 ```
 
-- `httpaccess` refreshes visitor policy and handles browser handoffs, token
-  renewal, cookies, and HTTP authorization. Run owners stop and wait for its
-  workers. It does not own accepted visitor connections.
-- `requestlimit` keeps one HTTP request budget per run, shared across that run's
-  visitor connections.
-- `httpaccess.ReadinessProof` accepts one body-free GET at an exact path for one
-  run. Service HTTP strips its secret before forwarding and uses a separate,
-  bounded probe budget. The app owner still checks its current registration and
-  captured target; successful visitor access is not a readiness proof.
-- `service/http.go` builds the service HTTP frontend. `service/stream` handles
-  visitor TLS, protocol negotiation, expiry, target connections, and cleanup.
-  The run supplies current admission and a shared request budget.
-- `observability/inspection` records body-free HTTP summaries for public and
-  connector requests. The target transport marks accepted application responses;
-  a denied request or failed target dial remains a tnl response. Inspection
-  observes completion without owning the handler or changing its cancellation.
+- `httpaccess` checks visitor access and handles policy refresh, browser
+  handoffs, cookies, and token renewal.
+- `requestlimit` shares one request budget across a run's connections.
+- `service/http.go` puts these pieces together.
+- `service/stream` handles visitor TLS, protocols, target connections, and cleanup.
+- `observability/inspection` records request summaries without bodies.
 
-Neither shared package nor the service tree imports publisher root.
+Readiness probes have a separate budget and secret. A successful visitor request
+is not a readiness proof.
+
+These packages must not import publisher root.
 
 ### installed jobs
 
@@ -360,13 +254,12 @@ installed --> publisher/deployment --> publisher/service
     +-------> shared client packages
 ```
 
-`installed` owns the registry, OS service setup, job reconciliation, supervision,
-and shutdown. It uses publisher operations and caller-supplied connector
-operations. Shared clients must not import it. A registry entry records a job;
-it does not grant permission to publish.
+`installed` manages saved jobs, OS service setup, restarts, and shutdown.
+It calls publisher and connector operations. Shared clients must not import it.
+A saved job does not grant permission to publish.
 
-`publisher/deployment` publishes assignments for both foreground commands and
-installed jobs. Publishing an assignment does not need an installed-job registry.
+`publisher/deployment` publishes assignments for foreground commands too.
+It does not need the installed-job registry.
 
 ### other important dependencies
 
@@ -379,91 +272,60 @@ installed jobs. Publishing an assignment does not need an installed-job registry
 - `transport` handles connections, not process startup, relay assignment, or
   visitor policy.
 
-Use the package that defines a shared value. HTTP limits, for example, use
-`policy/applicationlimits.Limits` directly, not a publisher alias.
-`naming/ingresspool` defines an address pool ID shared by control and ingress;
-control state need not import ingress just to name that pool.
+Use shared values directly. For example, use `policy/applicationlimits.Limits`,
+not a publisher alias. Shared names belong under `naming`; shared Amazon RDS
+certificates belong in `security/rdsroots`.
 
-`security/rdsroots` owns the pinned offline Amazon RDS regional CA catalog used
-by publisher discovery and control target approval. It depends on neither owner;
-control must not import publisher discovery to approve a supplied endpoint.
-
-`client/auth` packages deployment signing credentials and acquires their short-lived
-tokens through the existing publisher proof exchange. `connector` composes that
-registered-key source into its existing owner and stream engine; neither a human
-device nor a provider workload is substituted for the registered key. Language
-bindings give each explicit deployment handle an independent native registry and
-join its driver factories and native cleanup without stopping sibling handles.
-
-For shared behavior, define a small interface where it is used and have the
-caller supply the implementation. Do not copy permission checks or run-management
-code to avoid an import, or leave forwarding wrappers after moving code.
+For shared behavior, put a small interface where it is used. Supply the
+implementation from the caller. Do not copy permission checks or service-run
+code to avoid an import.
 
 ## where to put a change
 
-Start in the package that already does the job. Add a package when it has a
-separate responsibility and a caller that needs it, not just because a file is
-large. For example, keep `control/state` together where its operations share
-transactional checks and lock ordering.
+Start where the work already happens. Add a package only for a separate job
+with a real caller, not because a file is large.
 
-| Change                         | Start here                                                                 |
-| ------------------------------ | -------------------------------------------------------------------------- |
-| Replace an app registration    | `publisher/app`; stop and wait for the old publication first.              |
-| Renew a connector              | `connector/runtime`; keep renewal and fixed expiry together.               |
-| Approve certificate issuance   | `control/state`; check the current run, grant, and certificate plan.       |
-| Claim a publisher connection   | `relay` for the local session; `control/state` for the durable claim.      |
-| Change HTTP visitor access     | `publisher/httpaccess`.                                                    |
-| Change per-run HTTP limits     | `publisher/requestlimit`.                                                  |
-| Change QUIC or yamux mechanics | `transport/muxsession`.                                                    |
-| Change configuration syntax    | `config` for types and validation; `client/project` for evaluation.        |
-| Resolve project metadata       | `client/project/resolve`; `client/project/meta` writes portable artifacts. |
-| Change project initialization  | `client/project/init`; commands supply prompts and output.                 |
-| Change CLI frames              | `clioutput`; commands supply facts, not borders or padding.                |
+| Change                          | Start here                                                                 |
+| ------------------------------- | -------------------------------------------------------------------------- |
+| Replace an app registration     | `publisher/app`; stop and wait for the old publication first.              |
+| Renew a connector               | `connector/runtime`; keep renewal and fixed expiry together.               |
+| Approve certificate issuance    | `control/state`; check the current run, grant, and certificate plan.       |
+| Claim a publisher connection    | `relay` for the local session; `control/state` for the durable claim.      |
+| Change HTTP visitor access      | `publisher/httpaccess`.                                                    |
+| Change per-run HTTP limits      | `publisher/requestlimit`.                                                  |
+| Change QUIC or yamux mechanics  | `transport/muxsession`.                                                    |
+| Change configuration syntax     | `config` for types and validation; `client/project` for evaluation.        |
+| Resolve project metadata        | `client/project/resolve`; `client/project/meta` writes portable artifacts. |
+| Change project initialization   | `client/project/init`; commands supply prompts and output.                 |
+| Change CLI frames               | `clioutput`; commands supply facts, not borders or padding.                |
+| Change standalone browser pages | `browserpage` for layout and styles; the handler for behavior.             |
 
 Choose by the work, not the executable. `tnl publish` is publisher work,
 `tnl connect` is connector work, `tnl apply` sends a control change, and `tnld`
 starts server roles. One process can run publisher and connector operations
 without combining their permissions.
 
-Two names worth distinguishing:
-
-- `publisher/processidentity` manages a signed process identity and control
-  lease. Callers own renewal and stop loops; the package starts no worker and
-  owns no app publication or socket.
-- `serverhttp` provides bounded JSON decoding, problem responses, control cookies
-  (including the authority API), and private cluster authentication. It does not
-  manage saved services or decide durable permission.
-
-Shared client operations belong under `client`, not in command-private helpers.
-`client/team` handles session, team, and domain selection.
-`client/project/resolve` combines project declarations with server, team, and
-local state.
-
 ## starting work means owning cleanup
 
-Every worker, renewal loop, lock, socket, and temporary file needs one owner.
-That owner starts the work, requests stop, and waits for cleanup before returning.
-Process owners also supervise workers and allow a bounded drain. A progress
-callback does not make a command responsible for cleanup.
+The code that starts work must stop it and wait for cleanup before returning.
+This includes workers, renewal loops, locks, sockets, and temporary files.
+Reporting progress to a command does not make the command responsible for cleanup.
 
 Cancellation is only a stop request. Keep real operation and cleanup errors even
 if cancellation happens at the same time. In particular,
 `errors.Is(err, context.Canceled)` can match a joined error that contains another
 failure too.
 
-Pass deadlines, endpoint details, transport identities, and requested capabilities
-explicitly. Do not guess from defaults or optional runtime interface assertions.
-HTTP authorization must receive the trusted visitor source from the accepted
-stream, not reconstruct it from forwarding headers or socket defaults.
+Pass deadlines, endpoint details, identities, and permissions explicitly.
+HTTP access checks use the visitor address from the accepted stream, not
+forwarding headers.
 
-Keep visitor TLS separate from target TLS. Public reachability, connector
-permission, and target trust are independent facts within one service and
-service-run lifecycle; an HTTP address is not a second saved resource.
+Keep visitor TLS separate from target TLS. A public endpoint does not grant
+visitor access or change which target certificates the publisher trusts.
 
-Shared APIs must be safe during refresh and cleanup: reads must not race with
-background updates, and exported fields must not leak credentials through JSON.
-Keep secrets out of logs, diagrams, browser-safe metadata, and snapshots. The
-public Go SDK exposes a prepared publisher identity, not its key or control client.
+Protect reads from background updates. Keep secrets out of JSON, logs, diagrams,
+metadata, and snapshots. The public Go SDK exposes a prepared publisher identity,
+not its key or control client.
 
 ## generated code
 
@@ -480,20 +342,12 @@ Edit the source, then regenerate:
 | `internal/config` and its generators                    | JSON Schema, SDK configuration types, and keys.                        |
 | `internal/client/project/loader.ts`                     | Embedded JavaScript loader.                                            |
 
-The six HTTP serving contracts follow the component serving them. Local publisher
-registration and the browser API are separate contracts. Edit their OpenAPI
-`paths/` and `schemas/` fragments and generator configuration. Reuse control
-schemas for identical wire shapes; shared components contain only byte-identical
-referenced schemas and generate no Go package.
+Each HTTP contract belongs to the component serving it. Edit its OpenAPI
+`paths/`, `schemas/`, and generator settings, not generated code.
+Reuse the same schema for identical fields on the wire.
 
-The telemetry contract describes batches sent by native clients. Its generated
-models and validators do not add a native HTTP server. `client/telemetry` collects
-and delivers bounded events; process and publication owners close their scopes
-after their workers stop.
-
-`pkg/protocol/tunnelv1` is handwritten and is the only tunnel protocol definition.
-Use golden JSON, framed-wire fixtures, invalid inputs, bounds tests, fuzzing, and
-shared transport tests, not a second definition in JSON Schema. See the
+`pkg/protocol/tunnelv1` is handwritten. Test its wire format directly;
+do not add a second definition in JSON Schema. See the
 [contracts guide](contracts/readme.md) for other shared inputs.
 
 From the repository root:
@@ -503,23 +357,20 @@ mise exec -- task generate
 mise exec -- task format
 ```
 
-`generate` runs the generators in order. `generate-check` also rewrites generated
-files, then compares them with `HEAD`; commit intended generated changes first.
-See [edit generated sources](contributing.md#edit-generated-sources).
+`generate-check` rewrites files before comparing them with `HEAD`.
+Commit intended generated changes first. See
+[edit generated sources](contributing.md#edit-generated-sources) for details.
 
 ## tests and dependency checks
 
-Keep Go unit tests and tests using package internals beside the implementation,
-including daemon startup and shutdown tests. Keep local `testdata` there too;
-shared test-only fixtures go under `internal/testutil`.
+Keep Go tests and `testdata` beside their implementation. Shared test fixtures
+go under `internal/testutil`.
 
 Built-CLI tests live in `tests/integration/<boundary>`, with shared subprocess and
 Compose fixtures in `tests/integration/fixtures`. TypeScript tests and fixtures
 live in `packages/ts/test`; Python tests stay in `packages/py`.
 
-Move tests with the code. Update fixture paths, `-tnl-*` flags, test tiers, and
-Task selectors. Before combining or removing suites, preserve every unique
-assertion at the smallest package that can prove it.
+Move tests with the code. Keep each unique assertion and its Task selector.
 
 Use Task targets; CI uses the same targets. Routine tests need no external
 infrastructure. Integration tests use the smallest real setup needed.
@@ -527,11 +378,6 @@ PostgreSQL-backed targets create and remove their own digest-pinned disposable
 database. Large load and fault sweeps require explicit opt-in. Put check results
 in the PR, not this guide.
 
-`internal/daemon/package_dependencies_test.go` checks production imports,
-including generated and platform-specific files. It keeps the service tree and
-shared HTTP packages from importing publisher root, and shared clients from
-importing installed-process code.
-
-Package comments explain what the package does, who calls it, and what it starts
-and stops. Keep detailed rules and their tests with the code; this guide connects
-the parts.
+`internal/daemon/package_dependencies_test.go` checks the import rules above.
+Keep detailed implementation rules and their tests with the code, not in this
+guide.
