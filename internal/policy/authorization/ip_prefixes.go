@@ -6,25 +6,42 @@ import (
 	"slices"
 )
 
-// CanonicalizeIPPrefixes parses, masks, rejects duplicates, and sorts an IP
+const MaxVisitorIPPrefixes = 256
+
+var ErrIPPrefixLimit = errors.New("IP list must contain at most 256 normalized prefixes")
+
+// CanonicalizeIPPrefixes parses, masks, deduplicates, and sorts an IP
 // policy. it preserves nil so an omitted policy differs from an empty policy.
 func CanonicalizeIPPrefixes(values []string) ([]string, error) {
+	return canonicalizeIPPrefixes(values, len(values))
+}
+
+// CanonicalizeVisitorIPPrefixes bounds the normalized visitor policy, not the raw
+// aliases. transport owners bound input bytes; only 256 distinct values are kept.
+func CanonicalizeVisitorIPPrefixes(values []string) ([]string, error) {
+	return canonicalizeIPPrefixes(values, MaxVisitorIPPrefixes)
+}
+
+func canonicalizeIPPrefixes(values []string, maximum int) ([]string, error) {
 	if values == nil {
 		return nil, nil
 	}
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
+	capacity := min(len(values), maximum)
+	result := make([]string, 0, capacity)
+	seen := make(map[netip.Prefix]struct{}, capacity)
 	for _, value := range values {
 		prefix, err := canonicalIPPrefix(value)
 		if err != nil {
 			return nil, errors.Join(ErrInvalid, err)
 		}
-		canonical := prefix.String()
-		if _, exists := seen[canonical]; exists {
-			return nil, errors.Join(ErrInvalid, errors.New("duplicate IP prefix"))
+		if _, exists := seen[prefix]; exists {
+			continue
 		}
-		seen[canonical] = struct{}{}
-		result = append(result, canonical)
+		if len(result) == maximum {
+			return nil, errors.Join(ErrInvalid, ErrIPPrefixLimit)
+		}
+		seen[prefix] = struct{}{}
+		result = append(result, prefix.String())
 	}
 	slices.Sort(result)
 	return result, nil

@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/invopop/jsonschema"
@@ -31,6 +32,14 @@ func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {
 				t.Fatal("RDS name metadata", name)
 			}
 		}
+	}
+}
+
+func TestAccessSchemaDescribesNormalizedNotRawPrefixLimit(t *testing.T) {
+	ip, found := accessSchema("restricted", "anonymous").OneOf[1].Properties.Get("ip")
+	if !found || ip.MinItems == nil || *ip.MinItems != 1 || ip.MaxItems != nil || ip.UniqueItems ||
+		!strings.Contains(ip.Description, "256 normalized") {
+		t.Fatal("schema rejects aliases before normalization or omits the normalized limit", ip)
 	}
 }
 

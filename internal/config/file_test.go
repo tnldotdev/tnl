@@ -219,18 +219,24 @@ func TestValidateTNLScopesFixedAddressesToOneService(t *testing.T) {
 	}
 }
 
-func TestValidateTNLRejectsInvalidTargetsAndCanonicalIPDuplicates(t *testing.T) {
+func TestValidateTNLRejectsInvalidTargetsAndNormalizesIPAliases(t *testing.T) {
 	invalidTarget := Target("https://example.com")
 	for name, value := range map[string]TNL{
-		"target":            {Services: Services{"web": {Target: &ServiceTarget{Type: "address", Address: &invalidTarget}}}},
-		"masked prefix":     {Services: Services{"web": {HTTP: &HTTPService{Access: &Access{IP: []string{"192.0.2.7/24"}}}}}},
-		"duplicate address": {Services: Services{"web": {HTTP: &HTTPService{Access: &Access{IP: []string{"192.0.2.1", "192.0.2.1/32"}}}}}},
+		"target":             {Services: Services{"web": {Target: &ServiceTarget{Type: "address", Address: &invalidTarget}}}},
+		"wide mapped prefix": {Services: Services{"web": {HTTP: &HTTPService{Access: &Access{IP: []string{"::ffff:192.0.2.7/95"}}}}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateTNL(value); err == nil {
 				t.Fatalf("invalid configuration was accepted: %#v", value)
 			}
 		})
+	}
+	for _, input := range [][]string{{"192.0.2.7/24", "192.0.2.0/24"}, {"192.0.2.1", "192.0.2.1/32"}} {
+		access := &Access{IP: input}
+		value := TNL{Services: Services{"web": {HTTP: &HTTPService{Access: access}}}}
+		if err := ValidateTNL(value); err != nil || len(access.IP) != 1 || access.VisitorMode() != "restricted" {
+			t.Fatalf("canonical aliases must collapse without granting anonymous access: %+v, %v", access, err)
+		}
 	}
 }
 
@@ -369,8 +375,8 @@ func TestStaticFormatsShareTargetIPAndDurationValidation(t *testing.T) {
 		"target":                     {serviceCase("web", "", `{"address":"https://example.com/path"}`), "target.address:"},
 		"raw SSH":                    {serviceCase("shell", "ssh", `{"inspection":{"mode":"none"},"address":"sshd:22"}`), "use tcp for an existing sshd"},
 		"raw SSH target TLS":         {serviceCase("shell", "ssh", `{"address":"sshd:22","tls":{}}`), "use tcp for an existing sshd"},
-		"ip":                         {serviceCase("web", "", `{"http":{"access":{"ip":["192.0.2.7/24"]}}}`), "distinct canonical addresses or prefixes"},
-		"duplicate":                  {serviceCase("web", "", `{"http":{"access":{"ip":["192.0.2.1","192.0.2.1/32"]}}}`), "distinct canonical addresses or prefixes"},
+		"ip":                         {serviceCase("web", "", `{"http":{"access":{"ip":["::ffff:192.0.2.7/95"]}}}`), "access.ip"},
+		"invalid ip":                 {serviceCase("web", "", `{"http":{"access":{"ip":["invalid"]}}}`), "access.ip"},
 		"obsolete provider grant":    {serviceCase("web", "", `{"http":{"access":{"allow_providers":["stripe"]}}}`), "allow_providers"},
 		"unknown webhook provider":   {`{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{}}}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe","provider":"other"}}}`, "provider must be"},
 		"missing webhook provider":   {`{"services":{"api":{}},"deployments":{"local":{"targets":{"api":{}}}},"webhooks":{"stripe":{"service":"api","path":"/hooks/stripe"}}}`, "provider must be"},

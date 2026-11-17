@@ -98,8 +98,9 @@ export interface TnlConfig {
                       | {
                           mode?: "restricted" | "anonymous";
                           /**
+                           * At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves.
+                           *
                            * @minItems 1
-                           * @maxItems 256
                            */
                           ip?: [string, ...string[]];
                         };
@@ -205,8 +206,9 @@ export interface TnlConfig {
                       | {
                           mode?: "restricted" | "anonymous";
                           /**
+                           * At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves.
+                           *
                            * @minItems 1
-                           * @maxItems 256
                            */
                           ip?: [string, ...string[]];
                         };
@@ -312,8 +314,9 @@ export interface TnlConfig {
                       | {
                           mode?: "restricted" | "anonymous";
                           /**
+                           * At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves.
+                           *
                            * @minItems 1
-                           * @maxItems 256
                            */
                           ip?: [string, ...string[]];
                         };
@@ -419,8 +422,9 @@ export interface TnlConfig {
                       | {
                           mode?: "restricted" | "anonymous";
                           /**
+                           * At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves.
+                           *
                            * @minItems 1
-                           * @maxItems 256
                            */
                           ip?: [string, ...string[]];
                         };
@@ -514,8 +518,9 @@ export interface TnlConfig {
                       | {
                           mode?: "restricted" | "anonymous";
                           /**
+                           * At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves.
+                           *
                            * @minItems 1
-                           * @maxItems 256
                            */
                           ip?: [string, ...string[]];
                         };
@@ -609,8 +614,9 @@ export interface TnlConfig {
                       | {
                           mode?: "restricted" | "anonymous";
                           /**
+                           * At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves.
+                           *
                            * @minItems 1
-                           * @maxItems 256
                            */
                           ip?: [string, ...string[]];
                         };
@@ -704,8 +710,9 @@ export interface TnlConfig {
                       | {
                           mode?: "restricted" | "anonymous";
                           /**
+                           * At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves.
+                           *
                            * @minItems 1
-                           * @maxItems 256
                            */
                           ip?: [string, ...string[]];
                         };
@@ -824,8 +831,9 @@ export interface TnlConfig {
             | {
                 mode?: "restricted" | "anonymous";
                 /**
+                 * At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves.
+                 *
                  * @minItems 1
-                 * @maxItems 256
                  */
                 ip?: [string, ...string[]];
               };

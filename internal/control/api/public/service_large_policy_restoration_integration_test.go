@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,10 +114,11 @@ func TestIntegrationServiceLargeIPPolicyHTTPCreateConfigureAndProtectedRead(t *t
 	// 4096 prefixes were never legal under the existing 256-prefix bound.
 	// retain >64 KiB transport with a real CA, not an oversized IP-only policy.
 	first := prefixes(18, 256)
+	submitted := append(slices.Clone(first), first[0], "::ffff:198.18.0.1/128")
 	configuration := &controlv1.ProjectServiceConfiguration{Target: "https://private-large-policy.internal:3000",
 		TargetTls: &controlv1.ProjectTargetTLS{Hostname: trust.Hostname, CaPem: new(string(trust.CAPEM)), Digest: trust.Digest},
 		Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{
-			Mode: new(controlv1.VisitorAccessMode("anonymous")), Ip: &first,
+			Mode: new(controlv1.VisitorAccessMode("anonymous")), Ip: &submitted,
 		}}}
 	data, _ := request(http.MethodPost, "/v1/services", "large-policy", controlv1.CreateServiceRequest{
 		TeamId: team.ID, Name: "large-policy", Configuration: configuration,
@@ -183,21 +185,28 @@ func TestIntegrationServiceLargeIPPolicyHTTPCreateConfigureAndProtectedRead(t *t
 			t.Fatal(err)
 		}
 		name := fmt.Sprintf("large-policy-reject-%d", count)
-		request(http.MethodPost, "/v1/services", name, controlv1.CreateServiceRequest{
+		rejected, _ := request(http.MethodPost, "/v1/services", name, controlv1.CreateServiceRequest{
 			TeamId: team.ID, Name: name, Configuration: &invalid,
 		}, http.StatusBadRequest, false)
+		if !strings.Contains(string(rejected), "configuration.http.access.ip") || !strings.Contains(string(rejected), "256 normalized") {
+			t.Fatal("invalid create did not report the normalized IP limit", string(rejected))
+		}
 		after, err := client.ListServices(ctx, team.ID)
 		if err != nil || !reflect.DeepEqual(before, after) || checkProtected(first) != digest {
 			t.Fatal("invalid create IP count changed inventory or the saved declaration", count, err)
 		}
-		request(http.MethodPut, "/v1/services/"+service.Id, "", update(&invalid, digest), http.StatusBadRequest, false)
+		rejected, _ = request(http.MethodPut, "/v1/services/"+service.Id, "", update(&invalid, digest), http.StatusBadRequest, false)
+		if !strings.Contains(string(rejected), "configuration.http.access.ip") || !strings.Contains(string(rejected), "256 normalized") {
+			t.Fatal("invalid update did not report the normalized IP limit", string(rejected))
+		}
 		after, err = client.ListServices(ctx, team.ID)
 		if err != nil || !reflect.DeepEqual(before, after) || checkProtected(first) != digest {
 			t.Fatal("invalid update IP count changed inventory or the saved declaration", count, err)
 		}
 	}
 	second := prefixes(19, 256)
-	configuration.Http.Access.Ip = &second
+	replacement := append(slices.Clone(second), second[0], "::ffff:198.19.0.1/128")
+	configuration.Http.Access.Ip = &replacement
 	data, _ = request(http.MethodPut, "/v1/services/"+service.Id, "", update(configuration, digest), http.StatusOK, true)
 	noPolicyLeak(data)
 	originalID, originalRevision := service.Id, service.TrustRevision

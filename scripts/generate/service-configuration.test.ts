@@ -36,3 +36,18 @@ it("requires a full configuration fingerprint or explicit unconditional replacem
     expect(check(invalid), JSON.stringify(invalid)).toBe(false);
   }
 });
+
+it("allows raw IP aliases for the server's 256 normalized-prefix limit", async () => {
+  const bundle = (await repositoryGraph()).bundle("controlv1");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  ajv.addSchema({ components: bundle.components }, "https://contracts.test/control");
+  const check = ajv.compile({
+    $ref: "https://contracts.test/control#/components/schemas/ProjectHTTPAccess",
+  });
+  const ip = Array.from({ length: 256 }, (_, index) => `192.0.2.${index}`);
+  expect(check({ ip })).toBe(true);
+  expect(check({ ip: [...ip, ip[0], "::ffff:192.0.2.0", "192.0.2.0/32"] })).toBe(true);
+  for (const invalid of [null, [], [null], ["a".repeat(65)]]) {
+    expect(check({ ip: invalid }), JSON.stringify(invalid)).toBe(false);
+  }
+});

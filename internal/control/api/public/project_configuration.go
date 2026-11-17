@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -162,7 +163,12 @@ func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Reque
 		Deployment          string                             `json:"deployment"`
 		ServiceDeclarations map[string]string                  `json:"service_declarations"`
 	}
-	if decodeJSONLimited(w, r, &body, 4<<20) != nil || body.ExpectedRevision == nil || body.Configuration == nil || body.ServiceDeclarations == nil {
+	err := decodeJSONLimited(w, r, &body, 4<<20)
+	if errors.Is(err, authorization.ErrIPPrefixLimit) {
+		writeProblem(w, 400, controlv1.InvalidRequest, "http.access.ip: "+authorization.ErrIPPrefixLimit.Error())
+		return
+	}
+	if err != nil || body.ExpectedRevision == nil || body.Configuration == nil || body.ServiceDeclarations == nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid normalized project configuration")
 		return
 	}

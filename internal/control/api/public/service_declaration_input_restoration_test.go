@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"go.yaml.in/yaml/v3"
 )
 
 type serviceDeclarationInputRestorationStore struct {
@@ -105,10 +107,6 @@ func TestServiceDeclarationInputRestorationRejectsInvalidBeforeMutation(t *testi
 			{"null IP entry", `{"target":"app","http":{"access":{"ip":[null]}}}`, ""},
 			{"null limit", `{"target":"app","http":{"limits":{"total":null}}}`, ""},
 			{"empty IP", `{"target":"app","http":{"access":{"ip":[]}}}`, ""},
-			{"duplicate masked prefix", `{"target":"app","http":{"access":{"ip":["192.0.2.9/24","192.0.2.0/24"]}}}`, ""},
-			{"duplicate address prefix", `{"target":"app","http":{"access":{"ip":["192.0.2.1","192.0.2.1/32"]}}}`, ""},
-			{"duplicate mapped address", `{"target":"app","http":{"access":{"ip":["192.0.2.1","::ffff:192.0.2.1"]}}}`, ""},
-			{"duplicate mapped prefix", `{"target":"app","http":{"access":{"ip":["192.0.2.0/24","::ffff:192.0.2.9/120"]}}}`, ""},
 			{"mapped prefix outside IPv4", `{"target":"app","http":{"access":{"ip":["::ffff:192.0.2.1/95"]}}}`, ""},
 			{"invalid IP", `{"target":"app","http":{"access":{"ip":["invalid"]}}}`, ""},
 			{"zoned IP", `{"target":"app","http":{"access":{"ip":["fe80::1%en0"]}}}`, ""},
@@ -133,6 +131,9 @@ func TestServiceDeclarationInputRestorationRejectsInvalidBeforeMutation(t *testi
 				if strings.Contains(response.Body.String(), "private-declaration-value") {
 					t.Error("declaration rejection exposed private input")
 				}
+				if test.name == "257 prefixes" && !strings.Contains(response.Body.String(), "256 normalized") {
+					t.Error("limit error did not name the normalized-prefix count", response.Body.String())
+				}
 			})
 		}
 	}
@@ -149,6 +150,10 @@ func TestServiceDeclarationInputRestorationNormalizesAndPreservesOmission(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	withDuplicates, err := json.Marshal(append(slices.Clone(maximum), maximum[0], maximum[0]+"/128"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, operation := range []string{"create", "configure"} {
 		for _, test := range []struct {
 			name, protocol, configuration, target string
@@ -156,6 +161,35 @@ func TestServiceDeclarationInputRestorationNormalizesAndPreservesOmission(t *tes
 			ip                                    []string
 			postQuantum                           *bool
 		}{
+			{
+				name: "duplicate masked prefix", protocol: "http", target: "app", http: true,
+				configuration: `{"target":"app","http":{"access":{"mode":"restricted","ip":["192.0.2.9/24","192.0.2.0/24"]}}}`,
+				ip:            []string{"192.0.2.0/24"},
+			},
+			{
+				name: "duplicate address prefix", protocol: "http", target: "app", http: true,
+				configuration: `{"target":"app","http":{"access":{"mode":"restricted","ip":["192.0.2.1","192.0.2.1/32"]}}}`,
+				ip:            []string{"192.0.2.1/32"},
+			},
+			{
+				name: "duplicate mapped address", protocol: "http", target: "app", http: true,
+				configuration: `{"target":"app","http":{"access":{"mode":"restricted","ip":["192.0.2.1","::ffff:192.0.2.1"]}}}`,
+				ip:            []string{"192.0.2.1/32"},
+			},
+			{
+				name: "duplicate mapped prefix", protocol: "http", target: "app", http: true,
+				configuration: `{"target":"app","http":{"access":{"mode":"restricted","ip":["192.0.2.0/24","::ffff:192.0.2.9/120"]}}}`,
+				ip:            []string{"192.0.2.0/24"},
+			},
+			{
+				name: "overlapping network and single IP", protocol: "http", target: "app", http: true,
+				configuration: `{"target":"app","http":{"access":{"mode":"restricted","ip":["192.0.2.1","192.0.2.9/24"]}}}`,
+				ip:            []string{"192.0.2.0/24", "192.0.2.1/32"},
+			},
+			{
+				name: "256 prefixes plus duplicates", protocol: "http", target: "app", http: true, ip: canonical,
+				configuration: `{"target":"app","http":{"access":{"mode":"restricted","ip":` + string(withDuplicates) + `}}}`,
+			},
 			{
 				name: "unmasked dual stack and PQ true", protocol: "http", target: "localhost:4000", http: true, postQuantum: new(true),
 				configuration: `{"target":"localhost:4000","require_post_quantum":true,"http":{"access":{"mode":"restricted","ip":["2001:db8::9/64","192.0.2.9/24"]}}}`,
@@ -256,6 +290,31 @@ func TestServiceDeclarationExactBodyLimitBeforeMutation(t *testing.T) {
 					t.Fatal("over-limit body rejection exposed private declaration input")
 				}
 			})
+		}
+	}
+}
+
+func TestServiceIPNormalizationMatchesConfiguration(t *testing.T) {
+	const access = `{"ip":["::ffff:192.0.2.1","192.0.2.1/32","192.0.2.9/24","2001:0DB8::9/64","2001:db8::/64"]}`
+	want := []string{"192.0.2.0/24", "192.0.2.1/32", "2001:db8::/64"}
+	var configured config.Access
+	if err := json.Unmarshal([]byte(access), &configured); err != nil {
+		t.Fatal(err)
+	}
+	var yamlAccess config.Access
+	if err := yaml.Unmarshal([]byte(access), &yamlAccess); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []string{"create", "configure"} {
+		response, store := callServiceDeclarationInputRestoration(t, operation, "http",
+			`{"target":"app","http":{"access":`+access+`}}`, "")
+		if store.calls != 1 || store.configuration == nil {
+			t.Fatal("equivalent API policy did not reach mutation", response.Code, response.Body.String())
+		}
+		saved := store.configuration.HTTP.Access
+		if !slices.Equal(saved.IP, want) || !slices.Equal(configured.IP, want) || !slices.Equal(yamlAccess.IP, want) ||
+			saved.VisitorMode() != "restricted" || configured.VisitorMode() != "restricted" || yamlAccess.VisitorMode() != "restricted" {
+			t.Fatal("config/API normalization changed prefixes or granted anonymous access", configured, yamlAccess, saved)
 		}
 	}
 }

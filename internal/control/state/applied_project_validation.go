@@ -12,7 +12,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -84,11 +83,6 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 		}
 		if s.HTTP.Access != nil {
 			s.HTTP.Access.Mode = s.HTTP.Access.VisitorMode()
-			prefixes, err := authorization.CanonicalizeIPPrefixes(s.HTTP.Access.IP)
-			if err != nil {
-				return ErrProjectConfigurationInvalid
-			}
-			s.HTTP.Access.IP = prefixes
 		}
 		if r := s.HTTP.Readiness; r != nil && r.Path != "/" && !targetsyntax.ValidMountPrefix(r.Path) {
 			return ErrProjectConfigurationInvalid

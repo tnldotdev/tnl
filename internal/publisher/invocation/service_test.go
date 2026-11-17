@@ -144,7 +144,7 @@ func TestLocalServiceRealizationKeepsIdentityAcrossGitTransitions(t *testing.T) 
 					}
 					http := declaration.Http
 					if http == nil || http.Access == nil || http.Access.Mode == nil || *http.Access.Mode != "restricted" ||
-						http.Access.Ip == nil || !reflect.DeepEqual(*http.Access.Ip, []string{"192.0.2.1"}) ||
+						http.Access.Ip == nil || !reflect.DeepEqual(*http.Access.Ip, []string{"192.0.2.1/32"}) ||
 						http.Limits == nil || http.Limits.Total == nil || *http.Limits.Total != 100 || http.Limits.Concurrency == nil || *http.Limits.Concurrency != 2 ||
 						http.Limits.Rate == nil || http.Limits.Rate.Count != 5 || http.Limits.Rate.Per != "2m0s" || http.Limits.Rate.Burst == nil || *http.Limits.Rate.Burst != 2 ||
 						http.Readiness == nil || http.Readiness.Path != "/health" {

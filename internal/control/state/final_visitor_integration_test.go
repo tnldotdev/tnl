@@ -382,6 +382,9 @@ func TestIntegrationReplaceVisitorAccessChangesLiveRunWithoutIPBypass(t *testing
 		}
 	}
 	check(false)
+	f.local(t, "web", &config.HTTPService{Access: &config.Access{IP: []string{"192.0.2.7/24", "::ffff:192.0.2.9/120", "192.0.2.9"}}})
+	// a matching canonical network and host still require visitor authorization.
+	check(false)
 	f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "anonymous", IP: []string{"192.0.2.0/24"}}})
 	check(true)
 	input.SourceIP = "198.51.100.9"

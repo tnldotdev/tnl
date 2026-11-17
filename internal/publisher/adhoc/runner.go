@@ -90,7 +90,7 @@ func allocationRequest(options Options) (controlv1.AllocateServiceRequest, strin
 	if mode != controlv1.Restricted && mode != controlv1.Anonymous {
 		return body, "", nil, errors.New("HTTP access must be restricted or anonymous")
 	}
-	ips, err := authorization.CanonicalizeIPPrefixes(options.IP)
+	ips, err := authorization.CanonicalizeVisitorIPPrefixes(options.IP)
 	if err != nil {
 		return body, "", nil, err
 	}

@@ -25,7 +25,7 @@ import (
 func TestAllocationRequestUsesCanonicalServiceDeclarationAndCopiesInput(t *testing.T) {
 	expires := time.Now().Add(time.Hour)
 	options := Options{InvocationID: "inv_" + strings.Repeat("I", 22), Target: "https://app.example.test:8443",
-		RequirePostQuantum: true, ExpiresAt: &expires, IP: []string{"192.0.2.9/24"},
+		RequirePostQuantum: true, ExpiresAt: &expires, IP: []string{"192.0.2.9/24", "::ffff:192.0.2.19/120", "192.0.2.1", "::ffff:192.0.2.1"},
 		TargetTLS: &controlv1.ProjectTargetTLS{Hostname: "target.example.test"},
 		Limits:    applicationlimits.Limits{Requests: 2, Concurrency: 3, RateRequests: 4, RatePer: time.Minute, RateBurst: 5}}
 	body, address, trust, err := allocationRequest(options)
@@ -49,7 +49,7 @@ func TestAllocationRequestUsesCanonicalServiceDeclarationAndCopiesInput(t *testi
 	}
 	want := &controlv1.ProjectHTTPApplicationLimits{Total: new(2), Concurrency: new(3),
 		Rate: &controlv1.ProjectApplicationRate{Count: 4, Per: "1m0s", Burst: new(5)}}
-	if !reflect.DeepEqual(configuration.Http.Limits, want) || !reflect.DeepEqual(*configuration.Http.Access.Ip, []string{"192.0.2.0/24"}) {
+	if !reflect.DeepEqual(configuration.Http.Limits, want) || !reflect.DeepEqual(*configuration.Http.Access.Ip, []string{"192.0.2.0/24", "192.0.2.1/32"}) {
 		t.Fatal("allocation lost canonical HTTP limits or IP policy", configuration.Http)
 	}
 	captured, err := json.Marshal(body)

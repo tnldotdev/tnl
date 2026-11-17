@@ -124,7 +124,8 @@ func TestIntegrationLargePublicURLIPPolicy(t *testing.T) {
 		prefixes[index] = fmt.Sprintf("198.18.%d.%d/32", index/256, index%256)
 	}
 	slices.Sort(prefixes)
-	declaration := ProjectServiceConfiguration{Target: "localhost:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: prefixes}}}
+	submitted := append(slices.Clone(prefixes), prefixes[0], "::ffff:198.18.0.1/128")
+	declaration := ProjectServiceConfiguration{Target: "localhost:3000", HTTP: &config.HTTPService{Access: &config.Access{Mode: "restricted", IP: submitted}}}
 	service, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "web", "large", ServicePlacement{}, now, ServiceMetadata{}, &declaration)
 	if err != nil {
 		t.Fatal(err)
@@ -136,6 +137,14 @@ func TestIntegrationLargePublicURLIPPolicy(t *testing.T) {
 	var ciphertext []byte
 	if err := d.pool.QueryRow(t.Context(), `SELECT configuration_ciphertext FROM control.services WHERE id=$1`, service.ID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte("198.18.")) || bytes.Contains(ciphertext, []byte("localhost")) {
 		t.Fatal("saved service retained plaintext policy or target", err)
+	}
+	loaded.HTTP.Access.IP = append(slices.Clone(prefixes), "198.18.1.0/32")
+	if _, err := d.ConfigureService(t.Context(), service.ID, actor.ActingIdentityID, service.ServiceMetadata, loaded, ServiceUpdateConditions{UnconditionalConfiguration: true}, now.Add(time.Second)); !errors.Is(err, ErrProjectConfigurationInvalid) {
+		t.Fatal("257 distinct normalized prefixes reached mutation", err)
+	}
+	unchanged, _, err := d.GetServiceConfiguration(t.Context(), service.ID, actor.ActingIdentityID)
+	if err != nil || !slices.Equal(unchanged.HTTP.Access.IP, prefixes) {
+		t.Fatal("rejected prefix count changed saved configuration", err)
 	}
 	loaded.HTTP.Access.IP = slices.Clone(prefixes[1:])
 	if _, err := d.ConfigureService(t.Context(), service.ID, actor.ActingIdentityID, service.ServiceMetadata, loaded, ServiceUpdateConditions{UnconditionalConfiguration: true}, now.Add(time.Second)); err != nil {

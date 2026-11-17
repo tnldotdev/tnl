@@ -3102,6 +3102,7 @@ type ProjectConfiguration struct {
 
 // ProjectHTTPAccess defines model for ProjectHTTPAccess.
 type ProjectHTTPAccess struct {
+	// Ip At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. The request body limit bounds raw input before normalization. IP matches only narrow the visitor access mode; they never grant access by themselves.
 	Ip   *[]string          `json:"ip,omitempty"`
 	Mode *VisitorAccessMode `json:"mode,omitempty"`
 }

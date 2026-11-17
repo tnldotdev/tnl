@@ -225,12 +225,12 @@
                                     },
                                     "ip": {
                                       "items": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 64
                                       },
                                       "type": "array",
-                                      "maxItems": 256,
                                       "minItems": 1,
-                                      "uniqueItems": true
+                                      "description": "At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves."
                                     }
                                   },
                                   "additionalProperties": false,
@@ -486,12 +486,12 @@
                                     },
                                     "ip": {
                                       "items": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 64
                                       },
                                       "type": "array",
-                                      "maxItems": 256,
                                       "minItems": 1,
-                                      "uniqueItems": true
+                                      "description": "At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves."
                                     }
                                   },
                                   "additionalProperties": false,
@@ -750,12 +750,12 @@
                                     },
                                     "ip": {
                                       "items": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 64
                                       },
                                       "type": "array",
-                                      "maxItems": 256,
                                       "minItems": 1,
-                                      "uniqueItems": true
+                                      "description": "At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves."
                                     }
                                   },
                                   "additionalProperties": false,
@@ -1007,12 +1007,12 @@
                                     },
                                     "ip": {
                                       "items": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 64
                                       },
                                       "type": "array",
-                                      "maxItems": 256,
                                       "minItems": 1,
-                                      "uniqueItems": true
+                                      "description": "At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves."
                                     }
                                   },
                                   "additionalProperties": false,
@@ -1246,12 +1246,12 @@
                                     },
                                     "ip": {
                                       "items": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 64
                                       },
                                       "type": "array",
-                                      "maxItems": 256,
                                       "minItems": 1,
-                                      "uniqueItems": true
+                                      "description": "At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves."
                                     }
                                   },
                                   "additionalProperties": false,
@@ -1491,12 +1491,12 @@
                                     },
                                     "ip": {
                                       "items": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 64
                                       },
                                       "type": "array",
-                                      "maxItems": 256,
                                       "minItems": 1,
-                                      "uniqueItems": true
+                                      "description": "At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves."
                                     }
                                   },
                                   "additionalProperties": false,
@@ -1737,12 +1737,12 @@
                                     },
                                     "ip": {
                                       "items": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 64
                                       },
                                       "type": "array",
-                                      "maxItems": 256,
                                       "minItems": 1,
-                                      "uniqueItems": true
+                                      "description": "At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves."
                                     }
                                   },
                                   "additionalProperties": false,
@@ -1981,12 +1981,12 @@
                       },
                       "ip": {
                         "items": {
-                          "type": "string"
+                          "type": "string",
+                          "maxLength": 64
                         },
                         "type": "array",
-                        "maxItems": 256,
                         "minItems": 1,
-                        "uniqueItems": true
+                        "description": "At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves."
                       }
                     },
                     "additionalProperties": false,

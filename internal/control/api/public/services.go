@@ -111,14 +111,7 @@ func decodeServiceConfiguration(raw json.RawMessage) (*controlstate.ProjectServi
 	if err := httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), &declaration); err != nil {
 		return nil, err
 	}
-	// api input accepts equivalent prefixes; configuration values stay strict.
-	if declaration.Http != nil && declaration.Http.Access != nil && declaration.Http.Access.Ip != nil {
-		prefixes, err := authorization.CanonicalizeIPPrefixes(*declaration.Http.Access.Ip)
-		if err != nil {
-			return nil, err
-		}
-		declaration.Http.Access.Ip = &prefixes
-	}
+	// config.Access owns the same normalized value for api and project input.
 	encoded, err := json.Marshal(declaration)
 	if err != nil {
 		return nil, err
@@ -128,6 +121,14 @@ func decodeServiceConfiguration(raw json.RawMessage) (*controlstate.ProjectServi
 		return nil, err
 	}
 	return &configuration, nil
+}
+
+func writeServiceDeclarationProblem(w http.ResponseWriter, err error) {
+	title := "invalid service declaration"
+	if errors.Is(err, authorization.ErrIPPrefixLimit) {
+		title = "configuration.http.access.ip: " + authorization.ErrIPPrefixLimit.Error()
+	}
+	writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, title)
 }
 
 func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
@@ -168,7 +169,7 @@ func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id co
 	if len(body.Configuration) > 0 {
 		decoded, err := decodeServiceConfiguration(body.Configuration)
 		if err != nil {
-			writeProblem(w, 400, controlv1.InvalidRequest, "invalid service declaration")
+			writeServiceDeclarationProblem(w, err)
 			return
 		}
 		configuration = decoded
@@ -230,7 +231,7 @@ func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ contro
 	if rawConfiguration, present := fields["configuration"]; present {
 		decoded, err := decodeServiceConfiguration(rawConfiguration)
 		if err != nil {
-			writeProblem(w, 400, controlv1.InvalidRequest, "invalid service declaration")
+			writeServiceDeclarationProblem(w, err)
 			return
 		}
 		configuration = decoded

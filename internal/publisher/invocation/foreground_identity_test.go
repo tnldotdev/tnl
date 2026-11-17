@@ -217,12 +217,13 @@ func TestForegroundServiceDeclarationDoesNotMutateItsSavedInput(t *testing.T) {
 func TestForegroundExplicitAccessWireShape(t *testing.T) {
 	for _, mode := range []controlv1.VisitorAccessMode{controlv1.Anonymous, controlv1.Restricted} {
 		for _, test := range []struct {
-			name     string
-			prefixes []string
+			name      string
+			prefixes  []string
+			canonical []string
 		}{
-			{"omitted IP filter", nil},
-			{"empty IP selection", []string{}},
-			{"nonempty IP filter", []string{"192.0.2.1", "198.51.100.0/24"}},
+			{"omitted IP filter", nil, nil},
+			{"empty IP selection", []string{}, nil},
+			{"nonempty IP filter", []string{"192.0.2.1", "198.51.100.0/24"}, []string{"192.0.2.1/32", "198.51.100.0/24"}},
 		} {
 			for _, retained := range []bool{false, true} {
 				t.Run(string(mode)+"/"+test.name+map[bool]string{false: "/new", true: "/retained"}[retained], func(t *testing.T) {
@@ -253,12 +254,8 @@ func TestForegroundExplicitAccessWireShape(t *testing.T) {
 					if err := json.Unmarshal(encoded, &accepted); err != nil {
 						t.Fatalf("control cannot decode the explicit access declaration: %s: %v", encoded, err)
 					}
-					wantPrefixes := test.prefixes
-					if len(wantPrefixes) == 0 {
-						wantPrefixes = nil
-					}
 					if accepted.Access == nil || accepted.Access.Mode != string(mode) || accepted.Access.Validate() != nil ||
-						!reflect.DeepEqual(accepted.Access.IP, wantPrefixes) {
+						!reflect.DeepEqual(accepted.Access.IP, test.canonical) {
 						t.Fatalf("explicit replacement retained or changed an IP filter: %s", encoded)
 					}
 					var wire struct {

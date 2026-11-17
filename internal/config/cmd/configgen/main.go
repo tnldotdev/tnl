@@ -297,7 +297,8 @@ func trafficLimitsSchema() *jsonschema.Schema {
 func accessSchema(modes ...any) *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
 	properties.Set("mode", &jsonschema.Schema{Type: "string", Enum: modes})
-	properties.Set("ip", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), MaxItems: integerPointer(256), Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true})
+	properties.Set("ip", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string", MaxLength: integerPointer(64)},
+		Description: "At most 256 normalized IP prefixes. Addresses become host prefixes; prefixes are masked, IPv4-mapped aliases are unmapped, and equivalent entries are deduplicated and sorted. Overlapping but unequal prefixes remain distinct. IP matches only narrow the visitor access mode; they never grant access by themselves."})
 	return &jsonschema.Schema{OneOf: []*jsonschema.Schema{
 		{Type: "string", Enum: modes},
 		{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema},
