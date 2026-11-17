@@ -19,20 +19,18 @@ import (
 
 type publicAdmissionStore struct {
 	publicServiceStore
-	admit func(context.Context, controlstate.IngressLeaseIdentity, string, string, int, netip.Addr, time.Time, ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error)
+	admit func(context.Context, controlstate.IngressLeaseIdentity, string, string, int, netip.Addr, time.Time, ...controlstate.ServiceRunCursor) (controlstate.PublicServiceVisitorAdmission, error)
 }
 
-func (s publicAdmissionStore) AdmitPublicServiceVisitor(ctx context.Context, lease controlstate.IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, now time.Time, excluded ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error) {
-	return s.admit(ctx, lease, pool, visitor, port, source, now, excluded...)
+func (s publicAdmissionStore) AdmitPublicServiceVisitor(ctx context.Context, lease controlstate.IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, now time.Time, cursor ...controlstate.ServiceRunCursor) (controlstate.PublicServiceVisitorAdmission, error) {
+	return s.admit(ctx, lease, pool, visitor, port, source, now, cursor...)
 }
 
-func TestPublicServiceAdmissionExclusionsMatchDirectAndHTTP(t *testing.T) {
+func TestPublicServiceAdmissionCursorMatchesDirectAndHTTP(t *testing.T) {
 	now := time.Now().UTC()
 	serviceID := "svc_" + strings.Repeat("S", 22)
-	excluded := make([]ingressv1.ServiceRunReference, 7)
-	for i := range excluded {
-		excluded[i] = ingressv1.ServiceRunReference{ServiceId: serviceID, ServiceRunId: "srun_" + strings.Repeat(string(rune('A'+i)), 22), RunNumber: int64(i + 1)}
-	}
+	start := ingressv1.ServiceRunReference{ServiceId: serviceID, ServiceRunId: "srun_" + strings.Repeat("A", 22), RunNumber: 5}
+	after := ingressv1.ServiceRunReference{ServiceId: serviceID, ServiceRunId: "srun_" + strings.Repeat("B", 22), RunNumber: 12}
 	base := ingressv1.PublicServiceVisitorClaim{
 		IngressRunId: "process", IngressLeaseRevision: 4, IngressPoolId: "pool",
 		DestinationPort: 25443, ObservedSourceIp: "192.0.2.4",
@@ -41,10 +39,10 @@ func TestPublicServiceAdmissionExclusionsMatchDirectAndHTTP(t *testing.T) {
 	for _, transport := range []string{"direct", "HTTP"} {
 		t.Run(transport, func(t *testing.T) {
 			calls := 0
-			var got []controlstate.ServiceRunReference
-			store := &ingressStoreStub{publicServiceStore: publicAdmissionStore{admit: func(_ context.Context, lease controlstate.IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, at time.Time, runs ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error) {
+			var got []controlstate.ServiceRunCursor
+			store := &ingressStoreStub{publicServiceStore: publicAdmissionStore{admit: func(_ context.Context, lease controlstate.IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, at time.Time, runs ...controlstate.ServiceRunCursor) (controlstate.PublicServiceVisitorAdmission, error) {
 				calls++
-				got = append([]controlstate.ServiceRunReference(nil), runs...)
+				got = append([]controlstate.ServiceRunCursor(nil), runs...)
 				if lease.IngressID != "ingress" || lease.IngressRunID != base.IngressRunId || lease.IngressLeaseRevision != 4 ||
 					pool != base.IngressPoolId || visitor != base.VisitorConnectionId || port != 25443 ||
 					source.String() != base.ObservedSourceIp || !at.Equal(now) {
@@ -80,43 +78,46 @@ func TestPublicServiceAdmissionExclusionsMatchDirectAndHTTP(t *testing.T) {
 				}
 				return problem.Status
 			}
-			for _, count := range []int{0, 7} {
+			for _, cursor := range []*ingressv1.ServiceRunCursor{nil, {Start: start, After: start}, {Start: start, After: after}, {Start: after, After: start}} {
 				body := base
-				body.ExcludedRuns = excluded[:count]
+				body.RunCursor = cursor
 				if status := admit(body); status != http.StatusOK {
-					t.Fatal("valid exclusions rejected", status)
+					t.Fatal("valid cursor rejected", status)
 				}
-				want := make([]controlstate.ServiceRunReference, 0, count)
-				for _, row := range body.ExcludedRuns {
-					want = append(want, controlstate.ServiceRunReference{ServiceID: row.ServiceId, RunID: row.ServiceRunId, RunNumber: row.RunNumber})
+				var want []controlstate.ServiceRunCursor
+				if cursor != nil {
+					ref := func(row ingressv1.ServiceRunReference) controlstate.ServiceRunReference {
+						return controlstate.ServiceRunReference{ServiceID: row.ServiceId, RunID: row.ServiceRunId, RunNumber: row.RunNumber}
+					}
+					want = []controlstate.ServiceRunCursor{{Start: ref(cursor.Start), After: ref(cursor.After)}}
 				}
-				if len(got) != len(want) || count != 0 && !reflect.DeepEqual(got, want) {
-					t.Fatal("admission changed exact exclusions", got, want)
+				if !reflect.DeepEqual(got, want) {
+					t.Fatal("admission changed exact cursor", got, want)
 				}
 			}
 			for name, change := range map[string]func(*ingressv1.PublicServiceVisitorClaim){
 				"shared HTTPS": func(b *ingressv1.PublicServiceVisitorClaim) { b.DestinationPort = 443 },
 				"source zone":  func(b *ingressv1.PublicServiceVisitorClaim) { b.ObservedSourceIp = "fe80::1%en0" },
-				"too many":     func(b *ingressv1.PublicServiceVisitorClaim) { b.ExcludedRuns = append(b.ExcludedRuns, excluded[0]) },
-				"duplicate":    func(b *ingressv1.PublicServiceVisitorClaim) { b.ExcludedRuns[1] = excluded[0] },
 				"duplicate ID": func(b *ingressv1.PublicServiceVisitorClaim) {
-					b.ExcludedRuns[1].ServiceRunId = excluded[0].ServiceRunId
+					b.RunCursor.After.ServiceRunId = start.ServiceRunId
 				},
-				"duplicate number": func(b *ingressv1.PublicServiceVisitorClaim) { b.ExcludedRuns[1].RunNumber = excluded[0].RunNumber },
+				"duplicate number": func(b *ingressv1.PublicServiceVisitorClaim) { b.RunCursor.After.RunNumber = start.RunNumber },
 				"wrong service": func(b *ingressv1.PublicServiceVisitorClaim) {
-					b.ExcludedRuns[1].ServiceId = "svc_" + strings.Repeat("T", 22)
+					b.RunCursor.After.ServiceId = "svc_" + strings.Repeat("T", 22)
 				},
-				"invalid service": func(b *ingressv1.PublicServiceVisitorClaim) { b.ExcludedRuns[0].ServiceId = "invalid" },
-				"invalid run":     func(b *ingressv1.PublicServiceVisitorClaim) { b.ExcludedRuns[0].ServiceRunId = "invalid" },
-				"invalid number":  func(b *ingressv1.PublicServiceVisitorClaim) { b.ExcludedRuns[0].RunNumber = 0 },
+				"invalid service": func(b *ingressv1.PublicServiceVisitorClaim) { b.RunCursor.Start.ServiceId = "invalid" },
+				"invalid run":     func(b *ingressv1.PublicServiceVisitorClaim) { b.RunCursor.Start.ServiceRunId = "invalid" },
+				"invalid number":  func(b *ingressv1.PublicServiceVisitorClaim) { b.RunCursor.Start.RunNumber = 0 },
+				"missing start":   func(b *ingressv1.PublicServiceVisitorClaim) { b.RunCursor.Start = ingressv1.ServiceRunReference{} },
+				"missing after":   func(b *ingressv1.PublicServiceVisitorClaim) { b.RunCursor.After = ingressv1.ServiceRunReference{} },
 			} {
 				t.Run(name, func(t *testing.T) {
 					body := base
-					body.ExcludedRuns = append([]ingressv1.ServiceRunReference(nil), excluded...)
+					body.RunCursor = &ingressv1.ServiceRunCursor{Start: start, After: after}
 					change(&body)
 					before := calls
 					if status := admit(body); status != http.StatusBadRequest || calls != before {
-						t.Fatal("invalid exclusions reached state", status, calls-before)
+						t.Fatal("invalid cursor reached state", status, calls-before)
 					}
 				})
 			}

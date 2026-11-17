@@ -50,6 +50,29 @@ type ServiceSelection struct {
 	PairReady                                     *ConnectorPeerPairReady
 }
 
+// ServiceRunCursor bounds native continuation to one circular pass. references
+// describe traversal, not authority; every admission still checks current state.
+type ServiceRunCursor struct {
+	Start, After ServiceRunReference
+}
+
+func (c ServiceRunCursor) Valid() bool {
+	for _, ref := range []ServiceRunReference{c.Start, c.After} {
+		if _, err := checkedServiceRunBinding(ref.ServiceID, ref.RunID, ref.RunNumber); err != nil {
+			return false
+		}
+	}
+	return c.Start.ServiceID == c.After.ServiceID &&
+		(c.Start.RunID == c.After.RunID) == (c.Start.RunNumber == c.After.RunNumber)
+}
+
+func (c ServiceRunCursor) allows(number int64) bool {
+	if c.After.RunNumber >= c.Start.RunNumber {
+		return number > c.After.RunNumber || number < c.Start.RunNumber
+	}
+	return number > c.After.RunNumber && number < c.Start.RunNumber
+}
+
 // ConnectorPeerPairReady is a credential-free signing hint, never delivery authority.
 type ConnectorPeerPairReady struct {
 	PublisherIdentityID string
@@ -77,13 +100,17 @@ func (d *Database) SelectServiceRun(ctx context.Context, serviceID, identityID, 
 
 // both access paths select only runs with a current relay that can accept work.
 // callers hold service admission while selecting; existing streams never reselect.
-func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID, endpointHostname string, now time.Time, excluded ...ServiceRunReference) (id string, number int64, until time.Time, err error) {
-	ids, numbers := make([]string, len(excluded)), make([]int64, len(excluded))
-	for i, run := range excluded {
-		if run.ServiceID != serviceID {
+func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID, endpointHostname string, now time.Time, continuation ...ServiceRunCursor) (id string, number int64, until time.Time, err error) {
+	var start, after int64
+	if len(continuation) > 1 {
+		return "", 0, time.Time{}, ErrServiceAccess
+	}
+	if len(continuation) == 1 {
+		cursor := continuation[0]
+		if !cursor.Valid() || cursor.Start.ServiceID != serviceID {
 			return "", 0, time.Time{}, ErrServiceAccess
 		}
-		ids[i], numbers[i] = run.RunID, run.RunNumber
+		start, after = cursor.Start.RunNumber, cursor.After.RunNumber
 	}
 	err = tx.QueryRow(ctx, `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,permission.expires_at,run.certificate_expires_at)
 	    FROM control.service_runs run
@@ -94,14 +121,15 @@ func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID, endpoin
 	    AND (g.kind='service' OR signing.retired_at IS NULL)
 	    AND run.certificate_expires_at>$2
 	    AND ($5='' OR run.certificate_hostname=$5)
-	    AND NOT EXISTS(SELECT 1 FROM unnest($3::text[],$4::bigint[]) excluded(id,run_number)
-	        WHERE excluded.id=run.id AND excluded.run_number=run.run_number)
+	    AND ($3::bigint=0 OR ($4::bigint>=$3 AND (run.run_number>$4 OR run.run_number<$3))
+	        OR ($4<$3 AND run.run_number>$4 AND run.run_number<$3))
 	    AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases lease ON lease.relay_id=slot.relay_id
 	        AND lease.relay_run_id=slot.relay_run_id AND lease.relay_lease_revision=slot.relay_lease_revision
 	        AND lease.relay_service_id=slot.relay_service_id
 	        WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND lease.lease_expires_at>$2 AND NOT lease.draining AND lease.reported_streams<lease.stream_capacity)
 	    AND GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))<run.stream_capacity
-	    ORDER BY GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/run.stream_capacity,run.run_number LIMIT 1`, serviceID, now, ids, numbers, endpointHostname).
+	    ORDER BY CASE WHEN $3::bigint=0 THEN GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/run.stream_capacity ELSE 0 END,
+	        CASE WHEN $3::bigint>0 AND run.run_number<=$3 THEN 1 ELSE 0 END,run.run_number LIMIT 1`, serviceID, now, start, after, endpointHostname).
 		Scan(&id, &number, &until)
 	return
 }

@@ -20,10 +20,11 @@ func TestHTTPPublicServiceAdmissionKeepsExactExclusionsAndDoesNotRetryFailures(t
 				IngressRunId: "process", IngressLeaseRevision: 4, IngressPoolId: "pool",
 				DestinationPort: 25443, ObservedSourceIp: "192.0.2.4",
 				VisitorConnectionId: publicServiceTestID(t, "vc_"),
-				ExcludedRuns:        []ingressv1.ServiceRunReference{{ServiceId: publicServiceTestID(t, "svc_"), ServiceRunId: publicServiceTestID(t, "srun_"), RunNumber: 3}},
 			}
+			start := ingressv1.ServiceRunReference{ServiceId: publicServiceTestID(t, "svc_"), ServiceRunId: publicServiceTestID(t, "srun_"), RunNumber: 3}
+			expected.RunCursor = &ingressv1.ServiceRunCursor{Start: start, After: start}
 			approved := ingressv1.PublicServiceVisitorAdmission{
-				ServiceId: expected.ExcludedRuns[0].ServiceId, ServiceRunId: publicServiceTestID(t, "srun_"),
+				ServiceId: start.ServiceId, ServiceRunId: publicServiceTestID(t, "srun_"),
 				RunNumber: 4, VisitorConnectionId: expected.VisitorConnectionId, ExpiresAt: time.Now().UTC().Add(time.Second),
 			}
 			var calls atomic.Int32
@@ -34,7 +35,7 @@ func TestHTTPPublicServiceAdmissionKeepsExactExclusionsAndDoesNotRetryFailures(t
 				}
 				var body ingressv1.PublicServiceVisitorClaim
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !reflect.DeepEqual(body, expected) {
-					t.Error("HTTP admission changed the visitor, lease, selector, or exact exclusions", body, err)
+					t.Error("HTTP admission changed the visitor, lease, selector, or exact cursor", body, err)
 				}
 				switch mode {
 				case "control failure":

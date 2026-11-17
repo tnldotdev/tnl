@@ -16,7 +16,7 @@ import (
 type publicServiceStore interface {
 	ReadIngressServices(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.IngressServices, error)
 	ClosedServiceRuns(context.Context, controlstate.IngressLeaseIdentity, []controlstate.ServiceRunReference, time.Time) ([]controlstate.ServiceRunReference, error)
-	AdmitPublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, string, int, netip.Addr, time.Time, ...controlstate.ServiceRunReference) (controlstate.PublicServiceVisitorAdmission, error)
+	AdmitPublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, string, int, netip.Addr, time.Time, ...controlstate.ServiceRunCursor) (controlstate.PublicServiceVisitorAdmission, error)
 	PublicServiceVisitorStatus(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) (controlstate.PublicServiceVisitorStatus, error)
 	ClosePublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) error
 	PromotePublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) error
@@ -67,22 +67,21 @@ func (s *service) AdmitPublicServiceVisitor(ctx context.Context, id string, body
 	var result ingressv1.PublicServiceVisitorAdmission
 	lease, ok := ingressLeaseIdentity(id, body.IngressRunId, body.IngressLeaseRevision)
 	source, sourceOK := privateSource(body.ObservedSourceIp)
-	if !ok || !sourceOK || body.DestinationPort < 1024 || body.DestinationPort > 65535 || len(body.ExcludedRuns) > 7 {
+	if !ok || !sourceOK || body.DestinationPort < 1024 || body.DestinationPort > 65535 {
 		return result, serverhttp.NewProblemError(400, "invalid_request", "invalid public service admission")
 	}
-	excluded := make([]controlstate.ServiceRunReference, 0, len(body.ExcludedRuns))
-	runIDs, numbers := make(map[string]bool, len(body.ExcludedRuns)), make(map[int64]bool, len(body.ExcludedRuns))
-	serviceID := ""
-	for _, row := range body.ExcludedRuns {
-		if !opaqueid.Valid(row.ServiceId, opaqueid.ServicePrefix) || !opaqueid.Valid(row.ServiceRunId, opaqueid.ServiceRunPrefix) ||
-			row.RunNumber < 1 || runIDs[row.ServiceRunId] || numbers[row.RunNumber] || serviceID != "" && serviceID != row.ServiceId {
-			return result, serverhttp.NewProblemError(400, "invalid_request", "invalid public service run exclusion")
+	var continuation []controlstate.ServiceRunCursor
+	if cursor := body.RunCursor; cursor != nil {
+		ref := func(row ingressv1.ServiceRunReference) controlstate.ServiceRunReference {
+			return controlstate.ServiceRunReference{ServiceID: row.ServiceId, RunID: row.ServiceRunId, RunNumber: row.RunNumber}
 		}
-		serviceID = row.ServiceId
-		runIDs[row.ServiceRunId], numbers[row.RunNumber] = true, true
-		excluded = append(excluded, controlstate.ServiceRunReference{ServiceID: row.ServiceId, RunID: row.ServiceRunId, RunNumber: row.RunNumber})
+		value := controlstate.ServiceRunCursor{Start: ref(cursor.Start), After: ref(cursor.After)}
+		if !value.Valid() {
+			return result, serverhttp.NewProblemError(400, "invalid_request", "invalid public service run cursor")
+		}
+		continuation = append(continuation, value)
 	}
-	admitted, err := s.store.AdmitPublicServiceVisitor(ctx, lease, body.IngressPoolId, body.VisitorConnectionId, body.DestinationPort, source, s.now(), excluded...)
+	admitted, err := s.store.AdmitPublicServiceVisitor(ctx, lease, body.IngressPoolId, body.VisitorConnectionId, body.DestinationPort, source, s.now(), continuation...)
 	if err != nil {
 		return result, s.privateStateError(ctx, err)
 	}

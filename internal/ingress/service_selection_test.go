@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"strings"
 	"sync"
@@ -128,24 +129,126 @@ func TestPublicServiceSelectionDoesNotSearchOnNonRunRejection(t *testing.T) {
 	}
 }
 
-func TestPublicServiceSelectionStopsAfterEightDistinctRuns(t *testing.T) {
+func TestPublicServiceSelectionFindsHealthyNinth(t *testing.T) {
+	config, control, forwarder := nativeServiceSelectionConfig(t, 9)
+	server := serviceSelectionServer(t, config)
+	for _, run := range control.runs[:8] {
+		exhaustSelectionRun(t, server, run, "pending_service_connections")
+	}
+	err := rejectNativeServiceSelection(t, t.Context(), server)
+	if err == nil || len(control.claims) != 9 || len(forwarder.observed) != 1 ||
+		forwarder.observed[0].ServiceRunID != control.runs[8].ServiceRunId || len(control.live) != 0 || server.Load() != 0 {
+		t.Fatal("eight exhausted runs hid the healthy ninth or retained capacity", err, len(control.claims), forwarder.observed)
+	}
+	visitors := make(map[string]bool)
+	for i, claim := range control.claims {
+		if visitors[claim.VisitorConnectionId] || !control.deadlines[i].Equal(control.deadlines[0]) ||
+			control.actions[2*i] != "admit "+claim.VisitorConnectionId || control.actions[2*i+1] != "close "+claim.VisitorConnectionId {
+			t.Fatal("selection changed visitor IDs, closure order, or deadline", control.claims, control.actions)
+		}
+		if i == 0 && claim.RunCursor != nil || i > 0 && (claim.RunCursor == nil ||
+			claim.RunCursor.Start.ServiceRunId != control.runs[0].ServiceRunId ||
+			claim.RunCursor.After.ServiceRunId != control.runs[i-1].ServiceRunId) {
+			t.Fatal("selection lost its constant-size exact cursor", claim.RunCursor)
+		}
+		visitors[claim.VisitorConnectionId] = true
+	}
+}
+
+func TestPublicServiceSelectionExhaustsOnePassAndReleasesAllReservations(t *testing.T) {
 	config, control, forwarder := nativeServiceSelectionConfig(t, 9)
 	server := serviceSelectionServer(t, config)
 	for _, run := range control.runs {
 		exhaustSelectionRun(t, server, run, "pending_service_connections")
 	}
 	err := rejectNativeServiceSelection(t, t.Context(), server)
-	if !errors.Is(err, ErrServiceSelectionLimit) || strings.Contains(err.Error(), "full pool") || len(control.claims) != 8 || len(forwarder.observed) != 0 || len(control.live) != 0 {
-		t.Fatal("selection was unbounded or claimed the entire pool was full", err, len(control.claims), forwarder.observed)
+	if err == nil || len(control.claims) != 10 || len(forwarder.observed) != 0 || len(control.live) != 0 || server.Load() != 0 {
+		t.Fatal("exhausted selection repeated runs, forwarded, or leaked reservations", err, len(control.claims), control.live)
 	}
-	visitors := make(map[string]bool)
 	for i, claim := range control.claims {
-		if visitors[claim.VisitorConnectionId] || len(claim.ExcludedRuns) != i || !control.deadlines[i].Equal(control.deadlines[0]) ||
+		if !control.deadlines[i].Equal(control.deadlines[0]) ||
 			control.actions[2*i] != "admit "+claim.VisitorConnectionId || control.actions[2*i+1] != "close "+claim.VisitorConnectionId {
-			t.Fatal("selection changed visitor IDs, closure order, exclusions, or deadline", control.claims, control.actions)
+			t.Fatal("exhausted selection changed the close order or original deadline", control.actions)
 		}
-		visitors[claim.VisitorConnectionId] = true
 	}
+	pending, active := publicServiceAdmissionCounts(server)
+	if pending != 0 || active != 0 {
+		t.Fatal("exhausted selection retained process admission", pending, active)
+	}
+}
+
+func TestPublicServiceSelectionWrapsOnceAfterTheLoadSelectedRun(t *testing.T) {
+	config, control, forwarder := nativeServiceSelectionConfig(t, 9)
+	server := serviceSelectionServer(t, config)
+	healthy := control.runs[2]
+	for _, run := range control.runs {
+		if run.ServiceRunId != healthy.ServiceRunId {
+			exhaustSelectionRun(t, server, run, "pending_service_connections")
+		}
+	}
+	// the first response represents control's least-loaded choice, not run 1.
+	control.runs = append(control.runs[4:], control.runs[:4]...)
+	if err := rejectNativeServiceSelection(t, t.Context(), server); err == nil || len(control.claims) != 8 ||
+		len(forwarder.observed) != 1 || forwarder.observed[0].ServiceRunID != healthy.ServiceRunId || len(control.live) != 0 {
+		t.Fatal("continuation skipped the eligible run before its initial choice", err, len(control.claims), forwarder.observed)
+	}
+}
+
+func TestPublicServiceSelectionHealthyNinthRetainsEarlierGrantExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config, control, forwarder := nativeServiceSelectionConfig(t, 9)
+		config.OpenTimeout = time.Second
+		grantExpiry := time.Now().Add(20 * time.Millisecond)
+		control.runs[8].ExpiresAt = grantExpiry
+		server := serviceSelectionServer(t, config)
+		for _, run := range control.runs[:8] {
+			exhaustSelectionRun(t, server, run, "pending_service_connections")
+		}
+		forwarder.openings[control.runs[8].ServiceRunId] = func(ctx context.Context, _ tunnelv1.ServiceForwardingHeader, _ func(context.Context) error) (net.Conn, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok || !deadline.Equal(grantExpiry) || !deadline.Before(control.deadlines[0]) {
+				t.Error("ninth-run opening did not retain the earlier grant expiry", deadline)
+			}
+			<-ctx.Done()
+			return nil, context.Cause(ctx)
+		}
+		started := time.Now()
+		if err := rejectNativeServiceSelection(t, t.Context(), server); err == nil ||
+			time.Since(started) != 20*time.Millisecond || len(control.live) != 0 || server.Load() != 0 {
+			t.Fatal("selection extended the earlier grant or retained cleanup", err, time.Since(started))
+		}
+		if run := server.traffic.runs[selectionRunKey(control.runs[8])]; run != nil {
+			t.Fatal("expired opening spent ordinary quota before capacity admission", run)
+		}
+	})
+}
+
+func TestPublicServiceSelectionDeadlineBoundsContinuationBeyondEight(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config, control, forwarder := nativeServiceSelectionConfig(t, 20)
+		config.OpenTimeout = 20 * time.Millisecond
+		control.before = func(ctx context.Context, _ *ingressv1.PublicServiceVisitorAdmission) error {
+			if len(control.claims) == 9 {
+				<-ctx.Done()
+			}
+			return nil
+		}
+		server := serviceSelectionServer(t, config)
+		for _, run := range control.runs {
+			exhaustSelectionRun(t, server, run, "pending_service_connections")
+		}
+		started := time.Now()
+		if err := rejectNativeServiceSelection(t, t.Context(), server); err == nil ||
+			time.Since(started) != config.OpenTimeout || len(control.claims) != 9 || len(forwarder.observed) != 0 ||
+			len(control.live) != 0 || server.Load() != 0 {
+			t.Fatal("continuation exceeded its original deadline or leaked a late reservation", err, time.Since(started), len(control.claims))
+		}
+		for _, deadline := range control.deadlines {
+			if !deadline.Equal(control.deadlines[0]) {
+				t.Fatal("continuation restarted the setup deadline")
+			}
+		}
+	})
 }
 
 func TestPublicServiceSelectionDoesNotRetryAmbiguousFailures(t *testing.T) {

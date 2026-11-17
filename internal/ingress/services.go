@@ -382,6 +382,18 @@ func (r *ServiceRouting) lookup(hostname string, port int, lease ingressv1.Ingre
 	return result
 }
 
+// candidates borrows one immutable endpoint slice. refresh replaces rather than
+// edits it. selection checks its deadline between entries and clones inspected
+// facts on demand, not the entire pool before checking time.
+func (r *ServiceRouting) candidates(hostname string, port int, lease ingressv1.IngressLease, now time.Time) []*serviceRoute {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || !samePrivateLease(r.lease, lease) || !lease.ServingUntil.After(now) || lease.Draining {
+		return nil
+	}
+	return r.endpoints[serviceEndpoint{hostname: hostname, port: port}]
+}
+
 func (r *ServiceRouting) lookupLocked(hostname string, port int, lease ingressv1.IngressLease, now time.Time) []*serviceRoute {
 	if r.closed || !samePrivateLease(r.lease, lease) || !lease.ServingUntil.After(now) || lease.Draining {
 		return nil
@@ -424,7 +436,18 @@ func (r *ServiceRouting) waitForEndpoint(ctx context.Context, hostname string, l
 	for {
 		r.mu.Lock()
 		now := time.Now()
-		available := len(r.lookupLocked(hostname, 443, lease, now)) != 0
+		available := false
+		if !r.closed && samePrivateLease(r.lease, lease) && lease.ServingUntil.After(now) && !lease.Draining {
+			for _, route := range r.endpoints[serviceEndpoint{hostname: hostname, port: 443}] {
+				if ctx.Err() != nil {
+					break
+				}
+				if route.until.After(now) {
+					available = true
+					break
+				}
+			}
+		}
 		finished := r.closed || !lease.ServingUntil.After(now) || lease.Draining || !r.startedAt.Before(entered)
 		updated := r.updated
 		r.mu.Unlock()

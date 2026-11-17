@@ -24,17 +24,17 @@ type PublicServiceVisitorAdmission struct {
 
 // AdmitPublicServiceVisitor reserves bounded native pre-authentication capacity
 // by trusted destination port, without inspecting protocol negotiation.
-func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, now time.Time, excluded ...ServiceRunReference) (result PublicServiceVisitorAdmission, retErr error) {
+func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, now time.Time, continuation ...ServiceRunCursor) (result PublicServiceVisitorAdmission, retErr error) {
 	clock := newAuthorizationClock(now)
-	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || !tcpport.ValidNetwork(port) || port < 1024 || !source.IsValid() || source.Zone() != "" || len(excluded) > 7 {
+	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || !tcpport.ValidNetwork(port) || port < 1024 || !source.IsValid() || source.Zone() != "" || len(continuation) > 1 {
 		return result, ErrServiceAccess
 	}
-	seenIDs, seenNumbers := make(map[string]bool, len(excluded)), make(map[int64]bool, len(excluded))
-	for _, run := range excluded {
-		if _, err := checkedServiceRunBinding(run.ServiceID, run.RunID, run.RunNumber); err != nil || seenIDs[run.RunID] || seenNumbers[run.RunNumber] {
+	var cursor *ServiceRunCursor
+	if len(continuation) == 1 {
+		cursor = &continuation[0]
+		if !cursor.Valid() {
 			return result, ErrServiceAccess
 		}
-		seenIDs[run.RunID], seenNumbers[run.RunNumber] = true, true
 	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -48,13 +48,23 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	for _, run := range excluded {
-		if run.ServiceID != result.ServiceID {
-			return PublicServiceVisitorAdmission{}, ErrServiceAccess
-		}
+	if cursor != nil && cursor.Start.ServiceID != result.ServiceID {
+		return PublicServiceVisitorAdmission{}, ErrServiceAccess
 	}
 	if err = lockPublicServiceVisitorCapacity(ctx, tx, result.ServiceID); err != nil {
 		return result, err
+	}
+	if cursor != nil {
+		// an invented run number must not skip a different exact run. closed
+		// runs remain usable as traversal references, never as serving grants.
+		for _, ref := range []ServiceRunReference{cursor.Start, cursor.After} {
+			var exact bool
+			err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_runs WHERE service_id=$1 AND id=$2 AND run_number=$3)`,
+				ref.ServiceID, ref.RunID, ref.RunNumber).Scan(&exact)
+			if err != nil || !exact {
+				return result, errors.Join(ErrServiceAccess, err)
+			}
+		}
 	}
 	q := controlstatedb.New(tx)
 	service, err := q.GetService(ctx, result.ServiceID)
@@ -75,13 +85,11 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	err = tx.QueryRow(ctx, `SELECT service_run_id,run_number,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1 AND service_id=$2 AND ingress_id=$3 AND ingress_run_id=$4 AND ingress_lease_revision=$5 AND source_ip=$6 AND destination_port=$7 AND valid_until>$8 AND closed_at IS NULL`, visitor, result.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, clock.current()).Scan(&result.RunID, &result.RunNumber, &result.ExpiresAt)
 	if err == nil {
 		existing = true
-		for _, run := range excluded {
-			if run.RunID == result.RunID && run.RunNumber == result.RunNumber {
-				return PublicServiceVisitorAdmission{}, ErrServiceAccess
-			}
+		if cursor != nil && !cursor.allows(result.RunNumber) {
+			return PublicServiceVisitorAdmission{}, ErrServiceAccess
 		}
 	} else if errors.Is(err, pgx.ErrNoRows) {
-		result.RunID, result.RunNumber, _, err = selectRoutableServiceRun(ctx, tx, result.ServiceID, service.CertificateHostname, clock.current(), excluded...)
+		result.RunID, result.RunNumber, _, err = selectRoutableServiceRun(ctx, tx, result.ServiceID, service.CertificateHostname, clock.current(), continuation...)
 	}
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)

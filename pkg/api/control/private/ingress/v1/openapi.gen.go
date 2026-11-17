@@ -215,15 +215,15 @@ type PublicServiceVisitorAdmission struct {
 
 // PublicServiceVisitorClaim defines model for PublicServiceVisitorClaim.
 type PublicServiceVisitorClaim struct {
-	DestinationPort int `json:"destination_port"`
+	DestinationPort      int        `json:"destination_port"`
+	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
+	IngressPoolId        string     `json:"ingress_pool_id"`
+	IngressRunId         Identifier `json:"ingress_run_id"`
+	ObservedSourceIp     string     `json:"observed_source_ip"`
 
-	// ExcludedRuns Exact runs rejected by this ingress's local quotas before forwarding visitor bytes. All entries must name the resolved service, with distinct run IDs and run numbers. Each new run attempt uses a new visitor connection ID; retrying an existing ID never moves its reservation.
-	ExcludedRuns         []ServiceRunReference `json:"excluded_runs,omitempty"`
-	IngressLeaseRevision int64                 `json:"ingress_lease_revision"`
-	IngressPoolId        string                `json:"ingress_pool_id"`
-	IngressRunId         Identifier            `json:"ingress_run_id"`
-	ObservedSourceIp     string                `json:"observed_source_ip"`
-	VisitorConnectionId  VisitorConnectionID   `json:"visitor_connection_id"`
+	// RunCursor Constant-size continuation after local quota rejection, before any visitor bytes. Start is the first rejected run; after is the last rejected run. Continue in increasing run-number order, wrapping once below start. Both exact references must name the resolved service. The first admission uses current load ordering; continuations never revisit a run. Each new attempt uses a new visitor connection ID and the original setup deadline.
+	RunCursor           *ServiceRunCursor   `json:"run_cursor,omitempty"`
+	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
 }
 
 // PublicServiceVisitorLookup defines model for PublicServiceVisitorLookup.
@@ -298,6 +298,12 @@ type ServiceRunClosureLookup struct {
 // ServiceRunClosures defines model for ServiceRunClosures.
 type ServiceRunClosures struct {
 	Closed []ServiceRunReference `json:"closed"`
+}
+
+// ServiceRunCursor Constant-size continuation after local quota rejection, before any visitor bytes. Start is the first rejected run; after is the last rejected run. Continue in increasing run-number order, wrapping once below start. Both exact references must name the resolved service. The first admission uses current load ordering; continuations never revisit a run. Each new attempt uses a new visitor connection ID and the original setup deadline.
+type ServiceRunCursor struct {
+	After ServiceRunReference `json:"after"`
+	Start ServiceRunReference `json:"start"`
 }
 
 // ServiceRunID defines model for ServiceRunID.

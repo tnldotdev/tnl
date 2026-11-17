@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -160,6 +161,64 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 }
 
 func TestIntegrationPublicServiceAdmissionRunExclusions(t *testing.T) {
+	d, now, service, runs, ingress := publicServiceSelectionFixture(t, 2)
+	ctx := t.Context()
+	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	admit := func(id string, cursor ...ServiceRunCursor) (PublicServiceVisitorAdmission, error) {
+		return d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, id,
+			service.Endpoint.Port, netip.MustParseAddr("192.0.2.30"), now, cursor...)
+	}
+	first, err := admit(visitor)
+	if err != nil || first.RunID != runs[0].RunID || first.RunNumber != runs[0].RunNumber {
+		t.Fatal("first selection lost the exact ready run", first, err)
+	}
+	rejected := ServiceRunReference{ServiceID: service.ID, RunID: first.RunID, RunNumber: first.RunNumber}
+	cursor := ServiceRunCursor{Start: rejected, After: rejected}
+	if _, err := admit(visitor, cursor); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("changing cursor moved an existing visitor reservation", err)
+	}
+	retry, err := admit(visitor)
+	if err != nil || retry.RunID != first.RunID || !retry.ExpiresAt.Equal(first.ExpiresAt) {
+		t.Fatal("denied reselection changed the original reservation", retry, err)
+	}
+	secondVisitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+	second, err := admit(secondVisitor, cursor)
+	if err != nil || second.ServiceID != first.ServiceID || second.RunID != runs[1].RunID || second.RunNumber != runs[1].RunNumber {
+		t.Fatal("cursor did not select the ready sibling", second, err)
+	}
+	for _, id := range []string{visitor, secondVisitor} {
+		if err := d.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, id, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wrongNumber := rejected
+	wrongNumber.RunNumber += 100
+	if _, err := admit(mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), ServiceRunCursor{Start: wrongNumber, After: wrongNumber}); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("invented run number skipped an exact run", err)
+	}
+	other := rejected
+	other.ServiceID = mustOpaqueID(t, opaqueid.ServicePrefix)
+	contradictoryID := rejected
+	contradictoryID.RunID = runs[1].RunID
+	contradictoryNumber := rejected
+	contradictoryNumber.RunNumber++
+	last := ServiceRunReference{ServiceID: service.ID, RunID: second.RunID, RunNumber: second.RunNumber}
+	for _, cursors := range [][]ServiceRunCursor{
+		{{Start: other, After: other}}, {{Start: rejected, After: contradictoryID}}, {{Start: rejected, After: contradictoryNumber}},
+		{cursor, cursor}, {{Start: rejected, After: last}},
+	} {
+		if _, err := admit(mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), cursors...); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("invalid or exhausted cursor admitted a run", cursors, err)
+		}
+	}
+	var pending int
+	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.public_service_visitors WHERE service_id=$1 AND closed_at IS NULL`, service.ID).Scan(&pending); err != nil || pending != 0 {
+		t.Fatal("rejected selections retained visitor reservations", pending, err)
+	}
+}
+
+func publicServiceSelectionFixture(t *testing.T, count int) (*Database, time.Time, ServiceRecord, []ServiceRunState, IngressLease) {
+	t.Helper()
 	d, now, _, leases := newPublishRunPrerequisites(t)
 	ctx := t.Context()
 	request := appliedProjectRequest(t, d, now)
@@ -175,12 +234,12 @@ func TestIntegrationPublicServiceAdmissionRunExclusions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, request.TeamID, request.ProjectKey, "production", request.ActorID, 2, time.Hour, now)
+	enrollment, err := testDeploymentPublisherEnrollment(d, ctx, request.TeamID, request.ProjectKey, "production", request.ActorID, count, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs := make([]ServiceRunState, 0, 2)
-	for range 2 {
+	runs := make([]ServiceRunState, 0, count)
+	for range count {
 		replica := enrollAppliedDeployment(t, d, request, enrollment, now)
 		access := deploymentAssignmentAccess(t, d, replica, replica.assignments.Services[0], now)
 		runs = append(runs, readyAppliedServiceRun(t, d, access, replica.private, service, netip.MustParseAddr("127.0.0.1"), leases, now))
@@ -192,59 +251,100 @@ func TestIntegrationPublicServiceAdmissionRunExclusions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	admit := func(id string, excluded ...ServiceRunReference) (PublicServiceVisitorAdmission, error) {
-		return d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, id,
-			service.Endpoint.Port, netip.MustParseAddr("192.0.2.30"), now, excluded...)
+	return d, now, service, runs, ingress
+}
+
+func TestIntegrationPublicServiceAdmissionEligiblePagination(t *testing.T) {
+	d, now, service, runs, ingress := publicServiceSelectionFixture(t, 9)
+	ctx := t.Context()
+	// choose run 5 by current load, then change load while traversing. only
+	// the first page uses load; subsequent run-number pages must not repeat.
+	if _, err := d.pool.Exec(ctx, `UPDATE control.service_runs SET reported_streams=CASE WHEN id=$2 THEN 0 ELSE 1 END WHERE service_id=$1`, service.ID, runs[4].RunID); err != nil {
+		t.Fatal(err)
 	}
-	first, err := admit(visitor)
-	if err != nil || first.RunID != runs[0].RunID || first.RunNumber != runs[0].RunNumber {
-		t.Fatal("first selection lost the exact ready run", first, err)
-	}
-	rejected := ServiceRunReference{ServiceID: service.ID, RunID: first.RunID, RunNumber: first.RunNumber}
-	if _, err := admit(visitor, rejected); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("changing exclusions moved an existing visitor reservation", err)
-	}
-	retry, err := admit(visitor)
-	if err != nil || retry.RunID != first.RunID || !retry.ExpiresAt.Equal(first.ExpiresAt) {
-		t.Fatal("denied reselection changed the original reservation", retry, err)
-	}
-	secondVisitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	second, err := admit(secondVisitor, rejected)
-	if err != nil || second.ServiceID != first.ServiceID || second.RunID != runs[1].RunID || second.RunNumber != runs[1].RunNumber {
-		t.Fatal("exclusion did not select the ready sibling", second, err)
-	}
-	for _, id := range []string{visitor, secondVisitor} {
-		if err := d.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, id, now); err != nil {
+	var continuation []ServiceRunCursor
+	for _, index := range []int{4, 5, 6, 7, 8, 0, 1, 2, 3} {
+		visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+		admit := func() (PublicServiceVisitorAdmission, error) {
+			return d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, visitor,
+				service.Endpoint.Port, netip.MustParseAddr("192.0.2.30"), now, continuation...)
+		}
+		selected, err := admit()
+		if err != nil || selected.RunID != runs[index].RunID || selected.RunNumber != runs[index].RunNumber {
+			t.Fatal("eligible pagination changed its stable circular order", index, selected, err)
+		}
+		retry, err := admit()
+		if err != nil || retry.RunID != selected.RunID || !retry.ExpiresAt.Equal(selected.ExpiresAt) {
+			t.Fatal("retry moved or extended an exact native reservation", retry, err)
+		}
+		if err := d.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, visitor, now); err != nil {
+			t.Fatal(err)
+		}
+		ref := ServiceRunReference{ServiceID: selected.ServiceID, RunID: selected.RunID, RunNumber: selected.RunNumber}
+		if continuation == nil {
+			continuation = []ServiceRunCursor{{Start: ref}}
+		}
+		continuation[0].After = ref
+		if _, err := d.pool.Exec(ctx, `UPDATE control.service_runs SET reported_streams=0 WHERE service_id=$1`, service.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
-	wrongNumber := rejected
-	wrongNumber.RunNumber += 100
-	exact, err := admit(mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), wrongNumber)
-	if err != nil || exact.RunID != first.RunID {
-		t.Fatal("another run number excluded the current run", exact, err)
-	}
-	if err := d.ClosePublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, exact.ConnectionID, now); err != nil {
-		t.Fatal(err)
-	}
-	other := rejected
-	other.ServiceID = mustOpaqueID(t, opaqueid.ServicePrefix)
-	contradictoryID := rejected
-	contradictoryID.RunID = runs[1].RunID
-	contradictoryNumber := rejected
-	contradictoryNumber.RunNumber++
-	all := []ServiceRunReference{rejected, {ServiceID: service.ID, RunID: second.RunID, RunNumber: second.RunNumber}}
-	for _, exclusions := range [][]ServiceRunReference{
-		{other}, {rejected, rejected}, {rejected, contradictoryID}, {rejected, contradictoryNumber},
-		{rejected, rejected, rejected, rejected, rejected, rejected, rejected, rejected}, all,
-	} {
-		if _, err := admit(mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), exclusions...); !errors.Is(err, ErrServiceAccess) {
-			t.Fatal("invalid or exhausted exclusion set admitted a run", exclusions, err)
-		}
+	if _, err := d.AdmitPublicServiceVisitor(ctx, ingress.IngressLeaseIdentity, PrimaryIngressPoolID, mustOpaqueID(t, opaqueid.VisitorConnectionPrefix),
+		service.Endpoint.Port, netip.MustParseAddr("192.0.2.30"), now, continuation...); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("exhausted circular pass repeated a run", err)
 	}
 	var pending int
 	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.public_service_visitors WHERE service_id=$1 AND closed_at IS NULL`, service.ID).Scan(&pending); err != nil || pending != 0 {
-		t.Fatal("rejected selections retained visitor reservations", pending, err)
+		t.Fatal("pagination retained pre-authentication reservations", pending, err)
+	}
+	for _, mode := range []string{"unhealthy", "capacity", "stale publisher", "all unusable", "denied grants", "earlier grant expiry"} {
+		t.Run(mode, func(t *testing.T) {
+			tx, err := d.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := tx.Rollback(ctx); err != nil {
+					t.Error(err)
+				}
+			}()
+			query := `UPDATE control.service_runs SET healthy=false WHERE service_id=$1 AND run_number<$2`
+			at := now
+			switch mode {
+			case "capacity":
+				query = `UPDATE control.service_runs SET reported_streams=stream_capacity WHERE service_id=$1 AND run_number<$2`
+			case "stale publisher":
+				query = `UPDATE control.service_runs SET publisher_expires_at=$3 WHERE service_id=$1 AND run_number<$2`
+				at = now.Add(time.Second)
+			case "all unusable":
+				query = `UPDATE control.service_runs SET healthy=false WHERE service_id=$1 AND run_number<=$2`
+			case "denied grants":
+				query = `UPDATE control.publisher_grants SET revoked_at=$3 WHERE id IN (SELECT publisher_grant_id FROM control.service_runs WHERE service_id=$1 AND run_number<=$2)`
+			}
+			if mode == "stale publisher" || mode == "denied grants" {
+				_, err = tx.Exec(ctx, query, service.ID, runs[8].RunNumber, at)
+			} else {
+				_, err = tx.Exec(ctx, query, service.ID, runs[8].RunNumber)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			expiry := now.Add(time.Second)
+			if mode == "earlier grant expiry" {
+				_, err = tx.Exec(ctx, `UPDATE control.publisher_grants SET expires_at=$2 WHERE id=(SELECT publisher_grant_id FROM control.service_runs WHERE id=$1)`, runs[8].RunID, expiry)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			id, number, until, err := selectRoutableServiceRun(ctx, tx, service.ID, service.Endpoint.Hostname, at)
+			if mode == "all unusable" || mode == "denied grants" {
+				if !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatal("unusable or denied pool supplied a run", id, err)
+				}
+			} else if err != nil || id != runs[8].RunID || number != runs[8].RunNumber ||
+				mode == "earlier grant expiry" && !until.Equal(expiry) {
+				t.Fatal("eligibility or earlier grant expiry was applied after the query limit", id, number, until, err)
+			}
+		})
 	}
 }

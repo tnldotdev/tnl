@@ -36,27 +36,37 @@ type selectedServiceRun struct {
 }
 
 func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLease, source, destination netip.AddrPort, hostname string, capacity *visitorAdmission) (selected selectedServiceRun, result error) {
+	// one original budget bounds local scanning and every native admit/close.
+	// candidate rejection never restarts it.
+	ctx, cancel := context.WithDeadline(ctx, privateMinTime(capacity.deadline, lease.ServingUntil))
+	defer cancel()
 	if destination.Port() == 443 {
-		runs := s.services.lookup(hostname, 443, lease, time.Now())
+		runs := s.services.candidates(hostname, 443, lease, time.Now())
 		if len(runs) == 0 {
 			return selected, ErrServiceAdmission
 		}
 		first := int((s.nextServiceRun.Add(1) - 1) % uint64(len(runs)))
-		for attempt := range min(len(runs), 8) {
+		// visit this finite snapshot once, rotating the start for each visitor.
+		// unusable entries do not consume a separate fixed candidate budget.
+		for attempt := range len(runs) {
+			if err := context.Cause(ctx); err != nil {
+				return selected, err
+			}
 			run := runs[(first+attempt)%len(runs)]
+			if !run.until.After(time.Now()) {
+				continue
+			}
 			selected = selectedServiceRun{
 				access:    httpRequestAccess,
 				serviceID: run.run.ServiceId, runID: run.run.ServiceRunId, number: run.run.RunNumber,
-				expiresAt: run.until, relays: run.run.ConnectedRelays, limits: run.traffic, anonymous: run.run.Anonymous, http: run,
+				expiresAt: run.until, limits: run.traffic, anonymous: run.run.Anonymous, http: cloneServiceRoute(run),
 				recoveryEpisodeID: run.run.RecoveryEpisodeId,
 				denialReason:      controlv1.ObservationUnavailable,
 			}
+			selected.recoveryEpisodeID = selected.http.run.RecoveryEpisodeId
 			selected.visitorID, result = opaqueid.New(opaqueid.VisitorConnectionPrefix)
 			if result != nil {
 				return selected, result
-			}
-			if ctx.Err() != nil || !run.until.After(time.Now()) {
-				return selected, ErrServiceAdmission
 			}
 			if run.ip != nil && !run.ip.Allows(source.Addr().Unmap()) {
 				selected.denialReason = controlv1.ObservationIPPolicy
@@ -70,6 +80,10 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 			}
 			if len(selected.relays) == 0 {
 				continue
+			}
+			current, err := s.lease(time.Now())
+			if err != nil || !samePrivateLease(current, lease) || ctx.Err() != nil || !run.until.After(time.Now()) {
+				return selected, ErrServiceAdmission
 			}
 			reason := capacity.selectRun(trafficKey{service: selected.serviceID, id: selected.runID, run: uint64(selected.number)}, selected.limits, source.Addr().Unmap(), selected.anonymous)
 			if reason == "" {
@@ -91,7 +105,8 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 		IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
 		IngressPoolId: s.config.IngressPoolID, DestinationPort: int(destination.Port()), ObservedSourceIp: source.Addr().Unmap().String(),
 	}
-	for range 8 {
+	visited := make(map[string]struct{})
+	for {
 		if ctx.Err() != nil {
 			return selected, context.Cause(ctx)
 		}
@@ -114,8 +129,13 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 			selected.serviceID != "" && selected.serviceID != admitted.ServiceId {
 			return selected, ErrServiceAdmission
 		}
-		for _, excluded := range claim.ExcludedRuns {
-			if admitted.ServiceRunId == excluded.ServiceRunId || admitted.RunNumber == excluded.RunNumber {
+		if _, repeated := visited[admitted.ServiceRunId]; repeated {
+			return selected, ErrServiceAdmission
+		}
+		visited[admitted.ServiceRunId] = struct{}{}
+		if cursor := claim.RunCursor; cursor != nil {
+			if admitted.ServiceId != cursor.Start.ServiceId || admitted.ServiceRunId == cursor.Start.ServiceRunId ||
+				admitted.ServiceRunId == cursor.After.ServiceRunId || !serviceRunCursorAllows(*cursor, admitted.RunNumber) {
 				return selected, ErrServiceAdmission
 			}
 		}
@@ -127,6 +147,10 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 		selected.limits, err = routingTraffic(admitted.Traffic)
 		if err != nil {
 			return selected, err
+		}
+		current, err = s.lease(time.Now())
+		if err != nil || !samePrivateLease(current, lease) || ctx.Err() != nil || !selected.expiresAt.After(time.Now()) {
+			return selected, ErrServiceAdmission
 		}
 		reason := capacity.selectRun(trafficKey{service: selected.serviceID, id: selected.runID, run: uint64(selected.number)}, selected.limits, source.Addr().Unmap(), false)
 		if reason == "" {
@@ -140,7 +164,19 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 			return selected, err
 		}
 		lookup.VisitorConnectionId = ""
-		claim.ExcludedRuns = append(claim.ExcludedRuns, ingressv1.ServiceRunReference{ServiceId: selected.serviceID, ServiceRunId: selected.runID, RunNumber: selected.number})
+		ref := ingressv1.ServiceRunReference{ServiceId: selected.serviceID, ServiceRunId: selected.runID, RunNumber: selected.number}
+		if claim.RunCursor == nil {
+			claim.RunCursor = &ingressv1.ServiceRunCursor{Start: ref}
+		}
+		claim.RunCursor.After = ref
 	}
-	return selected, errors.Join(ErrServiceAdmission, ErrServiceSelectionLimit)
+}
+
+// continuation is a single circular pass after the load-selected first run.
+// monotonic run numbers keep later pages stable even if reported load changes.
+func serviceRunCursorAllows(cursor ingressv1.ServiceRunCursor, number int64) bool {
+	if cursor.After.RunNumber >= cursor.Start.RunNumber {
+		return number > cursor.After.RunNumber || number < cursor.Start.RunNumber
+	}
+	return number > cursor.After.RunNumber && number < cursor.Start.RunNumber
 }

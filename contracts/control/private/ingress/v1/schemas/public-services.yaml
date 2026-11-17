@@ -39,6 +39,14 @@ schemas:
   VisitorConnectionID:
     type: string
     pattern: "^vc_[A-Za-z0-9]{22}$"
+  ServiceRunCursor:
+    type: object
+    additionalProperties: false
+    required: [start, after]
+    description: Constant-size continuation after local quota rejection, before any visitor bytes. Start is the first rejected run; after is the last rejected run. Continue in increasing run-number order, wrapping once below start. Both exact references must name the resolved service. The first admission uses current load ordering; continuations never revisit a run. Each new attempt uses a new visitor connection ID and the original setup deadline.
+    properties:
+      start: { $ref: "../openapi.yaml#/components/schemas/ServiceRunReference" }
+      after: { $ref: "../openapi.yaml#/components/schemas/ServiceRunReference" }
   PublicServiceVisitorClaim:
     type: object
     additionalProperties: false
@@ -58,13 +66,7 @@ schemas:
       destination_port: { type: integer, minimum: 1024, maximum: 65535 }
       observed_source_ip: { type: string, minLength: 1, maxLength: 64 }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
-      excluded_runs:
-        type: array
-        maxItems: 7
-        uniqueItems: true
-        x-go-type-skip-optional-pointer: true
-        description: Exact runs rejected by this ingress's local quotas before forwarding visitor bytes. All entries must name the resolved service, with distinct run IDs and run numbers. Each new run attempt uses a new visitor connection ID; retrying an existing ID never moves its reservation.
-        items: { $ref: "../openapi.yaml#/components/schemas/ServiceRunReference" }
+      run_cursor: { $ref: "../openapi.yaml#/components/schemas/ServiceRunCursor" }
   PublicServiceVisitorLookup:
     type: object
     additionalProperties: false

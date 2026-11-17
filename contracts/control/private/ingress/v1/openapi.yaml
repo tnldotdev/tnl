@@ -68,6 +68,8 @@ components:
       $ref: "./schemas/public-services.yaml#/schemas/PublicServiceVisitorStatus"
     ServiceRunReference:
       $ref: "./schemas/public-services.yaml#/schemas/ServiceRunReference"
+    ServiceRunCursor:
+      $ref: "./schemas/public-services.yaml#/schemas/ServiceRunCursor"
     ServiceRunClosureLookup:
       $ref: "./schemas/public-services.yaml#/schemas/ServiceRunClosureLookup"
     ServiceRunClosures:

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -59,26 +60,36 @@ func (c *serviceSelectionControl) ReadIngressServices(ctx context.Context, id st
 func (c *serviceSelectionControl) AdmitPublicServiceVisitor(ctx context.Context, id string, claim ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	claim.ExcludedRuns = append([]ingressv1.ServiceRunReference(nil), claim.ExcludedRuns...)
+	if claim.RunCursor != nil {
+		copy := *claim.RunCursor
+		claim.RunCursor = &copy
+	}
 	c.claims = append(c.claims, claim)
 	deadline, _ := ctx.Deadline()
 	c.deadlines = append(c.deadlines, deadline)
 	c.actions = append(c.actions, "admit "+claim.VisitorConnectionId)
 	if !c.native || id != "ingress-a" || claim.IngressLeaseRevision != 1 ||
-		claim.ObservedSourceIp != "192.0.2.4" || claim.DestinationPort != 20000 || len(claim.ExcludedRuns) > 7 {
+		claim.ObservedSourceIp != "192.0.2.4" || claim.DestinationPort != 20000 {
 		return ingressv1.PublicServiceVisitorAdmission{}, ErrServiceAdmission
 	}
-	for _, run := range c.runs {
+	runs := slices.Clone(c.runs)
+	if cursor := claim.RunCursor; cursor != nil {
+		slices.SortFunc(runs, func(a, b ingressv1.PublicServiceVisitorAdmission) int {
+			aWrap, bWrap := a.RunNumber <= cursor.Start.RunNumber, b.RunNumber <= cursor.Start.RunNumber
+			if aWrap != bWrap {
+				if aWrap {
+					return 1
+				}
+				return -1
+			}
+			return int(a.RunNumber - b.RunNumber)
+		})
+	}
+	for _, run := range runs {
 		if len(run.ConnectedRelays) == 0 {
 			continue
 		}
-		excluded := false
-		for _, ref := range claim.ExcludedRuns {
-			if ref.ServiceId == run.ServiceId && ref.ServiceRunId == run.ServiceRunId && ref.RunNumber == run.RunNumber {
-				excluded = true
-			}
-		}
-		if excluded {
+		if claim.RunCursor != nil && !serviceRunCursorAllows(*claim.RunCursor, run.RunNumber) {
 			continue
 		}
 		run.VisitorConnectionId = claim.VisitorConnectionId
