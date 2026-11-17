@@ -53,7 +53,9 @@ func TestVisitorTLSRetainsEveryFallibleServerCallback(t *testing.T) {
 			return err
 		}},
 		{"entropy", func(f *visitorTLSFailures) error {
+			//lint:ignore SA1019 exercise failure provenance for a caller-supplied compatibility entropy reader.
 			config := f.config(&tls.Config{Rand: visitorTLSBrokenIO{err: failure}})
+			//lint:ignore SA1019 verify the supplied compatibility reader remains wrapped, not replaced.
 			_, err := config.Rand.Read(make([]byte, 32))
 			return err
 		}},

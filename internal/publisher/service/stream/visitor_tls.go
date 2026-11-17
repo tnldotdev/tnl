@@ -80,11 +80,15 @@ func (f *visitorTLSFailures) config(original *tls.Config) *tls.Config {
 	for i := range original.Certificates {
 		config.Certificates[i] = *f.certificate(&original.Certificates[i])
 	}
-	if original.NameToCertificate != nil {
-		config.NameToCertificate = make(map[string]*tls.Certificate, len(original.NameToCertificate))
-		for name, certificate := range original.NameToCertificate {
-			config.NameToCertificate[name] = f.certificate(certificate)
+	//lint:ignore SA1019 preserve caller-supplied certificate selection while observing its signer failures.
+	namedCertificates := original.NameToCertificate
+	if namedCertificates != nil {
+		wrapped := make(map[string]*tls.Certificate, len(namedCertificates))
+		for name, certificate := range namedCertificates {
+			wrapped[name] = f.certificate(certificate)
 		}
+		//lint:ignore SA1019 retain the supplied compatibility map without mutating the caller's certificates.
+		config.NameToCertificate = wrapped
 	}
 	if original.GetCertificate != nil {
 		config.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -120,8 +124,11 @@ func (f *visitorTLSFailures) config(original *tls.Config) *tls.Config {
 			return keys, f.callback(err)
 		}
 	}
-	if original.Rand != nil {
-		config.Rand = visitorTLSReader{Reader: original.Rand, failures: f}
+	//lint:ignore SA1019 preserve a caller-supplied compatibility entropy reader rather than silently replacing it.
+	random := original.Rand
+	if random != nil {
+		//lint:ignore SA1019 observe the supplied reader so its failures retain local provenance.
+		config.Rand = visitorTLSReader{Reader: random, failures: f}
 	}
 	if original.KeyLogWriter != nil {
 		config.KeyLogWriter = visitorTLSWriter{Writer: original.KeyLogWriter, failures: f}

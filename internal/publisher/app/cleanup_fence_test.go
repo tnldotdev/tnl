@@ -138,7 +138,11 @@ func TestManagerCloseFencesActiveRetryBeforeWaitingForOperationLock(t *testing.T
 	// barrier proves Close has published every active cleanup fence, without a
 	// sleep or advancing fake time while another goroutine waits on op.
 	manager.mu.Lock()
+	closingObserved := manager.closed
 	manager.mu.Unlock()
+	if !closingObserved {
+		t.Error("process close did not publish its closing state before joining cleanup")
+	}
 	if active.Err() == nil || context.Cause(active) != context.DeadlineExceeded {
 		t.Error("process close waited on the retry without first fencing its active context")
 	}
