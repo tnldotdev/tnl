@@ -25,6 +25,13 @@ import (
 
 var ErrEndpoint = errors.New("service TLS or visitor authorization failed")
 
+// VisitorHostnameRefusal identifies this visitor's failed TLS hostname check,
+// not a configuration, required worker, or physical cleanup failure.
+type VisitorHostnameRefusal struct{}
+
+func (*VisitorHostnameRefusal) Error() string { return ErrEndpoint.Error() }
+func (*VisitorHostnameRefusal) Unwrap() error { return ErrEndpoint }
+
 type Decision struct {
 	Allowed    bool
 	ValidUntil time.Time
@@ -301,7 +308,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	frontTLS.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		hostname, err := naming.CanonicalizeHostname(hello.ServerName)
 		if (err != nil || hostname != s.Hostname) && !(s.Protocol == config.ProtocolMySQL && hello.ServerName == "") {
-			return nil, ErrEndpoint
+			return nil, &VisitorHostnameRefusal{}
 		}
 		return nil, nil
 	}

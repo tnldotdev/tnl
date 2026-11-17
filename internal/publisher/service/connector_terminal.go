@@ -9,6 +9,7 @@ import (
 
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -37,6 +38,11 @@ func connectorAdmissionRoutineError(err error) bool {
 		return cause != nil && cause.err == visitortoken.ErrBinding
 	case *visitorlease.ConnectorPolicyRefusal:
 		return cause != nil
+	case *servicestream.VisitorHostnameRefusal:
+		return cause != nil
+	case *tunnel.ConnectorControlFailure, *tunnel.SessionCleanupError:
+		// required work cannot borrow a visitor-local refusal's provenance.
+		return httpAdmissionRoutineError(err)
 	case interface{ Unwrap() []error }:
 		children := cause.Unwrap()
 		if len(children) == 0 {
