@@ -30,6 +30,7 @@ func TestCatalogUsesWebhookOnlyFeedAndBoundedLastGood(t *testing.T) {
 	catalog.now = func() time.Time { return now }
 	first, err := catalog.Read(t.Context(), "github")
 	if err != nil || first.MaxAge != 900 || first.ETag == "" ||
+		!first.Window.Valid() ||
 		first.Source.Kind != "ip_ranges" || !slices.Equal(first.Source.Ranges, []string{"192.0.2.1/32", "2001:db8::/48"}) {
 		t.Fatalf("selected GitHub hooks = %+v, %v", first, err)
 	}
@@ -40,7 +41,9 @@ func TestCatalogUsesWebhookOnlyFeedAndBoundedLastGood(t *testing.T) {
 	unavailable = true
 	now = now.Add(2 * time.Minute)
 	stale, err := catalog.Read(t.Context(), "github")
-	if err != nil || stale.MaxAge != 0 || stale.ETag != first.ETag || requests != 2 {
+	if err != nil || stale.MaxAge != 0 || stale.ETag != first.ETag || requests != 2 ||
+		!stale.Window.ValidUntil.Equal(first.Window.ValidUntil) || !stale.Window.CheckedAt.Equal(first.Window.CheckedAt) ||
+		!stale.Window.ObservedAt.Equal(now) {
 		t.Fatalf("bounded last-good source = %+v, requests=%d, error=%v", stale, requests, err)
 	}
 	now = now.Add(25 * time.Hour)

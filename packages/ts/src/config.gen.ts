@@ -801,6 +801,8 @@ export interface TnlConfig {
             | "vercel"
             | "workos";
           /**
+           * Replace this endpoint's provider-managed sender ranges with these exact prefixes; do not union or fetch provider ranges. Other endpoints keep their own source checks. Apps still verify webhook signatures.
+           *
            * @minItems 1
            */
           sourceIPs?: [string, ...string[]];

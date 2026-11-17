@@ -316,7 +316,8 @@ func webhookSchema() *jsonschema.Schema {
 	declared := (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true}).Reflect(declaration{})
 	provider, _ := declared.Properties.Get("provider")
 	properties.Set("provider", provider)
-	properties.Set("source_ips", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true})
+	properties.Set("source_ips", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true,
+		Description: "Replace this endpoint's provider-managed sender ranges with these exact prefixes; do not union or fetch provider ranges. Other endpoints keep their own source checks. Apps still verify webhook signatures."})
 	return &jsonschema.Schema{Type: "object", Required: []string{"path", "service", "provider"}, Properties: properties, AdditionalProperties: jsonschema.FalseSchema}
 }
 

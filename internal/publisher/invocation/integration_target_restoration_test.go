@@ -12,17 +12,18 @@ import (
 )
 
 func TestIntegrationPreparationRejectsConflictingSavedHandlerTarget(t *testing.T) {
-	for _, hostname := range []string{"oauth.member.example", "hooks.member.example"} {
+	for _, test := range integrationIntentCases {
+		hostname, intent := test.hostname, test.intent
 		t.Run(hostname, func(t *testing.T) {
 			f := newServiceSetupFixture(t, hostname)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			_, saved, err := nativeIntegrationConfig(ctx, f.services, hostname, nil)
+			_, saved, err := nativeIntegrationConfig(ctx, f.services, hostname, intent, nil)
 			if err != nil {
 				t.Fatal("prepare original handler service", err)
 			}
 			configured, digest, err := f.services.routes.GetServiceConfiguration(ctx, saved.Id)
-			if err != nil || configured == nil || configured.Target != "app" {
+			if err != nil || configured == nil || configured.Target != string(intent) {
 				t.Fatal("original integration did not save its handler placeholder", err)
 			}
 			configured.Target = "http://127.0.0.1:3000"
@@ -42,7 +43,7 @@ func TestIntegrationPreparationRejectsConflictingSavedHandlerTarget(t *testing.T
 			public := bytes.Clone(f.public)
 			creates, updates, changes := f.creates, f.updates, f.changes
 			enrollments, redemptions, runs := f.enrollments, f.redemptions, f.runs
-			cfg, selected, err := nativeIntegrationConfig(ctx, f.services, hostname, nil)
+			cfg, selected, err := nativeIntegrationConfig(ctx, f.services, hostname, intent, nil)
 			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
 				t.Error("integration preparation accepted a conflicting saved handler target or lost its invalid-response reason", err)
 			}

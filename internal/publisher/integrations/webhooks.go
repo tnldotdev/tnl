@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -40,6 +41,7 @@ type webhookEndpoint struct {
 	any         bool
 	unavailable bool
 	stale       bool
+	validUntil  time.Time
 }
 
 type Webhooks struct {
@@ -47,6 +49,13 @@ type Webhooks struct {
 	server, hostname string
 	group            clientstate.IntegrationScope
 	paths            map[string]webhookEndpoint
+	mu               sync.RWMutex
+	refreshMu        sync.Mutex
+	sources          map[string]webhooksource.Source
+	resolve          func(context.Context, webhooksource.Cache, string, string) (webhooksource.Source, error)
+	now              func() time.Time
+	ingressIPs       []string
+	ingressAny       bool
 	// report contains only endpoint/tunnel identifiers and fixed failure reasons.
 	report func(string, string, string)
 	// OnReceiverResponse runs after a selected local service returns HTTP headers.
@@ -87,26 +96,46 @@ func newWebhooks(ctx context.Context, state *clientstate.Database, server string
 		}
 		sources[name] = source
 	}
-	handler := &Webhooks{state: state, server: server, group: group, hostname: hostname, paths: map[string]webhookEndpoint{}, report: report}
-	union := map[string]bool{}
-	allowAll := false
+	handler := &Webhooks{state: state, server: server, group: group, hostname: hostname, paths: map[string]webhookEndpoint{},
+		report: report, sources: sources, resolve: resolve, now: time.Now}
 	for name, definition := range definitions {
 		_, digest, err := DefinitionBytes(definition)
 		if err != nil {
 			return nil, nil, err
 		}
-		endpoint := webhookEndpoint{name: name, definition: definition, digest: digest}
+		definition.Methods = slices.Clone(definition.Methods)
+		definition.SourceIPs = slices.Clone(definition.SourceIPs)
+		handler.paths[definition.Path] = webhookEndpoint{name: name, definition: definition, digest: digest}
+	}
+	paths, prefixes, any, err := webhookPolicies(handler.paths, sources, handler.now())
+	if err != nil {
+		return nil, nil, err
+	}
+	handler.paths, handler.ingressIPs, handler.ingressAny = paths, slices.Clone(prefixes), any
+	for _, endpoint := range paths {
+		if endpoint.unavailable {
+			handler.failure(endpoint.name, "provider catalog", "source policy unavailable")
+		}
+	}
+	return handler, prefixes, nil
+}
+
+func webhookPolicies(paths map[string]webhookEndpoint, sources map[string]webhooksource.Source, now time.Time) (map[string]webhookEndpoint, []string, bool, error) {
+	current := make(map[string]webhookEndpoint, len(paths))
+	union := map[string]bool{}
+	allowAll := false
+	for path, original := range paths {
+		definition := original.definition
+		endpoint := webhookEndpoint{name: original.name, definition: definition, digest: original.digest}
 		prefixes := slices.Clone(definition.SourceIPs)
 		if definition.SourceIPs == nil {
 			source, found := sources[definition.Provider]
-			if !found {
+			if !found || definition.Provider != "custom" && !now.Before(source.ValidUntil) {
 				endpoint.unavailable = true
-				if report != nil {
-					report(name, "provider catalog", "source policy unavailable")
-				}
 			} else {
 				endpoint.any = source.Any
 				endpoint.stale = source.Stale
+				endpoint.validUntil = source.ValidUntil
 				prefixes = source.Prefixes
 			}
 		}
@@ -116,14 +145,14 @@ func newWebhooks(ctx context.Context, state *clientstate.Database, server string
 			if err != nil {
 				address, addressErr := netip.ParseAddr(value)
 				if addressErr != nil {
-					return nil, nil, fmt.Errorf("invalid webhook IP prefix: %w", err)
+					return nil, nil, false, fmt.Errorf("invalid webhook IP prefix: %w", err)
 				}
 				prefix = netip.PrefixFrom(address.Unmap(), address.Unmap().BitLen())
 			}
 			endpoint.prefixes = append(endpoint.prefixes, prefix)
 			union[prefix.String()] = true
 		}
-		handler.paths[definition.Path] = endpoint
+		current[path] = endpoint
 	}
 	prefixes := []string{}
 	if !allowAll {
@@ -132,16 +161,91 @@ func newWebhooks(ctx context.Context, state *clientstate.Database, server string
 		}
 		slices.Sort(prefixes)
 	}
-	return handler, prefixes, nil
+	return current, prefixes, allowAll, nil
+}
+
+// HasAvailablePolicy distinguishes an explicitly unrestricted source from an
+// empty union of unavailable endpoints. an empty union must not remove IP limits.
+func (h *Webhooks) HasAvailablePolicy() bool {
+	now := h.now()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, endpoint := range h.paths {
+		if !endpoint.unavailable && (endpoint.validUntil.IsZero() || now.Before(endpoint.validUntil)) {
+			return true
+		}
+	}
+	return false
+}
+
+// RefreshPolicies is called by the existing integration publisher tick. requests
+// never wait for a feed fetch and capture their policy before reading any body.
+// tightening is installed locally even if the coarse service-union write fails;
+// that old union can only cause additional denials, not grant path access.
+func (h *Webhooks) RefreshPolicies(ctx context.Context, install func(context.Context, []string) error) error {
+	h.refreshMu.Lock()
+	defer h.refreshMu.Unlock()
+	now := h.now()
+	h.mu.RLock()
+	paths := maps.Clone(h.paths)
+	h.mu.RUnlock()
+	providers := map[string]bool{}
+	for _, endpoint := range paths {
+		if endpoint.definition.SourceIPs == nil && endpoint.definition.Provider != "custom" {
+			providers[endpoint.definition.Provider] = true
+		}
+	}
+	for _, provider := range slices.Sorted(maps.Keys(providers)) {
+		previous, found := h.sources[provider]
+		if found && now.Before(previous.RefreshAt) {
+			continue
+		}
+		source, err := h.resolve(ctx, h.state, h.server, provider)
+		if err == nil && found && previous.Revision != "" && !previous.Any && source.Any {
+			err = errors.New("provider policy cannot implicitly become unrestricted")
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return errors.Join(err, ctx.Err())
+			}
+			previous.Stale = true
+			previous.RefreshAt = now.Add(30 * time.Second)
+			h.sources[provider] = previous
+			continue
+		}
+		source.Prefixes = slices.Clone(source.Prefixes)
+		h.sources[provider] = source
+	}
+	current, prefixes, any, err := webhookPolicies(paths, h.sources, h.now())
+	if err != nil {
+		return err
+	}
+	h.mu.Lock()
+	h.paths = current
+	h.mu.Unlock()
+	if !any && len(prefixes) == 0 || any == h.ingressAny && slices.Equal(prefixes, h.ingressIPs) {
+		return nil
+	}
+	if install == nil {
+		return errors.New("webhook source union installer is unavailable")
+	}
+	if err := install(ctx, prefixes); err != nil {
+		return err
+	}
+	h.ingressIPs, h.ingressAny = slices.Clone(prefixes), any
+	return nil
 }
 
 // PolicyStatus describes the actual source policy selected for an endpoint.
 func (h *Webhooks) PolicyStatus(name string) string {
+	now := h.now()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	for _, endpoint := range h.paths {
 		if endpoint.name != name {
 			continue
 		}
-		if endpoint.unavailable {
+		if endpoint.unavailable || !endpoint.validUntil.IsZero() && !now.Before(endpoint.validUntil) {
 			return "unavailable"
 		}
 		value := "all sources"
@@ -164,7 +268,9 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		return
 	}
 	// authorize the exact escaped path before reading or retaining any body bytes.
+	h.mu.RLock()
 	endpoint, found := h.paths[request.URL.EscapedPath()]
+	h.mu.RUnlock()
 	if !found || request.URL.RawPath != "" || request.URL.Path != request.URL.EscapedPath() {
 		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied, "")
 		return
@@ -177,7 +283,7 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied, "")
 		return
 	}
-	if endpoint.unavailable {
+	if endpoint.unavailable || !endpoint.validUntil.IsZero() && !h.now().Before(endpoint.validUntil) {
 		diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable, "")
 		return
 	}

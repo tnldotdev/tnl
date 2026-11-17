@@ -22,6 +22,12 @@ var appliedDiscoveryName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}
 // descriptors are local desired metadata, never commands or discovery inputs
 // evaluated by control. an explicit prefix cannot fall back to an address.
 func appliedLocalTargetDescriptor(target, protocol string) (bool, error) {
+	if targetsyntax.IntegrationTarget(target).Valid() {
+		if protocol != "http" {
+			return true, ErrProjectConfigurationInvalid
+		}
+		return true, nil
+	}
 	if target == "app" {
 		if protocol != "http" {
 			return true, ErrProjectConfigurationInvalid
@@ -66,6 +72,11 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 		return ErrProjectConfigurationInvalid
 	}
 	if s.Ephemeral && !local {
+		return ErrProjectConfigurationInvalid
+	}
+	if targetsyntax.IntegrationTarget(s.Target).Valid() &&
+		(!local || s.Ephemeral || s.TargetTLS != nil || s.TargetDiscovery != nil ||
+			s.HTTP == nil || s.HTTP.Access == nil || s.HTTP.Access.Mode != "anonymous") {
 		return ErrProjectConfigurationInvalid
 	}
 	if s.HTTP != nil {

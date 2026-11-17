@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -20,7 +21,7 @@ func TestIntegrationServiceUsesSelectedTeamDomainAndHostname(t *testing.T) {
 		t.Run(hostname, func(t *testing.T) {
 			f := newServiceSetupFixture(t, hostname)
 			for range 2 {
-				cfg, saved, err := nativeIntegrationConfig(t.Context(), f.services, hostname, nil)
+				cfg, saved, err := nativeIntegrationConfig(t.Context(), f.services, hostname, targetsyntax.WebhookIntegration, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -28,7 +29,7 @@ func TestIntegrationServiceUsesSelectedTeamDomainAndHostname(t *testing.T) {
 					saved.DomainId == nil || *saved.DomainId != f.services.domainID ||
 					saved.Endpoint == nil || saved.Endpoint.Hostname != hostname || saved.Endpoint.Port != 443 || !saved.Endpoint.Public ||
 					saved.Source != nil || saved.Ephemeral || cfg.Target != "" ||
-					f.declaration.Target != "app" || f.declaration.Hostname == nil || *f.declaration.Hostname != hostname ||
+					f.declaration.Target != string(targetsyntax.WebhookIntegration) || f.declaration.Hostname == nil || *f.declaration.Hostname != hostname ||
 					f.declaration.DomainId == nil || *f.declaration.DomainId != f.services.domainID {
 					t.Fatal("integration changed the selected ordinary service placement or saved a private target", cfg, saved, f.declaration)
 				}

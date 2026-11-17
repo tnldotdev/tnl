@@ -3193,7 +3193,7 @@ type ProjectServiceConfiguration struct {
 	// RequirePostQuantum Require hybrid post-quantum key agreement for visitor TLS, independently of target TLS.
 	RequirePostQuantum *bool `json:"require_post_quantum,omitempty"`
 
-	// Target Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP listener to its application owner in any deployment. Only local declarations may use compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets.
+	// Target Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP listener to its application owner in any deployment. integration:oauth and integration:webhooks explicitly select a non-ephemeral, in-process HTTP handler and require explicit anonymous HTTP access; they are not app listeners or separate resources. Only local declarations may use integration, compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets.
 	Target string `json:"target"`
 
 	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
@@ -3281,12 +3281,14 @@ type ProjectTargetTLS struct {
 
 // ProjectWebhook defines model for ProjectWebhook.
 type ProjectWebhook struct {
-	Delivery  *string         `json:"delivery,omitempty"`
-	Methods   *[]string       `json:"methods,omitempty"`
-	Path      string          `json:"path"`
-	Provider  WebhookProvider `json:"provider"`
-	Service   string          `json:"service"`
-	SourceIps *[]string       `json:"source_ips,omitempty"`
+	Delivery *string         `json:"delivery,omitempty"`
+	Methods  *[]string       `json:"methods,omitempty"`
+	Path     string          `json:"path"`
+	Provider WebhookProvider `json:"provider"`
+	Service  string          `json:"service"`
+
+	// SourceIps Explicit replacement for this endpoint's provider-managed sender ranges, not an additional union. No provider fetch is needed for this endpoint. Other endpoints retain their own source checks; applications still verify webhook signatures.
+	SourceIps *[]string `json:"source_ips,omitempty"`
 }
 
 // ProjectWorkload defines model for ProjectWorkload.
@@ -7052,7 +7054,7 @@ type ClientInterface interface {
 
 	// GetWebhookProviderSource Read one webhook provider source policy
 	//
-	// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy; this endpoint does not register a webhook or grant access to a public URL.
+	// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy. Both 200 and 304 carry the catalog's observation time, last successful provider check, 15-minute freshness boundary, and absolute 24-hour last-good boundary. An unchanged or stale response does not restart those windows. Clients spend response latency from request start and fail the affected endpoint closed at expiry. This endpoint does not register a webhook or grant visitor access.
 	//
 	// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 	GetWebhookProviderSource(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10666,7 +10668,7 @@ func (c *Client) ListAvailableServices(ctx context.Context, params *ListAvailabl
 
 // GetWebhookProviderSource Read one webhook provider source policy
 //
-// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy; this endpoint does not register a webhook or grant access to a public URL.
+// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy. Both 200 and 304 carry the catalog's observation time, last successful provider check, 15-minute freshness boundary, and absolute 24-hour last-good boundary. An unchanged or stale response does not restart those windows. Clients spend response latency from request start and fail the affected endpoint closed at expiry. This endpoint does not register a webhook or grant visitor access.
 //
 // Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 func (c *Client) GetWebhookProviderSource(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -19409,7 +19411,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetWebhookProviderSourceWithResponse Read one webhook provider source policy
 	//
-	// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy; this endpoint does not register a webhook or grant access to a public URL.
+	// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy. Both 200 and 304 carry the catalog's observation time, last successful provider check, 15-minute freshness boundary, and absolute 24-hour last-good boundary. An unchanged or stale response does not restart those windows. Clients spend response latency from request start and fail the affected endpoint closed at expiry. This endpoint does not register a webhook or grant visitor access.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -25404,8 +25406,22 @@ func (r ListAvailableServicesResponse) ContentType() string {
 
 // GetWebhookProviderSourceResponse200Headers the declared response headers of an HTTP 200 response for GetWebhookProviderSource
 type GetWebhookProviderSourceResponse200Headers struct {
-	CacheControl *string
-	ETag         *string
+	CacheControl               *string
+	ETag                       *string
+	TNLWebhookPolicyCheckedAt  time.Time
+	TNLWebhookPolicyFreshUntil time.Time
+	TNLWebhookPolicyObservedAt time.Time
+	TNLWebhookPolicyValidUntil time.Time
+}
+
+// GetWebhookProviderSourceResponse304Headers the declared response headers of an HTTP 304 response for GetWebhookProviderSource
+type GetWebhookProviderSourceResponse304Headers struct {
+	CacheControl               *string
+	ETag                       *string
+	TNLWebhookPolicyCheckedAt  time.Time
+	TNLWebhookPolicyFreshUntil time.Time
+	TNLWebhookPolicyObservedAt time.Time
+	TNLWebhookPolicyValidUntil time.Time
 }
 
 type GetWebhookProviderSourceResponse struct {
@@ -25417,6 +25433,8 @@ type GetWebhookProviderSourceResponse struct {
 	ApplicationproblemJSONDefault *Problem
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *GetWebhookProviderSourceResponse200Headers
+	// Headers304 the parsed response headers for an HTTP 304 response
+	Headers304 *GetWebhookProviderSourceResponse304Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -28557,7 +28575,7 @@ func (c *ClientWithResponses) ListAvailableServicesWithResponse(ctx context.Cont
 
 // GetWebhookProviderSourceWithResponse Read one webhook provider source policy
 //
-// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy; this endpoint does not register a webhook or grant access to a public URL.
+// Read the selected provider's current webhook source policy without a credential. Use ETag and If-None-Match to reuse unchanged policy. Both 200 and 304 carry the catalog's observation time, last successful provider check, 15-minute freshness boundary, and absolute 24-hour last-good boundary. An unchanged or stale response does not restart those windows. Clients spend response latency from request start and fail the affected endpoint closed at expiry. This endpoint does not register a webhook or grant visitor access.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -32874,7 +32892,80 @@ func ParseGetWebhookProviderSourceResponse(rsp *http.Response) (*GetWebhookProvi
 			}
 			headers.ETag = &value
 		}
+		if values := rsp.Header.Values("TNL-Webhook-Policy-Checked-At"); len(values) > 0 {
+			var value time.Time
+			if err := runtime.BindStyledParameterWithOptions("simple", "TNL-Webhook-Policy-Checked-At", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			}
+			headers.TNLWebhookPolicyCheckedAt = value
+		}
+		if values := rsp.Header.Values("TNL-Webhook-Policy-Fresh-Until"); len(values) > 0 {
+			var value time.Time
+			if err := runtime.BindStyledParameterWithOptions("simple", "TNL-Webhook-Policy-Fresh-Until", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			}
+			headers.TNLWebhookPolicyFreshUntil = value
+		}
+		if values := rsp.Header.Values("TNL-Webhook-Policy-Observed-At"); len(values) > 0 {
+			var value time.Time
+			if err := runtime.BindStyledParameterWithOptions("simple", "TNL-Webhook-Policy-Observed-At", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			}
+			headers.TNLWebhookPolicyObservedAt = value
+		}
+		if values := rsp.Header.Values("TNL-Webhook-Policy-Valid-Until"); len(values) > 0 {
+			var value time.Time
+			if err := runtime.BindStyledParameterWithOptions("simple", "TNL-Webhook-Policy-Valid-Until", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			}
+			headers.TNLWebhookPolicyValidUntil = value
+		}
 		response.Headers200 = &headers
+	case rsp.StatusCode == 304:
+		var headers GetWebhookProviderSourceResponse304Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		if values := rsp.Header.Values("TNL-Webhook-Policy-Checked-At"); len(values) > 0 {
+			var value time.Time
+			if err := runtime.BindStyledParameterWithOptions("simple", "TNL-Webhook-Policy-Checked-At", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			}
+			headers.TNLWebhookPolicyCheckedAt = value
+		}
+		if values := rsp.Header.Values("TNL-Webhook-Policy-Fresh-Until"); len(values) > 0 {
+			var value time.Time
+			if err := runtime.BindStyledParameterWithOptions("simple", "TNL-Webhook-Policy-Fresh-Until", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			}
+			headers.TNLWebhookPolicyFreshUntil = value
+		}
+		if values := rsp.Header.Values("TNL-Webhook-Policy-Observed-At"); len(values) > 0 {
+			var value time.Time
+			if err := runtime.BindStyledParameterWithOptions("simple", "TNL-Webhook-Policy-Observed-At", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			}
+			headers.TNLWebhookPolicyObservedAt = value
+		}
+		if values := rsp.Header.Values("TNL-Webhook-Policy-Valid-Until"); len(values) > 0 {
+			var value time.Time
+			if err := runtime.BindStyledParameterWithOptions("simple", "TNL-Webhook-Policy-Valid-Until", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			}
+			headers.TNLWebhookPolicyValidUntil = value
+		}
+		response.Headers304 = &headers
 	}
 
 	return response, nil

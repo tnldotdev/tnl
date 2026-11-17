@@ -11,11 +11,13 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing.T) {
-	for _, hostname := range []string{"oauth.member.example", "hooks.member.example"} {
+	for _, test := range integrationIntentCases {
+		hostname, intent := test.hostname, test.intent
 		t.Run(hostname, func(t *testing.T) {
 			f := newServiceSetupFixture(t, hostname)
 			inventories := 0
@@ -38,7 +40,7 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 				if err != nil {
 					t.Fatal(err)
 				}
-				cfg, saved, err := nativeIntegrationConfig(t.Context(), f.services, hostname, desired)
+				cfg, saved, err := nativeIntegrationConfig(t.Context(), f.services, hostname, intent, desired)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -47,7 +49,7 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 					t.Fatal("integration replaced its service, grant, or key, or invented a TCP target", cfg, saved)
 				}
 				http := f.declaration.Http
-				if f.declaration.Target != "app" || f.declaration.Traffic != nil || http == nil ||
+				if f.declaration.Target != string(intent) || f.declaration.Traffic != nil || http == nil ||
 					http.Access == nil || http.Access.Mode == nil || *http.Access.Mode != controlv1.Anonymous ||
 					(http.Access.Ip == nil) != (len(desired) == 0) ||
 					http.Access.Ip != nil && !slices.Equal(*http.Access.Ip, desired) ||
@@ -87,7 +89,7 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 				t.Fatal(err)
 			}
 			public := bytes.Clone(f.public)
-			_, _, err = nativeIntegrationConfig(t.Context(), f.services, hostname, nil)
+			_, _, err = nativeIntegrationConfig(t.Context(), f.services, hostname, intent, nil)
 			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerConflict {
 				t.Fatal("canonical reservation did not reject the conflicting endpoint", err)
 			}
@@ -107,7 +109,7 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 
 func TestNativeIntegrationConfigRejectsMismatchedReservationResponse(t *testing.T) {
 	f := newServiceSetupFixture(t, "oauth.member.example")
-	_, saved, err := nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, nil)
+	_, saved, err := nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, targetsyntax.OAuthIntegration, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +137,7 @@ func TestNativeIntegrationConfigRejectsMismatchedReservationResponse(t *testing.
 		invalid.Endpoint = &endpoint
 		return serviceTestResponse(r, http.StatusOK, invalid), true
 	}
-	_, _, err = nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, nil)
+	_, _, err = nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, targetsyntax.OAuthIntegration, nil)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
 		t.Fatal("integration adopted a mismatched successful reservation response", err)
 	}

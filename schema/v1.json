@@ -1917,7 +1917,8 @@
                 },
                 "type": "array",
                 "minItems": 1,
-                "uniqueItems": true
+                "uniqueItems": true,
+                "description": "Replace this endpoint's provider-managed sender ranges with these exact prefixes; do not union or fetch provider ranges. Other endpoints keep their own source checks. Apps still verify webhook signatures."
               }
             },
             "additionalProperties": false,

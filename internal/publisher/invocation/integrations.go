@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"net/http"
 	"slices"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
 	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
@@ -57,7 +59,7 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 	integrationURLPublisher := integrations.Publisher{
 		State: state, Store: services.state, Server: services.authenticated.ServerEndpoint, Hostname: oauth.Hostname,
 		Prepare: func(ctx context.Context) (integrations.Snapshot, error) {
-			config, saved, err := nativeIntegrationConfig(ctx, services, oauth.Hostname, nil)
+			config, saved, err := nativeIntegrationConfig(ctx, services, oauth.Hostname, targetsyntax.OAuthIntegration, nil)
 			if err != nil {
 				return integrations.Snapshot{}, err
 			}
@@ -142,7 +144,18 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 		))
 	}
 	var workers sync.WaitGroup
-	worker := webhookURLPublisher(state, services, group, hooks, tunnel, output, telemetry)
+	worker := webhookURLPublisher(state, services, group, hooks, tunnel, output,
+		func(ctx context.Context, definitions map[string]config.Webhook, report func(string, string, string)) (webhookSourceHandler, []string, error) {
+			handler, prefixes, err := integrations.NewWebhooks(ctx, state, services.authenticated.ServerEndpoint, group, hooks.Hostname, definitions, report)
+			if err == nil && telemetry != nil {
+				handler.OnReceiverResponse = func(mode string) {
+					delivery := telemetryv1.IntegrationOutcomeDelivery(mode)
+					telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "webhook", Outcome: telemetryv1.Ready, Delivery: &delivery})
+					telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "webhook", Outcome: telemetryv1.ReachedReceiver, Delivery: &delivery})
+				}
+			}
+			return handler, prefixes, err
+		})
 	workers.Go(func() { worker.Maintain(ctx) })
 	if telemetry != nil && len(registered) != 0 {
 		workers.Go(func() {
@@ -194,7 +207,18 @@ func readyWebhookDelivery(ctx context.Context, state *clientstate.Database, serv
 	return ""
 }
 
-func webhookURLPublisher(state *clientstate.Database, services publisherServices, group clientstate.IntegrationScope, origin meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry *clienttelemetry.Scope) integrations.Publisher {
+// the source owner supplies current path checks and refresh; invocation only
+// composes its coarse service-union write into the existing publisher tick.
+type webhookSourceHandler interface {
+	http.Handler
+	PolicyStatus(string) string
+	HasAvailablePolicy() bool
+	RefreshPolicies(context.Context, func(context.Context, []string) error) error
+}
+
+func webhookURLPublisher(state *clientstate.Database, services publisherServices, group clientstate.IntegrationScope, origin meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, prepare func(context.Context, map[string]config.Webhook, func(string, string, string)) (webhookSourceHandler, []string, error)) integrations.Publisher {
+	var active webhookSourceHandler
+	var activeRevision string
 	var reportMu sync.Mutex
 	lastReport := time.Time{}
 	failure := func(message string) {
@@ -227,10 +251,13 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 			if err != nil {
 				return integrations.Snapshot{}, err
 			}
-			handler, prefixes, err := integrations.NewWebhooks(ctx, state, services.authenticated.ServerEndpoint, group, origin.Hostname, definitions,
+			handler, prefixes, err := prepare(ctx, definitions,
 				func(endpoint, receiver, reason string) { failure(endpoint + " to " + receiver + ": " + reason) })
 			if err != nil {
 				return integrations.Snapshot{}, err
+			}
+			if !handler.HasAvailablePolicy() {
+				return integrations.Snapshot{}, errors.New("no webhook endpoint has an available source policy")
 			}
 			for _, name := range slices.Sorted(maps.Keys(definitions)) {
 				reportIntegrationURL(tunnel, output, "webhook policy", "", clioutput.Fields(
@@ -238,22 +265,29 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 					clioutput.Field{Label: "source policy", Value: handler.PolicyStatus(name)},
 				))
 			}
-			if telemetry != nil {
-				handler.OnReceiverResponse = func(mode string) {
-					delivery := telemetryv1.IntegrationOutcomeDelivery(mode)
-					telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "webhook", Outcome: telemetryv1.Ready, Delivery: &delivery})
-					telemetry.Integration(telemetryv1.IntegrationOutcome{Kind: "webhook", Outcome: telemetryv1.ReachedReceiver, Delivery: &delivery})
-				}
-			}
-			config, saved, err := nativeIntegrationConfig(ctx, services, origin.Hostname, prefixes)
+			config, saved, err := nativeIntegrationConfig(ctx, services, origin.Hostname, targetsyntax.WebhookIntegration, prefixes)
 			if err != nil {
 				return integrations.Snapshot{}, err
 			}
 			config.Handler = handler
+			active = handler
+			activeRevision = revision
 			return integrations.Snapshot{Config: config, Service: saved, Revision: revision}, nil
 		},
 		Revision: func(ctx context.Context) (string, error) {
 			_, revision, err := definitionsAt(ctx)
+			if err == nil && active != nil && revision == activeRevision {
+				refreshErr := active.RefreshPolicies(ctx, func(ctx context.Context, prefixes []string) error {
+					_, _, err := nativeIntegrationConfig(ctx, services, origin.Hostname, targetsyntax.WebhookIntegration, prefixes)
+					return err
+				})
+				if refreshErr != nil {
+					failure("the webhook source policy could not update its service IP union")
+					if ctx.Err() != nil || errors.Is(refreshErr, errIntegrationIntent) {
+						return "", refreshErr
+					}
+				}
+			}
 			return revision, err
 		},
 		Report: func(ready bool, err error) {
