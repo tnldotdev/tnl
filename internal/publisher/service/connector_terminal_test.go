@@ -214,6 +214,26 @@ func TestConnectorAbortClassificationKeepsJoinedIndependentFailures(t *testing.T
 		serviceWorkerError(err, errConnectorAdmissionAbort) == nil {
 		t.Fatal("owned Abort hid an independent joined failure", err)
 	}
+	for _, test := range []struct {
+		name  string
+		err   error
+		owned bool
+	}{
+		{"exact-stop", errConnectorAdmissionAbort, true},
+		{"joined-stops", errors.Join(errConnectorAdmissionAbort, errors.Join(errConnectorAdmissionAbort)), true},
+		{"nil", nil, false},
+		{"unidentified-cancellation", context.Canceled, false},
+		{"joined-independent-failure", errors.Join(errConnectorAdmissionAbort, independent), false},
+		{"physical-close", &muxsession.QUICTransportCloseError{Err: errConnectorAdmissionAbort}, false},
+		{"control-failure", &tunnel.ConnectorControlFailure{Origin: tunnel.ConnectorControlWriterFailure, Err: errConnectorAdmissionAbort}, false},
+		{"session-cleanup", &tunnel.SessionCleanupError{Err: errConnectorAdmissionAbort}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if connectorAbortOnly(test.err) != test.owned {
+				t.Fatal("TLS interruption matching borrowed independent or required failure provenance", test.err)
+			}
+		})
+	}
 }
 
 func TestConnectorTerminalMissingObservedEndsOnlyWithAuthenticatedRetirement(t *testing.T) {

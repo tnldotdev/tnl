@@ -115,6 +115,11 @@ func TestConnectorVisitorRefusalPreservesWorkerCleanupProvenance(t *testing.T) {
 						connectorAdmissionRoutineError(refusal.Unwrap()) {
 						t.Fatal("visitor TLS provenance was missing or classified a raw failure", visitorResult)
 					}
+					aborted, abort := context.WithCancelCause(ctx)
+					abort(errConnectorAdmissionAbort)
+					if normalized := connectorAbortOperation(refusal, aborted); normalized != refusal {
+						t.Fatal("Abort replaced an independent visitor TLS protocol refusal", normalized)
+					}
 					for _, required := range []error{
 						errors.Join(refusal, independent),
 						&muxsession.QUICTransportCloseError{Err: refusal},
@@ -160,6 +165,7 @@ func TestConnectorTLSCallbackFailureCannotBorrowVisitorRefusalProvenance(t *test
 		{"EOF", io.EOF},
 		{"raw-TLS", tls.RecordHeaderError{}},
 		{"hostname-refusal", &servicestream.VisitorHostnameRefusal{}},
+		{"abort-marker", errConnectorAdmissionAbort},
 	} {
 		t.Run(problem.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -187,6 +193,12 @@ func TestConnectorTLSCallbackFailureCannotBorrowVisitorRefusalProvenance(t *test
 				connectorAdmissionRoutineError(&tunnel.ConnectorControlFailure{Origin: tunnel.ConnectorControlWriterFailure, Err: callback}) {
 				t.Fatal("local callback failure borrowed visitor or required-control provenance", serving.err)
 			}
+			aborted, abort := context.WithCancelCause(ctx)
+			abort(errConnectorAdmissionAbort)
+			normalized := connectorAbortOperation(serving.err, aborted)
+			if !errors.Is(normalized, problem.err) || serviceWorkerError(normalized, errConnectorAdmissionAbort) == nil {
+				t.Fatal("Abort hid a required TLS callback failure", normalized)
+			}
 		})
 	}
 }
@@ -198,6 +210,9 @@ func TestConnectorTLSRefusalRetainsIgnoredAlertWriteFailure(t *testing.T) {
 	}{
 		{"independent", errors.Join(context.Canceled, errors.New("visitor TLS alert write failed independently"))},
 		{"raw-TLS", tls.RecordHeaderError{}},
+		{"control-wrapped-abort", &tunnel.ConnectorControlFailure{Origin: tunnel.ConnectorControlWriterFailure, Err: errConnectorAdmissionAbort}},
+		{"cleanup-wrapped-abort", &tunnel.SessionCleanupError{Err: errConnectorAdmissionAbort}},
+		{"physical-wrapped-abort", &muxsession.QUICTransportCloseError{Err: errConnectorAdmissionAbort}},
 	} {
 		t.Run(problem.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -226,6 +241,18 @@ func TestConnectorTLSRefusalRetainsIgnoredAlertWriteFailure(t *testing.T) {
 			if !errors.Is(serving.err, problem.err) || !errors.As(serving.err, &operation) ||
 				connectorAdmissionRoutineError(operation) || f.target.dials.Load() != 0 {
 				t.Fatal("TLS negotiation discarded its independently failed alert write", serving.err)
+			}
+			aborted, abort := context.WithCancelCause(ctx)
+			abort(errConnectorAdmissionAbort)
+			normalized := connectorAbortOperation(serving.err, aborted)
+			var retained *servicestream.VisitorTLSIOFailure
+			if !errors.Is(normalized, problem.err) || !errors.As(normalized, &retained) || retained != operation ||
+				serviceWorkerError(normalized, errConnectorAdmissionAbort) == nil {
+				t.Fatal("Abort replaced an independent TLS socket operation failure", normalized)
+			}
+			if normalized := connectorAbortOperation(operation, aborted); normalized != operation ||
+				serviceWorkerError(normalized, errConnectorAdmissionAbort) == nil {
+				t.Fatal("retained TLS I/O provenance was erased by the worker's Abort filter", normalized)
 			}
 		})
 	}

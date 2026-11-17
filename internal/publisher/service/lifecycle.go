@@ -24,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/proxy"
+	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -727,8 +728,17 @@ func serviceWorkerError(err, stopped error) error {
 		return nil
 	}
 	switch wrapped := err.(type) {
-	case *muxsession.QUICTransportCloseError:
+	case *muxsession.QUICTransportCloseError, *servicestream.VisitorTLSCallbackFailure:
 		return err
+	case *servicestream.VisitorProtocolRefusal, *servicestream.VisitorTLSIOFailure:
+		// Abort already normalized identified TLS interruptions. a retained
+		// producer wrapper still contains an independent or required failure.
+		if stopped == errConnectorAdmissionAbort {
+			return err
+		}
+		if serviceWorkerError(errors.Unwrap(err), stopped) == nil {
+			return nil
+		}
 	case interface{ Unwrap() []error }:
 		var failures []error
 		for _, cause := range wrapped.Unwrap() {

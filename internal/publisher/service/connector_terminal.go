@@ -92,6 +92,14 @@ func connectorAbortOperation(err error, ctx context.Context) error {
 		if cause != nil && !cause.Remote && cause.ErrorCode == 0 {
 			return errConnectorAdmissionAbort
 		}
+	case *servicestream.VisitorProtocolRefusal:
+		if cause != nil && connectorAbortOnly(connectorAbortOperation(cause.Unwrap(), ctx)) {
+			return errConnectorAdmissionAbort
+		}
+	case *servicestream.VisitorTLSIOFailure:
+		if cause != nil && connectorAbortOnly(connectorAbortOperation(cause.Unwrap(), ctx)) {
+			return errConnectorAdmissionAbort
+		}
 	case interface{ Unwrap() []error }:
 		var causes []error
 		for _, child := range cause.Unwrap() {
@@ -100,6 +108,28 @@ func connectorAbortOperation(err error, ctx context.Context) error {
 		return errors.Join(causes...)
 	}
 	return err
+}
+
+// only identified stop leaves and their joins may shed a TLS producer wrapper.
+// arbitrary wrappers, required work, and mixed failures keep their provenance.
+func connectorAbortOnly(err error) bool {
+	if err == errConnectorAdmissionAbort {
+		return true
+	}
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return false
+	}
+	children := joined.Unwrap()
+	if len(children) == 0 {
+		return false
+	}
+	for _, child := range children {
+		if !connectorAbortOnly(child) {
+			return false
+		}
+	}
+	return true
 }
 
 var _ tunnel.ConnectorPermissionControlHandlers = (*PeerSession)(nil)
