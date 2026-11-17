@@ -40,8 +40,34 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 	// candidate rejection never restarts it.
 	ctx, cancel := context.WithDeadline(ctx, privateMinTime(capacity.deadline, lease.ServingUntil))
 	defer cancel()
+	if err := context.Cause(ctx); err != nil {
+		return selected, err
+	}
 	if destination.Port() == 443 {
 		runs := s.services.candidates(hostname, 443, lease, time.Now())
+		available := false
+		for _, run := range runs {
+			if err := context.Cause(ctx); err != nil {
+				return selected, err
+			}
+			if run.until.After(time.Now()) {
+				available = true
+				break
+			}
+		}
+		if !available {
+			// never wait for unknown or stale policy without a bounded slot.
+			// a cache hit selects its accounting class without borrowing one.
+			if reason := capacity.admitPending(); reason != "" {
+				s.rejectCapacity(reason)
+				selected.denialReason = controlv1.ObservationCapacity
+				return selected, ErrServiceAdmission
+			}
+			if err := s.services.waitForEndpoint(ctx, hostname, lease); err != nil {
+				return selected, err
+			}
+			runs = s.services.candidates(hostname, 443, lease, time.Now())
+		}
 		if len(runs) == 0 {
 			return selected, ErrServiceAdmission
 		}
@@ -85,7 +111,16 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 			if err != nil || !samePrivateLease(current, lease) || ctx.Err() != nil || !run.until.After(time.Now()) {
 				return selected, ErrServiceAdmission
 			}
-			reason := capacity.selectRun(trafficKey{service: selected.serviceID, id: selected.runID, run: uint64(selected.number)}, selected.limits, source.Addr().Unmap(), selected.anonymous)
+			key := trafficKey{service: selected.serviceID, id: selected.runID, run: uint64(selected.number)}
+			var reason string
+			if !selected.anonymous {
+				// this is only a pre-byte availability check, not a reservation
+				// or permission. authorized visitors must acquire atomically later.
+				reason = s.traffic.available(key, selected.limits)
+			}
+			if reason == "" {
+				reason = capacity.selectRun(key, selected.limits, source.Addr().Unmap(), selected.anonymous)
+			}
 			if reason == "" {
 				return selected, nil
 			}
@@ -98,6 +133,11 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 		return selected, errors.Join(ErrServiceAdmission, ErrServiceSelectionLimit)
 	}
 
+	if reason := capacity.admitPending(); reason != "" {
+		s.rejectCapacity(reason)
+		selected.denialReason = controlv1.ObservationCapacity
+		return selected, ErrServiceAdmission
+	}
 	lookup := &ingressv1.PublicServiceVisitorLookup{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision}
 	selected.certificate = lookup
 	selected.access = clientCertificateAccess

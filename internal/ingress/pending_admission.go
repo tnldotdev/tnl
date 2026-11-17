@@ -23,6 +23,7 @@ type visitorAdmission struct {
 	limits           TrafficLimits
 	source           netip.Addr
 	state            visitorCapacityState
+	processPending   bool
 	metered          bool // ordinary byte accounting, not target permission.
 	deadline         time.Time
 	upload, download int64
@@ -30,15 +31,39 @@ type visitorAdmission struct {
 	copyReady        chan struct{}
 }
 
-// before control selects a run, only the process pending slot is known.
-// control's anonymous fact selects ordinary accounting; other runs stay pending.
+func (s *Server) newServiceAdmission() *visitorAdmission {
+	return &visitorAdmission{server: s, release: func() {}, copyReady: make(chan struct{}),
+		deadline: time.Now().Add(s.config.Pending.Timeout), upload: s.config.Pending.UploadBytes, download: s.config.Pending.DownloadBytes}
+}
+
+// unknown policy waits and restricted selections need process pending capacity.
+// a cached anonymous selection acquires ordinary capacity directly instead.
 func (s *Server) admitPendingService() (*visitorAdmission, string) {
-	release, reason := s.admitClass(pendingConnection)
-	if release == nil {
+	v := s.newServiceAdmission()
+	if reason := v.admitPending(); reason != "" {
 		return nil, reason
 	}
-	return &visitorAdmission{server: s, release: release, copyReady: make(chan struct{}),
-		deadline: time.Now().Add(s.config.Pending.Timeout), upload: s.config.Pending.UploadBytes, download: s.config.Pending.DownloadBytes}, ""
+	return v, ""
+}
+
+func (v *visitorAdmission) admitPending() string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.admitPendingLocked()
+}
+
+func (v *visitorAdmission) admitPendingLocked() string {
+	if v.state != pendingCapacity || !v.deadline.After(time.Now()) {
+		return "pending_expired"
+	}
+	if !v.processPending {
+		release, reason := v.server.admitClass(pendingConnection)
+		if release == nil {
+			return reason
+		}
+		v.release, v.processPending = release, true
+	}
+	return ""
 }
 
 func (v *visitorAdmission) selectRun(key trafficKey, limits TrafficLimits, source netip.Addr, anonymous bool) string {
@@ -63,6 +88,9 @@ func (v *visitorAdmission) selectRun(key trafficKey, limits TrafficLimits, sourc
 		}
 		v.metered = true
 	} else {
+		if reason := v.admitPendingLocked(); reason != "" {
+			return reason
+		}
 		budgetRelease, reason := v.server.traffic.acquirePending(key, source)
 		if budgetRelease == nil {
 			return reason

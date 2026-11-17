@@ -80,11 +80,17 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 	} else if destination.Port() < 1024 || hostname != "" {
 		return ErrServiceAdmission
 	}
-	admission, reason := p.admitPendingService()
-	if admission == nil {
-		p.rejectCapacity(reason)
-		outcome = observability.VisitorCapacityDenied
-		return ErrServiceAdmission
+	var admission *visitorAdmission
+	if destination.Port() == 443 {
+		admission = p.newServiceAdmission()
+	} else {
+		var reason string
+		admission, reason = p.admitPendingService()
+		if admission == nil {
+			p.rejectCapacity(reason)
+			outcome = observability.VisitorCapacityDenied
+			return ErrServiceAdmission
+		}
 	}
 	defer admission.close()
 	lease, err := p.lease(time.Now())
@@ -98,11 +104,6 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 	defer finish()
 	stopSetup := context.AfterFunc(p.admissions, finish)
 	defer stopSetup()
-	if destination.Port() == 443 {
-		if err := p.services.waitForEndpoint(setup, hostname, lease); err != nil {
-			return err
-		}
-	}
 	selected, err := p.selectPublicRun(setup, lease, source, destination, hostname, admission)
 	diagnostic := visitorDiagnosticFrom(ctx)
 	if diagnostic != nil {

@@ -350,12 +350,14 @@ func (s *Server) forwardService(ctx context.Context, public net.Conn, source, de
 	if s.config.Control == nil {
 		return ErrServiceAdmission
 	}
-	release, rejected := s.admitClass(serviceConnection)
-	if release == nil {
-		s.rejectCapacity(rejected)
-		return nil
+	if destination.Port() != 443 {
+		release, rejected := s.admitClass(serviceConnection)
+		if release == nil {
+			s.rejectCapacity(rejected)
+			return nil
+		}
+		defer release()
 	}
-	defer release()
 	return s.acceptPublic(ctx, public, source, destination, hostname, initial)
 }
 

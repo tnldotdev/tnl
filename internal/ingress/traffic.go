@@ -183,23 +183,46 @@ func (a *trafficAdmission) acquire(key trafficKey, limits TrafficLimits) (func()
 		r = &runTraffic{limits: limits}
 		a.runs[key] = r
 	}
-	// approval is immutable for an exact run; refreshes never replace its budget.
-	if r.limits != limits {
-		return nil, "invalid_traffic_projection"
-	}
 	r.seen = now
-	if r.active >= limits.Connections {
-		return nil, "service_connections"
+	if reason := runAvailability(r, limits, now); reason != "" {
+		return nil, reason
 	}
-	if limits.TotalConnections > 0 && r.connections >= limits.TotalConnections {
-		return nil, "service_connection_total"
-	}
-	if !take(&r.newConnections, float64(limits.Rate)/limits.Period().Seconds(), float64(limits.Burst), now) {
-		return nil, "service_connection_rate"
-	}
+	r.newConnections.tokens--
 	r.active++
 	r.connections = min(math.MaxInt64-1, r.connections) + 1
 	return sync.OnceFunc(func() { a.mu.Lock(); r.active--; r.seen = time.Now(); a.mu.Unlock() }), ""
+}
+
+// available never debits ordinary quotas or creates a run for pending visitors.
+// the later acquire rechecks under the same lock; a successful check cannot hold
+// capacity across visitor authorization or make a committed connection retryable.
+func (a *trafficAdmission) available(key trafficKey, limits TrafficLimits) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if r := a.runs[key]; r != nil {
+		return runAvailability(r, limits, time.Now())
+	}
+	if len(a.runs) >= maxTrafficKeys {
+		return "traffic_keys"
+	}
+	return ""
+}
+
+func runAvailability(r *runTraffic, limits TrafficLimits, now time.Time) string {
+	// approval is immutable for an exact run; refreshes never replace its budget.
+	if r.limits != limits {
+		return "invalid_traffic_projection"
+	}
+	if r.active >= limits.Connections {
+		return "service_connections"
+	}
+	if limits.TotalConnections > 0 && r.connections >= limits.TotalConnections {
+		return "service_connection_total"
+	}
+	if r.newConnections.refill(float64(limits.Rate)/limits.Period().Seconds(), float64(limits.Burst), now) < 1 {
+		return "service_connection_rate"
+	}
+	return ""
 }
 
 func (a *trafficAdmission) acquirePending(key trafficKey, addr netip.Addr) (func(), string) {

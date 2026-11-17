@@ -54,7 +54,7 @@ func TestPublicServiceSelectionSkipsOnlyLocallyExhaustedRun(t *testing.T) {
 				control.runs[0].Traffic.TotalConnections = &total
 				server := serviceSelectionHTTPServer(t, config)
 				forwarder.before = func(tunnelv1.ServiceForwardingHeader) {
-					if server.Load() != 1 || server.admitted[serviceConnection] != 1 ||
+					if server.Load() != 1 || server.admitted[serviceConnection] != 0 ||
 						server.admitted[pendingConnection]+server.admitted[visitorConnection] != 1 {
 						t.Error("candidate search duplicated physical or process admission")
 					}
