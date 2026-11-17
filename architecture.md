@@ -132,6 +132,14 @@ Apps, foreground commands, and installed jobs all use the same service-run code.
 Management, publication, and connection permissions stay separate, even when
 one process uses all three.
 
+Feedback reports, evidence, source snapshots, and conversation history also live
+in `client/state`, scoped to a local project/worktree, server, and preview.
+Control checks current visitor or management access and verified authorship
+without receiving that content. The publisher HTTP frontend and CLI compose
+those decisions with the same SQLite owner; a decision never outlives its original
+deadline while waiting for local state. There is no cross-machine feedback store.
+
+
 ## find the code
 
 ```text

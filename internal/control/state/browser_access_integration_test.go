@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -139,20 +138,12 @@ func TestIntegrationNonmemberWithAnonymousAccessPostsVerifiedFeedback(t *testing
 	auth := f.auth()
 	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ServiceRun: &auth,
 		IdentityID: identityID, DisplayName: "forged", BrowserCookieSecret: raw}
-	request := CreateFeedbackRequest{
-		PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "The label is unclear",
-		Anchor:         json.RawMessage(`null`),
-		Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
-		SourceAtReport: feedbackTestSource(t), IdempotencyKey: "signed-report", Actor: actor,
-	}
-	thread, err := database.CreateFeedback(t.Context(), auth, request, now)
-	if err != nil || thread.AuthorDisplayName != "Sam" || thread.AuthorIdentityID != identityID || !thread.AuthorVerified {
+	thread, err := database.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, "report", actor, now)
+	if err != nil || thread.Author.DisplayName != "Sam" || thread.Author.IdentityId == nil || *thread.Author.IdentityId != identityID || !thread.Author.Verified {
 		t.Fatalf("verified report identity = %+v, %v", thread, err)
 	}
-	reply, err := database.AppendFeedback(t.Context(), AppendFeedbackRequest{
-		FeedbackID: thread.ID, Type: FeedbackReply, Text: "One more detail", IdempotencyKey: "signed-reply", Actor: actor,
-	}, now)
-	if err != nil || reply.AuthorIdentityID != identityID || reply.AuthorDisplayName != "Sam" || !reply.AuthorVerified {
+	reply, err := database.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, "reply", actor, now)
+	if err != nil || reply.Author.IdentityId == nil || *reply.Author.IdentityId != identityID || reply.Author.DisplayName != "Sam" || !reply.Author.Verified {
 		t.Fatalf("verified reply identity = %+v, %v", reply, err)
 	}
 	// the local publisher closes its single-publisher run before replacement.
@@ -182,13 +173,12 @@ func TestIntegrationNonmemberWithAnonymousAccessPostsVerifiedFeedback(t *testing
 	}
 	actor.ShareID = share.ID
 	actor.CookieSecret, _ = base64.RawURLEncoding.Strict().DecodeString(redemption.CookieSecret)
-	request.Actor, request.IdempotencyKey, request.ReportText = actor, "signed-link-report", "Suggestion through a share"
-	sharedReport, err := database.CreateFeedback(t.Context(), auth, request, now)
-	if err != nil || !sharedReport.AuthorVerified || sharedReport.AuthorIdentityID != identityID {
+	sharedReport, err := database.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, "report", actor, now)
+	if err != nil || !sharedReport.Author.Verified || sharedReport.Author.IdentityId == nil || *sharedReport.Author.IdentityId != identityID {
 		t.Fatalf("signed-in nonmember with link = %+v, %v", sharedReport, err)
 	}
 	actor.ShareID, actor.CookieSecret, actor.TeamMember = "", nil, true
-	if _, _, err := database.ReviewerFeedbackScope(t.Context(), auth, preview.ID, actor, now); !errors.Is(err, ErrFeedbackAccess) {
+	if _, err := database.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, "read", actor, now); !errors.Is(err, ErrFeedbackAccess) {
 		t.Fatalf("nonmember used team access without a team grant: %v", err)
 	}
 }

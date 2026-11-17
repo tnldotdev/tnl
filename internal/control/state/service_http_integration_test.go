@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/netip"
 	"strings"
@@ -391,14 +390,9 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		shareRaw, _ := base64.RawURLEncoding.Strict().DecodeString(shareSession.CookieSecret)
 		actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.10", ServiceRun: &a,
 			BrowserCookieSecret: browserRaw, ShareID: share.ID, CookieSecret: shareRaw}
-		thread, err := d.CreateFeedback(t.Context(), a, CreateFeedbackRequest{
-			PreviewID: preview.ID, Service: "a", PagePath: "/", ReportText: "The label is unclear",
-			Anchor:         json.RawMessage(`null`),
-			Evidence:       json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
-			SourceAtReport: feedbackTestSource(t), IdempotencyKey: "outside-report", Actor: actor,
-		}, now)
-		if err != nil || !thread.AuthorVerified || thread.AuthorIdentityID != outside.Identity.Identity.ID ||
-			thread.AuthorDisplayName != "Sam" || thread.ServiceID != a.Subject.ID || thread.ServiceRunID != a.RunID || thread.RunNumber != a.Number {
+		thread, err := d.AuthorizeReviewerFeedback(t.Context(), a, preview.ID, "report", actor, now)
+		if err != nil || !thread.Author.Verified || thread.Author.IdentityId == nil || *thread.Author.IdentityId != outside.Identity.Identity.ID ||
+			thread.Author.DisplayName != "Sam" || thread.ServiceId != a.Subject.ID || thread.ServiceRunId != a.RunID || thread.RunNumber != a.Number {
 			t.Fatal("service-backed report lost its verified author or exact run provenance", thread, err)
 		}
 		tx, err := d.pool.Begin(t.Context())
@@ -414,7 +408,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 			t.Fatal(err)
 		}
 		check(a, ShareSessionTokenSource{ShareID: share.ID, Secret: shareSession.CookieSecret, RunID: a.RunID}, false)
-		if _, _, err := d.ReviewerFeedbackScope(t.Context(), a, preview.ID, actor, now); err == nil {
+		if _, err := d.AuthorizeReviewerFeedback(t.Context(), a, preview.ID, "read", actor, now); err == nil {
 			t.Fatal("revoked share retained reviewer authority")
 		}
 		identity, err = d.ServiceBrowserSession(t.Context(), a, browser.CookieSecret, false, now)

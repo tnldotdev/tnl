@@ -39,7 +39,7 @@ func writeControlStateProblem(ctx context.Context, response http.ResponseWriter,
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "DNS authority state conflict")
 	case errors.Is(err, controlstate.ErrShareInvalid), errors.Is(err, controlstate.ErrFeedbackInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
-	case errors.Is(err, controlstate.ErrTeamNotFound), errors.Is(err, controlstate.ErrPreviewNotFound), errors.Is(err, controlstate.ErrShareNotFound), errors.Is(err, controlstate.ErrFeedbackNotFound):
+	case errors.Is(err, controlstate.ErrTeamNotFound), errors.Is(err, controlstate.ErrPreviewNotFound), errors.Is(err, controlstate.ErrShareNotFound):
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 	case errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrFeedbackAccess):
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "service access denied")
@@ -47,7 +47,7 @@ func writeControlStateProblem(ctx context.Context, response http.ResponseWriter,
 		writeProblem(response, http.StatusForbidden, controlv1.GuestTrialExhausted, "guest demo limit reached; run tnl auth login to continue")
 	case errors.Is(err, controlstate.ErrShareLimit):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "share limit reached; revoke an old share or wait for one to expire")
-	case errors.Is(err, controlstate.ErrShareIdempotency), errors.Is(err, controlstate.ErrShareStale), errors.Is(err, controlstate.ErrFeedbackIdempotency), errors.Is(err, controlstate.ErrFeedbackState), errors.Is(err, controlstate.ErrPreviewStale):
+	case errors.Is(err, controlstate.ErrShareIdempotency), errors.Is(err, controlstate.ErrShareStale), errors.Is(err, controlstate.ErrPreviewStale):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "service state conflict")
 	case errors.Is(err, controlstate.ErrCertificateIssuanceInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid certificate issuance request")

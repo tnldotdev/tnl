@@ -328,7 +328,12 @@ func configuredInstallFixture(t *testing.T) (projectConfiguration, publishComman
 			"api":    {Target: &config.ServiceTarget{Type: "app"}},
 		},
 	}}}
-	flags := publishCommand{Target: name, remoteFlags: remoteFlags{StateDir: filepath.Join(t.TempDir(), "operator")}}
+	state := statusTestDatabase(t)
+	project.Project, err = project.Project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags := publishCommand{Target: name, remoteFlags: remoteFlags{StateDir: state.Root()}}
 	if err := project.applyInstalledService(&flags); err != nil {
 		t.Fatal(err)
 	}
@@ -520,6 +525,12 @@ func TestConfiguredWorktreeSourceBindsTeamDomainAndGrant(t *testing.T) {
 	project := projectConfiguration{Project: clientproject.Project{Root: root, Worktree: worktree, Config: config.TNL{
 		Services: config.Services{"orders": {Protocol: &protocol}},
 	}}}
+	state := statusTestDatabase(t)
+	var err error
+	project.Project, err = project.Project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	current := clientteam.NewContext(
 		authorityv1.Team{Id: "team_selected", DefaultDomainId: "domain_selected"},
 		authorityv1.Membership{
@@ -583,7 +594,14 @@ func TestConfiguredWorktreeSourceBindsTeamDomainAndGrant(t *testing.T) {
 	}
 	other := project
 	other.Root = filepath.Join(root, "other-checkout")
+	if err := os.MkdirAll(other.Root, 0700); err != nil {
+		t.Fatal(err)
+	}
 	other.Worktree = namedTestWorktree(other.Root, "shop")
+	other.Project, err = other.Project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	otherScope, err := invocation.ConfiguredInstallScopeForTeam(other.Project, "orders", invocation.FromTeamContext(current))
 	if err != nil || otherScope.WorktreeKey == scope.WorktreeKey || otherScope.Matches(item, identity) {
 		t.Fatalf("another checkout selected this worktree's service: %+v %v", otherScope, err)

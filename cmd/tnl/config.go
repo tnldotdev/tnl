@@ -542,6 +542,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Feedback.Resolve.remoteFlags, true)
 	case "feedback reopen <feedback-id>":
 		apply(&flags.Feedback.Reopen.remoteFlags, true)
+	case "feedback delete <feedback-id>":
+		apply(&flags.Feedback.Delete.remoteFlags, true)
 	case "admin server status":
 		apply(&flags.Admin.Server.Status.remoteFlags, false)
 	case "admin relays list":

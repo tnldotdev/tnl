@@ -7,7 +7,6 @@ package controlstatedb
 
 import (
 	"context"
-	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -848,7 +847,7 @@ func (q *Queries) PrepareConnectorPeerRebind(ctx context.Context, arg PrepareCon
 }
 
 const readConnectorPeerBindingClaims = `-- name: ReadConnectorPeerBindingClaims :many
-SELECT claims.pair_id, claims.connection_slot, claims.requested_at, claims.checked_at, claims.confirmed_until, claims.nonce_digest, claims.source_ip, claims.relay_id, claims.relay_run_id, claims.relay_lease_revision, claims.delivery_generation FROM control.connector_peer_pair_leg_claims claims WHERE claims.pair_id=$1
+SELECT claims.pair_id, claims.connection_slot, claims.requested_at, claims.checked_at, claims.confirmed_until, claims.nonce_digest, claims.source_digest, claims.source_ciphertext, claims.source_storage_key_id, claims.relay_id, claims.relay_run_id, claims.relay_lease_revision, claims.delivery_generation FROM control.connector_peer_pair_leg_claims claims WHERE claims.pair_id=$1
     AND claims.delivery_generation=$2
     AND EXISTS(SELECT 1 FROM control.connector_peer_pairs pair WHERE pair.id=$1 AND pair.retired_at IS NULL)
 ORDER BY claims.connection_slot LIMIT 2
@@ -875,7 +874,9 @@ func (q *Queries) ReadConnectorPeerBindingClaims(ctx context.Context, arg ReadCo
 			&i.CheckedAt,
 			&i.ConfirmedUntil,
 			&i.NonceDigest,
-			&i.SourceIp,
+			&i.SourceDigest,
+			&i.SourceCiphertext,
+			&i.SourceStorageKeyID,
 			&i.RelayID,
 			&i.RelayRunID,
 			&i.RelayLeaseRevision,
@@ -892,7 +893,7 @@ func (q *Queries) ReadConnectorPeerBindingClaims(ctx context.Context, arg ReadCo
 }
 
 const readConnectorPeerClaimBounds = `-- name: ReadConnectorPeerClaimBounds :many
-SELECT connection_slot,checked_at,confirmed_until,source_ip,relay_id,relay_run_id,relay_lease_revision
+SELECT connection_slot,checked_at,confirmed_until,source_digest,relay_id,relay_run_id,relay_lease_revision
 FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1
     AND delivery_generation=(SELECT delivery_generation FROM control.connector_peer_pairs WHERE id=$1 AND retired_at IS NULL)
 ORDER BY connection_slot LIMIT 2
@@ -902,7 +903,7 @@ type ReadConnectorPeerClaimBoundsRow struct {
 	ConnectionSlot     int16
 	CheckedAt          pgtype.Timestamptz
 	ConfirmedUntil     pgtype.Timestamptz
-	SourceIp           netip.Addr
+	SourceDigest       string
 	RelayID            string
 	RelayRunID         string
 	RelayLeaseRevision int64
@@ -921,7 +922,7 @@ func (q *Queries) ReadConnectorPeerClaimBounds(ctx context.Context, pairID strin
 			&i.ConnectionSlot,
 			&i.CheckedAt,
 			&i.ConfirmedUntil,
-			&i.SourceIp,
+			&i.SourceDigest,
 			&i.RelayID,
 			&i.RelayRunID,
 			&i.RelayLeaseRevision,
@@ -1235,10 +1236,10 @@ func (q *Queries) SaveConnectorPeerAuditBinding(ctx context.Context, arg SaveCon
 }
 
 const saveConnectorPeerPairLegClaim = `-- name: SaveConnectorPeerPairLegClaim :one
-INSERT INTO control.connector_peer_pair_leg_claims(pair_id,connection_slot,requested_at,nonce_digest,source_ip,
+INSERT INTO control.connector_peer_pair_leg_claims(pair_id,connection_slot,requested_at,nonce_digest,source_digest,source_ciphertext,source_storage_key_id,
     relay_id,relay_run_id,relay_lease_revision,checked_at,confirmed_until,delivery_generation)
 SELECT $1,$2,$3,$4,
-    $5,$6,$7,$8,$9,$10,$11
+    $5,$6,$7,$8,$9,$10,$11,$12,$13
 FROM control.connector_peer_pairs pair WHERE pair.id=$1 AND pair.retired_at IS NULL
 ON CONFLICT (pair_id,delivery_generation,connection_slot) DO UPDATE SET
     requested_at=EXCLUDED.requested_at,nonce_digest=EXCLUDED.nonce_digest,
@@ -1246,7 +1247,7 @@ ON CONFLICT (pair_id,delivery_generation,connection_slot) DO UPDATE SET
 WHERE EXISTS(SELECT 1 FROM control.connector_peer_pairs pair WHERE pair.id=EXCLUDED.pair_id AND pair.retired_at IS NULL)
     AND control.connector_peer_pair_leg_claims.requested_at<EXCLUDED.requested_at
     AND control.connector_peer_pair_leg_claims.nonce_digest<>EXCLUDED.nonce_digest
-    AND control.connector_peer_pair_leg_claims.source_ip=EXCLUDED.source_ip
+    AND control.connector_peer_pair_leg_claims.source_digest=EXCLUDED.source_digest
     AND control.connector_peer_pair_leg_claims.relay_id=EXCLUDED.relay_id
     AND control.connector_peer_pair_leg_claims.relay_run_id=EXCLUDED.relay_run_id
     AND control.connector_peer_pair_leg_claims.relay_lease_revision=EXCLUDED.relay_lease_revision
@@ -1258,7 +1259,9 @@ type SaveConnectorPeerPairLegClaimParams struct {
 	ConnectionSlot     int16
 	RequestedAt        pgtype.Timestamptz
 	NonceDigest        []byte
-	SourceIp           netip.Addr
+	SourceDigest       string
+	SourceCiphertext   []byte
+	SourceStorageKeyID string
 	RelayID            string
 	RelayRunID         string
 	RelayLeaseRevision int64
@@ -1275,7 +1278,9 @@ func (q *Queries) SaveConnectorPeerPairLegClaim(ctx context.Context, arg SaveCon
 		arg.ConnectionSlot,
 		arg.RequestedAt,
 		arg.NonceDigest,
-		arg.SourceIp,
+		arg.SourceDigest,
+		arg.SourceCiphertext,
+		arg.SourceStorageKeyID,
 		arg.RelayID,
 		arg.RelayRunID,
 		arg.RelayLeaseRevision,

@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -233,93 +235,121 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	if err != nil || identity.IdentityId != reviewer.Identity.Identity.Id || identity.VisitAllowed {
 		t.Fatal("share reviewer's sign-in identity was mistaken for visitor access", err)
 	}
-	report := controlv1.CreateFeedbackReportRequest{
-		PreviewId: preview.ID, RunNumber: auth.Number, Service: "reviewer", PagePath: "/settings",
-		Evidence:       controlv1.FeedbackEvidence{SchemaVersion: 1},
-		SourceAtReport: controlv1.SourceState{SchemaVersion: 1, ChangedFiles: []controlv1.SourceFileState{}},
+	report := controlv1.AuthorizeReviewerFeedbackRequest{
+		PreviewId: preview.ID, RunNumber: auth.Number, Operation: "report",
 		Access: controlv1.FeedbackReviewerAccess{SourceIp: new("192.0.2.9"), VisitAllowed: true,
 			ShareId: &share.ID, CookieSecret: &shareSession.CookieSecret},
 	}
-	report.Report.Text = "Feedback from the shared preview"
-	if _, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "share-without-author", report, auth.Token); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err := client.AuthorizeReviewerFeedback(ctx, service.ID, auth.RunID, report, auth.Token); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("share-only API submission bypassed required sign-in", err)
 	}
 	report.Access.BrowserCookieSecret = &installed.CookieSecret
 	withoutShare := report
 	withoutShare.Access.ShareId, withoutShare.Access.CookieSecret = nil, nil
 	var problem *clientcontrol.ProblemError
-	if _, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "identity-without-access", withoutShare, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+	if _, err := client.AuthorizeReviewerFeedback(ctx, service.ID, auth.RunID, withoutShare, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
 		t.Fatal("sign-in alone authorized a feedback report", err)
 	}
-	thread, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "signed-share-report", report, auth.Token)
-	if err != nil || thread.Report.Author == nil || !thread.Report.Author.Verified ||
-		thread.Report.Author.IdentityId == nil || *thread.Report.Author.IdentityId != reviewer.Identity.Identity.Id ||
-		thread.Report.Author.DisplayName != reviewer.Identity.Identity.DisplayName {
+	decision, err := client.AuthorizeReviewerFeedback(ctx, service.ID, auth.RunID, report, auth.Token)
+	if err != nil || !decision.Author.Verified ||
+		decision.Author.IdentityId == nil || *decision.Author.IdentityId != reviewer.Identity.Identity.Id ||
+		decision.Author.DisplayName != reviewer.Identity.Identity.DisplayName {
 		t.Fatal("API report lost the authenticated reviewer snapshot", err)
 	}
-	resolution, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "explicit-resolve",
-		controlv1.AppendReviewerFeedbackEventRequest{RunNumber: auth.Number, Type: controlv1.ReviewerFeedbackInputResolved, Access: report.Access}, auth.Token)
+	database, err := clientstate.OpenWithOptions(ctx, filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	profile, err := database.Server(ctx, f.server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+	feedbackFor := func(authorize clientstate.FeedbackAuthorize) *clientstate.FeedbackStore {
+		t.Helper()
+		local, err := profile.Feedback(ctx, project, preview.ID, authorize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return local
+	}
+	access := report.Access
+	local := feedbackFor(func(ctx context.Context, id, operation string) (controlv1.FeedbackAuthorization, error) {
+		request := report
+		request.Operation, request.Access = controlv1.FeedbackOperation(operation), access
+		return client.AuthorizeReviewerFeedback(ctx, id, auth.RunID, request, auth.Token)
+	})
+	body := controlv1.CreateFeedbackReportRequest{PreviewId: preview.ID, RunNumber: auth.Number, Service: "web", PagePath: "/",
+		Evidence:       controlv1.FeedbackEvidence{SchemaVersion: 1},
+		SourceAtReport: controlv1.SourceState{SchemaVersion: 1, ChangedFiles: []controlv1.SourceFileState{}}}
+	body.Report.Text = "A signed-in report"
+	thread, err := local.Create(ctx, service.ID, auth.RunID, "signed-share-report", body)
+	if err != nil {
+		t.Fatal("current API decision did not authorize local feedback", err)
+	}
+	resolution, err := local.AppendFeedbackEvent(ctx, thread.Id, "explicit-resolve",
+		controlv1.AppendFeedbackEventRequest{Type: "thread.resolved"})
 	if err != nil {
 		t.Fatal("authorized reviewer could not explicitly resolve feedback", err)
 	}
-	resolved, err := f.d.GetFeedback(ctx, thread.Id)
-	if err != nil || resolved.State != controlstate.FeedbackResolved {
+	resolved, err := local.GetFeedbackThread(ctx, thread.Id)
+	if err != nil || resolved.State != controlv1.Resolved {
 		t.Fatal("explicit resolve did not persist resolved state", err)
 	}
-	reply := controlv1.AppendReviewerFeedbackEventRequest{RunNumber: auth.Number, Type: controlv1.ReviewerFeedbackInputReply,
-		Text: new("A signed-in follow-up"), Access: report.Access}
-	reply.Access.BrowserCookieSecret = nil
-	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "anonymous-reply", reply, auth.Token); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	reply := controlv1.AppendFeedbackEventRequest{Type: "reply", Text: new("A signed-in follow-up")}
+	access.BrowserCookieSecret = nil
+	if _, err := local.AppendFeedbackEvent(ctx, thread.Id, "anonymous-reply", reply); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("share-only API reply bypassed required sign-in", err)
 	}
-	reply.Access = report.Access
-	noPermission := reply
-	noPermission.Access.ShareId, noPermission.Access.CookieSecret = nil, nil
-	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "resolved-without-preview-access", noPermission, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+	access = report.Access
+	access.ShareId, access.CookieSecret = nil, nil
+	if _, err := local.AppendFeedbackEvent(ctx, thread.Id, "resolved-without-preview-access", reply); !errors.As(err, &problem) || problem.Status != 403 {
 		t.Fatal("verified author alone authorized a resolved reply", err)
 	}
-	event, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "signed-reply", reply, auth.Token)
+	access = report.Access
+	event, err := local.AppendFeedbackEvent(ctx, thread.Id, "signed-reply", reply)
 	if err != nil || event.Author == nil || !event.Author.Verified || event.Author.IdentityId == nil ||
 		*event.Author.IdentityId != reviewer.Identity.Identity.Id || event.Cursor != resolution.Cursor+1 {
 		t.Fatal("API reply lost its verified author", err)
 	}
-	duplicate, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "signed-reply", reply, auth.Token)
+	duplicate, err := local.AppendFeedbackEvent(ctx, thread.Id, "signed-reply", reply)
 	if err != nil || duplicate.Cursor != event.Cursor {
 		t.Fatal("resolved API reply retry appended another event", err)
 	}
 	changed := reply
 	changed.Text = new("Different intent")
-	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "signed-reply", changed, auth.Token); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+	if _, err := local.AppendFeedbackEvent(ctx, thread.Id, "signed-reply", changed); !errors.Is(err, clientstate.ErrFeedbackIdempotency) {
 		t.Fatal("resolved API reply accepted changed idempotent intent", err)
 	}
-	current, err := client.GetReviewerFeedbackThread(ctx, service.ID, auth.RunID, thread.Id,
-		controlv1.ReviewerFeedbackReadRequest{PreviewId: preview.ID, RunNumber: auth.Number, Access: report.Access}, auth.Token)
+	current, err := local.GetFeedbackThread(ctx, thread.Id)
 	if err != nil || current.State != controlv1.Resolved || !reflect.DeepEqual(current.Report, thread.Report) ||
 		!reflect.DeepEqual(current.Evidence, thread.Evidence) || !reflect.DeepEqual(current.SourceAtReport, thread.SourceAtReport) ||
 		!reflect.DeepEqual(current.Anchor, thread.Anchor) || current.LatestEventCursor != event.Cursor {
 		t.Fatal("resolved API reply reopened feedback or rewrote its immutable report", err)
 	}
-	currentStored, err := f.d.GetFeedback(ctx, thread.Id)
-	if err != nil || !currentStored.StateUpdatedAt.Equal(resolved.StateUpdatedAt) {
-		t.Fatal("reply changed the explicit status timestamp", err)
+	resolutionHistory, err := local.Events(ctx, service.ID, thread.Id, 0)
+	if err != nil || len(resolutionHistory.Events) != 3 || !reflect.DeepEqual(resolutionHistory.Events[1], resolution) {
+		t.Fatal("reply changed the explicit status event or timestamp", err)
 	}
 	if _, err := f.d.SetTeamFeedbackPolicy(ctx, p.IdentityID, m.TeamId, "team_members", f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "team-members-only", report, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+	if _, err := client.AuthorizeReviewerFeedback(ctx, service.ID, auth.RunID, report, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
 		t.Fatal("signed-in share reviewer bypassed team-only feedback", err)
 	}
-	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "team-only-resolved-reply", reply, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+	if _, err := local.AppendFeedbackEvent(ctx, thread.Id, "team-only-resolved-reply", reply); !errors.As(err, &problem) || problem.Status != 403 {
 		t.Fatal("resolved reply bypassed the current author policy", err)
 	}
 	if _, err := f.d.SetTeamFeedbackPolicy(ctx, p.IdentityID, m.TeamId, "signed_in", f.now); err != nil {
 		t.Fatal(err)
 	}
 	// these are the same management mutations sent by tnl feedback commands.
-	write := controlv1.AppendFeedbackEventRequest{Type: controlv1.FeedbackInputReply, Text: new("CLI reply")}
-	if _, err := client.AppendFeedbackEvent(ctx, thread.Id, "unsigned-cli", write); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	write := controlv1.AuthorizeImplementerFeedbackRequest{PreviewId: preview.ID, ServiceId: service.ID, Operation: "reply"}
+	if _, err := client.AuthorizeImplementerFeedback(ctx, write); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("CLI/API mutation accepted no control identity", err)
 	}
+	var ownerLocal *clientstate.FeedbackStore
 	for _, test := range []struct {
 		name, token string
 		allowed     bool
@@ -331,24 +361,29 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		event, err := cli.AppendFeedbackEvent(ctx, thread.Id, test.name+"-cli", write)
+		management := feedbackFor(func(ctx context.Context, id, operation string) (controlv1.FeedbackAuthorization, error) {
+			request := write
+			request.ServiceId, request.Operation = id, controlv1.FeedbackOperation(operation)
+			return cli.AuthorizeImplementerFeedback(ctx, request)
+		})
+		event, err := management.AppendFeedbackEvent(ctx, thread.Id, "implementer-reply", reply)
 		if test.allowed {
 			if err != nil || event.Author == nil || !event.Author.Verified || event.Author.IdentityId == nil || *event.Author.IdentityId != p.IdentityID {
 				t.Fatal("authorized CLI/API mutation lost its verified author", err)
 			}
-		} else if !errors.Is(err, clientcontrol.ErrNotFound) {
+			ownerLocal = management
+		} else if !errors.As(err, &problem) || problem.Status != 403 {
 			t.Fatal("unrelated signed-in CLI/API actor gained management access", err)
 		}
 	}
-	history, err := client.ListReviewerFeedbackEvents(ctx, service.ID, auth.RunID, thread.Id,
-		controlv1.ReviewerFeedbackReadRequest{PreviewId: preview.ID, RunNumber: auth.Number, Access: report.Access, AfterCursor: &resolution.Cursor}, auth.Token)
-	if err != nil || len(history.Events) != 2 || history.Events[0].Type != controlv1.Reply ||
-		history.Events[1].Type != controlv1.Reply || history.Events[0].Cursor != event.Cursor ||
+	history, err := local.Events(ctx, service.ID, thread.Id, uint64(resolution.Cursor))
+	if err != nil || len(history.Events) != 2 || history.Events[0].Type != "reply" ||
+		history.Events[1].Type != "reply" || history.Events[0].Cursor != event.Cursor ||
 		history.Events[1].Cursor != event.Cursor+1 || history.EventCursor != history.Events[1].Cursor {
 		t.Fatal("resolved reviewer/implementer replies lost append order or cursor resume", err)
 	}
-	afterReplies, err := f.d.GetFeedback(ctx, thread.Id)
-	if err != nil || afterReplies.State != controlstate.FeedbackResolved || afterReplies.MessageCount != 3 {
+	afterReplies, err := local.GetFeedbackThread(ctx, thread.Id)
+	if err != nil || afterReplies.State != controlv1.Resolved || afterReplies.MessageCount != 3 {
 		t.Fatal("implementer reply implicitly reopened resolved feedback", err)
 	}
 	// expire only the share, not its browser author or publisher. the API must
@@ -356,7 +391,7 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	if _, err := f.sql.Exec(ctx, `UPDATE control.shares SET created_at=$2::timestamptz-interval '1 hour', expires_at=$2 WHERE id=$1`, share.ID, f.now.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "signed-reply", reply, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+	if _, err := local.AppendFeedbackEvent(ctx, thread.Id, "signed-reply", reply); !errors.As(err, &problem) || problem.Status != 403 {
 		t.Fatal("resolved reply retry outlived its share permission", err)
 	}
 	if _, err := f.sql.Exec(ctx, `UPDATE control.shares SET created_at=$2, expires_at=$2::timestamptz+interval '1 hour' WHERE id=$1`, share.ID, f.now); err != nil {
@@ -365,13 +400,13 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	if _, err := f.d.RevokeShare(ctx, share.ID, p.IdentityID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "revoked-report", report, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+	if _, err := client.AuthorizeReviewerFeedback(ctx, service.ID, auth.RunID, report, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
 		t.Fatal("verified browser author replaced revoked preview permission", err)
 	}
-	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "revoked-reply", reply, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+	if _, err := local.AppendFeedbackEvent(ctx, thread.Id, "revoked-reply", reply); !errors.As(err, &problem) || problem.Status != 403 {
 		t.Fatal("verified browser author bypassed current reply permission", err)
 	}
-	afterDenied, err := f.d.GetFeedback(ctx, thread.Id)
+	afterDenied, err := ownerLocal.GetFeedbackThread(ctx, thread.Id)
 	if err != nil || !reflect.DeepEqual(afterDenied, afterReplies) {
 		t.Fatal("denied resolved replies changed feedback history or state", err)
 	}
@@ -382,7 +417,7 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.AppendFeedbackEvent(t.Context(), thread.Id, "revoked-cli", write); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err := cli.AuthorizeImplementerFeedback(t.Context(), write); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("revoked CLI/API session retained feedback authority", err)
 	}
 }

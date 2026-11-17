@@ -27,6 +27,11 @@ func TestRuntimeProjectReadsEvaluatedSnapshotThroughSymlink(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			state := statusTestDatabase(t)
+			project, err = project.BindLocalIdentity(t.Context(), state)
+			if err != nil {
+				t.Fatal(err)
+			}
 			encoded, _, err := project.Snapshot()
 			if err != nil {
 				t.Fatal(err)
@@ -49,7 +54,7 @@ func TestRuntimeProjectReadsEvaluatedSnapshotThroughSymlink(t *testing.T) {
 			stdin := os.Stdin
 			os.Stdin = input
 			defer func() { os.Stdin = stdin }()
-			restored, _, err := runtimeProject(t.Context(), runtimeOptions{Directory: alias, StateDir: filepath.Join(t.TempDir(), "state"), SnapshotStdin: true})
+			restored, _, err := runtimeProject(t.Context(), runtimeOptions{Directory: alias, StateDir: state.Root(), SnapshotStdin: true})
 			if err != nil {
 				t.Fatal(err)
 			}

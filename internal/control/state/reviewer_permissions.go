@@ -139,5 +139,5 @@ func (d *Database) currentReviewer(ctx context.Context, tx pgx.Tx, service contr
 		reference = "identity:" + permission.IdentityID
 	}
 	return authorizedFeedbackActor{kind: feedbackReviewer, identityID: permission.IdentityID,
-		displayName: permission.DisplayName, reference: reference, permissions: reviewerFeedbackPermissions, expiresAt: until}, nil
+		displayName: permission.DisplayName, reference: reference, expiresAt: until}, nil
 }

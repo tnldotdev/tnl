@@ -95,17 +95,9 @@ type ShareAccessStore interface {
 }
 
 type FeedbackStore interface {
-	ListFeedbackForService(context.Context, string, string, string, string, string) (controlstate.FeedbackThreadPage, error)
-	AuthorizeFeedbackService(context.Context, string, string, time.Time) error
 	CreateServiceRunPreview(context.Context, controlstate.ServiceHTTPRun, time.Time) (controlstate.Preview, error)
-	CreateFeedback(context.Context, controlstate.ServiceHTTPRun, controlstate.CreateFeedbackRequest, time.Time) (controlstate.FeedbackThread, error)
-	AppendFeedback(context.Context, controlstate.AppendFeedbackRequest, time.Time) (controlstate.FeedbackEvent, error)
-	GetFeedback(context.Context, string) (controlstate.FeedbackThread, error)
-	ListFeedbackForTeam(context.Context, string, string) (controlstate.FeedbackThreadPage, error)
-	ListFeedbackForPage(context.Context, string, string, string, string) (controlstate.FeedbackThreadPage, error)
-	ListFeedbackEventsForTeam(context.Context, string, uint64) (controlstate.FeedbackEventPage, error)
-	ListFeedbackEventsForThread(context.Context, string, uint64) (controlstate.FeedbackEventPage, error)
-	ReviewerFeedbackScope(context.Context, controlstate.ServiceHTTPRun, string, controlstate.FeedbackActor, time.Time) (string, string, error)
+	AuthorizeReviewerFeedback(context.Context, controlstate.ServiceHTTPRun, string, string, controlstate.FeedbackActor, time.Time) (controlv1.FeedbackAuthorization, error)
+	AuthorizeImplementerFeedback(context.Context, string, string, string, string, time.Time) (controlv1.FeedbackAuthorization, error)
 }
 
 // AuthorizationStore provides current identity and team session authority.

@@ -79,10 +79,10 @@ WHERE id=sqlc.arg(id) AND retired_at IS NULL AND delivery_generation=sqlc.arg(de
 -- name: SaveConnectorPeerPairLegClaim :one
 -- two rows maximum per binding. an uncertain response requires a fresh proof from
 -- the same observed source and the same relay process, never the old nonce.
-INSERT INTO control.connector_peer_pair_leg_claims(pair_id,connection_slot,requested_at,nonce_digest,source_ip,
+INSERT INTO control.connector_peer_pair_leg_claims(pair_id,connection_slot,requested_at,nonce_digest,source_digest,source_ciphertext,source_storage_key_id,
     relay_id,relay_run_id,relay_lease_revision,checked_at,confirmed_until,delivery_generation)
 SELECT sqlc.arg(pair_id),sqlc.arg(connection_slot),sqlc.arg(requested_at),sqlc.arg(nonce_digest),
-    sqlc.arg(source_ip),sqlc.arg(relay_id),sqlc.arg(relay_run_id),sqlc.arg(relay_lease_revision),sqlc.arg(checked_at),sqlc.arg(confirmed_until),sqlc.arg(delivery_generation)
+    sqlc.arg(source_digest),sqlc.arg(source_ciphertext),sqlc.arg(source_storage_key_id),sqlc.arg(relay_id),sqlc.arg(relay_run_id),sqlc.arg(relay_lease_revision),sqlc.arg(checked_at),sqlc.arg(confirmed_until),sqlc.arg(delivery_generation)
 FROM control.connector_peer_pairs pair WHERE pair.id=sqlc.arg(pair_id) AND pair.retired_at IS NULL
 ON CONFLICT (pair_id,delivery_generation,connection_slot) DO UPDATE SET
     requested_at=EXCLUDED.requested_at,nonce_digest=EXCLUDED.nonce_digest,
@@ -90,7 +90,7 @@ ON CONFLICT (pair_id,delivery_generation,connection_slot) DO UPDATE SET
 WHERE EXISTS(SELECT 1 FROM control.connector_peer_pairs pair WHERE pair.id=EXCLUDED.pair_id AND pair.retired_at IS NULL)
     AND control.connector_peer_pair_leg_claims.requested_at<EXCLUDED.requested_at
     AND control.connector_peer_pair_leg_claims.nonce_digest<>EXCLUDED.nonce_digest
-    AND control.connector_peer_pair_leg_claims.source_ip=EXCLUDED.source_ip
+    AND control.connector_peer_pair_leg_claims.source_digest=EXCLUDED.source_digest
     AND control.connector_peer_pair_leg_claims.relay_id=EXCLUDED.relay_id
     AND control.connector_peer_pair_leg_claims.relay_run_id=EXCLUDED.relay_run_id
     AND control.connector_peer_pair_leg_claims.relay_lease_revision=EXCLUDED.relay_lease_revision
@@ -102,7 +102,7 @@ UPDATE control.connector_peer_pairs SET publisher_prepared_until=sqlc.arg(confir
 WHERE id=sqlc.arg(pair_id) AND retired_at IS NULL AND publisher_prepared_until>sqlc.arg(confirmed_until);
 
 -- name: ReadConnectorPeerClaimBounds :many
-SELECT connection_slot,checked_at,confirmed_until,source_ip,relay_id,relay_run_id,relay_lease_revision
+SELECT connection_slot,checked_at,confirmed_until,source_digest,relay_id,relay_run_id,relay_lease_revision
 FROM control.connector_peer_pair_leg_claims WHERE pair_id=sqlc.arg(pair_id)
     AND delivery_generation=(SELECT delivery_generation FROM control.connector_peer_pairs WHERE id=sqlc.arg(pair_id) AND retired_at IS NULL)
 ORDER BY connection_slot LIMIT 2;

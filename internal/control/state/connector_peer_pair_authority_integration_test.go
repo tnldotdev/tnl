@@ -289,13 +289,27 @@ func (f connectorPairCompanyFixture) foreignParentPair(t *testing.T, at time.Tim
 	if row.DeliveryGeneration <= original.DeliveryGeneration || !reflect.DeepEqual(row, expected) {
 		t.Fatal("foreign-parent insertion changed unrelated owner, binding, or deadline facts")
 	}
-	claims, err := tx.Exec(ctx, `INSERT INTO control.connector_peer_pair_leg_claims
-	    (pair_id,connection_slot,requested_at,checked_at,confirmed_until,nonce_digest,source_ip,relay_id,relay_run_id,relay_lease_revision,delivery_generation)
-	    SELECT $2,connection_slot,requested_at,checked_at,confirmed_until,nonce_digest,source_ip,relay_id,relay_run_id,relay_lease_revision,$3
-	    FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1 AND delivery_generation=$4`,
-		original.ID, id, row.DeliveryGeneration, original.DeliveryGeneration)
-	if err != nil || claims.RowsAffected() != 2 {
+	claims, err := q.ReadConnectorPeerBindingClaims(ctx, controlstatedb.ReadConnectorPeerBindingClaimsParams{PairID: original.ID, DeliveryGeneration: original.DeliveryGeneration})
+	if err != nil || len(claims) != 2 {
 		t.Fatal("foreign-parent fixture did not retain both current leg claims", err)
+	}
+	for _, claim := range claims {
+		source, err := d.openConnectorSource(ctx, q, original.ServiceID, claim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sealed, err := d.storageKey.Seal(connectorSourceContext(id, row.DeliveryGeneration, claim.ConnectionSlot), source.AsSlice())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = q.SaveConnectorPeerPairLegClaim(ctx, controlstatedb.SaveConnectorPeerPairLegClaimParams{
+			PairID: id, ConnectionSlot: claim.ConnectionSlot, RequestedAt: claim.RequestedAt, CheckedAt: claim.CheckedAt, ConfirmedUntil: claim.ConfirmedUntil,
+			NonceDigest: claim.NonceDigest, SourceDigest: claim.SourceDigest, SourceCiphertext: sealed, SourceStorageKeyID: d.storageKey.CurrentID(),
+			RelayID: claim.RelayID, RelayRunID: claim.RelayRunID, RelayLeaseRevision: claim.RelayLeaseRevision, DeliveryGeneration: row.DeliveryGeneration,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if key, err := d.connectorPeerSecret(row.StorageKeyID, connectorPeerPairKeyContext(id), row.KeyCiphertext, row.KeyDigest); err != nil || key != f.pair.Key {
 		t.Fatal("foreign-parent fixture has invalid pair ciphertext", err)

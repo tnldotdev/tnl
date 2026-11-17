@@ -94,11 +94,18 @@ func endpointResponse(value *controlstate.ServiceEndpoint) *controlv1.ServiceEnd
 	return &controlv1.ServiceEndpoint{Hostname: value.Hostname, Port: value.Port, Public: value.Public}
 }
 
+func optionalServiceString[T ~string](value *T) string {
+	if value == nil {
+		return ""
+	}
+	return string(*value)
+}
+
 func targetTLSInput(t *controlv1.ServiceTargetTLS) *controlstate.ServiceTargetTLS {
 	if t == nil {
 		return nil
 	}
-	return &controlstate.ServiceTargetTLS{Hostname: t.Hostname, System: t.System, Digest: t.Digest, PEM: optionalFeedbackString(t.Pem)}
+	return &controlstate.ServiceTargetTLS{Hostname: t.Hostname, System: t.System, Digest: t.Digest, PEM: optionalServiceString(t.Pem)}
 }
 
 func decodeServiceConfiguration(raw json.RawMessage) (*controlstate.ProjectServiceConfiguration, error) {
@@ -258,10 +265,10 @@ func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ contro
 	placement := controlstate.ServicePlacement{DNSAutomation: h.config.DNSAutomation}
 	placement.Reserve = body.Reserve != nil && *body.Reserve
 	if body.Placement != nil {
-		placement.DomainID = optionalFeedbackString(body.Placement.DomainId)
-		placement.Hostname = optionalFeedbackString(body.Placement.Hostname)
-		placement.WorktreeKey = optionalFeedbackString(body.Placement.WorktreeKey)
-		placement.WorktreeLabel = optionalFeedbackString(body.Placement.WorktreeLabel)
+		placement.DomainID = optionalServiceString(body.Placement.DomainId)
+		placement.Hostname = optionalServiceString(body.Placement.Hostname)
+		placement.WorktreeKey = optionalServiceString(body.Placement.WorktreeKey)
+		placement.WorktreeLabel = optionalServiceString(body.Placement.WorktreeLabel)
 	}
 	record, err := store.CreateServiceAt(r.Context(), body.TeamId, identity, body.Name, r.Header.Get("Idempotency-Key"), placement, time.Now(), metadata, configuration)
 	if err != nil {
@@ -449,7 +456,7 @@ func (h *handler) ListServiceGrants(w http.ResponseWriter, r *http.Request, id c
 	if !ok {
 		return
 	}
-	grants, next, err := store.ListServiceGrants(r.Context(), id, identity, optionalFeedbackString(params.Cursor))
+	grants, next, err := store.ListServiceGrants(r.Context(), id, identity, optionalServiceString(params.Cursor))
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "list service grants", err)
 		return
@@ -504,7 +511,7 @@ func (h *handler) ListServiceInvitations(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	rows, next, err := store.ListServiceInvitations(r.Context(), id, identity, optionalFeedbackString(params.Cursor))
+	rows, next, err := store.ListServiceInvitations(r.Context(), id, identity, optionalServiceString(params.Cursor))
 	if err != nil {
 		serviceVisitorError(r.Context(), w, "list service invitations", err)
 		return

@@ -25,7 +25,7 @@ tags:
   - name: shares
     description: Create and revoke expiring access to an exact service snapshot.
   - name: feedback
-    description: Read immutable reports and append ordered replies, source updates, and state changes.
+    description: Authorize local feedback without receiving reports, evidence, or conversation history.
   - name: visitor-access
     description: Manage visitor grants and invitations, then prepare exact-resource visitor tokens.
   - name: browser-access
@@ -233,14 +233,8 @@ paths:
     $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1shares~1{share_id}"
   /v1/shares/{share_id}/revoke:
     $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1shares~1{share_id}~1revoke"
-  /v1/feedback:
-    $ref: "./paths/feedback.yaml#/paths/~1v1~1feedback"
-  /v1/feedback/events:
-    $ref: "./paths/feedback.yaml#/paths/~1v1~1feedback~1events"
-  /v1/feedback/{feedback_id}:
-    $ref: "./paths/feedback.yaml#/paths/~1v1~1feedback~1{feedback_id}"
-  /v1/feedback/{feedback_id}/events:
-    $ref: "./paths/feedback.yaml#/paths/~1v1~1feedback~1{feedback_id}~1events"
+  /v1/feedback/authorization:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1feedback~1authorization"
   /v1/publisher-enrollments:
     $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher-enrollments"
   /v1/publisher-identities:
@@ -255,16 +249,8 @@ paths:
     $ref: "./paths/service-allocations.yaml#/paths/~1v1~1publisher~1services"
   /v1/services/{service_id}/runs/{service_run_id}/share-redemptions:
     $ref: "./paths/previews-and-shares.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1share-redemptions"
-  /v1/services/{service_id}/runs/{service_run_id}/feedback:
-    $ref: "./paths/feedback.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1feedback"
-  /v1/services/{service_id}/runs/{service_run_id}/feedback/query:
-    $ref: "./paths/feedback.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1feedback~1query"
-  /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events:
-    $ref: "./paths/feedback.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1feedback~1{feedback_id}~1events"
-  /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query:
-    $ref: "./paths/feedback.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1feedback~1{feedback_id}~1query"
-  /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query:
-    $ref: "./paths/feedback.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1feedback~1{feedback_id}~1events~1query"
+  /v1/services/{service_id}/runs/{service_run_id}/feedback/authorization:
+    $ref: "./paths/feedback.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1feedback~1authorization"
   /v1/admin/status:
     $ref: "./paths/admin.yaml#/paths/~1v1~1admin~1status"
   /v1/admin/relays:
@@ -689,6 +675,14 @@ components:
       $ref: "./schemas/previews-and-shares.yaml#/schemas/PreviewID"
     ShareID:
       $ref: "./schemas/previews-and-shares.yaml#/schemas/ShareID"
+    FeedbackOperation:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackOperation"
+    FeedbackAuthorization:
+      $ref: "./schemas/feedback.yaml#/schemas/FeedbackAuthorization"
+    AuthorizeReviewerFeedbackRequest:
+      $ref: "./schemas/feedback.yaml#/schemas/AuthorizeReviewerFeedbackRequest"
+    AuthorizeImplementerFeedbackRequest:
+      $ref: "./schemas/feedback.yaml#/schemas/AuthorizeImplementerFeedbackRequest"
     FeedbackID:
       $ref: "./schemas/feedback.yaml#/schemas/FeedbackID"
     PublisherConnectionID:

@@ -151,8 +151,13 @@ func (d *Database) connectorPeerSnapshot(ctx context.Context, tx pgx.Tx, row con
 	if err != nil {
 		return ConnectorPeerPair{}, err
 	}
-	if len(claims) == 2 && claims[0].SourceIp == claims[1].SourceIp {
-		p.SourceIP = claims[0].SourceIp
+	if len(claims) == 2 && claims[0].SourceDigest == claims[1].SourceDigest {
+		for _, claim := range claims {
+			p.SourceIP, err = d.openConnectorSource(ctx, controlstatedb.New(tx), row.ServiceID, claim)
+			if err != nil {
+				return ConnectorPeerPair{}, err
+			}
+		}
 	}
 	return p, nil
 }

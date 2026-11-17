@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/netip"
 	"strings"
@@ -20,13 +19,6 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
-
-func feedbackProofRequest(t *testing.T, preview string, actor FeedbackActor, key string) CreateFeedbackRequest {
-	t.Helper()
-	return CreateFeedbackRequest{PreviewID: preview, Service: "web", PagePath: "/", ReportText: "check the selected admission",
-		Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`),
-		SourceAtReport: feedbackTestSource(t), IdempotencyKey: key, Actor: actor}
-}
 
 func feedbackProofGrant(t *testing.T, f serviceHTTPFixture, ctx context.Context) controlv1.VisitorCredential {
 	t.Helper()
@@ -70,7 +62,7 @@ func TestIntegrationFeedbackBearerProofUsesIndependentBrowserAuthor(t *testing.T
 	grant := feedbackProofGrant(t, f, t.Context())
 	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9",
 		VisitProof: FeedbackBearerVisitProof{Token: visitortoken.Token(grant.Permission.VisitorToken)}}
-	if _, err := f.database.CreateFeedback(t.Context(), f.auth(), feedbackProofRequest(t, preview.ID, actor, "token-only"), f.now); !errors.Is(err, ErrVisitorSignIn) {
+	if _, err := f.database.AuthorizeReviewerFeedback(t.Context(), f.auth(), preview.ID, "report", actor, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatal("token-only feedback bypassed required sign-in", err)
 	}
 	personID, personName := mustOpaqueID(t, "ident_"), "Independent reviewer"
@@ -87,9 +79,9 @@ func TestIntegrationFeedbackBearerProofUsesIndependentBrowserAuthor(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	thread, err := f.database.CreateFeedback(t.Context(), f.auth(), feedbackProofRequest(t, preview.ID, actor, "independent-author"), f.now)
-	if err != nil || !thread.AuthorVerified || thread.AuthorIdentityID != personID ||
-		thread.AuthorDisplayName != personName {
+	thread, err := f.database.AuthorizeReviewerFeedback(t.Context(), f.auth(), preview.ID, "report", actor, f.now)
+	if err != nil || !thread.Author.Verified || thread.Author.IdentityId == nil || *thread.Author.IdentityId != personID ||
+		thread.Author.DisplayName != personName {
 		t.Fatal("bearer replaced the independent current browser author", err)
 	}
 	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.teams SET feedback_authors='signed_in' WHERE id=$1`, f.project.TeamID); err != nil {
@@ -107,17 +99,17 @@ func TestIntegrationFeedbackBearerProofUsesIndependentBrowserAuthor(t *testing.T
 	refresh()
 	anonymous := actor
 	anonymous.BrowserCookieSecret = nil
-	if _, err := f.database.CreateFeedback(t.Context(), f.auth(), feedbackProofRequest(t, preview.ID, anonymous, "requires-sign-in"), f.now); !errors.Is(err, ErrVisitorSignIn) {
+	if _, err := f.database.AuthorizeReviewerFeedback(t.Context(), f.auth(), preview.ID, "report", anonymous, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatal("token became a signed-in feedback author", err)
 	}
-	if _, err := f.database.CreateFeedback(t.Context(), f.auth(), feedbackProofRequest(t, preview.ID, actor, "signed-in-author"), f.now); err != nil {
+	if _, err := f.database.AuthorizeReviewerFeedback(t.Context(), f.auth(), preview.ID, "report", actor, f.now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.teams SET feedback_authors='team_members' WHERE id=$1`, f.project.TeamID); err != nil {
 		t.Fatal(err)
 	}
 	refresh()
-	if _, err := f.database.CreateFeedback(t.Context(), f.auth(), feedbackProofRequest(t, preview.ID, actor, "requires-membership"), f.now); !errors.Is(err, ErrFeedbackAccess) {
+	if _, err := f.database.AuthorizeReviewerFeedback(t.Context(), f.auth(), preview.ID, "report", actor, f.now); !errors.Is(err, ErrFeedbackAccess) {
 		t.Fatal("grant creator membership became browser author membership", err)
 	}
 }
@@ -180,12 +172,12 @@ func TestIntegrationFeedbackBearerProofRechecksGrantAuthority(t *testing.T) {
 			}
 			actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", VisitAllowed: true,
 				VisitProof: FeedbackBearerVisitProof{Token: token}, BrowserCookieSecret: browser}
-			if _, err := f.database.CreateFeedback(t.Context(), f.auth(), feedbackProofRequest(t, preview.ID, actor, "denied"), at); err == nil {
+			if _, err := f.database.AuthorizeReviewerFeedback(t.Context(), f.auth(), preview.ID, "report", actor, at); err == nil {
 				t.Fatal("invalid explicit bearer proof authorized feedback")
 			}
-			var count int
-			if err := f.database.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.feedback_threads WHERE preview_id=$1`, preview.ID).Scan(&count); err != nil || count != 0 {
-				t.Fatal("denied proof persisted feedback", err)
+			var exists bool
+			if err := f.database.pool.QueryRow(t.Context(), `SELECT to_regclass('control.feedback_threads') IS NOT NULL OR to_regclass('control.feedback_events') IS NOT NULL`).Scan(&exists); err != nil || exists {
+				t.Fatal("control retains feedback content tables", err)
 			}
 		})
 	}
@@ -199,7 +191,7 @@ func TestIntegrationFeedbackExplicitPermissionNeverFallsBack(t *testing.T) {
 	browser := feedbackBrowserSecret(t, t.Context(), f, preview.ID, f.project.ActorID)
 	grant := feedbackProofGrant(t, f, t.Context())
 	valid := FeedbackBearerVisitProof{Token: visitortoken.Token(grant.Permission.VisitorToken)}
-	for i, actor := range []FeedbackActor{
+	for _, actor := range []FeedbackActor{
 		{VisitProof: FeedbackBearerVisitProof{}},
 		{VisitProof: FeedbackBearerVisitProof{Token: "malformed-private-token"}},
 		{VisitProof: FeedbackConnectorVisitProof{}},
@@ -212,8 +204,7 @@ func TestIntegrationFeedbackExplicitPermissionNeverFallsBack(t *testing.T) {
 	} {
 		actor.Kind, actor.SourceIP, actor.VisitAllowed = "reviewer", "192.0.2.9", true
 		actor.BrowserCookieSecret = browser
-		request := feedbackProofRequest(t, preview.ID, actor, string(rune('a'+i)))
-		if _, err := f.database.CreateFeedback(t.Context(), f.auth(), request, f.now); err == nil {
+		if _, err := f.database.AuthorizeReviewerFeedback(t.Context(), f.auth(), preview.ID, "report", actor, f.now); err == nil {
 			t.Fatal("explicit invalid permission fell back to anonymous policy")
 		}
 	}
@@ -239,7 +230,7 @@ func TestIntegrationFeedbackShareBearerRequiresCapturedService(t *testing.T) {
 	permission.Scope, permission.Hostname = f.auth().Subject, f.service.Endpoint.Hostname
 	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9",
 		VisitProof: FeedbackBearerVisitProof{Token: signFeedbackProofFacts(t, f.database, permission, f.now)}, BrowserCookieSecret: browser}
-	if _, err := f.database.CreateFeedback(t.Context(), f.auth(), feedbackProofRequest(t, preview.ID, actor, "not-captured"), f.now); !errors.Is(err, ErrFeedbackAccess) {
+	if _, err := f.database.AuthorizeReviewerFeedback(t.Context(), f.auth(), preview.ID, "report", actor, f.now); !errors.Is(err, ErrFeedbackAccess) {
 		t.Fatal("signed share proof substituted a service outside its captured membership", err)
 	}
 }
@@ -269,8 +260,8 @@ func TestIntegrationFeedbackBrowserAndShareBearerRecheckCurrentParents(t *testin
 				t.Fatal(err)
 			}
 			actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", VisitProof: FeedbackBearerVisitProof{Token: issued.Token}, BrowserCookieSecret: browser}
-			thread, err := f.database.CreateFeedback(t.Context(), f.auth(), feedbackProofRequest(t, preview.ID, actor, "current"), f.now)
-			if err != nil || !thread.AuthorVerified || thread.AuthorIdentityID != f.project.ActorID {
+			thread, err := f.database.AuthorizeReviewerFeedback(t.Context(), f.auth(), preview.ID, "report", actor, f.now)
+			if err != nil || !thread.Author.Verified || thread.Author.IdentityId == nil || *thread.Author.IdentityId != f.project.ActorID {
 				t.Fatal("source bearer rejected or replaced its independent browser author", err)
 			}
 			err = f.database.RevokeControlSession(t.Context(), ControlPrincipal{IdentityID: f.project.ActorID, SessionID: parent.SessionID}, f.now)
@@ -280,8 +271,7 @@ func TestIntegrationFeedbackBrowserAndShareBearerRecheckCurrentParents(t *testin
 			actor.VisitProof = FeedbackBearerVisitProof{Token: signFeedbackProofFacts(t, f.database, issued.Permission, f.now)}
 			auth := f.auth()
 			actor.ServiceRun = &auth
-			if _, err := f.database.AppendFeedback(t.Context(), AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply,
-				Text: "revoked", IdempotencyKey: "revoked", Actor: actor}, f.now); err == nil {
+			if _, err := f.database.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, "reply", actor, f.now); err == nil {
 				t.Fatal("signed bearer bypassed current source authority")
 			}
 		})
@@ -343,12 +333,12 @@ func TestIntegrationFeedbackConnectorProofMatchesAdmittedBinding(t *testing.T) {
 	proof := FeedbackConnectorVisitProof{PairID: pair.ID, DeliveryGeneration: pair.DeliveryGeneration, PermissionToken: renewed.VisitorPermission.Token}
 	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.10", VisitProof: proof}
 	at := now.Add(time.Second)
-	if _, err := d.CreateFeedback(ctx, f.auth(), feedbackProofRequest(t, preview.ID, actor, "connector-without-author"), at); !errors.Is(err, ErrVisitorSignIn) {
+	if _, err := d.AuthorizeReviewerFeedback(ctx, f.auth(), preview.ID, "report", actor, at); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatal("admitted device became a signed-in feedback author", err)
 	}
 	actor.BrowserCookieSecret = browser
-	thread, err := d.CreateFeedback(ctx, f.auth(), feedbackProofRequest(t, preview.ID, actor, "connector"), at)
-	if err != nil || !thread.AuthorVerified || thread.AuthorIdentityID != f.project.ActorID {
+	thread, err := d.AuthorizeReviewerFeedback(ctx, f.auth(), preview.ID, "report", actor, at)
+	if err != nil || !thread.Author.Verified || thread.Author.IdentityId == nil || *thread.Author.IdentityId != f.project.ActorID {
 		t.Fatal("admitted connector rejected or replaced its browser author", err)
 	}
 	for _, change := range []string{"pair", "generation", "run", "source", "subject", "key", "parent", "bearer"} {
@@ -381,7 +371,7 @@ func TestIntegrationFeedbackConnectorProofMatchesAdmittedBinding(t *testing.T) {
 			if change != "bearer" {
 				badActor.VisitProof = bad
 			}
-			if _, err := d.CreateFeedback(ctx, auth, feedbackProofRequest(t, preview.ID, badActor, "wrong-"+change), at); err == nil {
+			if _, err := d.AuthorizeReviewerFeedback(ctx, auth, preview.ID, "report", badActor, at); err == nil {
 				t.Fatal("connector proof escaped its checked admitted binding")
 			}
 		})
@@ -389,7 +379,7 @@ func TestIntegrationFeedbackConnectorProofMatchesAdmittedBinding(t *testing.T) {
 	if _, err := d.pool.Exec(ctx, `UPDATE control.connector_peer_pairs SET publisher_prepared_until=NULL WHERE id=$1`, pair.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.CreateFeedback(ctx, f.auth(), feedbackProofRequest(t, preview.ID, actor, "not-installed"), at); err == nil {
+	if _, err := d.AuthorizeReviewerFeedback(ctx, f.auth(), preview.ID, "report", actor, at); err == nil {
 		t.Fatal("uninstalled connector binding authorized feedback")
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.connector_peer_pairs SET publisher_prepared_until=expires_at WHERE id=$1`, pair.ID); err != nil {
@@ -398,13 +388,13 @@ func TestIntegrationFeedbackConnectorProofMatchesAdmittedBinding(t *testing.T) {
 	if err := d.RevokeControlSession(ctx, ControlPrincipal{IdentityID: f.project.ActorID, SessionID: parent.SessionID}, at); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.CreateFeedback(ctx, f.auth(), feedbackProofRequest(t, preview.ID, actor, "revoked-parent"), at); err == nil {
+	if _, err := d.AuthorizeReviewerFeedback(ctx, f.auth(), preview.ID, "report", actor, at); err == nil {
 		t.Fatal("connector permission outlived its actual parent session")
 	}
 }
 
 func TestIntegrationFeedbackProofLockWaitCannotCommitExpiredAuthority(t *testing.T) {
-	for _, operation := range []string{"create", "append", "scope"} {
+	for _, operation := range []string{"report", "reply", "read"} {
 		t.Run(operation, func(t *testing.T) {
 			f := newServiceHTTPFixture(t)
 			f.run = f.publish(t, f.service)
@@ -414,50 +404,27 @@ func TestIntegrationFeedbackProofLockWaitCannotCommitExpiredAuthority(t *testing
 			permission := feedbackBearerFacts(t, f, grant.Permission.VisitorToken)
 			actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9",
 				VisitProof: FeedbackBearerVisitProof{Token: visitortoken.Token(grant.Permission.VisitorToken)}, BrowserCookieSecret: browser}
-			var thread FeedbackThread
-			var err error
-			if operation == "append" {
-				thread, err = f.database.CreateFeedback(t.Context(), f.auth(), feedbackProofRequest(t, preview.ID, actor, "original"), f.now)
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
 			permission.ExpiresAt = f.now.Truncate(time.Second).Add(2 * time.Second)
 			actor.VisitProof = FeedbackBearerVisitProof{Token: signFeedbackProofFacts(t, f.database, permission, f.now)}
 			auth := f.auth()
 			actor.ServiceRun = &auth
-			request := feedbackProofRequest(t, preview.ID, actor, "expired-write")
 			gate, err := f.database.pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
-			if operation == "scope" {
-				err = lockServiceAdmission(t.Context(), gate, f.service.ID)
-			} else {
-				_, err = gate.Exec(t.Context(), `SELECT next_cursor FROM control.feedback_event_clock WHERE id=1 FOR UPDATE`)
-			}
+			err = lockServiceAdmission(t.Context(), gate, f.service.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			entered := make(chan time.Time, 1)
 			done, join := connectorPairWorker(t, t.Context(), func(ctx context.Context) error {
 				entered <- time.Now()
-				switch operation {
-				case "create":
-					_, err := f.database.CreateFeedback(ctx, auth, request, f.now)
-					return err
-				case "append":
-					_, err := f.database.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply,
-						Text: "expired", IdempotencyKey: "expired-write", Actor: actor}, f.now)
-					return err
-				default:
-					team, service, err := f.database.ReviewerFeedbackScope(ctx, auth, preview.ID, actor, f.now)
-					if err != nil && (team != "" || service != "") {
-						return errors.New("denied scope returned authorized identifiers")
-					}
-					return err
+				decision, err := f.database.AuthorizeReviewerFeedback(ctx, auth, preview.ID, operation, actor, f.now)
+				if err != nil && decision.ServiceId != "" {
+					return errors.New("denied operation returned authorized identifiers")
 				}
+				return err
 			})
 			defer join()
 			ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
@@ -476,20 +443,6 @@ func TestIntegrationFeedbackProofLockWaitCannotCommitExpiredAuthority(t *testing
 			}
 			if err := awaitIntegrationResult(t, ctx, done); !errors.Is(err, ErrFeedbackAccess) {
 				t.Fatal("lock wait committed expired feedback authority", err)
-			}
-			var reports, events int
-			if err := f.database.pool.QueryRow(ctx, `SELECT
-			    (SELECT count(*) FROM control.feedback_threads WHERE preview_id=$1),
-			    (SELECT count(*) FROM control.feedback_events event JOIN control.feedback_threads thread ON thread.id=event.feedback_id WHERE thread.preview_id=$1)`,
-				preview.ID).Scan(&reports, &events); err != nil {
-				t.Fatal(err)
-			}
-			want := 0
-			if operation == "append" {
-				want = 1
-			}
-			if reports != want || events != want {
-				t.Fatal("expired operation left feedback writes", reports, events)
 			}
 		})
 	}
@@ -514,13 +467,13 @@ func TestIntegrationFeedbackGuestShareBearerNeedsNoRedundantSecret(t *testing.T)
 		t.Fatal(err)
 	}
 	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", VisitProof: FeedbackBearerVisitProof{Token: issued.Token}}
-	if _, err := f.database.CreateFeedback(f.ctx, auth, feedbackProofRequest(t, preview.ID, actor, "guest-without-author"), f.now); !errors.Is(err, ErrVisitorSignIn) {
+	if _, err := f.database.AuthorizeReviewerFeedback(f.ctx, auth, preview.ID, "report", actor, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatal("guest share bypassed required feedback sign-in", err)
 	}
 	identity := finalVisitorIdentity(t, f.database, f.now, "guest-reviewer@example.test")
 	actor.BrowserCookieSecret = feedbackBrowserSecret(t, f.ctx, serviceHTTPFixture{database: f.database, now: f.now, service: f.service, run: f.run}, preview.ID, identity)
-	thread, err := f.database.CreateFeedback(f.ctx, auth, feedbackProofRequest(t, preview.ID, actor, "guest-bearer"), f.now)
-	if err != nil || thread.GuestID != f.guest.ID || !thread.AuthorVerified || thread.AuthorIdentityID != identity {
+	thread, err := f.database.AuthorizeReviewerFeedback(f.ctx, auth, preview.ID, "report", actor, f.now)
+	if err != nil || thread.ServiceId != f.service.ID || !thread.Author.Verified || thread.Author.IdentityId == nil || *thread.Author.IdentityId != identity {
 		t.Fatal("actual guest share bearer lost its independent browser author or required redundant share credentials", err)
 	}
 }

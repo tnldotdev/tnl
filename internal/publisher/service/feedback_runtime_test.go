@@ -9,12 +9,15 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
@@ -36,10 +39,37 @@ type feedbackControlStub struct {
 	event            controlv1.AppendReviewerFeedbackEventRequest
 	page             controlv1.PreviewPageFeedbackRequest
 	read             controlv1.ReviewerFeedbackReadRequest
-	thread           controlv1.FeedbackThread
-	create           controlv1.CreateFeedbackReportRequest
 	preview          func(context.Context, string, string, int64, credentials.ServiceRunToken) (controlv1.Preview, error)
 	err              error
+	authorization    controlv1.AuthorizeReviewerFeedbackRequest
+}
+
+func testFeedbackState(t *testing.T) *clientstate.Store {
+	t.Helper()
+	d, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	profile, err := d.Server(t.Context(), "https://control.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return profile
+}
+
+func testFeedbackDecision(service, run string, body controlv1.AuthorizeReviewerFeedbackRequest) controlv1.FeedbackAuthorization {
+	return controlv1.FeedbackAuthorization{PreviewId: body.PreviewId, ServiceId: service, ServiceRunId: run, RunNumber: body.RunNumber, Operation: body.Operation, Actor: "reviewer",
+		Author: controlv1.FeedbackAuthor{IdentityId: new("ident_0123456789abcdefghijkl"), DisplayName: "Verified reviewer", Verified: true}, ExpiresAt: time.Now().Add(4 * time.Second), ContentExpiresAt: new(time.Now().Add(time.Hour))}
+}
+
+func (s *feedbackControlStub) AuthorizeReviewerFeedback(_ context.Context, service, run string, body controlv1.AuthorizeReviewerFeedbackRequest, token credentials.ServiceRunToken) (controlv1.FeedbackAuthorization, error) {
+	s.bind(service, run, token)
+	s.authorization = body
+	s.page = controlv1.PreviewPageFeedbackRequest{PreviewId: body.PreviewId, RunNumber: body.RunNumber, Access: body.Access}
+	s.read = controlv1.ReviewerFeedbackReadRequest{PreviewId: body.PreviewId, RunNumber: body.RunNumber, Access: body.Access}
+	s.event = controlv1.AppendReviewerFeedbackEventRequest{RunNumber: body.RunNumber, Access: body.Access, Type: controlv1.ReviewerFeedbackEventInputType(body.Operation)}
+	return testFeedbackDecision(service, run, body), s.err
 }
 
 func (s *feedbackControlStub) CreateServiceRunPreview(ctx context.Context, service, run string, number int64, token credentials.ServiceRunToken) (controlv1.Preview, error) {
@@ -49,35 +79,11 @@ func (s *feedbackControlStub) CreateServiceRunPreview(ctx context.Context, servi
 func (s *feedbackControlStub) bind(service, run string, token credentials.ServiceRunToken) {
 	s.serviceID, s.runID, s.token = service, run, token
 }
-func (s *feedbackControlStub) CreateFeedbackReport(_ context.Context, service, run, _ string, input controlv1.CreateFeedbackReportRequest, token credentials.ServiceRunToken) (controlv1.FeedbackThread, error) {
-	s.bind(service, run, token)
-	s.create = input
-	return s.thread, s.err
-}
-func (s *feedbackControlStub) ListPreviewPageFeedback(_ context.Context, service, run string, body controlv1.PreviewPageFeedbackRequest, token credentials.ServiceRunToken) (controlv1.FeedbackThreadPage, error) {
-	s.bind(service, run, token)
-	s.page = body
-	return controlv1.FeedbackThreadPage{Threads: []controlv1.FeedbackThreadSummary{}, EventCursor: 0}, s.err
-}
-func (s *feedbackControlStub) GetReviewerFeedbackThread(_ context.Context, service, run, _ string, body controlv1.ReviewerFeedbackReadRequest, token credentials.ServiceRunToken) (controlv1.FeedbackThread, error) {
-	s.bind(service, run, token)
-	s.read = body
-	return s.thread, s.err
-}
-func (s *feedbackControlStub) ListReviewerFeedbackEvents(_ context.Context, service, run, _ string, body controlv1.ReviewerFeedbackReadRequest, token credentials.ServiceRunToken) (controlv1.FeedbackEventPage, error) {
-	s.bind(service, run, token)
-	s.read = body
-	return controlv1.FeedbackEventPage{Events: []controlv1.FeedbackEvent{}}, s.err
-}
-func (s *feedbackControlStub) AppendReviewerFeedbackEvent(_ context.Context, service, run, _, _ string, body controlv1.AppendReviewerFeedbackEventRequest, token credentials.ServiceRunToken) (controlv1.FeedbackEvent, error) {
-	s.bind(service, run, token)
-	s.event = body
-	return controlv1.FeedbackEvent{}, s.err
-}
 
 func testFeedbackRuntime(t *testing.T, f *HTTP, control *feedbackControlStub) *feedbackRuntime {
 	t.Helper()
 	f.Control = serviceHTTPControl{HTTPControl: control}
+	f.State = testFeedbackState(t)
 	f.Feedback, f.PreviewID, f.ProjectService, f.Demo = true, "pv_0123456789abcdefghijkl", "web", true
 	runtime, err := newFeedbackRuntime(*f)
 	if err != nil {
@@ -163,10 +169,27 @@ func TestFeedbackHTMLInjectionAndPerBrowserFailuresKeepAppCookies(t *testing.T) 
 
 func TestFeedbackResolveAndReopenUsePreviewAccess(t *testing.T) {
 	client := &feedbackControlStub{}
-	runtime := &feedbackRuntime{client: client, serviceID: "svc_0123456789abcdefghijkl", runID: "srun_0123456789abcdefghijkl", number: 2, token: "run-token"}
+	runtime := &feedbackRuntime{client: client, state: testFeedbackState(t), demo: true, previewID: "pv_0123456789abcdefghijkl", service: "web", serviceID: "svc_0123456789abcdefghijkl", runID: "srun_0123456789abcdefghijkl", number: 2, token: "run-token"}
 	for _, kind := range []string{"thread.resolved", "thread.reopened"} {
 		for _, allowed := range []bool{true, false} {
-			request := httptest.NewRequest(http.MethodPost, "/__tnl/feedback/fb_0123456789abcdefghijkl/events", strings.NewReader(`{"schema_version":1,"type":"`+kind+`"}`))
+			local, err := runtime.local(t.Context(), controlv1.FeedbackReviewerAccess{VisitAllowed: allowed})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := controlv1.CreateFeedbackReportRequest{PreviewId: runtime.previewID, Service: "web", PagePath: "/", RunNumber: runtime.number}
+			body.Report.Text = "A suggestion"
+			body.SourceAtReport = controlv1.SourceState{SchemaVersion: 1, ChangedFiles: []controlv1.SourceFileState{}}
+			body.Evidence = controlv1.FeedbackEvidence{SchemaVersion: 1}
+			thread, err := local.Create(t.Context(), runtime.serviceID, runtime.runID, kind+strconv.FormatBool(allowed), body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == "thread.reopened" {
+				if _, err := local.AppendFeedbackEvent(t.Context(), thread.Id, "prepare", controlv1.AppendFeedbackEventRequest{Type: "thread.resolved"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			request := httptest.NewRequest(http.MethodPost, "/__tnl/feedback/"+thread.Id+"/events", strings.NewReader(`{"schema_version":1,"type":"`+kind+`"}`))
 			request.Header.Set("Idempotency-Key", kind)
 			if !allowed {
 				request.AddCookie(&http.Cookie{Name: httpaccess.ShareCookieName, Value: "shr_0123456789abcdefghijkl." + visitorfixture.BrowserCookie})
@@ -190,7 +213,7 @@ func TestFeedbackResolveAndReopenUsePreviewAccess(t *testing.T) {
 
 func TestFeedbackReportDoesNotAddUnselectedBrowserActivity(t *testing.T) {
 	control := &feedbackControlStub{}
-	runtime := &feedbackRuntime{client: control, previewID: "pv_0123456789abcdefghijkl", service: "web",
+	runtime := &feedbackRuntime{client: control, state: testFeedbackState(t), previewID: "pv_0123456789abcdefghijkl", service: "web",
 		serviceID: "svc_0123456789abcdefghijkl", runID: "srun_0123456789abcdefghijkl", number: 2,
 		token: "run-token", demo: true, browsers: make(map[[32]byte]*browserTrail)}
 	cookie := &http.Cookie{Name: httpaccess.FeedbackBrowserCookieName, Value: visitorfixture.BrowserCookie}
@@ -207,9 +230,10 @@ func TestFeedbackReportDoesNotAddUnselectedBrowserActivity(t *testing.T) {
 	request.Header.Set("Idempotency-Key", "omit-activity")
 	response := httptest.NewRecorder()
 	runtime.handle(response, request, feedbackAuthorization{allowed: true})
-	if response.Code != http.StatusOK || control.create.Report.Text != "Only the reviewed report" ||
-		control.create.Evidence.SchemaVersion != 1 || len(control.create.Evidence.Actions) != 0 ||
-		len(control.create.Evidence.FailedRequests) != 0 || control.create.Evidence.Element != nil {
+	var thread controlv1.FeedbackThread
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &thread) != nil ||
+		thread.Report.Text != "Only the reviewed report" || thread.Evidence.SchemaVersion != 1 ||
+		len(thread.Evidence.Actions) != 0 || len(thread.Evidence.FailedRequests) != 0 || thread.Evidence.Element != nil {
 		t.Fatal("publisher added unselected activity to the report", response.Code, response.Body.String())
 	}
 }
@@ -217,21 +241,17 @@ func TestFeedbackReportDoesNotAddUnselectedBrowserActivity(t *testing.T) {
 func TestFeedbackListFiltersKeepPublisherScope(t *testing.T) {
 	for _, path := range []string{"/__tnl/feedback?state=resolved", "/__tnl/feedback?state=resolved&path=%2Fsettings"} {
 		client := &feedbackControlStub{}
-		runtime := &feedbackRuntime{client: client, serviceID: "svc_0123456789abcdefghijkl", runID: "srun_0123456789abcdefghijkl", number: 2, token: "run-token", previewID: "pv_0123456789abcdefghijkl"}
+		runtime := &feedbackRuntime{client: client, state: testFeedbackState(t), demo: true, serviceID: "svc_0123456789abcdefghijkl", runID: "srun_0123456789abcdefghijkl", number: 2, token: "run-token", previewID: "pv_0123456789abcdefghijkl"}
 		request := httptest.NewRequest(http.MethodGet, path+"&preview_id=other&service_id=other&service_run_id=other&run_number=99", nil)
 		response := httptest.NewRecorder()
 		runtime.handle(response, request, feedbackAuthorization{allowed: true})
 		if response.Code != http.StatusOK || client.page.PreviewId != runtime.previewID || client.page.RunNumber != 2 ||
-			!client.page.Access.VisitAllowed || client.page.State == nil || *client.page.State != controlv1.Resolved ||
+			!client.page.Access.VisitAllowed || client.page.State != nil ||
 			client.serviceID != runtime.serviceID || client.runID != runtime.runID || client.token != runtime.token {
 			t.Fatal("feedback list escaped service scope", response.Code, client.page)
 		}
-		if strings.Contains(path, "path=") {
-			if client.page.PagePath == nil || *client.page.PagePath != "/settings" {
-				t.Fatal("feedback page filter changed", client.page.PagePath)
-			}
-		} else if client.page.PagePath != nil {
-			t.Fatal("all-pages feedback filter changed", client.page.PagePath)
+		if client.page.PagePath != nil {
+			t.Fatal("page filter was sent to control", client.page.PagePath)
 		}
 	}
 }
@@ -291,9 +311,9 @@ func TestFeedbackPublisherContractKeepsSourceAndScopeOutOfBrowserInput(t *testin
 	var input publisherv1.BrowserFeedbackReportRequest
 	load("thread", &thread)
 	load("report-request", &input)
-	control := &feedbackControlStub{thread: thread}
+	control := &feedbackControlStub{}
 	runtime := &feedbackRuntime{client: control, previewID: thread.Scope.PreviewId, service: "web", serviceID: thread.Scope.ServiceId,
-		runID: thread.Scope.ServiceRunId, number: 2, token: "run-token", demo: true}
+		runID: thread.Scope.ServiceRunId, number: 2, token: "run-token", demo: true, state: testFeedbackState(t)}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		runtime.handle(response, request, feedbackAuthorization{allowed: true})
 	}))
@@ -303,15 +323,15 @@ func TestFeedbackPublisherContractKeepsSourceAndScopeOutOfBrowserInput(t *testin
 		t.Fatal(err)
 	}
 	created, err := client.CreateBrowserFeedbackReportWithResponse(t.Context(), &publisherv1.CreateBrowserFeedbackReportParams{IdempotencyKey: "fixture-report"}, input)
-	if err != nil || created.JSON200 == nil || created.JSON200.Id != thread.Id || created.JSON200.Report.Text != input.Text {
+	if err != nil || created.JSON200 == nil || created.JSON200.Report.Text != input.Text {
 		t.Fatal("browser report contract failed", err)
 	}
-	if control.create.PreviewId != runtime.previewID || control.create.RunNumber != 2 || control.create.Service != "web" || !control.create.Access.VisitAllowed ||
-		control.create.SourceAtReport.Complete || control.create.SourceAtReport.HeadCommit != "" || len(control.create.SourceAtReport.ChangedFiles) != 0 ||
+	if control.authorization.PreviewId != runtime.previewID || control.authorization.RunNumber != 2 || !control.authorization.Access.VisitAllowed ||
+		created.JSON200.SourceAtReport.Complete || created.JSON200.SourceAtReport.HeadCommit != "" || len(created.JSON200.SourceAtReport.ChangedFiles) != 0 ||
 		control.serviceID != runtime.serviceID || control.runID != runtime.runID || control.token != runtime.token {
-		t.Fatal("service did not supply report scope and incomplete demo source", control.create)
+		t.Fatal("service did not retain report scope and incomplete demo source locally")
 	}
-	read, err := client.GetBrowserFeedbackThreadWithResponse(t.Context(), thread.Id)
+	read, err := client.GetBrowserFeedbackThreadWithResponse(t.Context(), created.JSON200.Id)
 	if err != nil || read.JSON200 == nil || read.JSON200.Scope.PreviewId != thread.Scope.PreviewId ||
 		read.JSON200.Scope.ServiceId != thread.Scope.ServiceId || read.JSON200.Scope.ServiceRunId != runtime.runID ||
 		read.JSON200.Scope.RunNumber != 2 || read.JSON200.Scope.Service != "web" || read.JSON200.SourceAtReport.SchemaVersion != 1 || read.JSON200.SourceAtReport.Complete {
@@ -320,9 +340,9 @@ func TestFeedbackPublisherContractKeepsSourceAndScopeOutOfBrowserInput(t *testin
 	if control.read.RunNumber != 2 || control.read.PreviewId != runtime.previewID {
 		t.Fatal("thread read lost the current service run")
 	}
-	if _, err := client.ListBrowserFeedbackEventsWithResponse(t.Context(), thread.Id, &publisherv1.ListBrowserFeedbackEventsParams{AfterCursor: new(int64(4))}); err != nil ||
-		control.read.RunNumber != 2 || control.read.AfterCursor == nil || *control.read.AfterCursor != 4 {
-		t.Fatal("thread event read lost the run binding or cursor", err)
+	if events, err := client.ListBrowserFeedbackEventsWithResponse(t.Context(), created.JSON200.Id, &publisherv1.ListBrowserFeedbackEventsParams{AfterCursor: new(int64(4))}); err != nil ||
+		control.read.RunNumber != 2 || control.read.AfterCursor != nil || events.JSON200 == nil || len(events.JSON200.Events) != 0 {
+		t.Fatal("event cursor was not applied locally or was sent to control", err)
 	}
 	for _, forged := range []string{
 		`{"schema_version":1,"text":"forged","page_path":"/","display_name":"unverified","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`,

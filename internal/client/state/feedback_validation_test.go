@@ -49,25 +49,29 @@ func TestFeedbackConversationTransitions(t *testing.T) {
 	if got, err := FeedbackOpen.transition(FeedbackUpdate); err != nil || got != FeedbackOpen {
 		t.Fatalf("source update changed state: %s, %v", got, err)
 	}
-	if validFeedbackEventPayload(AppendFeedbackRequest{Type: FeedbackUpdate, Text: "forged", SourceState: feedbackTestSource(t), Actor: FeedbackActor{Kind: "reviewer"}}) {
+	if validLocalFeedbackPayload("reviewer", "update", "forged", feedbackTestSource(t)) {
 		t.Fatal("preview access can forge an implementer source update")
 	}
 }
 
 func TestFeedbackAuthorizedActorPermissions(t *testing.T) {
-	for _, event := range []FeedbackEventType{FeedbackCreated, FeedbackReply, FeedbackUpdate, FeedbackThreadResolved, FeedbackThreadReopened, "unknown"} {
-		if (authorizedFeedbackActor{}).permits(event) {
+	for _, event := range []string{"report", "reply", "update", "thread.resolved", "thread.reopened", "delete", "unknown"} {
+		if localFeedbackPermits("", event) {
 			t.Fatalf("unresolved actor authorized %s", event)
 		}
-		reviewer := authorizedFeedbackActor{kind: feedbackReviewer, permissions: reviewerFeedbackPermissions}
-		implementer := authorizedFeedbackActor{kind: feedbackImplementer, permissions: implementerFeedbackPermissions}
-		if reviewer.permits(event) != (event != FeedbackUpdate && event != "unknown") || implementer.permits(event) != (event != FeedbackCreated && event != "unknown") {
-			t.Fatalf("actor operation permissions crossed for %s", event)
+		if localFeedbackPermits("reviewer", event) != (event != "update" && event != "delete" && event != "unknown") ||
+			localFeedbackPermits("implementer", event) != (event != "report" && event != "unknown") {
+			t.Fatalf("actor permissions crossed for %s", event)
 		}
 	}
 	if _, err := FeedbackThreadState("unknown").transition(FeedbackReply); !errors.Is(err, ErrFeedbackState) {
 		t.Fatal("unknown persisted thread state accepted", err)
 	}
+}
+
+func feedbackTestSource(t *testing.T) json.RawMessage {
+	t.Helper()
+	return json.RawMessage(`{"schema_version":1,"head_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","project_path":"","branch":"feature","changed_files":[{"path":"src/app.ts","status":"modified","blob_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","mode":"100644"}],"complete":true}`)
 }
 
 func TestFeedbackSourceStateRejectsPathsOutsideProject(t *testing.T) {

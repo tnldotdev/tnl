@@ -1140,58 +1140,10 @@ CREATE TABLE control.share_handoffs (
     FOREIGN KEY (share_id,service_id) REFERENCES control.share_services(share_id,service_id) ON DELETE CASCADE
 );
 CREATE INDEX share_handoffs_by_expiry ON control.share_handoffs(expires_at, token_digest);
-CREATE TABLE control.feedback_event_clock (
-    id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1), next_cursor bigint NOT NULL DEFAULT 1 CHECK (next_cursor >= 1)
-);
-INSERT INTO control.feedback_event_clock(id) VALUES (1);
-CREATE TABLE control.feedback_threads (
-    id text PRIMARY KEY CHECK (id <> ''), schema_version smallint NOT NULL DEFAULT 1 CHECK (schema_version >= 1),
-    preview_id text NOT NULL, team_id text, guest_id text, service_id text NOT NULL,
-    service_run_id text NOT NULL, run_number bigint NOT NULL CHECK (run_number >= 1),
-    service_name text NOT NULL CHECK (service_name <> ''),
-    page_path text NOT NULL CHECK (page_path LIKE '/%' AND char_length(page_path) <= 2048),
-    page_title text NOT NULL DEFAULT '' CHECK (char_length(page_title) <= 256),
-    message_count bigint NOT NULL DEFAULT 1 CHECK (message_count >= 1),
-    latest_event_cursor bigint NOT NULL DEFAULT 0 CHECK (latest_event_cursor >= 0),
-    report_text text NOT NULL CHECK (char_length(report_text) BETWEEN 1 AND 4000),
-    author_display_name text CHECK (char_length(author_display_name) BETWEEN 1 AND 256),
-    author_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
-    author_verified boolean NOT NULL DEFAULT false CHECK (author_verified = (author_identity_id IS NOT NULL)),
-    pin jsonb, evidence jsonb NOT NULL, report_source_state jsonb NOT NULL,
-    state text NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'resolved')),
-    created_at timestamptz NOT NULL, state_updated_at timestamptz NOT NULL,
-    idempotency_key text NOT NULL CHECK (idempotency_key <> ''), request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
-    UNIQUE (service_run_id, idempotency_key), UNIQUE (id,team_id), UNIQUE (id,guest_id),
-    CHECK (num_nonnulls(team_id,guest_id)=1),
-    FOREIGN KEY (preview_id, team_id) REFERENCES control.previews(id, team_id) ON DELETE RESTRICT,
-    FOREIGN KEY (preview_id, guest_id) REFERENCES control.previews(id, guest_id) ON DELETE RESTRICT
-);
-CREATE INDEX feedback_threads_by_preview_page ON control.feedback_threads(preview_id, service_id, page_path, created_at DESC, id);
-CREATE INDEX feedback_threads_by_team ON control.feedback_threads(team_id, created_at DESC, id);
-CREATE TABLE control.feedback_events (
-    cursor bigint PRIMARY KEY CHECK (cursor >= 1), schema_version smallint NOT NULL DEFAULT 1 CHECK (schema_version >= 1),
-    feedback_id text NOT NULL REFERENCES control.feedback_threads(id) ON DELETE RESTRICT,
-    team_id text, guest_id text,
-    event_type text NOT NULL CHECK (event_type IN ('thread.created', 'reply', 'update', 'thread.resolved', 'thread.reopened')),
-    actor_kind text NOT NULL CHECK (actor_kind IN ('reviewer', 'implementer')), actor_reference text NOT NULL CHECK (actor_reference <> ''),
-    idempotency_key text NOT NULL CHECK (idempotency_key <> ''), request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
-    text text CHECK (char_length(text) BETWEEN 1 AND 4000), evidence jsonb, source_state jsonb, occurred_at timestamptz NOT NULL,
-    author_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
-    author_display_name text CHECK (char_length(author_display_name) BETWEEN 1 AND 256),
-    author_verified boolean NOT NULL DEFAULT false CHECK (author_verified = (author_identity_id IS NOT NULL)),
-    UNIQUE (feedback_id, actor_kind, actor_reference, idempotency_key),
-    CHECK (num_nonnulls(team_id,guest_id)=1),
-    FOREIGN KEY (feedback_id,team_id) REFERENCES control.feedback_threads(id,team_id) ON DELETE RESTRICT,
-    FOREIGN KEY (feedback_id,guest_id) REFERENCES control.feedback_threads(id,guest_id) ON DELETE RESTRICT
-);
-CREATE INDEX feedback_events_by_thread ON control.feedback_events(feedback_id, cursor);
-CREATE INDEX feedback_events_by_team ON control.feedback_events(team_id, cursor);
 -- +goose StatementBegin
-CREATE FUNCTION control.cleanup_demo_feedback() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION control.cleanup_demo_preview() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.closed_at IS NULL AND NEW.closed_at IS NOT NULL THEN
-        DELETE FROM control.feedback_events WHERE feedback_id IN (SELECT t.id FROM control.feedback_threads t JOIN control.previews p ON p.id = t.preview_id WHERE p.demo_service_run_id = NEW.id);
-        DELETE FROM control.feedback_threads WHERE preview_id IN (SELECT id FROM control.previews WHERE demo_service_run_id = NEW.id);
         DELETE FROM control.preview_services WHERE preview_id IN (SELECT id FROM control.previews WHERE demo_service_run_id = NEW.id);
         DELETE FROM control.previews WHERE demo_service_run_id = NEW.id;
     END IF;
@@ -1614,14 +1566,8 @@ ALTER TABLE control.previews ADD CONSTRAINT previews_demo_service_run_team_fkey
     FOREIGN KEY(demo_service_run_id,team_id) REFERENCES control.service_runs(id,team_id) ON DELETE RESTRICT;
 ALTER TABLE control.previews ADD CONSTRAINT previews_demo_service_run_guest_fkey
     FOREIGN KEY(demo_service_run_id,guest_id) REFERENCES control.service_runs(id,guest_id) ON DELETE RESTRICT;
-ALTER TABLE control.feedback_threads ADD CONSTRAINT feedback_threads_service_fkey
-    FOREIGN KEY(service_id,team_id) REFERENCES control.services(id,team_id) ON DELETE RESTRICT;
-ALTER TABLE control.feedback_threads ADD CONSTRAINT feedback_threads_service_guest_fkey
-    FOREIGN KEY(service_id,guest_id) REFERENCES control.services(id,guest_id) ON DELETE RESTRICT;
-ALTER TABLE control.feedback_threads ADD CONSTRAINT feedback_threads_service_run_fkey
-    FOREIGN KEY(service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT;
-CREATE TRIGGER cleanup_demo_feedback AFTER UPDATE OF closed_at ON control.service_runs
-    FOR EACH ROW EXECUTE FUNCTION control.cleanup_demo_feedback();
+CREATE TRIGGER cleanup_demo_preview AFTER UPDATE OF closed_at ON control.service_runs
+    FOR EACH ROW EXECUTE FUNCTION control.cleanup_demo_preview();
 
 -- preparation bounds observations without starting ready-time charging. every
 -- serving capability shares the same fixed deadline after first readiness.
@@ -2960,7 +2906,9 @@ CREATE TABLE control.connector_peer_pair_leg_claims (
     confirmed_until timestamptz NOT NULL,
     CONSTRAINT connector_peer_claim_fixed_bound CHECK (confirmed_until>checked_at AND confirmed_until<=checked_at+interval '5 minutes'),
     nonce_digest bytea NOT NULL CHECK (octet_length(nonce_digest)=32),
-    source_ip inet NOT NULL,
+    source_digest text NOT NULL CHECK (source_digest ~ '^[A-Za-z0-9_-]{43}$'),
+    source_ciphertext bytea NOT NULL CHECK (octet_length(source_ciphertext)>16),
+    source_storage_key_id text NOT NULL,
     relay_id text NOT NULL,
     relay_run_id text NOT NULL,
     relay_lease_revision bigint NOT NULL CHECK (relay_lease_revision>0),

@@ -1,7 +1,6 @@
 package state
 
 import (
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -16,7 +15,7 @@ func TestIntegrationDemoFeedbackCleanupAndRetainedProjectFeedback(t *testing.T) 
 			f := newServiceHTTPFixture(t)
 			d, ctx, now := f.database, t.Context(), f.now
 			f.service = f.local(t, "web", &config.HTTPService{Access: &config.Access{Mode: "anonymous"}})
-			if _, err := d.pool.Exec(ctx, "UPDATE control.services SET ephemeral = true, expires_at = $2 WHERE id = $1", f.service.ID, now.Add(time.Minute)); err != nil {
+			if _, err := d.pool.Exec(ctx, "UPDATE control.services SET ephemeral=true,expires_at=$2 WHERE id=$1", f.service.ID, now.Add(time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 			f.run = f.publish(t, f.service)
@@ -25,19 +24,18 @@ func TestIntegrationDemoFeedbackCleanupAndRetainedProjectFeedback(t *testing.T) 
 				t.Fatal(err)
 			}
 			retry, err := d.CreateServiceRunPreview(ctx, f.auth(), now)
-			if err != nil || demo.ID != retry.ID {
-				t.Fatalf("demo preview retry = %+v, %v", retry, err)
+			if err != nil || retry.ID != demo.ID {
+				t.Fatal("demo preview retry", retry, err)
 			}
 			project := f.preview(t, "real-project", f.service)
-			browser := feedbackBrowserSecret(t, ctx, f, demo.ID, f.project.ActorID)
-			create := func(preview Preview, key string) FeedbackThread {
-				thread, err := d.CreateFeedback(ctx, f.auth(), CreateFeedbackRequest{PreviewID: preview.ID, Service: "demo", PagePath: "/", ReportText: "A suggestion", Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: key, Actor: FeedbackActor{Kind: "reviewer", VisitAllowed: true, SourceIP: "192.0.2.9", BrowserCookieSecret: browser}}, now)
-				if err != nil {
+			actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", BrowserCookieSecret: feedbackBrowserSecret(t, ctx, f, demo.ID, f.project.ActorID)}
+			for _, preview := range []Preview{demo, project} {
+				if _, err := d.AuthorizeReviewerFeedback(ctx, f.auth(), preview.ID, "report", actor, now); err != nil {
 					t.Fatal(err)
 				}
-				return thread
 			}
-			demoThread, projectThread := create(demo, "demo"), create(project, "project")
+			session := browserTestControlSession(t, d, f.project.ActorID, now)
+			owner := WithControlPrincipal(ctx, ControlPrincipal{IdentityID: f.project.ActorID, SessionID: session.SessionID})
 			if crashed {
 				if _, err := d.ExpireServiceRuns(ctx, now.Add(10*time.Minute)); err != nil {
 					t.Fatal(err)
@@ -48,43 +46,25 @@ func TestIntegrationDemoFeedbackCleanupAndRetainedProjectFeedback(t *testing.T) 
 			if _, err := d.ExpireServiceRuns(ctx, now.Add(10*time.Minute)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := d.GetFeedback(ctx, demoThread.ID); !errors.Is(err, ErrFeedbackNotFound) {
-				t.Fatalf("demo comment survived: %v", err)
-			}
 			if _, err := d.GetPreview(ctx, demo.ID); !errors.Is(err, ErrPreviewNotFound) {
-				t.Fatalf("demo preview survived: %v", err)
+				t.Fatal("demo preview survived", err)
 			}
-			if _, err := d.GetFeedback(ctx, projectThread.ID); err != nil {
-				t.Fatalf("real feedback removed: %v", err)
+			if _, err := d.AuthorizeReviewerFeedback(ctx, f.auth(), demo.ID, "read", actor, now.Add(10*time.Minute)); err == nil {
+				t.Fatal("closed demo retained authorization")
 			}
 			service, err := controlstatedb.New(d.pool).GetFeedbackService(ctx, f.service.ID)
 			if err != nil || service.TeamID != text(f.project.TeamID) || service.GuestID.Valid || !service.DeletedAt.Valid {
-				t.Fatalf("lost feedback ownership after service expiry: %+v, %v", service, err)
+				t.Fatal("lost retained feedback ownership", service, err)
 			}
-			if _, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: projectThread.ID, Type: FeedbackThreadResolved, IdempotencyKey: "after-stop", Actor: FeedbackActor{Kind: "implementer", IdentityID: f.project.ActorID}}, now.Add(10*time.Minute)); err != nil {
-				t.Fatalf("retained feedback could not be resolved: %v", err)
+			if _, err := d.AuthorizeImplementerFeedback(owner, f.project.ActorID, f.service.ID, project.ID, "thread.resolved", now.Add(10*time.Minute)); err != nil {
+				t.Fatal("retained project feedback could not be resolved", err)
 			}
-			reply, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: projectThread.ID, Type: FeedbackReply,
-				Text: "A clarification after service deletion", IdempotencyKey: "retained-reply",
-				Actor: FeedbackActor{Kind: "implementer", IdentityID: f.project.ActorID}}, now.Add(10*time.Minute))
-			if err != nil || !reply.AuthorVerified || reply.AuthorIdentityID != f.project.ActorID {
+			reply, err := d.AuthorizeImplementerFeedback(owner, f.project.ActorID, f.service.ID, project.ID, "reply", now.Add(10*time.Minute))
+			if err != nil || !reply.Author.Verified || reply.Author.IdentityId == nil || *reply.Author.IdentityId != f.project.ActorID {
 				t.Fatal("authorized manager could not reply to retained resolved feedback", err)
 			}
-			if _, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: projectThread.ID, Type: FeedbackReply,
-				Text: "Stale reviewer", IdempotencyKey: "deleted-service-reviewer",
-				Actor: FeedbackActor{Kind: "reviewer", ServiceRun: new(f.auth()), SourceIP: "192.0.2.9", BrowserCookieSecret: browser}}, now.Add(10*time.Minute)); !errors.Is(err, ErrServiceAccess) {
+			if _, err := d.AuthorizeReviewerFeedback(ctx, f.auth(), project.ID, "reply", actor, now.Add(10*time.Minute)); !errors.Is(err, ErrServiceAccess) {
 				t.Fatal("retained history restored deleted service reviewer authority", err)
-			}
-			retained, err := d.GetFeedback(ctx, projectThread.ID)
-			if err != nil || retained.State != FeedbackResolved || retained.ReportText != projectThread.ReportText ||
-				string(retained.SourceAtReport) != string(projectThread.SourceAtReport) || retained.MessageCount != 2 {
-				t.Fatal("retained reply reopened feedback or changed the first report", err)
-			}
-			history, err := d.ListFeedbackEventsForThread(ctx, projectThread.ID, 0)
-			if err != nil || len(history.Events) != 3 || history.Events[0].Type != FeedbackCreated ||
-				history.Events[1].Type != FeedbackThreadResolved || history.Events[2].Type != FeedbackReply ||
-				history.EventCursor != reply.Cursor {
-				t.Fatal("retained feedback lost its ordered history", err)
 			}
 		})
 	}

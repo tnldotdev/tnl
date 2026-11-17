@@ -112,7 +112,7 @@ func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPai
 			break
 		}
 	}
-	if remaining, err := rotating.countPreviousStorageSecrets(ctx); err != nil || remaining != 2 {
+	if remaining, err := rotating.countPreviousStorageSecrets(ctx); err != nil || remaining != 4 {
 		t.Fatal("locked connector pair was omitted from previous-key count", remaining, err)
 	}
 	wait, cancel := context.WithTimeout(ctx, 350*time.Millisecond)

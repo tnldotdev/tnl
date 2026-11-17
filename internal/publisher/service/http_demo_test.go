@@ -36,7 +36,8 @@ func TestServiceHTTPDemoPreviewBindsExactRunBeforeFeedbackAndRecoversOnRetry(t *
 	}}
 	control := serviceBrowserControl{HTTPControl: feedback, origin: "https://control.example.test", policy: policy}
 	facts := HTTP{Control: control, Subject: scope, RunID: runID, Number: number, Token: runToken,
-		Demo: true, Feedback: true, ProjectService: "demo", PreviewID: "pv_caller0123456789abcdef"}
+		State: testFeedbackState(t),
+		Demo:  true, Feedback: true, ProjectService: "demo", PreviewID: "pv_caller0123456789abcdef"}
 	failed, closeHTTP, err := PrepareHTTP(ctx, facts)
 	if !errors.Is(err, lost) || closeHTTP != nil || failed.browser != nil || failed.feedback != nil || policy.Calls.Load() != 0 {
 		t.Fatal("failed demo preview started HTTP work or lost the creation failure", err)
@@ -110,6 +111,7 @@ func TestServiceHTTPConfiguredPreviewDoesNotAllocateADemoPreview(t *testing.T) {
 		return controlv1.Preview{}, errors.New("configured previews must not allocate a demo preview")
 	}}
 	facts := HTTP{Control: serviceBrowserControl{HTTPControl: feedback, origin: "https://control.example.test", policy: policy},
+		State:   testFeedbackState(t),
 		Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_0123456789abcdefghijkl"}, RunID: "srun_0123456789abcdefghijkl",
 		Number: 7, Token: "run-secret", Feedback: true, ProjectService: "web", ProjectRoot: t.TempDir(), PreviewID: previewID}
 	prepared, closeHTTP, err := PrepareHTTP(t.Context(), facts)

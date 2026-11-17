@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
@@ -37,6 +39,15 @@ import (
 // on restart; its hostname, cookie jar, and authenticated reviewer stay the same.
 func reviewerHTTPRun(t *testing.T, control *clientcontrol.Client, service controlstate.ServiceRecord, run controlstate.ServiceHTTPRun, preview, project, target string) (*http.Transport, func()) {
 	t.Helper()
+	local, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(project, ".tnl-client-state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { local.Close() })
+	profile, err := local.Server(t.Context(), control.ControlURL())
+	if err != nil {
+		t.Fatal(err)
+	}
 	until := time.Now().Add(time.Minute)
 	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
@@ -46,7 +57,7 @@ func reviewerHTTPRun(t *testing.T, control *clientcontrol.Client, service contro
 		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress", IngressRunID: "ir_" + strings.Repeat("I", 22), IngressLeaseRevision: 1, DestinationPort: 443}},
 		RelayID: "relay", RelayServiceID: "relay-service", RelayRunID: "rr_" + strings.Repeat("R", 22), RelayLeaseRevision: 1, ServingUntil: until}
 	frontend, closeFrontend, err := publisherservice.PrepareHTTP(t.Context(), publisherservice.HTTP{
-		Control: control, Subject: run.Subject, RunID: run.RunID, Number: run.Number, Token: run.Token,
+		Control: control, State: profile, Subject: run.Subject, RunID: run.RunID, Number: run.Number, Token: run.Token,
 		Hostname: service.Placement.Hostname, Port: 443, Header: header, Source: netip.MustParseAddrPort("192.0.2.9:1234"),
 		Feedback: true, PreviewID: preview, ProjectService: "web", ProjectRoot: project,
 		ReserveCapacity: func(context.Context) error { return nil },

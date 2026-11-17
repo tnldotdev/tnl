@@ -20,6 +20,13 @@ type feedbackReadFixture struct {
 	threads     map[string]controlv1.FeedbackThread
 }
 
+func (f feedbackReadFixture) Events(ctx context.Context, _ string, id string, after uint64) (controlv1.FeedbackEventPage, error) {
+	if id != "" {
+		return f.ListFeedbackThreadEvents(ctx, id, after)
+	}
+	return f.ListFeedbackEvents(ctx, "", after)
+}
+
 func TestFeedbackValidationHasOwnedReasonBeforeAuthentication(t *testing.T) {
 	var output bytes.Buffer
 	err := run(t.Context(), []string{"--no-config", "feedback", "inspect", "--state-dir", filepath.Join(t.TempDir(), "state"), "not-a-feedback-id"}, &output, io.Discard)
@@ -33,13 +40,13 @@ func TestFeedbackCursorFailureIsAResponseErrorAndKeepsOutputCauses(t *testing.T)
 	fixture := feedbackReadFixture{teamPages: map[uint64]controlv1.FeedbackEventPage{
 		0: {EventCursor: 1, Events: []controlv1.FeedbackEvent{{Cursor: 0}}},
 	}}
-	_, _, err := pollFeedbackEvents(t.Context(), fixture, "tm_test", "", 0, io.Discard, feedbackNDJSON)
+	_, _, err := pollFeedbackEvents(t.Context(), fixture, "", 0, io.Discard, feedbackNDJSON)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
 		t.Fatalf("invalid cursor classified as %v", err)
 	}
 	fixture.teamPages[0] = controlv1.FeedbackEventPage{EventCursor: 1, Events: []controlv1.FeedbackEvent{{Cursor: 1}}}
 	cause := errors.New("output pipe closed")
-	_, _, err = pollFeedbackEvents(t.Context(), fixture, "tm_test", "", 0, failingFeedbackWriter{cause}, feedbackNDJSON)
+	_, _, err = pollFeedbackEvents(t.Context(), fixture, "", 0, failingFeedbackWriter{cause}, feedbackNDJSON)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.OutputUnavailable || !errors.Is(err, cause) {
 		t.Fatalf("output failure classified as %v", err)
 	}
@@ -112,15 +119,15 @@ func TestFeedbackWatchResumesAfterInvisibleEventsAndPagination(t *testing.T) {
 		},
 	}
 	var output bytes.Buffer
-	cursor, more, err := pollFeedbackEvents(t.Context(), fixture, "team", "pv_mine", 0, &output, feedbackNDJSON)
+	cursor, more, err := pollFeedbackEvents(t.Context(), fixture, "pv_mine", 0, &output, feedbackNDJSON)
 	if err != nil || !more || cursor != 2 {
 		t.Fatalf("first watch page cursor = %d, more = %v, error = %v", cursor, more, err)
 	}
-	cursor, more, err = pollFeedbackEvents(t.Context(), fixture, "team", "pv_mine", cursor, &output, feedbackNDJSON)
+	cursor, more, err = pollFeedbackEvents(t.Context(), fixture, "pv_mine", cursor, &output, feedbackNDJSON)
 	if err != nil || more || cursor != 4 {
 		t.Fatalf("second watch page cursor = %d, more = %v, error = %v", cursor, more, err)
 	}
-	cursor, more, err = pollFeedbackEvents(t.Context(), fixture, "team", "pv_mine", cursor, &output, feedbackNDJSON)
+	cursor, more, err = pollFeedbackEvents(t.Context(), fixture, "pv_mine", cursor, &output, feedbackNDJSON)
 	if err != nil || more || cursor != 4 {
 		t.Fatalf("idle watch cursor = %d, more = %v, error = %v", cursor, more, err)
 	}

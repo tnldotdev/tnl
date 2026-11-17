@@ -261,7 +261,9 @@ type ControlConnectorPeerPairLegClaim struct {
 	CheckedAt          pgtype.Timestamptz
 	ConfirmedUntil     pgtype.Timestamptz
 	NonceDigest        []byte
-	SourceIp           netip.Addr
+	SourceDigest       string
+	SourceCiphertext   []byte
+	SourceStorageKeyID string
 	RelayID            string
 	RelayRunID         string
 	RelayLeaseRevision int64
@@ -476,59 +478,6 @@ type ControlDomain struct {
 	ReusableAfter           pgtype.Timestamptz
 	ReleasedAt              pgtype.Timestamptz
 	UpdatedAt               pgtype.Timestamptz
-}
-
-type ControlFeedbackEvent struct {
-	Cursor            int64
-	SchemaVersion     int16
-	FeedbackID        string
-	TeamID            pgtype.Text
-	GuestID           pgtype.Text
-	EventType         string
-	ActorKind         string
-	ActorReference    string
-	IdempotencyKey    string
-	RequestDigest     []byte
-	Text              pgtype.Text
-	Evidence          []byte
-	SourceState       []byte
-	OccurredAt        pgtype.Timestamptz
-	AuthorIdentityID  pgtype.Text
-	AuthorDisplayName pgtype.Text
-	AuthorVerified    bool
-}
-
-type ControlFeedbackEventClock struct {
-	ID         int16
-	NextCursor int64
-}
-
-type ControlFeedbackThread struct {
-	ID                string
-	SchemaVersion     int16
-	PreviewID         string
-	TeamID            pgtype.Text
-	GuestID           pgtype.Text
-	ServiceID         string
-	ServiceRunID      string
-	RunNumber         int64
-	ServiceName       string
-	PagePath          string
-	PageTitle         string
-	MessageCount      int64
-	LatestEventCursor int64
-	ReportText        string
-	AuthorDisplayName pgtype.Text
-	AuthorIdentityID  pgtype.Text
-	AuthorVerified    bool
-	Pin               []byte
-	Evidence          []byte
-	ReportSourceState []byte
-	State             string
-	CreatedAt         pgtype.Timestamptz
-	StateUpdatedAt    pgtype.Timestamptz
-	IdempotencyKey    string
-	RequestDigest     []byte
 }
 
 type ControlGuestTrial struct {
