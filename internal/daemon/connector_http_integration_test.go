@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -124,7 +123,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				ca := newTestCertificateAuthority(t)
 				const hostname = "target.private.integration.test"
 				var posts atomic.Int64
-				target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if endpoint && r.TLS == nil {
 						t.Errorf("approved HTTPS Host was not used: %s", r.Host)
 					}
@@ -148,15 +147,13 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 						_ = buffer.Flush()
 						_, _ = io.Copy(connection, buffer)
 					}
-				}))
-				target.TLS = serviceRuntimeTLS(t, ca, hostname)
-				target.Config.ErrorLog = log.New(io.Discard, "", 0)
+				})
+				var target *httptest.Server
 				if endpoint {
-					target.StartTLS()
+					target = startPrivateHTTPTestTarget(t, f.owner, handler, serviceRuntimeTLS(t, ca, hostname))
 				} else {
-					target.Start()
+					target = startPrivateHTTPTestTarget(t, f.owner, handler, nil)
 				}
-				t.Cleanup(target.Close)
 				directory := t.TempDir()
 				if err := os.WriteFile(filepath.Join(directory, "ca.pem"), ca.certificatePEM, 0600); err != nil {
 					t.Fatal(err)
