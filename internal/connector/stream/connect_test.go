@@ -160,21 +160,16 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	var listeners [2]net.Listener
 	var datagrams [2]*muxsession.QUICListener
 	for slot := range uint8(2) {
-		var listener net.Listener
+		// reserve UDP even for TCP fallback: the connector races both transports,
+		// so an unrelated QUIC listener must not acquire this fixture's address.
+		listener, packet, err := transporttest.ListenTCPUDP()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = listener.Close(); _ = packet.Close() })
 		var udp *muxsession.QUICListener
 		if transport == "quic" {
-			var packet net.PacketConn
-			listener, packet, err = transporttest.ListenTCPUDP()
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = listener.Close(); _ = packet.Close() })
 			udp, err = muxsession.ListenQUICPacket(packet, serverTLS, muxsession.QUICConfig{Config: fixtureDatagramConfig()})
-		} else {
-			listener, err = net.Listen("tcp", "127.0.0.1:0")
-			if err == nil {
-				t.Cleanup(func() { _ = listener.Close() })
-			}
 		}
 		if err != nil {
 			t.Fatal(err)
