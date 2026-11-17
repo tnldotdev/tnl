@@ -25,6 +25,8 @@ import { httpsOriginSchema, pathTextSchema, registrationIDSchema } from "../valu
 import { parseStatus } from "./status.js";
 import { parseAssignment } from "./app.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
+import type { PublicationRun } from "./run.js";
+export type { PublicationRun } from "./run.js";
 
 type PublisherCredentialFile = {
   readonly publisherCredentialFile: string;
@@ -84,6 +86,9 @@ export function validatePublicationOptions(
 
 export interface Publication {
   readonly url: `https://${string}`;
+  /** exact-run address, present only when run aliases are enabled. */
+  readonly runURL?: `https://${string}` | undefined;
+  readonly run?: PublicationRun | undefined;
   close(): Promise<void>;
   wait(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -259,6 +264,8 @@ async function publishServerUntraced(
   let endpoint = await runtime.start(directory, undefined, selection, options.signal);
   if (options.signal?.aborted) throw aborted();
   let currentURL: `https://${string}` | undefined;
+  let currentRun: PublicationRun | undefined;
+  let currentRunURL: `https://${string}` | undefined;
   let registration: z.output<typeof registrationSchema> | undefined;
   let uncertain = false;
   let unregisterReplyLost = false;
@@ -494,6 +501,12 @@ async function publishServerUntraced(
       if (currentURL === undefined) throw new TnlError("sdk.response_invalid");
       return currentURL;
     },
+    get run() {
+      return currentRun;
+    },
+    get runURL() {
+      return currentRunURL;
+    },
     close,
     wait: () => done,
     [Symbol.asyncDispose]: close,
@@ -526,6 +539,8 @@ async function publishServerUntraced(
       if (status.publishRunNumber < lastRun) throw new TnlError("sdk.response_invalid");
       lastRun = status.publishRunNumber;
     }
+    currentRun = status.run;
+    currentRunURL = status.runURL;
     if (status.routable) {
       if (status.publicURL === undefined) throw new TnlError("sdk.response_invalid");
       if (!readyReached) {
@@ -780,6 +795,12 @@ export async function publishFetch(
   return Object.freeze({
     get url(): `https://${string}` {
       return base.url;
+    },
+    get runURL() {
+      return base.runURL;
+    },
+    get run() {
+      return base.run;
     },
     close,
     async wait(): Promise<void> {

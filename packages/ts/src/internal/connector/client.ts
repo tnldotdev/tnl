@@ -541,6 +541,12 @@ export function createClient<const Services extends ServiceFacts = Record<never,
               get url() {
                 return base.url;
               },
+              get runURL() {
+                return base.runURL;
+              },
+              get run() {
+                return base.run;
+              },
               close,
               wait: () => base.wait(),
               [Symbol.asyncDispose]: close,

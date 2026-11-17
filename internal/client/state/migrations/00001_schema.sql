@@ -145,6 +145,8 @@ CREATE TABLE local_tunnels (
     target TEXT CHECK (target IS NULL OR target <> ''),
     framework TEXT CHECK (framework IS NULL OR framework <> ''),
     publish_run_number INTEGER CHECK (publish_run_number IS NULL OR publish_run_number > 0),
+    service_run_id TEXT CHECK (service_run_id IS NULL OR (length(service_run_id)=27 AND substr(service_run_id,1,5)='srun_')),
+    run_hostname TEXT CHECK (run_hostname IS NULL OR (run_hostname<>'' AND service_protocol='http' AND service_run_id IS NOT NULL)),
     state TEXT NOT NULL CHECK (state IN ('starting', 'provisioning', 'ready', 'draining', 'stopped', 'failed')),
     started_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -562,6 +564,8 @@ SELECT id,
         'service_protocol', service_protocol,
         'service_id', coalesce(service_id, ''),
         'publish_run_number', coalesce(publish_run_number, 0),
+        'service_run_id', coalesce(service_run_id, ''),
+        'run_hostname', coalesce(run_hostname, ''),
         'hostname', coalesce(hostname, ''),
         'public_url', CASE WHEN hostname IS NULL THEN '' ELSE 'https://' || hostname END,
         'target', coalesce(target, ''), 'framework', coalesce(framework, ''), 'failure', coalesce(failure_code, ''),
@@ -598,6 +602,7 @@ END;
 -- +goose StatementBegin
 CREATE TRIGGER project_publication_changed AFTER UPDATE ON local_tunnels
 WHEN NEW.state IS NOT OLD.state OR NEW.hostname IS NOT OLD.hostname
+    OR NEW.service_run_id IS NOT OLD.service_run_id OR NEW.run_hostname IS NOT OLD.run_hostname
     OR NEW.target IS NOT OLD.target OR NEW.publish_run_number IS NOT OLD.publish_run_number
     OR NEW.service_id IS NOT OLD.service_id OR NEW.framework IS NOT OLD.framework OR NEW.failure_code IS NOT OLD.failure_code
 BEGIN

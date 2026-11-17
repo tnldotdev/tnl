@@ -293,6 +293,8 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
                 "service",
                 "service_protocol",
                 "service_id",
+                "service_run_id",
+                "run_hostname",
                 "publish_run_number",
                 "public_port",
                 "hostname",
@@ -323,6 +325,15 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
             not in ("starting", "provisioning", "ready", "draining", "stopped", "failed", "stale")
         ):
             raise InvalidResponse()
+        if (
+            "service_run_id" in publication
+            and re.fullmatch(r"srun_[A-Za-z0-9]{22}", text(publication["service_run_id"])) is None
+        ):
+            raise InvalidResponse()
+        if "run_hostname" in publication:
+            hostname(publication["run_hostname"])
+            if "service_run_id" not in publication:
+                raise InvalidResponse()
         for key in (
             "tunnel_id",
             "server",

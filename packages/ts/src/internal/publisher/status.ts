@@ -1,6 +1,7 @@
 import * as z from "zod";
 import { TnlError } from "../../errors.js";
 import { parseValue } from "../validation.js";
+import { publicationRunSchema, type PublicationRun } from "./run.js";
 import {
   hostnameSchema,
   httpsOriginSchema,
@@ -21,6 +22,8 @@ const publicationSchema = z.strictObject({
   service: textSchema.exactOptional(),
   service_protocol: textSchema.exactOptional(),
   service_id: serviceIDSchema.exactOptional(),
+  service_run_id: publicationRunSchema.shape.serviceRunID.exactOptional(),
+  run_hostname: hostnameSchema.exactOptional(),
   publish_run_number: runNumberSchema.exactOptional(),
   public_port: runNumberSchema.exactOptional(),
   hostname: textSchema.exactOptional(),
@@ -85,7 +88,12 @@ function publicationStatus(item: z.output<typeof serviceStatusSchema>) {
     ...(item.failure === undefined ? {} : { failure: item.failure }),
   };
 }
-export type PublicationStatus = Readonly<ReturnType<typeof publicationStatus>>;
+export type PublicationStatus = Readonly<
+  ReturnType<typeof publicationStatus> & {
+    run?: PublicationRun;
+    runURL?: `https://${string}`;
+  }
+>;
 
 export function parseStatus(
   value: unknown,
@@ -120,5 +128,38 @@ export function parseStatus(
   if (item.registration_id !== registrationID || item.target !== target) return undefined;
   if (item.routable && (!item.registered || item.run_number === undefined))
     throw new TnlError("sdk.response_invalid");
-  return publicationStatus(item);
+  const publication = snapshot.publications?.find(
+    (candidate) => candidate.tunnel_id === item.tunnel_id,
+  );
+  if (publication?.run_hostname !== undefined && publication.service_run_id === undefined)
+    throw new TnlError("sdk.response_invalid");
+  if (
+    publication?.service_run_id !== undefined &&
+    (publication.service_id === undefined ||
+      publication.publish_run_number === undefined ||
+      publication.publish_run_number !== item.run_number)
+  )
+    throw new TnlError("sdk.response_invalid");
+  if (
+    publication?.run_hostname !== undefined &&
+    `https://${publication.run_hostname}` === item.public_url
+  )
+    throw new TnlError("sdk.response_invalid");
+  return {
+    ...publicationStatus(item),
+    ...(publication?.service_run_id === undefined || publication.service_id === undefined
+      ? {}
+      : {
+          run: Object.freeze({
+            serviceID: publication.service_id,
+            serviceRunID: publication.service_run_id,
+            runNumber: String(publication.publish_run_number),
+          }),
+        }),
+    ...(publication?.run_hostname === undefined
+      ? {}
+      : {
+          runURL: `https://${publication.run_hostname}` as const,
+        }),
+  };
 }
