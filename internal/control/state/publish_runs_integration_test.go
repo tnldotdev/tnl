@@ -73,9 +73,22 @@ func TestIntegrationPublishRunExpiryAndGatedReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	expiredAt := f.now.Add(time.Minute)
+	// maintenance gates new work, not the run's issued serving authority.
+	// persist the original one-minute expiry independently of publisher liveness.
+	setExpirationProgressServingDeadline(t, &f, expiredAt)
+	before := expirationProgressSnapshot(t, t.Context(), f.database, f.run.RunID)
+	if count, err := f.database.ExpireServiceRuns(t.Context(), f.now.Add(45*time.Second)); err != nil || count != 0 {
+		t.Fatal("gated cleanup confused publisher liveness with serving expiry", count, err)
+	}
+	if after := expirationProgressSnapshot(t, t.Context(), f.database, f.run.RunID); after != before {
+		t.Fatal("gated liveness-only cleanup changed existing run authority")
+	}
+	assertAssignmentTotals(t, f.database.pool, 2)
 	if count, err := f.database.ExpireServiceRuns(t.Context(), expiredAt); err != nil || count != 1 {
 		t.Fatal("gated cleanup did not expire the run", count, err)
 	}
+	assertExpirationProgressClosed(t, t.Context(), f.database, f.run.RunID)
+	assertAssignmentTotals(t, f.database.pool, 0)
 	if _, err := f.database.StartServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.RunNumber, f.publisher, expiredAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("gated replay revived expired publication authority", err)
 	}

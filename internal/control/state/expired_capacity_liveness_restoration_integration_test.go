@@ -13,8 +13,12 @@ func TestIntegrationExpirationRestorationProgressPastBusyOwner(t *testing.T) {
 	busy := newServicePublicationFixture(t)
 	other := newRestorationOtherTeamPublication(t, busy, "expiration", busy.now)
 	other.start(t, "first", busy.now.Add(time.Second))
-	d, at := busy.database, other.run.ExpiresAt
-	if busy.service.TeamID == other.service.TeamID || !busy.run.ExpiresAt.Before(at) {
+	// both actual rows must be serving-expired, not just past their separate
+	// publisher liveness deadlines, before the original five-second caller.
+	setExpirationProgressServingDeadline(t, &busy, busy.now.Add(45*time.Second))
+	setExpirationProgressServingDeadline(t, &other, busy.now.Add(46*time.Second))
+	d, at := busy.database, busy.now.Add(46*time.Second)
+	if busy.service.TeamID == other.service.TeamID || !busy.run.ServingUntil.Before(at) {
 		t.Fatal("busy expired candidate must precede a different team's expired run")
 	}
 	assertAssignmentTotals(t, d.pool, 4)
@@ -64,7 +68,7 @@ func TestIntegrationExpirationRestorationProgressPastBusyOwner(t *testing.T) {
 		var busyOpen, otherClosed bool
 		if err := d.pool.QueryRow(ctx, `SELECT
 			(SELECT closed_at IS NULL AND assignments_open FROM control.service_runs WHERE id=$1),
-			(SELECT state='closed' AND closed_at>=publisher_expires_at AND NOT assignments_open
+			(SELECT state='closed' AND closed_at>=publisher_expires_at AND closed_at>=serving_until AND NOT assignments_open
 			 FROM control.service_runs WHERE id=$2)`, busy.run.RunID, other.run.RunID).Scan(&busyOpen, &otherClosed); err != nil {
 			t.Fatal("observe unrelated expiration progress within the original five-second caller", err)
 		}
@@ -107,7 +111,7 @@ func TestIntegrationExpirationRestorationProgressPastBusyOwner(t *testing.T) {
 		t.Fatal("released owner did not finish within the same five-second caller", remaining, count, err)
 	}
 	var closed bool
-	if err := d.pool.QueryRow(ctx, `SELECT state='closed' AND closed_at>=publisher_expires_at AND NOT assignments_open
+	if err := d.pool.QueryRow(ctx, `SELECT state='closed' AND closed_at>=publisher_expires_at AND closed_at>=serving_until AND NOT assignments_open
 		FROM control.service_runs WHERE id=$1`, busy.run.RunID).Scan(&closed); err != nil || !closed {
 		t.Fatal("released busy run retained publication authority", err)
 	}
@@ -117,6 +121,8 @@ func TestIntegrationExpirationRestorationProgressPastBusyOwner(t *testing.T) {
 func TestIntegrationCapacityRestorationUnrelatedStartReclaimsExpiredReservations(t *testing.T) {
 	f := newServicePublicationFixture(t)
 	d, now := f.database, f.now
+	later := now.Add(45 * time.Second)
+	setExpirationProgressServingDeadline(t, &f, later)
 	other := newRestorationOtherTeamPublication(t, f, "capacity", now)
 	if other.service.TeamID == f.service.TeamID {
 		t.Fatal("capacity contrast requires different teams")
@@ -170,7 +176,6 @@ func TestIntegrationCapacityRestorationUnrelatedStartReclaimsExpiredReservations
 	assertAssignmentTotals(t, d.pool, 2)
 	// this retains admission-triggered reclamation, not cleanup followed by
 	// admission. do not run a sweep or start a background cleanup worker here.
-	later := f.run.ExpiresAt
 	started, err := d.StartServiceRun(t.Context(), other.service.ID, prepared.RunID, prepared.RunNumber, other.publisher, later)
 	if err != nil {
 		t.Fatal("unrelated start alone did not reclaim the expired first run's reservations", err)
@@ -180,7 +185,7 @@ func TestIntegrationCapacityRestorationUnrelatedStartReclaimsExpiredReservations
 	}
 	assertAssignmentTotals(t, d.pool, 2)
 	var closed bool
-	if err := d.pool.QueryRow(t.Context(), `SELECT state='closed' AND closed_at>=publisher_expires_at AND NOT assignments_open
+	if err := d.pool.QueryRow(t.Context(), `SELECT state='closed' AND closed_at>=publisher_expires_at AND closed_at>=serving_until AND NOT assignments_open
 		AND (SELECT count(*)=2 FROM control.service_connection_slots WHERE service_run_id=$1 AND NOT session_open)
 		FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&closed); err != nil || !closed {
 		t.Fatal("expired first run retained publication or reservation authority", err)
