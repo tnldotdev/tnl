@@ -84,7 +84,7 @@ func serviceProblem(t *testing.T, w *httptest.ResponseRecorder, status int, code
 	}
 }
 
-func serviceFixture(t *testing.T) (*companyHTTPFixture, authorityv1.ControlSessionResponse, authorityv1.ControlSessionResponse, controlstate.Team, controlstate.ServiceRecord) {
+func serviceActorTeamFixture(t *testing.T) (*companyHTTPFixture, authorityv1.ControlSessionResponse, authorityv1.ControlSessionResponse, controlstate.Team) {
 	t.Helper()
 	f := newCompanyHTTPFixture(t, "service_actor")
 	if err := f.d.PrepareVisitorSigningKeys(t.Context(), "https://control.example.test", f.now); err != nil {
@@ -95,6 +95,12 @@ func serviceFixture(t *testing.T) (*companyHTTPFixture, authorityv1.ControlSessi
 	if err != nil {
 		t.Fatal(err)
 	}
+	return f, owner, recipient, team
+}
+
+func serviceFixture(t *testing.T) (*companyHTTPFixture, authorityv1.ControlSessionResponse, authorityv1.ControlSessionResponse, controlstate.Team, controlstate.ServiceRecord) {
+	t.Helper()
+	f, owner, recipient, team := serviceActorTeamFixture(t)
 	service, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, "api", "service", controlstate.ServicePlacement{}, f.now, controlstate.ServiceMetadata{Protocol: "http"}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -127,12 +133,24 @@ func serviceActorNamedService(t *testing.T, f *companyHTTPFixture, team, actor s
 }
 
 func TestIntegrationServiceActorRequestBindingAndCurrentManager(t *testing.T) {
-	f, owner, recipient, team, service := serviceFixture(t)
-	target := "/v1/service/teams/" + team.ID + "/services"
-	base := "/v1/service/services/" + service.ID
-	if _, err := f.sql.Exec(t.Context(), `INSERT INTO control.local_project_services(team_id,project_key,source_fingerprint,service,worktree_key,service_id,created_by_identity_id) VALUES($1,'project-key',$2,'api','checkout-key',$3,$4)`, team.ID, strings.Repeat("a", 64), service.ID, owner.Identity.Identity.Id); err != nil {
+	f, owner, recipient, team := serviceActorTeamFixture(t)
+	ownerCtx := controlstate.WithControlPrincipal(t.Context(), f.principal(owner))
+	// realization captures local source ownership and its project binding in
+	// one transaction; attaching a binding to a standalone service is invalid.
+	local, err := f.d.RealizeLocalProjectService(ownerCtx, controlstate.RealizeLocalProjectServiceRequest{
+		TeamID: team.ID, ActorID: owner.Identity.Identity.Id, ProjectKey: "project-key",
+		SourceFingerprint: strings.Repeat("a", 64), Service: "api", WorktreeKey: "checkout-key",
+		Configuration: controlstate.ProjectServiceConfiguration{Target: "localhost:3000"}, Now: f.now,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	service, err := f.d.GetService(ownerCtx, local.ServiceID, owner.Identity.Identity.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := "/v1/service/teams/" + team.ID + "/services"
+	base := "/v1/service/services/" + service.ID
 	// use actual generated HTTP operations as well as raw substitution probes.
 	client, err := authorityv1.NewClientWithResponses(f.server.URL, authorityv1.WithHTTPClient(f.server.Client()), authorityv1.WithRequestEditorFn(func(_ context.Context, r *http.Request) error {
 		r.Header.Set("Authorization", "Bearer "+companyWebsiteSecret)
