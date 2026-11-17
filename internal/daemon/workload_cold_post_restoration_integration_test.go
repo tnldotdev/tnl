@@ -166,6 +166,7 @@ func TestIntegrationWorkloadColdPOSTRestoration(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				request.Header.Set("Content-Type", "application/octet-stream")
 				request.Header.Set("Authorization", "Bearer application-owned")
 				// no GET, delayed body, custom pre-byte promotion, retry loop or
 				// idempotency key precedes this fresh client's first POST.

@@ -105,6 +105,7 @@ func TestIntegrationURLPublisherTerminatesVisitorTLSLocally(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	request.Header.Set("Content-Type", "text/plain")
 	response, body, err := fixture.visitor.request(request)
 	if err != nil {
 		t.Fatal(err)
