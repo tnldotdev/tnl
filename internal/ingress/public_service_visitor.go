@@ -444,7 +444,11 @@ func waitCopyCapacity(ctx context.Context, deadline time.Time, done <-chan struc
 	select {
 	case <-done:
 	case <-ctx.Done():
-		return context.Cause(ctx)
+		select {
+		case <-done:
+		default:
+			return context.Cause(ctx)
+		}
 	case <-timer.C:
 		select {
 		case <-done:
