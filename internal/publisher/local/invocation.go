@@ -60,6 +60,13 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	if err != nil {
 		return publisherprotocol.Registration{}, err
 	}
+	var supplied *invocationCertificate
+	if request.Certificate != nil {
+		supplied = &invocationCertificate{}
+		if err := supplied.replace(request.Certificate.CertificatePem, request.Certificate.PrivateKeyPem); err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+	}
 	file := request.PublisherCredentialFile
 	if file == "" && request.PublisherIdentityId == "" && request.Deployment == nil {
 		file = os.Getenv("TNL_PUBLISHER_CREDENTIAL_FILE")
@@ -192,6 +199,9 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	}
 	service := publisherapp.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}
 	cfg.ShutdownDeadline = deadline
+	if supplied != nil {
+		cfg.SuppliedCertificate = supplied.current
+	}
 	cfg.ShutdownContext = a.manager.PublicationShutdownContext(id)
 	cfg.TransportTLS = &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg.InspectionMode = policy.Mode
@@ -212,7 +222,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		Target: request.Target, ServiceID: saved.Id, ServiceProtocol: saved.Protocol}
 	configuration := publisherapp.Configuration{Service: publication, Inspection: policy, Cleanup: cleanup}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request, telemetryDisabled: request.TelemetryDisabled}
+	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request, telemetryDisabled: request.TelemetryDisabled, certificate: supplied}
 	a.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return publisherprotocol.Registration{}, err

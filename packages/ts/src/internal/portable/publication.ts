@@ -12,11 +12,17 @@ import type {
 import type { PublisherStorageHost } from "./storage-host.js";
 import { preserveRequestHeaders } from "./request.js";
 import { publicationRunSchema, publicationRunURLSchema } from "../publication_run.js";
+import {
+  resolveServiceCertificate,
+  serviceCertificateSourceSchema,
+  type ServiceCertificateSource,
+} from "../publication_certificate.js";
 
 const optionsSchema = z.strictObject({
   targetHostname: z.string().min(1).exactOptional(),
   telemetry: z.boolean().exactOptional(),
   signal: z.instanceof(AbortSignal).exactOptional(),
+  certificate: serviceCertificateSourceSchema.exactOptional(),
   requirePostQuantum: z.boolean().exactOptional(),
   access: z
     .union([
@@ -53,7 +59,9 @@ export function portablePublicationOptions(
   if (
     !parsed.success ||
     (named &&
-      Object.keys(options).some((key) => !["targetHostname", "telemetry", "signal"].includes(key)))
+      Object.keys(options).some(
+        (key) => !["targetHostname", "telemetry", "signal", "certificate"].includes(key),
+      ))
   )
     throw new TnlError("sdk.configuration_invalid");
   // there is no listener hostname or native telemetry process in this host.
@@ -62,6 +70,7 @@ export function portablePublicationOptions(
   const { access, limits, requirePostQuantum, signal } = parsed.data;
   return {
     signal,
+    certificate: parsed.data.certificate,
     temporary: {
       ...(requirePostQuantum === undefined ? {} : { require_post_quantum: requirePostQuantum }),
       ...(access === undefined
@@ -159,11 +168,13 @@ export async function publishPortable(options: {
   readonly handler: FetchHandler;
   readonly storage: PublisherStorageHost;
   readonly signal: AbortSignal;
+  readonly certificate?: ServiceCertificateSource | undefined;
   readonly retain: (publication: PortablePublication) => void;
   readonly release: (publication: PortablePublication) => void;
 }): Promise<PortablePublication> {
   const lifetime = new AbortController();
   const signal = AbortSignal.any([options.signal, lifetime.signal]);
+  const certificateSource = options.certificate;
   if (signal.aborted) throw new DOMException("publication canceled", "AbortError");
   if (typeof options.bridge.publish !== "function") throw new TnlError("sdk.wasm_invalid");
   let raw: unknown;
@@ -172,6 +183,15 @@ export async function publishPortable(options: {
       storage: options.storage,
       controlFetch: globalThis.fetch.bind(globalThis),
       signal,
+      ...(certificateSource === undefined
+        ? {}
+        : {
+            certificate: async (signal: AbortSignal) =>
+              resolveServiceCertificate(
+                certificateSource,
+                AbortSignal.any([signal, lifetime.signal, options.signal]),
+              ),
+          }),
       async fetch(request) {
         if (signal.aborted) throw new DOMException("publication canceled", "AbortError");
         try {

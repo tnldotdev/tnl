@@ -47,6 +47,10 @@ type lifecycleControl struct {
 
 func (*lifecycleControl) ControlURL() string { return "https://control.example.test" }
 
+func (*lifecycleControl) MarkSuppliedServiceCertificateInstalled(context.Context, string, string, int64, string, string, credentials.ServiceRunToken) (controlv1.SuppliedServiceCertificateInstallation, error) {
+	return controlv1.SuppliedServiceCertificateInstallation{}, ErrPrivateStream
+}
+
 func (*lifecycleControl) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
 	return controlv1.ControlDiscovery{BrowserLoginAvailable: new(true)}, nil
 }

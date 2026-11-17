@@ -102,6 +102,10 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 	if options.Deployment == "" || options.Service != "" && options.Temporary != nil {
 		return js.Undefined(), errArguments
 	}
+	certificateSource, err := publisherCertificateSource(host)
+	if err != nil {
+		return js.Undefined(), err
+	}
 	credential, err := auth.ParseDeploymentCredential(options.Credential)
 	if err != nil {
 		return js.Undefined(), err
@@ -186,6 +190,7 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 	runtimeMu.Unlock()
 	ready, closed := newPublisherDeferred(), newPublisherDeferred()
 	prepared.Config.CertificateStore = storage
+	prepared.Config.SuppliedCertificate = certificateSource
 	prepared.Config.WebSocketOnly = true
 	// the host owns relay TLS; native TLS options cannot cross this boundary.
 	prepared.Config.RelayWebSocket = muxsession.WebSocketConnector{}

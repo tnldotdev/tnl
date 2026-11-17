@@ -2,12 +2,15 @@ package protocol
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	api "github.com/tnldotdev/tnl/pkg/api/publisher/local/v1"
 )
 
 func TestStrictRequestBounds(t *testing.T) {
@@ -25,6 +28,27 @@ func TestStrictRequestBounds(t *testing.T) {
 		if err := Decode(httptest.NewRecorder(), r, &value); (err == nil) != test.valid {
 			t.Fatalf("decode = %v", err)
 		}
+	}
+}
+
+func TestSuppliedCertificatePrivateRequestBoundsAndRedaction(t *testing.T) {
+	request := Registration{Version: 1, RegistrationID: "registration", Owner: "0123456789abcdef0123456789abcdef",
+		Certificate: &api.SuppliedServiceCertificateMaterial{CertificatePem: strings.Repeat("c", 90<<10), PrivateKeyPem: "PRIVATE KEY"}}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/v1/renew", "/v1/prepare"} {
+		r := httptest.NewRequest("POST", path, strings.NewReader(string(encoded)))
+		r.Header.Set("Content-Type", "application/json")
+		var restored Registration
+		err := Decode(httptest.NewRecorder(), r, &restored)
+		if (err == nil) != (path == "/v1/renew") {
+			t.Fatal("certificate request widened an unrelated body limit", path, err)
+		}
+	}
+	if strings.Contains(fmt.Sprintf("%+v %#v", request, request), "PRIVATE KEY") {
+		t.Fatal("registration formatting exposed replacement material")
 	}
 }
 

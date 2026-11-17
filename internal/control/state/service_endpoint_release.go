@@ -86,7 +86,7 @@ func (d *Database) ReleaseServiceEndpoint(ctx context.Context, service, actor st
 	    retired_issuance_revision=COALESCE((SELECT max(created_revision) FROM control.acme_orders WHERE service_id=$1),0),
 	    reusable_after=GREATEST($4::timestamptz+interval '7 days',COALESCE(
 	      (SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=$5),$4::timestamptz),
-	      COALESCE((SELECT max(certificate_expires_at) FROM control.service_runs WHERE service_id=$1),$4::timestamptz))
+	      COALESCE((SELECT max(control.service_run_certificate_retention(id)) FROM control.service_runs WHERE service_id=$1),$4::timestamptz))
 	    WHERE service_id=$1 AND ingress_pool_id=$2 AND port=$3 AND state='held'`,
 		service, row.IngressPoolID, port, now, row.CertificateScope)
 	if err != nil {

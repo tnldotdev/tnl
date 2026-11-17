@@ -499,7 +499,7 @@ UPDATE control.service_runs
 SET publisher_expires_at = LEAST(publisher_expires_at, $1::timestamptz),
     serving_until = LEAST(serving_until, $1::timestamptz)
 WHERE id = $2
-RETURNING preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, run_hostname, run_alias_parent, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open
+RETURNING preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, run_hostname, run_alias_parent, require_post_quantum, certificate_issuance_id, supplied_certificate_sha256, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open
 `
 
 type LimitGuestServiceRunExpiryParams struct {
@@ -543,6 +543,7 @@ func (q *Queries) LimitGuestServiceRunExpiry(ctx context.Context, arg LimitGuest
 		&i.RunAliasParent,
 		&i.RequirePostQuantum,
 		&i.CertificateIssuanceID,
+		&i.SuppliedCertificateSha256,
 		&i.CertificateExpiresAt,
 		&i.CreatedAt,
 		&i.PublisherExpiresAt,

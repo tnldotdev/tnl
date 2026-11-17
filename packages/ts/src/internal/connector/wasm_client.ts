@@ -477,6 +477,7 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
               handler,
               storage,
               signal,
+              certificate: parsed.certificate,
               retain: (publication) => publications.add(publication),
               release: (publication) => publications.delete(publication),
             });

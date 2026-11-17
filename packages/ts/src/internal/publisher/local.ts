@@ -213,7 +213,9 @@ function runtimeRequestUntraced(
   const payload = get ? undefined : JSON.stringify(body);
   if (
     (get && body !== undefined) ||
-    (payload !== undefined && Buffer.byteLength(payload) > 64 * 1024)
+    (payload !== undefined &&
+      Buffer.byteLength(payload) >
+        (operation === "publications/register" || operation === "renew" ? 256 : 64) * 1024)
   )
     throw new TnlError("sdk.configuration_invalid");
   return new Promise((resolve, reject) => {
