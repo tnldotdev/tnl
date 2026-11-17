@@ -49,6 +49,9 @@ type nativeDefaultLeaseObservation struct {
 }
 
 func (f *nativeDefaultFaults) outageReady(now, sessionUntil time.Time) bool {
+	// pair authority is capped by the signed visitor permission, whose expiry
+	// has whole-second precision rather than the parent session's microseconds.
+	sessionUntil = sessionUntil.Truncate(time.Second)
 	connectorDeadline := minTime(f.connectorUntil, minTime(f.runUntil, f.permissionUntil))
 	publisherDeadline := minTime(f.publisherOwnerUntil, f.tokenUntil)
 	earliest := minTime(connectorDeadline, publisherDeadline)
@@ -363,12 +366,14 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	// could close the target first and make the packet-pause assertion vacuous.
 	var checks int
 	var latest, publisherUntil, publisherOwnerUntil, runUntil, permissionUntil, tokenUntil time.Time
+	var connectorReported, publisherOwnerReported time.Time
 	var changed bool
 	phaseDeadline := time.Now().Add(20 * time.Second)
 	for {
 		faults.mu.Lock()
 		checks, latest, publisherUntil, publisherOwnerUntil = faults.renewals, faults.connectorUntil, faults.publisherUntil, faults.publisherOwnerUntil
 		runUntil, permissionUntil, tokenUntil = faults.runUntil, faults.permissionUntil, faults.tokenUntil
+		connectorReported, publisherOwnerReported = faults.connectorLease.reported, faults.publisherOwnerLease.reported
 		changed = faults.changedPair
 		if faults.outageReady(time.Now(), session.RefreshExpiresAt) {
 			faults.outage = true
@@ -377,7 +382,9 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		}
 		faults.mu.Unlock()
 		if !time.Now().Before(phaseDeadline) {
-			t.Fatal("default renewal did not leave a retained-owner interval between installation expiry and inner QUIC idleness")
+			t.Fatalf("default renewal did not leave a retained-owner interval between installation expiry and inner QUIC idleness: session=%s connector_reported=%s publisher_owner_reported=%s connector=%s run=%s permission=%s token=%s delivery=%s publisher_owner=%s",
+				session.RefreshExpiresAt.Format(time.RFC3339Nano), connectorReported.Format(time.RFC3339Nano), publisherOwnerReported.Format(time.RFC3339Nano),
+				latest.Format(time.RFC3339Nano), runUntil.Format(time.RFC3339Nano), permissionUntil.Format(time.RFC3339Nano), tokenUntil.Format(time.RFC3339Nano), publisherUntil.Format(time.RFC3339Nano), publisherOwnerUntil.Format(time.RFC3339Nano))
 		}
 		select {
 		case <-time.After(time.Second):
@@ -542,7 +549,8 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 
 func TestDefaultNativeOutagePhase(t *testing.T) {
 	now := time.Date(2026, time.November, 15, 12, 0, 0, 0, time.UTC)
-	until := now.Add(65 * time.Second)
+	sessionUntil := now.Add(65*time.Second + 900*time.Millisecond)
+	until := sessionUntil.Truncate(time.Second)
 	for _, test := range []struct {
 		name   string
 		change func(*nativeDefaultFaults)
@@ -567,7 +575,7 @@ func TestDefaultNativeOutagePhase(t *testing.T) {
 				connectorLease: nativeDefaultLeaseObservation{reported: until}, publisherOwnerLease: nativeDefaultLeaseObservation{reported: until},
 			}
 			test.change(f)
-			if got := f.outageReady(now, until); got != test.want {
+			if got := f.outageReady(now, sessionUntil); got != test.want {
 				t.Fatalf("outage ready = %t, want %t", got, test.want)
 			}
 		})
