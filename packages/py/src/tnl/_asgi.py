@@ -16,20 +16,17 @@ from urllib.parse import urlsplit
 import uvicorn
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ._native import NativeRuntime, _join_cleanup, _shutdown_deadline, _shutdown_timestamp
+from ._native import NativeRuntime, _join_cleanup, _shutdown_deadline
 from ._protocol import (
-    Endpoint,
     InvalidResponse,
     NativeUnavailable,
-    PublicationCleanupFailed,
     RegistrationLost,
     Status,
     TnlError,
-    parse_assignment,
-    parse_registration,
     parse_status,
     service_name,
 )
+from ._registration import NativeRegistration
 
 _native = NativeRuntime()
 _alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -257,42 +254,35 @@ class Publication:
         environment: Mapping[str, str] | None = None,
         shutdown_deadline: Callable[[], float | None] | None = None,
     ) -> None:
-        self._native = native
-        self._deployment = None if deployment is None else dict(deployment)
+        deployment = None if deployment is None else dict(deployment)
         self._service = service
         self._on_close = on_close
-        self._environment = dict(os.environ if environment is None else environment)
+        environment = dict(os.environ if environment is None else environment)
         self._pid = os.getpid()
         self._loop = asyncio.get_running_loop()
         self._server = server
         self._serve_task = serve_task
         self._listener = listener
-        self._directory = directory
-        self._state_dir = state_dir
-        self._endpoint: Endpoint | None = None
         self._id = "ivk_" + "".join(secrets.choice(_alphabet) for _ in range(22))
-        self._owner = secrets.token_hex(16)
+        owner = secrets.token_hex(16)
         self._target = f"http://127.0.0.1:{listener.getsockname()[1]}"
         self._payload: dict[str, object] = {
             "version": 1,
             "invocation_id": self._id,
-            "owner": self._owner,
+            "owner": owner,
             "pid": os.getpid(),
             "target": self._target,
             "telemetry_disabled": not telemetry
-            or self._environment.get("TNL_NO_TELEMETRY", "").lower() in {"1", "true"},
+            or environment.get("TNL_NO_TELEMETRY", "").lower() in {"1", "true"},
         }
-        if self._deployment is not None:
-            self._payload["deployment"] = self._deployment
+        if deployment is not None:
+            self._payload["deployment"] = deployment
         if publisher_credential_file is not None:
             self._payload["publisher_credential_file"] = publisher_credential_file
         if publisher_identity_id is not None:
             self._payload["publisher_identity_id"] = publisher_identity_id
         if server_url is not None:
             self._payload["server_url"] = server_url
-        self._registration: dict[str, object] | None = None
-        self._registration_uncertain = False
-        self._unregister_reply_lost = False
         self._initial_registration: asyncio.Task[None] | None = None
         if access_mode is not None:
             self._payload["access_mode"] = access_mode
@@ -302,15 +292,37 @@ class Publication:
             self._payload["ip"] = ip
         if limits is not None:
             self._payload["limits"] = _limit_payload(limits)
+        payload = (
+            self._payload
+            if self._service is None
+            else {
+                "version": 1,
+                "directory": directory,
+                "service": self._service,
+                "framework": "python",
+                "owner": owner,
+                "pid": self._pid,
+                "telemetry_disabled": self._payload["telemetry_disabled"],
+            }
+        )
+        self._registration = NativeRegistration(
+            native,
+            directory,
+            state_dir,
+            payload,
+            service=self._service,
+            invocation_id=self._id if self._service is None else None,
+            publications=deployment is not None,
+            environment=environment,
+            target=self._target,
+        )
         self._closed = False
         self._closing_event = asyncio.Event()
         self._close_lock = asyncio.Lock()
         self._cleanup_task: asyncio.Task[None] | None = None
         self._close_complete = False
         self._shutdown_until: float | None = None
-        self._shutdown_timestamp: str | None = None
         self._parent_shutdown_deadline = shutdown_deadline
-        self._registration_lock = asyncio.Lock()
         self._monitor: asyncio.Task[None] | None = None
         self._url: str | None = None
         self._run = 0
@@ -330,69 +342,20 @@ class Publication:
         return self._url
 
     async def _register(self) -> None:
-        async with self._registration_lock:
+        async with self._registration.lock:
             if self._closed:
                 return
-            self._endpoint = await self._native.start(
-                self._directory,
-                invocation_id=self._id if self._service is None else None,
-                service=self._service,
-                state_dir=self._state_dir,
-                publications=self._deployment is not None,
-                environment=self._environment,
-            )
-            await self._acknowledge_registration()
-
-    async def _acknowledge_registration(self) -> None:
-        assert self._endpoint is not None
-        # native may commit before the reply is lost. keep the exact invocation,
-        # owner, PID, target, and policy until its idempotent reply is reconciled.
-        self._registration_uncertain = True
-        try:
+            await self._registration.discover()
             if self._service is not None:
-                assignment = parse_assignment(
-                    await self._native.request(
-                        self._endpoint,
-                        "prepare",
-                        {
-                            "version": 1,
-                            "directory": self._directory,
-                            "service": self._service,
-                            "framework": "python",
-                            "owner": self._owner,
-                            "pid": self._pid,
-                            "telemetry_disabled": self._payload["telemetry_disabled"],
-                        },
-                    ),
-                    self._endpoint,
-                )
-                self._registration = {
-                    "version": 1,
-                    "registration_id": assignment.registration_id,
-                    "owner": self._owner,
-                    "target": self._target,
-                }
-                # prepare acknowledged this reservation before url validation.
-                self._registration_uncertain = False
+                assignment = await self._registration.prepare()
+                self._registration.accept()
                 if assignment.public_url:
                     if self._url is not None and self._url != assignment.public_url:
                         raise InvalidResponse()
                     self._url = assignment.public_url
-                self._registration_uncertain = True
-                await self._native.request(self._endpoint, "register", self._registration)
-                self._registration_uncertain = False
+                await self._registration.bind(self._target)
                 return
-            self._registration = parse_registration(
-                await self._native.request(self._endpoint, "publications/register", self._payload),
-                self._owner,
-                self._target,
-            )
-        except (NativeUnavailable, InvalidResponse, asyncio.CancelledError):
-            raise
-        except TnlError:
-            self._registration_uncertain = False
-            raise
-        self._registration_uncertain = False
+            await self._registration.acquire_invocation()
 
     async def start(self) -> None:
         self._initial_registration = asyncio.create_task(self._register())
@@ -418,7 +381,7 @@ class Publication:
                 parent = self._parent_shutdown_deadline()
                 if parent is not None:
                     self._shutdown_until = min(self._shutdown_until, parent)
-            self._shutdown_timestamp = _shutdown_timestamp(self._shutdown_until)
+            self._registration.begin_shutdown(self._shutdown_until)
         return self._shutdown_until
 
     async def _unregister(self) -> None:
@@ -429,47 +392,7 @@ class Publication:
                 await self._initial_registration
             except (TnlError, asyncio.CancelledError):
                 pass
-        async with self._registration_lock:
-            for attempt in range(3):
-                try:
-                    if self._registration_uncertain and not (
-                        self._service is not None and self._registration is not None
-                    ):
-                        await self._acknowledge_registration()
-                    break
-                except NativeUnavailable:
-                    if attempt == 2:
-                        raise
-                    await asyncio.sleep(0.1)
-            if self._registration is not None and self._endpoint is not None:
-                for attempt in range(3):
-                    try:
-                        self._begin_shutdown()
-                        assert self._shutdown_timestamp is not None
-                        await self._native.request(
-                            self._endpoint,
-                            "unregister",
-                            {**self._registration, "shutdown_deadline": self._shutdown_timestamp},
-                        )
-                        break
-                    except RegistrationLost:
-                        # absence is not an acknowledgement of this cleanup.
-                        raise NativeUnavailable() from None
-                    except PublicationCleanupFailed:
-                        self._registration = None
-                        self._registration_uncertain = False
-                        self._unregister_reply_lost = False
-                        raise
-                    except NativeUnavailable:
-                        self._unregister_reply_lost = True
-                        if attempt == 2:
-                            raise
-                        await asyncio.sleep(0.1)
-                    except InvalidResponse:
-                        self._unregister_reply_lost = True
-                        raise
-                self._registration = None
-                self._unregister_reply_lost = False
+        await self._registration.unregister(self._begin_shutdown(), attempts=3)
 
     def _observe(self, status: Status) -> None:
         if status.public_url is not None:
@@ -496,11 +419,12 @@ class Publication:
                         TnlError("sdk.listener_failed", "ASGI listener stopped during publication")
                     )
                     return
-                assert self._endpoint is not None and self._registration is not None
+                registration = self._registration.current
+                assert registration is not None
                 status = parse_status(
-                    await self._native.request(self._endpoint, "status"),
+                    await self._registration.status(),
                     self._service or self._id,
-                    str(self._registration["registration_id"]),
+                    registration.registration_id,
                     self._target,
                 )
                 if status is not None:
@@ -509,7 +433,7 @@ class Publication:
                 if self._closed or self._finished.done():
                     return
                 if asyncio.get_running_loop().time() - last_renew >= 5:
-                    await self._native.request(self._endpoint, "renew", self._registration)
+                    await self._registration.renew()
                     last_renew = asyncio.get_running_loop().time()
             except asyncio.CancelledError:
                 return
@@ -579,6 +503,7 @@ class Publication:
             until = self._begin_shutdown()
             self._server._shutdown_until = until
             cleanup: list[BaseException] = []
+            joining = self._registration.stop()
             for server in self._server.servers:
                 server.close()
             if self._initial_registration is not None and not self._initial_registration.done():
@@ -594,6 +519,7 @@ class Publication:
                             # this exact monitor was canceled above; joined
                             # groups with independent failures are not suppressed.
                             pass
+                    cleanup.extend(await joining)
                     await self.unregister()
             except BaseException as cause:
                 cleanup.append(cause)
@@ -615,7 +541,7 @@ class Publication:
                         cleanup.append(joined)
             finally:
                 self._listener.close()
-            self._close_complete = self._registration is None and not self._registration_uncertain
+            self._close_complete = self._registration.complete
             if self._close_complete and self._on_close is not None:
                 self._on_close(self)
             failure: BaseException | None = None

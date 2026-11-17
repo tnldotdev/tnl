@@ -3,29 +3,23 @@ import * as path from "node:path";
 import { TnlCleanupError, TnlError } from "../../errors.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
-import {
-  hostnameSchema,
-  httpsOriginSchema,
-  pathTextSchema,
-  registrationIDSchema,
-  serviceNameSchema,
-} from "../values.js";
+import { pathTextSchema, serviceNameSchema } from "../values.js";
 import { operation, independent, scheduled, bound as observeBound } from "../tracing.js";
 import { canonicalLoopbackTarget, type CanonicalTarget } from "./target.js";
-import {
-  startRuntime,
-  runtimeRequest,
-  canceledRuntimeRequest,
-  type RuntimeEndpoint,
-  type EndpointSelection,
-} from "./local.js";
+import { startRuntime, runtimeRequest, canceledRuntimeRequest } from "./local.js";
 import {
   listeningTarget,
   isBunServer,
   observeListenerClose,
   type LocalHTTPServer,
 } from "./register.js";
-import { projectRuntimeSchema, type ProjectRuntime } from "../project/runtime.js";
+import type { ProjectRuntime } from "../project/runtime.js";
+import {
+  NativeRegistration,
+  recoverableRegistration as recoverable,
+  type Assignment,
+  type RegistrationRuntime,
+} from "./registration.js";
 export { startRuntime, runtimeRequest } from "./local.js";
 
 export const prepareOptionsSchema = z.strictObject({
@@ -46,55 +40,11 @@ export interface PreparedService extends ProjectRuntime {
   close(signal?: AbortSignal): Promise<void>;
 }
 
-const assignmentSchema = z
-  .strictObject({
-    version: z.literal(1),
-    registration_id: registrationIDSchema,
-    service: serviceNameSchema,
-    hostname: z.union([hostnameSchema, z.literal("")]),
-    public_url: z.union([httpsOriginSchema, z.literal("")]),
-    project: projectRuntimeSchema,
-  })
-  .refine(({ service, hostname, public_url, project }) => {
-    const metadata = project.services[service];
-    return (
-      project.dev &&
-      (hostname === ""
-        ? public_url === "" && metadata === undefined
-        : metadata?.protocol === "http" &&
-          metadata.hostname === hostname &&
-          metadata.url === `https://${hostname}` &&
-          public_url === (metadata.public ? metadata.url : ""))
-    );
-  })
-  .transform(({ registration_id, service, hostname, public_url, project }) => ({
-    registrationID: registration_id,
-    service,
-    hostname: hostname === "" ? undefined : hostname,
-    publicURL: public_url === "" ? undefined : public_url,
-    project,
-  }))
-  .readonly();
-type Assignment = z.output<typeof assignmentSchema>;
-type AppRegistration = { readonly endpoint: RuntimeEndpoint; readonly assignment: Assignment };
-type AppRegistrationState =
-  | { readonly phase: "prepared"; readonly registration: AppRegistration }
-  | { readonly phase: "released"; readonly registration: AppRegistration }
-  | { readonly phase: "closed"; readonly registration: AppRegistration };
-interface Dependencies {
-  start(
-    directory: string,
-    binary?: string,
-    selection?: EndpointSelection,
-    signal?: AbortSignal,
-  ): Promise<RuntimeEndpoint>;
-  request(
-    endpoint: RuntimeEndpoint,
-    operation: string,
-    body?: unknown,
-    signal?: AbortSignal,
-  ): Promise<unknown>;
-}
+type AppRegistrationState = {
+  readonly phase: "prepared" | "released" | "closed";
+  readonly native: NativeRegistration;
+};
+type Dependencies = RegistrationRuntime;
 const defaultDependencies: Dependencies = { start: startRuntime, request: runtimeRequest };
 
 function telemetryDisabled(options: PrepareOptions): boolean {
@@ -183,7 +133,11 @@ async function createPreparedServiceUntraced(
     pid: process.pid,
     telemetry_disabled: telemetryDisabled(options),
   };
-  const endpoint = await dependencies.start(directory, undefined, selection, signal);
+  const native = new NativeRegistration(dependencies, directory, selection, {
+    kind: "configured",
+    request: prepareRequest,
+  });
+  await native.discover(signal);
   signal?.throwIfAborted();
   let shutdownUntil: string | undefined;
   const beginShutdown = () => (shutdownUntil ??= new Date(Date.now() + 10_000).toISOString());
@@ -193,36 +147,27 @@ async function createPreparedServiceUntraced(
   signal?.addEventListener("abort", captureShutdown, { once: true });
   let assignment: Assignment;
   try {
-    assignment = parsePreparedAssignment(
-      await dependencies.request(endpoint, "prepare", prepareRequest, signal),
-    );
+    assignment = parsePreparedAssignment(await native.acquire(signal));
   } finally {
     signal?.removeEventListener("abort", captureShutdown);
   }
   if (signal?.aborted) {
     try {
-      await dependencies.request(
-        endpoint,
-        "unregister",
-        {
-          version: 1,
-          registration_id: assignment.registrationID,
-          owner,
-          shutdown_deadline: beginShutdown(),
-        },
-        AbortSignal.timeout(Math.max(0, Date.parse(beginShutdown()) - Date.now())),
-      );
+      await native.unregister({
+        deadline: beginShutdown(),
+        signal: AbortSignal.timeout(Math.max(0, Date.parse(beginShutdown()) - Date.now())),
+      });
     } catch (cleanupError) {
       throw new TnlCleanupError(signal.reason, cleanupError);
     }
     signal.throwIfAborted();
   }
-  if (endpoint.scope !== "app" || assignment.service !== endpoint.service)
+  if (native.endpoint.scope !== "app" || assignment.service !== native.endpoint.service)
     throw new TnlError("sdk.response_invalid");
   const initial = assignment;
   let state: AppRegistrationState = {
     phase: "prepared",
-    registration: { endpoint, assignment },
+    native,
   };
   let target: CanonicalTarget | undefined;
   let server: LocalHTTPServer | undefined;
@@ -238,38 +183,27 @@ async function createPreparedServiceUntraced(
     pending = result;
     return result;
   };
-  const registration = (current: AppRegistration = state.registration) => ({
-    version: 1,
-    registration_id: current.assignment.registrationID,
-    owner,
-    ...(target === undefined ? {} : { target }),
-  });
   const reconnect = (signal?: AbortSignal) =>
     operation("sdk.app.recover", async () => {
-      const replacementEndpoint = await dependencies.start(directory, undefined, selection, signal);
-      const replacement = parsePreparedAssignment(
-        await dependencies.request(replacementEndpoint, "prepare", prepareRequest, signal),
-      );
+      const replacementNative = new NativeRegistration(dependencies, directory, selection, {
+        kind: "configured",
+        request: prepareRequest,
+      });
+      await replacementNative.discover(signal);
+      const replacement = parsePreparedAssignment(await replacementNative.acquire(signal));
       if (
         replacement.publicURL !== initial.publicURL ||
         replacement.service !== initial.service ||
-        replacementEndpoint.scope !== "app" ||
-        replacement.service !== replacementEndpoint.service
+        replacementNative.endpoint.scope !== "app" ||
+        replacement.service !== replacementNative.endpoint.service
       ) {
         const failure = new TnlError("sdk.response_invalid");
         const until = beginShutdown();
         try {
-          await dependencies.request(
-            replacementEndpoint,
-            "unregister",
-            {
-              version: 1,
-              registration_id: replacement.registrationID,
-              owner,
-              shutdown_deadline: until,
-            },
-            AbortSignal.timeout(Math.max(0, Date.parse(until) - Date.now())),
-          );
+          await replacementNative.unregister({
+            deadline: until,
+            signal: AbortSignal.timeout(Math.max(0, Date.parse(until) - Date.now())),
+          });
         } catch (cleanup) {
           throw new TnlCleanupError(failure, cleanup);
         }
@@ -279,7 +213,7 @@ async function createPreparedServiceUntraced(
         shutdownUntil = undefined;
         state = {
           phase: "prepared",
-          registration: { endpoint: replacementEndpoint, assignment: replacement },
+          native: replacementNative,
         };
       }
     });
@@ -287,15 +221,13 @@ async function createPreparedServiceUntraced(
     detachListener?.();
     detachListener = undefined;
     clearTimeout(timer);
-    const current = state.registration;
+    const current = state.native;
     const bounded = AbortSignal.timeout(Math.max(0, Date.parse(until) - Date.now()));
-    await dependencies.request(
-      current.endpoint,
-      "unregister",
-      { ...registration(current), shutdown_deadline: until },
-      signal === undefined ? bounded : AbortSignal.any([bounded, signal]),
-    );
-    if (state.phase !== "closed") state = { phase: "released", registration: current };
+    await current.unregister({
+      deadline: until,
+      signal: signal === undefined ? bounded : AbortSignal.any([bounded, signal]),
+    });
+    if (state.phase !== "closed") state = { phase: "released", native: current };
   };
   const schedule = () => {
     if (state.phase !== "prepared") return;
@@ -308,12 +240,7 @@ async function createPreparedServiceUntraced(
             await release();
             return;
           }
-          await dependencies.request(
-            state.registration.endpoint,
-            "renew",
-            registration(),
-            lifetime.signal,
-          );
+          await state.native.renew(lifetime.signal);
         } catch (error) {
           if (lifetime.signal.aborted && !canceledRuntimeRequest(error, lifetime.signal))
             throw error;
@@ -321,12 +248,7 @@ async function createPreparedServiceUntraced(
             try {
               await reconnect(lifetime.signal);
               if (state.phase === "prepared" && target !== undefined)
-                await dependencies.request(
-                  state.registration.endpoint,
-                  "register",
-                  registration(),
-                  lifetime.signal,
-                );
+                await state.native.bind(target, lifetime.signal);
             } catch (cause) {
               if (lifetime.signal.aborted && !canceledRuntimeRequest(cause, lifetime.signal))
                 throw cause;
@@ -368,12 +290,12 @@ async function createPreparedServiceUntraced(
       detachListener = observeListenerClose(listener, stopped);
     }
     try {
-      await dependencies.request(state.registration.endpoint, "register", registration(), signal);
+      await state.native.bind(bound, signal);
     } catch (error) {
       if (!recoverable(error) || isClosed() || signal?.aborted) throw error;
       await reconnect(signal);
       if (isClosed()) throw new TnlError("sdk.registration_stale");
-      await dependencies.request(state.registration.endpoint, "register", registration(), signal);
+      await state.native.bind(bound, signal);
     }
     if (isClosed() || (listener !== undefined && !isBunServer(listener) && !listener.listening))
       throw new TnlError("sdk.listener_failed");
@@ -382,7 +304,7 @@ async function createPreparedServiceUntraced(
   const close = (signal?: AbortSignal): Promise<void> => {
     if (closing !== undefined) return closing;
     const until = beginShutdown();
-    state = { phase: "closed", registration: state.registration };
+    state = { phase: "closed", native: state.native };
     lifetime.abort(new TnlError("sdk.registration_stale"));
     clearTimeout(timer);
     process.off("beforeExit", beforeExit);
@@ -454,23 +376,12 @@ async function createPreparedServiceUntraced(
   return handle;
 }
 
-function recoverable(error: unknown): boolean {
-  return (
-    error instanceof TnlError &&
-    (error.code === "sdk.dev_unavailable" || error.code === "sdk.registration_stale")
-  );
-}
 function validateOptions(options: PrepareOptions): void {
   parseValue(prepareOptionsSchema, options, "sdk.configuration_invalid");
 }
-export function parseAssignment(value: unknown): Assignment {
-  return parseValue(assignmentSchema, value, "sdk.response_invalid");
-}
-
 // acquisition may precede endpoint allocation, but app/framework preparation
 // promises its selected canonical endpoint before the listener starts.
-function parsePreparedAssignment(value: unknown): Assignment {
-  const assignment = parseAssignment(value);
-  if (assignment.hostname === undefined) throw new TnlError("sdk.response_invalid");
+function parsePreparedAssignment(assignment: Assignment | undefined): Assignment {
+  if (assignment?.hostname === undefined) throw new TnlError("sdk.response_invalid");
   return assignment;
 }

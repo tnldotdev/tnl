@@ -122,6 +122,8 @@ def test_initial_registration_reply_loss_reconciles_and_joins_before_asgi_shutdo
                     await asyncio.wait_for(task, 4)
                 assert shutdown.is_set()
                 assert len(list(tmp_path.glob("worker-*"))) == 1
+                requests = (tmp_path / "invocations.ndjson").read_text().splitlines()
+                assert len(requests) == 2 and requests[0] == requests[1]
             finally:
                 (tmp_path / "release-register").touch()
                 (tmp_path / "release-drain").touch()

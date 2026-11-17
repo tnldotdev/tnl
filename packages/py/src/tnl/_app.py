@@ -6,7 +6,6 @@ import asyncio
 import os
 import secrets
 import socket
-from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
@@ -14,35 +13,15 @@ from starlette.types import ASGIApp
 from uvicorn.supervisors import ChangeReload
 
 from ._asgi import _OwnedServer
-from ._native import NativeRuntime, _join_cleanup, _shutdown_deadline, _shutdown_timestamp
+from ._native import NativeRuntime, _join_cleanup, _shutdown_deadline
 from ._protocol import (
-    Endpoint,
     InvalidResponse,
     NativeUnavailable,
     RegistrationLost,
     TnlError,
-    parse_assignment,
     service_name,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class _Preparing:
-    pass
-
-
-@dataclass(frozen=True, slots=True)
-class _Prepared:
-    endpoint: Endpoint
-    registration_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class _Closed:
-    registration: _Prepared | None
-
-
-type _RegistrationPhase = _Preparing | _Prepared | _Closed
+from ._registration import NativeRegistration
 
 
 class PreparedService:
@@ -54,52 +33,41 @@ class PreparedService:
         native: NativeRuntime,
         telemetry: bool = True,
     ) -> None:
-        self._directory = directory
-        self._service = service
-        self._state_dir = state_dir
-        self._native = native
         if type(telemetry) is not bool:
             raise TnlError("sdk.configuration_invalid", "telemetry must be a boolean")
-        self._telemetry_disabled = not telemetry or os.getenv("TNL_NO_TELEMETRY", "").lower() in {
-            "1",
-            "true",
-        }
-        self._owner = secrets.token_hex(16)
-        self._phase: _RegistrationPhase = _Preparing()
-        self._target: str | None = None
-        self._lock = asyncio.Lock()
+        self._registration = NativeRegistration(
+            native,
+            directory,
+            state_dir,
+            {
+                "version": 1,
+                "directory": directory,
+                "framework": "python",
+                "owner": secrets.token_hex(16),
+                "pid": os.getpid(),
+                "telemetry_disabled": not telemetry
+                or os.getenv("TNL_NO_TELEMETRY", "").lower() in {"1", "true"},
+                **({} if service is None else {"service": service}),
+            },
+            service=service,
+        )
         self._renewal: asyncio.Task[None] | None = None
-        self._requests: set[asyncio.Task[object]] = set()
         self._preparations: set[asyncio.Task[None]] = set()
         self._closed_error = RegistrationLost()
         self._cleanup: asyncio.Task[None] | None = None
         self._shutdown_until: float | None = None
-        self._preparation_uncertain = False
-        self._prepared_cleanup: _Prepared | None = None
         self.service = ""
         self.hostname = ""
         self.public_url = ""
 
-    async def _request(
-        self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
-    ) -> object:
-        task = asyncio.create_task(self._native.request(endpoint, operation, payload))
-        self._requests.add(task)
-        try:
-            return await task
-        finally:
-            self._requests.discard(task)
-
     async def _prepare(self) -> None:
-        if isinstance(self._phase, _Closed):
+        if self._registration.closed:
             raise self._closed_error
         task = asyncio.create_task(self._prepare_work())
         self._preparations.add(task)
         task.add_done_callback(self._preparation_finished)
-        # track native discovery and reservation together so close joins the
-        # complete acquisition before collecting registrations to unregister.
         await task
-        if isinstance(self._phase, _Closed):
+        if self._registration.closed:
             raise self._closed_error
 
     def _preparation_finished(self, task: asyncio.Task[None]) -> None:
@@ -108,115 +76,56 @@ class PreparedService:
             task.exception()
 
     async def _prepare_work(self) -> None:
-        if isinstance(self._phase, _Closed):
+        try:
+            await self._registration.discover()
+        except RegistrationLost:
+            if self._registration.closed:
+                raise self._closed_error from None
+            raise
+        assignment = await self._registration.prepare()
+        if self._registration.closed:
             raise self._closed_error
-        endpoint = await self._native.start(
-            self._directory, service=self._service, state_dir=self._state_dir
-        )
-        if isinstance(self._phase, _Closed):
-            raise self._closed_error
-        payload: dict[str, object] = {
-            "version": 1,
-            "directory": self._directory,
-            "framework": "python",
-            "owner": self._owner,
-            "pid": os.getpid(),
-            "telemetry_disabled": self._telemetry_disabled,
-        }
-        if self._service is not None:
-            payload["service"] = self._service
-        self._preparation_uncertain = True
-        assignment = parse_assignment(await self._request(endpoint, "prepare", payload), endpoint)
-        self._prepared_cleanup = _Prepared(endpoint, assignment.registration_id)
-        self._preparation_uncertain = False
         # acquisition may precede endpoint allocation; prepared apps may not.
         if not assignment.hostname:
             raise InvalidResponse()
-        ident, name, host, url = (
-            assignment.registration_id,
-            assignment.service,
-            assignment.hostname,
-            assignment.public_url,
-        )
+        name, host, url = assignment.service, assignment.hostname, assignment.public_url
         if self.service and (url != self.public_url or name != self.service):
             # compensate this rejected registration without stopping its owner.
             until = self._shutdown_until or _shutdown_deadline()
-            if asyncio.get_running_loop().time() >= until:
-                raise TimeoutError("registration cleanup timed out; remote cleanup is unconfirmed")
-            async with asyncio.timeout_at(until):
-                await self._native.request(
-                    endpoint,
-                    "unregister",
-                    {
-                        "version": 1,
-                        "registration_id": ident,
-                        "owner": self._owner,
-                        "shutdown_deadline": _shutdown_timestamp(until),
-                    },
-                )
-            self._preparation_uncertain = False
-            self._prepared_cleanup = None
+            await self._registration.discard_candidate(until)
             raise InvalidResponse()
-        if isinstance(self._phase, _Closed):
-            raise self._closed_error
-        self._phase = _Prepared(endpoint, ident)
-        self._preparation_uncertain = False
+        self._registration.accept()
         self.service, self.hostname, self.public_url = name, host, url
-
-    def _registration(self, prepared: _Prepared | None = None) -> dict[str, object]:
-        if prepared is None:
-            if not isinstance(self._phase, _Prepared):
-                raise RegistrationLost()
-            prepared = self._phase
-        value: dict[str, object] = {
-            "version": 1,
-            "registration_id": prepared.registration_id,
-            "owner": self._owner,
-        }
-        if self._target is not None:
-            value["target"] = self._target
-        return value
 
     async def start(self) -> None:
         await self._prepare()
-        if isinstance(self._phase, _Closed):
+        if self._registration.closed:
             raise self._closed_error
         self._renewal = asyncio.create_task(self._renew())
 
     async def register(self, target: str) -> None:
-        async with self._lock:
-            if isinstance(self._phase, _Closed):
-                raise RegistrationLost()
-            self._target = target
-            prepared = self._phase
-            assert isinstance(prepared, _Prepared)
+        async with self._registration.lock:
             try:
-                await self._request(prepared.endpoint, "register", self._registration(prepared))
+                await self._registration.bind(target)
             except (NativeUnavailable, RegistrationLost):
+                if self._registration.closed:
+                    raise
                 await self._prepare()
-                prepared = self._phase
-                assert isinstance(prepared, _Prepared)
-                await self._request(prepared.endpoint, "register", self._registration(prepared))
+                await self._registration.bind(target)
 
     async def _renew(self) -> None:
-        while not isinstance(self._phase, _Closed):
+        while not self._registration.closed:
             await asyncio.sleep(5)
-            async with self._lock:
-                prepared = self._phase
-                if isinstance(prepared, _Closed):
+            async with self._registration.lock:
+                if self._registration.closed:
                     return
-                assert isinstance(prepared, _Prepared)
                 try:
-                    await self._request(prepared.endpoint, "renew", self._registration(prepared))
+                    await self._registration.renew()
                 except (NativeUnavailable, RegistrationLost):
                     try:
                         await self._prepare()
-                        prepared = self._phase
-                        assert isinstance(prepared, _Prepared)
-                        if self._target is not None:
-                            await self._request(
-                                prepared.endpoint, "register", self._registration(prepared)
-                            )
+                        if self._registration.target is not None:
+                            await self._registration.bind(self._registration.target)
                     except TnlError:
                         pass
                 except TnlError:
@@ -227,71 +136,49 @@ class PreparedService:
             deadline = self._shutdown_until or _shutdown_deadline()
             if until is not None:
                 deadline = min(deadline, until)
-            self._shutdown_until = deadline
+            self._shutdown_until = self._registration.begin_shutdown(deadline)
             self._cleanup = asyncio.create_task(self._close(deadline))
         await _join_cleanup(self._cleanup)
 
     async def _close(self, until: float) -> None:
-        prepared = self._phase if isinstance(self._phase, _Prepared) else self._prepared_cleanup
-        self._phase = _Closed(prepared)
-        workers: set[asyncio.Task[object] | asyncio.Task[None]] = set(self._requests)
-        workers.update(self._preparations)
+        joining = self._registration.stop()
+        workers = set(self._preparations)
         if self._renewal is not None:
             workers.add(self._renewal)
         for worker in workers:
-            worker.cancel()
+            if not worker.done():
+                worker.cancel()
+        pending_work: set[asyncio.Task[None] | asyncio.Task[list[BaseException]]] = {
+            joining,
+            *workers,
+        }
+        done, pending = await asyncio.wait(
+            pending_work, timeout=max(0, until - asyncio.get_running_loop().time())
+        )
         failures: list[BaseException] = []
-        if workers:
-            done, pending = await asyncio.wait(
-                workers, timeout=max(0, until - asyncio.get_running_loop().time())
-            )
-            for worker in done:
-                if not worker.cancelled():
-                    cause = worker.exception()
-                    if (
-                        cause is not None
-                        and cause is not self._closed_error
-                        and all(cause is not failure for failure in failures)
-                    ):
-                        failures.append(cause)
-            if pending:
-                failures.append(
-                    TimeoutError("publication shutdown timed out; remote cleanup is unconfirmed")
-                )
-                for worker in pending:
-                    worker.add_done_callback(
-                        lambda task: None if task.cancelled() else task.exception()
-                    )
-        if self._preparation_uncertain:
-            failures.append(
-                TnlError(
-                    "sdk.dev_unavailable", "native registration cleanup could not be confirmed"
-                )
-            )
-        registrations: list[_Prepared] = []
-        for candidate in (prepared, self._prepared_cleanup):
-            if candidate is not None and candidate not in registrations:
-                registrations.append(candidate)
-        for registration in registrations:
-            try:
-                if asyncio.get_running_loop().time() >= until:
-                    raise TimeoutError(
-                        "publication shutdown timed out; remote cleanup is unconfirmed"
-                    )
-                async with asyncio.timeout_at(until):
-                    await self._native.request(
-                        registration.endpoint,
-                        "unregister",
-                        {
-                            **self._registration(registration),
-                            "shutdown_deadline": _shutdown_timestamp(until),
-                        },
-                    )
-            except BaseException as cause:
+        for completed in done:
+            if completed.cancelled():
+                continue
+            cause = completed.exception()
+            if cause is not None and cause is not self._closed_error:
                 failures.append(cause)
-        if not failures:
-            self._phase = _Closed(None)
-            self._prepared_cleanup = None
+        if joining in done and not joining.cancelled() and joining.exception() is None:
+            for cause in joining.result():
+                if all(cause is not failure for failure in failures):
+                    failures.append(cause)
+        if pending:
+            failures.append(
+                TimeoutError("publication shutdown timed out; remote cleanup is unconfirmed")
+            )
+            for unfinished in pending:
+                unfinished.add_done_callback(
+                    lambda task: None if task.cancelled() else task.exception()
+                )
+        try:
+            if not pending:
+                await self._registration.unregister(until)
+        except BaseException as cause:
+            failures.append(cause)
         if len(failures) == 1:
             raise failures[0]
         if failures:

@@ -462,12 +462,9 @@ export function createClient<const Services extends ServiceFacts = Record<never,
           )
             throw new TnlError("sdk.configuration_invalid");
           const work = (async () => {
-            const {
-              publishServer,
-              publishFetch,
-              validatePublicationOptions,
-              publicationCleanupFailed,
-            } = await import("../publisher/publication.js");
+            const { publishServer, publishFetch, validatePublicationOptions } =
+              await import("../publisher/publication.js");
+            const { publicationCleanupFailed } = await import("../publisher/registration.js");
             if (closed) throw closedError;
             validatePublicationOptions(options, service !== undefined);
             const selection: PublicationSelection =

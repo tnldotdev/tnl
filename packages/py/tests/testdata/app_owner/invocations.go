@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"reflect"
 	"sync"
 	"syscall"
 	"time"
@@ -105,7 +104,6 @@ func serveInvocations(cleanupReplyLoss string) error {
 	}
 	endpoint := caps.Owner()
 	var preparation sync.Mutex
-	requests := map[string]publisherprotocol.Invocation{}
 	boundary := (&localapi.Server{Capabilities: caps, Manager: manager, Database: database, Project: root, Invocation: func(requestContext context.Context, request publisherprotocol.Invocation) (publisherprotocol.Registration, error) {
 		preparation.Lock()
 		defer preparation.Unlock()
@@ -116,24 +114,32 @@ func serveInvocations(cleanupReplyLoss string) error {
 		if err := os.WriteFile(filepath.Join(root, "invocation.json"), encoded, 0600); err != nil {
 			return publisherprotocol.Registration{}, err
 		}
+		// record wire evidence, not an alternate invocation replay registry.
+		evidence, err := os.OpenFile(filepath.Join(root, "invocations.ndjson"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		_, writeErr := evidence.Write(append(encoded, '\n'))
+		if err := errors.Join(writeErr, evidence.Close()); err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		configured := false
 		for _, service := range manager.Snapshot().Services {
-			if service.Name == request.InvocationId && service.RegistrationID != "" {
-				if !reflect.DeepEqual(requests[service.Name], request) {
-					return publisherprotocol.Registration{}, publisherapp.ErrOwnerConflict
-				}
-				err := manager.RenewTarget(service.RegistrationID, request.Owner, request.Target)
-				return publisherprotocol.Registration{Version: 1, RegistrationID: service.RegistrationID, Owner: request.Owner, Target: request.Target}, err
+			if service.Name == request.InvocationId {
+				configured = true
+				break
 			}
 		}
-		if err := manager.AddService(publisherapp.Service{Name: request.InvocationId, Directory: root, ServiceProtocol: "http", Readiness: publisherapp.Readiness{Path: "/"}}); err != nil {
-			return publisherprotocol.Registration{}, err
+		if !configured {
+			if err := manager.AddService(publisherapp.Service{Name: request.InvocationId, Directory: root, ServiceProtocol: "http", Readiness: publisherapp.Readiness{Path: "/"}}); err != nil {
+				return publisherprotocol.Registration{}, err
+			}
 		}
 		id, err := manager.Reserve(request.InvocationId, request.Owner, request.Pid, "https://ephemeral.member.example.test")
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}
 		err = manager.RegisterContext(requestContext, id, request.Owner, request.Target, "python")
-		requests[request.InvocationId] = request
 		return publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, err
 	}}).Handler()
 	var first sync.Once

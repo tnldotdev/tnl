@@ -18,6 +18,16 @@ async def main() -> None:
     assert not hasattr(tnl, "open")
     client = tnl.create_client(project="acme/sdk-publication")
     async with client.deployment("production") as deployment:
+        if sys.argv[1] == "python-lost-reply":
+            try:
+                await deployment.publish(tnl.handler(endpoint), access="anonymous")
+            except tnl.TnlError as cause:
+                assert cause.code == "sdk.dev_unavailable"
+            else:
+                raise AssertionError("lost registration reply was accepted")
+            await deployment.aclose()
+            print(json.dumps({"recovered": True}), flush=True)
+            return
         async with await deployment.publish(
             tnl.handler(endpoint),
             access="restricted" if sys.argv[1] == "python-restricted" else "anonymous",
