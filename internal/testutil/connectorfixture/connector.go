@@ -185,11 +185,15 @@ func (n *Connector) Retire(ctx context.Context, pairID string, body controlv1.Co
 	}
 	n.mu.Lock()
 	p.retired = true
-	control := p.control
-	n.mu.Unlock()
-	if control != nil {
-		control.Retire()
+	// fence new admissions and stop existing application work, but retain the
+	// control channel for the connector's joined terminal/close exchange. durable
+	// retirement is not a remote control-stream reset or proof of cleanup.
+	p.mu.Lock()
+	for _, visitor := range p.seen {
+		visitor.cancel()
 	}
+	p.mu.Unlock()
+	n.mu.Unlock()
 	return receipt, nil
 }
 
@@ -227,7 +231,7 @@ func (n *Connector) accept(connection net.Conn, slot int) {
 			}
 		}
 		message, err := proof.Message()
-		if pair == nil || err != nil || proof.ConnectionSlot != slot || !ed25519.Verify(pair.public, message, proof.Signature) {
+		if pair == nil || pair.retired || err != nil || proof.ConnectionSlot != slot || !ed25519.Verify(pair.public, message, proof.Signature) {
 			return nil, errConnectorFixture
 		}
 		r := receipt()
@@ -248,15 +252,22 @@ func (n *Connector) accept(connection net.Conn, slot int) {
 	}
 	defer carrier.Close()
 	_ = session.HandleConnectorLegControl(n.ctx, func(_ context.Context, selection tunnelv1.ConnectorLegBinding) error {
+		n.mu.Lock()
+		defer n.mu.Unlock()
 		pair.mu.Lock()
 		defer pair.mu.Unlock()
-		if len(pair.nonces[slot]) != 0 || !selection.Matches(*hello.ConnectorPairLegProof) {
+		if pair.retired || len(pair.nonces[slot]) != 0 || !selection.Matches(*hello.ConnectorPairLegProof) {
 			return errConnectorFixture
 		}
 		pair.nonces[slot] = bytes.Clone(hello.ConnectorPairLegProof.Nonce)
 		pair.paths[slot] <- carrier
 		return nil
 	}, func(context.Context, tunnelv1.ConnectorPairLegProof) (tunnelv1.ConnectorPairLegAccepted, error) {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		if pair.retired {
+			return tunnelv1.ConnectorPairLegAccepted{}, errConnectorFixture
+		}
 		return receipt(), nil
 	})
 }
@@ -346,14 +357,17 @@ func (n *Connector) serve(p *connectorPair, ready chan<- error) {
 			if err != nil || !bytes.Equal(public, p.public) || !ed25519.Verify(public, message, signature) || !visitorsubject.Equal(p.response.Subject, entry.Subject) || entry.PairID != p.response.PairId || entry.ServiceID != n.service || entry.ServiceRunID != n.run || entry.SourceIP != "127.0.0.1" {
 				return
 			}
+			n.mu.Lock()
 			p.mu.Lock()
 			replay := p.seen[entry.VisitorConnectionID] != nil
-			if !replay {
+			retired := p.retired
+			if !replay && !retired {
 				visitor = NewJoinedVisitor(control.Context, entry, p.response.ExpiresAt, stream.Close)
 				p.seen[entry.VisitorConnectionID] = visitor
 			}
 			p.mu.Unlock()
-			if replay {
+			n.mu.Unlock()
+			if replay || retired {
 				return
 			}
 			stopped := make(chan struct{})
