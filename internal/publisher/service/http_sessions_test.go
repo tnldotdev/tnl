@@ -44,7 +44,11 @@ func serviceHTTPSessionFixture(t *testing.T, control *visitorfixture.HTTPControl
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(closeHTTP)
+	t.Cleanup(func() {
+		if err := closeHTTP(); err != nil {
+			t.Error(err)
+		}
+	})
 	control.Lease = frontend.Policy
 	control.Prepare = func(ctx context.Context, source json.RawMessage, response controlv1.VisitorTokenResponse, parent time.Time) error {
 		_, err := frontend.browser.PrepareToken(ctx, source, response, parent)

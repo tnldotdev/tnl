@@ -32,6 +32,9 @@ func Select(ctx context.Context, control ServiceReader, project clientproject.Pr
 	if key != "" {
 		if config.SelectedDeployment(project.Config) == "local" {
 			source := project.LocalPublicationIdentity()
+			if source.Key == "" || project.LocalWorktreeKey() == "" {
+				return controlv1.ServiceSummary{}, failure.Wrap("identify local service", failure.ClientStateUnavailable, errors.New("project is not bound to client state"))
+			}
 			params := controlv1.GetLocalProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey()}
 			bound, err := control.GetLocalProjectService(ctx, source.Key, key, params)
 			if errors.Is(err, clientcontrol.ErrNotFound) {

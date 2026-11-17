@@ -200,7 +200,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	if prepared.sourceKey == [32]byte{} {
 		return nil, nil, ErrPrivateStream
 	}
-	closeHTTP := func() {}
+	closeHTTP := func() error { return nil }
 	var httpFrontend HTTP
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 		var proof *httpaccess.ReadinessProof
@@ -219,6 +219,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 			ResponseHooks: prepared.httpResponseHooks,
 			Feedback:      config.Feedback, PreviewID: config.PreviewID,
 			PublicEndpoint: prepared.managedPublic, BrowserLoginAvailable: config.BrowserLoginAvailable,
+			State:          profile,
 			ProjectService: config.ProjectService, ProjectRoot: config.ProjectRoot, Demo: config.Demo,
 			Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 			RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
@@ -236,8 +237,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 				Connections: prepared.serviceHTTPRequests.Limits().Concurrency}
 			prepared.httpProxy, err = target.NewHTTPProxy(ctx, prepared.managedHostname, prepared.httpResponseHooks)
 			if err != nil {
-				closeHTTP()
-				return nil, nil, err
+				return nil, nil, errors.Join(err, closeHTTP())
 			}
 		}
 	}
@@ -271,7 +271,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	}
 	cache, err := profile.CertificatesForPublisher(prepared.Preparation.TeamId, config.PublisherIdentityID, *prepared.Preparation.CertificatePlan)
 	if err != nil {
-		closeHTTP()
+		err = errors.Join(err, closeHTTP())
 		if prepared.httpProxy != nil {
 			err = errors.Join(err, prepared.httpProxy.Close())
 		}
@@ -283,10 +283,10 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	certificateCtx, cancel := context.WithCancel(ctx)
 	return func() error { return certificates.Maintain(certificateCtx) }, func() error {
 		cancel()
-		closeHTTP()
+		err := closeHTTP()
 		if prepared.httpProxy != nil {
-			return prepared.httpProxy.Close()
+			err = errors.Join(err, prepared.httpProxy.Close())
 		}
-		return nil
+		return err
 	}, nil
 }

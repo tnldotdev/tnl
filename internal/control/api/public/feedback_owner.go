@@ -1,238 +1,30 @@
 package public
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
-	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (h *handler) ownerFeedbackDecision(ctx context.Context, principal controlReadPrincipal, thread controlstate.FeedbackThread) error {
-	if _, member := principal.teamIDs[thread.TeamID]; !member {
-		return authorization.ErrForbidden
-	}
-	return h.feedback.AuthorizeFeedbackService(ctx, thread.ServiceID, principal.identityID, time.Now())
-}
-
-func feedbackOwnerFailure(response http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, authorization.ErrUnauthenticated):
-		writeBearerProblem(response)
-	case errors.Is(err, authorization.ErrForbidden), errors.Is(err, controlstate.ErrFeedbackAccess), errors.Is(err, controlstate.ErrServiceAccess):
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-	default:
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "feedback authorization is unavailable")
-	}
-}
-
-func (h *handler) getOwnerFeedback(response http.ResponseWriter, request *http.Request, id string) (controlstate.FeedbackThread, string, bool) {
-	principal, ok := h.authorizeReads(response, request)
-	if !ok {
-		return controlstate.FeedbackThread{}, "", false
-	}
-	if h.feedback == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "feedback is unavailable")
-		return controlstate.FeedbackThread{}, "", false
-	}
-	thread, err := h.feedback.GetFeedback(request.Context(), id)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "read feedback thread", err)
-		return controlstate.FeedbackThread{}, "", false
-	}
-	err = h.ownerFeedbackDecision(request.Context(), principal, thread)
-	if err != nil {
-		feedbackOwnerFailure(response, err)
-		return controlstate.FeedbackThread{}, "", false
-	}
-	return thread, principal.identityID, true
-}
-
-func (h *handler) GetFeedbackThread(response http.ResponseWriter, request *http.Request, feedbackID controlv1.FeedbackID) {
-	thread, _, ok := h.getOwnerFeedback(response, request, feedbackID)
-	if !ok {
+func (h *handler) AuthorizeImplementerFeedback(w http.ResponseWriter, r *http.Request) {
+	var body controlv1.AuthorizeImplementerFeedbackRequest
+	if decodeJSON(w, r, &body) != nil || !body.Operation.Valid() || body.Operation == "report" {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid feedback authorization")
 		return
 	}
-	result, err := feedbackThreadResponse(thread)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "encode feedback thread", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, result)
-}
-
-func (h *handler) ListFeedbackThreads(response http.ResponseWriter, request *http.Request, _ controlv1.ListFeedbackThreadsParams) {
-	principal, ok := h.authorizeReads(response, request)
+	principal, ok := h.authorizeReads(w, r)
 	if !ok {
-		return
-	}
-	teamID := request.URL.Query().Get("team_id")
-	if _, member := principal.teamIDs[teamID]; !member {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
 		return
 	}
 	if h.feedback == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "feedback is unavailable")
+		writeProblem(w, 503, controlv1.Unavailable, "feedback authorization is unavailable")
 		return
 	}
-	page, err := h.feedback.ListFeedbackForTeam(request.Context(), teamID, request.URL.Query().Get("cursor"))
+	decision, err := h.feedback.AuthorizeImplementerFeedback(r.Context(), principal.identityID, body.ServiceId, body.PreviewId, string(body.Operation), time.Now())
 	if err != nil {
-		writeControlStateProblem(request.Context(), response, "list feedback threads", err)
+		writeFeedbackProblem(r.Context(), w, "authorize implementer feedback", err)
 		return
 	}
-	manageable := make([]controlstate.FeedbackThread, 0, len(page.Threads))
-	for _, thread := range page.Threads {
-		if err := h.ownerFeedbackDecision(request.Context(), principal, thread); err == nil {
-			manageable = append(manageable, thread)
-		} else if !errors.Is(err, authorization.ErrForbidden) && !errors.Is(err, controlstate.ErrServiceAccess) && !errors.Is(err, controlstate.ErrFeedbackAccess) {
-			feedbackOwnerFailure(response, err)
-			return
-		}
-	}
-	page.Threads = manageable
-	result, err := feedbackThreadPageResponse(page)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "encode feedback list", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, result)
-}
-
-func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *http.Request, feedbackID controlv1.FeedbackID, _ controlv1.AppendFeedbackEventParams) {
-	var body controlv1.AppendFeedbackEventRequest
-	if err := decodeJSONLimited(response, request, &body, 64<<10); err != nil || !body.Type.Valid() {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback event")
-		return
-	}
-	thread, identity, ok := h.getOwnerFeedback(response, request, feedbackID)
-	if !ok {
-		return
-	}
-	write, err := feedbackEventWrite(controlv1.FeedbackEventType(body.Type), body.Text, body.Evidence, body.SourceState)
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback event")
-		return
-	}
-	write.FeedbackID = thread.ID
-	write.IdempotencyKey = request.Header.Get("Idempotency-Key")
-	write.Actor = controlstate.FeedbackActor{
-		Kind: "implementer", IdentityID: identity,
-	}
-	event, err := h.feedback.AppendFeedback(request.Context(), write, time.Now())
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "append feedback event", err)
-		return
-	}
-	result, err := feedbackEventResponse(event)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "encode feedback event", err)
-		return
-	}
-	writeJSON(response, http.StatusCreated, result)
-}
-
-func (h *handler) ListFeedbackThreadEvents(response http.ResponseWriter, request *http.Request, feedbackID controlv1.FeedbackID, _ controlv1.ListFeedbackThreadEventsParams) {
-	thread, _, ok := h.getOwnerFeedback(response, request, feedbackID)
-	if !ok {
-		return
-	}
-	after, err := feedbackAfterCursor(request)
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback cursor")
-		return
-	}
-	page, err := h.feedback.ListFeedbackEventsForThread(request.Context(), thread.ID, after)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "list feedback thread events", err)
-		return
-	}
-	result, err := feedbackEventPageResponse(page)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "encode feedback events", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, result)
-}
-
-func (h *handler) ListFeedbackEvents(response http.ResponseWriter, request *http.Request, _ controlv1.ListFeedbackEventsParams) {
-	principal, ok := h.authorizeReads(response, request)
-	if !ok {
-		return
-	}
-	teamID := request.URL.Query().Get("team_id")
-	if _, member := principal.teamIDs[teamID]; !member {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-		return
-	}
-	after, err := feedbackAfterCursor(request)
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback cursor")
-		return
-	}
-	if h.feedback == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "feedback is unavailable")
-		return
-	}
-	page, err := h.feedback.ListFeedbackEventsForTeam(request.Context(), teamID, after)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "watch feedback events", err)
-		return
-	}
-	visible := make([]controlstate.FeedbackEvent, 0, len(page.Events))
-	for _, event := range page.Events {
-		thread, err := h.feedback.GetFeedback(request.Context(), event.FeedbackID)
-		if err != nil {
-			writeControlStateProblem(request.Context(), response, "read watched feedback", err)
-			return
-		}
-		if err := h.ownerFeedbackDecision(request.Context(), principal, thread); err == nil {
-			visible = append(visible, event)
-		} else if !errors.Is(err, authorization.ErrForbidden) && !errors.Is(err, controlstate.ErrServiceAccess) && !errors.Is(err, controlstate.ErrFeedbackAccess) {
-			feedbackOwnerFailure(response, err)
-			return
-		}
-	}
-	page.Events = visible
-	result, err := feedbackEventPageResponse(page)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "encode watched feedback", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, result)
-}
-
-func feedbackAfterCursor(request *http.Request) (uint64, error) {
-	value := request.URL.Query().Get("after_cursor")
-	if value == "" {
-		return 0, nil
-	}
-	parsed, err := strconv.ParseUint(value, 10, 63)
-	return parsed, err
-}
-
-func feedbackEventWrite(kind controlv1.FeedbackEventType, text *string, evidence *controlv1.FeedbackEvidence, source *controlv1.SourceState) (controlstate.AppendFeedbackRequest, error) {
-	write := controlstate.AppendFeedbackRequest{Type: controlstate.FeedbackEventType(kind)}
-	if text != nil {
-		write.Text = *text
-	}
-	if evidence != nil {
-		encoded, err := json.Marshal(evidence)
-		if err != nil {
-			return controlstate.AppendFeedbackRequest{}, err
-		}
-		write.Evidence = encoded
-	}
-	if source != nil {
-		encoded, err := json.Marshal(source)
-		if err != nil {
-			return controlstate.AppendFeedbackRequest{}, err
-		}
-		write.SourceState = encoded
-	}
-	return write, nil
+	writeJSON(w, 200, decision)
 }

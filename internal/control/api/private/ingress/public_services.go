@@ -17,7 +17,7 @@ type publicServiceStore interface {
 	ReadIngressServices(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.IngressServices, error)
 	ClosedServiceRuns(context.Context, controlstate.IngressLeaseIdentity, []controlstate.ServiceRunReference, time.Time) ([]controlstate.ServiceRunReference, error)
 	AdmitPublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, string, int, netip.Addr, time.Time, ...controlstate.ServiceRunCursor) (controlstate.PublicServiceVisitorAdmission, error)
-	PublicServiceVisitorStatus(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) (controlstate.PublicServiceVisitorStatus, error)
+	PublicServiceVisitorStatus(context.Context, controlstate.IngressLeaseIdentity, string, netip.Addr, time.Time) (controlstate.PublicServiceVisitorStatus, error)
 	ClosePublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) error
 	PromotePublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) error
 }
@@ -95,10 +95,11 @@ func (s *service) AdmitPublicServiceVisitor(ctx context.Context, id string, body
 func (s *service) PublicServiceVisitorStatus(ctx context.Context, id string, body ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
 	var result ingressv1.PublicServiceVisitorStatus
 	lease, ok := ingressLeaseIdentity(id, body.IngressRunId, body.IngressLeaseRevision)
-	if !ok {
-		return result, serverhttp.NewProblemError(400, "invalid_request", "invalid public service lease")
+	source, sourceOK := privateSource(body.ObservedSourceIp)
+	if !ok || !sourceOK {
+		return result, serverhttp.NewProblemError(400, "invalid_request", "invalid public service status source or lease")
 	}
-	status, err := s.store.PublicServiceVisitorStatus(ctx, lease, body.VisitorConnectionId, s.now())
+	status, err := s.store.PublicServiceVisitorStatus(ctx, lease, body.VisitorConnectionId, source, s.now())
 	if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrIngressLeaseStale) {
 		return ingressv1.PublicServiceVisitorStatus{State: ingressv1.PublicServiceVisitorDenied, ValidUntil: s.now()}, nil
 	}

@@ -12,9 +12,11 @@ import (
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/zalando/go-keyring"
 )
 
-func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
+func TestConnectionContextLocalIdentityAndPortableWorkload(t *testing.T) {
+	keyring.MockInit()
 	t.Setenv("TNL_SERVER", "")
 	t.Setenv("TNL_CONFIG", "")
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -30,8 +32,8 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	options := ContextOptions{Directory: root, StateDir: filepath.Join(root, "must-not-open-state"), Service: []string{"database"}}
-	_, local, err := connectionProject(t.Context(), options)
+	options := ContextOptions{Directory: root, StateDir: filepath.Join(root, "state"), Service: []string{"database"}}
+	project, local, err := connectionProject(t.Context(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +42,9 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 	}
 	if local.Deployment != "local" || local.TeamName != "acme" {
 		t.Fatal("local selection lost its deployment or team name")
+	}
+	if len(local.WorktreeKey) != 64 || local.WorktreeKey != project.LocalWorktreeKey() || project.LocalPublicationIdentity().Key == "" {
+		t.Fatal("human connector lost its random local identity")
 	}
 	all := options
 	all.Service = nil
@@ -56,6 +61,7 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 		t.Fatal("native context accepted an undeclared service", err)
 	}
 	options.Workload = "migrate"
+	options.StateDir = filepath.Join(root, "must-not-open-state")
 	if _, scope, err := connectionProject(t.Context(), options); err != nil || scope.TeamID != "acme" {
 		t.Fatal("team selector was not retained for saved-policy exchange", err)
 	}
@@ -72,6 +78,9 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 	}
 	if scope.Deployment != "production" || !scope.MatchesSelection(&connectorruntime.ProjectDeploymentSelection{Project: "acme/" + scope.ProjectKey, Name: "production"}) {
 		t.Fatal("workload selection lost its captured deployment or team")
+	}
+	if scope.WorktreeKey != scope.SourceID || scope.WorktreeKey == local.WorktreeKey {
+		t.Fatal("workload reused a machine-local directory identity")
 	}
 	if _, err := os.Stat(options.StateDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("context opened human state", err)

@@ -15,12 +15,13 @@ import (
 
 // Project is a selected and resolved project configuration.
 type Project struct {
-	Selection  Selection
-	Config     config.TNL
-	Declared   *config.Project
-	Deployment string
-	Worktree   Worktree
-	Root       string
+	Selection                  Selection
+	Config                     config.TNL
+	Declared                   *config.Project
+	Deployment                 string
+	Worktree                   Worktree
+	Root                       string
+	localSource, localWorktree string
 }
 
 // Resolve loads a selected project configuration and resolves its worktree and

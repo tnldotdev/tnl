@@ -452,25 +452,25 @@ func (e FeedbackEventInputType) Valid() bool {
 
 // Defines values for FeedbackEventType.
 const (
-	Reply          FeedbackEventType = "reply"
-	ThreadCreated  FeedbackEventType = "thread.created"
-	ThreadReopened FeedbackEventType = "thread.reopened"
-	ThreadResolved FeedbackEventType = "thread.resolved"
-	Update         FeedbackEventType = "update"
+	FeedbackEventTypeReply          FeedbackEventType = "reply"
+	FeedbackEventTypeThreadCreated  FeedbackEventType = "thread.created"
+	FeedbackEventTypeThreadReopened FeedbackEventType = "thread.reopened"
+	FeedbackEventTypeThreadResolved FeedbackEventType = "thread.resolved"
+	FeedbackEventTypeUpdate         FeedbackEventType = "update"
 )
 
 // Valid indicates whether the value is a known member of the FeedbackEventType enum.
 func (e FeedbackEventType) Valid() bool {
 	switch e {
-	case Reply:
+	case FeedbackEventTypeReply:
 		return true
-	case ThreadCreated:
+	case FeedbackEventTypeThreadCreated:
 		return true
-	case ThreadReopened:
+	case FeedbackEventTypeThreadReopened:
 		return true
-	case ThreadResolved:
+	case FeedbackEventTypeThreadResolved:
 		return true
-	case Update:
+	case FeedbackEventTypeUpdate:
 		return true
 	default:
 		return false
@@ -492,6 +492,39 @@ func (e FeedbackEvidenceActionsType) Valid() bool {
 	case Navigation:
 		return true
 	case Submit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FeedbackOperation.
+const (
+	FeedbackOperationDelete         FeedbackOperation = "delete"
+	FeedbackOperationRead           FeedbackOperation = "read"
+	FeedbackOperationReply          FeedbackOperation = "reply"
+	FeedbackOperationReport         FeedbackOperation = "report"
+	FeedbackOperationThreadReopened FeedbackOperation = "thread.reopened"
+	FeedbackOperationThreadResolved FeedbackOperation = "thread.resolved"
+	FeedbackOperationUpdate         FeedbackOperation = "update"
+)
+
+// Valid indicates whether the value is a known member of the FeedbackOperation enum.
+func (e FeedbackOperation) Valid() bool {
+	switch e {
+	case FeedbackOperationDelete:
+		return true
+	case FeedbackOperationRead:
+		return true
+	case FeedbackOperationReply:
+		return true
+	case FeedbackOperationReport:
+		return true
+	case FeedbackOperationThreadReopened:
+		return true
+	case FeedbackOperationThreadResolved:
+		return true
+	case FeedbackOperationUpdate:
 		return true
 	default:
 		return false
@@ -1914,7 +1947,7 @@ type AppliedDeployment struct {
 
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
 type AppliedProjectConfiguration struct {
-	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 	Configuration     ProjectConfiguration        `json:"configuration"`
 	ConfigurationHash string                      `json:"configuration_hash"`
 	Deployment        string                      `json:"deployment"`
@@ -1949,7 +1982,7 @@ type AppliedProjectServiceServiceKind string
 
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
 type ApplyProjectConfigurationRequest struct {
-	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 	Configuration    ProjectConfiguration `json:"configuration"`
 	Deployment       string               `json:"deployment"`
 	ExpectedRevision int64                `json:"expected_revision,string"`
@@ -1971,6 +2004,22 @@ type AuthenticationFacts struct {
 
 // AuthenticationFactsMethods defines model for AuthenticationFacts.Methods.
 type AuthenticationFactsMethods string
+
+// AuthorizeImplementerFeedbackRequest defines model for AuthorizeImplementerFeedbackRequest.
+type AuthorizeImplementerFeedbackRequest struct {
+	Operation FeedbackOperation `json:"operation"`
+	PreviewId PreviewID         `json:"preview_id"`
+	ServiceId ServiceID         `json:"service_id"`
+}
+
+// AuthorizeReviewerFeedbackRequest defines model for AuthorizeReviewerFeedbackRequest.
+type AuthorizeReviewerFeedbackRequest struct {
+	// Access Browser identity and visitor access are independent. Feedback writes require a current browser_cookie_secret for verified authorship, including guest previews. Control also rechecks current preview permission and team feedback restrictions; visit_allowed is an observation, not authority. Share, bearer, and connector proofs supply visit permission only.
+	Access    FeedbackReviewerAccess `json:"access"`
+	Operation FeedbackOperation      `json:"operation"`
+	PreviewId PreviewID              `json:"preview_id"`
+	RunNumber int64                  `json:"run_number,string"`
+}
 
 // AuthorizeServiceClientCertificateRequest defines model for AuthorizeServiceClientCertificateRequest.
 type AuthorizeServiceClientCertificateRequest struct {
@@ -2743,6 +2792,21 @@ type FeedbackAuthor struct {
 	Verified    bool        `json:"verified"`
 }
 
+// FeedbackAuthorization defines model for FeedbackAuthorization.
+type FeedbackAuthorization struct {
+	Actor  string         `json:"actor"`
+	Author FeedbackAuthor `json:"author"`
+
+	// ContentExpiresAt Fixed content-retention deadline for a run-bound demo preview; absent for project feedback.
+	ContentExpiresAt *time.Time        `json:"content_expires_at,omitempty"`
+	ExpiresAt        time.Time         `json:"expires_at"`
+	Operation        FeedbackOperation `json:"operation"`
+	PreviewId        PreviewID         `json:"preview_id"`
+	RunNumber        int64             `json:"run_number,string"`
+	ServiceId        ServiceID         `json:"service_id"`
+	ServiceRunId     string            `json:"service_run_id"`
+}
+
 // FeedbackBearerVisitProof The signed bearer token actually selected by HTTP authorization, including accepted renewal. Certificate tokens are not bearer proof.
 type FeedbackBearerVisitProof struct {
 	Kind  FeedbackBearerVisitProofKind `json:"kind"`
@@ -2833,6 +2897,9 @@ type FeedbackEvidenceActionsType string
 
 // FeedbackID defines model for FeedbackID.
 type FeedbackID = ResourceID
+
+// FeedbackOperation defines model for FeedbackOperation.
+type FeedbackOperation string
 
 // FeedbackReport defines model for FeedbackReport.
 type FeedbackReport struct {
@@ -3090,14 +3157,14 @@ type ProjectApplicationRate struct {
 	Per   string `json:"per"`
 }
 
-// ProjectConfiguration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+// ProjectConfiguration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 type ProjectConfiguration struct {
-	// Oauth Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a saved deployment.
+	// Oauth Publisher-only OAuth intent is not retained in shared configuration. Native clients send false.
 	Oauth    bool                                   `json:"oauth"`
 	Services map[string]ProjectServiceConfiguration `json:"services"`
 	Settings *DeploymentSettings                    `json:"settings,omitempty"`
 
-	// Webhooks Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public reachability enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
+	// Webhooks Publisher-only webhook handler definitions are not retained in shared configuration. Native clients send an empty object.
 	Webhooks  map[string]ProjectWebhook   `json:"webhooks"`
 	Workloads *map[string]ProjectWorkload `json:"workloads,omitempty"`
 }
@@ -3184,7 +3251,7 @@ type ProjectServiceConfiguration struct {
 	// Hostname Exact authorized service hostname, not an HTTPS origin. Does not enable public endpoint access.
 	Hostname *string `json:"hostname,omitempty"`
 
-	// Http HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
+	// Http HTTP visitor access and request limits, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Project-local readiness, path mounts, and browser opening stay with the publisher and are not saved in control.
 	Http     *ProjectServiceHTTP `json:"http,omitempty"`
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
@@ -3195,7 +3262,7 @@ type ProjectServiceConfiguration struct {
 	// RequirePostQuantum Require hybrid post-quantum key agreement for visitor TLS, independently of target TLS.
 	RequirePostQuantum *bool `json:"require_post_quantum,omitempty"`
 
-	// Target Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP listener to its application owner in any deployment. integration:oauth and integration:webhooks explicitly select a non-ephemeral, in-process HTTP handler and require explicit anonymous HTTP access; they are not app listeners or separate resources. Only local declarations may use integration, compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets.
+	// Target Saved service and remote deployment targets normalize to host:port with separate target_tls trust. Local project bindings use app for every protocol and keep listener and container selection local. Remote app descriptors defer HTTP listeners to their application owners. integration:oauth and integration:webhooks explicitly select a non-ephemeral, in-process HTTP handler and require explicit anonymous HTTP access; they are not app listeners or separate resources. Control does not discover local targets.
 	Target string `json:"target"`
 
 	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
@@ -3211,7 +3278,7 @@ type ProjectServiceConfiguration struct {
 // ProjectServiceDeclarations defines model for ProjectServiceDeclarations.
 type ProjectServiceDeclarations map[string]ServiceProtocol
 
-// ProjectServiceHTTP HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
+// ProjectServiceHTTP HTTP visitor access and request limits, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Project-local readiness, path mounts, and browser opening stay with the publisher and are not saved in control.
 type ProjectServiceHTTP struct {
 	Access *ProjectHTTPAccess            `json:"access,omitempty"`
 	Limits *ProjectHTTPApplicationLimits `json:"limits,omitempty"`
@@ -3501,10 +3568,7 @@ type PublisherRuntimeResponse struct {
 
 // PublisherRuntimeStatus Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access.
 type PublisherRuntimeStatus struct {
-	Active bool `json:"active"`
-
-	// Address Canonical public routable IPv4 or IPv6 host, never a CIDR. Absent for private or non-routable sources.
-	Address       *string                             `json:"address,omitempty"`
+	Active        bool                                `json:"active"`
 	AddressFamily PublisherRuntimeStatusAddressFamily `json:"address_family"`
 
 	// Deployment An accepted publisher deployment report, with control receipt times and a control-derived deployment_id. It does not prove cloud state, image identity, or target health. The deployment/deployment/replica combination belongs to this publisher identity.
@@ -3577,7 +3641,7 @@ type ReadinessResponseChecksRoute53Credentials string
 // ReadinessResponseStatus defines model for ReadinessResponse.Status.
 type ReadinessResponseStatus string
 
-// RealizeLocalProjectServiceRequest defines model for RealizeLocalProjectServiceRequest.
+// RealizeLocalProjectServiceRequest Shared service policy for one local worktree. Native clients send persistent random source/worktree IDs and an app target; directory mappings, listener selection, readiness, and mounts stay local.
 type RealizeLocalProjectServiceRequest struct {
 	Configuration     ProjectServiceConfiguration `json:"configuration"`
 	SourceFingerprint string                      `json:"source_fingerprint"`
@@ -3746,7 +3810,7 @@ type ServiceAuditEvent struct {
 	RunId                 *string                      `json:"run_id,omitempty"`
 	ServiceId             string                       `json:"service_id"`
 	ServiceKind           ServiceAuditEventServiceKind `json:"service_kind"`
-	SourceIp              *string                      `json:"source_ip,omitempty"`
+	SourceDigest          *string                      `json:"source_digest,omitempty"`
 	TeamId                string                       `json:"team_id"`
 	VisitorConnectionId   *string                      `json:"visitor_connection_id,omitempty"`
 }
@@ -4574,6 +4638,9 @@ type WorkloadTrust struct {
 // Cursor defines model for Cursor.
 type Cursor = ResourceID
 
+// DNSAuthorityReference defines model for DNSAuthorityReference.
+type DNSAuthorityReference = string
+
 // FeedbackAfterCursor defines model for FeedbackAfterCursor.
 type FeedbackAfterCursor = int64
 
@@ -4603,28 +4670,6 @@ type BeginServiceBrowserLoginParams struct {
 	PreviewId     *PreviewID `form:"preview_id,omitempty" json:"preview_id,omitempty"`
 	ReturnPath    string     `form:"return_path" json:"return_path"`
 	SwitchAccount *bool      `form:"switch_account,omitempty" json:"switch_account,omitempty"`
-}
-
-// ListFeedbackThreadsParams defines parameters for ListFeedbackThreads.
-type ListFeedbackThreadsParams struct {
-	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
-	Cursor *Cursor     `form:"cursor,omitempty" json:"cursor,omitempty"`
-}
-
-// ListFeedbackEventsParams defines parameters for ListFeedbackEvents.
-type ListFeedbackEventsParams struct {
-	TeamId      TeamIDQuery          `form:"team_id" json:"team_id"`
-	AfterCursor *FeedbackAfterCursor `form:"after_cursor,omitempty" json:"after_cursor,omitempty"`
-}
-
-// ListFeedbackThreadEventsParams defines parameters for ListFeedbackThreadEvents.
-type ListFeedbackThreadEventsParams struct {
-	AfterCursor *FeedbackAfterCursor `form:"after_cursor,omitempty" json:"after_cursor,omitempty"`
-}
-
-// AppendFeedbackEventParams defines parameters for AppendFeedbackEvent.
-type AppendFeedbackEventParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
 // AllocateGuestDemoServiceParams defines parameters for AllocateGuestDemoService.
@@ -4855,16 +4900,6 @@ type DeliverConnectorPeerPairJSONBody struct {
 	DeliveryGeneration int64 `json:"delivery_generation,string"`
 }
 
-// CreateFeedbackReportParams defines parameters for CreateFeedbackReport.
-type CreateFeedbackReportParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
-// AppendReviewerFeedbackEventParams defines parameters for AppendReviewerFeedbackEvent.
-type AppendReviewerFeedbackEventParams struct {
-	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-}
-
 // StartServiceRunJSONBody defines parameters for StartServiceRun.
 type StartServiceRunJSONBody struct {
 	RunNumber int64 `json:"run_number,string"`
@@ -4921,8 +4956,8 @@ type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
 
-// AppendFeedbackEventJSONRequestBody defines body for AppendFeedbackEvent for application/json ContentType.
-type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
+// AuthorizeImplementerFeedbackJSONRequestBody defines body for AuthorizeImplementerFeedback for application/json ContentType.
+type AuthorizeImplementerFeedbackJSONRequestBody = AuthorizeImplementerFeedbackRequest
 
 // EnrollGuestPublisherJSONRequestBody defines body for EnrollGuestPublisher for application/json ContentType.
 type EnrollGuestPublisherJSONRequestBody = EnrollGuestPublisherRequest
@@ -5077,20 +5112,8 @@ type DeliverConnectorPeerPairJSONRequestBody DeliverConnectorPeerPairJSONBody
 // ConfirmConnectorPeerPairPreparedJSONRequestBody defines body for ConfirmConnectorPeerPairPrepared for application/json ContentType.
 type ConfirmConnectorPeerPairPreparedJSONRequestBody = ConnectorPeerPairPrepared
 
-// CreateFeedbackReportJSONRequestBody defines body for CreateFeedbackReport for application/json ContentType.
-type CreateFeedbackReportJSONRequestBody = CreateFeedbackReportRequest
-
-// ListPreviewPageFeedbackJSONRequestBody defines body for ListPreviewPageFeedback for application/json ContentType.
-type ListPreviewPageFeedbackJSONRequestBody = PreviewPageFeedbackRequest
-
-// AppendReviewerFeedbackEventJSONRequestBody defines body for AppendReviewerFeedbackEvent for application/json ContentType.
-type AppendReviewerFeedbackEventJSONRequestBody = AppendReviewerFeedbackEventRequest
-
-// ListReviewerFeedbackEventsJSONRequestBody defines body for ListReviewerFeedbackEvents for application/json ContentType.
-type ListReviewerFeedbackEventsJSONRequestBody = ReviewerFeedbackReadRequest
-
-// GetReviewerFeedbackThreadJSONRequestBody defines body for GetReviewerFeedbackThread for application/json ContentType.
-type GetReviewerFeedbackThreadJSONRequestBody = ReviewerFeedbackReadRequest
+// AuthorizeReviewerFeedbackJSONRequestBody defines body for AuthorizeReviewerFeedback for application/json ContentType.
+type AuthorizeReviewerFeedbackJSONRequestBody = AuthorizeReviewerFeedbackRequest
 
 // CreateServiceRunPreviewJSONRequestBody defines body for CreateServiceRunPreview for application/json ContentType.
 type CreateServiceRunPreviewJSONRequestBody = ServiceRunPreviewRequest
@@ -5505,51 +5528,23 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscovery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListFeedbackThreads List feedback threads manageable in one team
+	// AuthorizeImplementerFeedbackWithBody Check current management access for one local feedback operation
 	//
-	// Read a cursor-paginated team feedback list under current management authorization. Each thread keeps its immutable first report and current state; use the event cursor to follow later changes.
-	//
-	// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
-	ListFeedbackThreads(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListFeedbackEvents Resume ordered feedback events for one team
-	//
-	// Resume the team's ordered feedback history after after_cursor using current management authorization. Event order is independent of branch names or local staging state.
-	//
-	// Corresponds with GET /v1/feedback/events (the `ListFeedbackEvents` operationId).
-	ListFeedbackEvents(ctx context.Context, params *ListFeedbackEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetFeedbackThread Read one immutable report and current feedback state
-	//
-	// Read one manageable feedback thread, including its immutable report and current state. Follow-up replies and state changes remain in the separate ordered event history.
-	//
-	// Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
-	GetFeedbackThread(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListFeedbackThreadEvents Read ordered follow-up events for one feedback thread
-	//
-	// Read follow-up events after after_cursor for one manageable feedback thread. The original report is immutable and remains on the thread rather than being rewritten by later events.
-	//
-	// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
-	ListFeedbackThreadEvents(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AppendFeedbackEventWithBody Reply, record a checkout update, resolve, or reopen feedback
-	//
-	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+	// Returns a short-lived decision and verified author. Feedback content is stored only on the publishing machine.
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
-	AppendFeedbackEventWithBody(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/feedback/authorization (the `AuthorizeImplementerFeedback` operationId).
+	AuthorizeImplementerFeedbackWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AppendFeedbackEvent Reply, record a checkout update, resolve, or reopen feedback
+	// AuthorizeImplementerFeedback Check current management access for one local feedback operation
 	//
-	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+	// Returns a short-lived decision and verified author. Feedback content is stored only on the publishing machine.
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
-	AppendFeedbackEvent(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, body AppendFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/feedback/authorization (the `AuthorizeImplementerFeedback` operationId).
+	AuthorizeImplementerFeedback(ctx context.Context, body AuthorizeImplementerFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateGuestDemo Create a restricted guest credential for the built-in demo
 	//
@@ -6735,95 +6730,23 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 	ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
+	// AuthorizeReviewerFeedbackWithBody Check current visitor access and feedback author policy
 	//
-	// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
-	CreateFeedbackReportWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateFeedbackReport Store a reviewer's first report for a preview page
-	//
-	// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
-	CreateFeedbackReport(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
-	//
-	// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+	// Accepts the publisher's current visit proof, not a visitor assertion. Never receives or stores feedback content.
 	//
 	// Takes any type of body and a specified content type.
 	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-	ListPreviewPageFeedbackWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/authorization (the `AuthorizeReviewerFeedback` operationId).
+	AuthorizeReviewerFeedbackWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListPreviewPageFeedback List feedback on one page for a reviewer
+	// AuthorizeReviewerFeedback Check current visitor access and feedback author policy
 	//
-	// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+	// Accepts the publisher's current visit proof, not a visitor assertion. Never receives or stores feedback content.
 	//
 	// Takes a body of the `application/json` content type.
 	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-	ListPreviewPageFeedback(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
-	//
-	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-	AppendReviewerFeedbackEventWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
-	//
-	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-	AppendReviewerFeedbackEvent(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListReviewerFeedbackEventsWithBody Read thread events through a current publisher connection
-	//
-	// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-	ListReviewerFeedbackEventsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListReviewerFeedbackEvents Read thread events through a current publisher connection
-	//
-	// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-	ListReviewerFeedbackEvents(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetReviewerFeedbackThreadWithBody Read a feedback thread through a current publisher connection
-	//
-	// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-	GetReviewerFeedbackThreadWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
-	//
-	// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-	GetReviewerFeedbackThread(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/authorization (the `AuthorizeReviewerFeedback` operationId).
+	AuthorizeReviewerFeedback(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeReviewerFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateServiceRunPreviewWithBody Create feedback context for one ephemeral service run
 	//
@@ -7299,83 +7222,15 @@ func (c *Client) GetControlDiscovery(ctx context.Context, reqEditors ...RequestE
 	return c.Client.Do(req)
 }
 
-// ListFeedbackThreads List feedback threads manageable in one team
+// AuthorizeImplementerFeedbackWithBody Check current management access for one local feedback operation
 //
-// Read a cursor-paginated team feedback list under current management authorization. Each thread keeps its immutable first report and current state; use the event cursor to follow later changes.
-//
-// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
-func (c *Client) ListFeedbackThreads(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListFeedbackThreadsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListFeedbackEvents Resume ordered feedback events for one team
-//
-// Resume the team's ordered feedback history after after_cursor using current management authorization. Event order is independent of branch names or local staging state.
-//
-// Corresponds with GET /v1/feedback/events (the `ListFeedbackEvents` operationId).
-func (c *Client) ListFeedbackEvents(ctx context.Context, params *ListFeedbackEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListFeedbackEventsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetFeedbackThread Read one immutable report and current feedback state
-//
-// Read one manageable feedback thread, including its immutable report and current state. Follow-up replies and state changes remain in the separate ordered event history.
-//
-// Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
-func (c *Client) GetFeedbackThread(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetFeedbackThreadRequest(c.Server, feedbackId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListFeedbackThreadEvents Read ordered follow-up events for one feedback thread
-//
-// Read follow-up events after after_cursor for one manageable feedback thread. The original report is immutable and remains on the thread rather than being rewritten by later events.
-//
-// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
-func (c *Client) ListFeedbackThreadEvents(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListFeedbackThreadEventsRequest(c.Server, feedbackId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AppendFeedbackEventWithBody Reply, record a checkout update, resolve, or reopen feedback
-//
-// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+// Returns a short-lived decision and verified author. Feedback content is stored only on the publishing machine.
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
-func (c *Client) AppendFeedbackEventWithBody(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAppendFeedbackEventRequestWithBody(c.Server, feedbackId, params, contentType, body)
+// Corresponds with POST /v1/feedback/authorization (the `AuthorizeImplementerFeedback` operationId).
+func (c *Client) AuthorizeImplementerFeedbackWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeImplementerFeedbackRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7386,15 +7241,15 @@ func (c *Client) AppendFeedbackEventWithBody(ctx context.Context, feedbackId Fee
 	return c.Client.Do(req)
 }
 
-// AppendFeedbackEvent Reply, record a checkout update, resolve, or reopen feedback
+// AuthorizeImplementerFeedback Check current management access for one local feedback operation
 //
-// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+// Returns a short-lived decision and verified author. Feedback content is stored only on the publishing machine.
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
-func (c *Client) AppendFeedbackEvent(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, body AppendFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAppendFeedbackEventRequest(c.Server, feedbackId, params, body)
+// Corresponds with POST /v1/feedback/authorization (the `AuthorizeImplementerFeedback` operationId).
+func (c *Client) AuthorizeImplementerFeedback(ctx context.Context, body AuthorizeImplementerFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeImplementerFeedbackRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9989,53 +9844,15 @@ func (c *Client) ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId
 	return c.Client.Do(req)
 }
 
-// CreateFeedbackReportWithBody Store a reviewer's first report for a preview page
+// AuthorizeReviewerFeedbackWithBody Check current visitor access and feedback author policy
 //
-// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
-func (c *Client) CreateFeedbackReportWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateFeedbackReportRequestWithBody(c.Server, serviceId, serviceRunId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateFeedbackReport Store a reviewer's first report for a preview page
-//
-// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
-func (c *Client) CreateFeedbackReport(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateFeedbackReportRequest(c.Server, serviceId, serviceRunId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListPreviewPageFeedbackWithBody List feedback on one page for a reviewer
-//
-// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+// Accepts the publisher's current visit proof, not a visitor assertion. Never receives or stores feedback content.
 //
 // Takes any type of body and a specified content type.
 //
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-func (c *Client) ListPreviewPageFeedbackWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPreviewPageFeedbackRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/authorization (the `AuthorizeReviewerFeedback` operationId).
+func (c *Client) AuthorizeReviewerFeedbackWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeReviewerFeedbackRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10046,129 +9863,15 @@ func (c *Client) ListPreviewPageFeedbackWithBody(ctx context.Context, serviceId 
 	return c.Client.Do(req)
 }
 
-// ListPreviewPageFeedback List feedback on one page for a reviewer
+// AuthorizeReviewerFeedback Check current visitor access and feedback author policy
 //
-// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+// Accepts the publisher's current visit proof, not a visitor assertion. Never receives or stores feedback content.
 //
 // Takes a body of the `application/json` content type.
 //
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-func (c *Client) ListPreviewPageFeedback(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPreviewPageFeedbackRequest(c.Server, serviceId, serviceRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
-//
-// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-func (c *Client) AppendReviewerFeedbackEventWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAppendReviewerFeedbackEventRequestWithBody(c.Server, serviceId, serviceRunId, feedbackId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
-//
-// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-func (c *Client) AppendReviewerFeedbackEvent(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAppendReviewerFeedbackEventRequest(c.Server, serviceId, serviceRunId, feedbackId, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListReviewerFeedbackEventsWithBody Read thread events through a current publisher connection
-//
-// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-func (c *Client) ListReviewerFeedbackEventsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListReviewerFeedbackEventsRequestWithBody(c.Server, serviceId, serviceRunId, feedbackId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListReviewerFeedbackEvents Read thread events through a current publisher connection
-//
-// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-func (c *Client) ListReviewerFeedbackEvents(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListReviewerFeedbackEventsRequest(c.Server, serviceId, serviceRunId, feedbackId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetReviewerFeedbackThreadWithBody Read a feedback thread through a current publisher connection
-//
-// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-func (c *Client) GetReviewerFeedbackThreadWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetReviewerFeedbackThreadRequestWithBody(c.Server, serviceId, serviceRunId, feedbackId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
-//
-// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-func (c *Client) GetReviewerFeedbackThread(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetReviewerFeedbackThreadRequest(c.Server, serviceId, serviceRunId, feedbackId, body)
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/authorization (the `AuthorizeReviewerFeedback` operationId).
+func (c *Client) AuthorizeReviewerFeedback(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeReviewerFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeReviewerFeedbackRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11173,253 +10876,27 @@ func NewGetControlDiscoveryRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewListFeedbackThreadsRequest constructs an http.Request for the ListFeedbackThreads method
-func NewListFeedbackThreadsRequest(server string, params *ListFeedbackThreadsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/feedback")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListFeedbackEventsRequest constructs an http.Request for the ListFeedbackEvents method
-func NewListFeedbackEventsRequest(server string, params *ListFeedbackEventsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/feedback/events")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if params.AfterCursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after_cursor", *params.AfterCursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetFeedbackThreadRequest constructs an http.Request for the GetFeedbackThread method
-func NewGetFeedbackThreadRequest(server string, feedbackId FeedbackID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/feedback/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListFeedbackThreadEventsRequest constructs an http.Request for the ListFeedbackThreadEvents method
-func NewListFeedbackThreadEventsRequest(server string, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/feedback/%s/events", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.AfterCursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after_cursor", *params.AfterCursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAppendFeedbackEventRequest calls the generic AppendFeedbackEvent builder with application/json body
-func NewAppendFeedbackEventRequest(server string, feedbackId FeedbackID, params *AppendFeedbackEventParams, body AppendFeedbackEventJSONRequestBody) (*http.Request, error) {
+// NewAuthorizeImplementerFeedbackRequest calls the generic AuthorizeImplementerFeedback builder with application/json body
+func NewAuthorizeImplementerFeedbackRequest(server string, body AuthorizeImplementerFeedbackJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewAppendFeedbackEventRequestWithBody(server, feedbackId, params, "application/json", bodyReader)
+	return NewAuthorizeImplementerFeedbackRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewAppendFeedbackEventRequestWithBody constructs an http.Request for the AppendFeedbackEvent method, with any body, and a specified content type
-func NewAppendFeedbackEventRequestWithBody(server string, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader) (*http.Request, error) {
+// NewAuthorizeImplementerFeedbackRequestWithBody constructs an http.Request for the AuthorizeImplementerFeedback method, with any body, and a specified content type
+func NewAuthorizeImplementerFeedbackRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
 
 	serverURL, err := url.Parse(server)
 	if err != nil {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/feedback/%s/events", pathParam0)
+	operationPath := fmt.Sprintf("/v1/feedback/authorization")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11435,19 +10912,6 @@ func NewAppendFeedbackEventRequestWithBody(server string, feedbackId FeedbackID,
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
 
 	return req, nil
 }
@@ -16301,19 +15765,19 @@ func NewConfirmConnectorPeerPairPreparedRequestWithBody(server string, serviceId
 	return req, nil
 }
 
-// NewCreateFeedbackReportRequest calls the generic CreateFeedbackReport builder with application/json body
-func NewCreateFeedbackReportRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody) (*http.Request, error) {
+// NewAuthorizeReviewerFeedbackRequest calls the generic AuthorizeReviewerFeedback builder with application/json body
+func NewAuthorizeReviewerFeedbackRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeReviewerFeedbackJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateFeedbackReportRequestWithBody(server, serviceId, serviceRunId, params, "application/json", bodyReader)
+	return NewAuthorizeReviewerFeedbackRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
 }
 
-// NewCreateFeedbackReportRequestWithBody constructs an http.Request for the CreateFeedbackReport method, with any body, and a specified content type
-func NewCreateFeedbackReportRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader) (*http.Request, error) {
+// NewAuthorizeReviewerFeedbackRequestWithBody constructs an http.Request for the AuthorizeReviewerFeedback method, with any body, and a specified content type
+func NewAuthorizeReviewerFeedbackRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -16335,270 +15799,7 @@ func NewCreateFeedbackReportRequestWithBody(server string, serviceId ServiceID, 
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewListPreviewPageFeedbackRequest calls the generic ListPreviewPageFeedback builder with application/json body
-func NewListPreviewPageFeedbackRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body ListPreviewPageFeedbackJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewListPreviewPageFeedbackRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
-}
-
-// NewListPreviewPageFeedbackRequestWithBody constructs an http.Request for the ListPreviewPageFeedback method, with any body, and a specified content type
-func NewListPreviewPageFeedbackRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback/query", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewAppendReviewerFeedbackEventRequest calls the generic AppendReviewerFeedbackEvent builder with application/json body
-func NewAppendReviewerFeedbackEventRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAppendReviewerFeedbackEventRequestWithBody(server, serviceId, serviceRunId, feedbackId, params, "application/json", bodyReader)
-}
-
-// NewAppendReviewerFeedbackEventRequestWithBody constructs an http.Request for the AppendReviewerFeedbackEvent method, with any body, and a specified content type
-func NewAppendReviewerFeedbackEventRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback/%s/events", pathParam0, pathParam1, pathParam2)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Idempotency-Key", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewListReviewerFeedbackEventsRequest calls the generic ListReviewerFeedbackEvents builder with application/json body
-func NewListReviewerFeedbackEventsRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewListReviewerFeedbackEventsRequestWithBody(server, serviceId, serviceRunId, feedbackId, "application/json", bodyReader)
-}
-
-// NewListReviewerFeedbackEventsRequestWithBody constructs an http.Request for the ListReviewerFeedbackEvents method, with any body, and a specified content type
-func NewListReviewerFeedbackEventsRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback/%s/events/query", pathParam0, pathParam1, pathParam2)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetReviewerFeedbackThreadRequest calls the generic GetReviewerFeedbackThread builder with application/json body
-func NewGetReviewerFeedbackThreadRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewGetReviewerFeedbackThreadRequestWithBody(server, serviceId, serviceRunId, feedbackId, "application/json", bodyReader)
-}
-
-// NewGetReviewerFeedbackThreadRequestWithBody constructs an http.Request for the GetReviewerFeedbackThread method, with any body, and a specified content type
-func NewGetReviewerFeedbackThreadRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "feedback_id", feedbackId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback/%s/query", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/feedback/authorization", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -17766,59 +16967,23 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/discovery (the `GetControlDiscovery` operationId).
 	GetControlDiscoveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetControlDiscoveryResponse, error)
 
-	// ListFeedbackThreadsWithResponse List feedback threads manageable in one team
+	// AuthorizeImplementerFeedbackWithBodyWithResponse Check current management access for one local feedback operation
 	//
-	// Read a cursor-paginated team feedback list under current management authorization. Each thread keeps its immutable first report and current state; use the event cursor to follow later changes.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
-	ListFeedbackThreadsWithResponse(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*ListFeedbackThreadsResponse, error)
-
-	// ListFeedbackEventsWithResponse Resume ordered feedback events for one team
-	//
-	// Resume the team's ordered feedback history after after_cursor using current management authorization. Event order is independent of branch names or local staging state.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/feedback/events (the `ListFeedbackEvents` operationId).
-	ListFeedbackEventsWithResponse(ctx context.Context, params *ListFeedbackEventsParams, reqEditors ...RequestEditorFn) (*ListFeedbackEventsResponse, error)
-
-	// GetFeedbackThreadWithResponse Read one immutable report and current feedback state
-	//
-	// Read one manageable feedback thread, including its immutable report and current state. Follow-up replies and state changes remain in the separate ordered event history.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
-	GetFeedbackThreadWithResponse(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*GetFeedbackThreadResponse, error)
-
-	// ListFeedbackThreadEventsWithResponse Read ordered follow-up events for one feedback thread
-	//
-	// Read follow-up events after after_cursor for one manageable feedback thread. The original report is immutable and remains on the thread rather than being rewritten by later events.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
-	ListFeedbackThreadEventsWithResponse(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*ListFeedbackThreadEventsResponse, error)
-
-	// AppendFeedbackEventWithBodyWithResponse Reply, record a checkout update, resolve, or reopen feedback
-	//
-	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+	// Returns a short-lived decision and verified author. Feedback content is stored only on the publishing machine.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
-	AppendFeedbackEventWithBodyWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendFeedbackEventResponse, error)
+	// Corresponds with POST /v1/feedback/authorization (the `AuthorizeImplementerFeedback` operationId).
+	AuthorizeImplementerFeedbackWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeImplementerFeedbackResponse, error)
 
-	// AppendFeedbackEventWithResponse Reply, record a checkout update, resolve, or reopen feedback
+	// AuthorizeImplementerFeedbackWithResponse Check current management access for one local feedback operation
 	//
-	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+	// Returns a short-lived decision and verified author. Feedback content is stored only on the publishing machine.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
-	AppendFeedbackEventWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, body AppendFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendFeedbackEventResponse, error)
+	// Corresponds with POST /v1/feedback/authorization (the `AuthorizeImplementerFeedback` operationId).
+	AuthorizeImplementerFeedbackWithResponse(ctx context.Context, body AuthorizeImplementerFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeImplementerFeedbackResponse, error)
 
 	// CreateGuestDemoWithResponse Create a restricted guest credential for the built-in demo
 	//
@@ -19080,95 +18245,23 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId).
 	ConfirmConnectorPeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error)
 
-	// CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
+	// AuthorizeReviewerFeedbackWithBodyWithResponse Check current visitor access and feedback author policy
 	//
-	// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
-	CreateFeedbackReportWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error)
-
-	// CreateFeedbackReportWithResponse Store a reviewer's first report for a preview page
-	//
-	// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
-	CreateFeedbackReportWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error)
-
-	// ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
-	//
-	// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+	// Accepts the publisher's current visit proof, not a visitor assertion. Never receives or stores feedback content.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-	ListPreviewPageFeedbackWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error)
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/authorization (the `AuthorizeReviewerFeedback` operationId).
+	AuthorizeReviewerFeedbackWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeReviewerFeedbackResponse, error)
 
-	// ListPreviewPageFeedbackWithResponse List feedback on one page for a reviewer
+	// AuthorizeReviewerFeedbackWithResponse Check current visitor access and feedback author policy
 	//
-	// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+	// Accepts the publisher's current visit proof, not a visitor assertion. Never receives or stores feedback content.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-	ListPreviewPageFeedbackWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error)
-
-	// AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
-	//
-	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-	AppendReviewerFeedbackEventWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error)
-
-	// AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
-	//
-	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-	AppendReviewerFeedbackEventWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error)
-
-	// ListReviewerFeedbackEventsWithBodyWithResponse Read thread events through a current publisher connection
-	//
-	// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-	ListReviewerFeedbackEventsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error)
-
-	// ListReviewerFeedbackEventsWithResponse Read thread events through a current publisher connection
-	//
-	// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-	ListReviewerFeedbackEventsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error)
-
-	// GetReviewerFeedbackThreadWithBodyWithResponse Read a feedback thread through a current publisher connection
-	//
-	// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-	GetReviewerFeedbackThreadWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error)
-
-	// GetReviewerFeedbackThreadWithResponse Read a feedback thread through a current publisher connection
-	//
-	// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-	GetReviewerFeedbackThreadWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error)
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/authorization (the `AuthorizeReviewerFeedback` operationId).
+	AuthorizeReviewerFeedbackWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeReviewerFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeReviewerFeedbackResponse, error)
 
 	// CreateServiceRunPreviewWithBodyWithResponse Create feedback context for one ephemeral service run
 	//
@@ -19887,32 +18980,32 @@ func (r GetControlDiscoveryResponse) ContentType() string {
 	return ""
 }
 
-type ListFeedbackThreadsResponse struct {
+type AuthorizeImplementerFeedbackResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *FeedbackThreadPage
+	JSON200 *FeedbackAuthorization
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListFeedbackThreadsResponse) GetJSON200() *FeedbackThreadPage {
+func (r AuthorizeImplementerFeedbackResponse) GetJSON200() *FeedbackAuthorization {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListFeedbackThreadsResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r AuthorizeImplementerFeedbackResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ListFeedbackThreadsResponse) GetBody() []byte {
+func (r AuthorizeImplementerFeedbackResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ListFeedbackThreadsResponse) Status() string {
+func (r AuthorizeImplementerFeedbackResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -19920,7 +19013,7 @@ func (r ListFeedbackThreadsResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ListFeedbackThreadsResponse) StatusCode() int {
+func (r AuthorizeImplementerFeedbackResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -19928,199 +19021,7 @@ func (r ListFeedbackThreadsResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListFeedbackThreadsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListFeedbackEventsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *FeedbackEventPage
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListFeedbackEventsResponse) GetJSON200() *FeedbackEventPage {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListFeedbackEventsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListFeedbackEventsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListFeedbackEventsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListFeedbackEventsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListFeedbackEventsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetFeedbackThreadResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *FeedbackThread
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetFeedbackThreadResponse) GetJSON200() *FeedbackThread {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetFeedbackThreadResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetFeedbackThreadResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetFeedbackThreadResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetFeedbackThreadResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetFeedbackThreadResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListFeedbackThreadEventsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *FeedbackEventPage
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListFeedbackThreadEventsResponse) GetJSON200() *FeedbackEventPage {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListFeedbackThreadEventsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListFeedbackThreadEventsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListFeedbackThreadEventsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListFeedbackThreadEventsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListFeedbackThreadEventsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AppendFeedbackEventResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *FeedbackEvent
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r AppendFeedbackEventResponse) GetJSON201() *FeedbackEvent {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AppendFeedbackEventResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AppendFeedbackEventResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AppendFeedbackEventResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AppendFeedbackEventResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AppendFeedbackEventResponse) ContentType() string {
+func (r AuthorizeImplementerFeedbackResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24401,80 +23302,32 @@ func (r ConfirmConnectorPeerPairPreparedResponse) ContentType() string {
 	return ""
 }
 
-type CreateFeedbackReportResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *FeedbackThread
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateFeedbackReportResponse) GetJSON201() *FeedbackThread {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateFeedbackReportResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateFeedbackReportResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateFeedbackReportResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateFeedbackReportResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateFeedbackReportResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListPreviewPageFeedbackResponse struct {
+type AuthorizeReviewerFeedbackResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *FeedbackThreadPage
+	JSON200 *FeedbackAuthorization
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListPreviewPageFeedbackResponse) GetJSON200() *FeedbackThreadPage {
+func (r AuthorizeReviewerFeedbackResponse) GetJSON200() *FeedbackAuthorization {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListPreviewPageFeedbackResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r AuthorizeReviewerFeedbackResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ListPreviewPageFeedbackResponse) GetBody() []byte {
+func (r AuthorizeReviewerFeedbackResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ListPreviewPageFeedbackResponse) Status() string {
+func (r AuthorizeReviewerFeedbackResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -24482,7 +23335,7 @@ func (r ListPreviewPageFeedbackResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ListPreviewPageFeedbackResponse) StatusCode() int {
+func (r AuthorizeReviewerFeedbackResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -24490,151 +23343,7 @@ func (r ListPreviewPageFeedbackResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListPreviewPageFeedbackResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AppendReviewerFeedbackEventResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *FeedbackEvent
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r AppendReviewerFeedbackEventResponse) GetJSON201() *FeedbackEvent {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AppendReviewerFeedbackEventResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AppendReviewerFeedbackEventResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AppendReviewerFeedbackEventResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AppendReviewerFeedbackEventResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AppendReviewerFeedbackEventResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListReviewerFeedbackEventsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *FeedbackEventPage
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListReviewerFeedbackEventsResponse) GetJSON200() *FeedbackEventPage {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListReviewerFeedbackEventsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ListReviewerFeedbackEventsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListReviewerFeedbackEventsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListReviewerFeedbackEventsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListReviewerFeedbackEventsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetReviewerFeedbackThreadResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *FeedbackThread
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetReviewerFeedbackThreadResponse) GetJSON200() *FeedbackThread {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetReviewerFeedbackThreadResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetReviewerFeedbackThreadResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetReviewerFeedbackThreadResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetReviewerFeedbackThreadResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetReviewerFeedbackThreadResponse) ContentType() string {
+func (r AuthorizeReviewerFeedbackResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -25838,94 +24547,34 @@ func (c *ClientWithResponses) GetControlDiscoveryWithResponse(ctx context.Contex
 	return ParseGetControlDiscoveryResponse(rsp)
 }
 
-// ListFeedbackThreadsWithResponse List feedback threads manageable in one team
+// AuthorizeImplementerFeedbackWithBodyWithResponse Check current management access for one local feedback operation
 //
-// Read a cursor-paginated team feedback list under current management authorization. Each thread keeps its immutable first report and current state; use the event cursor to follow later changes.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/feedback (the `ListFeedbackThreads` operationId).
-func (c *ClientWithResponses) ListFeedbackThreadsWithResponse(ctx context.Context, params *ListFeedbackThreadsParams, reqEditors ...RequestEditorFn) (*ListFeedbackThreadsResponse, error) {
-	rsp, err := c.ListFeedbackThreads(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListFeedbackThreadsResponse(rsp)
-}
-
-// ListFeedbackEventsWithResponse Resume ordered feedback events for one team
-//
-// Resume the team's ordered feedback history after after_cursor using current management authorization. Event order is independent of branch names or local staging state.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/feedback/events (the `ListFeedbackEvents` operationId).
-func (c *ClientWithResponses) ListFeedbackEventsWithResponse(ctx context.Context, params *ListFeedbackEventsParams, reqEditors ...RequestEditorFn) (*ListFeedbackEventsResponse, error) {
-	rsp, err := c.ListFeedbackEvents(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListFeedbackEventsResponse(rsp)
-}
-
-// GetFeedbackThreadWithResponse Read one immutable report and current feedback state
-//
-// Read one manageable feedback thread, including its immutable report and current state. Follow-up replies and state changes remain in the separate ordered event history.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/feedback/{feedback_id} (the `GetFeedbackThread` operationId).
-func (c *ClientWithResponses) GetFeedbackThreadWithResponse(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*GetFeedbackThreadResponse, error) {
-	rsp, err := c.GetFeedbackThread(ctx, feedbackId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetFeedbackThreadResponse(rsp)
-}
-
-// ListFeedbackThreadEventsWithResponse Read ordered follow-up events for one feedback thread
-//
-// Read follow-up events after after_cursor for one manageable feedback thread. The original report is immutable and remains on the thread rather than being rewritten by later events.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/feedback/{feedback_id}/events (the `ListFeedbackThreadEvents` operationId).
-func (c *ClientWithResponses) ListFeedbackThreadEventsWithResponse(ctx context.Context, feedbackId FeedbackID, params *ListFeedbackThreadEventsParams, reqEditors ...RequestEditorFn) (*ListFeedbackThreadEventsResponse, error) {
-	rsp, err := c.ListFeedbackThreadEvents(ctx, feedbackId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListFeedbackThreadEventsResponse(rsp)
-}
-
-// AppendFeedbackEventWithBodyWithResponse Reply, record a checkout update, resolve, or reopen feedback
-//
-// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+// Returns a short-lived decision and verified author. Feedback content is stored only on the publishing machine.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
-func (c *ClientWithResponses) AppendFeedbackEventWithBodyWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendFeedbackEventResponse, error) {
-	rsp, err := c.AppendFeedbackEventWithBody(ctx, feedbackId, params, contentType, body, reqEditors...)
+// Corresponds with POST /v1/feedback/authorization (the `AuthorizeImplementerFeedback` operationId).
+func (c *ClientWithResponses) AuthorizeImplementerFeedbackWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeImplementerFeedbackResponse, error) {
+	rsp, err := c.AuthorizeImplementerFeedbackWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseAppendFeedbackEventResponse(rsp)
+	return ParseAuthorizeImplementerFeedbackResponse(rsp)
 }
 
-// AppendFeedbackEventWithResponse Reply, record a checkout update, resolve, or reopen feedback
+// AuthorizeImplementerFeedbackWithResponse Check current management access for one local feedback operation
 //
-// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+// Returns a short-lived decision and verified author. Feedback content is stored only on the publishing machine.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/feedback/{feedback_id}/events (the `AppendFeedbackEvent` operationId).
-func (c *ClientWithResponses) AppendFeedbackEventWithResponse(ctx context.Context, feedbackId FeedbackID, params *AppendFeedbackEventParams, body AppendFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendFeedbackEventResponse, error) {
-	rsp, err := c.AppendFeedbackEvent(ctx, feedbackId, params, body, reqEditors...)
+// Corresponds with POST /v1/feedback/authorization (the `AuthorizeImplementerFeedback` operationId).
+func (c *ClientWithResponses) AuthorizeImplementerFeedbackWithResponse(ctx context.Context, body AuthorizeImplementerFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeImplementerFeedbackResponse, error) {
+	rsp, err := c.AuthorizeImplementerFeedback(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseAppendFeedbackEventResponse(rsp)
+	return ParseAuthorizeImplementerFeedbackResponse(rsp)
 }
 
 // CreateGuestDemoWithResponse Create a restricted guest credential for the built-in demo
@@ -28028,154 +26677,34 @@ func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithResponse(ctx c
 	return ParseConfirmConnectorPeerPairPreparedResponse(rsp)
 }
 
-// CreateFeedbackReportWithBodyWithResponse Store a reviewer's first report for a preview page
+// AuthorizeReviewerFeedbackWithBodyWithResponse Check current visitor access and feedback author policy
 //
-// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
-func (c *ClientWithResponses) CreateFeedbackReportWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error) {
-	rsp, err := c.CreateFeedbackReportWithBody(ctx, serviceId, serviceRunId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateFeedbackReportResponse(rsp)
-}
-
-// CreateFeedbackReportWithResponse Store a reviewer's first report for a preview page
-//
-// Submit the immutable first report through the exact service run token with the reviewer's current access proof in the body. Control verifies browser identity independently of visit permission; publisher authentication alone does not authorize a reviewer report.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback (the `CreateFeedbackReport` operationId).
-func (c *ClientWithResponses) CreateFeedbackReportWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *CreateFeedbackReportParams, body CreateFeedbackReportJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateFeedbackReportResponse, error) {
-	rsp, err := c.CreateFeedbackReport(ctx, serviceId, serviceRunId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateFeedbackReportResponse(rsp)
-}
-
-// ListPreviewPageFeedbackWithBodyWithResponse List feedback on one page for a reviewer
-//
-// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+// Accepts the publisher's current visit proof, not a visitor assertion. Never receives or stores feedback content.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-func (c *ClientWithResponses) ListPreviewPageFeedbackWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error) {
-	rsp, err := c.ListPreviewPageFeedbackWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/authorization (the `AuthorizeReviewerFeedback` operationId).
+func (c *ClientWithResponses) AuthorizeReviewerFeedbackWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeReviewerFeedbackResponse, error) {
+	rsp, err := c.AuthorizeReviewerFeedbackWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseListPreviewPageFeedbackResponse(rsp)
+	return ParseAuthorizeReviewerFeedbackResponse(rsp)
 }
 
-// ListPreviewPageFeedbackWithResponse List feedback on one page for a reviewer
+// AuthorizeReviewerFeedbackWithResponse Check current visitor access and feedback author policy
 //
-// Read feedback for one service through the exact service run token and the reviewer's body access proof, optionally filtering by page. The result is limited to the authorized preview context, not a team-wide management inventory.
+// Accepts the publisher's current visit proof, not a visitor assertion. Never receives or stores feedback content.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query (the `ListPreviewPageFeedback` operationId).
-func (c *ClientWithResponses) ListPreviewPageFeedbackWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ListPreviewPageFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*ListPreviewPageFeedbackResponse, error) {
-	rsp, err := c.ListPreviewPageFeedback(ctx, serviceId, serviceRunId, body, reqEditors...)
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/authorization (the `AuthorizeReviewerFeedback` operationId).
+func (c *ClientWithResponses) AuthorizeReviewerFeedbackWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeReviewerFeedbackJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeReviewerFeedbackResponse, error) {
+	rsp, err := c.AuthorizeReviewerFeedback(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseListPreviewPageFeedbackResponse(rsp)
-}
-
-// AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
-//
-// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-func (c *ClientWithResponses) AppendReviewerFeedbackEventWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error) {
-	rsp, err := c.AppendReviewerFeedbackEventWithBody(ctx, serviceId, serviceRunId, feedbackId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAppendReviewerFeedbackEventResponse(rsp)
-}
-
-// AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
-//
-// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events (the `AppendReviewerFeedbackEvent` operationId).
-func (c *ClientWithResponses) AppendReviewerFeedbackEventWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params *AppendReviewerFeedbackEventParams, body AppendReviewerFeedbackEventJSONRequestBody, reqEditors ...RequestEditorFn) (*AppendReviewerFeedbackEventResponse, error) {
-	rsp, err := c.AppendReviewerFeedbackEvent(ctx, serviceId, serviceRunId, feedbackId, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAppendReviewerFeedbackEventResponse(rsp)
-}
-
-// ListReviewerFeedbackEventsWithBodyWithResponse Read thread events through a current publisher connection
-//
-// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-func (c *ClientWithResponses) ListReviewerFeedbackEventsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error) {
-	rsp, err := c.ListReviewerFeedbackEventsWithBody(ctx, serviceId, serviceRunId, feedbackId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListReviewerFeedbackEventsResponse(rsp)
-}
-
-// ListReviewerFeedbackEventsWithResponse Read thread events through a current publisher connection
-//
-// Read one thread's ordered follow-up history through the exact service run token and the reviewer's current body access proof. This does not expose unrelated threads or team-wide events.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query (the `ListReviewerFeedbackEvents` operationId).
-func (c *ClientWithResponses) ListReviewerFeedbackEventsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body ListReviewerFeedbackEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*ListReviewerFeedbackEventsResponse, error) {
-	rsp, err := c.ListReviewerFeedbackEvents(ctx, serviceId, serviceRunId, feedbackId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListReviewerFeedbackEventsResponse(rsp)
-}
-
-// GetReviewerFeedbackThreadWithBodyWithResponse Read a feedback thread through a current publisher connection
-//
-// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-func (c *ClientWithResponses) GetReviewerFeedbackThreadWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error) {
-	rsp, err := c.GetReviewerFeedbackThreadWithBody(ctx, serviceId, serviceRunId, feedbackId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetReviewerFeedbackThreadResponse(rsp)
-}
-
-// GetReviewerFeedbackThreadWithResponse Read a feedback thread through a current publisher connection
-//
-// Read one thread through the exact service run token and the reviewer's current body access proof. A publisher's ability to carry the request does not grant the reviewer team management access.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query (the `GetReviewerFeedbackThread` operationId).
-func (c *ClientWithResponses) GetReviewerFeedbackThreadWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, body GetReviewerFeedbackThreadJSONRequestBody, reqEditors ...RequestEditorFn) (*GetReviewerFeedbackThreadResponse, error) {
-	rsp, err := c.GetReviewerFeedbackThread(ctx, serviceId, serviceRunId, feedbackId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetReviewerFeedbackThreadResponse(rsp)
+	return ParseAuthorizeReviewerFeedbackResponse(rsp)
 }
 
 // CreateServiceRunPreviewWithBodyWithResponse Create feedback context for one ephemeral service run
@@ -28957,158 +27486,26 @@ func ParseGetControlDiscoveryResponse(rsp *http.Response) (*GetControlDiscoveryR
 	return response, nil
 }
 
-// ParseListFeedbackThreadsResponse parses an HTTP response from a ListFeedbackThreadsWithResponse call
-func ParseListFeedbackThreadsResponse(rsp *http.Response) (*ListFeedbackThreadsResponse, error) {
+// ParseAuthorizeImplementerFeedbackResponse parses an HTTP response from a AuthorizeImplementerFeedbackWithResponse call
+func ParseAuthorizeImplementerFeedbackResponse(rsp *http.Response) (*AuthorizeImplementerFeedbackResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ListFeedbackThreadsResponse{
+	response := &AuthorizeImplementerFeedbackResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FeedbackThreadPage
+		var dest FeedbackAuthorization
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListFeedbackEventsResponse parses an HTTP response from a ListFeedbackEventsWithResponse call
-func ParseListFeedbackEventsResponse(rsp *http.Response) (*ListFeedbackEventsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListFeedbackEventsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FeedbackEventPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetFeedbackThreadResponse parses an HTTP response from a GetFeedbackThreadWithResponse call
-func ParseGetFeedbackThreadResponse(rsp *http.Response) (*GetFeedbackThreadResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetFeedbackThreadResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FeedbackThread
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListFeedbackThreadEventsResponse parses an HTTP response from a ListFeedbackThreadEventsWithResponse call
-func ParseListFeedbackThreadEventsResponse(rsp *http.Response) (*ListFeedbackThreadEventsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListFeedbackThreadEventsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FeedbackEventPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAppendFeedbackEventResponse parses an HTTP response from a AppendFeedbackEventWithResponse call
-func ParseAppendFeedbackEventResponse(rsp *http.Response) (*AppendFeedbackEventResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AppendFeedbackEventResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest FeedbackEvent
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -32151,154 +30548,22 @@ func ParseConfirmConnectorPeerPairPreparedResponse(rsp *http.Response) (*Confirm
 	return response, nil
 }
 
-// ParseCreateFeedbackReportResponse parses an HTTP response from a CreateFeedbackReportWithResponse call
-func ParseCreateFeedbackReportResponse(rsp *http.Response) (*CreateFeedbackReportResponse, error) {
+// ParseAuthorizeReviewerFeedbackResponse parses an HTTP response from a AuthorizeReviewerFeedbackWithResponse call
+func ParseAuthorizeReviewerFeedbackResponse(rsp *http.Response) (*AuthorizeReviewerFeedbackResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &CreateFeedbackReportResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest FeedbackThread
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListPreviewPageFeedbackResponse parses an HTTP response from a ListPreviewPageFeedbackWithResponse call
-func ParseListPreviewPageFeedbackResponse(rsp *http.Response) (*ListPreviewPageFeedbackResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListPreviewPageFeedbackResponse{
+	response := &AuthorizeReviewerFeedbackResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FeedbackThreadPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAppendReviewerFeedbackEventResponse parses an HTTP response from a AppendReviewerFeedbackEventWithResponse call
-func ParseAppendReviewerFeedbackEventResponse(rsp *http.Response) (*AppendReviewerFeedbackEventResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AppendReviewerFeedbackEventResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest FeedbackEvent
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListReviewerFeedbackEventsResponse parses an HTTP response from a ListReviewerFeedbackEventsWithResponse call
-func ParseListReviewerFeedbackEventsResponse(rsp *http.Response) (*ListReviewerFeedbackEventsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListReviewerFeedbackEventsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FeedbackEventPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetReviewerFeedbackThreadResponse parses an HTTP response from a GetReviewerFeedbackThreadWithResponse call
-func ParseGetReviewerFeedbackThreadResponse(rsp *http.Response) (*GetReviewerFeedbackThreadResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetReviewerFeedbackThreadResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FeedbackThread
+		var dest FeedbackAuthorization
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -33137,21 +31402,9 @@ type ServerInterface interface {
 	// GetControlDiscovery Describe control and its authentication methods
 	// (GET /v1/discovery)
 	GetControlDiscovery(w http.ResponseWriter, r *http.Request)
-	// ListFeedbackThreads List feedback threads manageable in one team
-	// (GET /v1/feedback)
-	ListFeedbackThreads(w http.ResponseWriter, r *http.Request, params ListFeedbackThreadsParams)
-	// ListFeedbackEvents Resume ordered feedback events for one team
-	// (GET /v1/feedback/events)
-	ListFeedbackEvents(w http.ResponseWriter, r *http.Request, params ListFeedbackEventsParams)
-	// GetFeedbackThread Read one immutable report and current feedback state
-	// (GET /v1/feedback/{feedback_id})
-	GetFeedbackThread(w http.ResponseWriter, r *http.Request, feedbackId FeedbackID)
-	// ListFeedbackThreadEvents Read ordered follow-up events for one feedback thread
-	// (GET /v1/feedback/{feedback_id}/events)
-	ListFeedbackThreadEvents(w http.ResponseWriter, r *http.Request, feedbackId FeedbackID, params ListFeedbackThreadEventsParams)
-	// AppendFeedbackEvent Reply, record a checkout update, resolve, or reopen feedback
-	// (POST /v1/feedback/{feedback_id}/events)
-	AppendFeedbackEvent(w http.ResponseWriter, r *http.Request, feedbackId FeedbackID, params AppendFeedbackEventParams)
+	// AuthorizeImplementerFeedback Check current management access for one local feedback operation
+	// (POST /v1/feedback/authorization)
+	AuthorizeImplementerFeedback(w http.ResponseWriter, r *http.Request)
 	// CreateGuestDemo Create a restricted guest credential for the built-in demo
 	// (POST /v1/guest-demo)
 	CreateGuestDemo(w http.ResponseWriter, r *http.Request)
@@ -33419,21 +31672,9 @@ type ServerInterface interface {
 	// ConfirmConnectorPeerPairPrepared Confirm an exact connector binding installed by the publisher
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared)
 	ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
-	// CreateFeedbackReport Store a reviewer's first report for a preview page
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback)
-	CreateFeedbackReport(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, params CreateFeedbackReportParams)
-	// ListPreviewPageFeedback List feedback on one page for a reviewer
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback/query)
-	ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-	// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events)
-	AppendReviewerFeedbackEvent(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID, params AppendReviewerFeedbackEventParams)
-	// ListReviewerFeedbackEvents Read thread events through a current publisher connection
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query)
-	ListReviewerFeedbackEvents(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID)
-	// GetReviewerFeedbackThread Read a feedback thread through a current publisher connection
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query)
-	GetReviewerFeedbackThread(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, feedbackId FeedbackID)
+	// AuthorizeReviewerFeedback Check current visitor access and feedback author policy
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/feedback/authorization)
+	AuthorizeReviewerFeedback(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 	// CreateServiceRunPreview Create feedback context for one ephemeral service run
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/preview)
 	CreateServiceRunPreview(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -33767,211 +32008,11 @@ func (siw *ServerInterfaceWrapper) GetControlDiscovery(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
-// ListFeedbackThreads operation middleware
-func (siw *ServerInterfaceWrapper) ListFeedbackThreads(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListFeedbackThreadsParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "cursor" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
-		}
-		return
-	}
+// AuthorizeImplementerFeedback operation middleware
+func (siw *ServerInterfaceWrapper) AuthorizeImplementerFeedback(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListFeedbackThreads(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListFeedbackEvents operation middleware
-func (siw *ServerInterfaceWrapper) ListFeedbackEvents(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListFeedbackEventsParams
-
-	// ------------- Required query parameter "team_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "after_cursor" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "after_cursor", r.URL.Query(), &params.AfterCursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after_cursor"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after_cursor", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListFeedbackEvents(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetFeedbackThread operation middleware
-func (siw *ServerInterfaceWrapper) GetFeedbackThread(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "feedback_id" -------------
-	var feedbackId FeedbackID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetFeedbackThread(w, r, feedbackId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListFeedbackThreadEvents operation middleware
-func (siw *ServerInterfaceWrapper) ListFeedbackThreadEvents(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "feedback_id" -------------
-	var feedbackId FeedbackID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListFeedbackThreadEventsParams
-
-	// ------------- Optional query parameter "after_cursor" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "after_cursor", r.URL.Query(), &params.AfterCursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after_cursor"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after_cursor", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListFeedbackThreadEvents(w, r, feedbackId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AppendFeedbackEvent operation middleware
-func (siw *ServerInterfaceWrapper) AppendFeedbackEvent(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "feedback_id" -------------
-	var feedbackId FeedbackID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params AppendFeedbackEventParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AppendFeedbackEvent(w, r, feedbackId, params)
+		siw.Handler.AuthorizeImplementerFeedback(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -37436,71 +35477,8 @@ func (siw *ServerInterfaceWrapper) ConfirmConnectorPeerPairPrepared(w http.Respo
 	handler.ServeHTTP(w, r)
 }
 
-// CreateFeedbackReport operation middleware
-func (siw *ServerInterfaceWrapper) CreateFeedbackReport(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service_run_id" -------------
-	var serviceRunId ServiceRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateFeedbackReportParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateFeedbackReport(w, r, serviceId, serviceRunId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListPreviewPageFeedback operation middleware
-func (siw *ServerInterfaceWrapper) ListPreviewPageFeedback(w http.ResponseWriter, r *http.Request) {
+// AuthorizeReviewerFeedback operation middleware
+func (siw *ServerInterfaceWrapper) AuthorizeReviewerFeedback(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -37524,167 +35502,7 @@ func (siw *ServerInterfaceWrapper) ListPreviewPageFeedback(w http.ResponseWriter
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListPreviewPageFeedback(w, r, serviceId, serviceRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AppendReviewerFeedbackEvent operation middleware
-func (siw *ServerInterfaceWrapper) AppendReviewerFeedbackEvent(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service_run_id" -------------
-	var serviceRunId ServiceRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "feedback_id" -------------
-	var feedbackId FeedbackID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params AppendReviewerFeedbackEventParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "Idempotency-Key" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
-		var IdempotencyKey IdempotencyKey
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
-			return
-		}
-
-		params.IdempotencyKey = IdempotencyKey
-
-	} else {
-		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AppendReviewerFeedbackEvent(w, r, serviceId, serviceRunId, feedbackId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListReviewerFeedbackEvents operation middleware
-func (siw *ServerInterfaceWrapper) ListReviewerFeedbackEvents(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service_run_id" -------------
-	var serviceRunId ServiceRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "feedback_id" -------------
-	var feedbackId FeedbackID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListReviewerFeedbackEvents(w, r, serviceId, serviceRunId, feedbackId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetReviewerFeedbackThread operation middleware
-func (siw *ServerInterfaceWrapper) GetReviewerFeedbackThread(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service_run_id" -------------
-	var serviceRunId ServiceRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "feedback_id" -------------
-	var feedbackId FeedbackID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "feedback_id", r.PathValue("feedback_id"), &feedbackId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "feedback_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetReviewerFeedbackThread(w, r, serviceId, serviceRunId, feedbackId)
+		siw.Handler.AuthorizeReviewerFeedback(w, r, serviceId, serviceRunId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -38591,11 +36409,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares", wrapper.CreateServiceShare)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/shares/{share_id}", wrapper.GetShare)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/shares/{share_id}/revoke", wrapper.RevokeShare)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback", wrapper.ListFeedbackThreads)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback/events", wrapper.ListFeedbackEvents)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback/{feedback_id}", wrapper.GetFeedbackThread)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/feedback/{feedback_id}/events", wrapper.ListFeedbackThreadEvents)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback/{feedback_id}/events", wrapper.AppendFeedbackEvent)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/feedback/authorization", wrapper.AuthorizeImplementerFeedback)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-enrollments", wrapper.CreatePublisherEnrollment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher-identities", wrapper.ListPublisherIdentities)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}", wrapper.RevokePublisherIdentity)
@@ -38603,11 +36417,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/publisher-identities/{publisher_identity_id}/grants/{grant_id}", wrapper.RevokePublisherGrant)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/services", wrapper.AllocatePublisherService)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/share-redemptions", wrapper.RedeemServiceShare)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback", wrapper.CreateFeedbackReport)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback/query", wrapper.ListPreviewPageFeedback)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events", wrapper.AppendReviewerFeedbackEvent)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/query", wrapper.GetReviewerFeedbackThread)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback/{feedback_id}/events/query", wrapper.ListReviewerFeedbackEvents)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/feedback/authorization", wrapper.AuthorizeReviewerFeedback)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/status", wrapper.GetAdminServerStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/admin/relays", wrapper.ListAdminRelays)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/admin/relays/{relay_id}/drain", wrapper.DrainAdminRelay)

@@ -43,20 +43,22 @@ func Select(ctx context.Context, options Options) (clientproject.Selection, stri
 	return selection, cwd, failure.Wrap("select project configuration", failure.ProjectConfigInvalid, err)
 }
 
-func Load(ctx context.Context, options Options, stateRoot string) (clientproject.Project, error) {
+func Load(ctx context.Context, options Options, stateRoot string) (_ clientproject.Project, retErr error) {
 	state, err := clientstate.Open(ctx, stateRoot)
 	if err != nil {
 		return clientproject.Project{}, failure.Wrap("open client state", failure.ClientStateUnavailable, err)
 	}
+	defer func() { retErr = errors.Join(retErr, state.Close()) }()
 	salt, err := state.WorktreeHashSalt(ctx)
-	closeErr := state.Close()
 	if err != nil {
 		return clientproject.Project{}, failure.Wrap("read worktree identity", failure.ClientStateUnavailable, err)
 	}
-	if closeErr != nil {
-		return clientproject.Project{}, failure.Wrap("close client state", failure.ClientStateUnavailable, closeErr)
+	project, err := LoadWithSalt(ctx, options, salt)
+	if err != nil {
+		return clientproject.Project{}, err
 	}
-	return LoadWithSalt(ctx, options, salt)
+	project, err = project.BindLocalIdentity(ctx, state)
+	return project, failure.Wrap("read local project identity", failure.ClientStateUnavailable, err)
 }
 
 func LoadWithSalt(ctx context.Context, options Options, salt [32]byte) (clientproject.Project, error) {

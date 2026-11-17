@@ -5,6 +5,48 @@ CREATE TABLE baseline_identity (
 ) STRICT;
 INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-service-integrations');
 
+-- feedback belongs to one local project/worktree, server, and preview. deleting
+-- a thread cascades through its entire history; the scoped clock never rewinds.
+CREATE TABLE feedback_clocks (
+    server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
+    project_root TEXT NOT NULL,
+    preview_id TEXT NOT NULL,
+    cursor INTEGER NOT NULL DEFAULT 0 CHECK (cursor >= 0),
+    expires_at INTEGER,
+    PRIMARY KEY (server_origin, project_root, preview_id)
+) STRICT;
+CREATE TABLE feedback_threads (
+    id TEXT PRIMARY KEY,
+    server_origin TEXT NOT NULL,
+    project_root TEXT NOT NULL,
+    preview_id TEXT NOT NULL,
+    service_id TEXT NOT NULL,
+    service_run_id TEXT NOT NULL,
+    page_path TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('open', 'resolved')),
+    message_count INTEGER NOT NULL DEFAULT 1 CHECK (message_count > 0),
+    latest_event_cursor INTEGER NOT NULL CHECK (latest_event_cursor > 0),
+    report TEXT NOT NULL CHECK (json_valid(report) AND length(report) <= 65536),
+    actor_reference TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_digest BLOB NOT NULL CHECK (length(request_digest) = 32),
+    FOREIGN KEY (server_origin, project_root, preview_id)
+        REFERENCES feedback_clocks(server_origin, project_root, preview_id) ON DELETE CASCADE,
+    UNIQUE (server_origin, project_root, preview_id, service_id, service_run_id, actor_reference, idempotency_key)
+) STRICT;
+CREATE INDEX feedback_threads_by_scope ON feedback_threads(server_origin, project_root, preview_id, id);
+CREATE TABLE feedback_events (
+    feedback_id TEXT NOT NULL REFERENCES feedback_threads(id) ON DELETE CASCADE,
+    cursor INTEGER NOT NULL CHECK (cursor > 0),
+    actor_kind TEXT NOT NULL CHECK (actor_kind IN ('reviewer', 'implementer')),
+    actor_reference TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_digest BLOB NOT NULL CHECK (length(request_digest) = 32),
+    event TEXT NOT NULL CHECK (json_valid(event) AND length(event) <= 65536),
+    PRIMARY KEY (feedback_id, cursor),
+    UNIQUE (feedback_id, actor_kind, actor_reference, idempotency_key)
+) STRICT;
+
 -- provisioning journals are append-only and protected by the client wrapping
 -- key. no expiration may discard a key after a remote enrollment committed.
 CREATE TABLE publisher_provision_journal (
@@ -177,6 +219,14 @@ CREATE TABLE project_previews (
     preview_id TEXT NOT NULL CHECK (preview_id <> ''),
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (server_origin, team_id, project_root)
+) STRICT;
+
+-- local paths never determine identifiers sent to control.
+CREATE TABLE local_project_identities (
+    project_root TEXT PRIMARY KEY CHECK (project_root <> ''),
+    source_id TEXT NOT NULL UNIQUE CHECK (length(source_id)=64 AND source_id NOT GLOB '*[^0-9a-f]*' AND source_id<>printf('%064d',0)),
+    worktree_id TEXT NOT NULL UNIQUE CHECK (length(worktree_id)=64 AND worktree_id NOT GLOB '*[^0-9a-f]*' AND worktree_id<>printf('%064d',0)),
+    CHECK (source_id<>worktree_id)
 ) STRICT;
 
 CREATE TABLE telemetry_outbox (

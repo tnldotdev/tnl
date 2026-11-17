@@ -12,17 +12,14 @@ func publisherRuntimeFields(r *controlv1.PublisherRuntimeStatus) []clioutput.Fie
 	if r == nil {
 		return []clioutput.Field{{Label: "runtime", Value: "not observed"}}
 	}
-	state, address := "offline", "unknown (no public address observed)"
+	state := "offline"
 	if r.Active {
 		state = "active"
-	}
-	if r.Address != nil {
-		address = *r.Address + " (" + string(r.AddressFamily) + ")"
 	}
 	fields := []clioutput.Field{
 		{Label: "runtime", Value: state}, {Label: "process run", Value: r.ProcessRunId},
 		{Label: "runtime epoch", Value: strconv.FormatInt(r.Epoch, 10)},
-		{Label: "control observed egress", Value: address},
+		{Label: "egress family", Value: string(r.AddressFamily)},
 		{Label: "observed at", Value: r.ObservedAt.UTC().Format(time.RFC3339)},
 		{Label: "last seen", Value: r.LastSeenAt.UTC().Format(time.RFC3339)},
 		{Label: "lease expires", Value: r.LeaseExpiresAt.UTC().Format(time.RFC3339)},

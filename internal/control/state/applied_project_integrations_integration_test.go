@@ -29,15 +29,16 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteDeployments(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if oauth.Revision != 2 || !oauth.Configuration.OAuth || len(oauth.Services) != 0 || oauth.ConfigurationHash == initial.ConfigurationHash {
-		t.Fatal("OAuth-only apply did not advance desired state")
+	if oauth.Revision != 1 || oauth.Configuration.OAuth || len(oauth.Services) != 0 || oauth.ConfigurationHash != initial.ConfigurationHash {
+		t.Fatal("OAuth-only apply changed shared desired state")
 	}
-	if replay, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil || replay.Revision != 2 {
+	if replay, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil || replay.Revision != 1 {
 		t.Fatal("OAuth-only retry was not content-idempotent", err)
 	}
 	stale := r
 	stale.ExpectedRevision = 0
 	stale.Configuration.OAuth = false
+	stale.Configuration.Services = map[string]ProjectServiceConfiguration{"web": {Target: "app"}}
 	if _, err = d.ApplyProjectConfiguration(t.Context(), stale); !errors.Is(err, ErrProjectConfigurationStale) {
 		t.Fatal("stale root metadata replaced desired state", err)
 	}
@@ -46,7 +47,7 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteDeployments(t *testin
 	if _, err = d.ApplyProjectConfiguration(t.Context(), collision); !errors.Is(err, ErrProjectSourceConflict) {
 		t.Fatal("root metadata replay bypassed source collision checks", err)
 	}
-	r.ExpectedRevision = 2
+	r.ExpectedRevision = 1
 	r.Configuration = appliedWebhookConfiguration()
 	r.Configuration.Services["remote"] = ProjectServiceConfiguration{Target: "https://eks.internal:8443", TargetTLS: appliedTargetTrust(t, "eks.internal")}
 	remote := projectServiceSelection(r, "eks", "remote")
@@ -56,8 +57,8 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteDeployments(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configured.Revision != 3 || !configured.Configuration.OAuth || len(configured.Configuration.Webhooks) != 2 || configured.Configuration.Webhooks["chat"].Delivery != "selected" {
-		t.Fatal("root declarations were not normalized and stored")
+	if configured.Revision != 2 || configured.Configuration.OAuth || len(configured.Configuration.Webhooks) != 0 {
+		t.Fatal("publisher integration handlers reached shared state")
 	}
 	remote.ExpectedRevision = configured.Revision
 	remoteApplied, err := d.ApplyProjectConfiguration(t.Context(), remote)
@@ -96,8 +97,8 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteDeployments(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.Revision != remoteApplied.Revision+1 || changed.Configuration.OAuth || changed.Configuration.Webhooks["payments"].Path != endpoint.Path {
-		t.Fatal("local-only integration edit did not update status")
+	if changed.Revision != remoteApplied.Revision || changed.Configuration.OAuth || len(changed.Configuration.Webhooks) != 0 {
+		t.Fatal("local-only integration edit changed shared state")
 	}
 	current, err := d.GetDeploymentPublisherAssignments(t.Context(), replica.lease.AccessToken, now)
 	if err != nil {
@@ -109,7 +110,7 @@ func TestIntegrationAppliedProjectRootIntegrationsAndRemoteDeployments(t *testin
 	if _, err = d.AuthenticatePublisherAccess(t.Context(), access.Token, "", now); err != nil {
 		t.Fatal("local metadata edit revoked an unrelated native deployment grant", err)
 	}
-	if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replica.lease.AccessToken, 3, configured.ConfigurationHash, false, now); !errors.Is(err, ErrProjectConfigurationStale) {
+	if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replica.lease.AccessToken, configured.Revision, configured.ConfigurationHash, false, now); !errors.Is(err, ErrProjectConfigurationStale) {
 		t.Fatal("deployment acknowledgement accepted project-level configuration facts", err)
 	}
 	if err = d.AcknowledgeDeploymentPublisherConfiguration(t.Context(), replica.lease.AccessToken, current.Revision, current.ConfigurationHash, false, now); err != nil {

@@ -179,8 +179,23 @@ func OpenWithOptions(ctx context.Context, root string, options OpenOptions) (res
 			return nil, errors.New("clientstate: wrapping key does not match database")
 		}
 	}
+	queries := clientstatedb.New(db)
+	if !options.NoWait {
+		at := sql.NullInt64{Int64: time.Now().UnixNano(), Valid: true}
+		expired, err := queries.ExpiredLocalFeedbackCount(ctx, at)
+		if err != nil {
+			return nil, errors.Join(err, db.Close())
+		}
+		// ordinary opens remain read-only when no demo retention work is due.
+		// taking a write lock here would block unrelated live client owners.
+		if expired > 0 {
+			if err := queries.PruneExpiredLocalFeedback(ctx, at); err != nil {
+				return nil, errors.Join(err, db.Close())
+			}
+		}
+	}
 	return &Database{
-		root: root, locksDir: locksDir, db: db, queries: clientstatedb.New(db), now: time.Now,
+		root: root, locksDir: locksDir, db: db, queries: queries, now: time.Now,
 		heartbeatInterval: tunnelHeartbeatInterval,
 		secrets:           protector,
 	}, nil

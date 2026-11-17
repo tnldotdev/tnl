@@ -47,7 +47,6 @@ type PublisherRuntimeStatus struct {
 	ProcessRunID        string                                    `json:"process_run_id"`
 	Epoch               int64                                     `json:"epoch,string"`
 	Evidence            string                                    `json:"evidence"`
-	Address             string                                    `json:"address,omitempty"`
 	AddressFamily       string                                    `json:"address_family"`
 	StartedAt           time.Time                                 `json:"started_at"`
 	ObservedAt          time.Time                                 `json:"observed_at"`
@@ -204,7 +203,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 		deploymentDeployment = nullableText(deployment)
 		deploymentFirst = timestamptz(r.Now)
 	}
-	address, family := publicPublisherAddress(r.SourceIP)
+	_, family := publicPublisherAddress(r.SourceIP)
 	until := r.Now.Add(DeploymentPublisherLeaseLifetime)
 	if r.Action == "start" {
 		if current.ProcessRunID == r.ProcessRunID && current.Epoch == r.ExpectedEpoch+1 && current.ScopeID == r.ScopeID && current.KeyID == kid && !current.StoppedAt.Valid {
@@ -214,7 +213,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 			if current.Epoch != r.ExpectedEpoch || current.ProcessRunID == r.ProcessRunID {
 				return result, ErrPublisherRuntimeStale
 			}
-			current, err = q.StartPublisherRuntime(ctx, controlstatedb.StartPublisherRuntimeParams{PublisherIdentityID: i.ID, TeamID: team, KeyID: kid, ScopeID: r.ScopeID, ProcessRunID: r.ProcessRunID, Epoch: r.ExpectedEpoch + 1, Address: nullableText(address), AddressFamily: family, Now: timestamptz(r.Now), LeaseExpiresAt: timestamptz(until), DeploymentReport: deploymentJSON, DeploymentID: deploymentDeployment, DeploymentFirstObservedAt: deploymentFirst})
+			current, err = q.StartPublisherRuntime(ctx, controlstatedb.StartPublisherRuntimeParams{PublisherIdentityID: i.ID, TeamID: team, KeyID: kid, ScopeID: r.ScopeID, ProcessRunID: r.ProcessRunID, Epoch: r.ExpectedEpoch + 1, AddressFamily: family, Now: timestamptz(r.Now), LeaseExpiresAt: timestamptz(until), DeploymentReport: deploymentJSON, DeploymentID: deploymentDeployment, DeploymentFirstObservedAt: deploymentFirst})
 			if err == nil && deployment != "" {
 				// the team lock serializes start with acknowledgement. invalidate
 				// only a new epoch, never recovery of a lost start reply; request
@@ -227,7 +226,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 			return result, ErrPublisherRuntimeStale
 		}
 		if r.Action == "renew" {
-			current, err = q.RenewPublisherRuntime(ctx, controlstatedb.RenewPublisherRuntimeParams{PublisherIdentityID: i.ID, ProcessRunID: r.ProcessRunID, Epoch: r.ExpectedEpoch, Address: nullableText(address), AddressFamily: family, Now: timestamptz(r.Now), LeaseExpiresAt: timestamptz(until)})
+			current, err = q.RenewPublisherRuntime(ctx, controlstatedb.RenewPublisherRuntimeParams{PublisherIdentityID: i.ID, ProcessRunID: r.ProcessRunID, Epoch: r.ExpectedEpoch, AddressFamily: family, Now: timestamptz(r.Now), LeaseExpiresAt: timestamptz(until)})
 		} else {
 			current, err = q.StopPublisherRuntime(ctx, controlstatedb.StopPublisherRuntimeParams{PublisherIdentityID: i.ID, ProcessRunID: r.ProcessRunID, Epoch: r.ExpectedEpoch, Now: timestamptz(r.Now)})
 		}
@@ -269,7 +268,7 @@ func publisherRuntimeStatus(ctx context.Context, q *controlstatedb.Queries, id s
 	if err != nil {
 		return nil, err
 	}
-	s := &PublisherRuntimeStatus{PublisherIdentityID: id, TeamID: r.TeamID, ProcessRunID: r.ProcessRunID, Epoch: r.Epoch, Evidence: r.Evidence, Address: r.Address.String, AddressFamily: r.AddressFamily, StartedAt: r.StartedAt.Time, ObservedAt: r.ObservedAt.Time, LastSeenAt: r.LastSeenAt.Time, LeaseExpiresAt: r.LeaseExpiresAt.Time, Active: active}
+	s := &PublisherRuntimeStatus{PublisherIdentityID: id, TeamID: r.TeamID, ProcessRunID: r.ProcessRunID, Epoch: r.Epoch, Evidence: r.Evidence, AddressFamily: r.AddressFamily, StartedAt: r.StartedAt.Time, ObservedAt: r.ObservedAt.Time, LastSeenAt: r.LastSeenAt.Time, LeaseExpiresAt: r.LeaseExpiresAt.Time, Active: active}
 	if len(r.DeploymentReport) != 0 {
 		var report controlv1.PublisherDeploymentReport
 		if err := json.Unmarshal(r.DeploymentReport, &report); err != nil {

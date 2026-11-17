@@ -35,15 +35,19 @@ func processFixture(t *testing.T) (clientproject.Project, *clientstate.Database,
 		t.Fatal(err)
 	}
 	project := clientproject.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}}}}
-	snapshot, _, err := project.Snapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
 	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = state.Close() })
+	project, err = project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := project.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
 	path, err := publisherprotocol.DescriptorPath(state.Root(), project.Root)
 	if err != nil {
 		t.Fatal(err)

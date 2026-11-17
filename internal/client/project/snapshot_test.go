@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -31,6 +32,25 @@ func TestSnapshotPreservesEvaluatedConfigurationAndPrimaryCheckout(t *testing.T)
 	}
 	if got, want := ServiceWorktreeLabel("web", restored.Worktree), ServiceWorktreeLabel("web", project.Worktree); got != want {
 		t.Fatalf("owner selected another hostname: %q, want %q", got, want)
+	}
+}
+
+func TestSnapshotRejectsMalformedLocalIdentity(t *testing.T) {
+	for _, ids := range [][2]string{
+		{strings.Repeat("a", 64), ""},
+		{"", strings.Repeat("b", 64)},
+		{strings.Repeat("a", 64), strings.Repeat("a", 64)},
+		{strings.Repeat("0", 64), strings.Repeat("b", 64)},
+		{strings.Repeat("A", 64), strings.Repeat("b", 64)},
+		{strings.Repeat("a", 63), strings.Repeat("b", 64)},
+	} {
+		raw, err := json.Marshal(projectSnapshot{LocalSource: ids[0], LocalWorktree: ids[1]})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadSnapshot(bytes.NewReader(raw)); err == nil {
+			t.Fatal("snapshot accepted invalid local identifiers", ids)
+		}
 	}
 }
 

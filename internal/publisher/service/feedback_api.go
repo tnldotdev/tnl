@@ -14,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/browserfonts"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -144,7 +145,12 @@ func (f *feedbackRuntime) list(response http.ResponseWriter, request *http.Reque
 		}
 		input.Cursor = &cursor
 	}
-	result, err := f.client.ListPreviewPageFeedback(request.Context(), f.serviceID, f.runID, input, f.token)
+	local, err := f.local(request.Context(), access)
+	if err != nil {
+		f.writeResult(response, nil, err)
+		return
+	}
+	result, err := local.List(request.Context(), f.serviceID, path, feedbackValue(input.State), feedbackValue(input.Cursor))
 	f.writeResult(response, result, err)
 }
 
@@ -171,14 +177,25 @@ func (f *feedbackRuntime) create(response http.ResponseWriter, request *http.Req
 		RunNumber: f.number, Service: f.service,
 	}
 	body.Report.Text = input.Text
-	created, err := f.client.CreateFeedbackReport(request.Context(), f.serviceID, f.runID, key, body, f.token)
+	local, err := f.local(request.Context(), access)
+	if err != nil {
+		f.writeResult(response, nil, err)
+		return
+	}
+	created, err := local.Create(request.Context(), f.serviceID, f.runID, key, body)
 	f.writeResult(response, created, err)
 }
 
 func (f *feedbackRuntime) read(response http.ResponseWriter, request *http.Request, id string, access controlv1.FeedbackReviewerAccess) {
-	result, err := f.client.GetReviewerFeedbackThread(request.Context(), f.serviceID, f.runID, id, controlv1.ReviewerFeedbackReadRequest{
-		PreviewId: f.previewID, RunNumber: f.number, Access: access,
-	}, f.token)
+	local, err := f.local(request.Context(), access)
+	if err != nil {
+		f.writeResult(response, nil, err)
+		return
+	}
+	result, err := local.GetFeedbackThread(request.Context(), id)
+	if err == nil && result.Scope.ServiceId != f.serviceID {
+		err = clientstate.ErrFeedbackNotFound
+	}
 	f.writeResult(response, result, err)
 }
 
@@ -193,7 +210,16 @@ func (f *feedbackRuntime) events(response http.ResponseWriter, request *http.Req
 		}
 		body.AfterCursor = after
 	}
-	result, err := f.client.ListReviewerFeedbackEvents(request.Context(), f.serviceID, f.runID, id, body, f.token)
+	local, err := f.local(request.Context(), access)
+	if err != nil {
+		f.writeResult(response, nil, err)
+		return
+	}
+	var cursor uint64
+	if body.AfterCursor != nil {
+		cursor = uint64(*body.AfterCursor)
+	}
+	result, err := local.Events(request.Context(), f.serviceID, id, cursor)
 	f.writeResult(response, result, err)
 }
 
@@ -218,7 +244,14 @@ func (f *feedbackRuntime) reply(response http.ResponseWriter, request *http.Requ
 	if input.Text != nil && *input.Text != "" {
 		body.Text = input.Text
 	}
-	result, err := f.client.AppendReviewerFeedbackEvent(request.Context(), f.serviceID, f.runID, id, key, body, f.token)
+	local, err := f.local(request.Context(), access)
+	if err != nil {
+		f.writeResult(response, nil, err)
+		return
+	}
+	result, err := local.AppendFeedbackEvent(request.Context(), id, key, controlv1.AppendFeedbackEventRequest{
+		Type: controlv1.FeedbackEventInputType(body.Type), Text: body.Text,
+	})
 	f.writeResult(response, result, err)
 }
 
@@ -232,6 +265,12 @@ func readFeedbackInput(response http.ResponseWriter, request *http.Request, targ
 	return decoder.Decode(new(any)) == io.EOF
 }
 
+func feedbackValue[T ~string](value *T) string {
+	if value == nil {
+		return ""
+	}
+	return string(*value)
+}
 func (f *feedbackRuntime) writeResult(response http.ResponseWriter, value any, err error) {
 	if err != nil {
 		// only a stable diagnostic is shown to the visitor. credentials and
@@ -241,12 +280,16 @@ func (f *feedbackRuntime) writeResult(response http.ResponseWriter, value any, e
 		switch {
 		case errors.Is(err, clientcontrol.ErrUnauthenticated):
 			message, status = "feedback requires sign-in; sign in and retry", http.StatusUnauthorized
-		case errors.Is(err, clientcontrol.ErrNotFound):
+		case errors.Is(err, clientcontrol.ErrNotFound), errors.Is(err, clientstate.ErrFeedbackNotFound):
 			message, status = "feedback thread not found", http.StatusNotFound
-		case errors.Is(err, clientcontrol.ErrStatusConflict):
+		case errors.Is(err, clientcontrol.ErrStatusConflict), errors.Is(err, clientstate.ErrFeedbackState), errors.Is(err, clientstate.ErrFeedbackIdempotency):
 			message, status = "feedback changed; reload and retry", http.StatusConflict
 		case errors.Is(err, clientcontrol.ErrRateLimited):
 			message, status = "too many feedback requests; retry shortly", http.StatusTooManyRequests
+		case errors.Is(err, clientstate.ErrFeedbackAccess):
+			message, status = "feedback requires current access", http.StatusForbidden
+		case errors.Is(err, clientstate.ErrFeedbackInvalid):
+			message, status = "invalid feedback request; check the input", http.StatusBadRequest
 		case errors.As(err, &problem) && problem.Status == http.StatusForbidden:
 			message, status = "feedback requires a current share", http.StatusForbidden
 		case errors.As(err, &problem) && problem.Status == http.StatusBadRequest:

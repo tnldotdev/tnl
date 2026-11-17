@@ -119,8 +119,8 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	if err := json.Unmarshal(result, &applied); err != nil || applied.Revision != 1 {
 		t.Fatalf("applied configuration: %v", err)
 	}
-	if !applied.Configuration.Oauth || len(applied.Configuration.Webhooks) != 1 || applied.Configuration.Webhooks["review"].Path != "/hooks/review" {
-		t.Fatal("root OAuth/webhook declarations did not reach real control")
+	if applied.Configuration.Oauth || len(applied.Configuration.Webhooks) != 0 {
+		t.Fatal("publisher-only OAuth/webhook handlers reached control")
 	}
 	for _, deployment := range []string{"external", "cluster"} {
 		result := cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", deployment, "--state-dir", person, "--output", "json"})

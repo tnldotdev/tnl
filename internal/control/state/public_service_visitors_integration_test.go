@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/netip"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +92,23 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	if err != nil || admitted.RunID != run.RunID || len(admitted.Relays) != 2 {
 		t.Fatal("direct selection lost the certified run", admitted, err)
 	}
+	var persisted string
+	if err := d.pool.QueryRow(ctx, `SELECT row_to_json(v)::text FROM control.public_service_visitors v WHERE visitor_connection_id=$1`, visitor).Scan(&persisted); err != nil ||
+		strings.Contains(persisted, source.String()) || strings.Contains(persisted, "source_ip") ||
+		!strings.Contains(persisted, publicVisitorSourceDigest(t, d, run.ServiceID, source.String())) {
+		t.Fatal("native admission retained a raw source or lost its binding", err)
+	}
+	for _, wrong := range []netip.Addr{netip.MustParseAddr("192.0.2.45"), netip.MustParseAddr("2001:db8::1")} {
+		status, err := d.PublicServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, visitor, wrong, now)
+		if err != nil || status.State != PublicServiceVisitorDenied {
+			t.Fatal("status accepted another live source", status, err)
+		}
+	}
+	for _, invalid := range []netip.Addr{{}, netip.MustParseAddr("::"), netip.MustParseAddr("0.0.0.0"), netip.MustParseAddr("fe80::1%en0")} {
+		if _, err := d.PublicServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, visitor, invalid, now); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("status accepted an invalid live source", err)
+		}
+	}
 	retry, err := admit()
 	if err != nil || retry.ServiceID != admitted.ServiceID || retry.RunID != admitted.RunID || retry.RunNumber != admitted.RunNumber || retry.ConnectionID != admitted.ConnectionID || !retry.ExpiresAt.Equal(admitted.ExpiresAt) || !reflect.DeepEqual(retry.Relays, admitted.Relays) {
 		t.Fatal("lost admission response changed its reservation", retry, err)
@@ -120,9 +138,13 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	if err != nil || !decision.Allowed || decision.Admitted {
 		t.Fatal("TLS authorization bypassed ingress capacity", decision, err)
 	}
-	status, err := d.PublicServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, visitor, now)
+	status, err := d.PublicServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, visitor, source, now)
 	if err != nil || status.State != PublicServiceVisitorAuthenticated {
 		t.Fatal("identity was not awaiting promotion", status, err)
+	}
+	mapped, err := d.PublicServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, visitor, netip.MustParseAddr("::ffff:"+source.String()), now)
+	if err != nil || mapped.State != status.State || !mapped.ValidUntil.Equal(status.ValidUntil) {
+		t.Fatal("mapped IPv4 changed the original admission binding", mapped, err)
 	}
 	wrong := lease.IngressLeaseIdentity
 	wrong.IngressRunID = id(opaqueid.IngressRunPrefix)
@@ -144,7 +166,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 	if _, err = authorize(source); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked certificate retained access", err)
 	}
-	status, err = d.PublicServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, visitor, now)
+	status, err = d.PublicServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, visitor, source, now)
 	if err != nil || status.State != PublicServiceVisitorDenied {
 		t.Fatal("ingress did not observe revocation", status, err)
 	}

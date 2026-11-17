@@ -110,9 +110,11 @@ func TestShareHandoffBridgeResetsLongRedirectChains(t *testing.T) {
 		Permission: controlv1.VisitorTokenResponse{VisitorToken: "signed-share-permission", ExpiresAt: time.Now().Add(5 * time.Minute)},
 	}
 	response := httptest.NewRecorder()
-	ShareRedirect(response, redemption)
+	ShareRedirect(response, httptest.NewRequest(http.MethodGet, "https://app.example.test/", nil), redemption)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `step=8&amp;next=9`) ||
 		!strings.Contains(response.Body.String(), "http-equiv=\"refresh\"") ||
+		!strings.Contains(response.Body.String(), "data:font/woff2;base64,") ||
+		!strings.Contains(response.Header().Get("Content-Security-Policy"), "font-src data:") ||
 		response.Header().Get("Referrer-Policy") != "no-referrer" || len(response.Result().Cookies()) != 2 {
 		t.Fatalf("long handoff bridge = %d, %q, %#v", response.Code, response.Body.String(), response.Header())
 	}
@@ -159,7 +161,7 @@ func TestShareRedirectKeepsExactDestinationAndHostBoundCookies(t *testing.T) {
 		},
 	}
 	response := httptest.NewRecorder()
-	ShareRedirect(response, redemption)
+	ShareRedirect(response, httptest.NewRequest(http.MethodGet, "https://app.example.test/", nil), redemption)
 	cookies := response.Result().Cookies()
 	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != redemption.NextUrl ||
 		response.Header().Get("Referrer-Policy") != "no-referrer" || response.Header().Get("Cache-Control") != "no-store" || len(cookies) != 2 {

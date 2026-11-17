@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
@@ -143,7 +144,7 @@ func (d *Database) ServiceHTTPBrowserTeam(ctx context.Context, subject visitorsc
 }
 
 func (d *Database) BeginServiceBrowserLogin(ctx context.Context, subject visitorscope.Scope, preview, path, nonce, verifier string, binding []byte, intent *CompanyLoginIntent, now time.Time) (string, error) {
-	if subject.Kind != visitorscope.Service || !subject.Valid() || !validFeedbackPath(path) || len(path) > 2048 || len(nonce) < 16 || len(nonce) > 256 || len(verifier) < 43 || len(verifier) > 128 || len(binding) != 32 || d.storageKey == nil {
+	if subject.Kind != visitorscope.Service || !subject.Valid() || !naming.ValidRequestPath(path) || len(path) > 2048 || len(nonce) < 16 || len(nonce) > 256 || len(verifier) < 43 || len(verifier) > 128 || len(binding) != 32 || d.storageKey == nil {
 		return "", ErrPreviewAccess
 	}
 	q := controlstatedb.New(d.pool)

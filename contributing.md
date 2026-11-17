@@ -85,6 +85,10 @@ with `mise exec -- task go:test:race:service` and
 example. `mise exec -- task go:test:race` still runs the complete routine suite.
 Both CI partitions must pass the `Go race` check.
 
+Linux Go CI runs routine tests separately from generation, static analysis,
+vulnerability scanning, and command builds. Both jobs retain their ten-minute
+limits and must pass the `Go (Linux)` check.
+
 For warm PostgreSQL latency, run `mise exec -- task go:test:load:postgres`.
 It compares a direct database connection with the connector/publisher path using
 the same query and retained sessions. The task owns its disposable databases;

@@ -24,12 +24,20 @@ func TestNormalizeAppliedRootIntegrationsMatchAppRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	normal, hash, err := NormalizeProjectConfiguration(input)
+	normal := appliedWebhookConfiguration()
+	normal.Services["app"] = ProjectServiceConfiguration{Protocol: "http", Target: "app", Public: new(true)}
+	if err := normalizeAppliedProjectIntegrations(&normal); err != nil {
+		t.Fatal(err)
+	}
+	shared, hash, err := NormalizeProjectConfiguration(input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !normal.OAuth || normal.Webhooks["payments"].Delivery != "fanout" || normal.Webhooks["chat"].Delivery != "selected" || !slices.Equal(normal.Webhooks["chat"].Methods, []string{"POST"}) || normal.Webhooks["chat"].SourceIPs != nil {
 		t.Fatal("integration normal form dropped root values or provider defaults")
+	}
+	if shared.OAuth || len(shared.Webhooks) != 0 {
+		t.Fatal("local integration handlers escaped into shared configuration")
 	}
 	w := input.Webhooks["payments"]
 	wire, _, err := (config.Webhook{Service: w.Service, Path: w.Path, Provider: w.Provider, Delivery: w.Delivery, Methods: w.Methods, SourceIPs: w.SourceIPs}).DefinitionBytes()
@@ -44,14 +52,14 @@ func TestNormalizeAppliedRootIntegrationsMatchAppRegistration(t *testing.T) {
 	if err != nil || !bytes.Equal(after, before) {
 		t.Fatal("normalization changed caller webhook declarations", err)
 	}
-	_, repeat, err := NormalizeProjectConfiguration(normal)
+	_, repeat, err := NormalizeProjectConfiguration(shared)
 	if err != nil || repeat != hash {
 		t.Fatal("normalized integration replay changed its hash", err)
 	}
 	normal.OAuth = false
 	_, changed, err := NormalizeProjectConfiguration(normal)
-	if err != nil || changed == hash {
-		t.Fatal("OAuth-only change did not change the desired hash", err)
+	if err != nil || changed != hash {
+		t.Fatal("OAuth-only change altered shared desired state", err)
 	}
 	if _, _, err = NormalizeProjectConfiguration(ProjectConfiguration{OAuth: true}); err != nil {
 		t.Fatal("OAuth intent required an already-running app", err)

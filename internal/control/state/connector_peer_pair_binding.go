@@ -73,12 +73,15 @@ func (d *Database) connectorPeerPairBinding(ctx context.Context, tx pgx.Tx, run 
 		}
 		seen[slot] = true
 		lease := b.relays[slot].RelayLease
+		source, err := d.openConnectorSource(ctx, q, run.ServiceID, claim)
+		if err != nil {
+			return connectorPeerBinding{}, err
+		}
 		if claim.RelayID != lease.RelayID || claim.RelayRunID != lease.RelayRunID ||
-			claim.RelayLeaseRevision != int64(lease.RelayLeaseRevision) || !claim.SourceIp.IsValid() || claim.SourceIp.Zone() != "" ||
-			claim.SourceIp != claim.SourceIp.Unmap() || b.source.IsValid() && claim.SourceIp != b.source {
+			claim.RelayLeaseRevision != int64(lease.RelayLeaseRevision) || b.source.IsValid() && source != b.source {
 			return connectorPeerBinding{}, ErrServiceAccess
 		}
-		b.source = claim.SourceIp
+		b.source = source
 		if claim.CheckedAt.Time.After(checkedNow()) || !claim.ConfirmedUntil.Time.After(checkedNow()) {
 			b.claimsCurrent = false
 		}

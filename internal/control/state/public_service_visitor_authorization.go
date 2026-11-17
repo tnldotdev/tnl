@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -11,7 +10,7 @@ import (
 // both ingress rechecks and publisher certificate checks use this decision. the
 // first certificate check binds a direct admission; later checks cannot change
 // its identity, device, key or original connection metadata.
-func recheckPublicServiceVisitor(ctx context.Context, tx pgx.Tx, service, run string, number int64, visitor, identity, device string, source netip.Addr, certificateDigest []byte, now time.Time) (result ServiceVisitorValidity, err error) {
+func recheckPublicServiceVisitor(ctx context.Context, tx pgx.Tx, service, run string, number int64, visitor, identity, device, sourceDigest string, certificateDigest []byte, now time.Time) (result ServiceVisitorValidity, err error) {
 	result.ValidUntil = now
 	var session string
 	err = tx.QueryRow(ctx, `SELECT COALESCE(cert.control_session_id,'') FROM control.service_client_certificates cert LEFT JOIN control.public_service_visitors v ON v.visitor_connection_id=$1 WHERE cert.certificate_digest=COALESCE($2::bytea,v.certificate_digest) AND cert.service_id=$3 AND cert.identity_id=$4 AND cert.device_id=$5 AND cert.revoked_at IS NULL AND cert.expires_at>$6`, visitor, certificateDigest, service, identity, device, now).Scan(&session)
@@ -36,9 +35,9 @@ func recheckPublicServiceVisitor(ctx context.Context, tx pgx.Tx, service, run st
 	    JOIN control.publisher_identities p ON p.id=run.publisher_identity_id AND p.id=g.publisher_identity_id AND p.revoked_at IS NULL
 	    JOIN control.service_client_certificates cert ON cert.certificate_digest=COALESCE($8::bytea,v.certificate_digest) AND cert.service_id=service.id AND cert.identity_id=$5 AND cert.device_id=$6 AND cert.revoked_at IS NULL AND cert.expires_at>$9
 	    JOIN control.visitor_devices device ON device.id=cert.device_id AND device.identity_id=cert.identity_id AND device.revoked_at IS NULL
-	    WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4 AND v.source_ip=$7 AND v.closed_at IS NULL AND v.valid_until>$9
+	    WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4 AND v.source_digest=$7 AND v.closed_at IS NULL AND v.valid_until>$9
 	    AND(v.identity_id IS NULL OR v.identity_id=$5) AND(v.device_id IS NULL OR v.device_id=$6) AND(v.certificate_digest IS NULL OR v.certificate_digest=cert.certificate_digest)
-	    AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND relay.lease_expires_at>$9 AND NOT relay.draining)`, visitor, service, run, number, identity, device, source.Unmap(), certificateDigest, now).Scan(&result.Admitted, &deadline)
+	    AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND relay.lease_expires_at>$9 AND NOT relay.draining)`, visitor, service, run, number, identity, device, sourceDigest, certificateDigest, now).Scan(&result.Admitted, &deadline)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}

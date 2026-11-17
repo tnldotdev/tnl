@@ -34,17 +34,18 @@ type feedbackProofControl struct {
 	denied atomic.Bool
 }
 
-func (c *feedbackProofControl) ListPreviewPageFeedback(_ context.Context, _, _ string, input controlv1.PreviewPageFeedbackRequest, _ credentials.ServiceRunToken) (controlv1.FeedbackThreadPage, error) {
-	c.pages <- input
+func (c *feedbackProofControl) AuthorizeReviewerFeedback(_ context.Context, service, run string, input controlv1.AuthorizeReviewerFeedbackRequest, _ credentials.ServiceRunToken) (controlv1.FeedbackAuthorization, error) {
+	c.pages <- controlv1.PreviewPageFeedbackRequest{PreviewId: input.PreviewId, RunNumber: input.RunNumber, Access: input.Access}
 	if c.denied.Load() {
-		return controlv1.FeedbackThreadPage{}, errors.New("private upstream failure: " + string(input.Access.VisitProof))
+		return controlv1.FeedbackAuthorization{}, errors.New("private upstream failure: " + string(input.Access.VisitProof))
 	}
-	return controlv1.FeedbackThreadPage{Threads: []controlv1.FeedbackThreadSummary{}}, nil
+	return testFeedbackDecision(service, run, input), nil
 }
 
 func feedbackProofRuntime(t *testing.T, frontend *HTTP, control *feedbackProofControl) {
 	t.Helper()
 	frontend.Control = serviceHTTPControl{HTTPControl: control}
+	frontend.State = testFeedbackState(t)
 	frontend.Feedback, frontend.PreviewID, frontend.ProjectService, frontend.Demo = true, "pv_0123456789abcdefghijkl", "web", true
 	runtime, err := newFeedbackRuntime(*frontend)
 	if err != nil {

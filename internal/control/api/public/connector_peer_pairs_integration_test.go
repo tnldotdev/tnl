@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -18,8 +19,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/control/storagekey"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
@@ -414,11 +417,45 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	}
 	assertDenied(otherRun.Token, pair.DeliveryGeneration)
 	assertDenied(owner.AccessToken.String(), pair.DeliveryGeneration)
-	if _, err := conn.Exec(ctx, `UPDATE control.connector_peer_pair_leg_claims SET source_ip='192.0.2.11' WHERE pair_id=$1 AND connection_slot=1`, pair.PairId); err != nil {
+	var savedDigest, savedKey string
+	var savedCiphertext []byte
+	if err := conn.QueryRow(ctx, `SELECT source_digest,source_ciphertext,source_storage_key_id
+		FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1 AND connection_slot=1`, pair.PairId).Scan(&savedDigest, &savedCiphertext, &savedKey); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := storagekey.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceKey, err := keys.IPPolicyKey(keys.CurrentID(), "connector-source-binding:"+service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalDigest, err := ippolicy.HashAddress(sourceKey, source)
+	if err != nil || originalDigest != savedDigest {
+		t.Fatal("fixture did not recover the exact claim's source verifier", err)
+	}
+	otherSource := netip.MustParseAddr("192.0.2.11")
+	otherDigest, err := ippolicy.HashAddress(sourceKey, otherSource)
+	clear(sourceKey[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCiphertext, err := keys.Seal(fmt.Sprintf("connector-source/%s/%d/1", pair.PairId, pair.DeliveryGeneration), otherSource.AsSlice())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// both claims remain valid envelopes for this pair, generation, and slot.
+	// delivery must still reject their different checked source addresses.
+	if _, err := conn.Exec(ctx, `UPDATE control.connector_peer_pair_leg_claims
+		SET source_digest=$2,source_ciphertext=$3,source_storage_key_id=$4 WHERE pair_id=$1 AND connection_slot=1`,
+		pair.PairId, otherDigest, otherCiphertext, keys.CurrentID()); err != nil {
 		t.Fatal(err)
 	}
 	assertDenied(run.Token, pair.DeliveryGeneration) // do not guess a shared origin
-	if _, err := conn.Exec(ctx, `UPDATE control.connector_peer_pair_leg_claims SET source_ip=$2 WHERE pair_id=$1 AND connection_slot=1`, pair.PairId, source); err != nil {
+	if _, err := conn.Exec(ctx, `UPDATE control.connector_peer_pair_leg_claims
+		SET source_digest=$2,source_ciphertext=$3,source_storage_key_id=$4 WHERE pair_id=$1 AND connection_slot=1`,
+		pair.PairId, savedDigest, savedCiphertext, savedKey); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := conn.Exec(ctx, `UPDATE control.service_connection_slots SET connection_assignment_revision=connection_assignment_revision+1 WHERE publisher_connection_id=$1`, run.Connections[0].PublisherConnectionID); err != nil {

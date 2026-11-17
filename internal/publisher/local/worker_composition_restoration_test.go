@@ -69,11 +69,7 @@ func restoredConfiguredWorkers(t *testing.T, definitions config.Services, aliase
 	_, _ = hash.Write([]byte(f.URL + "\x00tm_0000000000000000000001\x00" + a.project.Root))
 	declarations := map[string]controlv1.ProjectServiceConfiguration{}
 	for name, definition := range definitions {
-		target := "app"
-		if config.TargetType(definition) == "docker" {
-			target = "docker:" + *definition.Target.Container + ":3000"
-		}
-		declarations[name] = controlv1.ProjectServiceConfiguration{Name: new(name), Protocol: new(controlv1.ServiceProtocolHTTP), Target: target, Public: definition.Public}
+		declarations[name] = controlv1.ProjectServiceConfiguration{Name: new(name), Protocol: new(controlv1.ServiceProtocolHTTP), Target: "app", Public: definition.Public}
 	}
 	if err := f.ConfigureLocal(publishingtest.LocalProject{Key: source.Key, Fingerprint: source.Fingerprint,
 		Worktree: a.project.LocalWorktreeKey(), Label: a.project.Worktree.Label.FullLabel,

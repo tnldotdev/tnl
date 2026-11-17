@@ -55,6 +55,41 @@ type ControlSession struct {
 	UpdatedAt              int64
 }
 
+type FeedbackClock struct {
+	ServerOrigin string
+	ProjectRoot  string
+	PreviewID    string
+	Cursor       int64
+	ExpiresAt    sql.NullInt64
+}
+
+type FeedbackEvent struct {
+	FeedbackID     string
+	Cursor         int64
+	ActorKind      string
+	ActorReference string
+	IdempotencyKey string
+	RequestDigest  []byte
+	Event          string
+}
+
+type FeedbackThread struct {
+	ID                string
+	ServerOrigin      string
+	ProjectRoot       string
+	PreviewID         string
+	ServiceID         string
+	ServiceRunID      string
+	PagePath          string
+	State             string
+	MessageCount      int64
+	LatestEventCursor int64
+	Report            string
+	ActorReference    string
+	IdempotencyKey    string
+	RequestDigest     []byte
+}
+
 type GuestDemoSession struct {
 	ServerOrigin          string
 	GuestID               string
@@ -124,6 +159,12 @@ type IntegrationUrlLease struct {
 	ServiceID           string
 	RunNumber           int64
 	ExpiresAt           int64
+}
+
+type LocalProjectIdentity struct {
+	ProjectRoot string
+	SourceID    string
+	WorktreeID  string
 }
 
 type LocalTunnel struct {

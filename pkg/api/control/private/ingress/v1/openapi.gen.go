@@ -228,9 +228,12 @@ type PublicServiceVisitorClaim struct {
 
 // PublicServiceVisitorLookup defines model for PublicServiceVisitorLookup.
 type PublicServiceVisitorLookup struct {
-	IngressLeaseRevision int64               `json:"ingress_lease_revision"`
-	IngressRunId         Identifier          `json:"ingress_run_id"`
-	VisitorConnectionId  VisitorConnectionID `json:"visitor_connection_id"`
+	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
+	IngressRunId         Identifier `json:"ingress_run_id"`
+
+	// ObservedSourceIp Required for status checks; the original live socket source, checked against the admission digest. Close and promotion do not use it.
+	ObservedSourceIp    string              `json:"observed_source_ip,omitempty"`
+	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
 }
 
 // PublicServiceVisitorStatus defines model for PublicServiceVisitorStatus.

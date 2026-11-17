@@ -103,6 +103,7 @@ func TestAppWorkflowLocalRealizationSurvivesGitChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
+	state := statusTestDatabase(t)
 	configuration := filepath.Join(root, "tnl.json")
 	if err := os.WriteFile(configuration, []byte(`{"version":1,"tnl":{"services":{"web":{}}}}`), 0600); err != nil {
 		t.Fatal(err)
@@ -124,6 +125,10 @@ func TestAppWorkflowLocalRealizationSurvivesGitChanges(t *testing.T) {
 			}
 		}
 		p, err := clientproject.Resolve(t.Context(), clientproject.Selection{Path: configuration}, root, [32]byte{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err = p.BindLocalIdentity(t.Context(), state)
 		if err != nil {
 			t.Fatal(err)
 		}

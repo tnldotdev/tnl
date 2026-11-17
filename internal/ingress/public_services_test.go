@@ -86,7 +86,10 @@ func (c *publicServiceControlFixture) AdmitPublicServiceVisitor(ctx context.Cont
 	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, Traffic: c.traffic, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: until, ConnectedRelays: append([]ingressv1.ServiceRelay(nil), c.relays...), RecoveryEpisodeId: c.recoveryEpisodeID}, nil
 }
 
-func (c *publicServiceControlFixture) PublicServiceVisitorStatus(ctx context.Context, _ string, _ ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
+func (c *publicServiceControlFixture) PublicServiceVisitorStatus(ctx context.Context, _ string, lookup ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
+	if lookup.ObservedSourceIp != "192.0.2.4" {
+		return ingressv1.PublicServiceVisitorStatus{}, ErrServiceAdmission
+	}
 	c.recheckActive.Add(1)
 	defer c.recheckActive.Add(-1)
 	c.mu.Lock()

@@ -42,5 +42,5 @@ func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Qu
 	if declaration == nil {
 		return nil, nil
 	}
-	return serviceHTTPRequestPolicy(declaration.HTTP), nil
+	return config.HTTPRequestPolicy(declaration.HTTP), nil
 }

@@ -6,13 +6,13 @@ import (
 	"errors"
 	"io"
 	"math"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/sourcestate"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -36,6 +36,7 @@ type feedbackCommand struct {
 	Update  feedbackUpdateCommand  `cmd:"" help:"Post an update with the current source state."`
 	Resolve feedbackResolveCommand `cmd:"" help:"Resolve an open feedback thread."`
 	Reopen  feedbackReopenCommand  `cmd:"" help:"Reopen a resolved feedback thread."`
+	Delete  feedbackDeleteCommand  `cmd:"" help:"Delete a local thread, report, evidence, source snapshots, and history."`
 }
 
 type feedbackListCommand struct {
@@ -74,6 +75,54 @@ type feedbackResolveCommand struct {
 
 type feedbackReopenCommand struct {
 	feedbackMutationCommand `embed:""`
+}
+type feedbackDeleteCommand struct {
+	scopedTeamFlags `embed:""`
+	FeedbackID      string `arg:"" name:"feedback-id" required:"" help:"Local feedback thread ID."`
+}
+
+func localFeedback(ctx context.Context, session *clientteam.Session, project projectConfiguration, preview string) (*clientstate.FeedbackStore, error) {
+	if !project.Found() || project.Root == "" || preview == "" {
+		return nil, failure.Wrap("select local feedback", failure.PreviewNotSaved, errors.New("run from the project/worktree that owns the preview; start a configured app service first"))
+	}
+	return session.Store().Feedback(ctx, project.Root, preview, func(ctx context.Context, service, operation string) (controlv1.FeedbackAuthorization, error) {
+		return session.Authenticated().Control.AuthorizeImplementerFeedback(ctx, controlv1.AuthorizeImplementerFeedbackRequest{PreviewId: preview, ServiceId: service, Operation: controlv1.FeedbackOperation(operation)})
+	})
+}
+
+func runFeedbackDelete(ctx context.Context, flags feedbackDeleteCommand, project projectConfiguration, output, diagnostics io.Writer) (retErr error) {
+	defer func() { retErr = localFeedbackFailure(retErr) }()
+	if err := validFeedbackID(flags.FeedbackID); err != nil {
+		return err
+	}
+	session, _, preview, err := feedbackSession(ctx, flags.scopedTeamFlags, project, "tnl feedback delete", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	local, err := localFeedback(ctx, session, project, preview)
+	if err != nil {
+		return err
+	}
+	if err = local.Delete(ctx, flags.FeedbackID); err != nil {
+		return err
+	}
+	return writeHumanFrame(output, "tnl feedback delete", "deleted", "", clioutput.Fields(clioutput.Field{Label: "feedback ID", Value: flags.FeedbackID}))
+}
+
+func localFeedbackFailure(err error) error {
+	switch {
+	case errors.Is(err, clientstate.ErrFeedbackInvalid):
+		return failure.Wrap("validate local feedback", failure.FeedbackInputInvalid, err)
+	case errors.Is(err, clientstate.ErrFeedbackNotFound):
+		return failure.Wrap("read local feedback", failure.ServerResourceNotFound, err)
+	case errors.Is(err, clientstate.ErrFeedbackAccess):
+		return failure.Wrap("authorize local feedback", failure.ServerDenied, err)
+	case errors.Is(err, clientstate.ErrFeedbackState), errors.Is(err, clientstate.ErrFeedbackIdempotency):
+		return failure.Wrap("change local feedback", failure.ServerConflict, err)
+	default:
+		return err
+	}
 }
 
 type feedbackListResult struct {
@@ -128,8 +177,9 @@ func validFeedbackID(id string) error {
 	return nil
 }
 
-func runFeedbackList(ctx context.Context, flags feedbackListCommand, project projectConfiguration, output, diagnostics io.Writer) error {
-	session, teamID, previewID, err := feedbackSession(ctx, flags.scopedTeamFlags, project, "tnl feedback list", diagnostics)
+func runFeedbackList(ctx context.Context, flags feedbackListCommand, project projectConfiguration, output, diagnostics io.Writer) (retErr error) {
+	defer func() { retErr = localFeedbackFailure(retErr) }()
+	session, _, previewID, err := feedbackSession(ctx, flags.scopedTeamFlags, project, "tnl feedback list", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -137,11 +187,27 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 	if project.Found() && previewID == "" {
 		return failure.Wrap("read project preview", failure.PreviewNotSaved, errors.New("preview is not saved for this project; start a configured app service first"))
 	}
-	threads, cursor, err := session.Authenticated().Control.ListFeedbackThreads(ctx, teamID)
+	local, err := localFeedback(ctx, session, project, previewID)
 	if err != nil {
 		return err
 	}
-	threads = filterFeedbackPreview(threads, previewID)
+	threads := []controlv1.FeedbackThreadSummary{}
+	var cursor uint64
+	pageCursor := ""
+	for {
+		page, err := local.List(ctx, "", "", "", pageCursor)
+		if err != nil {
+			return err
+		}
+		if pageCursor == "" {
+			cursor = uint64(page.EventCursor)
+		}
+		threads = append(threads, page.Threads...)
+		if page.NextCursor == nil {
+			break
+		}
+		pageCursor = *page.NextCursor
+	}
 	if flags.Output == feedbackJSON {
 		return failure.Wrap("write feedback list", failure.OutputUnavailable, json.NewEncoder(output).Encode(feedbackListResult{SchemaVersion: 1, Threads: threads, EventCursor: cursor}))
 	}
@@ -159,24 +225,15 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 	return writeHumanFrame(output, "tnl feedback list", countState(len(threads), "thread", "threads"), "", blocks...)
 }
 
-func filterFeedbackPreview(threads []controlv1.FeedbackThreadSummary, previewID string) []controlv1.FeedbackThreadSummary {
-	if previewID == "" {
-		return threads
-	}
-	return slices.DeleteFunc(threads, func(thread controlv1.FeedbackThreadSummary) bool {
-		return thread.Scope.PreviewId != previewID
-	})
-}
-
 type feedbackThreadReader interface {
-	ListFeedbackThreadEvents(context.Context, string, uint64) (controlv1.FeedbackEventPage, error)
+	Events(context.Context, string, string, uint64) (controlv1.FeedbackEventPage, error)
 }
 
 func readFeedbackHistory(ctx context.Context, client feedbackThreadReader, id string) ([]controlv1.FeedbackEvent, uint64, error) {
 	events := make([]controlv1.FeedbackEvent, 0)
 	var after, watermark uint64
 	for {
-		page, err := client.ListFeedbackThreadEvents(ctx, id, after)
+		page, err := client.Events(ctx, "", id, after)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -238,7 +295,8 @@ func compareFeedbackSource(ctx context.Context, project projectConfiguration, pr
 	return result
 }
 
-func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, project projectConfiguration, output, diagnostics io.Writer) (retErr error) {
+	defer func() { retErr = localFeedbackFailure(retErr) }()
 	if err := validFeedbackID(flags.FeedbackID); err != nil {
 		return err
 	}
@@ -247,14 +305,18 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 		return err
 	}
 	defer session.Close()
-	thread, err := session.Authenticated().Control.GetFeedbackThread(ctx, flags.FeedbackID)
+	local, err := localFeedback(ctx, session, project, previewID)
+	if err != nil {
+		return err
+	}
+	thread, err := local.GetFeedbackThread(ctx, flags.FeedbackID)
 	if err != nil {
 		return err
 	}
 	if thread.SchemaVersion != 1 {
 		return failure.Wrap("inspect feedback", failure.ServerResponseInvalid, errors.New("feedback format is not supported by this client"))
 	}
-	events, cursor, err := readFeedbackHistory(ctx, session.Authenticated().Control, flags.FeedbackID)
+	events, cursor, err := readFeedbackHistory(ctx, local, flags.FeedbackID)
 	if err != nil {
 		return err
 	}
@@ -313,12 +375,12 @@ func feedbackEventAuthorLabel(event controlv1.FeedbackEvent) string {
 }
 
 type feedbackEventReader interface {
-	ListFeedbackEvents(context.Context, string, uint64) (controlv1.FeedbackEventPage, error)
+	Events(context.Context, string, string, uint64) (controlv1.FeedbackEventPage, error)
 	GetFeedbackThread(context.Context, string) (controlv1.FeedbackThread, error)
 }
 
-func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, teamID, previewID string, cursor uint64, output io.Writer, mode feedbackOutputMode) (uint64, bool, error) {
-	page, err := client.ListFeedbackEvents(ctx, teamID, cursor)
+func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, previewID string, cursor uint64, output io.Writer, mode feedbackOutputMode) (uint64, bool, error) {
+	page, err := client.Events(ctx, "", "", cursor)
 	if err != nil {
 		return cursor, false, err
 	}
@@ -371,11 +433,12 @@ func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, teamID,
 	return max(cursor, uint64(page.EventCursor)), false, nil
 }
 
-func runFeedbackWatch(ctx context.Context, flags feedbackWatchCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+func runFeedbackWatch(ctx context.Context, flags feedbackWatchCommand, project projectConfiguration, output, diagnostics io.Writer) (retErr error) {
+	defer func() { retErr = localFeedbackFailure(retErr) }()
 	if flags.After > math.MaxInt64 {
 		return failure.Wrap("validate feedback cursor", failure.FeedbackInputInvalid, errors.New("feedback cursor is out of range"))
 	}
-	session, teamID, previewID, err := feedbackSession(ctx, flags.scopedTeamFlags, project, "tnl feedback watch", diagnostics)
+	session, _, previewID, err := feedbackSession(ctx, flags.scopedTeamFlags, project, "tnl feedback watch", diagnostics)
 	if err != nil {
 		return err
 	}
@@ -383,10 +446,14 @@ func runFeedbackWatch(ctx context.Context, flags feedbackWatchCommand, project p
 	if project.Found() && previewID == "" {
 		return failure.Wrap("read project preview", failure.PreviewNotSaved, errors.New("preview is not saved for this project; start a configured app service first"))
 	}
+	local, err := localFeedback(ctx, session, project, previewID)
+	if err != nil {
+		return err
+	}
 	cursor := flags.After
 	for {
 		var more bool
-		cursor, more, err = pollFeedbackEvents(ctx, session.Authenticated().Control, teamID, previewID, cursor, output, flags.Output)
+		cursor, more, err = pollFeedbackEvents(ctx, local, previewID, cursor, output, flags.Output)
 		if err != nil && !errors.Is(err, clientcontrol.ErrUnavailable) {
 			return err
 		}
@@ -401,7 +468,8 @@ func runFeedbackWatch(ctx context.Context, flags feedbackWatchCommand, project p
 	}
 }
 
-func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, project projectConfiguration, kind string, output, diagnostics io.Writer) error {
+func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, project projectConfiguration, kind string, output, diagnostics io.Writer) (retErr error) {
+	defer func() { retErr = localFeedbackFailure(retErr) }()
 	if err := validFeedbackID(flags.FeedbackID); err != nil {
 		return err
 	}
@@ -417,12 +485,16 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 		return err
 	}
 	defer session.Close()
+	local, err := localFeedback(ctx, session, project, previewID)
+	if err != nil {
+		return err
+	}
 	body := controlv1.AppendFeedbackEventRequest{Type: controlv1.FeedbackEventInputType(kind)}
 	if message != "" {
 		body.Text = &message
 	}
 	if kind == "update" {
-		thread, err := session.Authenticated().Control.GetFeedbackThread(ctx, flags.FeedbackID)
+		thread, err := local.GetFeedbackThread(ctx, flags.FeedbackID)
 		if err != nil {
 			return err
 		}
@@ -439,7 +511,7 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 	if err != nil {
 		return err
 	}
-	event, err := session.Authenticated().Control.AppendFeedbackEvent(ctx, flags.FeedbackID, key, body)
+	event, err := local.AppendFeedbackEvent(ctx, flags.FeedbackID, key, body)
 	if err != nil {
 		return err
 	}

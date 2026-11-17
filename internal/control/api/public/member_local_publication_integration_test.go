@@ -12,6 +12,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
@@ -106,6 +107,15 @@ func TestIntegrationMemberFreshNamedLocalPreparationWithoutInventory(t *testing.
 	root := t.TempDir()
 	project := clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")},
 		Config: config.TNL{Services: config.Services{"web": {Public: new(true)}, "unselected": {}}},
+	}
+	state, err := clientstate.OpenWithOptions(ctx, filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { state.Close() })
+	project, err = project.BindLocalIdentity(ctx, state)
+	if err != nil {
+		t.Fatal(err)
 	}
 	selected := invocation.LocalService{Project: project, Name: "web",
 		Team: invocation.FromTeamContext(clientteam.NewContext(selectedTeam, member, domains.Domains, naming.ManagedURLModeGenerated))}

@@ -55,7 +55,16 @@ func appliedLocalTargetDescriptor(target, protocol string) (bool, error) {
 	return true, nil
 }
 
-func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, local bool) error {
+type serviceConfigurationOwner uint8
+
+const (
+	savedServiceConfiguration serviceConfigurationOwner = iota
+	localProjectConfiguration
+	remoteDeploymentConfiguration
+)
+
+func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, owner serviceConfigurationOwner) error {
+	local := owner != remoteDeploymentConfiguration
 	if !serviceName.MatchString(key) {
 		return ErrProjectConfigurationInvalid
 	}
@@ -117,6 +126,8 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 		if err != nil {
 			return err
 		}
+	} else if owner == localProjectConfiguration && s.Target == "app" {
+		descriptor = true
 	} else {
 		descriptor, err = appliedLocalTargetDescriptor(s.Target, s.Protocol)
 	}

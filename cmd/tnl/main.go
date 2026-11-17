@@ -955,6 +955,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runFeedbackMutation(ctx, flags.Feedback.Resolve.feedbackMutationCommand, project, "thread.resolved", stdout, stderr)
 	case "feedback reopen <feedback-id>":
 		return runFeedbackMutation(ctx, flags.Feedback.Reopen.feedbackMutationCommand, project, "thread.reopened", stdout, stderr)
+	case "feedback delete <feedback-id>":
+		return runFeedbackDelete(ctx, flags.Feedback.Delete, project, stdout, stderr)
 	case "admin server status":
 		return runAdminServerStatus(ctx, flags.Admin.Server.Status, stdout, stderr)
 	case "admin relays list":

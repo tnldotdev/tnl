@@ -93,3 +93,21 @@ func TestServiceBrowserHandoffKeepsIdentitySeparateFromVisitorPermission(t *test
 		})
 	}
 }
+
+func TestServiceBrowserLoginErrorsUseSharedPresentation(t *testing.T) {
+	h := &handler{}
+	for _, complete := range []bool{false, true} {
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Header.Set("Accept", "text/html")
+		response := httptest.NewRecorder()
+		if complete {
+			h.CompletePreviewBrowserLogin(response, request, controlv1.CompletePreviewBrowserLoginParams{})
+		} else {
+			h.BeginServiceBrowserLogin(response, request, controlv1.BeginServiceBrowserLoginParams{})
+		}
+		if response.Code < 400 || response.Header().Get("Content-Type") != "text/html; charset=utf-8" ||
+			!strings.Contains(response.Body.String(), "data:font/woff2;base64,") {
+			t.Fatal("browser sign-in failure did not use the shared page", response.Code, response.Header())
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"sort"
 	"strconv"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -52,7 +54,7 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 		event.DeviceID != "" && !opaqueid.Valid(event.DeviceID, "vdev_") ||
 		event.PublisherIdentityID != "" && !opaqueid.Valid(event.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) ||
 		event.RunID != "" && !serviceaudit.ValidReference(event.RunID) ||
-		event.ConfigurationRevision < 0 || event.SourceIP != "" || event.VisitorConnectionID != "" || event.Outcome != "" || event.Reason != "" {
+		event.ConfigurationRevision < 0 || event.SourceIP != "" || event.SourceDigest != "" || event.VisitorConnectionID != "" || event.Outcome != "" || event.Reason != "" {
 		return serviceaudit.ErrInvalid
 	}
 	switch event.EventType {
@@ -132,6 +134,18 @@ func insertServiceAuditBatch(ctx context.Context, tx pgx.Tx, events []serviceaud
 	services := make(map[string]struct{})
 	var serviceIDs []string
 	for _, event := range events {
+		if event.SourceIP != "" {
+			return ServiceObservationResult{}, serviceaudit.ErrInvalid
+		}
+		traffic := event.EventType == "connection.open" || event.EventType == "connection.close" || event.EventType == "http.decision"
+		if traffic != (event.SourceDigest != "") {
+			return ServiceObservationResult{}, serviceaudit.ErrInvalid
+		}
+		if event.SourceDigest != "" {
+			if _, err := ippolicy.ParseDigest(event.SourceDigest); err != nil {
+				return ServiceObservationResult{}, err
+			}
+		}
 		event.OccurredAt = event.OccurredAt.Truncate(time.Microsecond)
 		if previous, found := byID[event.ID]; found {
 			if !sameServiceAuditEvent(previous, event) {
@@ -203,9 +217,7 @@ func insertServiceAuditBatch(ctx context.Context, tx pgx.Tx, events []serviceaud
 			event := serviceaudit.Event{TeamID: row.TeamID.String, ServiceID: row.ServiceID, EventType: row.EventType,
 				RunID: row.RunID.String, VisitorConnectionID: row.VisitorConnectionID.String,
 				Outcome: row.Outcome.String, Reason: row.Reason.String, OccurredAt: row.OccurredAt.Time}
-			if row.SourceIp != nil {
-				event.SourceIP = row.SourceIp.String()
-			}
+			event.SourceDigest = row.SourceDigest.String
 			if row.GuestID != guests[row.ServiceID] || !sameServiceAuditEvent(byID[row.ID], event) {
 				return ServiceObservationResult{}, ErrServiceAuditAccess
 			}
@@ -221,7 +233,7 @@ func sameServiceAuditEvent(a, b serviceaudit.Event) bool {
 	}
 	switch a.EventType {
 	case "connection.open", "connection.close", "http.decision":
-		return a.SourceIP == b.SourceIP && a.Outcome == b.Outcome && a.Reason == b.Reason && a.OccurredAt.Equal(b.OccurredAt)
+		return a.SourceDigest == b.SourceDigest && a.Outcome == b.Outcome && a.Reason == b.Reason && a.OccurredAt.Equal(b.OccurredAt)
 	default:
 		return true
 	}
@@ -294,9 +306,7 @@ func (d *Database) ListServiceAudit(ctx context.Context, team, actor string, f S
 			break
 		}
 		e := serviceaudit.Event{ID: row.ID, Cursor: strconv.FormatInt(row.Cursor, 10), TeamID: row.TeamID.String, ServiceID: row.ServiceID, ServiceKind: "service", EventType: row.EventType, OccurredAt: row.OccurredAt.Time, ActorIdentityID: row.ActorIdentityID.String, DeviceID: row.DeviceID.String, PublisherIdentityID: row.PublisherIdentityID.String, RunID: row.RunID.String, VisitorConnectionID: row.VisitorConnectionID.String, Outcome: row.Outcome.String, Reason: row.Reason.String, ConfigurationRevision: row.ConfigurationRevision.Int64}
-		if row.SourceIp != nil && row.SourceIp.IsValid() {
-			e.SourceIP = row.SourceIp.Unmap().String()
-		}
+		e.SourceDigest = row.SourceDigest.String
 		page.Events = append(page.Events, e)
 	}
 	return page, tx.Commit(ctx)
@@ -368,6 +378,17 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 		if o.ServiceKind != "service" {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
+		sourceDigest := ""
+		if len(o.RoutingAuthority) == 0 {
+			source, sourceErr := netip.ParseAddr(o.SourceIP)
+			if sourceErr != nil {
+				return ServiceObservationResult{}, ErrServiceAuditAccess
+			}
+			sourceDigest, err = d.readServiceIPDigest(ctx, q, o.ServiceID, publicVisitorIPKeyPurpose, source)
+			if err != nil {
+				return ServiceObservationResult{}, errors.Join(ErrServiceAuditAccess, err)
+			}
+		}
 		if o.RunID == "" {
 			if o.RunNumber != 0 || o.EventType != "connection.open" || o.Outcome != "denied" ||
 				o.Reason != "capacity" && o.Reason != "unavailable" && o.Reason != "invalid_request" && o.Reason != "ip_policy" {
@@ -382,11 +403,11 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 				FROM control.public_service_visitors visitor JOIN control.services service ON service.id=visitor.service_id
 				WHERE visitor.visitor_connection_id=$1 AND visitor.service_id=$2
 				AND visitor.ingress_id=$3 AND visitor.ingress_run_id=$4 AND visitor.ingress_lease_revision=$5
-				AND host(visitor.source_ip)=$6 AND visitor.identity_id IS NULL AND visitor.device_id IS NULL
+				AND visitor.source_digest=$6 AND visitor.identity_id IS NULL AND visitor.device_id IS NULL
 				AND visitor.workload_session_id IS NULL AND visitor.promoted_at IS NULL
 				AND visitor.created_at<=$7 AND visitor.valid_until>=$8`,
 					o.VisitorConnectionID, o.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision),
-					o.SourceIP, o.OccurredAt.Add(time.Second), o.OccurredAt.Add(-serviceObservationDeliveryGrace)).Scan((*nullableAuditString)(&e.TeamID))
+					sourceDigest, o.OccurredAt.Add(time.Second), o.OccurredAt.Add(-serviceObservationDeliveryGrace)).Scan((*nullableAuditString)(&e.TeamID))
 			}
 		} else {
 			// direct admission identity is recovered
@@ -394,8 +415,8 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.public_service_visitors v
 				JOIN control.services s ON s.id=v.service_id JOIN control.service_runs r ON r.id=v.service_run_id
 				WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4
-				AND v.ingress_id=$5 AND v.ingress_run_id=$6 AND v.ingress_lease_revision=$7 AND host(v.source_ip)=$8
-				AND($9<>'allowed' OR v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.Outcome).Scan((*nullableAuditString)(&e.TeamID), (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
+				AND v.ingress_id=$5 AND v.ingress_run_id=$6 AND v.ingress_lease_revision=$7 AND v.source_digest=$8
+				AND($9<>'allowed' OR v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), sourceDigest, o.Outcome).Scan((*nullableAuditString)(&e.TeamID), (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
@@ -439,7 +460,7 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 	if _, err = lockCurrentIngressLease(ctx, q, lease, now); err != nil {
 		return result, err
 	}
-	result, err = insertServiceAuditBatch(ctx, tx, events, now)
+	result, err = d.insertServiceObservationBatch(ctx, tx, events, now)
 	if err != nil {
 		return ServiceObservationResult{}, err
 	}

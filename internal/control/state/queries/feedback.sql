@@ -1,108 +1,9 @@
--- name: ReserveFeedbackEventCursor :one
-UPDATE control.feedback_event_clock
-SET next_cursor = next_cursor + 1
-WHERE id = 1 AND next_cursor < 9223372036854775807
-RETURNING (next_cursor - 1)::bigint AS cursor;
-
--- name: FeedbackEventHighWater :one
-SELECT (next_cursor - 1)::bigint AS cursor
-FROM control.feedback_event_clock WHERE id = 1;
-
--- name: CreateFeedbackThread :one
-INSERT INTO control.feedback_threads (
-    id, preview_id, team_id, guest_id, service_id, service_run_id,
-    run_number, service_name, page_path, page_title, report_text, author_display_name, author_identity_id, author_verified,
-    pin, evidence, report_source_state, created_at, state_updated_at,
-    idempotency_key, request_digest
-) VALUES (
-    sqlc.arg(id), sqlc.arg(preview_id), sqlc.narg(team_id),
-    (SELECT service.guest_id FROM control.services service WHERE service.id=sqlc.arg(service_id)),sqlc.arg(service_id),
-    sqlc.arg(service_run_id), sqlc.arg(run_number), sqlc.arg(service),
-    sqlc.arg(page_path), sqlc.arg(page_title), sqlc.arg(report_text), sqlc.narg(author_display_name), sqlc.narg(author_identity_id), sqlc.arg(author_verified),
-    convert_from(sqlc.narg(anchor)::bytea, 'UTF8')::jsonb,
-    convert_from(sqlc.arg(evidence)::bytea, 'UTF8')::jsonb,
-    convert_from(sqlc.arg(source_at_report)::bytea, 'UTF8')::jsonb,
-    sqlc.arg(created_at), sqlc.arg(state_updated_at),
-    sqlc.arg(idempotency_key), sqlc.arg(request_digest)
-)
-ON CONFLICT (service_run_id, idempotency_key)
-DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING *;
-
--- name: GetFeedbackThread :one
-SELECT * FROM control.feedback_threads WHERE id = $1;
-
 -- name: GetFeedbackService :one
-SELECT * FROM control.services WHERE id = $1;
-
--- name: LockFeedbackThread :one
-SELECT * FROM control.feedback_threads WHERE id = $1 FOR UPDATE;
-
--- name: ListFeedbackThreadsForPage :many
-SELECT * FROM control.feedback_threads
-WHERE preview_id = sqlc.arg(preview_id)
-  AND service_id = sqlc.arg(service_id)
-   AND (sqlc.arg(page_path)::text = '' OR page_path = sqlc.arg(page_path))
-   AND (sqlc.arg(thread_state)::text = '' OR state = sqlc.arg(thread_state))
-  AND id > sqlc.arg(after_id)
-ORDER BY id LIMIT 101;
-
--- name: ListFeedbackThreadsForTeam :many
-SELECT * FROM control.feedback_threads
-WHERE team_id = sqlc.arg(team_id)
-  AND id > sqlc.arg(after_id)
-ORDER BY id LIMIT 101;
-
--- name: GetFeedbackEventByActorKey :one
-SELECT * FROM control.feedback_events
-WHERE feedback_id = sqlc.arg(feedback_id)
-  AND actor_kind = sqlc.arg(actor_kind)
-  AND actor_reference = sqlc.arg(actor_reference)
-  AND idempotency_key = sqlc.arg(idempotency_key);
-
--- name: InsertFeedbackEvent :one
-INSERT INTO control.feedback_events (
-    cursor, feedback_id, team_id, guest_id, event_type, actor_kind,
-    actor_reference, idempotency_key, request_digest, text,
-    evidence, source_state, occurred_at, author_identity_id, author_display_name, author_verified
-) VALUES (
-    sqlc.arg(cursor), sqlc.arg(feedback_id), sqlc.narg(team_id),
-    (SELECT thread.guest_id FROM control.feedback_threads thread WHERE thread.id=sqlc.arg(feedback_id)),
-    sqlc.arg(event_type), sqlc.arg(actor_kind), sqlc.arg(actor_reference),
-    sqlc.arg(idempotency_key), sqlc.arg(request_digest),
-    sqlc.narg(text),
-    convert_from(sqlc.narg(evidence)::bytea, 'UTF8')::jsonb,
-    convert_from(sqlc.narg(source_state)::bytea, 'UTF8')::jsonb,
-    sqlc.arg(occurred_at), sqlc.narg(author_identity_id), sqlc.narg(author_display_name), sqlc.arg(author_verified)
-)
-RETURNING *;
-
--- name: RecordFeedbackActivity :exec
-UPDATE control.feedback_threads
-SET latest_event_cursor = sqlc.arg(event_cursor),
-    message_count = message_count + CASE WHEN sqlc.arg(add_message)::boolean THEN 1 ELSE 0 END
-WHERE id = sqlc.arg(feedback_id);
-
--- name: UpdateFeedbackThreadState :one
-UPDATE control.feedback_threads
-SET state = sqlc.arg(next_state), state_updated_at = sqlc.arg(updated_at)
-WHERE id = sqlc.arg(feedback_id)
-  AND state = sqlc.arg(expected_state)
-RETURNING *;
-
--- name: ListFeedbackEventsForThread :many
-SELECT * FROM control.feedback_events
-WHERE feedback_id = sqlc.arg(feedback_id) AND cursor > sqlc.arg(after_cursor)
-ORDER BY cursor LIMIT 26;
-
--- name: ListFeedbackEventsForTeam :many
-SELECT * FROM control.feedback_events
-WHERE team_id = sqlc.arg(team_id) AND cursor > sqlc.arg(after_cursor)
-ORDER BY cursor LIMIT 26;
+SELECT * FROM control.services WHERE id=sqlc.arg(id);
 
 -- name: FeedbackRunScope :one
 SELECT run.id AS service_run_id, run.service_id, run.run_number,
-       service.team_id, service.guest_id, preview.id AS preview_id
+       service.team_id, service.guest_id, preview.id AS preview_id, preview.demo_service_run_id
 FROM control.service_runs AS run
 JOIN control.services AS service ON service.id = run.service_id
 JOIN control.preview_services AS included ON included.service_id = service.id
@@ -113,8 +14,13 @@ WHERE run.id = sqlc.arg(service_run_id)
   AND run.run_number = sqlc.arg(run_number)
   AND run.publisher_expires_at > sqlc.arg(now)
   AND run.state IN ('starting', 'ready')
-   AND run.closed_at IS NULL AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
+  AND run.closed_at IS NULL AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
 FOR UPDATE OF run;
+
+-- name: FeedbackServiceScope :one
+SELECT service.team_id,service.guest_id FROM control.services service
+JOIN control.preview_services included ON included.service_id=service.id
+WHERE service.id=sqlc.arg(service_id) AND included.preview_id=sqlc.arg(preview_id) AND service.protocol='http';
 
 -- name: CreateServiceRunPreview :one
 INSERT INTO control.previews (id, team_id, guest_id, created_by_identity_id, idempotency_key, created_at, demo_service_run_id)

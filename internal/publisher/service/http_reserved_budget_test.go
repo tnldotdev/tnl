@@ -77,7 +77,11 @@ func TestServiceHTTPPreparationHasOneRunWideBudgetAndJoinsCanceledWork(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(closeHTTP)
+			t.Cleanup(func() {
+				if err := closeHTTP(); err != nil {
+					t.Error(err)
+				}
+			})
 			*f = prepared
 			if cap(f.preparations) != 16 || f.probes.Limits().Concurrency != 4 {
 				t.Fatal("prepared run changed its independent preparation/probe bounds", cap(f.preparations), f.probes.Limits().Concurrency)

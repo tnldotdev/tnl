@@ -39,8 +39,7 @@ func feedbackReviewerActor(access controlv1.FeedbackReviewerAccess) (controlstat
 		actor.BrowserCookieSecret = secret
 	}
 	if access.ShareId != nil || access.ShareSecret != nil || access.CookieSecret != nil {
-		if access.ShareId == nil || !opaqueid.Valid(*access.ShareId, opaqueid.SharePrefix) ||
-			(access.ShareSecret == nil) == (access.CookieSecret == nil) {
+		if access.ShareId == nil || !opaqueid.Valid(*access.ShareId, opaqueid.SharePrefix) || (access.ShareSecret == nil) == (access.CookieSecret == nil) {
 			return actor, controlstate.ErrFeedbackAccess
 		}
 		supplied := access.ShareSecret
@@ -79,8 +78,7 @@ func feedbackVisitProof(raw json.RawMessage) (controlstate.FeedbackVisitProof, e
 	switch kind {
 	case "bearer":
 		var proof controlv1.FeedbackBearerVisitProof
-		if httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), &proof) != nil ||
-			proof.Kind != controlv1.FeedbackVisitBearer || len(proof.Token) == 0 || len(proof.Token) > 2048 {
+		if httpjson.Decode(json.NewDecoder(bytes.NewReader(raw)), &proof) != nil || proof.Kind != controlv1.FeedbackVisitBearer || len(proof.Token) == 0 || len(proof.Token) > 2048 {
 			return nil, controlstate.ErrFeedbackAccess
 		}
 		return controlstate.FeedbackBearerVisitProof{Token: visitortoken.Token(proof.Token)}, nil
@@ -93,9 +91,7 @@ func feedbackVisitProof(raw json.RawMessage) (controlstate.FeedbackVisitProof, e
 			json.Unmarshal(fields["delivery_generation"], &generation) != nil || generation != strconv.FormatInt(proof.DeliveryGeneration, 10) {
 			return nil, controlstate.ErrFeedbackAccess
 		}
-		return controlstate.FeedbackConnectorVisitProof{
-			PairID: proof.PairId, DeliveryGeneration: proof.DeliveryGeneration, PermissionToken: visitortoken.Token(proof.PermissionToken),
-		}, nil
+		return controlstate.FeedbackConnectorVisitProof{PairID: proof.PairId, DeliveryGeneration: proof.DeliveryGeneration, PermissionToken: visitortoken.Token(proof.PermissionToken)}, nil
 	default:
 		return nil, controlstate.ErrFeedbackAccess
 	}
@@ -126,255 +122,35 @@ func (h *handler) feedbackBrowserActor(request *http.Request, auth controlstate.
 	return actor, nil
 }
 
-func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, _ controlv1.CreateFeedbackReportParams) {
-	var body controlv1.CreateFeedbackReportRequest
-	if err := decodeJSONLimited(response, request, &body, 64<<10); err != nil || body.RunNumber < 1 {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback report")
+func (h *handler) AuthorizeReviewerFeedback(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
+	var body controlv1.AuthorizeReviewerFeedbackRequest
+	if decodeJSON(w, r, &body) != nil || body.RunNumber < 1 || !body.Operation.Valid() || body.Operation == "update" || body.Operation == "delete" {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid feedback authorization")
 		return
 	}
-	_, token, ok := h.serviceHTTP(response, request)
+	_, token, ok := h.serviceHTTP(w, r)
 	if !ok {
 		return
 	}
-	auth := serviceHTTPRun(serviceID, runID, token, body.RunNumber)
+	auth := serviceHTTPRun(service, run, token, body.RunNumber)
 	if h.feedback == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "feedback is unavailable")
+		writeProblem(w, 503, controlv1.Unavailable, "feedback authorization is unavailable")
 		return
 	}
 	actor, err := feedbackReviewerActor(body.Access)
 	if err != nil {
-		writeControlStateProblem(request.Context(), response, "verify feedback reviewer", err)
+		writeFeedbackProblem(r.Context(), w, "verify feedback reviewer", err)
 		return
 	}
-	actor, err = h.feedbackBrowserActor(request, auth, actor)
+	actor, err = h.feedbackBrowserActor(r, auth, actor)
 	if err != nil {
-		writeFeedbackProblem(request.Context(), response, "verify signed-in reviewer", err)
+		writeFeedbackProblem(r.Context(), w, "verify signed-in reviewer", err)
 		return
 	}
-	anchor, err := json.Marshal(body.Anchor)
+	decision, err := h.feedback.AuthorizeReviewerFeedback(r.Context(), auth, body.PreviewId, string(body.Operation), actor, time.Now())
 	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback element")
+		writeFeedbackProblem(r.Context(), w, "authorize reviewer feedback", err)
 		return
 	}
-	evidence, err := json.Marshal(body.Evidence)
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback evidence")
-		return
-	}
-	source, err := json.Marshal(body.SourceAtReport)
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid source state")
-		return
-	}
-	thread, err := h.feedback.CreateFeedback(request.Context(), auth, controlstate.CreateFeedbackRequest{
-		PageTitle: optionalFeedbackString(body.PageTitle),
-		PreviewID: body.PreviewId, Service: body.Service, PagePath: body.PagePath,
-		ReportText: body.Report.Text,
-		Anchor:     anchor, Evidence: evidence, SourceAtReport: source,
-		IdempotencyKey: request.Header.Get("Idempotency-Key"), Actor: actor,
-	}, time.Now())
-	if err != nil {
-		writeFeedbackProblem(request.Context(), response, "create feedback report", err)
-		return
-	}
-	result, err := feedbackThreadResponse(thread)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "encode feedback report", err)
-		return
-	}
-	writeJSON(response, http.StatusCreated, result)
-}
-
-func (h *handler) ListPreviewPageFeedback(response http.ResponseWriter, request *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID) {
-	var body controlv1.PreviewPageFeedbackRequest
-	if err := decodeJSON(response, request, &body); err != nil || body.RunNumber < 1 {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid page feedback request")
-		return
-	}
-	_, token, ok := h.serviceHTTP(response, request)
-	if !ok {
-		return
-	}
-	auth := serviceHTTPRun(serviceID, runID, token, body.RunNumber)
-	if h.feedback == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "feedback is unavailable")
-		return
-	}
-	actor, err := feedbackReviewerActor(body.Access)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "verify feedback reviewer", err)
-		return
-	}
-	actor, err = h.feedbackBrowserActor(request, auth, actor)
-	if err != nil {
-		writeFeedbackProblem(request.Context(), response, "verify signed-in reviewer", err)
-		return
-	}
-	_, service, err := h.feedback.ReviewerFeedbackScope(request.Context(), auth, body.PreviewId, actor, time.Now())
-	if err != nil {
-		writeFeedbackProblem(request.Context(), response, "read reviewer page", err)
-		return
-	}
-	cursor := ""
-	if body.Cursor != nil {
-		cursor = *body.Cursor
-	}
-	page, err := h.feedback.ListFeedbackForService(request.Context(), body.PreviewId, service, optionalFeedbackString(body.PagePath), optionalFeedbackString(body.State), cursor)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "list page feedback", err)
-		return
-	}
-	result, err := feedbackThreadPageResponse(page)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "encode page feedback", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, result)
-}
-
-func optionalFeedbackString[T ~string](value *T) string {
-	if value == nil {
-		return ""
-	}
-	return string(*value)
-}
-
-func (h *handler) AppendReviewerFeedbackEvent(response http.ResponseWriter, request *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, feedbackID controlv1.FeedbackID, _ controlv1.AppendReviewerFeedbackEventParams) {
-	var body controlv1.AppendReviewerFeedbackEventRequest
-	if err := decodeJSONLimited(response, request, &body, 64<<10); err != nil || body.RunNumber < 1 || !body.Type.Valid() {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid reviewer feedback")
-		return
-	}
-	_, token, ok := h.serviceHTTP(response, request)
-	if !ok {
-		return
-	}
-	auth := serviceHTTPRun(serviceID, runID, token, body.RunNumber)
-	if h.feedback == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "feedback is unavailable")
-		return
-	}
-	actor, err := feedbackReviewerActor(body.Access)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "verify feedback reviewer", err)
-		return
-	}
-	actor, err = h.feedbackBrowserActor(request, auth, actor)
-	if err != nil {
-		writeFeedbackProblem(request.Context(), response, "verify signed-in reviewer", err)
-		return
-	}
-	thread, authorized := h.readReviewerFeedback(response, request, auth, feedbackID, actor)
-	if !authorized {
-		return
-	}
-	write, err := feedbackEventWrite(controlv1.FeedbackEventType(body.Type), body.Text, body.Evidence, body.SourceState)
-	if err != nil {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid reviewer feedback")
-		return
-	}
-	write.FeedbackID, write.IdempotencyKey, write.Actor = thread.ID, request.Header.Get("Idempotency-Key"), actor
-	event, err := h.feedback.AppendFeedback(request.Context(), write, time.Now())
-	if err != nil {
-		writeFeedbackProblem(request.Context(), response, "append reviewer feedback", err)
-		return
-	}
-	result, err := feedbackEventResponse(event)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "encode reviewer feedback", err)
-		return
-	}
-	writeJSON(response, http.StatusCreated, result)
-}
-
-func (h *handler) GetReviewerFeedbackThread(response http.ResponseWriter, request *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, feedbackID controlv1.FeedbackID) {
-	thread, _, ok := h.reviewerFeedbackRead(response, request, serviceID, runID, feedbackID)
-	if !ok {
-		return
-	}
-	result, err := feedbackThreadResponse(thread)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "encode reviewer feedback thread", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, result)
-}
-
-func (h *handler) ListReviewerFeedbackEvents(response http.ResponseWriter, request *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, feedbackID controlv1.FeedbackID) {
-	thread, body, ok := h.reviewerFeedbackRead(response, request, serviceID, runID, feedbackID)
-	if !ok {
-		return
-	}
-	after := uint64(0)
-	if body.AfterCursor != nil {
-		if *body.AfterCursor < 0 {
-			writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid feedback cursor")
-			return
-		}
-		after = uint64(*body.AfterCursor)
-	}
-	page, err := h.feedback.ListFeedbackEventsForThread(request.Context(), thread.ID, after)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "list reviewer feedback events", err)
-		return
-	}
-	result, err := feedbackEventPageResponse(page)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "encode reviewer feedback events", err)
-		return
-	}
-	writeJSON(response, http.StatusOK, result)
-}
-
-func (h *handler) reviewerFeedbackRead(response http.ResponseWriter, request *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, feedbackID controlv1.FeedbackID) (controlstate.FeedbackThread, controlv1.ReviewerFeedbackReadRequest, bool) {
-	var body controlv1.ReviewerFeedbackReadRequest
-	if err := decodeJSON(response, request, &body); err != nil || body.RunNumber < 1 || body.PreviewId == "" {
-		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid reviewer feedback request")
-		return controlstate.FeedbackThread{}, body, false
-	}
-	_, token, ok := h.serviceHTTP(response, request)
-	if !ok {
-		return controlstate.FeedbackThread{}, body, false
-	}
-	auth := serviceHTTPRun(serviceID, runID, token, body.RunNumber)
-	if h.feedback == nil {
-		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "feedback is unavailable")
-		return controlstate.FeedbackThread{}, body, false
-	}
-	actor, err := feedbackReviewerActor(body.Access)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "verify feedback reviewer", err)
-		return controlstate.FeedbackThread{}, body, false
-	}
-	actor, err = h.feedbackBrowserActor(request, auth, actor)
-	if err != nil {
-		writeFeedbackProblem(request.Context(), response, "verify signed-in reviewer", err)
-		return controlstate.FeedbackThread{}, body, false
-	}
-	thread, ok := h.readReviewerFeedback(response, request, auth, feedbackID, actor)
-	if !ok || thread.PreviewID != body.PreviewId {
-		if ok {
-			writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-		}
-		return controlstate.FeedbackThread{}, body, false
-	}
-	return thread, body, true
-}
-
-func (h *handler) readReviewerFeedback(response http.ResponseWriter, request *http.Request, auth controlstate.ServiceHTTPRun, id string, actor controlstate.FeedbackActor) (controlstate.FeedbackThread, bool) {
-	thread, err := h.feedback.GetFeedback(request.Context(), id)
-	if err != nil {
-		writeControlStateProblem(request.Context(), response, "read reviewer feedback", err)
-		return controlstate.FeedbackThread{}, false
-	}
-	_, service, err := h.feedback.ReviewerFeedbackScope(request.Context(), auth, thread.PreviewID, actor, time.Now())
-	if err != nil {
-		writeFeedbackProblem(request.Context(), response, "verify reviewer feedback access", err)
-		return controlstate.FeedbackThread{}, false
-	}
-	if thread.ServiceID != service || thread.ServiceID != auth.Subject.ID {
-		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
-		return controlstate.FeedbackThread{}, false
-	}
-	return thread, true
+	writeJSON(w, 200, decision)
 }

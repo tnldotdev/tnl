@@ -68,8 +68,8 @@ func TestIntegrationConnectorServiceAuditExactRunPairAndSource(t *testing.T) {
 		t.Fatal("audit reporting changed traffic authority")
 	}
 	var actor, device, publisher, ip string
-	if err := f.d.pool.QueryRow(ctx, `SELECT actor_identity_id,device_id,publisher_identity_id,host(source_ip) FROM control.service_audit_events WHERE id=$1`, o.EventID).
-		Scan(&actor, &device, &publisher, &ip); err != nil || actor != pair.Subject.IdentityID || device != pair.Subject.DeviceID || publisher != pair.PublisherIdentityID || ip != source.String() {
+	if err := f.d.pool.QueryRow(ctx, `SELECT actor_identity_id,device_id,publisher_identity_id,source_digest FROM control.service_audit_events WHERE id=$1`, o.EventID).
+		Scan(&actor, &device, &publisher, &ip); err != nil || actor != pair.Subject.IdentityID || device != pair.Subject.DeviceID || publisher != pair.PublisherIdentityID || ip != auditSourceDigest(t, f.d, pair.ServiceID, source.String()) {
 		t.Fatal("audit identity or source was not derived from the installed pair", err)
 	}
 	// a rejected neighbor rolls the whole batch back, including an earlier valid

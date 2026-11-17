@@ -5,14 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"html"
-	"io"
 	"net/http"
 	"net/textproto"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/browserpage"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -141,9 +140,9 @@ func StripCookies(request *http.Request) *http.Request {
 	return copy
 }
 
-func ShareRedirect(response http.ResponseWriter, redemption controlv1.ShareRedemption) {
+func ShareRedirect(response http.ResponseWriter, request *http.Request, redemption controlv1.ShareRedemption) {
 	if err := PermissionCookie(response, redemption.Permission); err != nil {
-		http.Error(response, "share visitor permission is unavailable", http.StatusServiceUnavailable)
+		browserpage.Error(response, request, "share visitor permission is unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	http.SetCookie(response, &http.Cookie{
@@ -154,11 +153,7 @@ func ShareRedirect(response http.ResponseWriter, redemption controlv1.ShareRedem
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Referrer-Policy", "no-referrer")
 	if redemption.Bridge {
-		response.Header().Set("Content-Type", "text/html; charset=utf-8")
-		response.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'")
-		response.WriteHeader(http.StatusOK)
-		url := html.EscapeString(redemption.NextUrl)
-		_, _ = io.WriteString(response, `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=`+url+`"><title>tnl preview</title></head><body><a href="`+url+`">Continue to the preview</a></body></html>`)
+		browserpage.Redirect(response, redemption.NextUrl)
 		return
 	}
 	response.Header().Set("Location", redemption.NextUrl)

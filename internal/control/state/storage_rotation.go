@@ -75,10 +75,12 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.service_runs WHERE assignment_seed_storage_key_id = $1) +
 			(SELECT count(*) FROM control.connector_peer_pairs WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.connector_peer_pairs WHERE session_key_storage_key_id = $1) +
+			(SELECT count(*) FROM control.connector_peer_pair_leg_claims WHERE source_storage_key_id = $1) +
 			(SELECT count(*) FROM control.connector_peer_pending_bindings WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.services WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.service_ip_keys WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.deployments WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.deployment_publisher_enrollments WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_logins WHERE storage_key_id=$1) +
@@ -294,6 +296,15 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		query, column, keyIDColumn, table string
 		context                           func(string) string
 	}{
+		{`SELECT c.ctid::text,c.pair_id || '/' || c.delivery_generation || '/' || c.connection_slot,c.source_ciphertext
+		  FROM control.connector_peer_pairs p JOIN control.connector_peer_pair_leg_claims c ON c.pair_id=p.id
+		  WHERE c.source_storage_key_id=$1
+		  ORDER BY c.pair_id,c.delivery_generation,c.connection_slot FOR UPDATE OF p,c SKIP LOCKED LIMIT $2`,
+			"source_ciphertext", "source_storage_key_id", "control.connector_peer_pair_leg_claims",
+			func(id string) string { return "connector-source/" + id }},
+		{`SELECT ctid::text,service_id || '/' || purpose,key_ciphertext FROM control.service_ip_keys
+		  WHERE storage_key_id=$1 ORDER BY service_id,purpose FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"key_ciphertext", "storage_key_id", "control.service_ip_keys", serviceIPKeyContext},
 		{`SELECT ctid::text, 'device-login:' || encode(credential_digest,'hex'), payload FROM control.device_logins
 		  WHERE storage_key_id=$1 ORDER BY credential_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"payload", "storage_key_id", "control.device_logins", func(scope string) string { return scope }},

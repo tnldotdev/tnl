@@ -870,6 +870,10 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	if err != nil || !strings.Contains(string(html), "/__tnl/feedback/toolbar.") || !strings.Contains(page.Header.Get("Content-Security-Policy"), "style-src 'unsafe-inline'") {
 		t.Fatalf("demo toolbar or original styles missing: %v", err)
 	}
+	var previewID string
+	if err = inspect.QueryRow(`SELECT id FROM control.previews WHERE demo_service_run_id=$1`, ready.ServiceRunId).Scan(&previewID); err != nil {
+		t.Fatal(err)
+	}
 	report := func() *http.Response {
 		t.Helper()
 		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, serviceHTTPAddress(ready)+"/__tnl/feedback", strings.NewReader(`{"schema_version":1,"text":"Demo suggestion","page_path":"/","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`))
@@ -891,9 +895,16 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	if readErr != nil || unsigned.StatusCode != http.StatusUnauthorized || string(unsignedBody) != "feedback requires sign-in; sign in and retry\n" {
 		t.Fatalf("unsigned guest feedback = %d, %q, %v", unsigned.StatusCode, unsignedBody, readErr)
 	}
-	var unsignedReports int
-	if err := inspect.QueryRow(`SELECT count(*) FROM control.feedback_threads WHERE service_id=$1`, ready.ServiceId).Scan(&unsignedReports); err != nil || unsignedReports != 0 {
-		t.Fatalf("unsigned guest created feedback: count=%d, %v", unsignedReports, err)
+	localFeedback, err := store.DemoFeedback(t.Context(), previewID, func(context.Context, string, string) (controlv1.FeedbackAuthorization, error) {
+		t.Error("absent demo content requested authorization")
+		return controlv1.FeedbackAuthorization{}, errors.New("unexpected authorization")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsignedReports, err := localFeedback.List(t.Context(), "", "", "", "")
+	if err != nil || len(unsignedReports.Threads) != 0 || unsignedReports.EventCursor != 0 {
+		t.Fatalf("unsigned guest created local feedback: %+v, %v", unsignedReports, err)
 	}
 	privateState, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
@@ -944,9 +955,15 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	if err := authenticated.Control.DeleteGuestService(t.Context(), service.Id); err != nil && !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("remove guest demo URL after publication drains: %v", err)
 	}
-	var demoComments int
-	if err := inspect.QueryRow(`SELECT count(*) FROM control.feedback_threads WHERE service_id = $1`, ready.ServiceId).Scan(&demoComments); err != nil || demoComments != 0 {
-		t.Fatalf("demo comments retained after stop: %d, %v", demoComments, err)
+	localFeedback, err = store.DemoFeedback(t.Context(), previewID, func(context.Context, string, string) (controlv1.FeedbackAuthorization, error) {
+		t.Error("deleted demo content requested authorization")
+		return controlv1.FeedbackAuthorization{}, errors.New("unexpected authorization")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := localFeedback.GetFeedbackThread(t.Context(), thread.Id); !errors.Is(err, clientstate.ErrFeedbackNotFound) {
+		t.Fatal("demo comments retained after stop", err)
 	}
 	var deleted bool
 	if err := inspect.QueryRow(`SELECT deleted_at IS NOT NULL AND NOT enabled

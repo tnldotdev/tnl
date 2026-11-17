@@ -15,13 +15,15 @@ type projectSnapshot struct {
 	Project             Project       `json:"project"`
 	PrimaryCheckoutRoot string        `json:"primary_checkout_root"`
 	LabelParts          WorktreeLabel `json:"label_parts"`
+	LocalSource         string        `json:"local_source,omitempty"`
+	LocalWorktree       string        `json:"local_worktree,omitempty"`
 }
 
 // Snapshot transfers an already evaluated configuration to a connector owner. it
 // stays in the private process pipe; metadata and journals never contain it.
 func (p Project) Snapshot() ([]byte, string, error) {
 	parts := p.Worktree.labelParts
-	encoded, err := json.Marshal(projectSnapshot{Project: p, PrimaryCheckoutRoot: p.Worktree.PrimaryCheckoutRoot(), LabelParts: WorktreeLabel{Project: parts.project, Checkout: parts.checkout, ID: parts.id}})
+	encoded, err := json.Marshal(projectSnapshot{Project: p, PrimaryCheckoutRoot: p.Worktree.PrimaryCheckoutRoot(), LabelParts: WorktreeLabel{Project: parts.project, Checkout: parts.checkout, ID: parts.id}, LocalSource: p.localSource, LocalWorktree: p.localWorktree})
 	if err != nil {
 		return nil, "", err
 	}
@@ -47,6 +49,12 @@ func ReadSnapshot(input io.Reader) (Project, error) {
 		return Project{}, errors.New("selected project snapshot has trailing data")
 	}
 	snapshot.Project.Worktree.primaryRoot = snapshot.PrimaryCheckoutRoot
+	if snapshot.LocalSource != "" || snapshot.LocalWorktree != "" {
+		if !validLocalIdentity(snapshot.LocalSource) || !validLocalIdentity(snapshot.LocalWorktree) || snapshot.LocalSource == snapshot.LocalWorktree {
+			return Project{}, errors.New("selected project snapshot has invalid local identity")
+		}
+		snapshot.Project.localSource, snapshot.Project.localWorktree = snapshot.LocalSource, snapshot.LocalWorktree
+	}
 	snapshot.Project.Worktree.labelParts = worktreeLabelParts{project: snapshot.LabelParts.Project, checkout: snapshot.LabelParts.Checkout, id: snapshot.LabelParts.ID}
 	return snapshot.Project, nil
 }

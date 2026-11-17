@@ -13,7 +13,7 @@ func TestIntegrationTargetRequiresExplicitAnonymousHandlerIntent(t *testing.T) {
 				Target: target, Public: new(true),
 				HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}},
 			}
-			if err := normalizeAppliedProjectService("integration", &declaration, true); err != nil {
+			if err := normalizeAppliedProjectService("integration", &declaration, savedServiceConfiguration); err != nil {
 				t.Fatal("explicit anonymous integration handler was rejected", err)
 			}
 			for _, mutate := range []func(*ProjectServiceConfiguration){
@@ -28,7 +28,7 @@ func TestIntegrationTargetRequiresExplicitAnonymousHandlerIntent(t *testing.T) {
 				invalid := ProjectServiceConfiguration{Target: target, Public: new(true),
 					HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}}
 				mutate(&invalid)
-				if err := normalizeAppliedProjectService("integration", &invalid, true); err == nil {
+				if err := normalizeAppliedProjectService("integration", &invalid, savedServiceConfiguration); err == nil {
 					t.Error("integration accepted an implicit, incompatible, or unknown handler declaration", invalid)
 				}
 			}

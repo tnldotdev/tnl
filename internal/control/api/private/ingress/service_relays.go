@@ -7,6 +7,7 @@ import (
 	"net/netip"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
@@ -23,7 +24,11 @@ func (s *service) privateStateError(ctx context.Context, err error) error {
 
 func privateSource(source string) (netip.Addr, bool) {
 	ip, err := netip.ParseAddr(source)
-	return ip, err == nil && ip.IsValid() && ip.Zone() == "" && ip.String() == source
+	if err != nil || ip.String() != source {
+		return netip.Addr{}, false
+	}
+	normalized, err := ippolicy.NormalizeAddress(ip)
+	return normalized, err == nil
 }
 
 func privateRelayResponses(rows []controlstate.ServiceRelay) []ingressv1.ServiceRelay {

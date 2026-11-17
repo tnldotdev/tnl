@@ -3,9 +3,11 @@ package state
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
 func connectorPairConstraintInsert(owner, idempotency, parent, delivery string) string {
@@ -31,10 +33,18 @@ func TestIntegrationConnectorPeerPairSchemaConstraints(t *testing.T) {
 	}
 	// the five-minute endpoint is valid; each rejected update below must leave
 	// this complete, valid claim intact rather than fail on an unrelated field.
+	sourceDigest, err := f.d.serviceIPDigest(t.Context(), controlstatedb.New(f.d.pool), pair.ServiceID, connectorSourceIPKeyPurpose, netip.MustParseAddr("192.0.2.8"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceCiphertext, err := f.d.storageKey.Seal(connectorSourceContext(pair.ID, pair.DeliveryGeneration, 0), netip.MustParseAddr("192.0.2.8").AsSlice())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.d.pool.Exec(t.Context(), `INSERT INTO control.connector_peer_pair_leg_claims
-		(pair_id,connection_slot,requested_at,checked_at,confirmed_until,nonce_digest,source_ip,relay_id,relay_run_id,relay_lease_revision,delivery_generation)
-		VALUES ($1,0,$2,$2,$2::timestamptz+interval '5 minutes',decode(repeat('01',32),'hex'),'192.0.2.8',$3,$4,$5,$6)`,
-		pair.ID, f.now, pair.Relays[0].RelayLease.RelayID, pair.Relays[0].RelayLease.RelayRunID, pair.Relays[0].RelayLease.RelayLeaseRevision, pair.DeliveryGeneration); err != nil {
+		(pair_id,connection_slot,requested_at,checked_at,confirmed_until,nonce_digest,source_digest,source_ciphertext,source_storage_key_id,relay_id,relay_run_id,relay_lease_revision,delivery_generation)
+		VALUES ($1,0,$2,$2,$2::timestamptz+interval '5 minutes',decode(repeat('01',32),'hex'),$7,$8,$9,$3,$4,$5,$6)`,
+		pair.ID, f.now, pair.Relays[0].RelayLease.RelayID, pair.Relays[0].RelayLease.RelayRunID, pair.Relays[0].RelayLease.RelayLeaseRevision, pair.DeliveryGeneration, sourceDigest, sourceCiphertext, f.d.storageKey.CurrentID()); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
@@ -77,7 +87,7 @@ func TestIntegrationConnectorPeerPairSchemaConstraints(t *testing.T) {
 	}
 	// both leg keys are usable, but neither can be inserted twice.
 	if _, err := f.d.pool.Exec(t.Context(), `INSERT INTO control.connector_peer_pair_leg_claims
-		SELECT pair_id,1,requested_at,checked_at,confirmed_until,nonce_digest,source_ip,relay_id,relay_run_id,relay_lease_revision,delivery_generation
+		SELECT pair_id,1,requested_at,checked_at,confirmed_until,nonce_digest,source_digest,source_ciphertext,source_storage_key_id,relay_id,relay_run_id,relay_lease_revision,delivery_generation
 		FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1 AND connection_slot=0`, pair.ID); err != nil {
 		t.Fatal("sibling claim", err)
 	}
@@ -113,7 +123,8 @@ func TestIntegrationConnectorPeerPairShapeCatalog(t *testing.T) {
 			"retired_at": "timestamp with time zone YES", "retire_request_digest": "bytea YES",
 		},
 		"connector_peer_pair_leg_claims": {
-			"pair_id": "text NO", "connection_slot": "smallint NO", "source_ip": "inet NO",
+			"pair_id": "text NO", "connection_slot": "smallint NO", "source_digest": "text NO",
+			"source_ciphertext": "bytea NO", "source_storage_key_id": "text NO",
 			"checked_at": "timestamp with time zone NO", "confirmed_until": "timestamp with time zone NO",
 			"relay_run_id": "text NO", "relay_lease_revision": "bigint NO",
 		},

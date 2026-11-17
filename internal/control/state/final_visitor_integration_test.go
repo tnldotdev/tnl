@@ -211,46 +211,36 @@ func TestIntegrationFinalVisitorBrowserIdentityFeedbackAuthorPolicyAndSessionRev
 	auth = f.auth()
 	cookie, issued = finalBrowserSession(t, f, preview.ID, visitor)
 	ip := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ServiceRun: &auth}
-	report := CreateFeedbackRequest{PreviewID: preview.ID, Service: "web", PagePath: "/", ReportText: "immutable report", Anchor: json.RawMessage(`null`), Evidence: json.RawMessage(`{"schema_version":1,"actions":[],"failed_requests":[]}`), SourceAtReport: feedbackTestSource(t), IdempotencyKey: "anonymous", Actor: ip}
-	if _, err := d.CreateFeedback(t.Context(), auth, report, f.now); !errors.Is(err, ErrVisitorSignIn) {
+	if _, err := d.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, "report", ip, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatal("anonymous feedback bypassed required sign-in", err)
 	}
 	if _, err = d.SetTeamFeedbackPolicy(t.Context(), owner, f.project.TeamID, "signed_in", f.now); err != nil {
 		t.Fatal(err)
 	}
-	report.IdempotencyKey = "signin-required"
-	if _, err = d.CreateFeedback(t.Context(), auth, report, f.now); !errors.Is(err, ErrVisitorSignIn) {
+	if _, err = d.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, "report", ip, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatalf("anonymous policy bypass: %v", err)
 	}
 	raw, _ := base64.RawURLEncoding.DecodeString(cookie)
 	signed := ip
 	signed.BrowserCookieSecret = raw
 	signed.DisplayName = "forged"
-	report.Actor = signed
-	report.IdempotencyKey = "signed"
-	thread, err := d.CreateFeedback(t.Context(), auth, report, f.now)
-	if err != nil || !thread.AuthorVerified || thread.AuthorIdentityID != visitor || thread.AuthorDisplayName == "forged" {
+	thread, err := d.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, "report", signed, f.now)
+	if err != nil || !thread.Author.Verified || thread.Author.IdentityId == nil || *thread.Author.IdentityId != visitor || thread.Author.DisplayName == "forged" {
 		t.Fatalf("verified author: %+v %v", thread, err)
 	}
-	for _, event := range []FeedbackEventType{FeedbackReply, FeedbackThreadResolved, FeedbackThreadReopened} {
-		request := AppendFeedbackRequest{FeedbackID: thread.ID, Type: event, Text: "note", IdempotencyKey: string(event), Actor: ip}
-		if _, err = d.AppendFeedback(t.Context(), request, f.now); !errors.Is(err, ErrVisitorSignIn) {
+	for _, event := range []string{"reply", "thread.resolved", "thread.reopened"} {
+		if _, err = d.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, event, ip, f.now); !errors.Is(err, ErrVisitorSignIn) {
 			t.Fatalf("anonymous %s bypass: %v", event, err)
 		}
-		request.Actor = signed
-		stored, err := d.AppendFeedback(t.Context(), request, f.now)
-		if err != nil || !stored.AuthorVerified || stored.AuthorIdentityID != visitor {
+		stored, err := d.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, event, signed, f.now)
+		if err != nil || !stored.Author.Verified || stored.Author.IdentityId == nil || *stored.Author.IdentityId != visitor {
 			t.Fatal(stored, err)
 		}
-	}
-	original, err := d.GetFeedback(t.Context(), thread.ID)
-	if err != nil || original.ReportText != thread.ReportText || original.AuthorIdentityID != thread.AuthorIdentityID {
-		t.Fatal("report changed", err)
 	}
 	if _, err = d.SetTeamFeedbackPolicy(t.Context(), owner, f.project.TeamID, "team_members", f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.AppendFeedback(t.Context(), AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply, Text: "no permission", IdempotencyKey: "team-only", Actor: signed}, f.now); !errors.Is(err, ErrFeedbackAccess) {
+	if _, err = d.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, "reply", signed, f.now); !errors.Is(err, ErrFeedbackAccess) {
 		t.Fatalf("nonmember author policy bypass: %v", err)
 	}
 	if err = d.RevokeControlSession(t.Context(), ControlPrincipal{IdentityID: visitor, SessionID: issued.SessionID}, f.now); err != nil {
@@ -259,7 +249,7 @@ func TestIntegrationFinalVisitorBrowserIdentityFeedbackAuthorPolicyAndSessionRev
 	if _, err = d.ServiceBrowserSession(t.Context(), auth, cookie, false, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatalf("revoked current control session admitted: %v", err)
 	}
-	if _, err = d.CreateFeedback(t.Context(), auth, report, f.now); !errors.Is(err, ErrVisitorSignIn) {
+	if _, err = d.AuthorizeReviewerFeedback(t.Context(), auth, preview.ID, "report", signed, f.now); !errors.Is(err, ErrVisitorSignIn) {
 		t.Fatalf("revoked browser wrote: %v", err)
 	}
 }

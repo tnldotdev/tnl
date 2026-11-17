@@ -143,8 +143,8 @@ jobs:
           FRAMEWORK: ${{ matrix.framework }}
         run: pnpm exec vitest run "packages/ts/test/frameworks/$FRAMEWORK.test.ts"
 
-  go-linux:
-    name: Go (Linux)
+  go-linux-checks:
+    name: Go checks (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -185,11 +185,43 @@ jobs:
       - name: Scan for vulnerabilities
         run: task go:vulncheck
 
+      - name: Build commands
+        run: task go:build
+
+  go-linux-tests:
+    name: Go tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up tools
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
+        with:
+          tools: go node pnpm task
+          go-cache: build
+          pnpm: true
+
       - name: Run tests
         run: task go:test
 
-      - name: Build commands
-        run: task go:build
+  go-linux:
+    name: Go (Linux)
+    if: always()
+    needs: [go-linux-checks, go-linux-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify Linux checks and tests passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "- \(.key): \(.value.result)"' <<< "$RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
+          jq --exit-status 'all(.[]; .result == "success")' <<< "$RESULTS" > /dev/null
 
       - name: Prune Go build cache before saving
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

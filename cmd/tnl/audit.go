@@ -162,7 +162,7 @@ func renderServiceAudit(output io.Writer, page controlv1.ServiceAuditPage) error
 		}{
 			{"outcome", event.Outcome}, {"reason", event.Reason}, {"actor identity ID", event.ActorIdentityId},
 			{"publisher ID", event.PublisherIdentityId}, {"device ID", event.DeviceId}, {"run ID", event.RunId},
-			{"visitor connection ID", event.VisitorConnectionId}, {"source IP", event.SourceIp},
+			{"visitor connection ID", event.VisitorConnectionId}, {"source digest", event.SourceDigest},
 		} {
 			if optional.value != nil {
 				fields = append(fields, clioutput.Field{Label: optional.label, Value: *optional.value})

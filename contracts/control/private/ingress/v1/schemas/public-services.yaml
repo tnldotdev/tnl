@@ -75,6 +75,10 @@ schemas:
       ingress_run_id: { $ref: "../openapi.yaml#/components/schemas/Identifier" }
       ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
       visitor_connection_id: { $ref: "../openapi.yaml#/components/schemas/VisitorConnectionID" }
+      observed_source_ip:
+        type: string
+        x-go-type-skip-optional-pointer: true
+        description: Required for status checks; the original live socket source, checked against the admission digest. Close and promotion do not use it.
   PublicServiceVisitorAdmission:
     type: object
     additionalProperties: false

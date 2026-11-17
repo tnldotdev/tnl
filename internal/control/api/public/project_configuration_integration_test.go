@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -97,8 +98,8 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal("anonymous desired-state mutation", err)
 	}
 	localApplied, err := owner.ApplyProjectConfiguration(ctx, project, localBody)
-	if err != nil || !localApplied.Configuration.Oauth || len(localApplied.Configuration.Webhooks) != 1 || len(localApplied.Services) != 2 {
-		t.Fatal("local wire configuration lost integration declarations", localApplied, err)
+	if err != nil || localApplied.Configuration.Oauth || len(localApplied.Configuration.Webhooks) != 0 || len(localApplied.Services) != 2 {
+		t.Fatal("local wire configuration retained publisher integration handlers or lost shared services", localApplied, err)
 	}
 	body.ExpectedRevision = localApplied.Revision
 	applied, err := owner.ApplyProjectConfiguration(ctx, project, body)
@@ -175,9 +176,9 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil || len(previews.Previews) != 1 || previews.Previews[0].Id != preview.Id {
 		t.Fatal("creator preview was not discoverable from another session", err)
 	}
-	endpoint := localApplied.Configuration.Webhooks["payments"]
-	if endpoint.Delivery == nil || *endpoint.Delivery != "fanout" || endpoint.Methods == nil || len(*endpoint.Methods) != 1 || (*endpoint.Methods)[0] != "POST" {
-		t.Fatal("wire root declaration lost webhook defaults")
+	localWire, err := json.Marshal(localApplied)
+	if err != nil || bytes.Contains(localWire, []byte("/hooks/payments")) || len(localApplied.Configuration.Webhooks) != 0 || localApplied.Configuration.Oauth {
+		t.Fatal("wire shared configuration exposed local integration handlers", err)
 	}
 	rawAPI, err := controlv1.NewClientWithResponses(server.URL, controlv1.WithHTTPClient(server.Client()))
 	if err != nil {
@@ -405,7 +406,8 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		t.Fatal("remote wire status borrowed local state or invalid metadata changed the revision")
 	}
 	localStatus, err := owner.GetProjectConfiguration(ctx, team, project, "local")
-	if err != nil || !localStatus.Configuration.Oauth || len(localStatus.Configuration.Webhooks) != 1 || localStatus.Revision != current.Revision {
+	if err != nil || localStatus.Configuration.Oauth || len(localStatus.Configuration.Webhooks) != 0 || localStatus.Revision != current.Revision ||
+		!reflect.DeepEqual(localStatus.Configuration.Services, localApplied.Configuration.Services) {
 		t.Fatal("remote apply changed local root state", localStatus, err)
 	}
 	// a publisher lease is not a person's session, and a session is not a publisher lease.

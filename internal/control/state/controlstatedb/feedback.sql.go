@@ -29,105 +29,6 @@ func (q *Queries) AddServiceRunPreviewService(ctx context.Context, arg AddServic
 	return err
 }
 
-const createFeedbackThread = `-- name: CreateFeedbackThread :one
-INSERT INTO control.feedback_threads (
-    id, preview_id, team_id, guest_id, service_id, service_run_id,
-    run_number, service_name, page_path, page_title, report_text, author_display_name, author_identity_id, author_verified,
-    pin, evidence, report_source_state, created_at, state_updated_at,
-    idempotency_key, request_digest
-) VALUES (
-    $1, $2, $3,
-    (SELECT service.guest_id FROM control.services service WHERE service.id=$4),$4,
-    $5, $6, $7,
-    $8, $9, $10, $11, $12, $13,
-    convert_from($14::bytea, 'UTF8')::jsonb,
-    convert_from($15::bytea, 'UTF8')::jsonb,
-    convert_from($16::bytea, 'UTF8')::jsonb,
-    $17, $18,
-    $19, $20
-)
-ON CONFLICT (service_run_id, idempotency_key)
-DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
-RETURNING id, schema_version, preview_id, team_id, guest_id, service_id, service_run_id, run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest
-`
-
-type CreateFeedbackThreadParams struct {
-	ID                string
-	PreviewID         string
-	TeamID            pgtype.Text
-	ServiceID         string
-	ServiceRunID      string
-	RunNumber         int64
-	Service           string
-	PagePath          string
-	PageTitle         string
-	ReportText        string
-	AuthorDisplayName pgtype.Text
-	AuthorIdentityID  pgtype.Text
-	AuthorVerified    bool
-	Anchor            []byte
-	Evidence          []byte
-	SourceAtReport    []byte
-	CreatedAt         pgtype.Timestamptz
-	StateUpdatedAt    pgtype.Timestamptz
-	IdempotencyKey    string
-	RequestDigest     []byte
-}
-
-func (q *Queries) CreateFeedbackThread(ctx context.Context, arg CreateFeedbackThreadParams) (ControlFeedbackThread, error) {
-	row := q.db.QueryRow(ctx, createFeedbackThread,
-		arg.ID,
-		arg.PreviewID,
-		arg.TeamID,
-		arg.ServiceID,
-		arg.ServiceRunID,
-		arg.RunNumber,
-		arg.Service,
-		arg.PagePath,
-		arg.PageTitle,
-		arg.ReportText,
-		arg.AuthorDisplayName,
-		arg.AuthorIdentityID,
-		arg.AuthorVerified,
-		arg.Anchor,
-		arg.Evidence,
-		arg.SourceAtReport,
-		arg.CreatedAt,
-		arg.StateUpdatedAt,
-		arg.IdempotencyKey,
-		arg.RequestDigest,
-	)
-	var i ControlFeedbackThread
-	err := row.Scan(
-		&i.ID,
-		&i.SchemaVersion,
-		&i.PreviewID,
-		&i.TeamID,
-		&i.GuestID,
-		&i.ServiceID,
-		&i.ServiceRunID,
-		&i.RunNumber,
-		&i.ServiceName,
-		&i.PagePath,
-		&i.PageTitle,
-		&i.MessageCount,
-		&i.LatestEventCursor,
-		&i.ReportText,
-		&i.AuthorDisplayName,
-		&i.AuthorIdentityID,
-		&i.AuthorVerified,
-		&i.Pin,
-		&i.Evidence,
-		&i.ReportSourceState,
-		&i.State,
-		&i.CreatedAt,
-		&i.StateUpdatedAt,
-		&i.IdempotencyKey,
-		&i.RequestDigest,
-	)
-	return i, err
-}
-
 const createServiceRunPreview = `-- name: CreateServiceRunPreview :one
 INSERT INTO control.previews (id, team_id, guest_id, created_by_identity_id, idempotency_key, created_at, demo_service_run_id)
 SELECT $1, u.team_id, u.guest_id, u.created_by_identity_id, 'demo/' || r.id,
@@ -171,21 +72,9 @@ func (q *Queries) CreateServiceRunPreview(ctx context.Context, arg CreateService
 	return i, err
 }
 
-const feedbackEventHighWater = `-- name: FeedbackEventHighWater :one
-SELECT (next_cursor - 1)::bigint AS cursor
-FROM control.feedback_event_clock WHERE id = 1
-`
-
-func (q *Queries) FeedbackEventHighWater(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, feedbackEventHighWater)
-	var cursor int64
-	err := row.Scan(&cursor)
-	return cursor, err
-}
-
 const feedbackRunScope = `-- name: FeedbackRunScope :one
 SELECT run.id AS service_run_id, run.service_id, run.run_number,
-       service.team_id, service.guest_id, preview.id AS preview_id
+       service.team_id, service.guest_id, preview.id AS preview_id, preview.demo_service_run_id
 FROM control.service_runs AS run
 JOIN control.services AS service ON service.id = run.service_id
 JOIN control.preview_services AS included ON included.service_id = service.id
@@ -196,7 +85,7 @@ WHERE run.id = $1
   AND run.run_number = $4
   AND run.publisher_expires_at > $5
   AND run.state IN ('starting', 'ready')
-   AND run.closed_at IS NULL AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
+  AND run.closed_at IS NULL AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
 FOR UPDATE OF run
 `
 
@@ -209,12 +98,13 @@ type FeedbackRunScopeParams struct {
 }
 
 type FeedbackRunScopeRow struct {
-	ServiceRunID string
-	ServiceID    string
-	RunNumber    int64
-	TeamID       pgtype.Text
-	GuestID      pgtype.Text
-	PreviewID    string
+	ServiceRunID     string
+	ServiceID        string
+	RunNumber        int64
+	TeamID           pgtype.Text
+	GuestID          pgtype.Text
+	PreviewID        string
+	DemoServiceRunID pgtype.Text
 }
 
 func (q *Queries) FeedbackRunScope(ctx context.Context, arg FeedbackRunScopeParams) (FeedbackRunScopeRow, error) {
@@ -233,57 +123,36 @@ func (q *Queries) FeedbackRunScope(ctx context.Context, arg FeedbackRunScopePara
 		&i.TeamID,
 		&i.GuestID,
 		&i.PreviewID,
+		&i.DemoServiceRunID,
 	)
 	return i, err
 }
 
-const getFeedbackEventByActorKey = `-- name: GetFeedbackEventByActorKey :one
-SELECT cursor, schema_version, feedback_id, team_id, guest_id, event_type, actor_kind, actor_reference, idempotency_key, request_digest, text, evidence, source_state, occurred_at, author_identity_id, author_display_name, author_verified FROM control.feedback_events
-WHERE feedback_id = $1
-  AND actor_kind = $2
-  AND actor_reference = $3
-  AND idempotency_key = $4
+const feedbackServiceScope = `-- name: FeedbackServiceScope :one
+SELECT service.team_id,service.guest_id FROM control.services service
+JOIN control.preview_services included ON included.service_id=service.id
+WHERE service.id=$1 AND included.preview_id=$2 AND service.protocol='http'
 `
 
-type GetFeedbackEventByActorKeyParams struct {
-	FeedbackID     string
-	ActorKind      string
-	ActorReference string
-	IdempotencyKey string
+type FeedbackServiceScopeParams struct {
+	ServiceID string
+	PreviewID string
 }
 
-func (q *Queries) GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbackEventByActorKeyParams) (ControlFeedbackEvent, error) {
-	row := q.db.QueryRow(ctx, getFeedbackEventByActorKey,
-		arg.FeedbackID,
-		arg.ActorKind,
-		arg.ActorReference,
-		arg.IdempotencyKey,
-	)
-	var i ControlFeedbackEvent
-	err := row.Scan(
-		&i.Cursor,
-		&i.SchemaVersion,
-		&i.FeedbackID,
-		&i.TeamID,
-		&i.GuestID,
-		&i.EventType,
-		&i.ActorKind,
-		&i.ActorReference,
-		&i.IdempotencyKey,
-		&i.RequestDigest,
-		&i.Text,
-		&i.Evidence,
-		&i.SourceState,
-		&i.OccurredAt,
-		&i.AuthorIdentityID,
-		&i.AuthorDisplayName,
-		&i.AuthorVerified,
-	)
+type FeedbackServiceScopeRow struct {
+	TeamID  pgtype.Text
+	GuestID pgtype.Text
+}
+
+func (q *Queries) FeedbackServiceScope(ctx context.Context, arg FeedbackServiceScopeParams) (FeedbackServiceScopeRow, error) {
+	row := q.db.QueryRow(ctx, feedbackServiceScope, arg.ServiceID, arg.PreviewID)
+	var i FeedbackServiceScopeRow
+	err := row.Scan(&i.TeamID, &i.GuestID)
 	return i, err
 }
 
 const getFeedbackService = `-- name: GetFeedbackService :one
-SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id=$1
 `
 
 func (q *Queries) GetFeedbackService(ctx context.Context, id string) (ControlService, error) {
@@ -323,468 +192,6 @@ func (q *Queries) GetFeedbackService(ctx context.Context, id string) (ControlSer
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-	)
-	return i, err
-}
-
-const getFeedbackThread = `-- name: GetFeedbackThread :one
-SELECT id, schema_version, preview_id, team_id, guest_id, service_id, service_run_id, run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest FROM control.feedback_threads WHERE id = $1
-`
-
-func (q *Queries) GetFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error) {
-	row := q.db.QueryRow(ctx, getFeedbackThread, id)
-	var i ControlFeedbackThread
-	err := row.Scan(
-		&i.ID,
-		&i.SchemaVersion,
-		&i.PreviewID,
-		&i.TeamID,
-		&i.GuestID,
-		&i.ServiceID,
-		&i.ServiceRunID,
-		&i.RunNumber,
-		&i.ServiceName,
-		&i.PagePath,
-		&i.PageTitle,
-		&i.MessageCount,
-		&i.LatestEventCursor,
-		&i.ReportText,
-		&i.AuthorDisplayName,
-		&i.AuthorIdentityID,
-		&i.AuthorVerified,
-		&i.Pin,
-		&i.Evidence,
-		&i.ReportSourceState,
-		&i.State,
-		&i.CreatedAt,
-		&i.StateUpdatedAt,
-		&i.IdempotencyKey,
-		&i.RequestDigest,
-	)
-	return i, err
-}
-
-const insertFeedbackEvent = `-- name: InsertFeedbackEvent :one
-INSERT INTO control.feedback_events (
-    cursor, feedback_id, team_id, guest_id, event_type, actor_kind,
-    actor_reference, idempotency_key, request_digest, text,
-    evidence, source_state, occurred_at, author_identity_id, author_display_name, author_verified
-) VALUES (
-    $1, $2, $3,
-    (SELECT thread.guest_id FROM control.feedback_threads thread WHERE thread.id=$2),
-    $4, $5, $6,
-    $7, $8,
-    $9,
-    convert_from($10::bytea, 'UTF8')::jsonb,
-    convert_from($11::bytea, 'UTF8')::jsonb,
-    $12, $13, $14, $15
-)
-RETURNING cursor, schema_version, feedback_id, team_id, guest_id, event_type, actor_kind, actor_reference, idempotency_key, request_digest, text, evidence, source_state, occurred_at, author_identity_id, author_display_name, author_verified
-`
-
-type InsertFeedbackEventParams struct {
-	Cursor            int64
-	FeedbackID        string
-	TeamID            pgtype.Text
-	EventType         string
-	ActorKind         string
-	ActorReference    string
-	IdempotencyKey    string
-	RequestDigest     []byte
-	Text              pgtype.Text
-	Evidence          []byte
-	SourceState       []byte
-	OccurredAt        pgtype.Timestamptz
-	AuthorIdentityID  pgtype.Text
-	AuthorDisplayName pgtype.Text
-	AuthorVerified    bool
-}
-
-func (q *Queries) InsertFeedbackEvent(ctx context.Context, arg InsertFeedbackEventParams) (ControlFeedbackEvent, error) {
-	row := q.db.QueryRow(ctx, insertFeedbackEvent,
-		arg.Cursor,
-		arg.FeedbackID,
-		arg.TeamID,
-		arg.EventType,
-		arg.ActorKind,
-		arg.ActorReference,
-		arg.IdempotencyKey,
-		arg.RequestDigest,
-		arg.Text,
-		arg.Evidence,
-		arg.SourceState,
-		arg.OccurredAt,
-		arg.AuthorIdentityID,
-		arg.AuthorDisplayName,
-		arg.AuthorVerified,
-	)
-	var i ControlFeedbackEvent
-	err := row.Scan(
-		&i.Cursor,
-		&i.SchemaVersion,
-		&i.FeedbackID,
-		&i.TeamID,
-		&i.GuestID,
-		&i.EventType,
-		&i.ActorKind,
-		&i.ActorReference,
-		&i.IdempotencyKey,
-		&i.RequestDigest,
-		&i.Text,
-		&i.Evidence,
-		&i.SourceState,
-		&i.OccurredAt,
-		&i.AuthorIdentityID,
-		&i.AuthorDisplayName,
-		&i.AuthorVerified,
-	)
-	return i, err
-}
-
-const listFeedbackEventsForTeam = `-- name: ListFeedbackEventsForTeam :many
-SELECT cursor, schema_version, feedback_id, team_id, guest_id, event_type, actor_kind, actor_reference, idempotency_key, request_digest, text, evidence, source_state, occurred_at, author_identity_id, author_display_name, author_verified FROM control.feedback_events
-WHERE team_id = $1 AND cursor > $2
-ORDER BY cursor LIMIT 26
-`
-
-type ListFeedbackEventsForTeamParams struct {
-	TeamID      pgtype.Text
-	AfterCursor int64
-}
-
-func (q *Queries) ListFeedbackEventsForTeam(ctx context.Context, arg ListFeedbackEventsForTeamParams) ([]ControlFeedbackEvent, error) {
-	rows, err := q.db.Query(ctx, listFeedbackEventsForTeam, arg.TeamID, arg.AfterCursor)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlFeedbackEvent
-	for rows.Next() {
-		var i ControlFeedbackEvent
-		if err := rows.Scan(
-			&i.Cursor,
-			&i.SchemaVersion,
-			&i.FeedbackID,
-			&i.TeamID,
-			&i.GuestID,
-			&i.EventType,
-			&i.ActorKind,
-			&i.ActorReference,
-			&i.IdempotencyKey,
-			&i.RequestDigest,
-			&i.Text,
-			&i.Evidence,
-			&i.SourceState,
-			&i.OccurredAt,
-			&i.AuthorIdentityID,
-			&i.AuthorDisplayName,
-			&i.AuthorVerified,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listFeedbackEventsForThread = `-- name: ListFeedbackEventsForThread :many
-SELECT cursor, schema_version, feedback_id, team_id, guest_id, event_type, actor_kind, actor_reference, idempotency_key, request_digest, text, evidence, source_state, occurred_at, author_identity_id, author_display_name, author_verified FROM control.feedback_events
-WHERE feedback_id = $1 AND cursor > $2
-ORDER BY cursor LIMIT 26
-`
-
-type ListFeedbackEventsForThreadParams struct {
-	FeedbackID  string
-	AfterCursor int64
-}
-
-func (q *Queries) ListFeedbackEventsForThread(ctx context.Context, arg ListFeedbackEventsForThreadParams) ([]ControlFeedbackEvent, error) {
-	rows, err := q.db.Query(ctx, listFeedbackEventsForThread, arg.FeedbackID, arg.AfterCursor)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlFeedbackEvent
-	for rows.Next() {
-		var i ControlFeedbackEvent
-		if err := rows.Scan(
-			&i.Cursor,
-			&i.SchemaVersion,
-			&i.FeedbackID,
-			&i.TeamID,
-			&i.GuestID,
-			&i.EventType,
-			&i.ActorKind,
-			&i.ActorReference,
-			&i.IdempotencyKey,
-			&i.RequestDigest,
-			&i.Text,
-			&i.Evidence,
-			&i.SourceState,
-			&i.OccurredAt,
-			&i.AuthorIdentityID,
-			&i.AuthorDisplayName,
-			&i.AuthorVerified,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listFeedbackThreadsForPage = `-- name: ListFeedbackThreadsForPage :many
-SELECT id, schema_version, preview_id, team_id, guest_id, service_id, service_run_id, run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest FROM control.feedback_threads
-WHERE preview_id = $1
-  AND service_id = $2
-   AND ($3::text = '' OR page_path = $3)
-   AND ($4::text = '' OR state = $4)
-  AND id > $5
-ORDER BY id LIMIT 101
-`
-
-type ListFeedbackThreadsForPageParams struct {
-	PreviewID   string
-	ServiceID   string
-	PagePath    string
-	ThreadState string
-	AfterID     string
-}
-
-func (q *Queries) ListFeedbackThreadsForPage(ctx context.Context, arg ListFeedbackThreadsForPageParams) ([]ControlFeedbackThread, error) {
-	rows, err := q.db.Query(ctx, listFeedbackThreadsForPage,
-		arg.PreviewID,
-		arg.ServiceID,
-		arg.PagePath,
-		arg.ThreadState,
-		arg.AfterID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlFeedbackThread
-	for rows.Next() {
-		var i ControlFeedbackThread
-		if err := rows.Scan(
-			&i.ID,
-			&i.SchemaVersion,
-			&i.PreviewID,
-			&i.TeamID,
-			&i.GuestID,
-			&i.ServiceID,
-			&i.ServiceRunID,
-			&i.RunNumber,
-			&i.ServiceName,
-			&i.PagePath,
-			&i.PageTitle,
-			&i.MessageCount,
-			&i.LatestEventCursor,
-			&i.ReportText,
-			&i.AuthorDisplayName,
-			&i.AuthorIdentityID,
-			&i.AuthorVerified,
-			&i.Pin,
-			&i.Evidence,
-			&i.ReportSourceState,
-			&i.State,
-			&i.CreatedAt,
-			&i.StateUpdatedAt,
-			&i.IdempotencyKey,
-			&i.RequestDigest,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listFeedbackThreadsForTeam = `-- name: ListFeedbackThreadsForTeam :many
-SELECT id, schema_version, preview_id, team_id, guest_id, service_id, service_run_id, run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest FROM control.feedback_threads
-WHERE team_id = $1
-  AND id > $2
-ORDER BY id LIMIT 101
-`
-
-type ListFeedbackThreadsForTeamParams struct {
-	TeamID  pgtype.Text
-	AfterID string
-}
-
-func (q *Queries) ListFeedbackThreadsForTeam(ctx context.Context, arg ListFeedbackThreadsForTeamParams) ([]ControlFeedbackThread, error) {
-	rows, err := q.db.Query(ctx, listFeedbackThreadsForTeam, arg.TeamID, arg.AfterID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlFeedbackThread
-	for rows.Next() {
-		var i ControlFeedbackThread
-		if err := rows.Scan(
-			&i.ID,
-			&i.SchemaVersion,
-			&i.PreviewID,
-			&i.TeamID,
-			&i.GuestID,
-			&i.ServiceID,
-			&i.ServiceRunID,
-			&i.RunNumber,
-			&i.ServiceName,
-			&i.PagePath,
-			&i.PageTitle,
-			&i.MessageCount,
-			&i.LatestEventCursor,
-			&i.ReportText,
-			&i.AuthorDisplayName,
-			&i.AuthorIdentityID,
-			&i.AuthorVerified,
-			&i.Pin,
-			&i.Evidence,
-			&i.ReportSourceState,
-			&i.State,
-			&i.CreatedAt,
-			&i.StateUpdatedAt,
-			&i.IdempotencyKey,
-			&i.RequestDigest,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const lockFeedbackThread = `-- name: LockFeedbackThread :one
-SELECT id, schema_version, preview_id, team_id, guest_id, service_id, service_run_id, run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest FROM control.feedback_threads WHERE id = $1 FOR UPDATE
-`
-
-func (q *Queries) LockFeedbackThread(ctx context.Context, id string) (ControlFeedbackThread, error) {
-	row := q.db.QueryRow(ctx, lockFeedbackThread, id)
-	var i ControlFeedbackThread
-	err := row.Scan(
-		&i.ID,
-		&i.SchemaVersion,
-		&i.PreviewID,
-		&i.TeamID,
-		&i.GuestID,
-		&i.ServiceID,
-		&i.ServiceRunID,
-		&i.RunNumber,
-		&i.ServiceName,
-		&i.PagePath,
-		&i.PageTitle,
-		&i.MessageCount,
-		&i.LatestEventCursor,
-		&i.ReportText,
-		&i.AuthorDisplayName,
-		&i.AuthorIdentityID,
-		&i.AuthorVerified,
-		&i.Pin,
-		&i.Evidence,
-		&i.ReportSourceState,
-		&i.State,
-		&i.CreatedAt,
-		&i.StateUpdatedAt,
-		&i.IdempotencyKey,
-		&i.RequestDigest,
-	)
-	return i, err
-}
-
-const recordFeedbackActivity = `-- name: RecordFeedbackActivity :exec
-UPDATE control.feedback_threads
-SET latest_event_cursor = $1,
-    message_count = message_count + CASE WHEN $2::boolean THEN 1 ELSE 0 END
-WHERE id = $3
-`
-
-type RecordFeedbackActivityParams struct {
-	EventCursor int64
-	AddMessage  bool
-	FeedbackID  string
-}
-
-func (q *Queries) RecordFeedbackActivity(ctx context.Context, arg RecordFeedbackActivityParams) error {
-	_, err := q.db.Exec(ctx, recordFeedbackActivity, arg.EventCursor, arg.AddMessage, arg.FeedbackID)
-	return err
-}
-
-const reserveFeedbackEventCursor = `-- name: ReserveFeedbackEventCursor :one
-UPDATE control.feedback_event_clock
-SET next_cursor = next_cursor + 1
-WHERE id = 1 AND next_cursor < 9223372036854775807
-RETURNING (next_cursor - 1)::bigint AS cursor
-`
-
-func (q *Queries) ReserveFeedbackEventCursor(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, reserveFeedbackEventCursor)
-	var cursor int64
-	err := row.Scan(&cursor)
-	return cursor, err
-}
-
-const updateFeedbackThreadState = `-- name: UpdateFeedbackThreadState :one
-UPDATE control.feedback_threads
-SET state = $1, state_updated_at = $2
-WHERE id = $3
-  AND state = $4
-RETURNING id, schema_version, preview_id, team_id, guest_id, service_id, service_run_id, run_number, service_name, page_path, page_title, message_count, latest_event_cursor, report_text, author_display_name, author_identity_id, author_verified, pin, evidence, report_source_state, state, created_at, state_updated_at, idempotency_key, request_digest
-`
-
-type UpdateFeedbackThreadStateParams struct {
-	NextState     string
-	UpdatedAt     pgtype.Timestamptz
-	FeedbackID    string
-	ExpectedState string
-}
-
-func (q *Queries) UpdateFeedbackThreadState(ctx context.Context, arg UpdateFeedbackThreadStateParams) (ControlFeedbackThread, error) {
-	row := q.db.QueryRow(ctx, updateFeedbackThreadState,
-		arg.NextState,
-		arg.UpdatedAt,
-		arg.FeedbackID,
-		arg.ExpectedState,
-	)
-	var i ControlFeedbackThread
-	err := row.Scan(
-		&i.ID,
-		&i.SchemaVersion,
-		&i.PreviewID,
-		&i.TeamID,
-		&i.GuestID,
-		&i.ServiceID,
-		&i.ServiceRunID,
-		&i.RunNumber,
-		&i.ServiceName,
-		&i.PagePath,
-		&i.PageTitle,
-		&i.MessageCount,
-		&i.LatestEventCursor,
-		&i.ReportText,
-		&i.AuthorDisplayName,
-		&i.AuthorIdentityID,
-		&i.AuthorVerified,
-		&i.Pin,
-		&i.Evidence,
-		&i.ReportSourceState,
-		&i.State,
-		&i.CreatedAt,
-		&i.StateUpdatedAt,
-		&i.IdempotencyKey,
-		&i.RequestDigest,
 	)
 	return i, err
 }

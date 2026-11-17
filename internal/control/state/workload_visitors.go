@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -139,7 +138,7 @@ func (d *Database) IssueWorkloadServiceClientCertificate(ctx context.Context, cr
 
 // recheck uses the same run, publisher, ingress, relay and source constraints as
 // human direct admission, then intersects them with the workload's live lease.
-func recheckWorkloadPublicServiceVisitor(ctx context.Context, tx pgx.Tx, service, run string, number int64, visitor, session string, source netip.Addr, certificateDigest []byte, now time.Time) (result ServiceVisitorValidity, err error) {
+func recheckWorkloadPublicServiceVisitor(ctx context.Context, tx pgx.Tx, service, run string, number int64, visitor, session, sourceDigest string, certificateDigest []byte, now time.Time) (result ServiceVisitorValidity, err error) {
 	until, _, err := VisitorSubjectAccess(ctx, tx, service, workloadSubject(session), now)
 	if err != nil {
 		return result, err
@@ -156,9 +155,9 @@ func recheckWorkloadPublicServiceVisitor(ctx context.Context, tx pgx.Tx, service
             AND (g.kind='service' OR signing.retired_at IS NULL)
         JOIN control.publisher_identities p ON p.id=run.publisher_identity_id AND p.id=g.publisher_identity_id AND p.revoked_at IS NULL
         JOIN control.workload_client_certificates cert ON cert.certificate_digest=COALESCE($7::bytea,v.certificate_digest) AND cert.service_id=s.id AND cert.workload_session_id=$5 AND cert.expires_at>$8
-        WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4 AND v.source_ip=$6 AND v.closed_at IS NULL AND v.valid_until>$8
+        WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4 AND v.source_digest=$6 AND v.closed_at IS NULL AND v.valid_until>$8
         AND v.identity_id IS NULL AND v.device_id IS NULL AND (v.workload_session_id IS NULL OR v.workload_session_id=$5) AND(v.certificate_digest IS NULL OR v.certificate_digest=cert.certificate_digest)
-        AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND relay.lease_expires_at>$8 AND NOT relay.draining)`, visitor, service, run, number, session, source.Unmap(), certificateDigest, now).Scan(&result.Admitted, &deadline)
+        AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND relay.lease_expires_at>$8 AND NOT relay.draining)`, visitor, service, run, number, session, sourceDigest, certificateDigest, now).Scan(&result.Admitted, &deadline)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}

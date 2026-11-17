@@ -93,6 +93,7 @@ schemas:
             hostname: { type: string }
   RealizeLocalProjectServiceRequest:
     type: object
+    description: Shared service policy for one local worktree. Native clients send persistent random source/worktree IDs and an app target; directory mappings, listener selection, readiness, and mounts stay local.
     additionalProperties: false
     required: [team_id, source_fingerprint, worktree_key, configuration]
     properties:
@@ -146,7 +147,7 @@ schemas:
     additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
   ProjectConfiguration:
     type: object
-    description: Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+    description: Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
     additionalProperties: false
     required: [services, oauth, webhooks]
     properties:
@@ -157,12 +158,12 @@ schemas:
       oauth:
         type: boolean
         default: false
-        description: Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a saved deployment.
+        description: Publisher-only OAuth intent is not retained in shared configuration. Native clients send false.
       webhooks:
         type: object
         maxProperties: 32
         additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWebhook" }
-        description: Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public reachability enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
+        description: Publisher-only webhook handler definitions are not retained in shared configuration. Native clients send an empty object.
       settings:
         $ref: "../openapi.yaml#/components/schemas/DeploymentSettings"
       services:
@@ -290,7 +291,7 @@ schemas:
       target:
         type: string
         maxLength: 8192
-        description: "Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP listener to its application owner in any deployment. integration:oauth and integration:webhooks explicitly select a non-ephemeral, in-process HTTP handler and require explicit anonymous HTTP access; they are not app listeners or separate resources. Only local declarations may use integration, compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets."
+        description: "Saved service and remote deployment targets normalize to host:port with separate target_tls trust. Local project bindings use app for every protocol and keep listener and container selection local. Remote app descriptors defer HTTP listeners to their application owners. integration:oauth and integration:webhooks explicitly select a non-ephemeral, in-process HTTP handler and require explicit anonymous HTTP access; they are not app listeners or separate resources. Control does not discover local targets."
       target_discovery: { $ref: "../openapi.yaml#/components/schemas/ProjectTargetDiscovery" }
       public:
         type: boolean
@@ -315,7 +316,7 @@ schemas:
   ProjectServiceHTTP:
     type: object
     additionalProperties: false
-    description: HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
+    description: HTTP visitor access and request limits, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Project-local readiness, path mounts, and browser opening stay with the publisher and are not saved in control.
     properties:
       request_body_idle_timeout:
         type: string

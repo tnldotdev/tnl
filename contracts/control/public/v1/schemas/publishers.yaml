@@ -107,9 +107,6 @@ schemas:
           x-oapi-codegen-extra-tags: { json: "epoch,string" },
         }
       evidence: { type: string, enum: [control_observed] }
-      address:
-        type: string
-        description: Canonical public routable IPv4 or IPv6 host, never a CIDR. Absent for private or non-routable sources.
       address_family: { type: string, enum: [ipv4, ipv6, unknown] }
       started_at: { type: string, format: date-time }
       observed_at: { type: string, format: date-time }

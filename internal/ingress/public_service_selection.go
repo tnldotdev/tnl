@@ -138,7 +138,7 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 		selected.denialReason = controlv1.ObservationCapacity
 		return selected, ErrServiceAdmission
 	}
-	lookup := &ingressv1.PublicServiceVisitorLookup{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision}
+	lookup := &ingressv1.PublicServiceVisitorLookup{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, ObservedSourceIp: source.Addr().Unmap().String()}
 	selected.certificate = lookup
 	selected.access = clientCertificateAccess
 	claim := ingressv1.PublicServiceVisitorClaim{

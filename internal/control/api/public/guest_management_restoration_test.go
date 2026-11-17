@@ -5,8 +5,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestGuestRestoredTrialCannotUpdateServicesOrManageFeedback(t *testing.T) {
@@ -22,7 +20,9 @@ func TestGuestRestoredTrialCannotUpdateServicesOrManageFeedback(t *testing.T) {
 			if operation == "configure" {
 				h.ConfigureService(w, r, "service")
 			} else {
-				h.ListFeedbackThreads(w, r, controlv1.ListFeedbackThreadsParams{})
+				r = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"service_id":"service","preview_id":"preview","operation":"read"}`))
+				r.Header.Set("Authorization", "Bearer guest-token")
+				h.AuthorizeImplementerFeedback(w, r)
 			}
 			if w.Code != http.StatusUnauthorized || human.reads != 1 {
 				t.Fatal("guest trial became human service or feedback management authority", w.Code, human.reads)

@@ -157,10 +157,6 @@ class PublisherRuntimeStatus(BaseModel):
     process_run_id: str
     epoch: Annotated[str, Field(pattern=r"^[0-9]+$")]
     evidence: PublisherRuntimeStatusEvidence
-    address: str | None = Field(
-        default=None,
-        description="Canonical public routable IPv4 or IPv6 host, never a CIDR. Absent for private or non-routable sources.",
-    )
     address_family: PublisherRuntimeStatusAddressFamily
     started_at: datetime
     observed_at: datetime

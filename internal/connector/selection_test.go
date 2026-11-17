@@ -12,6 +12,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -29,6 +30,15 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 		"orders": {Name: &alias, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://do-not-evaluate.internal"))}},
 		"remote": {Name: &group},
 	}}}}
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	project.Project, err = project.Project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	source, err := project.SourceIdentity(t.Context())
 	if err != nil {
 		t.Fatal(err)

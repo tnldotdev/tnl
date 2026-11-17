@@ -40,8 +40,8 @@ func TestIntegrationReviewerSessionsObtainCurrentPermissionAfterAppRestart(t *te
 	}
 	actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", BrowserCookieSecret: browser,
 		VisitProof: FeedbackBearerVisitProof{Token: issued.Token}}
-	first, err := f.database.CreateFeedback(t.Context(), old, feedbackProofRequest(t, preview.ID, actor, "before-restart"), f.now)
-	if err != nil || first.AuthorIdentityID != reviewer || !first.AuthorVerified {
+	first, err := f.database.AuthorizeReviewerFeedback(t.Context(), old, preview.ID, "report", actor, f.now)
+	if err != nil || first.Author.IdentityId == nil || *first.Author.IdentityId != reviewer || !first.Author.Verified {
 		t.Fatal("initial reviewer feedback lost verified authorship", err)
 	}
 	if err := f.database.CloseServiceRun(t.Context(), old.Subject.ID, old.RunID, old.Token.String(), f.now); err != nil {
@@ -85,8 +85,8 @@ func TestIntegrationReviewerSessionsObtainCurrentPermissionAfterAppRestart(t *te
 		t.Fatal("restart extended the original share session deadline")
 	}
 	actor.VisitProof = FeedbackBearerVisitProof{Token: fresh.Token}
-	second, err := f.database.CreateFeedback(t.Context(), current, feedbackProofRequest(t, preview.ID, actor, "after-restart"), f.now)
-	if err != nil || second.ServiceRunID != current.RunID || second.AuthorIdentityID != reviewer || !second.AuthorVerified {
+	second, err := f.database.AuthorizeReviewerFeedback(t.Context(), current, preview.ID, "report", actor, f.now)
+	if err != nil || second.ServiceRunId != current.RunID || second.Author.IdentityId == nil || *second.Author.IdentityId != reviewer || !second.Author.Verified {
 		t.Fatal("same reviewer cookies could not leave feedback after restart", err)
 	}
 	added := f.local(t, "added", nil)
@@ -104,7 +104,7 @@ func TestIntegrationReviewerSessionsObtainCurrentPermissionAfterAppRestart(t *te
 	if _, err := f.database.IssueVisitorToken(t.Context(), testVisitorIssuer, current.Subject, source, f.now); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("reviewer session outlived its share creator's authority", err)
 	}
-	if _, err := f.database.CreateFeedback(t.Context(), current, feedbackProofRequest(t, preview.ID, actor, "revoked-creator"), f.now); err == nil {
+	if _, err := f.database.AuthorizeReviewerFeedback(t.Context(), current, preview.ID, "report", actor, f.now); err == nil {
 		t.Fatal("verified reviewer feedback outlived its share creator's authority")
 	}
 }

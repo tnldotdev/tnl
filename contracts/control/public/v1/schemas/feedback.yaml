@@ -1,4 +1,68 @@
 schemas:
+  FeedbackOperation:
+    type: string
+    enum: [read, report, reply, update, thread.resolved, thread.reopened, delete]
+  FeedbackAuthorization:
+    type: object
+    additionalProperties: false
+    required:
+      [preview_id, service_id, service_run_id, run_number, operation, actor, author, expires_at]
+    properties:
+      preview_id:
+        $ref: "../openapi.yaml#/components/schemas/PreviewID"
+      service_id:
+        $ref: "../openapi.yaml#/components/schemas/ServiceID"
+      service_run_id:
+        type: string
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
+      operation:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackOperation"
+      actor:
+        type: string
+      author:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackAuthor"
+      expires_at:
+        type: string
+        format: date-time
+      content_expires_at:
+        type: string
+        format: date-time
+        description: Fixed content-retention deadline for a run-bound demo preview; absent for project feedback.
+  AuthorizeReviewerFeedbackRequest:
+    type: object
+    additionalProperties: false
+    required: [preview_id, run_number, operation, access]
+    properties:
+      preview_id:
+        $ref: "../openapi.yaml#/components/schemas/PreviewID"
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
+      operation:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackOperation"
+      access:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackReviewerAccess"
+  AuthorizeImplementerFeedbackRequest:
+    type: object
+    additionalProperties: false
+    required: [preview_id, service_id, operation]
+    properties:
+      preview_id:
+        $ref: "../openapi.yaml#/components/schemas/PreviewID"
+      service_id:
+        $ref: "../openapi.yaml#/components/schemas/ServiceID"
+      operation:
+        $ref: "../openapi.yaml#/components/schemas/FeedbackOperation"
   FeedbackID:
     $ref: "../openapi.yaml#/components/schemas/ResourceID"
   ReviewSchemaVersion:

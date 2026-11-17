@@ -41,7 +41,7 @@ func TestIntegrationHTTPConnectionAuditUsesExactPublisherRunAndOriginalDeadline(
 		}
 		found++
 		if event.PublisherIdentityID != f.publisher.ID || event.ActorIdentityID != "" || event.DeviceID != "" ||
-			event.RunID != run.RunID || event.SourceIP != opened.SourceIP {
+			event.RunID != run.RunID || event.SourceIP != "" || event.SourceDigest != auditSourceDigest(t, d, service.ID, opened.SourceIP) {
 			t.Fatal("HTTP connection history invented an actor or lost its publisher/source", event)
 		}
 	}

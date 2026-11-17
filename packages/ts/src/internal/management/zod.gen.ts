@@ -117,7 +117,6 @@ export const publisherRuntimeStatusSchema = z.strictObject({
   process_run_id: z.string(),
   epoch: z.string().regex(/^[0-9]+$/),
   evidence: z.enum(["control_observed"]),
-  address: z.string().optional(),
   address_family: z.enum(["ipv4", "ipv6", "unknown"]),
   started_at: z.iso.datetime({ offset: true }),
   observed_at: z.iso.datetime({ offset: true }),

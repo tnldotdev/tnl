@@ -5,3 +5,7 @@ generate:
   client: true
   models: true
   std-http-server: true
+output-options:
+  # browser feedback references these identical wire models without control
+  # content endpoints. keep their defining schemas available to native clients.
+  skip-prune: true

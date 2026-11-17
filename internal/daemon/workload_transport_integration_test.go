@@ -719,11 +719,32 @@ func workloadNativeRuntimeBinding(t *testing.T, f *privateSeparatedFixture, sess
 	var valid bool
 	var binding string
 	err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),COALESCE(bool_and(pair.expires_at<=$2 AND pair.publisher_prepared_until IS NOT NULL
-		AND (SELECT count(*)=2 AND bool_and(host(source_ip)='127.0.0.1') FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)),false),
+		AND (SELECT count(*)=2 FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)),false),
 		COALESCE(jsonb_agg(jsonb_build_array(pair.id,pair.service_id,pair.service_run_id,pair.run_number,pair.owner_key,encode(pair.delivery_id,'hex'),pair.delivery_generation,encode(pair.key_ciphertext,'hex'),pair.slots) ORDER BY pair.id)::text,'')
 		FROM control.connector_peer_pairs pair WHERE pair.subject_kind='workload_session' AND pair.subject_id=$1`, session, expiry).Scan(&count, &valid, &binding)
 	if err != nil || count != 3 || !valid {
 		t.Fatalf("workload native source/install/fixed-expiry scope: pairs=%d valid=%t: %v", count, valid, err)
+	}
+	var pairs [][]json.RawMessage
+	if err := json.Unmarshal([]byte(binding), &pairs); err != nil || len(pairs) != count {
+		t.Fatal("invalid native source binding snapshot", err)
+	}
+	for _, pair := range pairs {
+		if len(pair) != 9 {
+			t.Fatal("invalid native source binding field count")
+		}
+		var id, service string
+		var generation int64
+		if json.Unmarshal(pair[0], &id) != nil || json.Unmarshal(pair[1], &service) != nil || json.Unmarshal(pair[6], &generation) != nil {
+			t.Fatal("invalid native source binding identity")
+		}
+		var sourceCurrent bool
+		err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*)=2 AND bool_and(source_digest=$3)
+			FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1 AND delivery_generation=$2`,
+			id, generation, runtimeSourceDigest(t, "connector-source-binding", service, "127.0.0.1")).Scan(&sourceCurrent)
+		if err != nil || !sourceCurrent {
+			t.Fatal("workload native binding lost its exact checked source", err)
+		}
 	}
 	return binding
 }

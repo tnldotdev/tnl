@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/browserpage"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -121,8 +122,36 @@ func TestBrowserHandoffInstallsHostBoundCookiesAndBridges(t *testing.T) {
 	next = "https://api.example.test/__tnl/team/handoff/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
 	bridge := serve()
 	if bridge.Code != http.StatusOK || !strings.Contains(bridge.Body.String(), `http-equiv="refresh"`) ||
-		!strings.Contains(bridge.Body.String(), next) || bridge.Header().Get("Content-Security-Policy") != "default-src 'none'; base-uri 'none'" {
+		!strings.Contains(bridge.Body.String(), next) || bridge.Header().Get("Content-Security-Policy") != browserpage.ContentSecurityPolicy ||
+		!strings.Contains(bridge.Body.String(), "data:font/woff2;base64,") {
 		t.Fatal("cross-host browser bridge changed", bridge.Code, bridge.Header(), bridge.Body.String())
+	}
+}
+
+func TestBrowserHandoffErrorsNegotiatePresentation(t *testing.T) {
+	for _, accept := range []string{"", "text/html"} {
+		request := httptest.NewRequest(http.MethodGet, "/__tnl/team/handoff/invalid", nil)
+		request.Header.Set("Accept", accept)
+		response := httptest.NewRecorder()
+		if !(&Browser{}).Handle(response, request) || response.Code != http.StatusServiceUnavailable {
+			t.Fatal("unavailable browser sign-in changed its status")
+		}
+		if accept == "" {
+			if response.Body.String() != "browser sign-in is unavailable\n" {
+				t.Fatal("plain browser failure changed")
+			}
+		} else if !strings.Contains(response.Body.String(), "<h1>service unavailable</h1>") ||
+			response.Header().Get("Content-Security-Policy") != browserpage.ContentSecurityPolicy {
+			t.Fatal("browser failure is not styled")
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/__tnl/team/session", nil)
+	request.Header.Set("Accept", "text/html")
+	response := httptest.NewRecorder()
+	(&Browser{}).Handle(response, request)
+	if response.Header().Get("Content-Type") != "text/plain; charset=utf-8" ||
+		response.Body.String() != "browser sign-in is unavailable\n" {
+		t.Fatal("browser session API negotiated HTML")
 	}
 }
 

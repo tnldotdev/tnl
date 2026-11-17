@@ -26,7 +26,7 @@ func assertWorkflowPublisherRuntime(t *testing.T, client *clientcontrol.Client, 
 			}
 			return nil
 		}
-		if r == nil || r.Epoch != epoch || r.Active != active || r.PublisherIdentityId != id || r.TeamId != team || len(r.ProcessRunId) != 32 || r.Evidence != "control_observed" || r.AddressFamily != "unknown" || r.Address != nil || r.ObservedAt.IsZero() || r.StartedAt.IsZero() || r.LastSeenAt.Before(r.ObservedAt) || (r.StoppedAt == nil) != active {
+		if r == nil || r.Epoch != epoch || r.Active != active || r.PublisherIdentityId != id || r.TeamId != team || len(r.ProcessRunId) != 32 || r.Evidence != "control_observed" || r.AddressFamily != "unknown" || r.ObservedAt.IsZero() || r.StartedAt.IsZero() || r.LastSeenAt.Before(r.ObservedAt) || (r.StoppedAt == nil) != active {
 			t.Fatalf("unexpected runtime observation: %+v; want epoch=%d active=%t", r, epoch, active)
 		}
 		return r

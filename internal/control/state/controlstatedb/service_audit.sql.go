@@ -33,12 +33,12 @@ func (q *Queries) CleanupServiceAuditEvents(ctx context.Context, arg CleanupServ
 
 const insertServiceAuditEvents = `-- name: InsertServiceAuditEvents :many
 INSERT INTO control.service_audit_events(id,team_id,guest_id,service_id,event_type,occurred_at,received_at,
-    actor_identity_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_ip,outcome,reason,configuration_revision)
+    actor_identity_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_digest,outcome,reason,configuration_revision)
 SELECT entry.value->>'id',NULLIF(entry.value->>'team_id',''),service.guest_id,service.id,
     entry.value->>'event_type',(entry.value->>'occurred_at')::timestamptz,$1,
     NULLIF(entry.value->>'actor_identity_id',''),NULLIF(entry.value->>'device_id',''),
     NULLIF(entry.value->>'publisher_identity_id',''),NULLIF(entry.value->>'run_id',''),
-    NULLIF(entry.value->>'visitor_connection_id',''),NULLIF(entry.value->>'source_ip','')::inet,
+    NULLIF(entry.value->>'visitor_connection_id',''),NULLIF(entry.value->>'source_digest',''),
     NULLIF(entry.value->>'outcome',''),NULLIF(entry.value->>'reason',''),NULLIF((entry.value->>'configuration_revision')::bigint,0)
 FROM jsonb_array_elements(convert_from($2::bytea,'UTF8')::jsonb) WITH ORDINALITY AS entry(value,position)
 JOIN control.services service ON service.id=(entry.value->>'service_id')
@@ -73,7 +73,7 @@ func (q *Queries) InsertServiceAuditEvents(ctx context.Context, arg InsertServic
 }
 
 const listServiceAuditEvents = `-- name: ListServiceAuditEvents :many
-SELECT cursor, id, team_id, guest_id, service_id, event_type, occurred_at, received_at, actor_identity_id, device_id, publisher_identity_id, run_id, visitor_connection_id, source_ip, outcome, reason, configuration_revision FROM control.service_audit_events
+SELECT cursor, id, team_id, guest_id, service_id, event_type, occurred_at, received_at, actor_identity_id, device_id, publisher_identity_id, run_id, visitor_connection_id, source_digest, outcome, reason, configuration_revision FROM control.service_audit_events
 WHERE team_id=$1 AND cursor>$2
     AND received_at >= $3
     AND ($4::timestamptz IS NULL OR occurred_at>=$4)
@@ -120,7 +120,7 @@ func (q *Queries) ListServiceAuditEvents(ctx context.Context, arg ListServiceAud
 			&i.PublisherIdentityID,
 			&i.RunID,
 			&i.VisitorConnectionID,
-			&i.SourceIp,
+			&i.SourceDigest,
 			&i.Outcome,
 			&i.Reason,
 			&i.ConfigurationRevision,
@@ -136,7 +136,7 @@ func (q *Queries) ListServiceAuditEvents(ctx context.Context, arg ListServiceAud
 }
 
 const listServiceAuditEventsByID = `-- name: ListServiceAuditEventsByID :many
-SELECT cursor, id, team_id, guest_id, service_id, event_type, occurred_at, received_at, actor_identity_id, device_id, publisher_identity_id, run_id, visitor_connection_id, source_ip, outcome, reason, configuration_revision FROM control.service_audit_events WHERE id=ANY($1::text[])
+SELECT cursor, id, team_id, guest_id, service_id, event_type, occurred_at, received_at, actor_identity_id, device_id, publisher_identity_id, run_id, visitor_connection_id, source_digest, outcome, reason, configuration_revision FROM control.service_audit_events WHERE id=ANY($1::text[])
 `
 
 func (q *Queries) ListServiceAuditEventsByID(ctx context.Context, eventIds []string) ([]ControlServiceAuditEvent, error) {
@@ -162,7 +162,7 @@ func (q *Queries) ListServiceAuditEventsByID(ctx context.Context, eventIds []str
 			&i.PublisherIdentityID,
 			&i.RunID,
 			&i.VisitorConnectionID,
-			&i.SourceIp,
+			&i.SourceDigest,
 			&i.Outcome,
 			&i.Reason,
 			&i.ConfigurationRevision,

@@ -201,7 +201,7 @@ type ControlConnectorPeerAuditBinding struct {
 	PublisherIdentityID string
 	IdentityID          pgtype.Text
 	DeviceID            pgtype.Text
-	SourceIp            netip.Addr
+	SourceDigest        string
 	CreatedAt           pgtype.Timestamptz
 	ExpiresAt           pgtype.Timestamptz
 	DeliveryGeneration  int64
@@ -261,7 +261,9 @@ type ControlConnectorPeerPairLegClaim struct {
 	CheckedAt          pgtype.Timestamptz
 	ConfirmedUntil     pgtype.Timestamptz
 	NonceDigest        []byte
-	SourceIp           netip.Addr
+	SourceDigest       string
+	SourceCiphertext   []byte
+	SourceStorageKeyID string
 	RelayID            string
 	RelayRunID         string
 	RelayLeaseRevision int64
@@ -478,59 +480,6 @@ type ControlDomain struct {
 	UpdatedAt               pgtype.Timestamptz
 }
 
-type ControlFeedbackEvent struct {
-	Cursor            int64
-	SchemaVersion     int16
-	FeedbackID        string
-	TeamID            pgtype.Text
-	GuestID           pgtype.Text
-	EventType         string
-	ActorKind         string
-	ActorReference    string
-	IdempotencyKey    string
-	RequestDigest     []byte
-	Text              pgtype.Text
-	Evidence          []byte
-	SourceState       []byte
-	OccurredAt        pgtype.Timestamptz
-	AuthorIdentityID  pgtype.Text
-	AuthorDisplayName pgtype.Text
-	AuthorVerified    bool
-}
-
-type ControlFeedbackEventClock struct {
-	ID         int16
-	NextCursor int64
-}
-
-type ControlFeedbackThread struct {
-	ID                string
-	SchemaVersion     int16
-	PreviewID         string
-	TeamID            pgtype.Text
-	GuestID           pgtype.Text
-	ServiceID         string
-	ServiceRunID      string
-	RunNumber         int64
-	ServiceName       string
-	PagePath          string
-	PageTitle         string
-	MessageCount      int64
-	LatestEventCursor int64
-	ReportText        string
-	AuthorDisplayName pgtype.Text
-	AuthorIdentityID  pgtype.Text
-	AuthorVerified    bool
-	Pin               []byte
-	Evidence          []byte
-	ReportSourceState []byte
-	State             string
-	CreatedAt         pgtype.Timestamptz
-	StateUpdatedAt    pgtype.Timestamptz
-	IdempotencyKey    string
-	RequestDigest     []byte
-}
-
 type ControlGuestTrial struct {
 	ID                    string
 	CredentialID          pgtype.Text
@@ -716,7 +665,7 @@ type ControlPublicServiceVisitor struct {
 	IngressRunID         string
 	IngressLeaseRevision int64
 	DestinationPort      int32
-	SourceIp             netip.Addr
+	SourceDigest         string
 	IdentityID           pgtype.Text
 	DeviceID             pgtype.Text
 	CertificateDigest    []byte
@@ -829,7 +778,6 @@ type ControlPublisherRuntime struct {
 	ScopeID                   string
 	ProcessRunID              string
 	Epoch                     int64
-	Address                   pgtype.Text
 	AddressFamily             string
 	Evidence                  string
 	StartedAt                 pgtype.Timestamptz
@@ -984,7 +932,7 @@ type ControlServiceAuditEvent struct {
 	PublisherIdentityID   pgtype.Text
 	RunID                 pgtype.Text
 	VisitorConnectionID   pgtype.Text
-	SourceIp              *netip.Addr
+	SourceDigest          pgtype.Text
 	Outcome               pgtype.Text
 	Reason                pgtype.Text
 	ConfigurationRevision pgtype.Int8
@@ -1132,6 +1080,13 @@ type ControlServiceInvitation struct {
 	AcceptedAt          pgtype.Timestamptz
 	AcceptedIdentityID  pgtype.Text
 	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlServiceIpKey struct {
+	ServiceID     string
+	Purpose       string
+	KeyCiphertext []byte
+	StorageKeyID  string
 }
 
 type ControlServiceNamespaceClaim struct {

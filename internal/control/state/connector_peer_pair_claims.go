@@ -140,6 +140,10 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 		return result, ErrServiceAccess
 	}
 	nonce := sha256.Sum256(proof.Nonce)
+	sourceDigest, err := d.serviceIPDigest(ctx, q, proof.ServiceID, connectorSourceIPKeyPurpose, observedSource)
+	if err != nil {
+		return result, err
+	}
 	claims, err := q.ReadConnectorPeerBindingClaims(ctx, controlstatedb.ReadConnectorPeerBindingClaimsParams{PairID: pair.ID, DeliveryGeneration: pair.DeliveryGeneration})
 	if err != nil {
 		return result, err
@@ -159,7 +163,7 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 			}
 			return result, ErrConnectorPeerBindingStale
 		}
-		if claim.SourceIp != observedSource {
+		if claim.SourceDigest != sourceDigest {
 			if pending {
 				return result, ErrServiceAccess
 			}
@@ -169,10 +173,15 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 	if !slotCurrent || run.State != "ready" || delivered[proof.ConnectionSlot].RelayAddress != current.RelayAddress || delivered[proof.ConnectionSlot].TLSServerName != current.TlsServerName {
 		return result, ErrConnectorPeerBindingStale
 	}
+	sourceCiphertext, err := d.storageKey.Seal(connectorSourceContext(pair.ID, pair.DeliveryGeneration, int16(proof.ConnectionSlot)), observedSource.AsSlice())
+	if err != nil {
+		return result, err
+	}
 	if _, err = q.SaveConnectorPeerPairLegClaim(ctx, controlstatedb.SaveConnectorPeerPairLegClaimParams{
 		PairID: pair.ID, ConnectionSlot: int16(proof.ConnectionSlot), RequestedAt: timestamptz(requestAt),
 		DeliveryGeneration: pair.DeliveryGeneration,
-		NonceDigest:        nonce[:], SourceIp: observedSource, RelayID: lease.RelayID, RelayRunID: lease.RelayRunID,
+		NonceDigest:        nonce[:], SourceDigest: sourceDigest, SourceCiphertext: sourceCiphertext,
+		SourceStorageKeyID: d.storageKey.CurrentID(), RelayID: lease.RelayID, RelayRunID: lease.RelayRunID,
 		RelayLeaseRevision: int64(lease.RelayLeaseRevision),
 		CheckedAt:          timestamptz(checked), ConfirmedUntil: timestamptz(deadline),
 	}); err != nil {

@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"maps"
-	"net/http"
 	"slices"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -17,11 +15,11 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// Declaration sends evaluated declarations, never executable TypeScript or local
-// paths that a remote publisher would need to reopen. discover is needed only
-// when capturing target trust for a local Docker or Compose target.
+// Declaration sends shared service policy and required target trust. local target
+// selection, readiness, mounts, and integration handlers stay with the publisher.
+// saved remote deployments retain the configuration their publishers need.
 func Declaration(ctx context.Context, project clientproject.Project, current team.Context, discover func(context.Context, string) (string, error), selected ...string) (controlv1.ProjectConfiguration, error) {
-	declaration := controlv1.ProjectConfiguration{Oauth: project.Config.OAuth, Webhooks: map[string]controlv1.ProjectWebhook{}, Services: map[string]controlv1.ProjectServiceConfiguration{}}
+	declaration := controlv1.ProjectConfiguration{Webhooks: map[string]controlv1.ProjectWebhook{}, Services: map[string]controlv1.ProjectServiceConfiguration{}}
 	if err := config.ValidateTNL(project.Config); err != nil {
 		return declaration, err
 	}
@@ -37,21 +35,6 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 			entry.DomainId = &domain.Id
 		}
 		declaration.Settings = &entry
-	}
-	for name, webhook := range project.Config.Webhooks {
-		delivery := webhook.DeliveryMode()
-		methods := slices.Clone(webhook.Methods)
-		if len(methods) == 0 {
-			methods = []string{http.MethodPost}
-		}
-		slices.Sort(methods)
-		entry := controlv1.ProjectWebhook{Service: webhook.Service, Path: webhook.Path, Provider: controlv1.WebhookProvider(webhook.Provider), Delivery: &delivery, Methods: &methods}
-		if len(webhook.SourceIPs) != 0 {
-			ips := slices.Clone(webhook.SourceIPs)
-			slices.Sort(ips)
-			entry.SourceIps = &ips
-		}
-		declaration.Webhooks[name] = entry
 	}
 	names := slices.Sorted(maps.Keys(project.Config.Services))
 	if len(selected) != 0 {
@@ -83,8 +66,12 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 		if err != nil {
 			return declaration, err
 		}
-		if service.HTTP != nil {
-			httpSettings := *service.HTTP
+		httpPolicy := service.HTTP
+		if deployment == "local" {
+			httpPolicy = config.HTTPRequestPolicy(httpPolicy)
+		}
+		if httpPolicy != nil {
+			httpSettings := *httpPolicy
 			if httpSettings.Access != nil {
 				access := *httpSettings.Access
 				if err := access.Validate(); err != nil {
@@ -102,31 +89,18 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 			}
 		}
 		cloud := config.TargetType(service) == "eks" || config.TargetType(service) == "rds"
-		if cloud {
+		if deployment == "local" {
+			// the application owns the listener for every local protocol.
+			entry.Target = "app"
+		} else if cloud {
 			t := service.Target
 			entry.TargetDiscovery = &controlv1.ProjectTargetDiscovery{Type: controlv1.ProjectTargetDiscoveryType(t.Type), Region: *t.Region, Cluster: t.Cluster, Instance: t.Instance}
 			if t.Endpoint != nil {
 				endpoint := controlv1.ProjectTargetDiscoveryEndpoint(*t.Endpoint)
 				entry.TargetDiscovery.Endpoint = &endpoint
 			}
-		} else if deployment == "local" || config.TargetType(service) == "app" {
-			// local discovery stays local. this declarative descriptor contains no
-			// checkout path, discovered container address or running app listener.
-			entry.Target = config.TargetType(service)
-			if service.Target != nil {
-				switch service.Target.Type {
-				case "address":
-					resolved, err := project.ResolvePublish(name, "")
-					if err != nil {
-						return declaration, err
-					}
-					entry.Target = string(*resolved.Target)
-				case "compose":
-					entry.Target = fmt.Sprintf("compose:%s:%d", *service.Target.Service, *service.Target.Port)
-				case "docker":
-					entry.Target = fmt.Sprintf("docker:%s:%d", *service.Target.Container, *service.Target.Port)
-				}
-			}
+		} else if config.TargetType(service) == "app" {
+			entry.Target = "app"
 		} else {
 			resolved, err := project.ResolvePublish(name, "")
 			if err != nil {

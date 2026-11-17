@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -54,6 +55,7 @@ type HTTPRun struct {
 // http binds each request to one trusted forwarding header. policy and
 // browser credential renewal are prepared once by the service run owner.
 type HTTP struct {
+	State                 *clientstate.Store
 	AuditSink             serviceaudit.Sink
 	InspectionMode        inspection.Mode
 	ObserveSummary        inspection.Observer
@@ -86,7 +88,7 @@ type HTTP struct {
 	preparations          chan struct{}
 }
 
-func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
+func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || !f.InspectionMode.Valid() ||
 		!opaqueid.Valid(f.RunID, opaqueid.ServiceRunPrefix) || f.Number < 1 || f.Token == "" {
 		return HTTP{}, nil, servicestream.ErrEndpoint
@@ -145,7 +147,11 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func(), error) {
 	if f.feedback != nil {
 		f.ResponseHooks = f.feedback.responseHooks(f.ResponseHooks)
 	}
-	return f, func() { tokens.Close(); policy.Close() }, nil
+	return f, func() error {
+		tokens.Close()
+		policy.Close()
+		return f.feedback.close(ctx)
+	}, nil
 }
 
 func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestream.HTTPTarget) error {
@@ -455,7 +461,7 @@ func (f HTTP) share(w http.ResponseWriter, r *http.Request) {
 		servicestream.DenyHTTP(w, r, servicestream.HTTPDecisionStatus(err))
 		return
 	}
-	httpaccess.ShareRedirect(w, redemption)
+	httpaccess.ShareRedirect(w, r, redemption)
 }
 
 var _ servicestream.HTTPFrontend = HTTP{}

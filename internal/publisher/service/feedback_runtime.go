@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"time"
 
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -23,11 +25,7 @@ const (
 )
 
 type FeedbackClient interface {
-	CreateFeedbackReport(context.Context, string, string, string, controlv1.CreateFeedbackReportRequest, credentials.ServiceRunToken) (controlv1.FeedbackThread, error)
-	ListPreviewPageFeedback(context.Context, string, string, controlv1.PreviewPageFeedbackRequest, credentials.ServiceRunToken) (controlv1.FeedbackThreadPage, error)
-	GetReviewerFeedbackThread(context.Context, string, string, string, controlv1.ReviewerFeedbackReadRequest, credentials.ServiceRunToken) (controlv1.FeedbackThread, error)
-	ListReviewerFeedbackEvents(context.Context, string, string, string, controlv1.ReviewerFeedbackReadRequest, credentials.ServiceRunToken) (controlv1.FeedbackEventPage, error)
-	AppendReviewerFeedbackEvent(context.Context, string, string, string, string, controlv1.AppendReviewerFeedbackEventRequest, credentials.ServiceRunToken) (controlv1.FeedbackEvent, error)
+	AuthorizeReviewerFeedback(context.Context, string, string, controlv1.AuthorizeReviewerFeedbackRequest, credentials.ServiceRunToken) (controlv1.FeedbackAuthorization, error)
 }
 
 // feedbackAuthorization is supplied by request admission, never browser input.
@@ -71,6 +69,7 @@ func connectorFeedbackAuthorization(authorization servicestream.ConnectorHTTPAut
 
 type feedbackRuntime struct {
 	client      FeedbackClient
+	state       *clientstate.Store
 	previewID   string
 	serviceID   string
 	service     string
@@ -91,19 +90,45 @@ func newFeedbackRuntime(config HTTP) (*feedbackRuntime, error) {
 	if !config.Feedback {
 		return nil, nil
 	}
-	if config.Control == nil || !opaqueid.Valid(config.PreviewID, opaqueid.PreviewPrefix) || config.ProjectService == "" || !config.Demo && config.ProjectRoot == "" {
+	if config.State == nil || config.Control == nil || !opaqueid.Valid(config.PreviewID, opaqueid.PreviewPrefix) || config.ProjectService == "" || !config.Demo && config.ProjectRoot == "" {
 		return nil, errors.New("service: feedback requires a configured preview, project service, and project root")
 	}
 	asset, assetPath := toolbar.Script()
 	return &feedbackRuntime{
 		demo:   config.Demo,
-		client: config.Control, previewID: config.PreviewID, serviceID: config.Subject.ID,
+		client: config.Control, state: config.State, previewID: config.PreviewID, serviceID: config.Subject.ID,
 		service: config.ProjectService, projectRoot: config.ProjectRoot,
 		runID: config.RunID, number: config.Number, token: config.Token,
 		browsers: make(map[[32]byte]*browserTrail), asset: asset, assetPath: assetPath,
 	}, nil
 }
 
+func (f *feedbackRuntime) local(ctx context.Context, access controlv1.FeedbackReviewerAccess) (*clientstate.FeedbackStore, error) {
+	if f.state == nil {
+		return nil, errors.New("service: feedback client state is unavailable")
+	}
+	authorize := func(ctx context.Context, service, operation string) (controlv1.FeedbackAuthorization, error) {
+		if service != f.serviceID {
+			return controlv1.FeedbackAuthorization{}, clientstate.ErrFeedbackNotFound
+		}
+		return f.client.AuthorizeReviewerFeedback(ctx, service, f.runID, controlv1.AuthorizeReviewerFeedbackRequest{
+			PreviewId: f.previewID, RunNumber: f.number, Operation: controlv1.FeedbackOperation(operation), Access: access,
+		}, f.token)
+	}
+	if f.demo {
+		return f.state.DemoFeedback(ctx, f.previewID, authorize)
+	}
+	return f.state.Feedback(ctx, f.projectRoot, f.previewID, authorize)
+}
+
+func (f *feedbackRuntime) close(ctx context.Context) error {
+	if f == nil || !f.demo {
+		return nil
+	}
+	cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer stop()
+	return f.state.DiscardDemoFeedback(cleanup, f.previewID)
+}
 func (f *feedbackRuntime) responseHooks(hooks httpstream.ResponseHooks) httpstream.ResponseHooks {
 	modify, observe := hooks.ModifyHTML, hooks.ObserveStatus
 	hooks.ModifyHTML = func(response *http.Response) error {

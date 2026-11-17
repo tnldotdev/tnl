@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -35,6 +36,7 @@ func validBrowserReturnPath(path string) bool {
 }
 
 func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request *http.Request, params controlv1.BeginServiceBrowserLoginParams) {
+	response = failureproblem.BrowserResponse(response, request)
 	response.Header().Set("Referrer-Policy", "no-referrer")
 	response.Header().Set("Cache-Control", "no-store")
 	if h.browserAccess == nil || h.browserOIDC == nil || h.browserAuthority == nil {
@@ -114,6 +116,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 }
 
 func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, request *http.Request, params controlv1.CompletePreviewBrowserLoginParams) {
+	response = failureproblem.BrowserResponse(response, request)
 	response.Header().Set("Referrer-Policy", "no-referrer")
 	response.Header().Set("Cache-Control", "no-store")
 	if h.browserAccess == nil || h.browserOIDC == nil || h.browserAuthority == nil || params.Code == "" || len(params.Code) > 4096 {

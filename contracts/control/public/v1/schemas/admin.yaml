@@ -16,7 +16,7 @@ schemas:
       publisher_identity_id: { type: string }
       run_id: { type: string }
       visitor_connection_id: { type: string }
-      source_ip: { type: string }
+      source_digest: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
       outcome: { type: string, maxLength: 64 }
       reason: { type: string, maxLength: 64 }
       configuration_revision:

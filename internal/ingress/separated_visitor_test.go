@@ -92,7 +92,11 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(closeHTTP)
+	t.Cleanup(func() {
+		if err := closeHTTP(); err != nil {
+			t.Error(err)
+		}
+	})
 	var applications, probes atomic.Int32
 	target := servicestream.HTTPTarget{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(httpstream.ReadinessProbeHeader) != "" {

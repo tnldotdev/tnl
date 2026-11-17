@@ -10,8 +10,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
+
+const publicVisitorIPKeyPurpose = "public-visitor-binding"
 
 type PublicServiceVisitorAdmission struct {
 	ServiceID, RunID, ConnectionID string
@@ -26,7 +29,7 @@ type PublicServiceVisitorAdmission struct {
 // by trusted destination port, without inspecting protocol negotiation.
 func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressLeaseIdentity, pool, visitor string, port int, source netip.Addr, now time.Time, continuation ...ServiceRunCursor) (result PublicServiceVisitorAdmission, retErr error) {
 	clock := newAuthorizationClock(now)
-	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || !tcpport.ValidNetwork(port) || port < 1024 || !source.IsValid() || source.Zone() != "" || len(continuation) > 1 {
+	if _, sourceErr := ippolicy.NormalizeAddress(source); sourceErr != nil || validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || !tcpport.ValidNetwork(port) || port < 1024 || len(continuation) > 1 {
 		return result, ErrServiceAccess
 	}
 	var cursor *ServiceRunCursor
@@ -72,6 +75,10 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		service.Protocol == "http" {
 		return result, errors.Join(ErrServiceAccess, err)
 	}
+	sourceDigest, err := d.serviceIPDigest(ctx, q, service.ID, publicVisitorIPKeyPurpose, source)
+	if err != nil {
+		return result, err
+	}
 	current, err := lockCurrentIngressLease(ctx, q, lease, clock.current())
 	if err != nil || current.Draining {
 		return result, errors.Join(ErrServiceAccess, err)
@@ -82,7 +89,7 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		return result, errors.Join(ErrServiceAccess, err)
 	}
 	var existing bool
-	err = tx.QueryRow(ctx, `SELECT service_run_id,run_number,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1 AND service_id=$2 AND ingress_id=$3 AND ingress_run_id=$4 AND ingress_lease_revision=$5 AND source_ip=$6 AND destination_port=$7 AND valid_until>$8 AND closed_at IS NULL`, visitor, result.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, clock.current()).Scan(&result.RunID, &result.RunNumber, &result.ExpiresAt)
+	err = tx.QueryRow(ctx, `SELECT service_run_id,run_number,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1 AND service_id=$2 AND ingress_id=$3 AND ingress_run_id=$4 AND ingress_lease_revision=$5 AND source_digest=$6 AND destination_port=$7 AND valid_until>$8 AND closed_at IS NULL`, visitor, result.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), sourceDigest, port, clock.current()).Scan(&result.RunID, &result.RunNumber, &result.ExpiresAt)
 	if err == nil {
 		existing = true
 		if cursor != nil && !cursor.allows(result.RunNumber) {
@@ -123,7 +130,7 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 	}
 	result.ExpiresAt = minTime(result.ExpiresAt, runUntil)
 	if !existing {
-		_, err = tx.Exec(ctx, `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,valid_until,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(visitor_connection_id) DO NOTHING`, visitor, result.ServiceID, result.RunID, result.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), port, source.Unmap(), result.ExpiresAt, now)
+		_, err = tx.Exec(ctx, `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(visitor_connection_id) DO NOTHING`, visitor, result.ServiceID, result.RunID, result.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), port, sourceDigest, result.ExpiresAt, now)
 		if err != nil {
 			return result, err
 		}
@@ -131,7 +138,7 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		var same bool
 		// return the stored deadline on the first response too. PostgreSQL stores
 		// microseconds, so an in-memory nanosecond deadline would change on retry.
-		if err = tx.QueryRow(ctx, `SELECT service_id=$2 AND service_run_id=$3 AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6 AND source_ip=$7 AND destination_port=$8 AND valid_until>$9 AND closed_at IS NULL,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1`, visitor, result.ServiceID, result.RunID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), source.Unmap(), port, clock.current()).Scan(&same, &result.ExpiresAt); err != nil || !same {
+		if err = tx.QueryRow(ctx, `SELECT service_id=$2 AND service_run_id=$3 AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6 AND source_digest=$7 AND destination_port=$8 AND valid_until>$9 AND closed_at IS NULL,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1`, visitor, result.ServiceID, result.RunID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), sourceDigest, port, clock.current()).Scan(&same, &result.ExpiresAt); err != nil || !same {
 			return result, errors.Join(ErrServiceAccess, err)
 		}
 	}
@@ -167,8 +174,8 @@ const (
 	PublicServiceVisitorDenied        PublicServiceVisitorState = "denied"
 )
 
-func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease IngressLeaseIdentity, visitor string, now time.Time) (result PublicServiceVisitorStatus, retErr error) {
-	if validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) {
+func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease IngressLeaseIdentity, visitor string, source netip.Addr, now time.Time) (result PublicServiceVisitorStatus, retErr error) {
+	if _, err := ippolicy.NormalizeAddress(source); err != nil || validateIngressLeaseIdentity(lease) != nil || !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -178,9 +185,9 @@ func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease Ingress
 	defer rollback(ctx, tx, "check public service visitor", &retErr)()
 	result.State = PublicServiceVisitorDenied
 	var service, run string
-	var source netip.Addr
+	var savedDigest string
 	var number int64
-	err = tx.QueryRow(ctx, `SELECT service_id,service_run_id,run_number,source_ip,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1 AND ingress_id=$2 AND ingress_run_id=$3 AND ingress_lease_revision=$4 AND closed_at IS NULL AND valid_until>$5`, visitor, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now).Scan(&service, &run, &number, &source, &result.ValidUntil)
+	err = tx.QueryRow(ctx, `SELECT service_id,service_run_id,run_number,source_digest,valid_until FROM control.public_service_visitors WHERE visitor_connection_id=$1 AND ingress_id=$2 AND ingress_run_id=$3 AND ingress_lease_revision=$4 AND closed_at IS NULL AND valid_until>$5`, visitor, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now).Scan(&service, &run, &number, &savedDigest, &result.ValidUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PublicServiceVisitorStatus{State: PublicServiceVisitorDenied, ValidUntil: now}, nil
 	}
@@ -191,6 +198,13 @@ func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease Ingress
 		return result, err
 	}
 	q := controlstatedb.New(tx)
+	sourceDigest, err := d.readServiceIPDigest(ctx, q, service, publicVisitorIPKeyPurpose, source)
+	if err != nil {
+		return result, err
+	}
+	if savedDigest != sourceDigest {
+		return PublicServiceVisitorStatus{State: PublicServiceVisitorDenied, ValidUntil: now}, nil
+	}
 	if _, err = lockCurrentIngressLease(ctx, q, lease, now); err != nil {
 		return result, err
 	}
@@ -202,7 +216,7 @@ func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease Ingress
 		if _, err := d.serviceHTTPSourcePolicy(ctx, q, service, source); err != nil {
 			return result, err
 		}
-		validity, err := recheckWorkloadPublicServiceVisitor(ctx, tx, service, run, number, visitor, binding.WorkloadSessionID.String, source, nil, now)
+		validity, err := recheckWorkloadPublicServiceVisitor(ctx, tx, service, run, number, visitor, binding.WorkloadSessionID.String, sourceDigest, nil, now)
 		if err != nil && !errors.Is(err, ErrServiceAccess) {
 			return result, err
 		}
@@ -228,7 +242,7 @@ func (d *Database) PublicServiceVisitorStatus(ctx context.Context, lease Ingress
 			}
 			return result, err
 		}
-		validity, err := recheckPublicServiceVisitor(ctx, tx, service, run, number, visitor, binding.IdentityID.String, binding.DeviceID.String, source, nil, now)
+		validity, err := recheckPublicServiceVisitor(ctx, tx, service, run, number, visitor, binding.IdentityID.String, binding.DeviceID.String, sourceDigest, nil, now)
 		if err != nil && !errors.Is(err, ErrServiceAccess) {
 			return result, err
 		}

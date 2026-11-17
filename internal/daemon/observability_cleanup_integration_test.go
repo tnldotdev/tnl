@@ -54,7 +54,7 @@ func TestIntegrationServiceAuditCleanupObservedOnce(t *testing.T) {
 	db.Instrument(m)
 	old := time.Now().Add(-serviceaudit.Retention - time.Hour)
 	for range 3 {
-		if _, err := inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,event_type,occurred_at,received_at) VALUES($1,$2,$3,'connection.close',$4,$4)`, serviceaudit.NewID(), service.TeamID, service.ID, old); err != nil {
+		if _, err := inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,event_type,occurred_at,received_at,source_digest) VALUES($1,$2,$3,'connection.close',$4,$4,$5)`, serviceaudit.NewID(), service.TeamID, service.ID, old, runtimeSourceDigest(t, "service-audit", service.ID, "127.0.0.1")); err != nil {
 			t.Fatal(err)
 		}
 	}

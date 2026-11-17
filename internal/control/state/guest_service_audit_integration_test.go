@@ -46,8 +46,8 @@ func TestIntegrationGuestIngressAuditRetainsTeamlessOwnership(t *testing.T) {
 	}
 	var count int
 	if err := f.database.pool.QueryRow(ctx, `SELECT count(*) FROM control.service_audit_events
-		WHERE id=ANY($1) AND team_id IS NULL AND guest_id=$2 AND service_id=$3 AND host(source_ip)=$4`,
-		[]string{denial.EventID, forwarded.EventID}, guest.ID, f.service.ID, denial.SourceIP).Scan(&count); err != nil || count != 2 {
+		WHERE id=ANY($1) AND team_id IS NULL AND guest_id=$2 AND service_id=$3 AND source_digest=$4`,
+		[]string{denial.EventID, forwarded.EventID}, guest.ID, f.service.ID, auditSourceDigest(t, f.database, f.service.ID, denial.SourceIP)).Scan(&count); err != nil || count != 2 {
 		t.Fatal("ingress observations lost the actual guest owner", count, err)
 	}
 	denial.EventID, denial.ServiceID = serviceaudit.NewID(), mustOpaqueID(t, opaqueid.ServicePrefix)

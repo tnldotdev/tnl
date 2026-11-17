@@ -204,11 +204,15 @@ func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, servic
 	if !destinationMatches {
 		return result, ErrServiceAccess
 	}
+	sourceDigest, err := d.readServiceIPDigest(ctx, q, service, publicVisitorIPKeyPurpose, source)
+	if err != nil {
+		return result, err
+	}
 	digest := sha256.Sum256(der)
 	if subject.WorkloadSessionID != "" {
-		result, err = recheckWorkloadPublicServiceVisitor(ctx, tx, service, runID, number, visitor, subject.WorkloadSessionID, source, digest[:], now)
+		result, err = recheckWorkloadPublicServiceVisitor(ctx, tx, service, runID, number, visitor, subject.WorkloadSessionID, sourceDigest, digest[:], now)
 	} else {
-		result, err = recheckPublicServiceVisitor(ctx, tx, service, runID, number, visitor, subject.IdentityID, subject.DeviceID, source, digest[:], now)
+		result, err = recheckPublicServiceVisitor(ctx, tx, service, runID, number, visitor, subject.IdentityID, subject.DeviceID, sourceDigest, digest[:], now)
 	}
 	if err != nil {
 		return result, err

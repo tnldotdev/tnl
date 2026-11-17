@@ -61,6 +61,10 @@ func TestWaitUsesActualOwnerAndFreshPublicTargetProbe(t *testing.T) {
 			t.Error(err)
 		}
 	})
+	project.Project, err = project.Project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	salt, err := state.WorktreeHashSalt(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -71,10 +75,7 @@ func TestWaitUsesActualOwnerAndFreshPublicTargetProbe(t *testing.T) {
 	if err := f.ConfigureLocal(publishingtest.LocalProject{Key: source.Key, Fingerprint: source.Fingerprint,
 		Worktree: project.LocalWorktreeKey(), Label: project.Worktree.Label.FullLabel, PreviewKey: hex.EncodeToString(hash.Sum(nil)),
 		Services: map[string]controlv1.ProjectServiceConfiguration{
-			"web": {Name: new("web"), Protocol: new(controlv1.ServiceProtocolHTTP), Target: "app", Public: new(true),
-				Http: &controlv1.ProjectServiceHTTP{Readiness: &struct {
-					Path string `json:"path"`
-				}{Path: "/ready"}}},
+			"web": {Name: new("web"), Protocol: new(controlv1.ServiceProtocolHTTP), Target: "app", Public: new(true)},
 		}}); err != nil {
 		t.Fatal(err)
 	}

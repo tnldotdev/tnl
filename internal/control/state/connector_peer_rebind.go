@@ -200,7 +200,7 @@ func (d *Database) RebindConnectorPeerPair(ctx context.Context, serviceID, pairI
 		})); err != nil {
 			return result, err
 		}
-		if err = saveConnectorPeerAuditBinding(ctx, tx, revision, binding, binding.expiresAt); err != nil {
+		if err = d.saveConnectorPeerAuditBinding(ctx, tx, revision, binding, binding.expiresAt); err != nil {
 			return result, err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE control.connector_peer_audit_bindings SET retired_at=COALESCE(retired_at,$3) WHERE pair_id=$1 AND delivery_generation<>$2`, pair.ID, revision.DeliveryGeneration, now); err != nil {

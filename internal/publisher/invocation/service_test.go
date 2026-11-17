@@ -16,6 +16,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -77,6 +78,11 @@ func TestLocalServiceRealizationKeepsIdentityAcrossGitTransitions(t *testing.T) 
 		{Id: "domain_alternate", CanonicalDomain: "alternate.example.test", Kind: authorityv1.Custom, State: authorityv1.DomainStateReady},
 	}, naming.ManagedURLModeSimple)
 	original := map[string]received{}
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
 	for _, phase := range []struct {
 		name string
 		git  []string
@@ -93,6 +99,10 @@ func TestLocalServiceRealizationKeepsIdentityAcrossGitTransitions(t *testing.T) 
 				}
 			}
 			project, err := clientproject.Resolve(t.Context(), clientproject.Selection{Path: path}, root, [32]byte{1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			project, err = project.BindLocalIdentity(t.Context(), state)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,10 +128,7 @@ func TestLocalServiceRealizationKeepsIdentityAcrossGitTransitions(t *testing.T) 
 				if got.project != source.Key || got.request.SourceFingerprint != source.Fingerprint || got.request.WorktreeKey != project.LocalWorktreeKey() || got.request.TeamId != "team_1" || got.request.Configuration.Access == nil || !bool(got.request.Configuration.Access.Team) {
 					t.Fatalf("%s lost its local scope or team access: %+v", name, got)
 				}
-				wantTarget := "http://127.0.0.1:3000"
-				if name == "sdk" {
-					wantTarget = "app"
-				}
+				wantTarget := "app"
 				declaration := got.request.Configuration
 				if declaration.Target != wantTarget || declaration.Protocol == nil || *declaration.Protocol != "http" || declaration.Name == nil || *declaration.Name != name {
 					t.Fatalf("%s changed its declaration: %+v", name, got.request)
@@ -147,8 +154,8 @@ func TestLocalServiceRealizationKeepsIdentityAcrossGitTransitions(t *testing.T) 
 						http.Access.Ip == nil || !reflect.DeepEqual(*http.Access.Ip, []string{"192.0.2.1/32"}) ||
 						http.Limits == nil || http.Limits.Total == nil || *http.Limits.Total != 100 || http.Limits.Concurrency == nil || *http.Limits.Concurrency != 2 ||
 						http.Limits.Rate == nil || http.Limits.Rate.Count != 5 || http.Limits.Rate.Per != "2m0s" || http.Limits.Rate.Burst == nil || *http.Limits.Rate.Burst != 2 ||
-						http.Readiness == nil || http.Readiness.Path != "/health" {
-						t.Fatalf("public HTTP lost its request policy, limits, or readiness: %+v", http)
+						http.Readiness != nil || http.Paths != nil || http.Open != nil {
+						t.Fatalf("public HTTP lost shared policy or retained local settings: %+v", http)
 					}
 				case "sdk":
 					if declaration.DomainId != nil || declaration.Http != nil || declaration.Traffic != nil || declaration.TargetTls != nil {
@@ -197,6 +204,7 @@ func TestLocalServiceRealizationRejectsAnotherServiceOrWorktree(t *testing.T) {
 				t.Fatal(err)
 			}
 			project := clientproject.Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{"web": {}}}}
+			project = bindLocalServiceTestProject(t, project)
 			current := NewTeamSelection(authorityv1.Team{Id: "team_1"}, authorityv1.Membership{}, nil, naming.ManagedURLModeSimple)
 			_, err = RealizeLocalService(t.Context(), control, LocalService{Project: project, Team: current, Name: "web"})
 			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
@@ -214,6 +222,7 @@ func TestLocalServiceRealizationCapturesOnlySelectedTargetTrust(t *testing.T) {
 		"other": {Target: &config.ServiceTarget{Type: "docker", Container: new("unselected"), Port: new(443),
 			TLS: &config.TargetTLS{CA: new("system")}}},
 	}}}
+	project = bindLocalServiceTestProject(t, project)
 	const address = "https://127.0.0.1:8443"
 	var resolved []string
 	resolver := target.TargetResolverFunc(func(_ context.Context, _ clientproject.Project, name string) (string, string, error) {
@@ -257,7 +266,7 @@ func TestLocalServiceRealizationCapturesOnlySelectedTargetTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	trust := request.Configuration.TargetTls
-	if !reflect.DeepEqual(resolved, []string{"web"}) || request.Configuration.Target != "docker:selected:8443" ||
+	if !reflect.DeepEqual(resolved, []string{"web"}) || request.Configuration.Target != "app" ||
 		trust == nil || trust.Hostname != declaration.Hostname || trust.Digest != declaration.Digest || trust.CaPem == nil || *trust.CaPem != string(want.PEM) {
 		t.Fatal("realization lost selected portable target trust or sent a discovered address", resolved, request.Configuration)
 	}
@@ -272,6 +281,20 @@ func TestLocalServiceRealizationCapturesOnlySelectedTargetTrust(t *testing.T) {
 	}
 }
 
+func bindLocalServiceTestProject(t *testing.T, project clientproject.Project) clientproject.Project {
+	t.Helper()
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = state.Close() })
+	project, err = project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return project
+}
+
 func TestLocalServiceRealizationRejectsUnavailableDomainBeforeRequest(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("unavailable domain sent a control mutation")
@@ -283,6 +306,7 @@ func TestLocalServiceRealizationRejectsUnavailableDomainBeforeRequest(t *testing
 		t.Fatal(err)
 	}
 	project := clientproject.Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{"web": {}}}}
+	project = bindLocalServiceTestProject(t, project)
 	current := NewTeamSelection(authorityv1.Team{Id: "team_1"}, authorityv1.Membership{}, nil, naming.ManagedURLModeSimple)
 	_, err = RealizeLocalService(t.Context(), control, LocalService{Project: project, Team: current, Name: "web", Domain: "unavailable.example.test"})
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.DomainNotAvailable {

@@ -15,6 +15,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -70,6 +71,15 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 			project := clientproject.Project{Root: root, Worktree: worktree,
 				Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")},
 				Config:    config.TNL{Services: config.Services{"api": {Public: new(true), Domain: test.domain}}}}
+			state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer state.Close()
+			project, err = project.BindLocalIdentity(t.Context(), state)
+			if err != nil {
+				t.Fatal(err)
+			}
 			source, worktreeKey := project.LocalPublicationIdentity(), project.LocalWorktreeKey()
 			want := clientproject.ServiceWorktreeLabel("api", worktree) + "." + test.namespace
 			var requests atomic.Int32

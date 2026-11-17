@@ -129,7 +129,7 @@ func TestIntegrationServiceAuditAuthenticatedBatches(t *testing.T) {
 			continue
 		}
 		httpEvents++
-		if event.RunID != run.RunID || event.SourceIP != o.SourceIP || event.Outcome != "denied" || event.Reason != "authorization" {
+		if event.RunID != run.RunID || event.SourceIP != "" || event.SourceDigest != auditSourceDigest(t, d, service.ID, o.SourceIP) || event.Outcome != "denied" || event.Reason != "authorization" {
 			t.Fatal("publisher HTTP audit lost its exact run, source, or denied decision")
 		}
 	}
@@ -238,8 +238,9 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 	visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	// seed the already-authenticated admission facts; the transport suite owns
 	// device proof and stream handshake. audit must independently check this scope.
-	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,identity_id,device_id,certificate_digest,source_ip,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$12,'192.0.2.9',$7,$8,$9,25443,$10,$11)`, visitor, service.ID, run.RunID, run.RunNumber, actorID, device.ID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now.Add(time.Minute), now, make([]byte, 32))
+	sourceDigest := publicVisitorSourceDigest(t, d, service.ID, "192.0.2.9")
+	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,identity_id,device_id,certificate_digest,source_digest,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
+		VALUES($1,$2,$3,$4,$5,$6,$12,$13,$7,$8,$9,25443,$10,$11)`, visitor, service.ID, run.RunID, run.RunNumber, actorID, device.ID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now.Add(time.Minute), now, make([]byte, 32), sourceDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,8 +461,9 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 		var batch serviceaudit.Batch
 		for _, entry := range runs {
 			visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-			_, err = d.pool.Exec(t.Context(), `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,source_ip,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
-				VALUES($1,$2,$3,$4,'192.0.2.9',$5,$6,$7,25443,$8,$9)`, visitor, entry.service.ID, entry.run.RunID, entry.run.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now.Add(time.Minute), now)
+			sourceDigest := publicVisitorSourceDigest(t, d, entry.service.ID, "192.0.2.9")
+			_, err = d.pool.Exec(t.Context(), `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,source_digest,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
+				VALUES($1,$2,$3,$4,$10,$5,$6,$7,25443,$8,$9)`, visitor, entry.service.ID, entry.run.RunID, entry.run.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now.Add(time.Minute), now, sourceDigest)
 			if err != nil {
 				t.Fatal(err)
 			}
