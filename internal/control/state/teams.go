@@ -49,6 +49,7 @@ type Domain struct {
 	CreatedAt             time.Time
 	VerifiedAt            time.Time
 	UpdatedAt             time.Time
+	Release               *DomainRelease
 }
 
 type DNSRecord struct {
@@ -424,6 +425,12 @@ func (d *Database) ListTeamDomains(ctx context.Context, identityID, teamID strin
 			AuthorityRevision: row.AuthorityRevision, RequiredRecords: nameserverRecords(row.CanonicalDomain, row.Nameservers),
 			CreatedAt:  row.CreatedAt.Time,
 			VerifiedAt: row.VerifiedAt.Time, UpdatedAt: row.UpdatedAt.Time,
+		}
+		if result[index].State == DomainReleasing {
+			result[index], err = d.GetTeamDomain(ctx, identityID, teamID, row.ID, time.Now())
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return result, nil

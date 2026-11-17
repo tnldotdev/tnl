@@ -227,6 +227,10 @@ components:
       $ref: "./schemas/invites.yaml#/schemas/InvitationID"
     DomainID:
       $ref: "./schemas/domains.yaml#/schemas/DomainID"
+    DomainRelease:
+      $ref: "./schemas/domains.yaml#/schemas/DomainRelease"
+    DomainReleaseBlocker:
+      $ref: "./schemas/domains.yaml#/schemas/DomainReleaseBlocker"
     CanonicalHostname:
       $ref: "./schemas/domains.yaml#/schemas/CanonicalHostname"
     CanonicalLabel:

@@ -11,7 +11,44 @@ schemas:
     enum: [managed, custom]
   DomainState:
     type: string
-    enum: [pending, ready, releasing, failed]
+    enum: [pending, ready, releasing, released, failed]
+  DomainReleaseBlocker:
+    type: string
+    enum:
+      - deployments
+      - services
+      - endpoint_dns
+      - challenge_cleanup
+      - issuance
+      - uncertain_issuance
+      - certificate
+      - dns_authority
+  DomainRelease:
+    type: object
+    additionalProperties: false
+    description: Current owner observations, not a release estimate. DNS authority release must be confirmed even after other blockers clear. Facts may change after observed_at.
+    required: [observed_at, blockers, completion_unknown]
+    properties:
+      observed_at:
+        type: string
+        format: date-time
+      blockers:
+        type: array
+        uniqueItems: true
+        maxItems: 8
+        items:
+          $ref: "../openapi.yaml#/components/schemas/DomainReleaseBlocker"
+      certificate_expires_at:
+        type: string
+        format: date-time
+        description: Latest actual retained certificate expiry, including expired evidence. This is not the release completion time; unresolved work can block release beyond this date.
+      completion_unknown:
+        type: boolean
+        description: True until the DNS authority owner has durably confirmed final release. No universal quarantine duration or completion date is promised.
+      released_at:
+        type: string
+        format: date-time
+        description: Present only after the DNS authority owner confirms final release.
   DNSRecord:
     type: object
     additionalProperties: false
@@ -69,6 +106,8 @@ schemas:
       updated_at:
         type: string
         format: date-time
+      release:
+        $ref: "../openapi.yaml#/components/schemas/DomainRelease"
   DomainPage:
     type: object
     additionalProperties: false

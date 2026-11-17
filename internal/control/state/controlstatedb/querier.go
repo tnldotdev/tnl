@@ -180,6 +180,7 @@ type Querier interface {
 	GetGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error)
 	GetIdentityContextIdentity(ctx context.Context, identityID string) (GetIdentityContextIdentityRow, error)
 	GetIdentityTeam(ctx context.Context, arg GetIdentityTeamParams) (GetIdentityTeamRow, error)
+	GetIdentityTeamDomainRelease(ctx context.Context, arg GetIdentityTeamDomainReleaseParams) (GetIdentityTeamDomainReleaseRow, error)
 	GetIngressLease(ctx context.Context, arg GetIngressLeaseParams) (ControlIngressLease, error)
 	GetIngressPool(ctx context.Context, id string) (ControlIngressPool, error)
 	GetIngressServingLease(ctx context.Context, arg GetIngressServingLeaseParams) (ControlIngressLease, error)

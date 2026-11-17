@@ -58,6 +58,7 @@ type Store interface {
 	RevokeTeamInvitation(context.Context, string, string, string, time.Time) error
 	AcceptInvitation(context.Context, string, credentials.InvitationToken, time.Time) (controlstate.Membership, error)
 	ListTeamDomains(context.Context, string, string) ([]controlstate.Domain, error)
+	GetTeamDomain(context.Context, string, string, string, time.Time) (controlstate.Domain, error)
 	ClaimTeamDomain(context.Context, controlstate.ClaimDomainRequest, time.Time) (controlstate.Domain, error)
 	SetTeamDefaultDomain(context.Context, string, string, string, time.Time) (controlstate.Team, error)
 	ReleaseTeamDomain(context.Context, string, string, string, time.Time) error
