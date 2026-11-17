@@ -17,6 +17,15 @@ import (
 )
 
 func TestWaitDoesNotTreatOldSnapshotAsFreshOwnerCheck(t *testing.T) {
+	for _, name := range []string{"empty state", "saved ready"} {
+		t.Run(name, func(t *testing.T) {
+			testWaitWithoutOwner(t, name == "saved ready")
+		})
+	}
+}
+
+func testWaitWithoutOwner(t *testing.T, seedReady bool) {
+	t.Helper()
 	project := projectConfiguration{Project: clientproject.Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{"web": {}}}}}
 	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -27,22 +36,24 @@ func TestWaitDoesNotTreatOldSnapshotAsFreshOwnerCheck(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	old, err := publisherapp.ReadSnapshotFrom(t.Context(), state, project.Root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old.Services = []publisherapp.Service{{
-		Name: "web", Directory: project.Root, RegistrationID: "old-registration", Target: "http://127.0.0.1:3000",
-		Registered: true, Routable: true, Ready: true, RunNumber: 7,
-		Observation: &publisherapp.Observation{RegistrationID: "old-registration", RunNumber: 7,
-			CheckedAt: time.Now().Add(-time.Hour), Status: 204, Ready: true},
-	}}
-	if err := publisherapp.CommitSnapshot(t.Context(), state, &old, "service.readiness", nil); err != nil {
-		t.Fatal(err)
-	}
-	saved, err := publisherapp.ReadSnapshotFrom(t.Context(), state, project.Root)
-	if err != nil || len(saved.Services) != 1 || !saved.Services[0].Ready || saved.Services[0].Observation == nil {
-		t.Fatal("fixture did not persist old readiness", saved, err)
+	if seedReady {
+		old, err := publisherapp.ReadSnapshotFrom(t.Context(), state, project.Root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old.Services = []publisherapp.Service{{
+			Name: "web", Directory: project.Root, RegistrationID: "old-registration", Target: "http://127.0.0.1:3000",
+			Registered: true, Routable: true, Ready: true, RunNumber: 7,
+			Observation: &publisherapp.Observation{RegistrationID: "old-registration", RunNumber: 7,
+				CheckedAt: time.Now().Add(-time.Hour), Status: 204, Ready: true},
+		}}
+		if err := publisherapp.CommitSnapshot(t.Context(), state, &old, "service.readiness", nil); err != nil {
+			t.Fatal(err)
+		}
+		saved, err := publisherapp.ReadSnapshotFrom(t.Context(), state, project.Root)
+		if err != nil || len(saved.Services) != 1 || !saved.Services[0].Ready || saved.Services[0].Observation == nil {
+			t.Fatal("fixture did not persist old readiness", saved, err)
+		}
 	}
 	var output bytes.Buffer
 	err = runAppWait(t.Context(), project, state.Root(), waitCommand{Timeout: 10 * time.Millisecond, Output: "json"}, &output)
