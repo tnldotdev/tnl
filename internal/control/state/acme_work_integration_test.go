@@ -239,14 +239,14 @@ func TestIntegrationClosingSessionCleansDNSAuthorizations(t *testing.T) {
 	if err := database.CloseServiceRun(t.Context(), authentication.ServiceID, authentication.RunID, authentication.Token, now); err != nil {
 		t.Fatal(err)
 	}
+	// retirement spends its transaction time before scheduling cleanup.
+	now = now.Add(time.Second)
 	cleanup, found, err := database.ClaimACMEOrderWork(t.Context(), "cleanup", now, time.Minute)
-	if err != nil || !found || cleanup.ID != work.ID || cleanup.State != "authorizing" ||
-		len(cleanup.Authorizations) != 1 || cleanup.Authorizations[0].State != "presenting" {
-		t.Fatalf("closing a run lost resumable issuance: found=%t state=%s error=%v", found, cleanup.State, err)
+	if err != nil || !found || cleanup.ID != work.ID || cleanup.State != "canceled" ||
+		len(cleanup.Authorizations) != 1 || cleanup.Authorizations[0].State != "cleaning" {
+		t.Fatalf("closing the last consumer did not retain terminal cleanup: found=%t state=%s error=%v", found, cleanup.State, err)
 	}
-	// the publisher's approved CSR survives a run restart. only a terminal
-	// issuance result removes its DNS presentation, not the old run closing.
-	cleanup.State, cleanup.Authorizations[0].State = "canceled", "cleaning"
+	// checkpointing or restarting cleanup must not resume abandoned issuance.
 	cleanup, err = database.SaveACMEOrderWork(t.Context(), cleanup, now)
 	if err != nil {
 		t.Fatal(err)

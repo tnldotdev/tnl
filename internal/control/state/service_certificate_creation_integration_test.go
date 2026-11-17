@@ -39,7 +39,7 @@ func TestIntegrationCertificateCreationRejectsWrongOrExpiredRunAuthority(t *test
 			case "run-number":
 				number++
 			case "expired-run":
-				at = f.run.ExpiresAt.Add(time.Second)
+				at = f.run.ServingUntil.Add(time.Second)
 			}
 			before := certificateCreationSnapshot(t, f)
 			_, err := f.database.CreateServiceCertificateIssuance(t.Context(), f.service.ID, f.run.RunID, token,

@@ -376,6 +376,12 @@ func (w *ServiceWorker) collectCertificate(ctx context.Context, client acmeAPI, 
 	}
 	work.FinalizeURL = order.Finalize
 	work.CertificateURL = order.Certificate
+	if work.NeedsFinalizationRecovery() && (order.Status == "pending" || order.Status == "ready") {
+		// a retired order may still have a lost finalization in flight. keep
+		// recovery and quarantine, but never authorize or finalize it again.
+		work.AvailableAt = pollAt(now, w.config.PollInterval, order.RetryAfter)
+		return nil
+	}
 	switch order.Status {
 	case "pending":
 		work.State = "authorizing"

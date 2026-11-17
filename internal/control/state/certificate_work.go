@@ -104,6 +104,7 @@ func (d *Database) ClaimACMEOrderWork(
 	now time.Time,
 	leaseDuration time.Duration,
 ) (work ACMEOrderWork, found bool, retErr error) {
+	clock := newAuthorizationClock(now)
 	if !validStateText(workerID) || leaseDuration <= 0 {
 		return ACMEOrderWork{}, false, ErrCertificateIssuanceInvalid
 	}
@@ -127,6 +128,17 @@ func (d *Database) ClaimACMEOrderWork(
 	}
 	if err != nil {
 		return ACMEOrderWork{}, false, fmt.Errorf("controlstate: claim ACME order work: claim order: %w", err)
+	}
+	// permission can expire before maintenance closes its run. a claimed order
+	// has no other live worker; retire unused issuance before any new CA work.
+	if err := queries.RetireUnusedServiceCertificateOrder(ctx, controlstatedb.RetireUnusedServiceCertificateOrderParams{
+		IssuanceID: order.ID, Now: timestamptz(clock.current()),
+	}); err != nil {
+		return ACMEOrderWork{}, false, err
+	}
+	order, err = queries.GetACMEOrder(ctx, order.ID)
+	if err != nil {
+		return ACMEOrderWork{}, false, err
 	}
 	account, err := d.getACMEAccountByID(ctx, tx, order.AccountID)
 	if err != nil {

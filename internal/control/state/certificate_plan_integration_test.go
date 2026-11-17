@@ -129,7 +129,8 @@ func TestIntegrationCertificatePlanInstallGuards(t *testing.T) {
 			}
 			if name == "expired" {
 				installedAt = notAfter
-				if _, err := database.pool.Exec(t.Context(), `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`, authentication.RunID, notAfter.Add(time.Hour)); err != nil {
+				// isolate certificate expiry from the run's serving deadline.
+				if _, err := database.pool.Exec(t.Context(), `UPDATE control.service_runs SET serving_until=$2 WHERE id=$1`, authentication.RunID, notAfter.Add(time.Hour)); err != nil {
 					t.Fatal(err)
 				}
 			}

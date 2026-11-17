@@ -233,7 +233,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		if active.PublisherExpiresAt.Time.After(clock.current()) && (serviceRunLifecycleState(active.State) != serviceRunPrepared || active.PreparationExpiresAt.Time.After(clock.current())) {
 			return result, ErrServiceConflict
 		}
-		if _, err = closeServiceRun(ctx, q, active, clock.current()); err != nil {
+		if _, err = settleServiceRun(ctx, q, active, clock.current()); err != nil {
 			return result, err
 		}
 	}
@@ -293,6 +293,11 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		}
 		run, err = boundGuestServingAuthority(ctx, q, run, clock.current())
 		if err != nil {
+			return result, err
+		}
+	}
+	if activeID != "" {
+		if err = retireUnusedServiceCertificateOrders(ctx, q, activeID, clock.current()); err != nil {
 			return result, err
 		}
 	}

@@ -77,13 +77,7 @@ func TestRetiredIssuanceKeepsUncertainFinalizationRecoverable(t *testing.T) {
 				} else if err != nil {
 					t.Fatal(err)
 				}
-				want := retired
-				if status == "pending" {
-					want = controlstate.ACMEOrderAuthorizing
-				} else if status == "ready" {
-					want = controlstate.ACMEOrderReadyToFinalize
-				}
-				if work.State != want || !work.FinalizationPossible || work.NotAfter != nil || len(dns.cleanupCalls) != 0 || len(api.finalizations) != 0 {
+				if work.State != retired || !work.AvailableAt.After(now) || !work.FinalizationPossible || work.NotAfter != nil || len(dns.cleanupCalls) != 0 || len(api.finalizations) != 0 {
 					t.Fatal("uncertain finalization was cleaned up or lost its recovery path")
 				}
 			})

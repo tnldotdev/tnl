@@ -11,6 +11,16 @@ import (
 // callers hold owner -> service -> run. settlement retains every issued offline
 // serving tail and is a no-op after the exact active run has been settled once.
 func closeServiceRun(ctx context.Context, q *controlstatedb.Queries, run controlstatedb.ControlServiceRun, now time.Time) (int64, error) {
+	count, err := settleServiceRun(ctx, q, run, now)
+	if err == nil && count != 0 {
+		err = retireUnusedServiceCertificateOrders(ctx, q, run.ID, now)
+	}
+	return count, err
+}
+
+// atomic replacement settles the old run before inserting its successor, then
+// retires unused certificates against both changes before committing.
+func settleServiceRun(ctx context.Context, q *controlstatedb.Queries, run controlstatedb.ControlServiceRun, now time.Time) (int64, error) {
 	count, err := q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{
 		ID: run.ID, ServiceID: run.ServiceID, RunNumber: run.RunNumber, Now: timestamptz(now),
 	})

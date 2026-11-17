@@ -400,6 +400,9 @@ type Querier interface {
 	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
 	LockService(ctx context.Context, id string) (ControlService, error)
 	LockServiceAuditClock(ctx context.Context, arg LockServiceAuditClockParams) error
+	// run closure holds its parent first. lock shared orders in stable order before
+	// taking a fresh consumer snapshot, so concurrent final closes cannot miss both.
+	LockServiceCertificateOrdersForConsumer(ctx context.Context, serviceRunID string) ([]string, error)
 	LockServiceHTTPBrowserSession(ctx context.Context, arg LockServiceHTTPBrowserSessionParams) (LockServiceHTTPBrowserSessionRow, error)
 	LockServiceRecoveryEpisode(ctx context.Context, id int64) (ControlServiceRecoveryEpisode, error)
 	LockServiceRun(ctx context.Context, arg LockServiceRunParams) (ControlServiceRun, error)
@@ -493,6 +496,10 @@ type Querier interface {
 	// terminal retries compare the stored digest; no upsert or deadline advance exists.
 	RetireConnectorPeerPair(ctx context.Context, arg RetireConnectorPeerPairParams) (ControlConnectorPeerPair, error)
 	RetirePublisherKey(ctx context.Context, arg RetirePublisherKeyParams) (int64, error)
+	// a captured, current plan is interest even before its sibling submits a CSR.
+	// publisher_service_permission remains the authority for service/grant/owner
+	// policy. serving_until is authority; shorter publisher liveness is not expiry.
+	RetireUnusedServiceCertificateOrder(ctx context.Context, arg RetireUnusedServiceCertificateOrderParams) error
 	RetireVisitorTokenSigningKeys(ctx context.Context, now pgtype.Timestamptz) error
 	RevokeControlSession(ctx context.Context, arg RevokeControlSessionParams) (int64, error)
 	RevokeGuestShare(ctx context.Context, arg RevokeGuestShareParams) (ControlShare, error)
