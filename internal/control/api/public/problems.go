@@ -62,6 +62,8 @@ func writeControlStateProblem(ctx context.Context, response http.ResponseWriter,
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "operation is disabled")
 	case errors.Is(err, controlstate.ErrInsufficientRelayServices):
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.PlacementUnavailable, "relay placement is unavailable")
+	case controlstate.IsUnavailable(err):
+		writeUnavailableProblem(ctx, response, failure.Operation(operation), "control storage is unavailable", failure.ServerUnavailable, err)
 	default:
 		writeInternalStateProblem(ctx, response, operation, err)
 	}
