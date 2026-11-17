@@ -63,19 +63,29 @@ func Observer(state *clientstate.Database, server, hostname string, group client
 	}
 }
 
-// OAuthAdmission checks a known final return against the actual serving run.
+// PrepareOAuthReturn checks the exact serving run without spending its return.
+// only application forwarding consumes it, after reversible admission gates.
 // unknown states still belong to the app; neither its query nor validation changes.
-func OAuthAdmission(state *clientstate.Database, server string) func(*http.Request, publisherservice.HTTPRun) error {
-	return func(request *http.Request, run publisherservice.HTTPRun) error {
+func PrepareOAuthReturn(state *clientstate.Database, server string) func(*http.Request, publisherservice.HTTPRun) (func(context.Context) error, error) {
+	return func(request *http.Request, run publisherservice.HTTPRun) (func(context.Context) error, error) {
 		query := request.URL.Query()
 		if request.Method != http.MethodGet || len(query["state"]) != 1 {
+			return nil, nil
+		}
+		consume, err := state.PrepareOAuthReturn(request.Context(), server, run.Hostname, query.Get("state"),
+			request.URL.EscapedPath(), run.ServiceID, uint64(run.Number))
+		if err != nil {
+			return nil, diagnostic.Wrap(diagnostic.OAuthCallbackExpired, err)
+		}
+		if consume == nil {
+			return nil, nil
+		}
+		return func(ctx context.Context) error {
+			if err := consume(ctx); err != nil {
+				return diagnostic.Wrap(diagnostic.OAuthCallbackExpired, err)
+			}
 			return nil
-		}
-		if err := state.AdmitOAuthReturn(request.Context(), server, run.Hostname, query.Get("state"),
-			request.URL.EscapedPath(), run.ServiceID, uint64(run.Number)); err != nil {
-			return diagnostic.Wrap(diagnostic.OAuthCallbackExpired, err)
-		}
-		return nil
+		}, nil
 	}
 }
 

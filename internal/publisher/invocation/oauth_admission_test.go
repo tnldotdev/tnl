@@ -56,30 +56,44 @@ func TestRuntimeOAuthAdmissionSurvivesDisabledIntegrationOnReplacement(t *testin
 			}
 			prior := 0
 			cfg := publisherservice.RunConfig{Control: f.services.routes, Metadata: controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP},
-				HTTPAdmitRequest: func(*http.Request, publisherservice.HTTPRun) error { prior++; return nil }}
+				HTTPPrepareRequest: func(*http.Request, publisherservice.HTTPRun) (func(context.Context) error, error) {
+					prior++
+					return nil, nil
+				}}
 			// use the actual runtime attachment with OAuth disabled. retained
 			// returns must still be checked before an ordinary app can receive them.
 			stop, err := attachRuntimeIntegrations(t.Context(), f.state, clientproject.Project{}, publisherapp.Service{}, tunnel, &cfg)
-			if err != nil || stop != nil || cfg.HTTPAdmitRequest == nil || cfg.Prepared != nil {
+			if err != nil || stop != nil || cfg.HTTPPrepareRequest == nil || cfg.Prepared != nil {
 				t.Fatal("runtime did not attach run-fact admission independently of integration workers", err)
 			}
 			request := httptest.NewRequest(http.MethodGet, redirect.Header().Get("Location"), nil)
-			err = cfg.HTTPAdmitRequest(request, run)
+			consume, err := cfg.HTTPPrepareRequest(request, run)
 			if replace {
 				if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.OAuthCallbackExpired {
 					t.Fatal("replacement received a callback after disabling OAuth", err)
 				}
 			} else if err != nil {
 				t.Fatal("current app lost its callback", err)
+			} else {
+				if _, err := cfg.HTTPPrepareRequest(request, run); err != nil {
+					t.Fatal("read-only validation consumed the callback", err)
+				}
+				if consume == nil || consume(request.Context()) != nil {
+					t.Fatal("current app could not consume its callback")
+				}
 			}
-			if err := cfg.HTTPAdmitRequest(request, run); err == nil {
+			if _, err := cfg.HTTPPrepareRequest(request, run); err == nil {
 				t.Fatal("runtime admitted a replayed or replaced callback")
 			}
 			if request.URL.RawQuery != query {
 				t.Fatal("runtime rewrote the provider's query bytes")
 			}
 			request.URL.RawQuery = "state=unknown&code=app-owned"
-			if err := cfg.HTTPAdmitRequest(request, run); err != nil || prior != 3 {
+			wantPrior := 3
+			if !replace {
+				wantPrior++
+			}
+			if consume, err := cfg.HTTPPrepareRequest(request, run); err != nil || consume != nil || prior != wantPrior {
 				t.Fatal("runtime took over app OAuth validation or dropped the prior hook", err, prior)
 			}
 		})

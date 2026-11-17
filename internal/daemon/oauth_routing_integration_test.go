@@ -85,7 +85,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		config.HTTPResponseHooks = func(run publisherservice.HTTPRun) httpstream.ResponseHooks {
 			return httpstream.ResponseHooks{Observe: func(response *http.Response) error { return observe(response, run) }}
 		}
-		config.HTTPAdmitRequest = integrations.OAuthAdmission(state, server)
+		config.HTTPPrepareRequest = integrations.PrepareOAuthReturn(state, server)
 		var binding controlv1.ServiceRunPreparation
 		config.Prepared = func(run controlv1.ServiceRunPreparation) error {
 			binding = run

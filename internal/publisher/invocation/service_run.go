@@ -148,7 +148,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		}
 		base.PreviewID, base.Feedback = preview, effective.Feedback != nil && *effective.Feedback
 	}
-	publication.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
+	publication.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) (result error) {
 		base.ShutdownDeadline = func() time.Time {
 			if ctx.Err() == nil {
 				// an internal attempt retires on its own bounded run budget.
@@ -180,7 +180,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 				return err
 			}
 			if stop != nil {
-				defer stop()
+				defer func() { result = errors.Join(result, stop()) }()
 			}
 		}
 		var pending targetplan.TargetSnapshot

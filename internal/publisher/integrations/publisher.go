@@ -4,10 +4,12 @@ package integrations
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -35,59 +37,98 @@ type Publisher struct {
 	Eligible func(context.Context) (bool, error)
 	Revision func(context.Context) (string, error)
 	Report   func(ready bool, err error)
-	// run and interval are substituted only by lifecycle tests.
+	// run, lock and interval are substituted only by lifecycle tests.
 	run      func(context.Context, publisherservice.RunConfig) error
+	lock     func() (io.Closer, error)
 	interval time.Duration
 }
 
 var errIntegrationRunStale = errors.New("integration service run was replaced or stopped")
 
-func (p Publisher) Maintain(ctx context.Context) {
+type integrationAttempt struct {
+	operation, cleanup error
+	recovered          bool
+}
+
+func (a integrationAttempt) Err() error { return errors.Join(a.operation, a.cleanup) }
+
+func integrationStopResult(err error) error {
+	if failure.Only(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+// Maintain retries unavailable attempts, then returns the final owned shutdown
+// result. recovered attempt errors are reported, not retained as shutdown errors.
+func (p Publisher) Maintain(ctx context.Context) error {
 	interval := p.interval
 	if interval == 0 {
 		interval = 4 * time.Second
 	}
+	acquire := p.lock
+	if acquire == nil {
+		acquire = func() (io.Closer, error) {
+			return p.Store.LockHostname("companion:" + p.Hostname)
+		}
+	}
+	var pendingCleanup error
 	for ctx.Err() == nil {
 		eligible := true
-		var err error
+		var operation, cleanup error
+		owned := false
 		if p.Eligible != nil {
-			eligible, err = p.Eligible(ctx)
+			eligible, operation = p.Eligible(ctx)
 		}
 		// keep the lock identity stable across tnl versions sharing client state.
-		if err == nil && eligible {
-			lock, lockErr := p.Store.LockHostname("companion:" + p.Hostname)
-			err = lockErr
-			if err == nil {
-				err = p.serve(ctx, interval)
+		if operation == nil && eligible {
+			lock, lockErr := acquire()
+			operation = lockErr
+			if operation == nil {
+				owned = true
+				attempt := p.serve(ctx, interval)
+				operation = attempt.operation
+				if attempt.recovered {
+					pendingCleanup = nil
+				}
 				// serve joins the publisher and clears readiness before releasing ownership.
-				err = errors.Join(err, lock.Close())
+				cleanup = errors.Join(attempt.cleanup, lock.Close())
+				pendingCleanup = errors.Join(pendingCleanup, integrationStopResult(cleanup))
 			}
 		}
-		if err != nil && !errors.Is(err, clientstate.ErrLocked) && ctx.Err() == nil && p.Report != nil {
+		if ctx.Err() != nil {
+			if !owned && failure.Only(operation, clientstate.ErrLocked) {
+				operation = nil
+			}
+			return integrationStopResult(errors.Join(operation, pendingCleanup))
+		}
+		err := errors.Join(operation, cleanup)
+		if err != nil && !failure.Only(err, clientstate.ErrLocked) && p.Report != nil {
 			p.Report(false, err)
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return integrationStopResult(pendingCleanup)
 		case <-time.After(interval):
 		}
 	}
+	return integrationStopResult(pendingCleanup)
 }
 
-func (p Publisher) serve(parent context.Context, interval time.Duration) error {
+func (p Publisher) serve(parent context.Context, interval time.Duration) integrationAttempt {
 	snapshot, err := p.Prepare(parent)
 	if err != nil {
-		return err
+		return integrationAttempt{operation: err}
 	}
 	if snapshot.Service.Id != snapshot.Config.ServiceID || snapshot.Service.Endpoint == nil ||
 		snapshot.Service.Endpoint.Hostname != p.Hostname {
-		return errors.New("prepared integration service has a different service ID or hostname")
+		return integrationAttempt{operation: errors.New("prepared integration service has a different service ID or hostname")}
 	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	publisherInstanceID, err := opaqueid.New(opaqueid.InvocationPrefix)
 	if err != nil {
-		return err
+		return integrationAttempt{operation: err}
 	}
 	var mu sync.Mutex
 	ready := false
@@ -99,7 +140,10 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 	change := func(ctx context.Context, available bool) error {
 		var err error
 		if available {
-			if stopped || binding.ServiceId == "" || binding.RunNumber < 1 || ctx.Err() != nil {
+			if ctx.Err() != nil {
+				return context.Cause(ctx)
+			}
+			if stopped || binding.ServiceId == "" || binding.RunNumber < 1 {
 				return errIntegrationRunStale
 			}
 			err = p.State.MarkIntegrationURLReady(ctx, p.Server, p.Hostname, publisherInstanceID, binding.ServiceId, uint64(binding.RunNumber))
@@ -113,14 +157,32 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 		return err
 	}
 	clear := func() error {
-		cleanup, stop := context.WithTimeout(context.Background(), 2*time.Second)
+		until := time.Now().Add(2 * time.Second)
+		if deadline, ok := parent.Deadline(); ok && deadline.Before(until) {
+			until = deadline
+		}
+		// retries must not start the enclosing publication's terminal budget.
+		// after that owner stops, its original bound also caps readiness cleanup.
+		if parent.Err() != nil && config.ShutdownDeadline != nil {
+			if deadline := config.ShutdownDeadline(); !deadline.IsZero() && deadline.Before(until) {
+				until = deadline
+			}
+		}
+		cleanupParent := context.WithoutCancel(parent)
+		if config.ShutdownContext != nil {
+			cleanupParent = config.ShutdownContext
+		}
+		cleanup, stop := context.WithDeadline(cleanupParent, until)
 		defer stop()
-		return change(cleanup, false)
+		return errors.Join(change(cleanup, false), context.Cause(cleanup))
 	}
 	prepared, onReady, status := config.Prepared, config.Ready, config.ObserveReadiness
 	config.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
 		mu.Lock()
 		defer mu.Unlock()
+		if parent.Err() != nil {
+			return context.Cause(parent)
+		}
 		if stopped || ctx.Err() != nil || preparation.ServiceId != config.ServiceID || preparation.Hostname != p.Hostname ||
 			!opaqueid.Valid(preparation.ServiceRunId, opaqueid.ServiceRunPrefix) || preparation.RunNumber < 1 {
 			return errIntegrationRunStale
@@ -148,6 +210,9 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 	config.Ready = func() error {
 		mu.Lock()
 		defer mu.Unlock()
+		if parent.Err() != nil {
+			return context.Cause(parent)
+		}
 		if stopped || binding.ServiceId == "" || ctx.Err() != nil {
 			return errIntegrationRunStale
 		}
@@ -195,20 +260,23 @@ func (p Publisher) serve(parent context.Context, interval time.Duration) error {
 	go func() { done <- run(ctx, config) }()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	finish := func(result error) error {
+	finish := func(result error) integrationAttempt {
 		mu.Lock()
 		defer mu.Unlock()
 		stopped = true
 		cancel()
-		return errors.Join(result, readinessErr, clear())
+		return integrationAttempt{operation: errors.Join(result, readinessErr), cleanup: clear(), recovered: notified}
 	}
-	stop := func(cause error) error {
+	stop := func(cause error) integrationAttempt {
 		mu.Lock()
 		stopped = true
 		cancel()
 		clearErr := clear()
 		mu.Unlock()
-		return finish(errors.Join(cause, clearErr, <-done))
+		result := <-done
+		mu.Lock()
+		defer mu.Unlock()
+		return integrationAttempt{operation: errors.Join(cause, readinessErr), cleanup: errors.Join(clearErr, result), recovered: notified}
 	}
 	for {
 		select {

@@ -6,14 +6,18 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestHTTPStreamClosesEveryOwnedTargetSocket(t *testing.T) {
@@ -60,6 +64,76 @@ func TestHTTPStreamClosesEveryOwnedTargetSocket(t *testing.T) {
 			<-closed
 		}
 	})
+}
+
+func TestConnectorHTTPApplicationClaimsCommitAfterBudget(t *testing.T) {
+	const hostname = "service.example.test"
+	certificate := visitorfixture.Certificate(t, hostname)
+	budget, err := requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, ok := budget.Reserve(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "https://"+hostname+"/held", nil))
+	if !ok {
+		t.Fatal("did not reserve sole application slot")
+	}
+	defer held.Finish()
+	var prepared, committed, applications atomic.Int32
+	transport := &http.Transport{MaxConnsPerHost: 1,
+		TLSClientConfig: &tls.Config{RootCAs: visitorfixture.Roots(t, certificate)},
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			incoming, visitor := net.Pipe()
+			stream := Stream{Protocol: config.ProtocolHTTP, Hostname: hostname, HTTPRequests: budget,
+				TLS: &tls.Config{Certificates: []tls.Certificate{certificate}},
+				Visitor: ConnectorVisitor{Admission: &AdmissionFixture{Check: func(context.Context) (Decision, error) {
+					return Decision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
+				}}},
+				PrepareRequest: func(*http.Request) (func(context.Context) error, error) {
+					prepared.Add(1)
+					return func(context.Context) error { committed.Add(1); return nil }, nil
+				},
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					applications.Add(1)
+					w.WriteHeader(http.StatusNoContent)
+				})}
+			done := make(chan error, 1)
+			go func() {
+				defer incoming.Close()
+				done <- stream.Forward(t.Context(), incoming)
+			}()
+			t.Cleanup(func() {
+				_ = visitor.Close()
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					t.Error("connector HTTP stream did not join")
+				}
+			})
+			return visitor, nil
+		}}
+	t.Cleanup(transport.CloseIdleConnections)
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	visit := func(want int) {
+		t.Helper()
+		response, err := client.Get("https://" + hostname + "/callback")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != want {
+			t.Fatal("connector request returned", response.StatusCode, "want", want)
+		}
+	}
+	visit(http.StatusServiceUnavailable)
+	if prepared.Load() != 1 || committed.Load() != 0 || applications.Load() != 0 {
+		t.Fatal("rejected connector request committed application claim", prepared.Load(), committed.Load(), applications.Load())
+	}
+	held.Finish()
+	visit(http.StatusNoContent)
+	if prepared.Load() != 2 || committed.Load() != 1 || applications.Load() != 1 {
+		t.Fatal("admitted connector request did not commit immediately before application", prepared.Load(), committed.Load(), applications.Load())
+	}
 }
 
 type stoppedConnectorAdmission struct {

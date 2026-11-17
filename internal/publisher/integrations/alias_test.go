@@ -282,10 +282,15 @@ func TestAliasFinalOAuthHopRejectsReplacementRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodGet, response.Header().Get("Location"), nil)
-	if err := snapshot.Config.Prepared(aliasPreparation(t, id, selection.Hostname, prepared.RunNumber+1)); err != nil {
+	replacement := aliasPreparation(t, id, selection.Hostname, prepared.RunNumber+1)
+	if err := snapshot.Config.Prepared(replacement); err != nil {
 		t.Fatal(err)
 	}
-	err = snapshot.Config.AdmitRequest(request)
+	if err := snapshot.Config.AdmitRequest(request); err != nil {
+		t.Fatal("current alias ownership was rejected before claim validation", err)
+	}
+	_, err = snapshot.Config.HTTPPrepareRequest(request, publisherservice.HTTPRun{ServiceID: id,
+		RunID: replacement.ServiceRunId, Hostname: selection.Hostname, Number: replacement.RunNumber})
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.OAuthCallbackExpired {
 		t.Fatalf("final-hop selection check = %v", err)
 	}
@@ -340,7 +345,7 @@ func TestAliasPublisherReadinessKeepsThePreparedServiceRunThroughRenewalAndDrain
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	result, done := make(chan error, 1), make(chan struct{})
-	go func() { defer close(done); result <- worker.serve(ctx, time.Millisecond) }()
+	go func() { defer close(done); result <- worker.serve(ctx, time.Millisecond).Err() }()
 	t.Cleanup(func() {
 		cancel()
 		select {

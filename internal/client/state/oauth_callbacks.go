@@ -146,29 +146,49 @@ func (d *Database) ConsumeOAuthCallback(ctx context.Context, server, hostname, s
 // that started login. unknown states are ordinary app requests; a known return
 // never falls through to a replacement run, including after it was consumed.
 func (d *Database) AdmitOAuthReturn(ctx context.Context, server, hostname, state, path, serviceID string, number uint64) error {
+	consume, err := d.PrepareOAuthReturn(ctx, server, hostname, state, path, serviceID, number)
+	if err != nil || consume == nil {
+		return err
+	}
+	return consume(ctx)
+}
+
+// PrepareOAuthReturn validates a final return without spending it. the returned
+// claim rechecks current destination ownership atomically when consumed, after
+// reversible request admission. a known claim never becomes an unknown state.
+func (d *Database) PrepareOAuthReturn(ctx context.Context, server, hostname, state, path, serviceID string, number uint64) (func(context.Context) error, error) {
 	if state == "" || len(state) > 8192 {
-		return nil
+		return nil, nil
 	}
 	digest := sha256.Sum256([]byte(state))
 	row, err := d.queries.GetOAuthReturn(ctx, clientstatedb.GetOAuthReturnParams{ServerOrigin: server, Hostname: hostname, StateDigest: digest[:]})
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if row.CallbackPath != path {
-		return nil
+		return nil, nil
 	}
-	count, err := d.queries.ConsumeOAuthReturn(ctx, clientstatedb.ConsumeOAuthReturnParams{
+	if row.ServiceID != serviceID || number == 0 || number > 1<<63-1 || row.RunNumber != int64(number) ||
+		row.ConsumedAt.Valid || row.ExpiresAt <= d.now().UTC().UnixNano() {
+		return nil, sql.ErrNoRows
+	}
+	claim := clientstatedb.ConsumeOAuthReturnParams{
 		ServerOrigin: server, Hostname: hostname, StateDigest: digest[:], CallbackPath: path,
-		ServiceID: serviceID, RunNumber: int64(number), Now: sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true},
-	})
-	if err != nil {
-		return err
+		ServiceID: serviceID, RunNumber: int64(number), CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt,
 	}
-	if count != 1 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return func(ctx context.Context) error {
+		current := claim
+		current.Now = sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true}
+		count, err := d.queries.ConsumeOAuthReturn(ctx, current)
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return sql.ErrNoRows
+		}
+		return nil
+	}, nil
 }

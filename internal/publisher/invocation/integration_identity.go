@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
@@ -15,7 +16,32 @@ import (
 
 var errIntegrationIntent = errors.New("saved service requires explicit integration handler and anonymous access configuration")
 
-func nativeIntegrationConfig(ctx context.Context, services publisherServices, hostname string, intent targetsyntax.IntegrationTarget, allowed []string) (publisherservice.RunConfig, controlv1.Service, error) {
+// integration shutdown carries the enclosing owner's bound, independently of
+// an individual run attempt. routine retries must not start that terminal fence.
+type integrationShutdown struct {
+	deadline func() time.Time
+	fence    context.Context
+}
+
+func (s integrationShutdown) bind(ctx context.Context, cfg *publisherservice.RunConfig) {
+	cfg.ShutdownContext = s.fence
+	_, bounded := ctx.Deadline()
+	if s.deadline == nil && !bounded {
+		return
+	}
+	cfg.ShutdownDeadline = func() time.Time {
+		var until time.Time
+		if ctx.Err() != nil && s.deadline != nil {
+			until = s.deadline()
+		}
+		if parent, ok := ctx.Deadline(); ok && (until.IsZero() || parent.Before(until)) {
+			until = parent
+		}
+		return until
+	}
+}
+
+func nativeIntegrationConfig(ctx context.Context, services publisherServices, hostname string, intent targetsyntax.IntegrationTarget, allowed []string, shutdown integrationShutdown) (publisherservice.RunConfig, controlv1.Service, error) {
 	if !intent.Valid() {
 		return publisherservice.RunConfig{}, controlv1.Service{}, publisheridentity.ErrScope
 	}
@@ -38,7 +64,9 @@ func nativeIntegrationConfig(ctx context.Context, services publisherServices, ho
 	if err != nil {
 		return publisherservice.RunConfig{}, controlv1.Service{}, err
 	}
-	return publisherservice.RunConfig{Control: native, State: services.state, Access: native.Access,
+	cfg := publisherservice.RunConfig{Control: native, State: services.state, Access: native.Access,
 		PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
-		ServiceID: saved.Id, Metadata: publisheridentity.ServiceMetadata(saved), InspectionMode: inspection.None}, saved, nil
+		ServiceID: saved.Id, Metadata: publisheridentity.ServiceMetadata(saved), InspectionMode: inspection.None}
+	shutdown.bind(ctx, &cfg)
+	return cfg, saved, nil
 }

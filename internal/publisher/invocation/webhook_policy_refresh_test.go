@@ -58,7 +58,7 @@ func TestWebhookPublisherRefreshesCoarseUnionWithoutReplacingItsHandler(t *testi
 						return source, nil, nil
 					}
 					return source, []string{"192.0.2.0/24"}, nil
-				})
+				}, integrationShutdown{})
 			snapshot, err := publisher.Prepare(t.Context())
 			if !available {
 				if err == nil || f.creates != 0 || f.enrollments != 0 || f.updates != 0 {

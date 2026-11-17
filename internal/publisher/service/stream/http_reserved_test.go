@@ -16,6 +16,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 )
@@ -48,9 +49,9 @@ func (*connectorHTTPBudgetFixture) Limits() applicationlimits.Limits {
 	return applicationlimits.Limits{}.Defaults(false)
 }
 
-func (f *connectorHTTPBudgetFixture) Admit(http.ResponseWriter, *http.Request) (func(), bool) {
+func (f *connectorHTTPBudgetFixture) Reserve(http.ResponseWriter, *http.Request) (*requestlimit.Reservation, bool) {
 	f.entries.Add(1)
-	return func() {}, true
+	return &requestlimit.Reservation{}, true
 }
 
 func TestConnectorHTTPReservedCompositionRequiresExplicitProofAndPreservesBudget(t *testing.T) {

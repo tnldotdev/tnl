@@ -18,7 +18,7 @@ func TestIntegrationPreparationRejectsConflictingSavedHandlerTarget(t *testing.T
 			f := newServiceSetupFixture(t, hostname)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			_, saved, err := nativeIntegrationConfig(ctx, f.services, hostname, intent, nil)
+			_, saved, err := nativeIntegrationConfig(ctx, f.services, hostname, intent, nil, integrationShutdown{})
 			if err != nil {
 				t.Fatal("prepare original handler service", err)
 			}
@@ -43,7 +43,7 @@ func TestIntegrationPreparationRejectsConflictingSavedHandlerTarget(t *testing.T
 			public := bytes.Clone(f.public)
 			creates, updates, changes := f.creates, f.updates, f.changes
 			enrollments, redemptions, runs := f.enrollments, f.redemptions, f.runs
-			cfg, selected, err := nativeIntegrationConfig(ctx, f.services, hostname, intent, nil)
+			cfg, selected, err := nativeIntegrationConfig(ctx, f.services, hostname, intent, nil, integrationShutdown{})
 			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
 				t.Error("integration preparation accepted a conflicting saved handler target or lost its invalid-response reason", err)
 			}

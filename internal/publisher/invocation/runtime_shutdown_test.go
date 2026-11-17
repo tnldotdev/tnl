@@ -16,7 +16,7 @@ func TestPublicationShutdownHandsOriginalDeadlineToProcess(t *testing.T) {
 			recorded = until
 			return until
 		})
-		ctx, deadline, join := publicationShutdown(parent)
+		ctx, deadline, _, join := publicationShutdown(parent)
 		defer join()
 		until := deadline()
 		<-ctx.Done()
@@ -40,7 +40,7 @@ func TestPublicationShutdownRetainsEarlierParentAndExpiredProcessBudget(t *testi
 			recorded = until
 			return until
 		})
-		ctx, deadline, join := publicationShutdown(parent)
+		ctx, deadline, _, join := publicationShutdown(parent)
 		defer join()
 		<-ctx.Done()
 		if got := deadline(); !got.Equal(parentUntil) || !recorded.Equal(parentUntil) {
@@ -50,6 +50,31 @@ func TestPublicationShutdownRetainsEarlierParentAndExpiredProcessBudget(t *testi
 		defer stop()
 		if cleanup.Err() != context.DeadlineExceeded {
 			t.Fatal("publication cleanup received a fresh window after parent expiry")
+		}
+	})
+}
+
+func TestPublicationShutdownFenceExpiresAtOriginalBound(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		until := time.Now().Add(time.Second)
+		parent := observability.WithShutdownDeadline(t.Context(), func(time.Time) time.Time { return until })
+		ctx, deadline, fence, join := publicationShutdown(parent)
+		defer join()
+		if got := deadline(); got != until {
+			t.Fatal("publication did not retain its process bound", got, until)
+		}
+		<-ctx.Done()
+		if fence.Err() != nil {
+			t.Fatal("stop request expired the cleanup fence before its deadline")
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if context.Cause(fence) != context.DeadlineExceeded || deadline() != until {
+			t.Fatal("cleanup fence lost the original expiry or started a new budget", context.Cause(fence), deadline())
+		}
+		join()
+		if context.Cause(fence) != context.DeadlineExceeded {
+			t.Fatal("joining the fence replaced its expiry cause")
 		}
 	})
 }

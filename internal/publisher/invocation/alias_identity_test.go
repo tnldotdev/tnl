@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"reflect"
 	"testing"
+	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -58,7 +59,11 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 				t.Fatal(err)
 			}
 			admissions, responses, captures := 0, 0, 0
+			until := time.Now().Add(time.Second)
+			fence, expire := context.WithCancelCause(context.Background())
+			defer expire(context.Canceled)
 			base := publisherservice.RunConfig{Control: f.services.routes, Access: func(context.Context) (string, error) { return "parent-access", nil },
+				ShutdownDeadline: func() time.Time { return until }, ShutdownContext: fence,
 				ServiceID: f.parent.Id, Target: "127.0.0.1:3000", Metadata: publisheridentity.ServiceMetadata(f.parent),
 				Mounts: []publisherproxy.Mount{{Prefix: "/api", Target: "http://127.0.0.1:4000"}}, Feedback: true, PreviewID: "parent-preview",
 				ResolveHTTPTarget: func(*http.Request) (string, string, error) { captures++; return target, "app-instance", nil },
@@ -76,6 +81,10 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 				HTTPAdmitRequest: func(*http.Request, publisherservice.HTTPRun) error {
 					t.Error("alias inherited the ordinary app's OAuth return admission")
 					return publisheridentity.ErrScope
+				},
+				HTTPPrepareRequest: func(*http.Request, publisherservice.HTTPRun) (func(context.Context) error, error) {
+					t.Error("alias inherited the ordinary app's OAuth return claim")
+					return nil, publisheridentity.ErrScope
 				},
 				HTTPResponseHooks: func(run publisherservice.HTTPRun) httpstream.ResponseHooks {
 					return httpstream.ResponseHooks{Observe: func(*http.Response) error {
@@ -97,7 +106,9 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 				t.Fatal(err)
 			}
 			for range 2 {
-				prepared, err := worker.Prepare(t.Context())
+				attempt, cancelAttempt := context.WithCancel(t.Context())
+				defer cancelAttempt()
+				prepared, err := worker.Prepare(attempt)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -108,9 +119,12 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 					t.Fatal("alias changed its selected IP policy or sent an empty filter")
 				}
 				cfg := prepared.Config
+				if cfg.ShutdownContext != fence || cfg.ShutdownDeadline == nil || !cfg.ShutdownDeadline().IsZero() {
+					t.Fatal("alias lost its parent fence or started the parent's terminal budget")
+				}
 				if cfg.ServiceID != f.saved.Id || cfg.PublisherIdentityID != f.identity.ClientId ||
 					cfg.PublisherGrantID != f.identity.GrantId || cfg.PublisherKeyID != f.identity.KeyId ||
-					cfg.Target != base.Target || cfg.Feedback || cfg.PreviewID != "" || cfg.HTTPAdmitRequest != nil ||
+					cfg.Target != base.Target || cfg.Feedback || cfg.PreviewID != "" || cfg.HTTPAdmitRequest != nil || cfg.HTTPPrepareRequest == nil ||
 					!reflect.DeepEqual(cfg.Metadata.TargetTls, base.Metadata.TargetTls) ||
 					len(cfg.Mounts) != 1 || cfg.Mounts[0].Target != base.Mounts[0].Target ||
 					!prepared.Service.RequirePostQuantum || prepared.Service.HttpLimits.Concurrency == nil || *prepared.Service.HttpLimits.Concurrency != 6 {
@@ -119,6 +133,15 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 				request, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+f.saved.Endpoint.Hostname+"/", nil)
 				if err := cfg.AdmitRequest(request); err != nil {
 					t.Fatal(err)
+				}
+				run := publisherservice.HTTPRun{ServiceID: cfg.ServiceID, RunID: serviceTestID(t, opaqueid.ServiceRunPrefix),
+					Hostname: f.saved.Endpoint.Hostname, Number: 1}
+				if err := cfg.Prepared(controlv1.ServiceRunPreparation{ServiceId: run.ServiceID, ServiceRunId: run.RunID,
+					Hostname: run.Hostname, RunNumber: run.Number}); err != nil {
+					t.Fatal(err)
+				}
+				if commit, err := cfg.HTTPPrepareRequest(request, run); err != nil || commit != nil {
+					t.Fatal("alias inherited the parent's claim or changed unknown app state", err)
 				}
 				if address, identity, err := cfg.ResolveHTTPTarget(request); err != nil || address != target || identity != "app-instance" {
 					t.Fatal("alias lost the captured dynamic target identity", address, identity, err)
@@ -138,6 +161,10 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 				if _, err := cfg.Control.PrepareServiceRun(t.Context(), cfg.ServiceID, serviceTestID(t, opaqueid.IdempotencyPrefix), access,
 					publisheridentity.ServiceDeclaration(prepared.Service)); !errors.Is(err, clientcontrol.ErrUnavailable) {
 					t.Fatal("alias run did not use its signed exact-service authority", err)
+				}
+				cancelAttempt()
+				if got := cfg.ShutdownDeadline(); got != until {
+					t.Fatal("alias replaced its captured parent shutdown deadline", got, until)
 				}
 			}
 			if f.creates != 1 || f.enrollments != 1 || f.redemptions != 1 || f.runs != 2 || admissions != 2 || responses != 2 || captures != 2 {

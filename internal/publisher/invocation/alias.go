@@ -188,9 +188,8 @@ func aliasChoiceError(err error) error {
 	return failure.Wrap("update alias selection", reason, err)
 }
 
-func startProjectAliases(ctx context.Context, state *clientstate.Database, project projectConfiguration, service, team string, parent publisherServices, base publisherservice.RunConfig, group clientstate.IntegrationScope, tunnel *clientstate.Tunnel, output *Presentation) func() {
-	ctx, cancel := context.WithCancel(ctx)
-	var workers sync.WaitGroup
+func startProjectAliases(ctx context.Context, state *clientstate.Database, project projectConfiguration, service, team string, parent publisherServices, base publisherservice.RunConfig, group clientstate.IntegrationScope, tunnel *clientstate.Tunnel, output *Presentation) func() error {
+	var workers []func(context.Context) error
 	for _, name := range slices.Sorted(maps.Keys(project.Config.Aliases)) {
 		definition := project.Config.Aliases[name]
 		if definition.Service != service {
@@ -248,9 +247,9 @@ func startProjectAliases(ctx context.Context, state *clientstate.Database, proje
 				reportIntegrationURL(tunnel, output, "alias ready", "", clioutput.Fields(clioutput.Field{Label: "alias", Value: name}, clioutput.Field{Label: "public URL", Value: "https://" + services.hostname}))
 			}
 		})
-		workers.Go(func() { worker.Maintain(ctx) })
+		workers = append(workers, worker.Maintain)
 	}
-	return func() { cancel(); workers.Wait() }
+	return startIntegrationWorkers(ctx, workers...)
 }
 
 func projectAliasPublisher(state *clientstate.Database, services publisherServices, selection clientstate.AliasSelection, tunnelID string, base publisherservice.RunConfig, policy resolvedVisitorAccess, report func(bool, error)) integrations.Publisher {
@@ -285,13 +284,14 @@ func projectAliasPublisher(state *clientstate.Database, services publisherServic
 			return integrations.Snapshot{}, err
 		}
 		// the alias owns OAuth return admission for its own run; do not copy
-		// the ordinary app's HTTPAdmitRequest and consume a return twice.
+		// the ordinary app's HTTP request hooks and consume a return twice.
 		cfg := publisherservice.RunConfig{Telemetry: base.Telemetry, Control: native, State: services.state, Access: native.Access,
 			PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
 			ServiceID: saved.Id, Metadata: publisheridentity.ServiceMetadata(saved), Target: base.Target, Handler: base.Handler,
 			InspectionMode: base.InspectionMode, PreferredRegions: slices.Clone(base.PreferredRegions),
 			Mounts: slices.Clone(base.Mounts), ResolveHTTPTarget: base.ResolveHTTPTarget, TargetResolver: base.TargetResolver,
 			HTTPResponseHooks: base.HTTPResponseHooks, AdmitRequest: base.AdmitRequest, TransportTLS: base.TransportTLS}
+		(integrationShutdown{deadline: base.ShutdownDeadline, fence: base.ShutdownContext}).bind(ctx, &cfg)
 		return integrations.Snapshot{Config: cfg, Service: saved}, nil
 	}, report)
 }

@@ -51,15 +51,29 @@ func reportIntegrationURL(tunnel *clientstate.Tunnel, output *Presentation, stat
 	}
 }
 
-func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, oauth meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry *clienttelemetry.Scope) func() {
+// startIntegrationWorkers owns one cancellation and joins every worker before
+// returning its result. repeated stops observe the same joined result.
+func startIntegrationWorkers(ctx context.Context, workers ...func(context.Context) error) func() error {
 	ctx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
+	var joined sync.WaitGroup
+	results := make([]error, len(workers))
+	for index, worker := range workers {
+		joined.Go(func() { results[index] = worker(ctx) })
+	}
+	return sync.OnceValue(func() error {
+		cancel()
+		joined.Wait()
+		return errors.Join(results...)
+	})
+}
+
+func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, oauth meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, telemetry *clienttelemetry.Scope, shutdown integrationShutdown) func() error {
 	var reportMu sync.Mutex
 	lastReport := time.Time{}
 	integrationURLPublisher := integrations.Publisher{
 		State: state, Store: services.state, Server: services.authenticated.ServerEndpoint, Hostname: oauth.Hostname,
 		Prepare: func(ctx context.Context) (integrations.Snapshot, error) {
-			config, saved, err := nativeIntegrationConfig(ctx, services, oauth.Hostname, targetsyntax.OAuthIntegration, nil)
+			config, saved, err := nativeIntegrationConfig(ctx, services, oauth.Hostname, targetsyntax.OAuthIntegration, nil, shutdown)
 			if err != nil {
 				return integrations.Snapshot{}, err
 			}
@@ -82,15 +96,13 @@ func startOAuthIntegrationURL(ctx context.Context, state *clientstate.Database, 
 			}
 		},
 	}
-	go func() { defer close(done); integrationURLPublisher.Maintain(ctx) }()
-	return func() { cancel(); <-done }
+	return startIntegrationWorkers(ctx, integrationURLPublisher.Maintain)
 }
 
-func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, project clientproject.Project, tunnel *clientstate.Tunnel, service string, group clientstate.IntegrationScope, output *Presentation, telemetry *clienttelemetry.Scope) func() {
+func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database, services publisherServices, project clientproject.Project, tunnel *clientstate.Tunnel, service string, group clientstate.IntegrationScope, output *Presentation, telemetry *clienttelemetry.Scope, shutdown integrationShutdown) func() error {
 	if len(project.Config.Webhooks) == 0 {
-		return func() {}
+		return func() error { return nil }
 	}
-	ctx, cancel := context.WithCancel(ctx)
 	names := make([]string, 0, len(project.Config.Webhooks))
 	for name, definition := range project.Config.Webhooks {
 		if definition.Service == service {
@@ -98,8 +110,7 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 		}
 	}
 	if len(names) == 0 {
-		cancel()
-		return func() {}
+		return func() error { return nil }
 	}
 	slices.Sort(names)
 	registered := make(map[string]config.Webhook, len(names))
@@ -124,8 +135,7 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 	hooks, err := resolve.IntegrationOrigin(ctx, state, project, services.authenticated.ServerEndpoint, services.namespace, "hooks")
 	if err != nil {
 		reportIntegrationURL(tunnel, output, "webhooks unavailable", "app tunnel continues", clioutput.Text("the stable webhook origin could not be selected"))
-		cancel()
-		return func() {}
+		return func() error { return nil }
 	}
 	for _, name := range slices.Sorted(maps.Keys(registered)) {
 		definition := registered[name]
@@ -143,7 +153,6 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 			clioutput.Field{Label: "guide", Value: "https://tnl.dev/w/" + definition.Provider},
 		))
 	}
-	var workers sync.WaitGroup
 	worker := webhookURLPublisher(state, services, group, hooks, tunnel, output,
 		func(ctx context.Context, definitions map[string]config.Webhook, report func(string, string, string)) (webhookSourceHandler, []string, error) {
 			handler, prefixes, err := integrations.NewWebhooks(ctx, state, services.authenticated.ServerEndpoint, group, hooks.Hostname, definitions, report)
@@ -155,14 +164,15 @@ func startWebhookIntegrationURL(ctx context.Context, state *clientstate.Database
 				}
 			}
 			return handler, prefixes, err
-		})
-	workers.Go(func() { worker.Maintain(ctx) })
+		}, shutdown)
+	workers := []func(context.Context) error{worker.Maintain}
 	if telemetry != nil && len(registered) != 0 {
-		workers.Go(func() {
+		workers = append(workers, func(ctx context.Context) error {
 			watchWebhookReady(ctx, state, services.authenticated.ServerEndpoint, group, hooks.Hostname, registered, telemetry)
+			return nil
 		})
 	}
-	return func() { cancel(); workers.Wait() }
+	return startIntegrationWorkers(ctx, workers...)
 }
 
 func watchWebhookReady(ctx context.Context, state *clientstate.Database, server string, group clientstate.IntegrationScope, hostname string, definitions map[string]config.Webhook, telemetry *clienttelemetry.Scope) {
@@ -216,7 +226,7 @@ type webhookSourceHandler interface {
 	RefreshPolicies(context.Context, func(context.Context, []string) error) error
 }
 
-func webhookURLPublisher(state *clientstate.Database, services publisherServices, group clientstate.IntegrationScope, origin meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, prepare func(context.Context, map[string]config.Webhook, func(string, string, string)) (webhookSourceHandler, []string, error)) integrations.Publisher {
+func webhookURLPublisher(state *clientstate.Database, services publisherServices, group clientstate.IntegrationScope, origin meta.IntegrationOrigin, tunnel *clientstate.Tunnel, output *Presentation, prepare func(context.Context, map[string]config.Webhook, func(string, string, string)) (webhookSourceHandler, []string, error), shutdown integrationShutdown) integrations.Publisher {
 	var active webhookSourceHandler
 	var activeRevision string
 	var reportMu sync.Mutex
@@ -265,7 +275,7 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 					clioutput.Field{Label: "source policy", Value: handler.PolicyStatus(name)},
 				))
 			}
-			config, saved, err := nativeIntegrationConfig(ctx, services, origin.Hostname, targetsyntax.WebhookIntegration, prefixes)
+			config, saved, err := nativeIntegrationConfig(ctx, services, origin.Hostname, targetsyntax.WebhookIntegration, prefixes, shutdown)
 			if err != nil {
 				return integrations.Snapshot{}, err
 			}
@@ -278,7 +288,7 @@ func webhookURLPublisher(state *clientstate.Database, services publisherServices
 			_, revision, err := definitionsAt(ctx)
 			if err == nil && active != nil && revision == activeRevision {
 				refreshErr := active.RefreshPolicies(ctx, func(ctx context.Context, prefixes []string) error {
-					_, _, err := nativeIntegrationConfig(ctx, services, origin.Hostname, targetsyntax.WebhookIntegration, prefixes)
+					_, _, err := nativeIntegrationConfig(ctx, services, origin.Hostname, targetsyntax.WebhookIntegration, prefixes, shutdown)
 					return err
 				})
 				if refreshErr != nil {

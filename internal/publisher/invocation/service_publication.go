@@ -40,7 +40,7 @@ func SigningIdentity(ctx context.Context, profile *clientstate.Store, id string)
 // only the person's session creates saved state; every protocol then publishes
 // through its exact service grant and the shared service-run owner.
 func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePresentation) (result error) {
-	ctx, shutdownDeadline, joinShutdown := publicationShutdown(ctx)
+	ctx, shutdownDeadline, _, joinShutdown := publicationShutdown(ctx)
 	defer joinShutdown()
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	protocol, err := privatePublishProtocol(flags.Protocol)

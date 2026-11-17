@@ -67,7 +67,7 @@ func AliasPublisher(state *clientstate.Database, store *clientstate.Store, selec
 			admit, prepared, readiness := config.AdmitRequest, config.Prepared, snapshot.Readiness
 			var mu sync.Mutex
 			var run controlv1.ServiceRunPreparation
-			admitOAuth := OAuthAdmission(state, selection.Scope.Server)
+			prepareOAuth := PrepareOAuthReturn(state, selection.Scope.Server)
 			config.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
 				if preparation.ServiceId != config.ServiceID || preparation.RunNumber < 1 || !opaqueid.Valid(preparation.ServiceRunId, opaqueid.ServiceRunPrefix) {
 					return clientstate.ErrAliasSelectionStale
@@ -97,11 +97,20 @@ func AliasPublisher(state *clientstate.Database, store *clientstate.Store, selec
 				if err != nil {
 					return diagnostic.Wrap(diagnostic.AliasUnavailable, err)
 				}
+				return nil
+			}
+			// the alias owns its own claim; never inherit an ordinary app's
+			// request preparation or spend a return in the early owner check.
+			config.HTTPPrepareRequest = func(request *http.Request, serving publisherservice.HTTPRun) (func(context.Context) error, error) {
 				mu.Lock()
 				captured := run
 				mu.Unlock()
-				return admitOAuth(request, publisherservice.HTTPRun{Hostname: current.Hostname,
-					ServiceID: captured.ServiceId, RunID: captured.ServiceRunId, Number: captured.RunNumber})
+				expected := publisherservice.HTTPRun{Hostname: current.Hostname,
+					ServiceID: captured.ServiceId, RunID: captured.ServiceRunId, Number: captured.RunNumber}
+				if serving != expected {
+					return nil, diagnostic.Wrap(diagnostic.AliasUnavailable, clientstate.ErrAliasSelectionStale)
+				}
+				return prepareOAuth(request, serving)
 			}
 			snapshot.Readiness = func(ctx context.Context, ready bool) error {
 				var err error

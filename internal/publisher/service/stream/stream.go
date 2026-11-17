@@ -57,6 +57,7 @@ type Stream struct {
 	InspectionMode         inspection.Mode
 	ObserveSummary         inspection.Observer
 	AdmitRequest           func(*http.Request) error
+	PrepareRequest         func(*http.Request) (func(context.Context) error, error)
 	HTTPResponseHooks      httpstream.ResponseHooks
 	ConnectorHTTP          ConnectorHTTPFrontend
 	TLS                    *tls.Config
@@ -424,11 +425,27 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 						return
 					}
 				}
-				release, ok := admitRequest(s.HTTPRequests, w, r)
+				var commit func(context.Context) error
+				if s.PrepareRequest != nil {
+					var err error
+					commit, err = s.PrepareRequest(r)
+					if err != nil {
+						DenyHTTP(w, r, http.StatusServiceUnavailable)
+						return
+					}
+				}
+				reservation, ok := reserveRequest(s.HTTPRequests, w, r)
 				if !ok {
 					return
 				}
-				defer release()
+				defer reservation.Finish()
+				if commit != nil {
+					if err := commit(r.Context()); err != nil {
+						reservation.Refund()
+						DenyHTTP(w, r, http.StatusServiceUnavailable)
+						return
+					}
+				}
 				if s.ConnectorHTTP != nil && httpProof != nil {
 					r = s.ConnectorHTTP.ConnectorApplication(w, r)
 				}

@@ -21,7 +21,7 @@ func TestIntegrationServiceUsesSelectedTeamDomainAndHostname(t *testing.T) {
 		t.Run(hostname, func(t *testing.T) {
 			f := newServiceSetupFixture(t, hostname)
 			for range 2 {
-				cfg, saved, err := nativeIntegrationConfig(t.Context(), f.services, hostname, targetsyntax.WebhookIntegration, nil)
+				cfg, saved, err := nativeIntegrationConfig(t.Context(), f.services, hostname, targetsyntax.WebhookIntegration, nil, integrationShutdown{})
 				if err != nil {
 					t.Fatal(err)
 				}

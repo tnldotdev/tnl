@@ -15,9 +15,11 @@ UPDATE oauth_callback_handoffs SET consumed_at = ?1
 WHERE oauth_callback_handoffs.server_origin = ?2
     AND oauth_callback_handoffs.hostname = ?3
     AND oauth_callback_handoffs.state_digest = ?4
+    AND oauth_callback_handoffs.created_at = ?5
+    AND oauth_callback_handoffs.expires_at = ?6
     AND oauth_callback_handoffs.consumed_at IS NULL AND oauth_callback_handoffs.expires_at > ?1
-    AND oauth_callback_handoffs.callback_path = ?5
-    AND oauth_callback_handoffs.service_id = ?6 AND oauth_callback_handoffs.run_number = ?7
+    AND oauth_callback_handoffs.callback_path = ?7
+    AND oauth_callback_handoffs.service_id = ?8 AND oauth_callback_handoffs.run_number = ?9
     AND EXISTS (
       SELECT 1 FROM local_tunnels t
       WHERE t.id = oauth_callback_handoffs.tunnel_id AND t.server_origin = oauth_callback_handoffs.server_origin
@@ -44,6 +46,8 @@ type ConsumeOAuthReturnParams struct {
 	ServerOrigin string
 	Hostname     string
 	StateDigest  []byte
+	CreatedAt    int64
+	ExpiresAt    int64
 	CallbackPath string
 	ServiceID    string
 	RunNumber    int64
@@ -55,6 +59,8 @@ func (q *Queries) ConsumeOAuthReturn(ctx context.Context, arg ConsumeOAuthReturn
 		arg.ServerOrigin,
 		arg.Hostname,
 		arg.StateDigest,
+		arg.CreatedAt,
+		arg.ExpiresAt,
 		arg.CallbackPath,
 		arg.ServiceID,
 		arg.RunNumber,

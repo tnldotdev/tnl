@@ -48,7 +48,7 @@ func PublisherCredentialFileServer(selected, path string) (string, error) {
 // PublishEnrolled resolves one scoped identity and composes the service run with
 // its caller-owned journal, inspection, process coordination, and exact cleanup.
 func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection EnrolledSelection, output *Presentation, input io.Reader) (result error) {
-	ctx, shutdownDeadline, joinShutdown := publicationShutdown(ctx)
+	ctx, shutdownDeadline, _, joinShutdown := publicationShutdown(ctx)
 	defer joinShutdown()
 	selected := 0
 	for _, value := range []string{selection.EnrollmentKey, selection.PublisherIdentityID, selection.PublisherCredentialFile} {

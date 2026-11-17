@@ -56,6 +56,7 @@ type Prepared struct {
 	inspectionMode         inspection.Mode
 	observeSummary         inspection.Observer
 	admitRequest           func(*http.Request) error
+	prepareRequest         func(*http.Request) (func(context.Context) error, error)
 	targetResolver         TargetResolver
 	managedHostname        string
 	managedProtocol        config.ProtocolName
@@ -886,7 +887,7 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 		RequestBodyIdleTimeout: b.prepared.requestBodyIdleTimeout,
 		Mounts:                 b.prepared.mounts, ResolveHTTPTarget: b.prepared.resolveHTTPTarget,
 		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,
-		AdmitRequest: b.prepared.admitRequest, HTTPResponseHooks: b.prepared.httpResponseHooks, HTTPDrain: drain,
+		AdmitRequest: b.prepared.admitRequest, PrepareRequest: b.prepared.prepareRequest, HTTPResponseHooks: b.prepared.httpResponseHooks, HTTPDrain: drain,
 		ConnectorHTTP: b.prepared.connectorHTTP, FinishVisitor: finishDelivery,
 		HTTPProxy: b.prepared.httpProxy,
 		Authority: authority,

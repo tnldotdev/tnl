@@ -228,7 +228,7 @@ func TestServiceHTTPReadinessIsExactAndDoesNotSpendApplicationBudget(t *testing.
 		t.Run(name, func(t *testing.T) {
 			var proof *httpaccess.ReadinessProof
 			var budget *requestlimit.HTTP
-			var probes, applications atomic.Int32
+			var probes, applications, prepared, consumed atomic.Int32
 			var stale atomic.Bool
 			events := make(chan serviceaudit.Observation, 16)
 			client, _, _, token := serviceHTTPConfiguredFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +263,10 @@ func TestServiceHTTPReadinessIsExactAndDoesNotSpendApplicationBudget(t *testing.
 						return errors.New("registration replaced")
 					}
 					return nil
+				}
+				f.PrepareRequest = func(*http.Request) (func(context.Context) error, error) {
+					prepared.Add(1)
+					return func(context.Context) error { consumed.Add(1); return nil }, nil
 				}
 				f.AuditSink = connectorAuditSink(func(o serviceaudit.Observation) bool { events <- o; return true })
 			})
@@ -317,6 +321,9 @@ func TestServiceHTTPReadinessIsExactAndDoesNotSpendApplicationBudget(t *testing.
 			request(http.MethodGet, "/health", next, "", http.StatusServiceUnavailable)
 			if probes.Load() != 2 || applications.Load() != 1 {
 				t.Fatal("owner probes crossed ownership or application budgets", probes.Load(), applications.Load())
+			}
+			if prepared.Load() != 6 || consumed.Load() != 1 {
+				t.Fatal("owner readiness probes prepared or committed application claims", prepared.Load(), consumed.Load())
 			}
 			// only the failed/ordinary requests claim visitor access decisions.
 			if len(events) != 7 {

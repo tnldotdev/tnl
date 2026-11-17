@@ -58,6 +58,7 @@ type HTTP struct {
 	InspectionMode        inspection.Mode
 	ObserveSummary        inspection.Observer
 	AdmitRequest          func(*http.Request) error
+	PrepareRequest        func(*http.Request) (func(context.Context) error, error)
 	ReadinessProof        *httpaccess.ReadinessProof
 	ResponseHooks         httpstream.ResponseHooks
 	Feedback              bool
@@ -246,6 +247,16 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				next.ServeHTTP(w, r)
 				return
 			}
+			var commit func(context.Context) error
+			if f.PrepareRequest != nil {
+				var err error
+				commit, err = f.PrepareRequest(r)
+				if err != nil {
+					outcome, reason = "failed", "unavailable"
+					servicestream.DenyHTTP(w, r, http.StatusServiceUnavailable)
+					return
+				}
+			}
 			var tokens *httpaccess.Tokens
 			if f.browser != nil {
 				tokens = f.browser.Tokens
@@ -283,6 +294,14 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				outcome, reason = "failed", "unavailable"
 				servicestream.DenyHTTP(w, r, http.StatusServiceUnavailable)
 				return
+			}
+			if commit != nil {
+				if err := commit(r.Context()); err != nil {
+					reservation.Refund()
+					outcome, reason = "failed", "unavailable"
+					servicestream.DenyHTTP(w, r, http.StatusServiceUnavailable)
+					return
+				}
 			}
 			r = httpstream.WithVisitorHost(f.ConnectorApplication(w, r), f.Hostname)
 			// report the decision before an upgrade or long-lived response.

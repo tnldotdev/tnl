@@ -321,7 +321,7 @@ func TestIntegrationURLPublisherReadinessLossAndRecoveryUseTheSameOwner(t *testi
 			return nil
 		}}
 	result, done := make(chan error, 1), make(chan struct{})
-	go func() { defer close(done); result <- worker.serve(ctx, time.Hour) }()
+	go func() { defer close(done); result <- worker.serve(ctx, time.Hour).Err() }()
 	t.Cleanup(func() { cancel(); waitIntegrationURLPublisher(t, done) })
 	if err := waitIntegrationURLPublisher(t, checked); err != nil {
 		t.Fatal(err)
@@ -371,7 +371,7 @@ func TestIntegrationURLPublisherKeepsIndependentRunAndReadinessCleanupFailures(t
 			return errors.Join(context.Canceled, runProblem)
 		}}
 	result, done := make(chan error, 1), make(chan struct{})
-	go func() { defer close(done); result <- worker.serve(ctx, time.Hour) }()
+	go func() { defer close(done); result <- worker.serve(ctx, time.Hour).Err() }()
 	t.Cleanup(func() { cancel(); waitIntegrationURLPublisher(t, done) })
 	waitIntegrationURLPublisher(t, started)
 	cancel()
@@ -423,7 +423,7 @@ func TestIntegrationURLPublisherRequiresOneActualPreparedRun(t *testing.T) {
 			return nil
 		}}
 	result, done := make(chan error, 1), make(chan struct{})
-	go func() { defer close(done); result <- worker.serve(ctx, time.Hour) }()
+	go func() { defer close(done); result <- worker.serve(ctx, time.Hour).Err() }()
 	t.Cleanup(func() { cancel(); waitIntegrationURLPublisher(t, done) })
 	if err := waitIntegrationURLPublisher(t, checked); err != nil {
 		t.Fatal(err)

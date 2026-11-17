@@ -29,19 +29,36 @@ func startDeployedPublisher(ctx context.Context, n *publisheridentity.Native, se
 
 // publicationShutdown owns the foreground operation's first stop. beginning its
 // deadline also stops sibling integrations; final local and remote work share it.
-func publicationShutdown(parent context.Context) (context.Context, func() time.Time, func()) {
+func publicationShutdown(parent context.Context) (context.Context, func() time.Time, context.Context, func()) {
 	ctx, cancel := context.WithCancel(parent)
+	fence, expire := context.WithCancelCause(context.WithoutCancel(parent))
+	var mu sync.Mutex
+	var timer *time.Timer
+	expired := make(chan struct{})
 	deadline := sync.OnceValue(func() time.Time {
 		until := observability.ShutdownDeadline(parent, time.Now().Add(10*time.Second))
+		mu.Lock()
+		timer = time.AfterFunc(time.Until(until), func() {
+			defer close(expired)
+			expire(context.DeadlineExceeded)
+		})
+		mu.Unlock()
 		cancel()
 		return until
 	})
 	done := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() { defer close(done); deadline() })
-	return ctx, deadline, func() {
+	return ctx, deadline, fence, sync.OnceFunc(func() {
 		cancel()
 		if !stop() {
 			<-done
 		}
-	}
+		mu.Lock()
+		active := timer
+		mu.Unlock()
+		if active != nil && !active.Stop() {
+			<-expired
+		}
+		expire(context.Canceled)
+	})
 }

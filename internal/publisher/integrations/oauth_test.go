@@ -223,24 +223,28 @@ func TestOAuthFinalHopPreservesProviderBytesAndAppValidation(t *testing.T) {
 	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "https://"+run.Hostname+"/api/auth/callback/github?"+query {
 		t.Fatal("callback redirect changed provider query bytes", response.Code, response.Header().Get("Location"))
 	}
-	admit := OAuthAdmission(state, testServer)
+	prepare := PrepareOAuthReturn(state, testServer)
 	request := httptest.NewRequest(http.MethodGet, response.Header().Get("Location"), nil)
 	other := run
 	other.Number++
-	if err := admit(request, other); err == nil {
+	if _, err := prepare(request, other); err == nil {
 		t.Fatal("replacement run admitted the final callback")
 	}
-	if err := admit(request, run); err != nil {
+	consume, err := prepare(request, run)
+	if err != nil || consume == nil {
 		t.Fatal("replacement attempt consumed the initiating run's callback", err)
 	}
 	if request.URL.RawQuery != query {
 		t.Fatal("final admission rewrote opaque provider query bytes")
 	}
-	if err := admit(request, run); err == nil {
+	if err := consume(request.Context()); err != nil {
+		t.Fatal("current return could not commit", err)
+	}
+	if _, err := prepare(request, run); err == nil {
 		t.Fatal("final callback was replayed")
 	}
 	request.URL.RawQuery = "code=app-owned&state=unknown"
-	if err := admit(request, other); err != nil {
+	if consume, err := prepare(request, other); err != nil || consume != nil {
 		t.Fatal("tnl took over validation of an unknown app OAuth state", err)
 	}
 }

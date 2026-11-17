@@ -19,7 +19,7 @@ import (
 // replacement owners are rediscovered and receive a fresh lease; an old owner
 // capability or registration is never replayed against the replacement.
 func PublishNamed(ctx context.Context, project clientproject.Project, name, stateDir string, telemetryDisabled bool, resolveOwner func(context.Context, clientproject.Project, string) (publisherprotocol.Endpoint, error), output *Presentation) (result error) {
-	ctx, shutdownDeadline, joinShutdown := publicationShutdown(ctx)
+	ctx, shutdownDeadline, _, joinShutdown := publicationShutdown(ctx)
 	defer joinShutdown()
 	ctx, finishStartup := observability.ClientOperation(ctx, "client.publish.startup")
 	defer func() { finishStartup(result) }()

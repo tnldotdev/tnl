@@ -34,7 +34,7 @@ func TestIntegrationPreparationDoesNotConvertOrdinaryApp(t *testing.T) {
 					t.Fatal(err)
 				}
 				updates, changes := f.updates, f.changes
-				cfg, adopted, err := nativeIntegrationConfig(t.Context(), f.services, hostname, intent, nil)
+				cfg, adopted, err := nativeIntegrationConfig(t.Context(), f.services, hostname, intent, nil, integrationShutdown{})
 				if err == nil || cfg.Control != nil || cfg.Access != nil || cfg.ServiceID != "" || adopted.Id != "" {
 					t.Error("ordinary app was silently converted to an anonymous integration", err)
 				}
@@ -76,10 +76,10 @@ func TestIntegrationPreparationAcceptsOnlyTheExplicitConvertedIntent(t *testing.
 			if test.intent == other {
 				other = targetsyntax.WebhookIntegration
 			}
-			if _, _, err := nativeIntegrationConfig(t.Context(), f.services, test.hostname, other, nil); err == nil || f.enrollments != 0 {
+			if _, _, err := nativeIntegrationConfig(t.Context(), f.services, test.hostname, other, nil, integrationShutdown{}); err == nil || f.enrollments != 0 {
 				t.Fatal("one integration intent silently became another", err)
 			}
-			cfg, adopted, err := nativeIntegrationConfig(t.Context(), f.services, test.hostname, test.intent, nil)
+			cfg, adopted, err := nativeIntegrationConfig(t.Context(), f.services, test.hostname, test.intent, nil, integrationShutdown{})
 			if err != nil || cfg.ServiceID != saved.Id || adopted.Id != saved.Id || f.creates != 1 || f.enrollments != 1 {
 				t.Fatal("explicit converted declaration did not retain the one service and exact publisher grant", err)
 			}

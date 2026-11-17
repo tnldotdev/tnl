@@ -2,11 +2,13 @@ package invocation
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -14,6 +16,40 @@ import (
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestNativeIntegrationConfigCarriesEnclosingShutdownFacts(t *testing.T) {
+	for _, test := range integrationIntentCases {
+		t.Run(test.hostname, func(t *testing.T) {
+			f := newServiceSetupFixture(t, test.hostname)
+			parentUntil := time.Now().Add(time.Minute)
+			ctx, cancel := context.WithDeadline(t.Context(), parentUntil)
+			defer cancel()
+			fence, expire := context.WithCancelCause(context.Background())
+			defer expire(context.Canceled)
+			until := parentUntil.Add(-time.Second)
+			calls := 0
+			shutdown := integrationShutdown{fence: fence, deadline: func() time.Time { calls++; return until }}
+			cfg, _, err := nativeIntegrationConfig(ctx, f.services, test.hostname, test.intent, nil, shutdown)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ShutdownContext != fence || cfg.ShutdownDeadline == nil {
+				t.Fatal("integration run lost its enclosing shutdown fence or deadline")
+			}
+			if got := cfg.ShutdownDeadline(); got != parentUntil || calls != 0 || ctx.Err() != nil {
+				t.Fatal("an internal attempt started the parent's terminal budget", got, calls, ctx.Err())
+			}
+			cancel()
+			if got := cfg.ShutdownDeadline(); got != until || calls != 1 {
+				t.Fatal("integration run did not retain the parent's original stop bound", got, calls)
+			}
+			expire(context.DeadlineExceeded)
+			if context.Cause(cfg.ShutdownContext) != context.DeadlineExceeded {
+				t.Fatal("integration run lost its active expiry fence")
+			}
+		})
+	}
+}
 
 func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing.T) {
 	for _, test := range integrationIntentCases {
@@ -40,7 +76,7 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 				if err != nil {
 					t.Fatal(err)
 				}
-				cfg, saved, err := nativeIntegrationConfig(t.Context(), f.services, hostname, intent, desired)
+				cfg, saved, err := nativeIntegrationConfig(t.Context(), f.services, hostname, intent, desired, integrationShutdown{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -89,7 +125,7 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 				t.Fatal(err)
 			}
 			public := bytes.Clone(f.public)
-			_, _, err = nativeIntegrationConfig(t.Context(), f.services, hostname, intent, nil)
+			_, _, err = nativeIntegrationConfig(t.Context(), f.services, hostname, intent, nil, integrationShutdown{})
 			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerConflict {
 				t.Fatal("canonical reservation did not reject the conflicting endpoint", err)
 			}
@@ -109,7 +145,7 @@ func TestNativeIntegrationConfigCreatesUpdatesAndReloadsWithoutTarget(t *testing
 
 func TestNativeIntegrationConfigRejectsMismatchedReservationResponse(t *testing.T) {
 	f := newServiceSetupFixture(t, "oauth.member.example")
-	_, saved, err := nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, targetsyntax.OAuthIntegration, nil)
+	_, saved, err := nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, targetsyntax.OAuthIntegration, nil, integrationShutdown{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +173,7 @@ func TestNativeIntegrationConfigRejectsMismatchedReservationResponse(t *testing.
 		invalid.Endpoint = &endpoint
 		return serviceTestResponse(r, http.StatusOK, invalid), true
 	}
-	_, _, err = nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, targetsyntax.OAuthIntegration, nil)
+	_, _, err = nativeIntegrationConfig(t.Context(), f.services, f.services.hostname, targetsyntax.OAuthIntegration, nil, integrationShutdown{})
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
 		t.Fatal("integration adopted a mismatched successful reservation response", err)
 	}

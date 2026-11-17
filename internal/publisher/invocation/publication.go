@@ -37,16 +37,16 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	var recorder *clientstate.InspectionRecorder
 	var localDemo *demo.Server
 	var cleanup func() error
-	ctx, shutdownDeadline, joinShutdown := publicationShutdown(ctx)
+	ctx, shutdownDeadline, shutdownContext, joinShutdown := publicationShutdown(ctx)
 	defer joinShutdown()
-	var stopIntegrations func()
+	var stopIntegrations func() error
 	// the service operation joins its workers before returning. drain its
 	// observations and remove temporary state before finishing this journal.
 	defer func() {
 		finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), shutdownDeadline())
 		defer cancel()
 		if stopIntegrations != nil {
-			stopIntegrations()
+			result = errors.Join(result, stopIntegrations())
 		}
 		if recorder != nil {
 			result = errors.Join(result, recorder.Close(finish))
@@ -127,6 +127,8 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	var native *publisheridentity.Native
 	var saved controlv1.Service
 	var cfg publisherservice.RunConfig
+	var authenticated *auth.Client
+	var selectedTeam string
 	if guest != nil {
 		output.configureBrowser(false)
 		native, saved, cleanup, err = prepareGuestDemoService(ctx, state, server, *guest, flags, address, shutdownDeadline)
@@ -135,7 +137,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 			return err
 		}
 	} else {
-		authenticated, err := flags.Authenticate(ctx, state, server, flags.AccessToken)
+		authenticated, err = flags.Authenticate(ctx, state, server, flags.AccessToken)
 		if err != nil {
 			return err
 		}
@@ -148,6 +150,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		if err != nil {
 			return err
 		}
+		selectedTeam = services.teamID
 		if flags.Ephemeral {
 			native, _, err = publisheridentity.EnsureNamespace(ctx, profile, authenticated.Control, authenticated.Authority, services.teamID, services.domainID, services.namespace)
 			if err != nil {
@@ -233,6 +236,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	}
 	cfg.Control, cfg.State, cfg.Access = native, profile, native.Access
 	cfg.ShutdownDeadline = shutdownDeadline
+	cfg.ShutdownContext = shutdownContext
 	cfg.PublisherIdentityID, cfg.PublisherGrantID, cfg.PublisherKeyID = native.PublisherIdentityID(), native.PublisherGrantID(), native.PublisherKeyID()
 	cfg.ServiceID, cfg.Metadata = saved.Id, publisheridentity.ServiceMetadata(saved)
 	cfg.Target, cfg.ProjectRoot, cfg.ProjectService = plan.Target, flags.ProjectRoot, flags.Service
@@ -260,18 +264,16 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 			output.setGuestShare(link)
 		}
 	} else {
-		if project.Config.OAuth || len(project.Config.Webhooks) != 0 || len(project.Config.Aliases) != 0 {
-			if project.Root == "" {
-				worktree, err := clientproject.ResolveWorktree(ctx, flags.ProjectRoot)
-				if err != nil {
-					return err
-				}
-				project.Root, project.Worktree = flags.ProjectRoot, worktree
-			}
-			stopIntegrations, err = attachRuntimeIntegrations(ctx, state, project.Project, publisherapp.Service{Name: flags.Service, Target: plan.Target}, tunnel, &cfg)
+		if projectHasIntegrations(project.Project) && project.Root == "" {
+			worktree, err := clientproject.ResolveWorktree(ctx, flags.ProjectRoot)
 			if err != nil {
 				return err
 			}
+			project.Root, project.Worktree = flags.ProjectRoot, worktree
+		}
+		stopIntegrations, err = attachIntegrations(ctx, state, project.Project, publisherapp.Service{Name: flags.Service, Target: plan.Target}, tunnel, &cfg, selectedTeam, authenticated)
+		if err != nil {
+			return err
 		}
 	}
 	if localDemo != nil {

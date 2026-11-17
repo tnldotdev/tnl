@@ -74,7 +74,11 @@ type RunConfig struct {
 	AdmitRequest      func(*http.Request) error
 	// http admission receives this serving run's validated facts, not mutable
 	// preparation state shared with another publication.
-	HTTPAdmitRequest                       func(*http.Request, HTTPRun) error
+	HTTPAdmitRequest func(*http.Request, HTTPRun) error
+	// preparation is read-only; its per-request claim commits only after visitor
+	// authorization and capacity admission, immediately before app forwarding.
+	// owner readiness probes do not prepare or commit application claims.
+	HTTPPrepareRequest                     func(*http.Request, HTTPRun) (func(context.Context) error, error)
 	ReadinessProof                         func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof
 	Feedback                               bool
 	PreviewID, ProjectService, ProjectRoot string

@@ -101,6 +101,16 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 			return cfg.HTTPAdmitRequest(request, run)
 		}
 	}
+	if cfg.HTTPPrepareRequest != nil {
+		if approved.Protocol != controlv1.ServiceProtocolHTTP {
+			return nil, ErrPrivateStream
+		}
+		run := HTTPRun{ServiceID: preparation.ServiceId, RunID: preparation.ServiceRunId,
+			Number: preparation.RunNumber, Hostname: preparation.Hostname}
+		prepared.prepareRequest = func(request *http.Request) (func(context.Context) error, error) {
+			return cfg.HTTPPrepareRequest(request, run)
+		}
+	}
 	prepared.managedPublic = approved.Endpoint.Public
 	prepared.metadataRevision = approved.TrustRevision
 	prepared.targetResolver = cfg.TargetResolver
@@ -205,7 +215,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		httpFrontend, closeHTTP, err = PrepareHTTP(ctx, HTTP{
 			AuditSink:      audit,
 			InspectionMode: config.InspectionMode, ObserveSummary: config.ObserveSummary,
-			AdmitRequest: prepared.admitRequest, ReadinessProof: proof,
+			AdmitRequest: prepared.admitRequest, PrepareRequest: prepared.prepareRequest, ReadinessProof: proof,
 			ResponseHooks: prepared.httpResponseHooks,
 			Feedback:      config.Feedback, PreviewID: config.PreviewID,
 			PublicEndpoint: prepared.managedPublic, BrowserLoginAvailable: config.BrowserLoginAvailable,

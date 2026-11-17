@@ -13,6 +13,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
+	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -20,7 +21,7 @@ import (
 // RequestLimits is the run-owned request budget, shared across visitor streams.
 // the service run supplies it; a stream never creates a separate budget.
 type RequestLimits interface {
-	Admit(http.ResponseWriter, *http.Request) (func(), bool)
+	Reserve(http.ResponseWriter, *http.Request) (*requestlimit.Reservation, bool)
 	Limits() applicationlimits.Limits
 }
 
@@ -32,10 +33,18 @@ func targetConnections(limits RequestLimits) int {
 }
 
 func admitRequest(limits RequestLimits, w http.ResponseWriter, r *http.Request) (func(), bool) {
-	if limits == nil {
-		return func() {}, true
+	reservation, ok := reserveRequest(limits, w, r)
+	if !ok {
+		return nil, false
 	}
-	return limits.Admit(w, r)
+	return reservation.Finish, true
+}
+
+func reserveRequest(limits RequestLimits, w http.ResponseWriter, r *http.Request) (*requestlimit.Reservation, bool) {
+	if limits == nil {
+		return &requestlimit.Reservation{}, true
+	}
+	return limits.Reserve(w, r)
 }
 
 func DenyHTTP(w http.ResponseWriter, r *http.Request, status int) {

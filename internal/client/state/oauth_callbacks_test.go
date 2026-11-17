@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -266,17 +267,108 @@ func TestOAuthCallbackConcurrentConsumptionHasOneWinner(t *testing.T) {
 		t.Fatalf("concurrent callback results: %v, %v", first, second)
 	}
 	start = make(chan struct{})
+	prepared := make(chan struct{}, 2)
 	for _, database := range []*Database{state, other} {
 		workers.Go(func() {
-			<-start
-			results <- database.AdmitOAuthReturn(t.Context(), scope.Server, input.Origin.Hostname, input.State,
+			consume, err := database.PrepareOAuthReturn(t.Context(), scope.Server, input.Origin.Hostname, input.State,
 				input.Destination.Path, input.Origin.ServiceID, input.Origin.RunNumber)
+			prepared <- struct{}{}
+			<-start
+			if err != nil {
+				results <- err
+				return
+			}
+			if consume == nil {
+				results <- errors.New("known return produced no claim")
+				return
+			}
+			results <- consume(t.Context())
 		})
 	}
+	<-prepared
+	<-prepared
 	close(start)
 	workers.Wait()
 	first, second = <-results, <-results
 	if !(first == nil && errors.Is(second, sql.ErrNoRows) || second == nil && errors.Is(first, sql.ErrNoRows)) {
 		t.Fatalf("concurrent final-hop results: %v, %v", first, second)
+	}
+}
+
+func TestOAuthReturnClaimRechecksDestinationAndHandoffIdentity(t *testing.T) {
+	for _, replacement := range []string{"none", "run", "scope", "stopped", "removed", "expired", "purged", "recreated"} {
+		t.Run(replacement, func(t *testing.T) {
+			state, _ := aliasTestDatabase(t)
+			scope := aliasTestScope(t)
+			tunnel, selection := aliasTestTunnel(t, state, scope, scope.ProjectKey, "main", true)
+			_, receiver, err := state.AliasCandidate(t.Context(), selection.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := SaveOAuthCallbackInput{
+				Scope:       OAuthCallbackScope{Server: scope.Server, Hostname: "oauth." + scope.Namespace, IntegrationScope: receiver.IntegrationScope},
+				Origin:      OAuthRedirectOrigin{Hostname: receiver.Hostname, ServiceID: receiver.ServiceID, RunNumber: receiver.PublishRunNumber},
+				Destination: OAuthCallbackDestination{TunnelID: tunnel.ID(), Path: "/callback"}, State: "prepared-return",
+			}
+			if err := state.SaveOAuthCallback(t.Context(), input); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := state.ConsumeOAuthCallback(t.Context(), input.Scope.Server, input.Scope.Hostname, input.State, input.Destination.Path); err != nil {
+				t.Fatal(err)
+			}
+			prepare := func(value, path string) (func(context.Context) error, error) {
+				return state.PrepareOAuthReturn(t.Context(), scope.Server, receiver.Hostname, value, path, receiver.ServiceID, receiver.PublishRunNumber)
+			}
+			for _, request := range []struct{ state, path string }{{"unknown", "/callback"}, {input.State, "/unrelated"}} {
+				if consume, err := prepare(request.state, request.path); err != nil || consume != nil {
+					t.Fatal("unrelated app request acquired a claim", err)
+				}
+			}
+			first, err := prepare(input.State, input.Destination.Path)
+			if err != nil || first == nil {
+				t.Fatal("valid return did not prepare", err)
+			}
+			second, err := prepare(input.State, input.Destination.Path)
+			if err != nil || second == nil {
+				t.Fatal("read-only preparation spent the return", err)
+			}
+			switch replacement {
+			case "run":
+				err = tunnel.SetReady(t.Context(), receiver.PublicURL, receiver.PublishRunNumber+1)
+			case "scope":
+				next := receiver.IntegrationScope
+				next.Namespace = "other." + next.Namespace
+				err = tunnel.SetIntegrationScope(t.Context(), next)
+			case "stopped":
+				err = tunnel.Finish(t.Context(), nil)
+			case "removed":
+				_, err = state.db.ExecContext(t.Context(), `DELETE FROM local_tunnels WHERE id=?`, tunnel.ID())
+			case "expired":
+				now := state.now()
+				state.now = func() time.Time { return now.Add(11 * time.Minute) }
+			case "purged":
+				_, err = state.db.ExecContext(t.Context(), `DELETE FROM oauth_callback_handoffs`)
+			case "recreated":
+				_, err = state.db.ExecContext(t.Context(), `UPDATE oauth_callback_handoffs SET created_at=created_at+1, expires_at=expires_at+1`)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = first(t.Context())
+			if replacement != "none" {
+				if !errors.Is(err, sql.ErrNoRows) {
+					t.Fatal("prepared return reached a changed destination or handoff", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal("current return could not commit", err)
+			}
+			for _, consume := range []func(context.Context) error{first, second} {
+				if err := consume(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+					t.Fatal("a prepared return committed twice", err)
+				}
+			}
+		})
 	}
 }
