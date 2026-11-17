@@ -29,11 +29,20 @@ func NewRequestID() string {
 
 // Write sends an authored problem once and returns the ID for operational logs.
 func Write(response http.ResponseWriter, status int, code, title, detail, caseID string) string {
+	return WriteWithDetails(response, status, code, title, detail, caseID, nil)
+}
+
+// WriteWithDetails sends the same envelope with diagnostic fields approved by
+// the serving API. callers own field selection and validation, not wire framing.
+func WriteWithDetails(response http.ResponseWriter, status int, code, title, detail, caseID string, details map[string]any) string {
+	if details == nil {
+		details = map[string]any{}
+	}
 	requestID := NewRequestID()
 	response.Header().Set("Link", "<"+HelpURL(code, caseID)+">; rel=\"help\"")
 	httpjson.WriteProblem(response, status, Problem{
 		Type: URL(code), Title: title, Status: status, Code: code, Detail: detail,
-		RequestID: requestID, Details: map[string]any{},
+		RequestID: requestID, Details: details,
 	})
 	return requestID
 }

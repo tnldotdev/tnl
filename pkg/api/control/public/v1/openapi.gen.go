@@ -3068,8 +3068,10 @@ type PreviewSummary struct {
 
 // Problem defines model for Problem.
 type Problem struct {
-	Code      ProblemCode             `json:"code"`
-	Detail    string                  `json:"detail"`
+	Code   ProblemCode `json:"code"`
+	Detail string      `json:"detail"`
+
+	// Details Optional code-specific diagnostic fields. A not_found problem with HTTP status 404 may include allowed_namespace, a canonical ASCII hostname of at most 253 bytes from the current actor's authorized namespace. It is omitted after membership loss and when the namespace denial includes an independent fault. It never identifies the rejected hostname's owner or whether a foreign service exists. Clients must validate this field before displaying it and ignore unknown detail keys.
 	Details   *map[string]interface{} `json:"details,omitempty"`
 	RequestId string                  `json:"request_id"`
 	RetryAt   *time.Time              `json:"retry_at,omitempty"`

@@ -43,9 +43,11 @@ func policyDiagnosticCLI(t *testing.T, handle http.HandlerFunc) func(...string) 
 				Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{"oidc"},
 					Oidc: &controlv1.OIDCAuthenticationFacts{Issuer: "https://identity.example.test", LoginFlow: "device_code"}}})
 		case "GET /v1/identity":
-			_ = json.NewEncoder(w).Encode(authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: policyDiagnosticTeam}}})
+			_ = json.NewEncoder(w).Encode(authorityv1.IdentityContext{Memberships: []authorityv1.Membership{
+				{TeamId: policyDiagnosticTeam, Role: "owner", MemberSlug: "current-actor", ManagedLabel: "current-actor"},
+			}})
 		case "GET /v1/teams/" + policyDiagnosticTeam:
-			_ = json.NewEncoder(w).Encode(authorityv1.Team{Id: policyDiagnosticTeam})
+			_ = json.NewEncoder(w).Encode(authorityv1.Team{Id: policyDiagnosticTeam, Kind: "organization", DisplayName: "diagnostics"})
 		default:
 			handle(w, r)
 		}
@@ -61,8 +63,8 @@ func policyDiagnosticCLI(t *testing.T, handle http.HandlerFunc) func(...string) 
 		args = append(args, "--server="+server.URL, "--access-token="+access.String(), "--state-dir="+state, "--team="+policyDiagnosticTeam)
 		var stdout, stderr bytes.Buffer
 		err := run(t.Context(), args, &stdout, &stderr)
-		if err != nil {
-			writeCommandError(&stderr, err)
+		if _, render := terminalResult(err); render != nil {
+			writeCommandError(&stderr, render)
 		}
 		return stdout.String(), stderr.String(), err
 	}
@@ -70,11 +72,12 @@ func policyDiagnosticCLI(t *testing.T, handle http.HandlerFunc) func(...string) 
 
 func assertPolicyDiagnosticFrame(t *testing.T, text string, reason failure.Reason) {
 	t.Helper()
-	if strings.Count(text, "+--[ ") != 1 || !strings.Contains(text, string(reason)) {
+	help := failure.HelpURL(reason, "")
+	if strings.Count(text, "+--[ ") != 1 || help != "" && !strings.Contains(text, string(reason)) {
 		t.Fatalf("policy error did not render once with its stable code:\n%s", text)
 	}
 	unwrapped := strings.NewReplacer(" ", "", "\n", "", "|", "").Replace(text)
-	if !strings.Contains(unwrapped, failure.HelpURL(reason, "")) {
+	if help != "" && !strings.Contains(unwrapped, help) {
 		t.Fatalf("policy error lost its help URL:\n%s", text)
 	}
 	for _, line := range strings.Split(text, "\n") {

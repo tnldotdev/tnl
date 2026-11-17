@@ -15,7 +15,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -59,8 +61,11 @@ func (h *handler) serviceVisitor(w http.ResponseWriter, r *http.Request) (servic
 func serviceVisitorError(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	var hostname *controlstate.ServiceHostnameError
 	if errors.As(err, &hostname) && hostname != nil {
-		if failure.Only(err, hostname) {
-			writeProblem(w, 404, controlv1.NotFound, hostname.Error())
+		namespace, validation := naming.CanonicalizeHostname(hostname.Namespace)
+		if failure.Only(err, hostname) && validation == nil && namespace == hostname.Namespace {
+			title := hostname.Error()
+			failureproblem.WriteWithDetails(w, http.StatusNotFound, string(controlv1.NotFound), title, title, "",
+				map[string]any{"allowed_namespace": namespace})
 		} else {
 			writeInternalStateProblem(ctx, w, operation, err)
 		}

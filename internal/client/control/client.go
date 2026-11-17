@@ -318,6 +318,10 @@ func responseError(status int, header http.Header, payload []byte) (result error
 	case controlv1.GuestIssuanceLimited:
 		return ErrGuestIssuanceLimited
 	case controlv1.NotFound:
+		cause := &ProblemError{Status: status, Problem: problem}
+		if namespace, ok := serviceNamespace(cause); ok {
+			return &ServiceNamespaceError{problem: cause, namespace: namespace}
+		}
 		return ErrNotFound
 	case controlv1.NameUnavailable:
 		return ErrNameUnavailable

@@ -293,7 +293,10 @@ class Problem(BaseModel):
     request_id: Annotated[str, Field(min_length=1)]
     detail: Annotated[str, Field(min_length=1)]
     retry_at: datetime | None = None
-    details: dict[str, Any] | None = None
+    details: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional code-specific diagnostic fields. A not_found problem with HTTP status 404 may include allowed_namespace, a canonical ASCII hostname of at most 253 bytes from the current actor's authorized namespace. It is omitted after membership loss and when the namespace denial includes an independent fault. It never identifies the rejected hostname's owner or whether a foreign service exists. Clients must validate this field before displaying it and ignore unknown detail keys.",
+    )
 
 
 class TeamIdQuery(RootModel[ResourceId]):

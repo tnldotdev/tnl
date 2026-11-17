@@ -72,6 +72,13 @@ func TestIntegrationServiceNamespaceHintUsesOnlyCurrentActorAuthority(t *testing
 			strings.Contains(problem.Title, namespace) != hint {
 			t.Fatal("namespace error did not follow current actor authority", status, string(wire))
 		}
+		var allowed any
+		if problem.Details != nil {
+			allowed = (*problem.Details)["allowed_namespace"]
+		}
+		if hint && allowed != namespace || !hint && allowed != nil {
+			t.Fatal("structured namespace hint did not follow current actor authority", status, string(wire))
+		}
 		for _, private := range []string{ownerNamespace, saved.ID, f.actor, member.ID} {
 			if strings.Contains(string(wire), private) {
 				t.Fatal("namespace denial disclosed another owner or protected identity")
