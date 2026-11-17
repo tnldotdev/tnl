@@ -34,7 +34,7 @@ ORDER BY issuance.created_revision DESC LIMIT 1;
 
 -- name: GetPrivateDNSChallengeContext :one
 SELECT service.id AS service_id,service.team_id,orders.certificate_domain_id AS domain_id,
-    domain.dns_authority_reference,orders.certificate_scope AS canonical_hostname,
+    domain.dns_authority_reference,orders.certificate_identifiers,
     domain.canonical_domain,auth.id AS authorization_id,auth.identifier,
     auth.challenge_digest,auth.presentation_reference,auth.state
 FROM control.acme_authorizations auth

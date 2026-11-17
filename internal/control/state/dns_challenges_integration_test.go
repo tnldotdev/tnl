@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,6 +35,54 @@ func assertDNSChallengeSubjectBinding(t *testing.T, database *Database, expected
 		tc.change(&crossed)
 		if _, err := database.GetDNSChallengeContextForSubject(t.Context(), crossed, challenge.AuthorizationID); !errors.Is(err, ErrDNSChallengeNotFound) {
 			t.Fatalf("crossed DNS challenge %s accepted: %v", tc.name, err)
+		}
+	}
+}
+
+func TestIntegrationRunAliasDNSChallengesUseCapturedCertificateNames(t *testing.T) {
+	f, parent, declaration := newRunAliasServiceFixture(t)
+	f.run = f.publish(t, f.service)
+	var plan CertificatePlan
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT certificate_cache_key,certificate_scope,certificate_identifiers
+	    FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&plan.CacheKey, &plan.Scope, &plan.Identifiers); err != nil {
+		t.Fatal(err)
+	}
+	plan.ChallengeMethod = "dns-01"
+	if len(plan.Identifiers) != 2 || !slices.Contains(plan.Identifiers, f.run.RunHostname) ||
+		!slices.Contains(plan.Identifiers, f.service.Endpoint.Hostname) {
+		t.Fatal("fixture did not capture the two exact certificate names", plan)
+	}
+	work := createPlanIssuanceWork(t, f.database, f.now, f.run, plan, false, nil)
+	for _, authorization := range work.Authorizations {
+		challenge, err := f.database.GetDNSChallengeContextForSubject(t.Context(), work.Subject, authorization.ID)
+		if err != nil || challenge.Identifier != authorization.Identifier {
+			t.Fatal("approved certificate name lost DNS challenge authority", authorization.Identifier, err)
+		}
+		assertDNSChallengeSubjectBinding(t, f.database, work.Subject, challenge)
+	}
+	// cleanup uses the order's captured names even after the endpoint setting
+	// changes. current configuration must not strand an approved TXT record.
+	declaration.RunAliasParent = ""
+	if _, err := f.database.ConfigureService(t.Context(), f.service.ID, f.project.ActorID, f.service.ServiceMetadata,
+		&declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
+		t.Fatal(err)
+	}
+	for _, authorization := range work.Authorizations {
+		if _, err := f.database.GetDNSChallengeContextForSubject(t.Context(), work.Subject, authorization.ID); err != nil {
+			t.Fatal("withdrawal stranded captured DNS cleanup authority", err)
+		}
+	}
+	authorization := work.Authorizations[0]
+	for _, identifier := range []string{parent, "*." + parent, "unapproved." + parent, "*." + f.service.Endpoint.Hostname} {
+		if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.acme_authorizations SET identifier=$2 WHERE id=$1`,
+			authorization.ID, identifier); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.database.GetDNSChallengeContextForSubject(t.Context(), work.Subject, authorization.ID); err == nil {
+			t.Fatal("DNS challenge escaped its captured certificate names", identifier)
 		}
 	}
 }
