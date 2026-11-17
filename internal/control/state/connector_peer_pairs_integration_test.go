@@ -161,6 +161,10 @@ func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPai
 func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	d, now, _, leases := newConnectorPairPrerequisites(t)
 	ctx := t.Context()
+	const servingAllowance = 90 * time.Second
+	if err := d.ConfigureControlOutageTolerance(servingAllowance); err != nil {
+		t.Fatal(err)
+	}
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	visitor := WithControlPrincipal(ctx, principal)
@@ -217,8 +221,19 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if state, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil || state.State != "ready" {
+	ready, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0})
+	if err != nil || ready.State != "ready" {
 		t.Fatal("service run is not ready", err)
+	}
+	wantServingUntil := now.Add(servingAllowance)
+	if !ready.ExpiresAt.Equal(now.Add(45*time.Second)) || !ready.ObservedAt.Equal(now) || !ready.ServingUntil.Equal(wantServingUntil) {
+		t.Fatal("serving allowance changed run liveness or its fixed serving deadline")
+	}
+	var savedLiveness, savedServing, certificateUntil time.Time
+	if err := d.pool.QueryRow(ctx, `SELECT publisher_expires_at,serving_until,certificate_expires_at FROM control.service_runs WHERE id=$1`, run.RunID).
+		Scan(&savedLiveness, &savedServing, &certificateUntil); err != nil ||
+		!savedLiveness.Equal(ready.ExpiresAt) || !savedServing.Equal(wantServingUntil) || !certificateUntil.Equal(now.Add(time.Hour)) {
+		t.Fatal("ready run did not persist its independent liveness, serving, and certificate bounds", err)
 	}
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -244,8 +259,30 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ID == "" || first.Key == "" || first.DeliveryGeneration < 1 || !first.ExpiresAt.After(now) || first.ExpiresAt.After(run.ExpiresAt) || first.Relays[0].RelayLease.RelayServiceID == first.Relays[1].RelayLease.RelayServiceID {
-		t.Fatal("pair escaped its exact ready run and two distinct leases")
+	if first.ID == "" || first.Key == "" || first.DeliveryGeneration < 1 ||
+		first.ServiceID != service.ID || first.ServiceRunID != run.RunID || first.RunNumber != run.RunNumber ||
+		first.PublisherIdentityID != publisher.ID || first.Subject != request.Subject || first.Relays != request.ExpectedRelays ||
+		first.Relays[0].RelayLease.RelayServiceID == first.Relays[1].RelayLease.RelayServiceID {
+		t.Fatal("pair escaped its exact ready run, enrolled subject, or two distinct leases")
+	}
+	// the run's serving allowance is earlier than the device's two-minute cap,
+	// but later than publisher liveness. neither boundary may replace the other.
+	t.Logf("pair bounds: liveness=%s serving=%s certificate=%s pair=%s",
+		savedLiveness, savedServing, certificateUntil, first.ExpiresAt)
+	if !first.ExpiresAt.Equal(wantServingUntil) || !first.ExpiresAt.After(savedLiveness) ||
+		first.ExpiresAt.After(certificateUntil) || first.ExpiresAt.After(now.Add(2*time.Minute)) {
+		t.Fatal("pair did not retain the earlier fixed serving bound independently of run liveness")
+	}
+	var savedParent string
+	var savedPublicKey []byte
+	var savedExpiry, accessUntil, refreshUntil time.Time
+	if err := d.pool.QueryRow(ctx, `SELECT pair.parent_control_session_id,pair.owner_public_key,pair.expires_at,
+		parent.access_expires_at,parent.refresh_expires_at FROM control.connector_peer_pairs pair
+		JOIN control.control_sessions parent ON parent.id=pair.parent_control_session_id WHERE pair.id=$1`, first.ID).
+		Scan(&savedParent, &savedPublicKey, &savedExpiry, &accessUntil, &refreshUntil); err != nil ||
+		savedParent != principal.SessionID || !bytes.Equal(savedPublicKey, public) || !savedExpiry.Equal(wantServingUntil) ||
+		first.ExpiresAt.After(accessUntil) || first.ExpiresAt.After(refreshUntil) {
+		t.Fatal("pair lost its exact saved session, enrolled key, or parent expiry bounds", err)
 	}
 	assertNativeDeliveryID(t, d, first)
 	t.Run("stable owner replacement", func(t *testing.T) { assertNativeStateStableOwners(t, d, visitor, request, private, run, now) })
@@ -408,7 +445,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	clipped, err := d.PrepareConnectorPeerPair(visitor, request, now)
-	if err != nil || clipped.ExpiresAt.After(grantDeadline) || clipped.ID != first.ID || clipped.DeliveryGeneration != first.DeliveryGeneration {
+	if err != nil || !clipped.ExpiresAt.Equal(grantDeadline) || clipped.ID != first.ID || clipped.DeliveryGeneration != first.DeliveryGeneration {
 		t.Fatal("retry outlived the publisher grant's earlier deadline", err)
 	}
 	var savedDeadline time.Time
@@ -547,19 +584,32 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	if _, err := d.pool.Exec(ctx, `UPDATE control.service_connection_slots SET connection_assignment_revision=connection_assignment_revision-1 WHERE publisher_connection_id=$1`, first.Relays[0].PublisherConnectionID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.pool.Exec(ctx, `UPDATE control.relay_leases SET lease_expires_at=$2 WHERE relay_id=$1`, first.Relays[0].RelayLease.RelayID, now.Add(time.Millisecond)); err != nil {
+	relayServingUntil := now.Add(2 * time.Second)
+	if _, err := d.pool.Exec(ctx, `UPDATE control.relay_leases SET lease_expires_at=$2,serving_until=$3 WHERE relay_id=$1`,
+		first.Relays[0].RelayLease.RelayID, now.Add(time.Millisecond), relayServingUntil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.PrepareConnectorPeerPair(visitor, request, now.Add(time.Second)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("expired relay lease recovered pair", err)
 	}
-	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testConnectorLegProof(t, second, 0, now.Add(time.Second), private), now.Add(time.Second)); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("expired relay lease recovered relay key", err)
+	// new pair preparation needs a live lease; an exact retained relay claim
+	// instead uses its confirmed serving bound, never an open-ended allowance.
+	if claim, err := testClaimConnectorPeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP,
+		testConnectorLegProof(t, second, 0, now.Add(time.Second), private), now.Add(time.Second)); err != nil ||
+		claim.PairID != second.ID || claim.DeliveryGeneration != second.DeliveryGeneration || claim.DeliveryID != second.DeliveryID ||
+		claim.Key != second.Key || claim.SourceIP != sourceIP || !claim.ExpiresAt.Equal(relayServingUntil) {
+		t.Fatal("retained relay claim lost exact source or escaped its serving bound after liveness expiry", err)
 	}
-	if err := d.RevokeVisitorDevice(visitor, principal.IdentityID, device.ID, now); err != nil {
+	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP,
+		testConnectorLegProof(t, second, 0, relayServingUntil, private), relayServingUntil); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("expired relay serving authority recovered relay key", err)
+	}
+	revokedAt := now.Add(time.Second + time.Microsecond)
+	if err := d.RevokeVisitorDevice(visitor, principal.IdentityID, device.ID, revokedAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, testConnectorLegProof(t, second, 0, now.Add(5*time.Microsecond), private), now.Add(5*time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP,
+		testConnectorLegProof(t, second, 0, revokedAt, private), revokedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked connector subject recovered relay key", err)
 	}
 	if _, err := d.PrepareConnectorPeerPair(visitor, request, now); err == nil {
