@@ -285,11 +285,15 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		return result, ErrServiceAccess
 	}
 	q := controlstatedb.New(tx)
+	nameScope := "member/" + actorID + "/" + placement.WorktreeKey
 	var selectedOwner serviceSourceOwner
 	if placement.Reserve {
 		selectedOwner, err = d.serviceReservationOwner(ctx, tx, teamID, actorID, name, placement, configuration, clock.current())
 		if err != nil {
 			return result, err
+		}
+		if selectedOwner.scope == NamespaceScopeShared {
+			nameScope = "shared"
 		}
 	}
 	receipt, err := q.GetServiceCreationRequest(ctx, controlstatedb.GetServiceCreationRequestParams{CreatedByIdentityID: actorID, IdempotencyKey: key})
@@ -308,7 +312,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 	if placement.Reserve {
 		if existing == "" {
 			candidates, readErr := q.ListServiceReservationCandidates(ctx, controlstatedb.ListServiceReservationCandidatesParams{
-				TeamID: text(teamID), Name: name, Hostname: placement.Hostname,
+				TeamID: text(teamID), Name: name, NameScope: nameScope, Hostname: placement.Hostname,
 			})
 			if readErr != nil {
 				return result, readErr
@@ -388,8 +392,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 	if err = requireNewServiceWork(ctx, controlstatedb.New(tx), MaintenanceControlServiceCreation); err != nil {
 		return result, err
 	}
-	nameScope := "member/" + actorID + "/" + placement.WorktreeKey
-	if placement.Hostname != "" && placement.SourceKey == "" {
+	if !placement.Reserve && placement.Hostname != "" && placement.SourceKey == "" {
 		domain := placement.DomainID
 		if domain == "" {
 			if err := tx.QueryRow(ctx, `SELECT COALESCE(default_domain_id,'') FROM control.teams WHERE id=$1`, teamID).Scan(&domain); err != nil {

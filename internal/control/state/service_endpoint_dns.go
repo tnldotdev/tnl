@@ -30,6 +30,8 @@ func reconcileServiceEndpoint(ctx context.Context, tx pgx.Tx, endpoint serviceEn
 	if endpoint.Automation && endpoint.Public {
 		state, available = ServiceEndpointDNSPending, &now
 	}
+	// a replacement must not discard the predecessor's provider ownership
+	// receipt. same-source handoff can skip quarantine, but not DNS removal.
 	var hostname string
 	err := tx.QueryRow(ctx, `INSERT INTO control.service_endpoints(hostname,service_id,deployment_id,domain_id,namespace,ingress_pool_id,public,dns_automation,dns_authority_reference,dns_state,dns_available_at,created_at,local_source_key)
 	    SELECT $1,$2,$3,domain.id,$5,$6,$7,$12,domain.dns_authority_reference,$8,$9,$10,$11 FROM control.domains domain WHERE domain.id=$4
@@ -53,9 +55,11 @@ func reconcileServiceEndpoint(ctx context.Context, tx pgx.Tx, endpoint serviceEn
 	        ELSE EXCLUDED.dns_available_at END,
 	      dns_revision=control.service_endpoints.dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL
 	    WHERE control.service_endpoints.service_id=EXCLUDED.service_id
-	      OR(control.service_endpoints.deployment_id=EXCLUDED.deployment_id AND EXCLUDED.deployment_id IS NOT NULL
+	      OR(control.service_endpoints.dns_state IN('unmanaged','removed')
+	        AND control.service_endpoints.deployment_id=EXCLUDED.deployment_id AND EXCLUDED.deployment_id IS NOT NULL
 	        AND EXISTS(SELECT 1 FROM control.services previous WHERE previous.id=control.service_endpoints.service_id AND previous.deleted_at IS NOT NULL))
-	      OR(control.service_endpoints.local_source_key=EXCLUDED.local_source_key AND EXCLUDED.local_source_key<>''
+	      OR(control.service_endpoints.dns_state IN('unmanaged','removed')
+	        AND control.service_endpoints.local_source_key=EXCLUDED.local_source_key AND EXCLUDED.local_source_key<>''
 	        AND EXISTS(SELECT 1 FROM control.services previous WHERE previous.id=control.service_endpoints.service_id AND previous.deleted_at IS NOT NULL))
 	      OR(control.service_endpoints.retired_at IS NOT NULL AND control.service_endpoints.reusable_after<=$10 AND control.service_endpoints.dns_state='removed'
 	        AND EXISTS(SELECT 1 FROM control.service_namespace_claims claim WHERE claim.namespace=control.service_endpoints.namespace AND claim.deployment_id=EXCLUDED.deployment_id AND claim.retired_at IS NULL))

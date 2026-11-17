@@ -87,8 +87,7 @@ func (d *Database) updateAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if s.RequirePostQuantum != nil && *s.RequirePostQuantum != row.RequirePostQuantum {
 		// visitor TLS is captured for each run. changing it ends that run
 		// without changing publisher-to-target trust or a broader grant.
-		if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET state='closed',closed_at=$2
-			WHERE service_id=$1 AND closed_at IS NULL`, id, now); err != nil {
+		if err = closeServiceRuns(ctx, tx, id, now); err != nil {
 			return err
 		}
 	}
@@ -130,8 +129,7 @@ func (d *Database) revokeProjectResourcePublishers(ctx context.Context, tx pgx.T
 	}
 	// a changed binding ends every affected run, including those using a
 	// registered credential. that credential may still cover other services.
-	if _, err := tx.Exec(ctx, `UPDATE control.service_runs SET state='closed',closed_at=$2
-		WHERE service_id=$1 AND closed_at IS NULL`, s.ServiceID.String, now); err != nil {
+	if err := closeServiceRuns(ctx, tx, s.ServiceID.String, now); err != nil {
 		return err
 	}
 	rows, err := tx.Query(ctx, `SELECT id,publisher_identity_id FROM control.publisher_grants WHERE revoked_at IS NULL AND service_id=$1 ORDER BY publisher_identity_id,id`, s.ServiceID)
@@ -185,7 +183,7 @@ func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *cont
 		if _, err := q.LockService(ctx, s.ServiceID.String); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE control.service_runs SET state='closed',closed_at=$2 WHERE service_id=$1 AND closed_at IS NULL`, s.ServiceID.String, now); err != nil {
+		if err := closeServiceRuns(ctx, tx, s.ServiceID.String, now); err != nil {
 			return err
 		}
 		if _, err := q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: s.ServiceID.String, TeamID: text(s.TeamID), Now: timestamptz(now)}); err != nil {

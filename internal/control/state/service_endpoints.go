@@ -53,10 +53,16 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 		}
 		var claim string
 		if err := tx.QueryRow(ctx, `INSERT INTO control.service_namespace_claims(namespace,deployment_id,domain_id,created_at)
-		    VALUES($1,$2,$3,$4) ON CONFLICT(namespace) DO UPDATE SET namespace=EXCLUDED.namespace
-		    WHERE control.service_namespace_claims.deployment_id=EXCLUDED.deployment_id
+		    VALUES($1,$2,$3,$4) ON CONFLICT(namespace) DO UPDATE SET
+		      deployment_id=EXCLUDED.deployment_id,domain_id=EXCLUDED.domain_id,
+		      created_at=CASE WHEN control.service_namespace_claims.retired_at IS NULL
+		        THEN control.service_namespace_claims.created_at ELSE EXCLUDED.created_at END,
+		      local_source_key='',membership_id=NULL,owner_team_id=NULL,retired_at=NULL,reusable_after=NULL
+		    WHERE (control.service_namespace_claims.deployment_id=EXCLUDED.deployment_id
 		      AND control.service_namespace_claims.domain_id=EXCLUDED.domain_id
-		      AND control.service_namespace_claims.retired_at IS NULL RETURNING namespace`,
+		      AND control.service_namespace_claims.retired_at IS NULL)
+		      OR control.service_namespace_reusable(control.service_namespace_claims.namespace,$4)
+		    RETURNING namespace`,
 			hostname, deployment, domain, now).Scan(&claim); err != nil {
 			return publisherLookupError(err, ErrServiceConflict)
 		}

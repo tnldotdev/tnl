@@ -1262,20 +1262,26 @@ func (q *Queries) ListServiceInvitations(ctx context.Context, arg ListServiceInv
 const listServiceReservationCandidates = `-- name: ListServiceReservationCandidates :many
 SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
 WHERE team_id=$1 AND deleted_at IS NULL
-    AND (name=$2 OR certificate_hostname=$3)
+    AND (name=$2 AND name_scope=$3 OR certificate_hostname=$4)
 ORDER BY id LIMIT 2
 `
 
 type ListServiceReservationCandidatesParams struct {
-	TeamID   pgtype.Text
-	Name     string
-	Hostname string
+	TeamID    pgtype.Text
+	Name      string
+	NameScope string
+	Hostname  string
 }
 
 // current exact namespace authority is checked under the team guard before this
 // bounded point selection; it is never an administrator inventory fallback.
 func (q *Queries) ListServiceReservationCandidates(ctx context.Context, arg ListServiceReservationCandidatesParams) ([]ControlService, error) {
-	rows, err := q.db.Query(ctx, listServiceReservationCandidates, arg.TeamID, arg.Name, arg.Hostname)
+	rows, err := q.db.Query(ctx, listServiceReservationCandidates,
+		arg.TeamID,
+		arg.Name,
+		arg.NameScope,
+		arg.Hostname,
+	)
 	if err != nil {
 		return nil, err
 	}

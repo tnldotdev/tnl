@@ -213,7 +213,7 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 	}
 	visitorTLSChanged := configuration != nil && row.RequirePostQuantum != (declaration.RequirePostQuantum != nil && *declaration.RequirePostQuantum)
 	if changed || visitorTLSChanged {
-		if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET state='closed', closed_at=$2 WHERE service_id=$1 AND closed_at IS NULL`, serviceID, now); err != nil {
+		if err = closeServiceRuns(ctx, tx, serviceID, now); err != nil {
 			return result, err
 		}
 	}

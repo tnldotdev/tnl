@@ -96,7 +96,7 @@ func (d *Database) updateLocalService(ctx context.Context, tx pgx.Tx, q *control
 		return err
 	}
 	if !serviceMetadataMatches(saved, ServiceMetadata{Protocol: s.Protocol, TLS: trust}) {
-		if _, err := tx.Exec(ctx, `UPDATE control.service_runs SET state='closed',closed_at=$2 WHERE service_id=$1 AND closed_at IS NULL`, row.ID, now); err != nil {
+		if err := closeServiceRuns(ctx, tx, row.ID, now); err != nil {
 			return err
 		}
 	}

@@ -19,7 +19,7 @@ VALUES(sqlc.arg(created_by_identity_id),sqlc.arg(idempotency_key),sqlc.arg(servi
 -- bounded point selection; it is never an administrator inventory fallback.
 SELECT * FROM control.services
 WHERE team_id=sqlc.arg(team_id) AND deleted_at IS NULL
-    AND (name=sqlc.arg(name) OR certificate_hostname=sqlc.arg(hostname))
+    AND (name=sqlc.arg(name) AND name_scope=sqlc.arg(name_scope) OR certificate_hostname=sqlc.arg(hostname))
 ORDER BY id LIMIT 2;
 
 -- name: GetService :one

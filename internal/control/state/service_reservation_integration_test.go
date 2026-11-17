@@ -169,3 +169,62 @@ func TestIntegrationExactReservationRejectsAllocationAndLocalAppAssociations(t *
 		t.Fatal("administrator exact reservation adopted a local-app source")
 	}
 }
+
+func TestIntegrationMemberReservationScopesServiceNames(t *testing.T) {
+	for _, secondName := range []string{"preview-b", "preview"} {
+		t.Run(secondName, func(t *testing.T) {
+			d, now, administrator, team := newAuthorityTeam(t)
+			aliceSession, alice := allocationVisitorMember(t, d, team.ID, administrator, "alice", TeamRoleMember, now)
+			bobSession, bob := allocationVisitorMember(t, d, team.ID, administrator, "bob", TeamRoleMember, now)
+			domain := deploymentCustomDomain(t, d, ApplyProjectConfigurationRequest{TeamID: team.ID, ActorID: administrator}, now)
+			declaration := &ProjectServiceConfiguration{Protocol: "http", Target: "app", Public: new(true)}
+			var first ServiceRecord
+			for i, input := range []struct {
+				session ControlSession
+				member  Membership
+				name    string
+			}{{aliceSession, alice, "preview"}, {bobSession, bob, secondName}} {
+				if input.member.Role != TeamRoleMember {
+					t.Fatal("reservation fixture requires ordinary members")
+				}
+				hostname := "preview." + input.member.MemberSlug + "." + domain.CanonicalDomain
+				placement := ServicePlacement{Reserve: true, DomainID: domain.ID, Hostname: hostname}
+				ctx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: input.member.IdentityID, SessionID: input.session.SessionID})
+				saved, err := d.CreateServiceAt(ctx, team.ID, input.member.IdentityID, input.name, "member-reserve-"+input.member.MemberSlug,
+					placement, now, ServiceMetadata{}, declaration)
+				if err != nil || saved.ID == "" || saved.Recovered || saved.Endpoint == nil || saved.Endpoint.Hostname != hostname {
+					t.Fatal("ordinary member could not reserve a scoped service name", saved, err)
+				}
+				if i == 0 {
+					first = saved
+					continue
+				}
+				if saved.ID == first.ID {
+					t.Fatal("same-name reservation adopted another member's service")
+				}
+				// a new operation still recovers only this member's exact service.
+				recovered, err := d.CreateServiceAt(ctx, team.ID, input.member.IdentityID, input.name, "member-recover-"+input.member.MemberSlug,
+					placement, now, ServiceMetadata{}, declaration)
+				if err != nil || !recovered.Recovered || recovered.ID != saved.ID {
+					t.Fatal("scoped reservation failed exact recovery", recovered, err)
+				}
+				placement.Hostname = "other." + input.member.MemberSlug + "." + domain.CanonicalDomain
+				if _, err := d.CreateServiceAt(ctx, team.ID, input.member.IdentityID, input.name, "same-scope-other-host",
+					placement, now, ServiceMetadata{}, declaration); !errors.Is(err, ErrServiceConflict) {
+					t.Fatal("reservation allowed a duplicate name in the same scope", err)
+				}
+				candidates, err := controlstatedb.New(d.pool).ListServiceReservationCandidates(ctx, controlstatedb.ListServiceReservationCandidatesParams{
+					TeamID: text(team.ID), Name: "different-name", NameScope: "member/" + input.member.IdentityID + "/", Hostname: first.Endpoint.Hostname,
+				})
+				if err != nil || len(candidates) != 1 || candidates[0].ID != first.ID {
+					t.Fatal("scoped name filtering removed the exact-host ownership fence", candidates, err)
+				}
+				placement.Hostname = first.Endpoint.Hostname
+				if _, err := d.CreateServiceAt(ctx, team.ID, input.member.IdentityID, "different-name", "foreign-exact-host",
+					placement, now, ServiceMetadata{}, declaration); err == nil {
+					t.Fatal("reservation adopted another member's exact hostname")
+				}
+			}
+		})
+	}
+}
