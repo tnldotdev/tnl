@@ -206,24 +206,40 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	}()
 	defer func() { stopRegistration(); <-registrationDone }()
 	visitor := &http.Client{Transport: http.DefaultTransport, Timeout: 2 * time.Second}
+	var readinessSnapshot publisherapp.Snapshot
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("last public readiness snapshot: %+v", readinessSnapshot)
+			for _, service := range readinessSnapshot.Services {
+				t.Logf("last public readiness observation: %+v", service.Observation)
+			}
+		}
+	})
+	// ingress can deliver bytes before the publisher's next heartbeat confirms
+	// public endpoint readiness. require both in one bounded startup window.
+	readinessCtx, stopReadiness := context.WithTimeout(t.Context(), 25*time.Second)
+	defer stopReadiness()
 	workflowWait(t, 25*time.Second, func() bool {
-		response, err := visitor.Get(assignment.PublicURL)
+		request, err := http.NewRequestWithContext(readinessCtx, http.MethodGet, assignment.PublicURL, nil)
+		if err != nil {
+			return false
+		}
+		response, err := visitor.Do(request)
 		if err != nil {
 			return false
 		}
 		defer response.Body.Close()
 		body, _ := io.ReadAll(response.Body)
-		return response.StatusCode == 200 && string(body) == "local application"
-	})
-	workflowWait(t, 5*time.Second, func() bool {
-		var snapshot publisherapp.Snapshot
-		services := []string{"web"}
-		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &services}, &snapshot); err != nil {
+		if response.StatusCode != http.StatusOK || string(body) != "local application" {
 			return false
 		}
-		for _, s := range snapshot.Services {
+		services := []string{"web"}
+		if err := publisherprotocol.Call(readinessCtx, endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &services}, &readinessSnapshot); err != nil {
+			return false
+		}
+		for _, s := range readinessSnapshot.Services {
 			if s.Name == "web" {
-				return s.Ready
+				return s.Registered && s.Routable && s.Ready && s.RunNumber > 0 && s.Observation != nil && s.Observation.Ready
 			}
 		}
 		return false
@@ -292,8 +308,8 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	if err := publisherprotocol.Call(t.Context(), privateAppEndpoint, "POST", "/v1/prepare", publisherprotocol.Prepare{Version: 1, Service: internal, Directory: root, Framework: "node", Owner: privateOwner, PID: os.Getpid()}, &privateAssignment); err != nil {
 		t.Fatal(err)
 	}
-	if privateAssignment.PublicURL != "" || privateAssignment.Hostname != "" {
-		t.Fatal("private app was assigned a public hostname")
+	if privateAssignment.PublicURL != "" || privateAssignment.Hostname == "" {
+		t.Fatal("connector-only app lost its TLS hostname or received a public URL")
 	}
 	privateRegistration := publisherprotocol.Registration{Version: 1, RegistrationID: privateAssignment.RegistrationID, Owner: privateOwner, Target: target.URL}
 	if err := publisherprotocol.Call(t.Context(), privateAppEndpoint, "POST", "/v1/register", privateRegistration, nil); err != nil {
@@ -344,6 +360,9 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	localService, err := connector.Select(t.Context(), control, project.Project, internal, team)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if localService.Endpoint == nil || localService.Endpoint.Public || localService.Endpoint.Hostname != privateAssignment.Hostname || localService.Endpoint.Port != 443 {
+		t.Fatal("connector-only app changed its prepared TLS identity or enabled ingress")
 	}
 	localClient := workflowNativeHTTPClient(t, f, localService.Endpoint.Hostname)
 	workflowWait(t, 10*time.Second, func() bool {

@@ -175,22 +175,24 @@ func TestIntegrationCLIMemberOwnPublicationWithoutInventory(t *testing.T) {
 	saved, err := memberControl.GetService(t.Context(), local.ServiceID)
 	if err != nil || saved.Id != local.ServiceID || saved.TeamId != team.Id || saved.Protocol != controlv1.ServiceProtocolHTTP ||
 		saved.Endpoint == nil || !saved.Endpoint.Public || saved.Endpoint.Hostname != hostname || saved.Endpoint.Port != 443 ||
-		saved.ServiceRunId == nil || saved.RunNumber == nil || *saved.RunNumber <= 0 || !saved.Enabled {
-		t.Fatal("member could not read its exact ready service and run", err)
+		!saved.Enabled {
+		t.Fatal("member could not read its exact saved service", err)
 	}
-	// inspect the committed run, not a creator label or an elevated setup session.
+	// management reads do not select a run or grant connector access. inspect the
+	// exact CLI-observed run and its ownership without adding a visitor grant.
 	connection, err := pgx.Connect(t.Context(), f.databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer connection.Close(context.Background())
-	var membershipID, publisherCreator, grantKind, grantedService, grantCreator string
-	err = connection.QueryRow(t.Context(), `SELECT p.owner_membership_id,p.created_by_identity_id,g.kind,g.service_id,g.created_by_identity_id
+	var runID, membershipID, publisherCreator, grantKind, grantedService, grantCreator string
+	err = connection.QueryRow(t.Context(), `SELECT r.id,p.owner_membership_id,p.created_by_identity_id,g.kind,g.service_id,g.created_by_identity_id
 		FROM control.service_runs r JOIN control.publisher_identities p ON p.id=r.publisher_identity_id
 		JOIN control.publisher_grants g ON g.id=r.publisher_grant_id AND g.publisher_identity_id=p.id
-		WHERE r.id=$1 AND r.service_id=$2 AND r.run_number=$3 AND r.team_id=$4 AND r.closed_at IS NULL`,
-		*saved.ServiceRunId, saved.Id, *saved.RunNumber, team.Id).Scan(&membershipID, &publisherCreator, &grantKind, &grantedService, &grantCreator)
-	if err != nil || membershipID != member.Id || publisherCreator != member.IdentityId ||
+		WHERE r.service_id=$1 AND r.run_number=$2 AND r.team_id=$3 AND r.closed_at IS NULL
+			AND r.state='ready' AND r.healthy AND r.serving_until>now() AND r.certificate_expires_at>now()`,
+		saved.Id, ready.PublishRunNumber, team.Id).Scan(&runID, &membershipID, &publisherCreator, &grantKind, &grantedService, &grantCreator)
+	if err != nil || runID == "" || membershipID != member.Id || publisherCreator != member.IdentityId ||
 		grantKind != "service" || grantedService != saved.Id || grantCreator != member.IdentityId {
 		t.Fatal("publication did not use the ordinary member's own exact publisher grant", err)
 	}
@@ -213,7 +215,7 @@ func TestIntegrationCLIMemberOwnPublicationWithoutInventory(t *testing.T) {
 	process.stop()
 	assertMember()
 	t.Logf("built CLI member publication: team_id=%s service_id=%s service_run_id=%s run_number=%d tunnel_id=%s; broad inventory remains denied; scope=ad-hoc own namespace",
-		team.Id, saved.Id, *saved.ServiceRunId, *saved.RunNumber, ready.TunnelID)
+		team.Id, saved.Id, runID, ready.PublishRunNumber, ready.TunnelID)
 }
 
 // session issuance is fixture setup, not an OIDC-login proof. use the configured

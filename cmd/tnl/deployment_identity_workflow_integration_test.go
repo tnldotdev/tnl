@@ -142,7 +142,8 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 	}
 	defer inspect.Close(t.Context())
 	f.certificateWorkPaused.Store(true)
-	var firstIssuance string
+	var pendingIssuance, installedIssuance string
+	var installedCertificate []byte
 	for replacement := range 4 {
 		selector := "production"
 		if replacement == 1 || replacement == 3 {
@@ -162,7 +163,7 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 		ready, joined := f.command(t, ctx, stop, args)
 		if replacement == 0 {
 			workflowWait(t, 15*time.Second, func() bool {
-				return inspect.QueryRow(t.Context(), `SELECT issuance.id FROM control.acme_orders issuance JOIN control.service_runs run ON run.id=issuance.service_run_id WHERE run.publisher_identity_id=$1 ORDER BY issuance.created_revision LIMIT 1`, value.Member.PublisherIdentityId).Scan(&firstIssuance) == nil
+				return inspect.QueryRow(t.Context(), `SELECT issuance.id FROM control.acme_orders issuance JOIN control.service_runs run ON run.id=issuance.service_run_id WHERE run.publisher_identity_id=$1 ORDER BY issuance.created_revision LIMIT 1`, value.Member.PublisherIdentityId).Scan(&pendingIssuance) == nil
 			})
 			runtime := assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 1, true)
 			var oldRun string
@@ -235,6 +236,12 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 			case <-time.After(20 * time.Second):
 				t.Fatal("pending issuer did not join before state deletion")
 			}
+			// the last authorized consumer closed before the CA did any work.
+			// recovery must replay its saved CSR, not revive the canceled order.
+			var orderState, orderReason string
+			if err := inspect.QueryRow(t.Context(), `SELECT state,last_error FROM control.acme_orders WHERE id=$1`, pendingIssuance).Scan(&orderState, &orderReason); err != nil || orderState != "canceled" || orderReason != "no authorized certificate consumer" {
+				t.Fatal("pending issuance survived its final consumer's joined close", err, orderState, orderReason)
+			}
 			missing := f.state(t, "missing-certificate-state")
 			missingErr := run(t.Context(), []string{"--no-config", "publisher", "serve", "--deployment", "production", "--project-key", applied.ProjectKey, "--instance", "replica-1", "--identity-file", credential, "--state-dir", missing}, io.Discard, io.Discard)
 			if reason, _ := failure.ReasonOf(missingErr); reason != failure.PublisherCertificateStateMissing {
@@ -252,7 +259,7 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 		if replacement == 1 {
 			workflowWait(t, 15*time.Second, func() bool {
 				var requests int
-				err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.service_certificate_requests request JOIN control.service_runs run ON run.id=request.service_run_id WHERE request.issuance_id=$1 AND run.publisher_identity_id=$2`, firstIssuance, value.Member.PublisherIdentityId).Scan(&requests)
+				err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.service_certificate_requests request JOIN control.service_runs run ON run.id=request.service_run_id WHERE request.issuance_id=$1 AND run.publisher_identity_id=$2`, pendingIssuance, value.Member.PublisherIdentityId).Scan(&requests)
 				return err == nil && requests >= 2
 			})
 			f.certificateWorkPaused.Store(false)
@@ -295,6 +302,7 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 		if _, supplied := os.LookupEnv("TNL_DEPLOYMENT_IDENTITY"); supplied {
 			t.Fatal("injected identity remains in the worker environment")
 		}
+		var servingCertificate []byte
 		workflowWait(t, 10*time.Second, func() bool {
 			response, err := client.Get("https://" + address + "/replacement")
 			if err != nil {
@@ -302,8 +310,17 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 			}
 			defer response.Body.Close()
 			body, _ := io.ReadAll(response.Body)
-			return response.StatusCode == http.StatusOK && string(body) == "portable deployment worker"
+			if response.StatusCode != http.StatusOK || string(body) != "portable deployment worker" || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
+				return false
+			}
+			servingCertificate = response.TLS.PeerCertificates[0].Raw
+			return true
 		})
+		if replacement == 1 {
+			installedCertificate = bytes.Clone(servingCertificate)
+		} else if !bytes.Equal(servingCertificate, installedCertificate) {
+			t.Fatal("task-local state deletion changed the trusted serving certificate")
+		}
 		status, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "live")
 		if err != nil || len(status.Members) != 1 || status.Members[0].PublisherIdentityId != value.Member.PublisherIdentityId || !status.Members[0].Healthy || status.Members[0].ObservedRevision != status.Members[0].CurrentRevision {
 			t.Fatal("replacement changed membership or did not acknowledge its assignment", err)
@@ -324,8 +341,17 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 			t.Fatal("deployment import created a person session", err)
 		}
 		var installed string
-		if err := inspect.QueryRow(t.Context(), `SELECT certificate_issuance_id FROM control.service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL ORDER BY run_number DESC LIMIT 1`, value.Member.PublisherIdentityId).Scan(&installed); err != nil || installed != firstIssuance {
-			t.Fatal("task-local state deletion changed the installed certificate issuance", err)
+		if err := inspect.QueryRow(t.Context(), `SELECT certificate_issuance_id FROM control.service_runs WHERE publisher_identity_id=$1 AND closed_at IS NULL ORDER BY run_number DESC LIMIT 1`, value.Member.PublisherIdentityId).Scan(&installed); err != nil {
+			t.Fatal("current publisher run did not acknowledge its certificate issuance", err)
+		}
+		if replacement == 1 {
+			var orders int
+			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.acme_orders issuance JOIN control.service_runs run ON run.id=issuance.service_run_id WHERE run.publisher_identity_id=$1`, value.Member.PublisherIdentityId).Scan(&orders); err != nil || orders != 2 || installed == pendingIssuance {
+				t.Fatal("recovered canceled issuance did not produce exactly one replacement", err, orders)
+			}
+			installedIssuance = installed
+		} else if installed != installedIssuance {
+			t.Fatal("task-local state deletion changed the installed certificate issuance", installed, installedIssuance)
 		}
 		if err := state.Close(); err != nil {
 			t.Fatal(err)
@@ -445,5 +471,5 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 	if f.deploymentEnrollmentRequests.Load() != 2 {
 		t.Fatal("revoked identity fell back to enrollment")
 	}
-	t.Log("CLI provision -> pending CSR -> delete runtime SQLite -> recover the same issuance and visitor bytes -> delete runtime state and omit bootstrap -> same filesystem identity, certificate and traffic without enrollment")
+	t.Log("CLI provision -> pending CSR -> final consumer cancels issuance -> delete runtime SQLite -> replay saved CSR and replace canceled issuance once -> retain the installed certificate and trusted visitor bytes across task-state deletion without enrollment")
 }
