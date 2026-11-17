@@ -1,6 +1,7 @@
 package tnl
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -44,6 +45,7 @@ func (r *sdkTelemetryTransport) connections(t *testing.T, private ...string) int
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var count int64
+	seen := make(map[[2]string][]byte)
 	for _, data := range r.data {
 		for _, value := range private {
 			if value != "" && strings.Contains(string(data), value) {
@@ -56,6 +58,20 @@ func (r *sdkTelemetryTransport) connections(t *testing.T, private ...string) int
 		}
 		for _, item := range batch.Events {
 			if event, err := item.Event.AsTransportEvent(); err == nil && event.Name == "transport.report" && event.Payload.Role == api.TransportReportRolePublisher {
+				// delivery can retry an accepted event. match the receiver's
+				// installation/event key, without hiding changed observations.
+				key := [2]string{batch.InstallationId, event.EventId}
+				encoded, err := json.Marshal(item)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if previous, found := seen[key]; found {
+					if !bytes.Equal(previous, encoded) {
+						t.Fatal("SDK telemetry retry changed its collected event")
+					}
+					continue
+				}
+				seen[key] = encoded
 				for _, measurement := range event.Payload.Measurements {
 					if measurement.Operation == api.RelayConnect && measurement.Outcome == api.Succeeded {
 						count += measurement.Count
@@ -71,6 +87,59 @@ func (r *sdkTelemetryTransport) batches() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.data)
+}
+
+func TestSDKTelemetryReceiverCountsDistinctObservations(t *testing.T) {
+	recorded := &sdkTelemetryTransport{}
+	deliver := func(installation, id string) {
+		t.Helper()
+		var event api.Event
+		if err := event.FromTransportEvent(api.TransportEvent{
+			EventId: id, EventVersion: 1, Name: "transport.report",
+			Payload: api.TransportReport{Role: api.TransportReportRolePublisher, Measurements: []api.Measurement{{
+				Operation: api.RelayConnect, Path: api.TlsTcp, Outcome: api.Succeeded, Duration: api.Lt1s, Count: 2,
+			}}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(api.Batch{SchemaVersion: 1, InstallationId: installation, Events: []api.CollectedEvent{{
+			Client: api.Client{Version: "test", Os: "linux", Arch: "amd64"}, Event: event,
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, clienttelemetry.ReceiverURL, bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := recorded.RoundTrip(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := response.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const first = "inst_AAAAAAAAAAAAAAAAAAAAAA"
+	const second = "inst_BBBBBBBBBBBBBBBBBBBBBB"
+	const original = "tev_AAAAAAAAAAAAAAAAAAAAAA"
+	const independent = "tev_BBBBBBBBBBBBBBBBBBBBBB"
+	deliver(first, original)
+	deliver(first, original)
+	if got := recorded.connections(t); got != 2 {
+		t.Errorf("retry counted as new relay observations: got %d, want 2", got)
+	}
+	deliver(first, independent)
+	if got := recorded.connections(t); got != 4 {
+		t.Errorf("independent event lost: got %d, want 4", got)
+	}
+	deliver(second, original)
+	if got := recorded.connections(t); got != 6 {
+		t.Errorf("independent installation lost: got %d, want 6", got)
+	}
+	if recorded.batches() != 4 {
+		t.Fatal("receiver hid a delivery attempt")
+	}
 }
 
 func TestOpenDefaultsTelemetryOnAcrossPublicationRestarts(t *testing.T) {
