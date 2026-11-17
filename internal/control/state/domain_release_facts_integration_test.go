@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"slices"
@@ -10,7 +11,7 @@ import (
 )
 
 func TestIntegrationDomainReleaseFacts(t *testing.T) {
-	for _, phase := range []string{"saved-services", "saved-deployments", "endpoint-dns", "challenge-cleanup", "uncertain-issuance", "certificate-expiry", "known-expiry-unsettled-issuance", "provider-release"} {
+	for _, phase := range []string{"saved-services", "saved-deployments", "endpoint-dns", "challenge-cleanup", "uncertain-issuance", "certificate-expiry", "known-expiry-retired-issuance", "provider-release"} {
 		t.Run(phase, func(t *testing.T) {
 			owner, member, domain, fixtures := sessionLockAuthorityFixtures(t)
 			f := fixtures[0]
@@ -31,7 +32,7 @@ func TestIntegrationDomainReleaseFacts(t *testing.T) {
 				setEndpointReadinessDNS(t, f, true, ServiceEndpointDNSPending)
 			}
 			if phase == "challenge-cleanup" || phase == "uncertain-issuance" ||
-				phase == "certificate-expiry" || phase == "known-expiry-unsettled-issuance" {
+				phase == "certificate-expiry" || phase == "known-expiry-retired-issuance" {
 				var err error
 				f.run, err = d.StartServiceRun(ctx, f.service.ID, f.prepared.RunID, f.prepared.RunNumber, f.publisher, now)
 				if err != nil {
@@ -39,7 +40,7 @@ func TestIntegrationDomainReleaseFacts(t *testing.T) {
 				}
 				certificate = createPlanIssuanceWork(t, d, now, f.run, f.prepared.CertificatePlan,
 					phase != "uncertain-issuance", func(work *ACMEOrderWork) {
-						if phase == "uncertain-issuance" || phase == "known-expiry-unsettled-issuance" {
+						if phase == "uncertain-issuance" || phase == "known-expiry-retired-issuance" {
 							work.State = ACMEOrderFinalizing
 							work.OrderURL, work.FinalizeURL = "https://acme.example.test/order/1", "https://acme.example.test/finalize/1"
 						}
@@ -65,6 +66,21 @@ func TestIntegrationDomainReleaseFacts(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if phase == "known-expiry-retired-issuance" {
+				var state string
+				var expiry time.Time
+				var material []byte
+				var neverInstalled, finalizationPossible bool
+				if err := d.pool.QueryRow(ctx, `SELECT state,not_after,certificate_pem,
+					installed_at IS NULL,finalization_possible FROM control.acme_orders WHERE id=$1`,
+					certificate.ID).Scan(&state, &expiry, &material, &neverInstalled, &finalizationPossible); err != nil {
+					t.Fatal(err)
+				}
+				if state != "canceled" || certificate.NotAfter == nil || !expiry.Equal(*certificate.NotAfter) ||
+					!bytes.Equal(material, certificate.CertificatePEM) || !neverInstalled || !finalizationPossible {
+					t.Fatal("retirement lost the actual issued certificate or invented installation", state, expiry)
+				}
+			}
 			domains, err := d.ListTeamDomains(ctx, owner, member.TeamID)
 			if err != nil {
 				t.Fatal(err)
@@ -78,7 +94,7 @@ func TestIntegrationDomainReleaseFacts(t *testing.T) {
 			facts := releaseFactsProjection(t, selected)
 			wanted := map[string]string{"saved-services": "services", "saved-deployments": "deployments", "endpoint-dns": "endpoint_dns",
 				"challenge-cleanup": "challenge_cleanup", "uncertain-issuance": "uncertain_issuance",
-				"certificate-expiry": "certificate", "known-expiry-unsettled-issuance": "issuance",
+				"certificate-expiry": "certificate", "known-expiry-retired-issuance": "certificate",
 				"provider-release": "dns_authority"}[phase]
 			if !slices.Contains(facts.Blockers, wanted) || !facts.CompletionUnknown || facts.ObservedAt.IsZero() {
 				t.Fatalf("release facts omitted actual %s blocker or invented completion: %+v", phase, facts)
@@ -88,6 +104,11 @@ func TestIntegrationDomainReleaseFacts(t *testing.T) {
 			}
 			if phase == "uncertain-issuance" && facts.CertificateExpiresAt != nil {
 				t.Fatal("uncertain issuance fabricated a certificate expiry")
+			}
+			if phase == "known-expiry-retired-issuance" &&
+				(slices.Contains(facts.Blockers, "issuance") || slices.Contains(facts.Blockers, "uncertain_issuance") ||
+					!slices.Contains(facts.Blockers, "dns_authority")) {
+				t.Fatal("retired known certificate retained an obsolete issuance blocker or claimed completion", facts)
 			}
 			if phase == "provider-release" {
 				if ready, err := d.DNSAuthorityReleaseReady(ctx, domain.ID, now); err != nil || !ready {
@@ -106,7 +127,7 @@ func TestIntegrationDomainReleaseFacts(t *testing.T) {
 					t.Fatal("actual expiry became an invented completion date or lost retained evidence", expired)
 				}
 				ready, err := d.DNSAuthorityReleaseReady(ctx, domain.ID, at)
-				wantReady := phase == "certificate-expiry"
+				wantReady := phase == "certificate-expiry" || phase == "known-expiry-retired-issuance"
 				if err != nil || ready != wantReady {
 					t.Fatal("release explanation did not preserve the existing authority fence", ready, err)
 				}

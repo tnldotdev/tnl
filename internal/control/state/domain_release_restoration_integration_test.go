@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 	"time"
 )
@@ -130,27 +131,75 @@ func TestIntegrationDomainReleaseRestoredIssuedCertificateAndCleanupFences(t *te
 		// an installed order or alter its installation history.
 		work := createPlanIssuanceWork(t, d, now, f.run, f.prepared.CertificatePlan, true, func(work *ACMEOrderWork) {
 			work.State = ACMEOrderFinalizing
-		})
+		}, planIssuanceOptions{lifetime: 10 * time.Second})
 		if work.State != ACMEOrderFinalizing || !work.FinalizationPossible || work.NotAfter == nil || len(work.CertificatePEM) == 0 {
 			t.Fatal("fixture did not retain an actual issued leaf awaiting its final receipt")
 		}
-		if err := d.ReleaseTeamDomain(ctx, owner, member.TeamID, domain.ID, now); err != nil {
+		at := *work.NotAfter
+		if !at.After(now) || !at.Before(f.run.ServingUntil) {
+			t.Fatal("finalization fixture cannot claim current work before its run authority ends")
+		}
+		team, err := d.GetTeam(ctx, member.IdentityID, member.TeamID)
+		if err != nil || team.DefaultDomainID == "" || team.DefaultDomainID == domain.ID {
+			t.Fatal("fixture lacks an independent managed endpoint domain", err)
+		}
+		configuration, digest, err := d.GetServiceConfiguration(ctx, f.service.ID, member.IdentityID)
+		if err != nil || configuration == nil {
+			t.Fatal("fixture lacks current saved service configuration", err)
+		}
+		configuration.DomainID = team.DefaultDomainID
+		moved, err := d.ConfigureService(ctx, f.service.ID, member.IdentityID, f.service.ServiceMetadata,
+			configuration, ServiceUpdateConditions{ConfigurationDigest: digest}, now)
+		if err != nil || moved.DomainID != team.DefaultDomainID || moved.TrustRevision != f.service.TrustRevision {
+			t.Fatal("endpoint-only move failed or changed target trust", err)
+		}
+		var captured bool
+		if err := d.pool.QueryRow(ctx, `SELECT certificate_domain_id=$2 AND closed_at IS NULL AND serving_until>$3
+			FROM control.service_runs WHERE id=$1`, f.run.RunID, domain.ID, at).Scan(&captured); err != nil || !captured {
+			t.Fatal("endpoint move rewrote the run's captured certificate plan or closed it", captured, err)
+		}
+		// claim while the captured domain and consumer are still authorized.
+		// release must not turn this in-flight terminal receipt into a new claim.
+		current, found, err := d.ClaimACMEOrderWork(ctx, "restored-finalization-receipt", at, time.Minute)
+		if err != nil || !found || current.ID != work.ID || current.State != ACMEOrderFinalizing ||
+			current.OrderRevision != work.OrderRevision || current.WorkEpoch <= work.WorkEpoch || !current.WorkExpiresAt.After(at) ||
+			current.NotAfter == nil || !current.NotAfter.Equal(at) || !bytes.Equal(current.CertificatePEM, work.CertificatePEM) {
+			t.Fatal("claim current finalization receipt before domain release", found, err)
+		}
+		if err := d.ReleaseTeamDomain(ctx, owner, member.TeamID, domain.ID, at); err != nil {
 			t.Fatal(err)
 		}
 		for _, fixture := range fixtures {
-			if err := d.DeleteService(ctx, fixture.service.ID, owner, observedServiceDeletion(t, d, fixture.service.ID), now); err != nil {
+			if fixture.service.ID == f.service.ID {
+				continue
+			}
+			service, err := d.GetService(ctx, fixture.service.ID, owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := d.DeleteService(ctx, service.ID, owner, ServiceDeleteConditions{Revision: service.ServiceRevision}, at); err != nil {
 				t.Fatal("domain release prevented saved-service cleanup", err)
 			}
 		}
-		at := *work.NotAfter
+		var retained bool
+		if err := d.pool.QueryRow(ctx, `SELECT state='finalizing' AND order_revision=$2 AND work_owner=$3
+			AND work_epoch=$4 AND work_expires_at=$5 AND not_after=$6 AND certificate_pem=$7 AND installed_at IS NULL
+			FROM control.acme_orders WHERE id=$1`, work.ID, int64(current.OrderRevision), current.WorkerID,
+			int64(current.WorkEpoch), current.WorkExpiresAt, at, work.CertificatePEM).Scan(&retained); err != nil || !retained {
+			t.Fatal("release changed the already-authorized finalization receipt", retained, err)
+		}
+		observed, err := d.GetTeamDomain(ctx, owner, member.TeamID, domain.ID, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		facts := releaseFactsProjection(t, observed)
+		if !slices.Equal(facts.Blockers, []string{"issuance", "dns_authority"}) ||
+			facts.CertificateExpiresAt == nil || !facts.CertificateExpiresAt.Equal(at) || !facts.CompletionUnknown {
+			t.Fatal("nonterminal receipt lost its independent release blocker at actual leaf expiry", facts)
+		}
 		ready, err := d.DNSAuthorityReleaseReady(ctx, domain.ID, at)
 		if err != nil || ready {
 			t.Fatal("past leaf deadline settled unfinished finalization", ready, err)
-		}
-		current, found, err := d.ClaimACMEOrderWork(ctx, "restored-finalization-receipt", at, time.Minute)
-		if err != nil || !found || current.ID != work.ID || current.State != ACMEOrderFinalizing ||
-			current.WorkEpoch <= work.WorkEpoch || !current.WorkExpiresAt.After(at) {
-			t.Fatal("claim current finalization work without reviving publisher authority", found, err)
 		}
 		current.State, current.AvailableAt = ACMEOrderWaitingForInstall, at
 		completed, err := d.SaveACMEOrderWork(ctx, current, at)
@@ -161,6 +210,15 @@ func TestIntegrationDomainReleaseRestoredIssuedCertificateAndCleanupFences(t *te
 		ready, err = d.DNSAuthorityReleaseReady(ctx, domain.ID, at)
 		if err != nil || !ready {
 			t.Fatal("completed finalization receipt did not settle release at the same deadline", ready, err)
+		}
+		observed, err = d.GetTeamDomain(ctx, owner, member.TeamID, domain.ID, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		facts = releaseFactsProjection(t, observed)
+		if !slices.Equal(facts.Blockers, []string{"dns_authority"}) ||
+			facts.CertificateExpiresAt == nil || !facts.CertificateExpiresAt.Equal(at) || !facts.CompletionUnknown {
+			t.Fatal("terminal receipt erased retained expiry or invented provider completion", facts)
 		}
 		var neverInstalled bool
 		if err := d.pool.QueryRow(ctx, `SELECT installed_at IS NULL FROM control.acme_orders WHERE id=$1`, work.ID).Scan(&neverInstalled); err != nil || !neverInstalled {
