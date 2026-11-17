@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -88,6 +89,93 @@ func TestWebSocketSessionSurvivesSetupCancellation(t *testing.T) {
 		t.Fatal("lost chunked stream bytes", err, len(got))
 	}
 	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWebSocketYamuxFramesIgnoreMessageBoundaries(t *testing.T) {
+	listener, serverTLS, roots := webSocketTestListener(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	var workers sync.WaitGroup
+	t.Cleanup(workers.Wait)
+	received := make(chan error, 1)
+	payloads := []string{"split frame", "first coalesced frame", "second coalesced frame"}
+	workers.Go(func() {
+		network, err := listener.Accept()
+		if err != nil {
+			received <- err
+			return
+		}
+		session, err := AcceptWebSocket(ctx, network, serverTLS, WebSocketConfig{})
+		if err != nil {
+			received <- err
+			return
+		}
+		defer session.Close()
+		for _, want := range payloads {
+			stream, err := session.AcceptStream(ctx)
+			if err != nil {
+				received <- err
+				return
+			}
+			_ = stream.SetReadDeadline(time.Now().Add(5 * time.Second))
+			got, readErr := io.ReadAll(stream)
+			if err := errors.Join(readErr, stream.Close()); err != nil {
+				received <- err
+				return
+			}
+			if string(got) != want {
+				received <- errors.New("yamux stream payload changed at a WebSocket message boundary")
+				return
+			}
+		}
+		received <- nil
+	})
+	// unblock Accept before joining the worker if client setup fails.
+	defer listener.Close()
+	dialer := net.Dialer{}
+	client, _, err := websocket.Dial(ctx, "wss://relay.test"+WebSocketPath, &websocket.DialOptions{
+		HTTPClient: &http.Client{Transport: &http.Transport{
+			TLSClientConfig: roots,
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "tcp", listener.Addr().String())
+			},
+		}},
+		Subprotocols: []string{WebSocketProtocol},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for {
+			if _, _, err := client.Read(ctx); err != nil {
+				return
+			}
+		}
+	}()
+	defer func() {
+		_ = client.CloseNow()
+		<-drained
+	}()
+	dataFrame := func(stream uint32, payload string) []byte {
+		// yamux v0 DATA with SYN|FIN: one complete stream in one frame.
+		frame := make([]byte, 12, 12+len(payload))
+		binary.BigEndian.PutUint16(frame[2:4], 1|4)
+		binary.BigEndian.PutUint32(frame[4:8], stream)
+		binary.BigEndian.PutUint32(frame[8:12], uint32(len(payload)))
+		return append(frame, payload...)
+	}
+	split := dataFrame(1, payloads[0])
+	combined := append(dataFrame(3, payloads[1]), dataFrame(5, payloads[2])...)
+	for _, message := range [][]byte{split[:7], split[7:], combined} {
+		if err := client.Write(ctx, websocket.MessageBinary, message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := <-received; err != nil {
 		t.Fatal(err)
 	}
 }

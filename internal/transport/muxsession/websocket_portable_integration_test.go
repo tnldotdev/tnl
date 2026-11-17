@@ -26,10 +26,6 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func TestIntegrationWebSocketPortableClient(t *testing.T) {
-	testWebSocketPortableClient(t, "../../../packages/ts/test/fixtures/relay-websocket-native.ts", "")
-}
-
 func TestIntegrationWebSocketWASMClient(t *testing.T) {
 	testWebSocketWASMClient(t, "testdata/websocket-wasm.ts")
 }
@@ -53,14 +49,11 @@ func testWebSocketWASMClient(t *testing.T, fixture string) {
 func testWebSocketPortableClient(t *testing.T, fixture, wasm string) {
 	t.Helper()
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	var wasmExec string
-	if wasm != "" {
-		goroot, err := exec.CommandContext(t.Context(), "go", "env", "GOROOT").Output()
-		if err != nil {
-			t.Fatalf("locate the WASM compiler runtime: %v", err)
-		}
-		wasmExec = filepath.Join(strings.TrimSpace(string(goroot)), "lib", "wasm", "wasm_exec.js")
+	goroot, err := exec.CommandContext(t.Context(), "go", "env", "GOROOT").Output()
+	if err != nil {
+		t.Fatalf("locate the WASM compiler runtime: %v", err)
 	}
+	wasmExec := filepath.Join(strings.TrimSpace(string(goroot)), "lib", "wasm", "wasm_exec.js")
 	certificate := visitorfixture.Certificate(t, "localhost")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -173,11 +166,7 @@ func testWebSocketPortableClient(t *testing.T, fixture, wasm string) {
 		t.Fatal(err)
 	}
 	pin := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
-	parameters := map[string]any{"server": "wss://localhost:" + port + muxsession.WebSocketPath, "hello": hello.Bytes(), "spki": base64.StdEncoding.EncodeToString(pin[:])}
-	if wasm != "" {
-		parameters["wasm"] = wasm
-		parameters["wasmExec"] = wasmExec
-	}
+	parameters := map[string]any{"server": "wss://localhost:" + port + muxsession.WebSocketPath, "hello": hello.Bytes(), "spki": base64.StdEncoding.EncodeToString(pin[:]), "wasm": wasm, "wasmExec": wasmExec}
 	if fixture == "testdata/websocket-workerd.ts" {
 		parameters["certificate"] = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}))
 	}

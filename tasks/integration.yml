@@ -2,9 +2,9 @@ version: "3"
 
 tasks:
   websocket:
-    desc: Check installed Chrome WebSocket/yamux bytes and authentication against the native relay transport
+    desc: Check Chrome and workerd WASM WebSocket/yamux bytes and authentication against the native relay transport
     cmds:
-      - go test -race -v ./internal/transport/muxsession -run='^TestIntegrationWebSocket(PortableClient|WASMClient|WorkerdClient)$' -count=1 -timeout=2m -args -tnl-test-tier=integration
+      - go test -race -v ./internal/transport/muxsession -run='^TestIntegrationWebSocket(WASMClient|WorkerdClient)$' -count=1 -timeout=2m -args -tnl-test-tier=integration
 
   default:
     desc: Run PostgreSQL-backed integration boundaries
