@@ -1,6 +1,6 @@
 import { createClient } from "@tnldotdev/tnl";
 import * as z from "zod";
-import { check, fixtureCall, fixtureSchema } from "./fixture.ts";
+import { check, fixtureCall, fixtureSchema, publisherFailures } from "./fixture.ts";
 import { publisherHandler } from "./handler.ts";
 import { installPublisherFixtureHost, runtimeStarts } from "./host.ts";
 
@@ -25,8 +25,10 @@ export async function smoke(input: unknown) {
   }).deployment(fixture.deployment);
   const handler = publisherHandler(crypto.randomUUID());
   const restrictedHandler = publisherHandler(crypto.randomUUID());
+  let phase = "publish";
   const operation = async () => {
     const publication = await publisher.publish("web", handler.handle);
+    phase = "public-exercise";
     const publicProof = await fixtureCall(fixture, "/exercise", publication.url);
     check(
       publicProof.status === 200 &&
@@ -34,7 +36,9 @@ export async function smoke(input: unknown) {
         publicProof.certificate_sha256.length === 64,
       "public visitor did not verify publisher TLS",
     );
+    phase = "connector";
     const connection = await connector.connect("web");
+    phase = "response-stream";
     const response = await connection.fetch(connection.url + "/stream");
     check(response.ok && response.body !== null, "connector-to-WASM publisher stream failed");
     const reader = response.body.getReader();
@@ -55,6 +59,7 @@ export async function smoke(input: unknown) {
     );
     reader.releaseLock();
 
+    phase = "upload";
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("upload-first\n"));
@@ -71,6 +76,7 @@ export async function smoke(input: unknown) {
       "streamed request body changed",
     );
 
+    phase = "cancel";
     const controller = new AbortController();
     const cancel = await connection.fetch(connection.url + "/cancel", {
       signal: controller.signal,
@@ -100,12 +106,14 @@ export async function smoke(input: unknown) {
       );
       canceled = evidence.canceled && evidence.requestAborted;
     }
+    phase = "restricted";
     const restricted = await publisher.publish("restricted", restrictedHandler.handle);
     const denied = await fixtureCall(fixture, "/observe", restricted.url);
     check(
       denied.status === 403 && restrictedHandler.calls() === 0,
       "restricted public request reached the handler",
     );
+    phase = "named-close";
     await restricted.close();
     await restricted.wait();
     await publication.close();
@@ -116,6 +124,7 @@ export async function smoke(input: unknown) {
       "named publication cleanup removed its saved service or retained a run",
     );
 
+    phase = "temporary";
     const temporary = await publisher.publish(handler.handle, { access: "anonymous" });
     const temporaryProof = await fixtureCall(fixture, "/observe", temporary.url);
     check(
@@ -148,11 +157,12 @@ export async function smoke(input: unknown) {
   const [result] = await Promise.allSettled([operation()]);
   const cleanup = await Promise.allSettled([connector.close(), publisher.close()]);
   const failures = [
-    ...(result?.status === "rejected" ? [result.reason as unknown] : []),
-    ...cleanup.flatMap((entry) => (entry.status === "rejected" ? [entry.reason as unknown] : [])),
+    ...(result?.status === "rejected" ? publisherFailures(result.reason, phase) : []),
+    ...cleanup.flatMap((entry) =>
+      entry.status === "rejected" ? publisherFailures(entry.reason, "cleanup") : [],
+    ),
   ];
-  if (failures.length > 0)
-    throw new AggregateError(failures, "actual Go/WASM publisher proof or cleanup failed");
+  if (failures.length > 0) throw new Error(JSON.stringify(failures));
   check(result?.status === "fulfilled", "publisher proof did not complete");
   return result.value;
 }

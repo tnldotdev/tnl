@@ -30,8 +30,30 @@ export const fixtureSchema = z.strictObject({
 });
 export type PublisherFixture = z.output<typeof fixtureSchema>;
 
+export class PublisherFixtureAssertion extends Error {}
+
 export function check(value: unknown, message: string): asserts value {
-  if (!value) throw new Error(message);
+  if (!value) throw new PublisherFixtureAssertion(message);
+}
+
+export function publisherFailures(error: unknown, phase: string, depth = 0): unknown[] {
+  if (depth < 4 && error instanceof AggregateError)
+    return error.errors
+      .slice(0, 16)
+      .flatMap((cause: unknown) => publisherFailures(cause, phase, depth + 1));
+  if (error instanceof PublisherFixtureAssertion)
+    return [{ phase, code: "fixture.assertion_failed", detail: error.message }];
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    /^sdk\.[a-z_]+$/.test(error.code)
+  )
+    return [{ phase, code: error.code }];
+  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
+    return [{ phase, code: error.name }];
+  return [{ phase, code: "fixture.operation_failed" }];
 }
 
 export const observationSchema = z.strictObject({

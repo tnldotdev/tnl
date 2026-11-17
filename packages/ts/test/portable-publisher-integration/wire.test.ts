@@ -3,7 +3,7 @@ import {
   publisherChromeArguments,
   publisherWorkerdConfiguration,
 } from "../../../../scripts/test/portable-publisher-config.ts";
-import { fixtureSchema } from "./fixture.ts";
+import { fixtureSchema, publisherFailures, PublisherFixtureAssertion } from "./fixture.ts";
 import { publisherHandler } from "./handler.ts";
 
 const fixture = fixtureSchema.parse({
@@ -27,6 +27,31 @@ const fixture = fixtureSchema.parse({
   api_token: "private-fixture-api-token",
   runner_certificate_pem: "fixture-runner-certificate",
   runner_private_key_pem: "fixture-runner-key",
+});
+
+test("publisher diagnostics retain safe phases and codes without private error messages", () => {
+  const secret = "private request body and signing credential";
+  const error = new AggregateError(
+    [
+      new PublisherFixtureAssertion("public visitor did not verify publisher TLS"),
+      Object.assign(new Error(secret), { code: "sdk.cleanup_failed" }),
+      new DOMException(secret, "TimeoutError"),
+      new Error(secret),
+    ],
+    secret,
+  );
+  const failures = publisherFailures(error, "public-exercise");
+  expect(failures).toEqual([
+    {
+      phase: "public-exercise",
+      code: "fixture.assertion_failed",
+      detail: "public visitor did not verify publisher TLS",
+    },
+    { phase: "public-exercise", code: "sdk.cleanup_failed" },
+    { phase: "public-exercise", code: "TimeoutError" },
+    { phase: "public-exercise", code: "fixture.operation_failed" },
+  ]);
+  expect(JSON.stringify(failures)).not.toContain(secret);
 });
 
 test("Chrome trusts exact fixture pins without disabling TLS verification globally", () => {

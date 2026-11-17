@@ -144,19 +144,41 @@ async function chromeSmoke(configuration: PublisherFixture) {
     lifetime.signal.addEventListener("abort", interrupted, { once: true });
     try {
       const page = await browser.newPage();
+      const network: string[] = [];
+      page.on("response", (response) => {
+        if (response.url().startsWith(configuration.control_url)) {
+          const url = new URL(response.url());
+          network.push(`${response.status()} ${url.pathname}`);
+          if (network.length > 64) network.shift();
+        }
+      });
+      page.on("requestfailed", (request) => {
+        const url = new URL(request.url());
+        network.push(`failed ${request.method()} ${url.pathname}`);
+        if (network.length > 64) network.shift();
+      });
       page.setDefaultTimeout(180_000);
       const address = server.address();
       check(address !== null && typeof address !== "string", "HTTPS fixture listener did not bind");
       await page.goto(`https://localhost:${address.port}/`);
       await page.waitForFunction(() => "publisherFixture" in globalThis);
-      return await page.evaluate(async (input) => {
-        const host = globalThis as typeof globalThis & {
-          publisherFixture?: { smoke(input: unknown): Promise<unknown> };
-        };
-        if (host.publisherFixture === undefined)
-          throw new Error("publisher fixture module is missing");
-        return host.publisherFixture.smoke(input);
-      }, configuration);
+      try {
+        return await page.evaluate(async (input) => {
+          const host = globalThis as typeof globalThis & {
+            publisherFixture?: { smoke(input: unknown): Promise<unknown> };
+          };
+          if (host.publisherFixture === undefined)
+            throw new Error("publisher fixture module is missing");
+          return host.publisherFixture.smoke(input);
+        }, configuration);
+      } catch (error) {
+        const diagnostics = await page.evaluate(() =>
+          Reflect.get(globalThis, "__tnlWasmFixtureDiagnostics"),
+        );
+        throw new Error(
+          `${error instanceof Error ? error.message : "publisher fixture failed"}; Go diagnostics: ${JSON.stringify(diagnostics)}; control requests: ${network.join("; ")}`,
+        );
+      }
     } finally {
       lifetime.signal.removeEventListener("abort", interrupted);
       await browser.close();
