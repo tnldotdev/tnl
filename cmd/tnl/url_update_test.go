@@ -111,13 +111,8 @@ func (s *urlUpdateStore) ConfigureService(_ context.Context, id, actor string, m
 	if metadata.Validate() != nil {
 		return controlstate.ServiceRecord{}, controlstate.ErrServiceConflict
 	}
-	normalized, _, err := controlstate.NormalizeProjectConfiguration(controlstate.ProjectConfiguration{
-		Services: map[string]controlstate.ProjectServiceConfiguration{s.record.Name: *declaration},
-	})
-	if err != nil {
-		return controlstate.ServiceRecord{}, err
-	}
-	value := normalized.Services[s.record.Name]
+	// this is a saved service, not a local project's address-free declaration.
+	value := *declaration
 	if value.TargetTLS != nil {
 		d := value.TargetTLS
 		snapshot, err := (targettrust.Declaration{Hostname: d.Hostname, CAPEM: []byte(d.CAPEM), Digest: d.Digest, HostnameFromTarget: d.HostnameFromTarget}).Snapshot()
