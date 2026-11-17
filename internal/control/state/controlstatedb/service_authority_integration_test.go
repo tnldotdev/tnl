@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
@@ -136,8 +137,8 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 			VALUES ($1, $2, $1, $3, $3)`, relay, relay+":443", now)
 		exec(`INSERT INTO control.relay_leases(relay_id, relay_service_id, relay_run_id, relay_lease_revision,
 			protocol_version, internal_relay_address, connection_capacity, stream_capacity,
-			registered_at, renewed_at, lease_expires_at)
-			VALUES ($1, $1, $2, 1, 1, $3, 8, 8, $4, $4, $5)`, relay, runID, relay+":444", now, now.Add(10*time.Minute))
+			registered_at, renewed_at, lease_expires_at, serving_until)
+			VALUES ($1, $1, $2, 1, 1, $3, 8, 8, $4, $4, $5, $6)`, relay, runID, relay+":444", now, now.Add(10*time.Minute), now.Add(controloutage.DefaultTolerance))
 	}
 	prepared, err := d.PrepareServiceRun(ctx, service.ID, p, "first", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}})
 	if err != nil {
