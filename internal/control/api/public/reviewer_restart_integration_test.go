@@ -44,7 +44,7 @@ func reviewerHTTPRun(t *testing.T, control *clientcontrol.Client, service contro
 		VisitorConnectionID: "vc_" + strings.Repeat("V", 22), PublisherConnectionID: "pc_" + strings.Repeat("P", 22),
 		ConnectionAssignmentRevision: 1, ExpiresAt: until,
 		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress", IngressRunID: "ir_" + strings.Repeat("I", 22), IngressLeaseRevision: 1, DestinationPort: 443}},
-		RelayID: "relay", RelayServiceID: "relay-service", RelayRunID: "rr_" + strings.Repeat("R", 22), RelayLeaseRevision: 1, LeaseExpiresAt: until}
+		RelayID: "relay", RelayServiceID: "relay-service", RelayRunID: "rr_" + strings.Repeat("R", 22), RelayLeaseRevision: 1, ServingUntil: until}
 	frontend, closeFrontend, err := publisherservice.PrepareHTTP(t.Context(), publisherservice.HTTP{
 		Control: control, Subject: run.Subject, RunID: run.RunID, Number: run.Number, Token: run.Token,
 		Hostname: service.Placement.Hostname, Port: 443, Header: header, Source: netip.MustParseAddrPort("192.0.2.9:1234"),
