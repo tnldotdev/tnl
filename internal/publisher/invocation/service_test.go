@@ -306,6 +306,7 @@ func TestLocalServiceRealizationRejectsUnavailableDomainBeforeRequest(t *testing
 		t.Fatal(err)
 	}
 	project := clientproject.Project{Root: t.TempDir(), Config: config.TNL{Services: config.Services{"web": {}}}}
+	project = bindLocalServiceTestProject(t, project)
 	current := NewTeamSelection(authorityv1.Team{Id: "team_1"}, authorityv1.Membership{}, nil, naming.ManagedURLModeSimple)
 	_, err = RealizeLocalService(t.Context(), control, LocalService{Project: project, Team: current, Name: "web", Domain: "unavailable.example.test"})
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.DomainNotAvailable {
