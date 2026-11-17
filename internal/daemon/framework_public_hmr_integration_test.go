@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"html"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -233,9 +235,9 @@ func testPublicFrameworkHMR(t *testing.T, framework string) {
 			t.Fatalf("public Next development asset accepted an unrelated origin: response=%v body=%s err=%v", response, body, err)
 		}
 	}
-	connection, hmrDeadline := publicFrameworkWebSocket(t, f, base, socketPath, protocol)
+	connection, hmrDeadline, closeWebSocket := publicFrameworkWebSocket(t, f, base, socketPath, protocol)
 	defer func() {
-		if err := connection.Close(); err != nil {
+		if err := closeWebSocket(); err != nil {
 			t.Error("close public framework websocket", err)
 		}
 	}()
@@ -416,7 +418,7 @@ func publicFrameworkWorkspace(t *testing.T, repo, framework string) string {
 	return directory
 }
 
-func publicFrameworkWebSocket(t *testing.T, f *splitPublishFixture, base, path, protocol string) (*websocket.Conn, time.Time) {
+func publicFrameworkWebSocket(t *testing.T, f *splitPublishFixture, base, path, protocol string) (*websocket.Conn, time.Time, func() error) {
 	t.Helper()
 	settings, err := websocket.NewConfig("wss://"+strings.TrimPrefix(base, "https://")+path, base)
 	if err != nil {
@@ -456,7 +458,18 @@ func publicFrameworkWebSocket(t *testing.T, f *splitPublishFixture, base, path, 
 		_ = connection.Close()
 		t.Fatal(err)
 	}
-	return connection, deadline
+	return connection, deadline, func() (result error) {
+		defer func() { result = errors.Join(result, secured.Close()) }()
+		// websocket.Conn.Close sends a close frame and immediately closes tcp,
+		// leaving the peer's reply unread. finish that exchange before stopping
+		// the framework, within the original websocket deadline.
+		connection.PayloadType = websocket.CloseFrame
+		if _, err := connection.Write([]byte{0x03, 0xe8}); err != nil { // normal closure, status 1000
+			return err
+		}
+		_, err := io.Copy(io.Discard, connection)
+		return err
+	}
 }
 
 type publicHMRMessage struct {
