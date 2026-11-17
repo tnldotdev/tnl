@@ -23,7 +23,7 @@ func TestPublicHTTPAssignmentRequiresServerDiscovery(t *testing.T) {
 		TrustRevision: 1,
 		Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocolHTTP), Target: "http://127.0.0.1:3000", Public: new(true)},
 	}
-	if err := p.Publish(t.Context(), a, nil); !errors.Is(err, ErrAssignment) {
+	if err := p.Publish(t.Context(), a, nil, nil); !errors.Is(err, ErrAssignment) {
 		t.Fatal("public HTTP assignment accepted missing discovery", err)
 	}
 	p.ServerDiscovery = serverDiscoveryFunc(func(ctx context.Context) (controlv1.ControlDiscovery, error) {
@@ -32,7 +32,7 @@ func TestPublicHTTPAssignmentRequiresServerDiscovery(t *testing.T) {
 		}
 		return controlv1.ControlDiscovery{}, failure
 	})
-	if err := p.Publish(t.Context(), a, nil); !errors.Is(err, failure) {
+	if err := p.Publish(t.Context(), a, nil, nil); !errors.Is(err, failure) {
 		t.Fatal("public HTTP assignment hid discovery failure", err)
 	}
 }
@@ -51,7 +51,7 @@ func TestAssignmentBrowserDiscoveryDoesNotGateOtherServices(t *testing.T) {
 					})}
 				assignment := controlv1.DeploymentPublisherServiceAssignment{TrustRevision: 1,
 					Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, Target: "127.0.0.1:3000", Public: &public}}
-				if err := p.Publish(t.Context(), assignment, nil); err == nil || errors.Is(err, ErrAssignment) {
+				if err := p.Publish(t.Context(), assignment, nil, nil); err == nil || errors.Is(err, ErrAssignment) {
 					t.Fatal("unrelated service did not reach its independent identity validation", err)
 				}
 			}
