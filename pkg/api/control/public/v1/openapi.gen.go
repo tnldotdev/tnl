@@ -3279,6 +3279,9 @@ type ProjectTargetTLS struct {
 	// Digest Computed by control and included in resolved configuration. Callers may omit it.
 	Digest   string `json:"digest,omitempty"`
 	Hostname string `json:"hostname"`
+
+	// HostnameFromTarget System trust captured without a hostname override. Target updates follow the replacement origin's hostname. Omitted or false pins hostname, even when it equals the current target. Not allowed with ca_pem; for an address target, hostname must match its host.
+	HostnameFromTarget bool `json:"hostname_from_target,omitempty"`
 }
 
 // ProjectWebhook defines model for ProjectWebhook.

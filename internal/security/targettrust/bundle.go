@@ -53,6 +53,8 @@ type Snapshot struct {
 	System   bool
 	PEM      []byte
 	Digest   string
+	// hostname provenance is configuration intent, not additional trust material.
+	HostnameFromTarget bool `json:",omitempty"`
 }
 
 // CapturePEM validates publisher-discovered CA-only material through the same
@@ -128,7 +130,8 @@ func (c *Cache) Capture(ctx context.Context, root, target string, setting config
 		return Snapshot{}, ErrInvalidBundle
 	}
 	host = canonicalHostname(host)
-	snapshot := Snapshot{Hostname: host, System: setting.CA == "system"}
+	snapshot := Snapshot{Hostname: host, System: setting.CA == "system",
+		HostnameFromTarget: setting.CA == "system" && setting.Hostname == nil}
 	if !snapshot.System {
 		var data []byte
 		if strings.HasPrefix(setting.CA, "https://") {
@@ -362,5 +365,6 @@ func (s Snapshot) CAVerifier() (*tls.Config, error) {
 }
 
 func (s Snapshot) valid() bool {
-	return config.ValidTLSIdentity(s.Hostname) && s.Hostname == canonicalHostname(s.Hostname) && s.Digest == s.digest() && s.System != (len(s.PEM) != 0)
+	return config.ValidTLSIdentity(s.Hostname) && s.Hostname == canonicalHostname(s.Hostname) && s.Digest == s.digest() && s.System != (len(s.PEM) != 0) &&
+		(!s.HostnameFromTarget || s.System)
 }

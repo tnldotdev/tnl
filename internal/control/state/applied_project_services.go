@@ -105,7 +105,7 @@ func appliedServiceTargetTrust(trust *ProjectTargetTLS) (*ServiceTargetTLS, erro
 	if trust == nil {
 		return nil, nil
 	}
-	snapshot, err := (targettrust.Declaration{Hostname: trust.Hostname, CAPEM: []byte(trust.CAPEM), Digest: trust.Digest}).Snapshot()
+	snapshot, err := (targettrust.Declaration{Hostname: trust.Hostname, CAPEM: []byte(trust.CAPEM), Digest: trust.Digest, HostnameFromTarget: trust.HostnameFromTarget}).Snapshot()
 	if err != nil {
 		return nil, errors.Join(ErrProjectConfigurationInvalid, err)
 	}

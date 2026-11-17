@@ -86,6 +86,29 @@ func TestAllocationRequestRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestAllocationRequestKeepsDefaultAndExplicitHostnameProvenance(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		setting   *controlv1.ProjectTargetTLS
+		automatic bool
+	}{
+		{name: "origin default", automatic: true},
+		{name: "explicit same hostname", setting: &controlv1.ProjectTargetTLS{Hostname: "app.example.test"}},
+		{name: "captured default", setting: &controlv1.ProjectTargetTLS{Hostname: "app.example.test", HostnameFromTarget: true}, automatic: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body, _, trust, err := allocationRequest(Options{Target: "https://app.example.test:443", TargetTLS: test.setting})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if trust == nil || body.Configuration.TargetTls == nil || trust.HostnameFromTarget != test.automatic ||
+				body.Configuration.TargetTls.HostnameFromTarget != test.automatic {
+				t.Fatal("allocation lost the captured hostname choice", trust, body.Configuration.TargetTls)
+			}
+		})
+	}
+}
+
 type allocationControl struct {
 	publisheridentity.ServiceControl
 	allocate                        func(controlv1.AllocateServiceRequest) (controlv1.Service, error)

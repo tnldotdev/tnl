@@ -242,24 +242,34 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 		saved.Target, saved.TargetDiscovery = parsed.Host, nil
 		if parsed.Scheme == "http" {
 			saved.TargetTls, metadata.TargetTls = nil, nil
-		} else if saved.TargetTls == nil {
+		} else if saved.TargetTls == nil || saved.TargetTls.HostnameFromTarget {
 			trust, err := targettrust.NewDeclaration(parsed.Hostname(), nil)
 			if err != nil {
 				return err
 			}
-			saved.TargetTls = &controlv1.ProjectTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest}
-			metadata.TargetTls = &controlv1.ServiceTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest, System: true}
+			snapshot, err := trust.Snapshot()
+			if err != nil {
+				return err
+			}
+			saved.TargetTls = &controlv1.ProjectTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest, HostnameFromTarget: true}
+			metadata.TargetTls = &controlv1.ServiceTargetTLS{Hostname: snapshot.Hostname, Digest: snapshot.Digest, System: true}
 		}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	address, err := servicePublicAddress(updated.Protocol, updated.Endpoint)
-	if err != nil {
-		return err
+	fields := []clioutput.Field{{Label: "service", Value: updated.Name}, {Label: "service ID", Value: updated.Id}}
+	if updated.Endpoint != nil && updated.Endpoint.Public {
+		address, err := servicePublicAddress(updated.Protocol, updated.Endpoint)
+		if err != nil {
+			return err
+		}
+		fields = append(fields, clioutput.Field{Label: "public URL", Value: address})
+	} else {
+		fields = append(fields, clioutput.Field{Label: "access path", Value: "connector-only"})
 	}
-	fields := []clioutput.Field{{Label: "public URL", Value: address}, {Label: "target", Value: target}}
+	fields = append(fields, clioutput.Field{Label: "target", Value: target})
 	return writeHumanFrame(output, "tnl url update", "updated", "restart the publisher to use the new target",
 		clioutput.Fields(fields...))
 }

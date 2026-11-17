@@ -123,6 +123,7 @@ func allocationRequest(options Options) (controlv1.AllocateServiceRequest, strin
 		if err != nil {
 			return body, "", nil, err
 		}
+		declaration.HostnameFromTarget = options.TargetTLS == nil || options.TargetTLS.HostnameFromTarget
 		if options.TargetTLS != nil && options.TargetTLS.Digest != "" && options.TargetTLS.Digest != declaration.Digest {
 			return body, "", nil, errors.New("target TLS digest does not match its captured trust")
 		}
@@ -130,7 +131,7 @@ func allocationRequest(options Options) (controlv1.AllocateServiceRequest, strin
 		if err != nil {
 			return body, "", nil, err
 		}
-		body.Configuration.TargetTls = &controlv1.ProjectTargetTLS{Hostname: declaration.Hostname, Digest: declaration.Digest}
+		body.Configuration.TargetTls = &controlv1.ProjectTargetTLS{Hostname: declaration.Hostname, Digest: declaration.Digest, HostnameFromTarget: declaration.HostnameFromTarget}
 		if ca != "" {
 			body.Configuration.TargetTls.CaPem = new(ca)
 		}

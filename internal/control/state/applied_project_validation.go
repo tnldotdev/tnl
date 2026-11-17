@@ -145,6 +145,17 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 		if err != nil || t.Digest != "" && t.Digest != declaration.Digest {
 			return ErrProjectConfigurationInvalid
 		}
+		if t.HostnameFromTarget {
+			if t.CAPEM != "" {
+				return ErrProjectConfigurationInvalid
+			}
+			if !descriptor {
+				host, _, err := net.SplitHostPort(s.Target)
+				if err != nil || !sameAppliedTargetTLSIdentity(host, t.Hostname) {
+					return ErrProjectConfigurationInvalid
+				}
+			}
+		}
 		t.Digest = declaration.Digest
 	}
 	if s.Hostname != "" {
@@ -157,6 +168,15 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 		return ErrProjectConfigurationInvalid
 	}
 	return normalizeAppliedTraffic(s)
+}
+
+func sameAppliedTargetTLSIdentity(host, identity string) bool {
+	address, addressErr := netip.ParseAddr(host)
+	expected, expectedErr := netip.ParseAddr(identity)
+	if addressErr == nil || expectedErr == nil {
+		return addressErr == nil && expectedErr == nil && address.Unmap() == expected.Unmap()
+	}
+	return strings.EqualFold(host, identity)
 }
 
 func parseAppliedHTTPOrigin(target string) (*url.URL, error) {

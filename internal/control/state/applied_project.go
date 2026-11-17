@@ -45,9 +45,10 @@ type ProjectApplicationRate struct {
 	Burst *int   `json:"burst,omitempty"`
 }
 type ProjectTargetTLS struct {
-	Hostname string `json:"hostname"`
-	CAPEM    string `json:"ca_pem,omitempty"`
-	Digest   string `json:"digest"`
+	Hostname           string `json:"hostname"`
+	CAPEM              string `json:"ca_pem,omitempty"`
+	Digest             string `json:"digest"`
+	HostnameFromTarget bool   `json:"hostname_from_target,omitempty"`
 }
 type ProjectServiceAccess struct {
 	Team bool `json:"team"`

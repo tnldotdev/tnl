@@ -9,7 +9,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
@@ -128,7 +130,14 @@ func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation se
 			return installedjobs.ErrScope
 		}
 	} else {
-		hostname, domain, err := resolve.PublishHostname(flags.PublicURL, flags.Name, flags.Domain, current)
+		exact := ""
+		if flags.PublicURL != "" {
+			exact, err = naming.ParseExactPublicURL(flags.PublicURL)
+			if err != nil {
+				return failure.Wrap("select service address", failure.InvalidTunnelFlags, err)
+			}
+		}
+		hostname, domain, err := resolve.PublishHostname(exact, flags.Name, flags.Domain, current)
 		if err != nil {
 			return err
 		}

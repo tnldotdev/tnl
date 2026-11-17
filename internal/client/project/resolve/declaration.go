@@ -154,7 +154,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 				if err != nil {
 					return declaration, err
 				}
-				entry.TargetTls = &controlv1.ProjectTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest}
+				entry.TargetTls = &controlv1.ProjectTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest, HostnameFromTarget: trust.HostnameFromTarget}
 				if len(trust.CAPEM) != 0 {
 					pem := string(trust.CAPEM)
 					entry.TargetTls.CaPem = &pem

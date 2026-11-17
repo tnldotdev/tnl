@@ -132,6 +132,9 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 	}
 	if !enrolled {
 		applyServiceConfiguration(&flags.tunnelFlags, effective.Service)
+		if service == "" && flags.PublicURL == "" && flags.Name == "" && c.Config.Name != nil {
+			flags.Name = *c.Config.Name
+		}
 	} else if service != "" && effective.HTTP != nil {
 		flags.httpLimits = effective.HTTP.Limits
 	}

@@ -79,7 +79,7 @@ func foregroundTargetTLS(trust *targettrust.Snapshot) (*controlv1.ProjectTargetT
 	if err != nil {
 		return nil, err
 	}
-	tls := &controlv1.ProjectTargetTLS{Hostname: captured.Hostname, Digest: captured.Digest}
+	tls := &controlv1.ProjectTargetTLS{Hostname: captured.Hostname, Digest: captured.Digest, HostnameFromTarget: captured.HostnameFromTarget}
 	if len(captured.CAPEM) != 0 {
 		tls.CaPem = new(string(captured.CAPEM))
 	}

@@ -9,9 +9,10 @@ import (
 // Declaration is portable publisher-to-target trust captured for project apply.
 // its versioned digest is distinct from the saved-service snapshot digest.
 type Declaration struct {
-	Hostname string
-	CAPEM    []byte
-	Digest   string
+	Hostname           string
+	CAPEM              []byte
+	Digest             string
+	HostnameFromTarget bool
 }
 
 // NewDeclaration derives the project digest from the exact approved bytes.
@@ -30,7 +31,7 @@ func (d Declaration) Snapshot() (*Snapshot, error) {
 	if d.Digest != declarationDigest(d.Hostname, d.CAPEM) {
 		return nil, errors.New("target trust digest does not match its snapshot")
 	}
-	snapshot := &Snapshot{Hostname: d.Hostname, PEM: d.CAPEM, System: len(d.CAPEM) == 0}
+	snapshot := &Snapshot{Hostname: d.Hostname, PEM: d.CAPEM, System: len(d.CAPEM) == 0, HostnameFromTarget: d.HostnameFromTarget}
 	snapshot.Digest = snapshot.digest()
 	return snapshot, snapshot.Validate()
 }
@@ -40,7 +41,7 @@ func (s Snapshot) Declaration() (*Declaration, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
-	return &Declaration{Hostname: s.Hostname, CAPEM: s.PEM, Digest: declarationDigest(s.Hostname, s.PEM)}, nil
+	return &Declaration{Hostname: s.Hostname, CAPEM: s.PEM, Digest: declarationDigest(s.Hostname, s.PEM), HostnameFromTarget: s.HostnameFromTarget}, nil
 }
 
 func declarationDigest(hostname string, ca []byte) string {

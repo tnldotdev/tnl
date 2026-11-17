@@ -164,6 +164,48 @@ func TestBarePublishUsesStableDirectoryNameWithoutConfiguration(t *testing.T) {
 	}
 }
 
+func TestPublishRootNameDoesNotOverrideNamedServiceHostname(t *testing.T) {
+	for _, test := range []struct {
+		name, source, target, override, publicURL, wantName, wantURL string
+	}{
+		{name: "root default", source: `{"name":"review"}`, target: "3000", wantName: "review"},
+		{name: "CLI name", source: `{"name":"review"}`, target: "3000", override: "cli-review", wantName: "cli-review"},
+		{name: "CLI URL", source: `{"name":"review"}`, target: "3000", publicURL: "exact.example", wantURL: "exact.example"},
+		{name: "worktree default", source: `{}`, target: "3000", wantName: "worktree"},
+		{name: "saved service name", source: `{"name":"root","services":{"web":{}},"deployments":{"local":{"targets":{"web":{"address":3000,"public":true,"name":"saved"}}}}}`, target: "web", wantName: "web-worktree"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "tnl.json")
+			if err := os.WriteFile(path, []byte(`{"version":1,"tnl":`+test.source+`}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			document, err := config.LoadDocument(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved, err := config.ResolveDeployment(*document.TNL, "local")
+			if err != nil {
+				t.Fatal(err)
+			}
+			project := projectConfiguration{Project: clientproject.Project{Config: resolved, Root: root, Worktree: namedTestWorktree(root, "worktree")}}
+			flags := publishCommand{Target: test.target, tunnelFlags: tunnelFlags{Name: test.override, PublicURL: test.publicURL}}
+			if err := project.applyPublish(&flags); err != nil {
+				t.Fatal(err)
+			}
+			wantName := test.wantName
+			if wantName == "worktree" {
+				wantName = project.Worktree.Label.FullLabel
+			} else if wantName == "web-worktree" {
+				wantName = clientproject.ServiceWorktreeLabel("web", project.Worktree)
+			}
+			if flags.Name != wantName || flags.PublicURL != test.wantURL {
+				t.Fatalf("name=%q URL=%q, want name=%q URL=%q", flags.Name, flags.PublicURL, wantName, test.wantURL)
+			}
+		})
+	}
+}
+
 func TestEnrolledPublishDoesNotInheritProjectVisitorPolicy(t *testing.T) {
 	name := "project-service"
 	access := &config.Access{Mode: "anonymous"}

@@ -243,7 +243,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 			if err != nil {
 				return err
 			}
-			options.TargetTLS = &controlv1.ProjectTargetTLS{Hostname: declaration.Hostname, Digest: declaration.Digest}
+			options.TargetTLS = &controlv1.ProjectTargetTLS{Hostname: declaration.Hostname, Digest: declaration.Digest, HostnameFromTarget: declaration.HostnameFromTarget}
 			if len(declaration.CAPEM) != 0 {
 				options.TargetTLS.CaPem = new(string(declaration.CAPEM))
 			}

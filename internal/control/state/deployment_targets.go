@@ -57,7 +57,7 @@ func normalizeDeploymentTarget(ctx context.Context, name, protocol string, input
 		if err != nil {
 			return s, ErrProjectConfigurationInvalid
 		}
-		s.TargetTLS = &ProjectTargetTLS{Hostname: declaration.Hostname, CAPEM: string(declaration.CAPEM), Digest: declaration.Digest}
+		s.TargetTLS = &ProjectTargetTLS{Hostname: declaration.Hostname, CAPEM: string(declaration.CAPEM), Digest: declaration.Digest, HostnameFromTarget: declaration.HostnameFromTarget}
 	}
 	if err = normalizeAppliedProjectService(name, &s, false); err != nil {
 		return s, err
@@ -76,6 +76,9 @@ func deploymentTarget(s ProjectServiceConfiguration) DeploymentTargetStatus {
 			ca = "system"
 		}
 		result.TLS = &DeploymentTargetTLS{Hostname: s.TargetTLS.Hostname, CA: ca}
+		if s.TargetTLS.HostnameFromTarget {
+			result.TLS.Hostname = ""
+		}
 	}
 	return result
 }

@@ -15,6 +15,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -97,5 +98,22 @@ func TestAppMountTrustCanBeCapturedBeforeItsListenerExists(t *testing.T) {
 	project.Config.Services["api"].Target.TLS.Hostname = nil
 	if _, err := ProjectMounts(t.Context(), project, "web", func(string) string { return "" }, nil); err == nil {
 		t.Fatal("unknown app listener inferred a certificate hostname")
+	}
+}
+
+func TestForegroundTargetDeclarationRetainsHostnameProvenance(t *testing.T) {
+	for _, explicit := range []string{"", "target.example"} {
+		trust, err := CaptureServiceTargetTrust(t.Context(), ServiceOptions{PublicOptions: PublicOptions{TargetTLSName: explicit}, TargetTLS: new(true)}, controlv1.ServiceProtocolHTTP, "https://target.example")
+		if err != nil || trust == nil {
+			t.Fatal("capture HTTPS target", err)
+		}
+		declaration, err := foregroundTargetTLS(trust)
+		if err != nil || declaration.HostnameFromTarget != (explicit == "") {
+			t.Fatal("foreground declaration lost the explicit hostname choice", declaration, err)
+		}
+		pinned, err := targettrust.NewDeclaration("target.example", nil)
+		if err != nil || declaration.Digest != pinned.Digest {
+			t.Fatal("provenance changed trust approval", declaration, err)
+		}
 	}
 }

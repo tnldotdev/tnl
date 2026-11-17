@@ -374,6 +374,10 @@ schemas:
     description: "Publisher-to-target TLS trust, separate from visitor TLS. ca_pem adds CA certificates to the publisher's system roots. Control computes digest from the exact hostname and CA bytes. Omit it when changing trust settings; a supplied digest must match."
     properties:
       hostname: { type: string, minLength: 1, maxLength: 253 }
+      hostname_from_target:
+        type: boolean
+        x-go-type-skip-optional-pointer: true
+        description: "System trust captured without a hostname override. Target updates follow the replacement origin's hostname. Omitted or false pins hostname, even when it equals the current target. Not allowed with ca_pem; for an address target, hostname must match its host."
       ca_pem:
         {
           "type": "string",

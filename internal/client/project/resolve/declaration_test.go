@@ -131,6 +131,30 @@ func TestRemoteDeclarationKeepsExposureOnEachService(t *testing.T) {
 	}
 }
 
+func TestDeclarationPreservesDefaultAndExplicitTargetTLSHostname(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		for _, deployment := range []string{"local", "production"} {
+			t.Run(deployment+map[bool]string{false: " default", true: " explicit"}[explicit], func(t *testing.T) {
+				tls := &config.TargetTLS{CA: new("system")}
+				if explicit {
+					tls.Hostname = new("target.example")
+				}
+				project := clientproject.Project{Config: config.TNL{Deployment: deployment, Services: config.Services{
+					"web": {Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("https://target.example")), TLS: tls}},
+				}}}
+				declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				trust := declaration.Services["web"].TargetTls
+				if trust == nil || trust.Hostname != "target.example" || trust.HostnameFromTarget != !explicit || trust.Digest == "" {
+					t.Fatal("project declaration lost hostname provenance", trust)
+				}
+			})
+		}
+	}
+}
+
 func TestProjectDeclarationPreservesDirectSettingsPolicyLimitsAndGrantIntent(t *testing.T) {
 	deployment := "cloud"
 	remote := config.Target("http://api.internal:8080")
