@@ -663,7 +663,8 @@ func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request,
 		if ready {
 			state = controlv1.ServiceRunStateStateReady
 		}
-		deadline := time.Now().Add(time.Minute)
+		observedAt := time.Now()
+		deadline := observedAt.Add(time.Minute)
 		if snapshot.Preparation.ExpiresAt.Before(deadline) {
 			deadline = snapshot.Preparation.ExpiresAt
 		}
@@ -672,7 +673,7 @@ func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request,
 		}
 		publishingWrite(w, 200, controlv1.ServiceRunState{ServiceId: service, ServiceRunId: id, RunNumber: snapshot.Setup.RunNumber,
 			EndpointRevision: current.EndpointRevision, PublicEndpointReady: ready && current.Endpoint.Public,
-			State: state, Healthy: &body.Healthy, PublisherExpiresAt: deadline, PublisherConnections: snapshot.Setup.PublisherConnections})
+			State: state, Healthy: &body.Healthy, ObservedAt: observedAt, PublisherExpiresAt: deadline, PublisherConnections: snapshot.Setup.PublisherConnections})
 	case operation == "connector-peer-pairs" && r.Method == http.MethodGet:
 		publishingWrite(w, 200, controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{}})
 	case operation == "service-observations" && r.Method == http.MethodPost:
