@@ -155,6 +155,7 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		r.Header.Set("Content-Type", "text/plain")
 		if credential != "" {
 			r.Header.Set("Tnl-Visitor-Token", credential)
 		}
