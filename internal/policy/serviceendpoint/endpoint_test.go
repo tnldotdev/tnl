@@ -1,6 +1,9 @@
 package serviceendpoint
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPermissionPortDoesNotDependOnIngressReservation(t *testing.T) {
 	for protocol, want := range map[string]uint16{"http": 443, "tcp": 0, "postgres": 0, "mysql": 0, "kubernetes": 0} {
@@ -35,17 +38,37 @@ func TestHTTPAuthorityUsesCanonicalHTTPSPort(t *testing.T) {
 	if HTTPAuthority(hostname, 443) != hostname || HTTPAuthority(hostname, 8443) != hostname+":8443" {
 		t.Fatal("authority did not distinguish canonical HTTPS and local alternate ports")
 	}
-	for _, authority := range []string{hostname, hostname + ":443"} {
+	for _, authority := range []string{hostname, hostname + ":443", strings.ToUpper(hostname), "SeRvIcE.ExAmPlE.TeSt:443"} {
 		if !MatchesHTTPAuthority(hostname, 443, authority) {
 			t.Fatal("canonical HTTPS authority rejected", authority)
 		}
 	}
-	for _, authority := range []string{hostname + ":8443", hostname + ".", "other.example.test", "https://" + hostname, hostname + ":0443", hostname + ":443@other.example.test"} {
+	for _, authority := range []string{
+		hostname + ":8443", strings.ToUpper(hostname) + ":8443",
+		hostname + ".", strings.ToUpper(hostname) + ".:443",
+		"other.example.test", "SERVICE.example.test.other", "https://" + hostname,
+		hostname + ":0443", hostname + ":+443", hostname + ":", hostname + ":443:443",
+		hostname + ":443@other.example.test", "user@" + hostname, "[" + hostname + "]:443",
+		hostname + "/path", hostname + "?query", hostname + "#fragment", hostname + " ",
+		"\u017fervice.example.test", "\u017fervice.example.test:443",
+	} {
 		if MatchesHTTPAuthority(hostname, 443, authority) {
 			t.Fatal("another authority was accepted", authority)
 		}
 	}
-	if !MatchesHTTPAuthority(hostname, 8443, hostname+":8443") || MatchesHTTPAuthority(hostname, 8443, hostname) {
-		t.Fatal("alternate local port was inferred or ignored")
+	for _, authority := range []string{hostname + ":8443", strings.ToUpper(hostname) + ":8443"} {
+		if !MatchesHTTPAuthority(hostname, 8443, authority) {
+			t.Fatal("exact alternate local port rejected", authority)
+		}
+	}
+	for _, authority := range []string{hostname, strings.ToUpper(hostname), hostname + ":443", hostname + ":08443", hostname + ".:8443"} {
+		if MatchesHTTPAuthority(hostname, 8443, authority) {
+			t.Fatal("alternate local port was inferred or ignored", authority)
+		}
+	}
+	for _, authority := range []string{"\u212a.example.test", "\u212a.example.test:443"} {
+		if MatchesHTTPAuthority("k.example.test", 443, authority) {
+			t.Fatal("non-ASCII case folding accepted another authority", authority)
+		}
 	}
 }

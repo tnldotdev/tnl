@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -317,7 +318,8 @@ func (s *Server) handle(ctx context.Context, public net.Conn, finishInspection f
 		}
 		return nil
 	}
-	canonicalSNI := hello.ServerName == serverName
+	// service SNI may differ by case, but a trailing dot is not accepted.
+	canonicalSNI := strings.EqualFold(hello.ServerName, serverName)
 	hello.ServerName = serverName
 	finishInspection()
 	if hello.ServerName == s.config.ServerHostname {

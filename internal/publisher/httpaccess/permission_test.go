@@ -130,6 +130,45 @@ func TestLocalHTTPPermissionSNIIsCaseInsensitiveAndServiceBound(t *testing.T) {
 	}
 }
 
+func TestLocalHTTPPermissionAuthorityIsCaseInsensitiveAndPortBound(t *testing.T) {
+	policy, _, token := visitorfixture.Policy(t, false)
+	for _, test := range []struct {
+		name, authority, credential string
+		want                        error
+	}{
+		{"exact", "preview.example.test", token.Reveal(), nil},
+		{"uppercase", "PREVIEW.EXAMPLE.TEST", token.Reveal(), nil},
+		{"mixed_case_default_port", "PrEvIeW.ExAmPlE.TeSt:443", token.Reveal(), nil},
+		{"sibling", "SIBLING.EXAMPLE.TEST", token.Reveal(), visitortoken.ErrBinding},
+		{"control", "CONTROL.EXAMPLE.TEST", token.Reveal(), visitortoken.ErrBinding},
+		{"trailing_dot", "PREVIEW.EXAMPLE.TEST.", token.Reveal(), visitortoken.ErrBinding},
+		{"trailing_dot_default_port", "PREVIEW.EXAMPLE.TEST.:443", token.Reveal(), visitortoken.ErrBinding},
+		{"wrong_port", "PREVIEW.EXAMPLE.TEST:8443", token.Reveal(), visitortoken.ErrBinding},
+		{"noncanonical_port", "PREVIEW.EXAMPLE.TEST:0443", token.Reveal(), visitortoken.ErrBinding},
+		{"missing_permission", "PREVIEW.EXAMPLE.TEST", "", visitortoken.ErrToken},
+		{"invalid_permission", "PREVIEW.EXAMPLE.TEST", "invalid", visitortoken.ErrToken},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := visitorfixture.Request()
+			request.Host = test.authority
+			if test.credential != "" {
+				request.Header.Set(VisitorTokenHeader, test.credential)
+			}
+			permission, err := localHTTPPermission(request, policy, nil)
+			if test.want == nil {
+				if err != nil || permission.token != token || permission.anonymous {
+					t.Fatal("same-service authority lost its verified permission", err)
+				}
+			} else if !errors.Is(err, test.want) {
+				t.Fatal("authority or credential crossed its authorization boundary", err)
+			}
+			if request.Host != test.authority {
+				t.Fatal("authorization rewrote the original HTTP authority")
+			}
+		})
+	}
+}
+
 func TestServiceHTTPWorkloadCertificateNeverFallsBackToHumanCredentials(t *testing.T) {
 	for _, profile := range []string{"fixed permission", "workload identity"} {
 		t.Run(profile, func(t *testing.T) {

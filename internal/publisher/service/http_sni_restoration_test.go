@@ -43,10 +43,20 @@ func TestServiceHTTPCaseInsensitiveSNIKeepsAuthorityAndAccessFences(t *testing.T
 			}{
 				{"exact", hostname, hostname, "valid", http.StatusOK, 1, 1},
 				{"uppercase_same_name", strings.ToUpper(hostname), hostname, "valid", http.StatusOK, 1, 1},
+				{"uppercase_host", hostname, strings.ToUpper(hostname), "valid", http.StatusOK, 1, 1},
+				{"uppercase_host_default_port", hostname, strings.ToUpper(hostname) + ":443", "valid", http.StatusOK, 1, 1},
 				{"covered_sibling_sni", sibling, hostname, "valid", http.StatusMisdirectedRequest, 0, 0},
 				{"wrong_host", hostname, sibling, "valid", http.StatusMisdirectedRequest, 0, 0},
+				{"uppercase_wrong_host", hostname, strings.ToUpper(sibling), "valid", http.StatusMisdirectedRequest, 0, 0},
+				{"control_host", hostname, "CONTROL.EXAMPLE.TEST", "valid", http.StatusMisdirectedRequest, 0, 0},
+				{"trailing_dot_host", hostname, strings.ToUpper(hostname) + ".", "valid", http.StatusMisdirectedRequest, 0, 0},
+				{"trailing_dot_host_default_port", hostname, strings.ToUpper(hostname) + ".:443", "valid", http.StatusMisdirectedRequest, 0, 0},
+				{"wrong_port", hostname, strings.ToUpper(hostname) + ":8443", "valid", http.StatusMisdirectedRequest, 0, 0},
+				{"noncanonical_port", hostname, strings.ToUpper(hostname) + ":0443", "valid", http.StatusMisdirectedRequest, 0, 0},
 				{"missing_permission", hostname, hostname, "", http.StatusForbidden, 0, 1},
 				{"invalid_permission", hostname, hostname, "invalid", http.StatusForbidden, 0, 1},
+				{"uppercase_host_missing_permission", hostname, strings.ToUpper(hostname), "", http.StatusForbidden, 0, 1},
+				{"uppercase_host_invalid_permission", hostname, strings.ToUpper(hostname), "invalid", http.StatusForbidden, 0, 1},
 			} {
 				t.Run(fmt.Sprintf("inline=%t/http2=%t/%s", inline, h2, test.name), func(t *testing.T) {
 					var targets, ownerChecks, capacity atomic.Int32
@@ -55,7 +65,7 @@ func TestServiceHTTPCaseInsensitiveSNIKeepsAuthorityAndAccessFences(t *testing.T
 					var budget *requestlimit.HTTP
 					client, _, _, token := serviceHTTPConfiguredFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						targets.Add(1)
-						if r.Host != hostname || r.URL.Path != "/sni" || r.Header.Get(httpaccess.VisitorTokenHeader) != "" {
+						if r.Host != test.host || r.URL.Path != "/sni" || r.Header.Get(httpaccess.VisitorTokenHeader) != "" {
 							t.Error("authorized request changed its service authority, path, or credential stripping")
 						}
 						if _, err := io.WriteString(w, body); err != nil {

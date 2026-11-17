@@ -5,6 +5,7 @@ package serviceendpoint
 import (
 	"net"
 	"strconv"
+	"strings"
 
 	"github.com/tnldotdev/tnl/internal/naming"
 )
@@ -44,7 +45,13 @@ func HTTPAuthority(hostname string, port uint16) string {
 	return net.JoinHostPort(hostname, strconv.Itoa(int(port)))
 }
 
+// MatchesHTTPAuthority permits hostname case differences, not trailing-dot or
+// port aliases. the caller's canonical service identity remains unchanged.
 func MatchesHTTPAuthority(hostname string, port uint16, authority string) bool {
-	return authority == HTTPAuthority(hostname, port) ||
-		port == 443 && authority == net.JoinHostPort(hostname, "443")
+	host, rawPort, hasPort := strings.Cut(authority, ":")
+	canonical, err := naming.CanonicalizeHostname(host)
+	if err != nil || strings.HasSuffix(host, ".") || canonical != hostname {
+		return false
+	}
+	return !hasPort && port == 443 || hasPort && rawPort == strconv.Itoa(int(port))
 }
