@@ -1,14 +1,20 @@
 package stream
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net"
 	"net/http"
+	"os"
+	"syscall"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // RequestLimits is the run-owned request budget, shared across visitor streams.
@@ -48,20 +54,74 @@ func DenyHTTP(w http.ResponseWriter, r *http.Request, status int) {
 	message := "service HTTP access denied"
 	if status == http.StatusServiceUnavailable {
 		message = "service HTTP authorization is unavailable; retry"
+	} else if status == http.StatusInternalServerError {
+		message = "service HTTP authorization failed"
 	}
 	http.Error(w, message, status)
 }
 
 func HTTPDecisionStatus(err error) int {
-	if code, ok := diagnostic.CodeOf(err); ok && code == diagnostic.VisitorAccessDenied {
+	return httpDecisionStatus(err, false)
+}
+
+// classify each independent cause. a denial or unavailable marker must not hide
+// an unrelated fault in a joined result, even beneath a diagnostic wrapper.
+func httpDecisionStatus(err error, denied bool) int {
+	switch err {
+	case nil, visitortoken.ErrToken, visitortoken.ErrBinding, clientcontrol.ErrNotFound,
+		clientcontrol.ErrUnauthenticated, clientcontrol.ErrStatusConflict:
 		return http.StatusForbidden
+	case clientcontrol.ErrUnavailable, visitortoken.ErrKey:
+		return http.StatusServiceUnavailable
+	case os.ErrDeadlineExceeded, io.EOF, io.ErrUnexpectedEOF, net.ErrClosed,
+		syscall.ECONNREFUSED, syscall.ECONNRESET, syscall.ECONNABORTED, syscall.EPIPE,
+		syscall.ETIMEDOUT, syscall.EHOSTUNREACH, syscall.ENETUNREACH:
+		return http.StatusServiceUnavailable
+	case visitortoken.ErrPolicy, context.Canceled, context.DeadlineExceeded:
+		if denied {
+			return http.StatusForbidden
+		}
+		return http.StatusServiceUnavailable
 	}
-	if err == nil || errors.Is(err, visitortoken.ErrToken) || errors.Is(err, visitortoken.ErrBinding) || errors.Is(err, clientcontrol.ErrNotFound) || errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.Is(err, clientcontrol.ErrStatusConflict) {
-		return http.StatusForbidden
+	if _, ok := err.(*diagnostic.Error); ok {
+		if code, _ := diagnostic.CodeOf(err); code == diagnostic.VisitorAccessDenied {
+			denied = true
+		}
 	}
-	var problem *clientcontrol.ProblemError
-	if errors.As(err, &problem) && problem != nil && (problem.Status == 401 || problem.Status == 403 || problem.Status == 404 || problem.Status == 409) {
-		return http.StatusForbidden
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return http.StatusInternalServerError
+		}
+		status := http.StatusForbidden
+		for _, cause := range causes {
+			current := httpDecisionStatus(cause, denied)
+			if current == http.StatusInternalServerError {
+				return current
+			}
+			if current == http.StatusServiceUnavailable {
+				status = current
+			}
+		}
+		return status
 	}
-	return http.StatusServiceUnavailable
+	if problem, ok := err.(*clientcontrol.ProblemError); ok && problem != nil {
+		switch problem.Status {
+		case 401, 403, 404, 409:
+			return http.StatusForbidden
+		case 502, 503, 504:
+			switch problem.Problem.Code {
+			case controlv1.Unavailable, controlv1.PlacementUnavailable, controlv1.CredentialDeliveryUnavailable:
+				return http.StatusServiceUnavailable
+			}
+		}
+		return http.StatusInternalServerError
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return httpDecisionStatus(cause, denied)
+	}
+	if dns, ok := err.(*net.DNSError); ok && dns != nil && (dns.IsTimeout || dns.IsTemporary || dns.IsNotFound) {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusInternalServerError
 }

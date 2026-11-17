@@ -333,13 +333,15 @@ func responseError(status int, header http.Header, payload []byte) (result error
 			seconds = 1
 		}
 		return &RateLimitError{RetryAfter: time.Duration(min(seconds, 86400)) * time.Second}
-	case controlv1.Unavailable, controlv1.PlacementUnavailable, controlv1.Internal:
+	case controlv1.Unavailable, controlv1.PlacementUnavailable:
 		return ErrUnavailable
+	case controlv1.Internal:
+		return failure.Wrap("request control API", failure.ServerAPIInternal, &ProblemError{Status: status, Problem: problem})
 	default:
-		if status >= 500 && status < 600 && problem.Code.Valid() {
-			return ErrUnavailable
-		}
 		cause := &ProblemError{Status: status, Problem: problem}
+		if status >= 500 && status < 600 {
+			return failure.Wrap("request control API", failure.ServerAPIInternal, cause)
+		}
 		if status == http.StatusForbidden {
 			return failure.Wrap("request control API", failure.ServerDenied, cause)
 		}

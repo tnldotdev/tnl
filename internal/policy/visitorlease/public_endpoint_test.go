@@ -179,3 +179,44 @@ func TestPublicEndpointUsesCurrentIPPolicyAndCopiesCallerValues(t *testing.T) {
 		}
 	})
 }
+
+func TestPublicSourceDenialDoesNotRelabelUnavailableOrReplacedEndpoint(t *testing.T) {
+	for _, boundary := range []string{"source", "expired", "disabled", "endpoint"} {
+		t.Run(boundary, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				lease, update, _ := fixture(t)
+				endpoint := controlv1.VisitorPublicEndpoint{Hostname: update.View.Hostname, Port: 443, EndpointRevision: 1}
+				allowed, err := ippolicy.Hash([32]byte{1}, netip.MustParsePrefix("198.51.100.0/24"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ip, err := ippolicy.New([32]byte{1}, []ippolicy.Entry{allowed})
+				if err != nil {
+					t.Fatal(err)
+				}
+				update.PublicEndpoint, update.IP = &endpoint, &ip
+				update.View.ValidUntil = time.Now().Add(time.Second)
+				if boundary == "disabled" {
+					update.Enabled = false
+				}
+				if err := lease.Apply(lease.Begin(), update); err != nil {
+					t.Fatal(err)
+				}
+				if boundary == "expired" {
+					time.Sleep(time.Second)
+				}
+				selected := endpoint
+				if boundary == "endpoint" {
+					selected.EndpointRevision++
+				}
+				guard, err := lease.BindPublicConnection(selected, netip.MustParseAddr("192.0.2.1"), func() {})
+				if guard != nil {
+					guard.Close()
+				}
+				if !errors.Is(err, visitortoken.ErrPolicy) || errors.Is(err, ErrSourceDenied) != (boundary == "source") {
+					t.Fatal("source diagnostic replaced a different authority failure", err)
+				}
+			})
+		})
+	}
+}

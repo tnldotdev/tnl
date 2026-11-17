@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -54,7 +55,8 @@ func (f *connectorHTTPBudgetFixture) Admit(http.ResponseWriter, *http.Request) (
 
 func TestConnectorHTTPReservedCompositionRequiresExplicitProofAndPreservesBudget(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
-		for _, boundary := range []string{"available", "missing proof", "missing frontend", "rejected proof"} {
+		for _, boundary := range []string{"available", "missing proof", "missing frontend", "rejected proof",
+			"invalid credential", "known outage", "unexpected fault", "outage and fault", "cancellation and fault"} {
 			t.Run(boundary+map[bool]string{false: "/http1", true: "/http2"}[h2], func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
@@ -97,6 +99,16 @@ func TestConnectorHTTPReservedCompositionRequiresExplicitProofAndPreservesBudget
 					endpoint.ConnectorHTTP = nil
 				case "rejected proof":
 					visitor.HTTPProof = connectorHTTPProofFixture{err: visitortoken.ErrPolicy}
+				case "invalid credential":
+					visitor.HTTPProof = connectorHTTPProofFixture{err: visitortoken.ErrToken}
+				case "known outage":
+					visitor.HTTPProof = connectorHTTPProofFixture{err: clientcontrol.ErrUnavailable}
+				case "unexpected fault":
+					visitor.HTTPProof = connectorHTTPProofFixture{err: errors.New("private proof implementation fault")}
+				case "outage and fault":
+					visitor.HTTPProof = connectorHTTPProofFixture{err: errors.Join(clientcontrol.ErrUnavailable, errors.New("private independent fault"))}
+				case "cancellation and fault":
+					visitor.HTTPProof = connectorHTTPProofFixture{err: errors.Join(context.Canceled, errors.New("private independent fault"))}
 				}
 				endpoint.Visitor = visitor
 				incoming, outgoing := net.Pipe()
@@ -148,6 +160,11 @@ func TestConnectorHTTPReservedCompositionRequiresExplicitProofAndPreservesBudget
 				if boundary != "available" {
 					if response.StatusCode < 400 || reserved.Load() != 0 {
 						t.Fatal("missing or rejected explicit capability fell back to local TCP or another frontend")
+					}
+					want := map[string]int{"invalid credential": 403, "known outage": 503, "unexpected fault": 500,
+						"outage and fault": 500, "cancellation and fault": 500}[boundary]
+					if want != 0 && response.StatusCode != want || strings.Contains(body, "private") {
+						t.Fatal("real HTTP authorization lost its error class or disclosed a cause", response.StatusCode, body)
 					}
 					return
 				}

@@ -1,12 +1,17 @@
 package visitorlease
 
 import (
+	"fmt"
 	"net/netip"
 
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+// ErrSourceDenied retains the policy fence while identifying an actual source
+// rejection, not an unavailable snapshot or a different endpoint revision.
+var ErrSourceDenied = fmt.Errorf("visitor source is not permitted by the service IP policy: %w", visitortoken.ErrPolicy)
 
 func validPublicEndpoint(endpoint controlv1.VisitorPublicEndpoint) bool {
 	protocol := "tcp"
@@ -27,9 +32,15 @@ func (l *Lease) BindPublicConnection(endpoint controlv1.VisitorPublicEndpoint, s
 	stopped := l.expireLocked(now)
 	guard := &Guard{lease: l, publicEndpoint: &endpoint, source: source.Unmap(), stop: stop}
 	if l.phase != leaseCurrent || !guard.allowedLocked(now) {
+		err := visitortoken.ErrPolicy
+		if l.phase == leaseCurrent && l.update.Enabled && now.Before(l.update.View.ValidUntil) &&
+			l.update.PublicEndpoint != nil && *l.update.PublicEndpoint == endpoint &&
+			l.update.IP != nil && !l.update.IP.Allows(source.Unmap()) {
+			err = ErrSourceDenied
+		}
 		l.mu.Unlock()
 		stopGuards(stopped)
-		return nil, visitortoken.ErrPolicy
+		return nil, err
 	}
 	l.guards[guard] = struct{}{}
 	guard.resetLocked()

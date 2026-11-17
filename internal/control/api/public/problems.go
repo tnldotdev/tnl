@@ -63,9 +63,13 @@ func writeControlStateProblem(ctx context.Context, response http.ResponseWriter,
 	case errors.Is(err, controlstate.ErrInsufficientRelayServices):
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.PlacementUnavailable, "relay placement is unavailable")
 	default:
-		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
-		operatorlog.ReportContext(ctx, failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
+		writeInternalStateProblem(ctx, response, operation, err)
 	}
+}
+
+func writeInternalStateProblem(ctx context.Context, response http.ResponseWriter, operation string, err error) {
+	requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
+	operatorlog.ReportContext(ctx, failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 }
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {

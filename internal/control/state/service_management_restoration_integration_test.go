@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -36,8 +37,8 @@ func TestIntegrationServiceRestoredSimpleOrganizationNamespaceNegatives(t *testi
 			invalid := declaration
 			invalid.Hostname = hostname
 			if _, err := d.CreateServiceAt(t.Context(), team.ID, owner, name, name,
-				ServicePlacement{}, now, ServiceMetadata{}, &invalid); !errors.Is(err, ErrServiceAccess) {
-				t.Fatal("simple organization namespace accepted a foreign or apex hostname", err)
+				ServicePlacement{}, now, ServiceMetadata{}, &invalid); !errors.Is(err, ErrServiceAccess) || !strings.Contains(err.Error(), namespace) {
+				t.Fatal("namespace denial omitted the current actor's allowed namespace", err)
 			}
 		})
 	}

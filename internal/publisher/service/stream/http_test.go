@@ -3,15 +3,18 @@ package stream
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestHTTPDecisionStatusKeepsDenialSeparateFromOutage(t *testing.T) {
@@ -32,7 +35,17 @@ func TestHTTPDecisionStatusKeepsDenialSeparateFromOutage(t *testing.T) {
 		{"unavailable verification key", visitortoken.ErrKey, http.StatusServiceUnavailable},
 		{"denied bind", diagnostic.Wrap(diagnostic.VisitorAccessDenied, visitortoken.ErrPolicy), http.StatusForbidden},
 		{"canceled bind", diagnostic.Wrap(diagnostic.VisitorAccessDenied, context.Canceled), http.StatusForbidden},
-		{"unexpected", errors.New("fixture failure"), http.StatusServiceUnavailable},
+		{"unexpected", errors.New("fixture failure"), http.StatusInternalServerError},
+		{"unavailable and fault", errors.Join(clientcontrol.ErrUnavailable, errors.New("private cleanup fault")), http.StatusInternalServerError},
+		{"denial and fault", errors.Join(visitortoken.ErrToken, errors.New("private cleanup fault")), http.StatusInternalServerError},
+		{"denied bind and fault", diagnostic.Wrap(diagnostic.VisitorAccessDenied, errors.Join(visitortoken.ErrPolicy, errors.New("private cleanup fault"))), http.StatusInternalServerError},
+		{"cancellation and fault", errors.Join(context.Canceled, errors.New("private cleanup fault")), http.StatusInternalServerError},
+		{"internal problem", &clientcontrol.ProblemError{Status: http.StatusInternalServerError}, http.StatusInternalServerError},
+		{"network outage", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}, http.StatusServiceUnavailable},
+		{"network and independent fault", &net.OpError{Op: "read", Net: "tcp", Err: errors.Join(syscall.ECONNRESET, errors.New("private fault"))}, http.StatusInternalServerError},
+		{"known unavailable problem", &clientcontrol.ProblemError{Status: 503, Problem: controlv1.Problem{Code: controlv1.Unavailable}}, http.StatusServiceUnavailable},
+		{"unknown unavailable problem", &clientcontrol.ProblemError{Status: 503}, http.StatusInternalServerError},
+		{"invalid upstream problem", &clientcontrol.ProblemError{Status: 502, Problem: controlv1.Problem{Code: controlv1.Forbidden}}, http.StatusInternalServerError},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := HTTPDecisionStatus(test.err); got != test.status {

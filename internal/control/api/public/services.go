@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -56,6 +57,15 @@ func (h *handler) serviceVisitor(w http.ResponseWriter, r *http.Request) (servic
 }
 
 func serviceVisitorError(ctx context.Context, w http.ResponseWriter, operation string, err error) {
+	var hostname *controlstate.ServiceHostnameError
+	if errors.As(err, &hostname) && hostname != nil {
+		if failure.Only(err, hostname) {
+			writeProblem(w, 404, controlv1.NotFound, hostname.Error())
+		} else {
+			writeInternalStateProblem(ctx, w, operation, err)
+		}
+		return
+	}
 	switch {
 	case errors.Is(err, controlstate.ErrProjectConfigurationInvalid):
 		writeProblem(w, 400, controlv1.InvalidRequest, "provide a valid service declaration and select a ready team domain")

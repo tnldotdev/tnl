@@ -17,6 +17,7 @@ import (
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
@@ -667,6 +668,12 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 			Hostname: b.prepared.managedHostname, Port: int(metadata.Destination.Port()), EndpointRevision: proof.Authority.EndpointRevision,
 		}, metadata.Source.Addr(), func() { cancel(); _ = stream.Close() })
 		if err != nil {
+			if errors.Is(err, visitorlease.ErrSourceDenied) {
+				serviceaudit.Emit(b.audit, serviceaudit.Observation{ServiceID: header.ServiceID, ServiceKind: "service",
+					RunID: header.ServiceRunID, RunNumber: int64(header.RunNumber), VisitorConnectionID: header.VisitorConnectionID,
+					SourceIP: metadata.Source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "denied", Reason: "ip_policy"})
+				return diagnostic.WrapMessage(diagnostic.VisitorAccessDenied, "visitor source is not permitted by the service IP policy", err)
+			}
 			return err
 		}
 		defer guard.Close()

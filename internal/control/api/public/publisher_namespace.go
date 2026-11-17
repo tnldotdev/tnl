@@ -4,8 +4,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -24,7 +26,16 @@ func (h *handler) authenticatePublisher(w http.ResponseWriter, r *http.Request) 
 	}
 	p, err := store.AuthenticatePublisherAccess(r.Context(), token, publisherRequestSource(r), time.Now())
 	if err != nil {
-		publisherProblem(r.Context(), w, "authenticate publisher", err)
+		switch {
+		case failure.Only(err, controlstate.ErrPublisherIdentity), failure.Only(err, pgx.ErrNoRows):
+			writeBearerProblem(w)
+		case failure.Only(err, controlstate.ErrServiceAccess):
+			writeProblem(w, http.StatusForbidden, controlv1.Forbidden, "publisher permission denied")
+		case controlstate.IsUnavailable(err):
+			writeUnavailableProblem(r.Context(), w, "authenticate publisher", "publisher authentication is unavailable", failure.ServerUnavailable, err)
+		default:
+			writeInternalStateProblem(r.Context(), w, "authenticate publisher", err)
+		}
 		return nil, controlstate.PublisherIdentity{}, false
 	}
 	*r = *r.WithContext(observability.AuthenticatedServerScope(r.Context(), observability.Identity{

@@ -70,6 +70,39 @@ func TestNameUnavailableRemainsDistinctFromStatusConflict(t *testing.T) {
 	}
 }
 
+func TestClientPreservesInternalProblemInsteadOfRetryableOutage(t *testing.T) {
+	for _, test := range []struct {
+		code        controlv1.ProblemCode
+		status      int
+		unavailable bool
+	}{
+		{controlv1.Internal, 500, false},
+		{controlv1.Forbidden, 502, false},
+		{controlv1.Unavailable, 503, true},
+		{controlv1.PlacementUnavailable, 503, true},
+	} {
+		t.Run(string(test.code), func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(test.status)
+				_ = json.NewEncoder(w).Encode(controlv1.Problem{Code: test.code, Status: test.status,
+					Title: "safe control problem", RequestId: "req_fixture"})
+			}))
+			defer server.Close()
+			client, err := New(server.URL, server.Client(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Discovery(t.Context())
+			var problem *ProblemError
+			if errors.Is(err, ErrUnavailable) != test.unavailable || !errors.As(err, &problem) ||
+				problem.Status != test.status || problem.Problem.RequestId != "req_fixture" {
+				t.Fatal("control response lost its fault class or correlation facts", err)
+			}
+		})
+	}
+}
+
 func TestClientBoundsRequests(t *testing.T) {
 	client, err := New("https://server.example", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		<-request.Context().Done()

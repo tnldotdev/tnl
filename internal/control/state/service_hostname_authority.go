@@ -11,6 +11,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
+// ServiceHostnameError contains only the current actor's default namespace on a
+// ready authorized domain. it never describes the rejected hostname's owner.
+type ServiceHostnameError struct {
+	Namespace string
+}
+
+func (e *ServiceHostnameError) Error() string {
+	return "service hostname is not permitted; use a hostname below " + e.Namespace
+}
+func (e *ServiceHostnameError) Unwrap() error { return ErrServiceAccess }
+
 func hostnameWithin(hostname, domain string) bool {
 	return hostname == domain || strings.HasSuffix(hostname, "."+domain)
 }

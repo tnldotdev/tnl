@@ -2,12 +2,12 @@ package public
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -18,8 +18,16 @@ type managedCertificateStore interface {
 }
 
 func writeManagedCertificateProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
-	if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrServiceConflict) {
+	if failure.Only(err, controlstate.ErrVisitorPermission) {
+		writeProblem(w, http.StatusForbidden, controlv1.Forbidden, "visitor permission denied")
+		return
+	}
+	if failure.Only(err, controlstate.ErrServiceAccess) || failure.Only(err, controlstate.ErrServiceConflict) {
 		serviceVisitorError(ctx, w, operation, err)
+		return
+	}
+	if controlstate.IsUnavailable(err) {
+		writeUnavailableProblem(ctx, w, failure.Operation(operation), "certificate authorization is unavailable", failure.ServerUnavailable, err)
 		return
 	}
 	writeControlStateProblem(ctx, w, operation, err)

@@ -88,10 +88,10 @@ func TestResponseProblemPrecedenceAndRetryAfter(t *testing.T) {
 	if err := responseError(400, nil, []byte(`{"code":"unavailable"}`)); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("problem mapping=%v", err)
 	}
-	if err := responseError(500, nil, []byte(`{"code":"internal"}`)); !errors.Is(err, ErrUnavailable) {
+	if err := responseError(500, nil, []byte(`{"code":"internal"}`)); errors.Is(err, ErrUnavailable) {
 		t.Fatalf("internal problem mapping=%v", err)
 	}
-	if err := responseError(502, nil, []byte(`{"code":"forbidden"}`)); !errors.Is(err, ErrUnavailable) {
+	if err := responseError(502, nil, []byte(`{"code":"forbidden"}`)); errors.Is(err, ErrUnavailable) {
 		t.Fatalf("valid 5xx problem mapping=%v", err)
 	}
 	if err := responseError(500, nil, []byte(`{"code":"future_code"}`)); errors.Is(err, ErrUnavailable) {

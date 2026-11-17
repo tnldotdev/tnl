@@ -54,14 +54,14 @@ func (d *Database) newServiceSourceOwner(ctx context.Context, tx pgx.Tx, facts s
 		scope, membership = NamespaceScopeMember, facts.ActorMembershipID
 	}
 	if scope == NamespaceScopeShared && !standalone && facts.TeamKind != "personal" {
-		return serviceSourceOwner{}, ErrServiceAccess
+		return serviceSourceOwner{}, &ServiceHostnameError{Namespace: namespace}
 	}
 	labels, err := controlstatedb.New(tx).ListTeamNamespaceLabels(ctx, team)
 	if err != nil {
 		return serviceSourceOwner{}, err
 	}
 	if err := authorizeServiceHostname(facts, labels, team, membership, hostname, string(scope), d.managedURLMode); err != nil {
-		return serviceSourceOwner{}, err
+		return serviceSourceOwner{}, &ServiceHostnameError{Namespace: namespace}
 	}
 	owner := serviceSourceOwner{scope: scope, membership: membership, local: !standalone}
 	if scope == NamespaceScopeShared {
