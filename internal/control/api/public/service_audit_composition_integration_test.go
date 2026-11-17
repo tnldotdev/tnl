@@ -311,7 +311,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	defer secureDirect.Close()
 	_ = secureDirect.SetDeadline(time.Now().Add(5 * time.Second))
 	const secretPayload = "private-query-target-and-command-never-audit"
-	if _, err = fmt.Fprintf(secureDirect, "POST /never-audit-path HTTP/1.1\r\nHost: %s\r\n%s: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", prepared.Hostname, httpaccess.VisitorTokenHeader, permission, len(secretPayload), secretPayload); err != nil {
+	if _, err = fmt.Fprintf(secureDirect, "POST /never-audit-path HTTP/1.1\r\nHost: %s\r\n%s: %s\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", prepared.Hostname, httpaccess.VisitorTokenHeader, permission, len(secretPayload), secretPayload); err != nil {
 		select {
 		case forwarding := <-forwarded:
 			t.Fatalf("direct request write failed: %v; forwarding: %v", err, forwarding)

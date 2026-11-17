@@ -83,6 +83,31 @@ func TestExclusions(t *testing.T) {
 	}
 }
 
+func TestInspectorEmptyPOSTDistinguishesAbsentAndEmptyContentType(t *testing.T) {
+	p := inspector(t, policy.Settings{})
+	for _, test := range []struct {
+		name, kind string
+		header     bool
+		want       int
+	}{
+		{"absent", "", false, 0},
+		{"empty", "", true, http.StatusForbidden},
+		{"empty_form", "application/x-www-form-urlencoded", true, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r := request(http.MethodPost, "/ping", "", "")
+			if test.header {
+				r.Header.Set("Content-Type", test.kind)
+			}
+			_, cleanup, result := p.Inspect(r)
+			defer cleanup()
+			if result.Status != test.want {
+				t.Fatalf("empty POST status=%d rules=%v", result.Status, result.RuleIDs)
+			}
+		})
+	}
+}
+
 func TestBuffersReleaseBeforeResponse(t *testing.T) {
 	// the old 128 KiB spill must fail here if any path attempts disk storage.
 	dir := t.TempDir()

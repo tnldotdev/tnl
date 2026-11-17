@@ -722,22 +722,45 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	}
 	if !deadlineProof {
 		payload := bytes.Repeat([]byte("guest transfer\n"), (6<<20)/len("guest transfer\n")+1)
-		transferRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, serviceHTTPAddress(ready)+"/transfer", bytes.NewReader(payload))
-		if err != nil {
-			t.Fatal(err)
+		transfer := func(body []byte) (int, []byte) {
+			t.Helper()
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, serviceHTTPAddress(ready)+"/transfer", bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// wait for authorization before sending a body larger than ingress's
+			// pending visitor budget. inspection has a separate per-request body limit.
+			request.Header.Set("Expect", "100-continue")
+			request.Header.Set("Content-Type", "application/octet-stream")
+			response, err := visitor.client.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			echo, readErr := io.ReadAll(response.Body)
+			closeErr := response.Body.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				t.Fatal("guest transfer response did not join", err)
+			}
+			return response.StatusCode, echo
 		}
-		// wait for authorization before sending a body larger than ingress's pending
-		// visitor budget; that budget remains independent of cumulative transfer.
-		transferRequest.Header.Set("Expect", "100-continue")
-		transferRequest.Header.Set("Content-Type", "application/octet-stream")
-		transferred, err := visitor.client.Do(transferRequest)
-		if err != nil {
-			t.Fatal(err)
+		beforeTransfer := targetRequests.Load()
+		if status, _ := transfer(payload); status != http.StatusRequestEntityTooLarge || targetRequests.Load() != beforeTransfer {
+			t.Fatalf("oversized guest upload reached the app: status=%d target requests=%d", status, targetRequests.Load()-beforeTransfer)
 		}
-		echo, readErr := io.ReadAll(transferred.Body)
-		transferred.Body.Close()
-		if readErr != nil || transferred.StatusCode != http.StatusOK || !bytes.Equal(echo, payload) {
-			t.Fatalf("guest transfer = %d, %d bytes, %v", transferred.StatusCode, len(echo), readErr)
+		// retain the entire original transfer beyond the former cumulative cap,
+		// while each allowed request stays below the independent inspector cap.
+		total, requests := 0, int64(0)
+		for total < len(payload) {
+			part := payload[total:min(total+(512<<10), len(payload))]
+			status, echo := transfer(part)
+			if status != http.StatusOK || !bytes.Equal(echo, part) {
+				t.Fatalf("guest transfer at %d = %d, %d bytes", total, status, len(echo))
+			}
+			total += len(echo)
+			requests++
+		}
+		if total <= 6<<20 || total != len(payload) || targetRequests.Load() != beforeTransfer+requests {
+			t.Fatal("guest transfer lost cumulative bytes or repeated an application request")
 		}
 		t.Logf("guest uploaded and downloaded %d bytes with no cumulative transfer cap", len(payload))
 		transferredAt := time.Now()
@@ -769,7 +792,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	if targetRequests.Load() == 0 {
 		t.Fatal("ready guest share did not carry HTTP bytes to the local service")
 	}
-	ping, err := visitor.client.Post(serviceHTTPAddress(ready)+"/ping", "", nil)
+	ping, err := visitor.client.Post(serviceHTTPAddress(ready)+"/ping", "application/x-www-form-urlencoded", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
