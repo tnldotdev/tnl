@@ -113,7 +113,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go node pnpm task aqua:WebAssembly/binaryen ${{ (matrix.suite == 'connections' || matrix.suite == 'tcp-clients') && 'python uv' || '' }}
+          tools: go node pnpm task aqua:WebAssembly/binaryen ${{ (matrix.suite == 'connections' || matrix.suite == 'tcp-clients') && 'python uv' || '' }} ${{ (matrix.suite == 'connector-wasm' || matrix.suite == 'publisher-wasm') && 'go:github.com/letsencrypt/pebble/v2/cmd/pebble' || '' }}
           go-cache: race
           pnpm: true
 
