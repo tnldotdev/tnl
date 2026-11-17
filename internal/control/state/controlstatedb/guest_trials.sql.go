@@ -92,7 +92,7 @@ func (q *Queries) CountRecentGuestTrialsByIP(ctx context.Context, arg CountRecen
 }
 
 const findGuestServiceAllocation = `-- name: FindGuestServiceAllocation :one
-SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
 WHERE guest_id = $1 AND idempotency_key = $2
 `
 
@@ -119,6 +119,7 @@ func (q *Queries) FindGuestServiceAllocation(ctx context.Context, arg FindGuestS
 		&i.StorageKeyID,
 		&i.TrustRevision,
 		&i.EndpointRevision,
+		&i.ServiceRevision,
 		&i.VisitorRevision,
 		&i.PublisherPool,
 		&i.Ephemeral,

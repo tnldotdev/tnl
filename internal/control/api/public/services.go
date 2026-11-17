@@ -24,7 +24,8 @@ type serviceVisitorStore interface {
 	ConfigureService(context.Context, string, string, controlstate.ServiceMetadata, *controlstate.ProjectServiceConfiguration, controlstate.ServiceUpdateConditions, time.Time) (controlstate.ServiceRecord, error)
 	GetService(context.Context, string, string) (controlstate.ServiceRecord, error)
 	GetServiceConfiguration(context.Context, string, string) (*controlstate.ProjectServiceConfiguration, string, error)
-	DeleteService(context.Context, string, string, time.Time) error
+	DeleteService(context.Context, string, string, controlstate.ServiceDeleteConditions, time.Time) error
+	DeleteGuestService(context.Context, string, controlstate.GuestCredential, time.Time) error
 	SetServiceEnabled(context.Context, string, string, bool, time.Time) (controlstate.ServiceRecord, error)
 	ReleaseServiceEndpoint(context.Context, string, string, int64, int, time.Time) (controlstate.ServiceRecord, error)
 	CreateServiceGrant(context.Context, string, string, string, string, string, *time.Time, time.Time) (controlstate.ServiceGrant, error)
@@ -283,6 +284,7 @@ func (h *handler) ListServices(w http.ResponseWriter, r *http.Request, params co
 }
 
 func (h *handler) GetService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
+	w.Header().Set("Cache-Control", "no-store")
 	store, identity, ok := h.serviceVisitor(w, r)
 	if !ok {
 		return
@@ -337,7 +339,7 @@ func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request, se
 	writeJSON(w, 200, serviceaccess.Service(record))
 }
 
-func (h *handler) DeleteService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
+func (h *handler) DeleteService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, params controlv1.DeleteServiceParams) {
 	credential, guest, proceed := h.guestServiceCredential(w, r)
 	if !proceed {
 		return
@@ -348,9 +350,12 @@ func (h *handler) DeleteService(w http.ResponseWriter, r *http.Request, id contr
 			writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "services are unavailable")
 			return
 		}
-		ctx := controlstate.WithGuestServiceCredential(r.Context(), credential)
-		if err := store.DeleteService(ctx, id, "", time.Now()); err != nil {
-			guestProblem(ctx, w, "delete guest service", err)
+		if params.ExpectedServiceRevision != nil || params.UnconditionalDelete != nil {
+			writeProblem(w, 400, controlv1.InvalidRequest, "guest cleanup uses its exact trial credential, not management deletion conditions")
+			return
+		}
+		if err := store.DeleteGuestService(r.Context(), id, credential, time.Now()); err != nil {
+			guestProblem(r.Context(), w, "delete guest service", err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -360,7 +365,22 @@ func (h *handler) DeleteService(w http.ResponseWriter, r *http.Request, id contr
 	if !ok {
 		return
 	}
-	if err := store.DeleteService(r.Context(), id, identity, time.Now()); err != nil {
+	conditions := controlstate.ServiceDeleteConditions{}
+	if params.ExpectedServiceRevision != nil {
+		conditions.Revision = *params.ExpectedServiceRevision
+	}
+	if params.UnconditionalDelete != nil {
+		conditions.Unconditional = *params.UnconditionalDelete
+	}
+	if (params.ExpectedServiceRevision != nil) == (params.UnconditionalDelete != nil) ||
+		conditions.Validate() != nil ||
+		params.UnconditionalDelete != nil && (!*params.UnconditionalDelete || r.URL.Query().Get("unconditional_delete") != "true") ||
+		params.ExpectedServiceRevision != nil && strconv.FormatInt(*params.ExpectedServiceRevision, 10) != r.URL.Query().Get("expected_service_revision") ||
+		len(r.URL.Query()["expected_service_revision"]) > 1 || len(r.URL.Query()["unconditional_delete"]) > 1 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "send exactly one of expected_service_revision or unconditional_delete=true")
+		return
+	}
+	if err := store.DeleteService(r.Context(), id, identity, conditions, time.Now()); err != nil {
 		serviceVisitorError(r.Context(), w, "delete service", err)
 		return
 	}

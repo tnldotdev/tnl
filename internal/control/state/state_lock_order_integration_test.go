@@ -122,7 +122,7 @@ func TestIntegrationStateLockOrderServiceActor(t *testing.T) {
 				case "create-service":
 					_, err = d.CreateServiceAt(signed, r.TeamID, r.ActorID, "second", "second", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 				case "delete-service":
-					err = d.DeleteService(signed, s.ID, r.ActorID, now)
+					err = d.DeleteService(signed, s.ID, r.ActorID, observedServiceDeletion(t, d, s.ID), now)
 				}
 				done <- err
 			})

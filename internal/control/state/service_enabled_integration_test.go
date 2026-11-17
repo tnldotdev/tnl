@@ -133,7 +133,7 @@ func TestIntegrationServiceEnableDoesNotRestoreDeletedOrExpiredServices(t *testi
 	if _, err := f.d.SetServiceEnabled(ctx, f.local.ID, f.member.IdentityID, false, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.d.DeleteService(ctx, f.local.ID, f.member.IdentityID, f.now); err != nil {
+	if err := f.d.DeleteService(ctx, f.local.ID, f.member.IdentityID, observedServiceDeletion(t, f.d, f.local.ID), f.now); err != nil {
 		t.Fatal("suspension prevented saved-service cleanup", err)
 	}
 	if _, err := f.d.SetServiceEnabled(ctx, f.local.ID, f.member.IdentityID, true, f.now); !errors.Is(err, ErrServiceAccess) {

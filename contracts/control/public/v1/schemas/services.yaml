@@ -186,6 +186,7 @@ schemas:
         publisher_pool,
         trust_revision,
         endpoint_revision,
+        service_revision,
         ephemeral,
         require_post_quantum,
       ]
@@ -222,6 +223,12 @@ schemas:
         x-go-type: int64
         x-oapi-codegen-extra-tags: { json: "endpoint_revision,string" }
         description: Revision of the hostname, domain, ingress pool, and port reservation. Independent of target trust and connector permission.
+      service_revision:
+        type: string
+        pattern: "^[1-9][0-9]*$"
+        x-go-type: int64
+        x-oapi-codegen-extra-tags: { json: "service_revision,string" }
+        description: Current saved-service settings revision. Advances for metadata, configuration, enablement, endpoint, and service visitor-grant changes, not run preparation or heartbeat churn. Use as expected_service_revision for ordinary deletion; a configuration digest or trust revision is not a substitute.
       http_limits:
         $ref: "../openapi.yaml#/components/schemas/ProjectHTTPApplicationLimits"
         description: Approved run-local HTTP request limits returned to the scoped publisher. Applies after visitor authorization on public and connector admissions.

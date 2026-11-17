@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
@@ -129,7 +130,7 @@ func TestIntegrationServiceRoleScopeDomainManagementMatrix(t *testing.T) {
 							}
 						}
 						before = serviceSecuritySnapshot(t, d)
-						err = d.DeleteService(t.Context(), service.ID, actor.id, now)
+						err = d.DeleteService(t.Context(), service.ID, actor.id, observedServiceDeletion(t, d, service.ID), now)
 						if actor.manager {
 							if err != nil {
 								t.Fatal("authorized cleanup failed", err)
@@ -159,10 +160,15 @@ func TestIntegrationServiceRoleScopeDomainManagementMatrix(t *testing.T) {
 // a rejected operation must not leave a receipt, policy change, or audit.
 func serviceSecuritySnapshot(t *testing.T, d *Database) map[string]string {
 	t.Helper()
-	result := privateOwnershipSnapshot(t, d)
+	return serviceSecuritySnapshotQuery(t, d.pool)
+}
+
+func serviceSecuritySnapshotQuery(t *testing.T, q controlstatedb.DBTX) map[string]string {
+	t.Helper()
+	result := privateOwnershipSnapshotQuery(t, q)
 	for _, table := range []string{"service_endpoints", "service_namespace_claims", "service_creation_requests", "deployment_names", "visitor_policies", "visitor_policy_events", "service_port_claims", "service_recovery_episodes"} {
 		var rows string
-		if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb)::text FROM control.`+table+` r`).Scan(&rows); err != nil {
+		if err := q.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb)::text FROM control.`+table+` r`).Scan(&rows); err != nil {
 			t.Fatal(err)
 		}
 		result[table] = rows

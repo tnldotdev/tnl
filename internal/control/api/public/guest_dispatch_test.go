@@ -33,10 +33,17 @@ type guestDeletionStore struct {
 	service, actor string
 	calls          int
 	err            error
+	guest          bool
 }
 
-func (s *guestDeletionStore) DeleteService(ctx context.Context, service, actor string, _ time.Time) error {
+func (s *guestDeletionStore) DeleteService(ctx context.Context, service, actor string, _ controlstate.ServiceDeleteConditions, _ time.Time) error {
 	s.ctx, s.service, s.actor = ctx, service, actor
+	s.calls++
+	return s.err
+}
+
+func (s *guestDeletionStore) DeleteGuestService(ctx context.Context, service string, _ controlstate.GuestCredential, _ time.Time) error {
+	s.ctx, s.service, s.guest = ctx, service, true
 	s.calls++
 	return s.err
 }
@@ -58,9 +65,9 @@ func TestGuestCleanupUsesOrdinaryDeletionWithoutHumanAuthorityAfterReadyExhausti
 			dependencies: Stores{Services: store}}
 		r := guestDeleteRequest("guest-token")
 		w := httptest.NewRecorder()
-		h.DeleteService(w, r, trials.record.ID)
+		h.DeleteService(w, r, trials.record.ID, controlv1.DeleteServiceParams{})
 		if w.Code != 204 || store.calls != 1 || store.service != trials.record.ID || store.actor != "" ||
-			store.ctx == r.Context() || human.reads != 0 {
+			store.ctx != r.Context() || !store.guest || human.reads != 0 {
 			t.Fatal("cleanup became a human mutation, depended on issuance, or rejected spent READY allowance", w.Code, store.calls)
 		}
 	}
@@ -82,7 +89,7 @@ func TestGuestCleanupRetainsStateExpirySourceAndExactServiceChecks(t *testing.T)
 			human := &guestHumanAuthorizer{}
 			h := &handler{guests: trials, authorizer: human, dependencies: Stores{Services: store}}
 			w := httptest.NewRecorder()
-			h.DeleteService(w, guestDeleteRequest("guest-token"), trials.record.ID)
+			h.DeleteService(w, guestDeleteRequest("guest-token"), trials.record.ID, controlv1.DeleteServiceParams{})
 			if w.Code != tc.status || store.calls != 1 || human.reads != 0 {
 				t.Fatal("cleanup bypassed the ordinary state check", w.Code, store.calls)
 			}
@@ -97,7 +104,7 @@ func TestGuestLookupOutageNeverFallsThroughToHumanDeletion(t *testing.T) {
 		human, store := &guestHumanAuthorizer{}, &guestDeletionStore{}
 		h := &handler{guests: trials, authorizer: human, dependencies: Stores{Services: store}}
 		w := httptest.NewRecorder()
-		h.DeleteService(w, guestDeleteRequest("human-token"), trials.record.ID)
+		h.DeleteService(w, guestDeleteRequest("human-token"), trials.record.ID, controlv1.DeleteServiceParams{})
 		if w.Code != 503 || store.calls != 0 || human.reads != 0 {
 			t.Fatal("trial lookup outage became human management", w.Code, store.calls, human.reads)
 		}
@@ -118,7 +125,8 @@ func TestUnrecognizedTrialBearerMayUseOnlyNormalHumanAuthentication(t *testing.T
 		human, store := &guestHumanAuthorizer{}, &guestDeletionStore{}
 		h := &handler{guests: trials, authorizer: human, dependencies: Stores{Services: store}}
 		r, w := guestDeleteRequest(tc.token), httptest.NewRecorder()
-		h.DeleteService(w, r, trials.record.ID)
+		r.URL.RawQuery = "expected_service_revision=1"
+		h.DeleteService(w, r, trials.record.ID, controlv1.DeleteServiceParams{ExpectedServiceRevision: new(int64(1))})
 		if w.Code != tc.status || human.reads != 1 || store.calls != tc.calls ||
 			tc.calls != 0 && (store.actor != "identity_1" || store.ctx != r.Context()) {
 			t.Fatal("unrecognized trial bearer bypassed human authentication", tc.token, w.Code)

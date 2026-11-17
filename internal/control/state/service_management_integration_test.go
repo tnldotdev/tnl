@@ -134,13 +134,13 @@ func TestIntegrationServiceManagementMemberOwnership(t *testing.T) {
 	if err := f.d.DeletePublisherService(ctx, f.publisher, f.allocation.ID, f.now); err == nil {
 		t.Fatal("human management restored revoked publisher deletion authority")
 	}
-	if err := f.d.DeleteService(ctx, f.allocation.ID, f.unrelated.IdentityID, f.now); !errors.Is(err, ErrServiceAccess) {
+	if err := f.d.DeleteService(ctx, f.allocation.ID, f.unrelated.IdentityID, observedServiceDeletion(t, f.d, f.allocation.ID), f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("unrelated human deleted an allocation", err)
 	}
-	if err := f.d.DeleteService(ctx, f.allocation.ID, f.member.IdentityID, f.now); err != nil {
+	if err := f.d.DeleteService(ctx, f.allocation.ID, f.member.IdentityID, observedServiceDeletion(t, f.d, f.allocation.ID), f.now); err != nil {
 		t.Fatal("human owner could not delete its allocation", err)
 	}
-	if err := f.d.DeleteService(ctx, f.local.ID, f.member.IdentityID, f.now); err != nil {
+	if err := f.d.DeleteService(ctx, f.local.ID, f.member.IdentityID, observedServiceDeletion(t, f.d, f.local.ID), f.now); err != nil {
 		t.Fatal("human owner could not delete its standalone service", err)
 	}
 }
@@ -376,7 +376,7 @@ func TestIntegrationServiceManagementRetainsProjectDefinitionAndGrantGuards(t *t
 	if _, err := d.GetService(t.Context(), local.ServiceID, member.IdentityID); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.DeleteService(t.Context(), local.ServiceID, member.IdentityID, now); !errors.Is(err, ErrProjectManaged) {
+	if err := d.DeleteService(t.Context(), local.ServiceID, member.IdentityID, observedServiceDeletion(t, d, local.ServiceID), now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("member management bypassed project definition ownership", err)
 	}
 	var grant string

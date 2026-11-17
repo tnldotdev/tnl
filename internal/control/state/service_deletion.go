@@ -10,15 +10,34 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-type guestServiceCredentialKey struct{}
-
-// WithGuestServiceCredential permits only the guest branch of DeleteService.
-// generic service management never consumes it or treats a trial as a person.
-func WithGuestServiceCredential(ctx context.Context, credential GuestCredential) context.Context {
-	return context.WithValue(ctx, guestServiceCredentialKey{}, credential)
+// service deletion conditions describe the manager's observed settings, not
+// publisher, guest, run-token, or authoritative project cleanup permission.
+type ServiceDeleteConditions struct {
+	Revision      int64
+	Unconditional bool
 }
 
-func (d *Database) DeleteService(ctx context.Context, serviceID, actorID string, now time.Time) (retErr error) {
+func (c ServiceDeleteConditions) Validate() error {
+	if c.Revision < 0 || (c.Revision > 0) == c.Unconditional {
+		return ErrProjectConfigurationInvalid
+	}
+	return nil
+}
+
+func (d *Database) DeleteService(ctx context.Context, serviceID, actorID string, conditions ServiceDeleteConditions, now time.Time) error {
+	if err := conditions.Validate(); err != nil {
+		return err
+	}
+	return d.deleteService(ctx, serviceID, actorID, conditions, nil, now)
+}
+
+// guest cleanup uses exact credential/source authority independently of ordinary
+// management conditions, including terminal retries after READY exhaustion.
+func (d *Database) DeleteGuestService(ctx context.Context, serviceID string, credential GuestCredential, now time.Time) error {
+	return d.deleteService(ctx, serviceID, "", ServiceDeleteConditions{}, &credential, now)
+}
+
+func (d *Database) deleteService(ctx context.Context, serviceID, actorID string, conditions ServiceDeleteConditions, credential *GuestCredential, now time.Time) (retErr error) {
 	clock := newAuthorizationClock(now)
 	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) {
 		return ErrServiceAccess
@@ -30,11 +49,8 @@ func (d *Database) DeleteService(ctx context.Context, serviceID, actorID string,
 	defer rollback(ctx, tx, "delete service", &retErr)()
 	q := controlstatedb.New(tx)
 	var service controlstatedb.ControlService
-	if credential, guest := ctx.Value(guestServiceCredentialKey{}).(GuestCredential); guest {
-		if actorID != "" {
-			return ErrServiceAccess
-		}
-		trial, authErr := d.lockGuestCredential(ctx, q, credential, clock)
+	if credential != nil {
+		trial, authErr := d.lockGuestCredential(ctx, q, *credential, clock)
 		if authErr != nil {
 			return authErr
 		}
@@ -56,6 +72,11 @@ func (d *Database) DeleteService(ctx context.Context, serviceID, actorID string,
 	}
 	if err = rejectProjectManagedDefinition(ctx, tx, serviceID); err != nil {
 		return err
+	}
+	// compare only the current authorized, locked row, before any closure,
+	// tombstone, audit, policy change, or endpoint retirement can be written.
+	if credential == nil && !conditions.Unconditional && conditions.Revision != service.ServiceRevision {
+		return ErrServiceConflict
 	}
 	if err = closeServiceRuns(ctx, tx, serviceID, clock.current()); err != nil {
 		return err

@@ -41,7 +41,7 @@ func TestIntegrationDomainReleaseRestoredIssuedCertificateAndCleanupFences(t *te
 				t.Fatal(err)
 			}
 			for _, fixture := range fixtures {
-				if err := d.DeleteService(ctx, fixture.service.ID, owner, now); err != nil {
+				if err := d.DeleteService(ctx, fixture.service.ID, owner, observedServiceDeletion(t, d, fixture.service.ID), now); err != nil {
 					t.Fatal("domain release prevented saved-service cleanup", err)
 				}
 			}
@@ -138,7 +138,7 @@ func TestIntegrationDomainReleaseRestoredIssuedCertificateAndCleanupFences(t *te
 			t.Fatal(err)
 		}
 		for _, fixture := range fixtures {
-			if err := d.DeleteService(ctx, fixture.service.ID, owner, now); err != nil {
+			if err := d.DeleteService(ctx, fixture.service.ID, owner, observedServiceDeletion(t, d, fixture.service.ID), now); err != nil {
 				t.Fatal("domain release prevented saved-service cleanup", err)
 			}
 		}

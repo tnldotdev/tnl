@@ -41,7 +41,7 @@ func TestIntegrationAuthorizedRouteHostnameLookup(t *testing.T) {
 	if err != nil || got.Enabled {
 		t.Fatal("suspended service disappeared from management", err)
 	}
-	if err := d.DeleteService(t.Context(), target.ID, actor.ActingIdentityID, now); err != nil {
+	if err := d.DeleteService(t.Context(), target.ID, actor.ActingIdentityID, observedServiceDeletion(t, d, target.ID), now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.GetService(t.Context(), target.ID, actor.ActingIdentityID); !errors.Is(err, ErrServiceAccess) {

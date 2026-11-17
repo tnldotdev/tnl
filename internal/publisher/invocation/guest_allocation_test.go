@@ -39,7 +39,7 @@ func (c *guestAllocationControl) AllocateGuestDemoService(ctx context.Context, k
 	return c.saved, nil
 }
 
-func (c *guestAllocationControl) DeleteService(_ context.Context, service string) error {
+func (c *guestAllocationControl) DeleteGuestService(_ context.Context, service string) error {
 	c.deleted = append(c.deleted, service)
 	return c.deletionErr
 }

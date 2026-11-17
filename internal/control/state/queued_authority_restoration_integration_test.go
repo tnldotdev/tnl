@@ -165,7 +165,7 @@ func TestIntegrationQueuedAuthorityRestoredWriterBeforeServiceOperation(t *testi
 							&changed, ServiceUpdateConditions{ConfigurationDigest: digest}, now)
 						return err
 					default:
-						return d.DeleteService(ctx, f.service.ID, member.IdentityID, now)
+						return d.DeleteService(ctx, f.service.ID, member.IdentityID, ServiceDeleteConditions{Revision: original.ServiceRevision}, now)
 					}
 				}
 				gate, err := d.pool.Begin(ctx)
@@ -191,15 +191,29 @@ func TestIntegrationQueuedAuthorityRestoredWriterBeforeServiceOperation(t *testi
 				var want error = ErrServiceAccess
 				// current members retain their own HTTP reservation and stored
 				// declaration/cleanup rights. role changes still close the
-				// prepared publisher run; release permits cleanup, not new work.
-				if mutation == "role" && operation != "start" || mutation == "release" && operation == "delete" {
+				// prepared publisher run; release permits cleanup, not new work,
+				// but its suspension invalidates the old deletion observation.
+				if mutation == "role" && operation != "start" {
 					want = nil
+				}
+				staleCleanup := mutation == "release" && operation == "delete"
+				if staleCleanup {
+					want = ErrServiceConflict
 				}
 				if mutationErr != nil {
 					t.Error("queued authority writer failed", mutationErr)
 				}
 				if !failure.Only(operationErr, want) {
 					t.Error("queued operation did not use its exact post-mutation rights", operationErr, want)
+				}
+				if staleCleanup {
+					current, err := d.GetService(ctx, f.service.ID, member.IdentityID)
+					if err != nil || current.Enabled || current.ServiceRevision <= original.ServiceRevision {
+						t.Fatal("released domain lost stored cleanup rights or did not invalidate the old revision", err)
+					}
+					if err := d.DeleteService(ctx, f.service.ID, member.IdentityID, ServiceDeleteConditions{Revision: current.ServiceRevision}, now); err != nil {
+						t.Fatal("current protected cleanup failed after domain release", err)
+					}
 				}
 				var stored controlstatedb.ControlService
 				err = d.pool.QueryRow(ctx, `SELECT id,team_id,guest_id,name,name_scope,created_by_identity_id,
@@ -208,7 +222,7 @@ func TestIntegrationQueuedAuthorityRestoredWriterBeforeServiceOperation(t *testi
 					&stored.ID, &stored.TeamID, &stored.GuestID, &stored.Name, &stored.NameScope,
 					&stored.CreatedByIdentityID, &stored.DomainID, &stored.CertificateHostname,
 					&stored.CertificateScope, &stored.Protocol, &stored.Enabled, &stored.DeletedAt)
-				deleted := operation == "delete" && want == nil
+				deleted := operation == "delete" && (want == nil || staleCleanup)
 				if err != nil || stored.ID != original.ID || stored.TeamID != original.TeamID ||
 					stored.GuestID != original.GuestID || stored.Name != original.Name ||
 					stored.NameScope != original.NameScope || stored.CreatedByIdentityID != original.CreatedByIdentityID ||
@@ -290,7 +304,7 @@ func TestIntegrationQueuedAuthorityRestoredWriterBeforeServiceOperation(t *testi
 					}
 				}
 				if mutation == "remove" && operation == "delete" {
-					if err := d.DeleteService(ctx, f.service.ID, owner, now); err != nil {
+					if err := d.DeleteService(ctx, f.service.ID, owner, observedServiceDeletion(t, d, f.service.ID), now); err != nil {
 						t.Error("removed member denial also removed the administrator's cleanup right", err)
 					}
 				}

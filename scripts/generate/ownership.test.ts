@@ -37,7 +37,13 @@ it("validates exclusive team/trial ownership without generating union models", a
     [
       "controlv1",
       "Service",
-      { ...serviceFields, endpoint_revision: "1", ephemeral: true, require_post_quantum: false },
+      {
+        ...serviceFields,
+        endpoint_revision: "1",
+        service_revision: "1",
+        ephemeral: true,
+        require_post_quantum: false,
+      },
       {},
     ],
     ["controlv1", "ServiceSummary", { ...serviceFields, require_post_quantum: false }, {}],

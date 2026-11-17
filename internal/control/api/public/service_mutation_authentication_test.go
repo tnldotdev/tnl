@@ -29,7 +29,7 @@ func (s *serviceMutationAuthenticationStore) GetService(_ context.Context, servi
 	return controlstate.ServiceRecord{ID: service, ServiceMetadata: controlstate.ServiceMetadata{Protocol: "http", TrustRevision: 7}}, nil
 }
 
-func (s *serviceMutationAuthenticationStore) DeleteService(_ context.Context, service, actor string, _ time.Time) error {
+func (s *serviceMutationAuthenticationStore) DeleteService(_ context.Context, service, actor string, _ controlstate.ServiceDeleteConditions, _ time.Time) error {
 	s.calls++
 	s.deletes++
 	if service != "svc_aaaaaaaaaaaaaaaaaaaaaa" || actor != testControlReadPrincipal().identityID {
@@ -71,7 +71,11 @@ func TestServiceMutationsAuthenticateBeforeServiceStore(t *testing.T) {
 						// authentication; only service-store work is forbidden.
 						guests: &guestCreationStoreStub{},
 					}
-					request := httptest.NewRequest(operation.method, path, strings.NewReader(operation.body))
+					requestPath := path
+					if operation.method == http.MethodDelete {
+						requestPath += "?expected_service_revision=7"
+					}
+					request := httptest.NewRequest(operation.method, requestPath, strings.NewReader(operation.body))
 					if authentication.header != "" {
 						request.Header.Set("Authorization", authentication.header)
 					}

@@ -36,7 +36,7 @@ func TestIntegrationAppliedProjectPersonalSharedLocalRealization(t *testing.T) {
 	if _, err = d.ConfigureService(t.Context(), service.ServiceID, r.ActingIdentityID, *service.Metadata, nil, ServiceUpdateConditions{}, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("shared realization lost definition ownership", err)
 	}
-	if err = d.DeleteService(t.Context(), service.ServiceID, r.ActingIdentityID, now); !errors.Is(err, ErrProjectManaged) {
+	if err = d.DeleteService(t.Context(), service.ServiceID, r.ActingIdentityID, observedServiceDeletion(t, d, service.ServiceID), now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("shared realization lost definition ownership", err)
 	}
 	otherTeam, err := d.CreateTeam(t.Context(), authorityTeamRequest(r.ActingIdentityID), now)

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -82,7 +83,7 @@ func newServiceSetupFixture(t *testing.T, hostname string) *serviceSetupFixture 
 	domain := serviceTestID(t, opaqueid.DomainPrefix)
 	f := &serviceSetupFixture{t: t, state: state, creations: make(map[string]struct{ request, service string }), saved: controlv1.Service{Id: serviceTestID(t, opaqueid.ServicePrefix),
 		TeamId: serviceTestID(t, opaqueid.TeamPrefix), DomainId: &domain, Protocol: controlv1.ServiceProtocolHTTP,
-		Enabled: true, TrustRevision: 1, CreatedAt: time.Now().UTC(),
+		Enabled: true, TrustRevision: 1, ServiceRevision: 1, CreatedAt: time.Now().UTC(),
 		Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 443, Public: true}}}
 	f.identity = authorityv1.PublisherEnrollmentResult{ClientId: serviceTestID(t, opaqueid.PublisherIdentityPrefix),
 		GrantId: serviceTestID(t, opaqueid.PublisherGrantPrefix), KeyId: serviceTestID(t, opaqueid.PublisherIdentityKeyPrefix),
@@ -198,6 +199,10 @@ func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
 		return serviceTestResponse(r, 200, f.saved), nil
 	case "DELETE /v1/services/" + f.saved.Id:
 		management()
+		if r.URL.Query().Get("expected_service_revision") != strconv.FormatInt(f.saved.ServiceRevision, 10) ||
+			r.URL.Query().Has("unconditional_delete") {
+			f.t.Error("ordinary fixture deletion omitted its current service revision")
+		}
 		f.created = false
 		return serviceTestResponse(r, http.StatusOK, struct{}{}), nil
 	case "PUT /v1/services/" + f.saved.Id:
@@ -378,7 +383,7 @@ func TestReserveConfiguredServiceCreatesANewLifetimeAfterDeletion(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.services.routes.DeleteService(t.Context(), first.Id); err != nil {
+	if err := f.services.routes.DeleteService(t.Context(), first.Id, controlv1.DeleteServiceParams{ExpectedServiceRevision: &first.ServiceRevision}); err != nil {
 		t.Fatal(err)
 	}
 	second, err := reserveConfiguredService(t.Context(), f.services, declaration)

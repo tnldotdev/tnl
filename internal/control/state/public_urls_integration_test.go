@@ -52,7 +52,7 @@ func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
 	if err != nil || second.TeamID != service.TeamID || second.DomainID != service.DomainID || second.Endpoint.Hostname != nested.Hostname {
 		t.Fatal("nested hostname changed member authority", err)
 	}
-	if err := d.DeleteService(t.Context(), second.ID, actor.ActingIdentityID, now); err != nil {
+	if err := d.DeleteService(t.Context(), second.ID, actor.ActingIdentityID, observedServiceDeletion(t, d, second.ID), now); err != nil {
 		t.Fatal(err)
 	}
 	page, cursor, err := d.ListServices(t.Context(), actor.TeamID, actor.ActingIdentityID, "")
@@ -63,7 +63,7 @@ func TestIntegrationRouteCreationAndDeletion(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(loaded, service) {
 		t.Fatal("service read lost saved fields", err)
 	}
-	if err := d.DeleteService(t.Context(), service.ID, actor.ActingIdentityID, now); err != nil {
+	if err := d.DeleteService(t.Context(), service.ID, actor.ActingIdentityID, observedServiceDeletion(t, d, service.ID), now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.GetService(t.Context(), service.ID, actor.ActingIdentityID); !errors.Is(err, ErrServiceAccess) {
@@ -276,7 +276,7 @@ func TestIntegrationDNSPublicURLWork(t *testing.T) {
 	if _, found, err := d.ClaimServiceEndpointDNSWork(t.Context(), "dns-worker", now, time.Minute); err != nil || found {
 		t.Fatal("connector-only service queued public DNS", found, err)
 	}
-	if err := d.DeleteService(t.Context(), service.ID, actor.ActingIdentityID, now); err != nil {
+	if err := d.DeleteService(t.Context(), service.ID, actor.ActingIdentityID, observedServiceDeletion(t, d, service.ID), now); err != nil {
 		t.Fatal(err)
 	}
 	var removed bool

@@ -241,7 +241,7 @@ func TestIntegrationAuthorityMutationProgressesDuringRunRetries(t *testing.T) {
 			workers.Go(func() {
 				var err error
 				if operation == "delete" {
-					err = f.database.DeleteService(mutationCtx, deletion.service.ID, member.IdentityID, f.now)
+					err = f.database.DeleteService(mutationCtx, deletion.service.ID, member.IdentityID, observedServiceDeletion(t, f.database, deletion.service.ID), f.now)
 				} else {
 					_, err = f.database.SetMembershipRole(mutationCtx, owner, f.service.TeamID, member.ID, TeamRoleMember, f.now)
 				}

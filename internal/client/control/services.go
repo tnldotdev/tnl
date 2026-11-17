@@ -139,9 +139,29 @@ func (c *Client) ConfigureService(ctx context.Context, id string, body controlv1
 	})
 }
 
-func (c *Client) DeleteService(ctx context.Context, id string) error {
+func (c *Client) DeleteService(ctx context.Context, id string, conditions controlv1.DeleteServiceParams) error {
+	if (conditions.ExpectedServiceRevision != nil) == (conditions.UnconditionalDelete != nil) ||
+		conditions.ExpectedServiceRevision != nil && *conditions.ExpectedServiceRevision < 1 ||
+		conditions.UnconditionalDelete != nil && !*conditions.UnconditionalDelete {
+		return failure.Wrap("delete service", failure.ServerRequestInvalid, errors.New("send exactly one positive expected service revision or explicit unconditional deletion"))
+	}
+	if conditions.ExpectedServiceRevision != nil {
+		conditions.ExpectedServiceRevision = new(*conditions.ExpectedServiceRevision)
+	}
+	if conditions.UnconditionalDelete != nil {
+		conditions.UnconditionalDelete = new(*conditions.UnconditionalDelete)
+	}
 	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.DeleteService(ctx, id, editors...)
+		return c.api.DeleteService(ctx, id, &conditions, editors...)
+	})
+	return err
+}
+
+// guest cleanup carries the trial credential and exact service, not management
+// CAS. the server checks source, ownership, and fixed trial lifetime.
+func (c *Client) DeleteGuestService(ctx context.Context, id string) error {
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.DeleteService(ctx, id, nil, editors...)
 	})
 	return err
 }

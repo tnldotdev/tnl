@@ -57,8 +57,7 @@ func TestIntegrationGuestAuthorityCumulativeBudgetAndOfflineReplacement(t *testi
 	if _, err := f.database.PrepareServiceRun(f.ctx, f.service.ID, f.publisher, "overlap", overlapAt, ServiceRunRequest{Metadata: f.service.ServiceMetadata}); err == nil {
 		t.Fatal("replacement overlapped outstanding serving authority")
 	}
-	deleteCtx := WithGuestServiceCredential(t.Context(), guestCredentialForTest(guest))
-	if err := f.database.DeleteService(deleteCtx, f.service.ID, "", overlapAt); err != nil {
+	if err := f.database.DeleteGuestService(t.Context(), f.service.ID, guestCredentialForTest(guest), overlapAt); err != nil {
 		t.Fatal(err)
 	}
 	request := f.allocation

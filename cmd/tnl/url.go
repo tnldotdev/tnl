@@ -47,6 +47,7 @@ type publicURLInventoryCommand struct {
 type publicURLDeleteCommand struct {
 	scopedTeamFlags `embed:""`
 	Service         string `arg:"" name:"service-or-address" required:"" help:"Service ID, public hostname, or HTTPS origin to delete."`
+	Unconditional   bool   `name:"unconditional" help:"Delete despite concurrent saved-service changes; current management permission is still required."`
 }
 
 func runURLList(ctx context.Context, command publicURLListCommand, output, diagnostics io.Writer) error {
@@ -186,11 +187,30 @@ func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, d
 	if err != nil {
 		return err
 	}
-	if err := session.Authenticated().Control.DeleteService(ctx, selected.Id); err != nil {
+	if err := deleteManagedService(ctx, session.Authenticated().Control, selected.Id, command.Unconditional); err != nil {
 		return err
 	}
 	return writeHumanTransition(output, "tnl url delete", "deleted", selected.Name, "", "service deleted", "",
 		clioutput.Field{Label: "id", Value: selected.Id})
+}
+
+type serviceDeletionClient interface {
+	GetService(context.Context, string) (controlv1.Service, error)
+	DeleteService(context.Context, string, controlv1.DeleteServiceParams) error
+}
+
+func deleteManagedService(ctx context.Context, control serviceDeletionClient, id string, unconditional bool) error {
+	if unconditional {
+		return control.DeleteService(ctx, id, controlv1.DeleteServiceParams{UnconditionalDelete: new(true)})
+	}
+	current, err := control.GetService(ctx, id)
+	if err != nil {
+		return err
+	}
+	if current.Id != id || current.ServiceRevision < 1 {
+		return failure.Wrap("read service before deletion", failure.ServerResponseInvalid, errors.New("control returned an invalid service ID or revision"))
+	}
+	return control.DeleteService(ctx, id, controlv1.DeleteServiceParams{ExpectedServiceRevision: &current.ServiceRevision})
 }
 
 func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, diagnostics io.Writer) error {

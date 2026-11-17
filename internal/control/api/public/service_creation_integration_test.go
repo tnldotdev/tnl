@@ -116,7 +116,7 @@ func TestIntegrationCreateServiceDeclarationAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.DeleteService(ctx, first.Id); err != nil {
+	if err := client.DeleteService(ctx, first.Id, controlv1.DeleteServiceParams{ExpectedServiceRevision: &first.ServiceRevision}); err != nil {
 		t.Fatal(err)
 	}
 	create(body, "one-service", http.StatusConflict)

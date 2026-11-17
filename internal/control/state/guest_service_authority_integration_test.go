@@ -77,10 +77,10 @@ func TestIntegrationGuestServicePublisherRequestsRequireCurrentSource(t *testing
 	if _, err := f.database.AllocateGuestDemoService(t.Context(), request); !errors.Is(err, authorization.ErrGuestIPChanged) {
 		t.Fatalf("foreign source recovered allocation: %v", err)
 	}
-	if err := f.database.DeleteService(WithGuestServiceCredential(t.Context(), foreign), f.service.ID, "", f.now); !errors.Is(err, authorization.ErrGuestIPChanged) {
+	if err := f.database.DeleteGuestService(t.Context(), f.service.ID, foreign, f.now); !errors.Is(err, authorization.ErrGuestIPChanged) {
 		t.Fatalf("foreign source deleted allocation: %v", err)
 	}
-	if err := f.database.DeleteService(t.Context(), f.service.ID, guest.ID, f.now); !errors.Is(err, ErrServiceAccess) {
+	if err := f.database.DeleteService(t.Context(), f.service.ID, guest.ID, observedServiceDeletion(t, f.database, f.service.ID), f.now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatalf("guest ID was treated as a person: %v", err)
 	}
 	f.ready(t, f.now)
@@ -342,11 +342,11 @@ func TestIntegrationGuestServiceDatabaseRejectsMismatchedAuthority(t *testing.T)
 		if _, err := d.EnrollGuestPublisher(t.Context(), credential, f.service.ID, public, f.now); err == nil {
 			t.Fatal("unrelated trial enrolled a publisher")
 		}
-		if err := d.DeleteService(WithGuestServiceCredential(t.Context(), credential), f.service.ID, "", f.now); err == nil {
+		if err := d.DeleteGuestService(t.Context(), f.service.ID, credential, f.now); err == nil {
 			t.Fatal("unrelated trial deleted a service")
 		}
 	}
-	if err := d.DeleteService(WithGuestServiceCredential(t.Context(), guestCredentialForTest(guest)), f.service.ID, "", f.now.Add(time.Second)); err != nil {
+	if err := d.DeleteGuestService(t.Context(), f.service.ID, guestCredentialForTest(guest), f.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	replacement, err := d.AllocateGuestDemoService(t.Context(), AllocateGuestDemoServiceRequest{
@@ -444,7 +444,7 @@ func TestIntegrationGuestServiceRejectsExpiryDuringDatabaseWait(t *testing.T) {
 					}
 				}
 				if operation == "allocate" || operation == "enroll" {
-					if err := d.DeleteService(WithGuestServiceCredential(t.Context(), request.Credential), f.service.ID, "", f.now); err != nil {
+					if err := d.DeleteGuestService(t.Context(), f.service.ID, request.Credential, f.now); err != nil {
 						t.Fatal(err)
 					}
 					request.IdempotencyKey = "next"

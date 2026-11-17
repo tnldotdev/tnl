@@ -283,7 +283,7 @@ func (q *Queries) GetFeedbackEventByActorKey(ctx context.Context, arg GetFeedbac
 }
 
 const getFeedbackService = `-- name: GetFeedbackService :one
-SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1
 `
 
 func (q *Queries) GetFeedbackService(ctx context.Context, id string) (ControlService, error) {
@@ -303,6 +303,7 @@ func (q *Queries) GetFeedbackService(ctx context.Context, id string) (ControlSer
 		&i.StorageKeyID,
 		&i.TrustRevision,
 		&i.EndpointRevision,
+		&i.ServiceRevision,
 		&i.VisitorRevision,
 		&i.PublisherPool,
 		&i.Ephemeral,

@@ -885,7 +885,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		t.Fatalf("guest feedback = %d, %+v, %v", reported.StatusCode, thread, decodeErr)
 	}
 	stopIntegrationPublisher(t, handle)
-	if err := authenticated.Control.DeleteService(t.Context(), service.Id); err != nil && !errors.Is(err, clientcontrol.ErrNotFound) {
+	if err := authenticated.Control.DeleteGuestService(t.Context(), service.Id); err != nil && !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("remove guest demo URL after publication drains: %v", err)
 	}
 	var demoComments int

@@ -70,7 +70,7 @@ func TestIntegrationRuntimeHTTPRestoredAuthorityLossPreservesEvidence(t *testing
 					t.Fatal("actual service suspension failed", err)
 				}
 			case "delete":
-				if err := d.DeleteService(ctx, service.ID, owner, at); err != nil {
+				if err := d.DeleteService(ctx, service.ID, owner, observedServiceDeletion(t, d, service.ID), at); err != nil {
 					t.Fatal("actual service deletion failed", err)
 				}
 			case "domain_release":

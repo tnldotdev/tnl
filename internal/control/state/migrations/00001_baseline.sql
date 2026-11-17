@@ -1359,6 +1359,7 @@ CREATE TABLE control.services (
     storage_key_id text,
     trust_revision bigint NOT NULL DEFAULT 1 CHECK (trust_revision >= 1),
     endpoint_revision bigint NOT NULL DEFAULT 1 CHECK (endpoint_revision >= 1),
+    service_revision bigint NOT NULL DEFAULT 1 CHECK (service_revision >= 1),
     visitor_revision bigint NOT NULL DEFAULT 1 CHECK (visitor_revision >= 1),
     publisher_pool boolean NOT NULL DEFAULT false,
     ephemeral boolean NOT NULL DEFAULT false,
@@ -1447,6 +1448,31 @@ $$;
 -- +goose StatementEnd
 CREATE TRIGGER advance_service_endpoint_revision BEFORE UPDATE ON control.services
     FOR EACH ROW EXECUTE FUNCTION control.advance_service_endpoint_revision();
+-- saved-service concurrency is independent of target trust, endpoint allocation,
+-- and run churn. keep the counter at the locked row shared by all setting owners.
+-- +goose StatementBegin
+CREATE FUNCTION control.advance_service_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.service_revision := OLD.service_revision;
+    IF (OLD.name,OLD.name_scope,OLD.placement_worktree_key,OLD.placement_worktree_label,
+        OLD.protocol,OLD.tls_metadata,OLD.configuration_ciphertext,OLD.storage_key_id,
+        OLD.trust_revision,OLD.visitor_revision,OLD.publisher_pool,OLD.ephemeral,OLD.expires_at,
+        OLD.require_post_quantum,OLD.domain_id,OLD.certificate_hostname,OLD.certificate_scope,
+        OLD.service_port,OLD.ingress_pool_id,OLD.public,OLD.enabled,OLD.deleted_at)
+        IS DISTINCT FROM
+       (NEW.name,NEW.name_scope,NEW.placement_worktree_key,NEW.placement_worktree_label,
+        NEW.protocol,NEW.tls_metadata,NEW.configuration_ciphertext,NEW.storage_key_id,
+        NEW.trust_revision,NEW.visitor_revision,NEW.publisher_pool,NEW.ephemeral,NEW.expires_at,
+        NEW.require_post_quantum,NEW.domain_id,NEW.certificate_hostname,NEW.certificate_scope,
+        NEW.service_port,NEW.ingress_pool_id,NEW.public,NEW.enabled,NEW.deleted_at) THEN
+        NEW.service_revision := OLD.service_revision+1;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER advance_service_revision BEFORE UPDATE ON control.services
+    FOR EACH ROW EXECUTE FUNCTION control.advance_service_revision();
 ALTER TABLE control.publisher_grants ADD CONSTRAINT publisher_grants_service_fkey
     FOREIGN KEY (service_id) REFERENCES control.services(id) ON DELETE RESTRICT;
 ALTER TABLE control.publisher_grants ADD CONSTRAINT publisher_grants_service_team_fkey

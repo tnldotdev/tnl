@@ -3707,6 +3707,9 @@ type Service struct {
 	// RunNumber Present only alongside service_run_id.
 	RunNumber *int64 `json:"run_number,omitempty,string"`
 
+	// ServiceRevision Current saved-service settings revision. Advances for metadata, configuration, enablement, endpoint, and service visitor-grant changes, not run preparation or heartbeat churn. Use as expected_service_revision for ordinary deletion; a configuration digest or trust revision is not a substitute.
+	ServiceRevision int64 `json:"service_revision,string"`
+
 	// ServiceRunId Present for a ready run with a live publisher grant and at least one live ready publisher connection; first readiness requires two.
 	ServiceRunId *ServiceRunID       `json:"service_run_id,omitempty"`
 	Source       *LocalServiceSource `json:"source,omitempty"`
@@ -4791,6 +4794,15 @@ type ListServicesParams struct {
 // CreateServiceParams defines parameters for CreateService.
 type CreateServiceParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// DeleteServiceParams defines parameters for DeleteService.
+type DeleteServiceParams struct {
+	// ExpectedServiceRevision Current saved service revision from getService. Mutually exclusive with unconditional_delete; not required for credential-bound guest cleanup.
+	ExpectedServiceRevision *int64 `form:"expected_service_revision,omitempty" json:"expected_service_revision,omitempty"`
+
+	// UnconditionalDelete Explicitly delete the currently authorized service regardless of its revision. Send true or omit; mutually exclusive with expected_service_revision.
+	UnconditionalDelete *bool `form:"unconditional_delete,omitempty" json:"unconditional_delete,omitempty"`
 }
 
 // ListServiceGrantsParams defines parameters for ListServiceGrants.
@@ -6271,10 +6283,10 @@ type ClientInterface interface {
 
 	// DeleteService Delete a saved service and revoke its active publication
 	//
-	// Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
+	// Ordinary management deletion requires exactly one of expected_service_revision from the current getService response or unconditional_delete=true. Neither or both is invalid; a stale revision conflicts before closing runs or changing any state. The service revision covers saved metadata, configuration, enablement, and endpoint settings independently of trust and configuration-digest checks. Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service without either management condition after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
 	//
 	// Corresponds with DELETE /v1/services/{service_id} (the `DeleteService` operationId).
-	DeleteService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteService(ctx context.Context, serviceId ServiceID, params *DeleteServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetService Read one saved service for management
 	//
@@ -9005,11 +9017,11 @@ func (c *Client) CreateService(ctx context.Context, params *CreateServiceParams,
 
 // DeleteService Delete a saved service and revoke its active publication
 //
-// Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
+// Ordinary management deletion requires exactly one of expected_service_revision from the current getService response or unconditional_delete=true. Neither or both is invalid; a stale revision conflicts before closing runs or changing any state. The service revision covers saved metadata, configuration, enablement, and endpoint settings independently of trust and configuration-digest checks. Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service without either management condition after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
 //
 // Corresponds with DELETE /v1/services/{service_id} (the `DeleteService` operationId).
-func (c *Client) DeleteService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteServiceRequest(c.Server, serviceId)
+func (c *Client) DeleteService(ctx context.Context, serviceId ServiceID, params *DeleteServiceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteServiceRequest(c.Server, serviceId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -14620,7 +14632,7 @@ func NewCreateServiceRequestWithBody(server string, params *CreateServiceParams,
 }
 
 // NewDeleteServiceRequest constructs an http.Request for the DeleteService method
-func NewDeleteServiceRequest(server string, serviceId ServiceID) (*http.Request, error) {
+func NewDeleteServiceRequest(server string, serviceId ServiceID, params *DeleteServiceParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14643,6 +14655,45 @@ func NewDeleteServiceRequest(server string, serviceId ServiceID) (*http.Request,
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ExpectedServiceRevision != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "expected_service_revision", *params.ExpectedServiceRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.UnconditionalDelete != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "unconditional_delete", *params.UnconditionalDelete, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
@@ -18553,12 +18604,12 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteServiceWithResponse Delete a saved service and revoke its active publication
 	//
-	// Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
+	// Ordinary management deletion requires exactly one of expected_service_revision from the current getService response or unconditional_delete=true. Neither or both is invalid; a stale revision conflicts before closing runs or changing any state. The service revision covers saved metadata, configuration, enablement, and endpoint settings independently of trust and configuration-digest checks. Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service without either management condition after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/services/{service_id} (the `DeleteService` operationId).
-	DeleteServiceWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*DeleteServiceResponse, error)
+	DeleteServiceWithResponse(ctx context.Context, serviceId ServiceID, params *DeleteServiceParams, reqEditors ...RequestEditorFn) (*DeleteServiceResponse, error)
 
 	// GetServiceWithResponse Read one saved service for management
 	//
@@ -27173,13 +27224,13 @@ func (c *ClientWithResponses) CreateServiceWithResponse(ctx context.Context, par
 
 // DeleteServiceWithResponse Delete a saved service and revoke its active publication
 //
-// Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
+// Ordinary management deletion requires exactly one of expected_service_revision from the current getService response or unconditional_delete=true. Neither or both is invalid; a stale revision conflicts before closing runs or changing any state. The service revision covers saved metadata, configuration, enablement, and endpoint settings independently of trust and configuration-digest checks. Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service without either management condition after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/services/{service_id} (the `DeleteService` operationId).
-func (c *ClientWithResponses) DeleteServiceWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*DeleteServiceResponse, error) {
-	rsp, err := c.DeleteService(ctx, serviceId, reqEditors...)
+func (c *ClientWithResponses) DeleteServiceWithResponse(ctx context.Context, serviceId ServiceID, params *DeleteServiceParams, reqEditors ...RequestEditorFn) (*DeleteServiceResponse, error) {
+	rsp, err := c.DeleteService(ctx, serviceId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -33175,7 +33226,7 @@ type ServerInterface interface {
 	CreateService(w http.ResponseWriter, r *http.Request, params CreateServiceParams)
 	// DeleteService Delete a saved service and revoke its active publication
 	// (DELETE /v1/services/{service_id})
-	DeleteService(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
+	DeleteService(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params DeleteServiceParams)
 	// GetService Read one saved service for management
 	// (GET /v1/services/{service_id})
 	GetService(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
@@ -36100,8 +36151,37 @@ func (siw *ServerInterfaceWrapper) DeleteService(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteServiceParams
+
+	// ------------- Optional query parameter "expected_service_revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "expected_service_revision", r.URL.Query(), &params.ExpectedServiceRevision, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "expected_service_revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "expected_service_revision", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "unconditional_delete" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "unconditional_delete", r.URL.Query(), &params.UnconditionalDelete, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "unconditional_delete"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "unconditional_delete", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteService(w, r, serviceId)
+		siw.Handler.DeleteService(w, r, serviceId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

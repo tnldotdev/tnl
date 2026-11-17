@@ -156,9 +156,21 @@ paths:
       operationId: deleteService
       tags: [services]
       summary: Delete a saved service and revoke its active publication
-      description: Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced.
+      description: "Ordinary management deletion requires exactly one of expected_service_revision from the current getService response or unconditional_delete=true. Neither or both is invalid; a stale revision conflicts before closing runs or changing any state. The service revision covers saved metadata, configuration, enablement, and endpoint settings independently of trust and configuration-digest checks. Revoke access and close any run before tombstoning its ID-keyed ingress projection. A current trial credential may delete only its exact owned demo service without either management condition after control verifies the server-observed source; READY exhaustion does not prevent cleanup within the fixed trial lifetime. A publisher grant, run token, or share is not management permission. Guest cleanup uses this same closure, settlement, and endpoint retirement; outstanding offline serving authority remains fenced."
       security: [{ bearerAuth: [] }, { guestAuth: [] }]
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: expected_service_revision
+          in: query
+          description: Current saved service revision from getService. Mutually exclusive with unconditional_delete; not required for credential-bound guest cleanup.
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+            x-go-type: int64
+        - name: unconditional_delete
+          in: query
+          description: Explicitly delete the currently authorized service regardless of its revision. Send true or omit; mutually exclusive with expected_service_revision.
+          schema: { type: boolean }
       responses:
         "204": { description: Service deleted }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

@@ -151,7 +151,7 @@ func TestIntegrationGuestServiceCreationMaintenancePreservesRecoveryAndNumber(t 
 	if err != nil || again.ID != first.ID {
 		t.Fatal("maintenance blocked exact guest allocation recovery", err)
 	}
-	if err := d.DeleteService(WithGuestServiceCredential(t.Context(), request.Credential), first.ID, "", now); err != nil {
+	if err := d.DeleteGuestService(t.Context(), first.ID, request.Credential, now); err != nil {
 		t.Fatal("maintenance blocked guest cleanup", err)
 	}
 	request.IdempotencyKey = "new"

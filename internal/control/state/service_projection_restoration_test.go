@@ -31,7 +31,7 @@ func TestServiceRestoredStoredRecordProjectionAndInvalidProtocol(t *testing.T) {
 		for _, flags := range []bool{false, true} {
 			row := controlstatedb.ControlService{
 				ID: "svc_" + strings.Repeat("a", 22), TeamID: text("team-one"), Name: "orders",
-				Protocol: "postgres", TlsMetadata: encoded, TrustRevision: 7, EndpointRevision: 11,
+				Protocol: "postgres", TlsMetadata: encoded, TrustRevision: 7, EndpointRevision: 11, ServiceRevision: 19,
 				DomainID: text("domain-one"), CertificateHostname: "orders.example.test",
 				PlacementWorktreeKey: "checkout-key", PlacementWorktreeLabel: "feature",
 				ServicePort: pgtype.Int4{Int32: 24001, Valid: true}, Public: true,
@@ -45,7 +45,7 @@ func TestServiceRestoredStoredRecordProjectionAndInvalidProtocol(t *testing.T) {
 				ServiceMetadata: ServiceMetadata{Protocol: "postgres", TLS: tls, TrustRevision: 7, PublisherPool: flags,
 					Endpoint: &ServiceEndpoint{Hostname: "orders.example.test", Port: 24001, Public: true}},
 				ID: row.ID, TeamID: row.TeamID.String, GuestID: row.GuestID.String, Name: "orders", DomainID: "domain-one",
-				EndpointRevision: 11, Enabled: flags, Ephemeral: flags, RequirePostQuantum: flags,
+				EndpointRevision: 11, ServiceRevision: 19, Enabled: flags, Ephemeral: flags, RequirePostQuantum: flags,
 				CreatedAt: now, ExpiresAt: &expiry,
 				Placement: &ServicePlacement{DomainID: "domain-one", Hostname: "orders.example.test",
 					WorktreeKey: "checkout-key", WorktreeLabel: "feature"},

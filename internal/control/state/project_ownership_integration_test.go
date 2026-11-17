@@ -80,7 +80,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		&ProjectServiceConfiguration{Target: "localhost:4000"}, ServiceUpdateConditions{UnconditionalConfiguration: true}, now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("explicit declaration bypassed project management", err)
 	}
-	if err = d.DeleteService(ctx, first.ServiceID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
+	if err = d.DeleteService(ctx, first.ServiceID, r.ActorID, observedServiceDeletion(t, d, first.ServiceID), now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("public service deleted", err)
 	}
 	var configuredGrant string
@@ -223,7 +223,7 @@ func TestIntegrationAppliedProjectManagedDeploymentGrantsAndSafeMetadata(t *test
 			publicID = s.ServiceID
 		}
 	}
-	if err = d.DeleteService(t.Context(), publicID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
+	if err = d.DeleteService(t.Context(), publicID, r.ActorID, observedServiceDeletion(t, d, publicID), now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("public service deletion succeeded", err)
 	}
 	if !strings.HasPrefix(publicID, "svc_") {

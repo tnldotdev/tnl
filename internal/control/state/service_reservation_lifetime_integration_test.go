@@ -44,7 +44,7 @@ func TestIntegrationStandaloneSharedSameSourceHandoffKeepsLifetimeReceiptsAndGra
 	if err := d.RemoveMembership(t.Context(), owner, team.ID, creator.ID, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.DeleteService(t.Context(), first.ID, owner, now.Add(2*time.Second)); err != nil {
+	if err := d.DeleteService(t.Context(), first.ID, owner, observedServiceDeletion(t, d, first.ID), now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	second, err := d.CreateServiceAt(t.Context(), team.ID, owner, "handoff", "replacement", placement, now.Add(3*time.Second), ServiceMetadata{}, declaration)

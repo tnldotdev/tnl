@@ -127,7 +127,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if _, err = d.PrepareServiceRun(ctx, other.ID, namespaceScope, "wrong-scope", now, controlstate.ServiceRunRequest{Metadata: controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("exact service grant selected unrelated service: %v", err)
 	}
-	if err := d.DeleteService(ctx, other.ID, identityID, now); err != nil {
+	if err := d.DeleteService(ctx, other.ID, identityID, controlstate.ServiceDeleteConditions{Revision: other.ServiceRevision}, now); err != nil {
 		t.Fatal(err)
 	}
 	for _, relay := range []string{"relay-a", "relay-b"} {

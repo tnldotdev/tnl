@@ -27,6 +27,7 @@ type ServiceRecord struct {
 	ServiceMetadata
 	ID, TeamID, GuestID, DomainID, Name string
 	EndpointRevision                    int64
+	ServiceRevision                     int64
 	Placement                           *ServicePlacement   `json:"placement,omitempty"`
 	Source                              *LocalServiceSource `json:"source,omitempty"`
 	HTTPLimits                          *ProjectHTTPApplicationLimits
@@ -101,7 +102,7 @@ func checkedServiceRecord(row controlstatedb.ControlService) (ServiceRecord, err
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	return ServiceRecord{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID.String, GuestID: row.GuestID.String, DomainID: row.DomainID.String, Name: row.Name, EndpointRevision: row.EndpointRevision, Enabled: row.Enabled, Ephemeral: row.Ephemeral, RequirePostQuantum: row.RequirePostQuantum, ExpiresAt: optionalTime(row.ExpiresAt), CreatedAt: row.CreatedAt.Time, Placement: &ServicePlacement{DomainID: row.DomainID.String, Hostname: row.CertificateHostname, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
+	return ServiceRecord{ServiceMetadata: metadata, ID: row.ID, TeamID: row.TeamID.String, GuestID: row.GuestID.String, DomainID: row.DomainID.String, Name: row.Name, EndpointRevision: row.EndpointRevision, ServiceRevision: row.ServiceRevision, Enabled: row.Enabled, Ephemeral: row.Ephemeral, RequirePostQuantum: row.RequirePostQuantum, ExpiresAt: optionalTime(row.ExpiresAt), CreatedAt: row.CreatedAt.Time, Placement: &ServicePlacement{DomainID: row.DomainID.String, Hostname: row.CertificateHostname, WorktreeKey: row.PlacementWorktreeKey, WorktreeLabel: row.PlacementWorktreeLabel}}, nil
 }
 
 func serviceManager(ctx context.Context, tx pgx.Tx, teamID, actorID string) error {
@@ -437,10 +438,6 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 	if err = d.ensureLocalServiceEndpoint(ctx, tx, id, actorID, name, placement, public, clock.current()); err != nil {
 		return result, err
 	}
-	row, err := controlstatedb.New(tx).LockService(ctx, id)
-	if err != nil {
-		return result, err
-	}
 	if err = auditPrivateMutation(ctx, tx, id, actorID, "service.create", id, now); err != nil {
 		return result, err
 	}
@@ -460,6 +457,10 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		if err = auditPrivateMutation(ctx, tx, id, actorID, "grant.create", ownerGrantID, now); err != nil {
 			return result, err
 		}
+	}
+	row, err := q.LockService(ctx, id)
+	if err != nil {
+		return result, err
 	}
 	result, err = checkedServiceRecord(row)
 	if err != nil {

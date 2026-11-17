@@ -110,7 +110,7 @@ func TestIntegrationCreateServiceDeclaration(t *testing.T) {
 	if _, err := d.CreateServiceAt(ctx, actor.TeamID, actor.ActingIdentityID, "declared", "create", ServicePlacement{}, now, created.ServiceMetadata, nil); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("metadata-only retry discarded a saved declaration", err)
 	}
-	if err := d.DeleteService(ctx, created.ID, actor.ActingIdentityID, now); err != nil {
+	if err := d.DeleteService(ctx, created.ID, actor.ActingIdentityID, observedServiceDeletion(t, d, created.ID), now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.CreateServiceAt(ctx, actor.TeamID, actor.ActingIdentityID, "declared", "create", ServicePlacement{}, now, ServiceMetadata{}, &equivalent); !errors.Is(err, ErrServiceConflict) {

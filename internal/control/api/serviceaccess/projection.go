@@ -12,7 +12,7 @@ func Service(record controlstate.ServiceRecord) controlv1.Service {
 	result := controlv1.Service{Id: record.ID, TeamId: record.TeamID, GuestId: record.GuestID, Name: record.Name,
 		HttpRequestBodyIdleTimeout: record.HTTPRequestBodyIdleTimeout,
 		Enabled:                    record.Enabled, CreatedAt: record.CreatedAt, Protocol: controlv1.ServiceProtocol(record.Protocol),
-		PublisherPool: record.PublisherPool, TrustRevision: record.TrustRevision, EndpointRevision: record.EndpointRevision,
+		PublisherPool: record.PublisherPool, TrustRevision: record.TrustRevision, EndpointRevision: record.EndpointRevision, ServiceRevision: record.ServiceRevision,
 		Ephemeral: record.Ephemeral, ExpiresAt: record.ExpiresAt, RequirePostQuantum: record.RequirePostQuantum}
 	if t := record.Endpoint; t != nil {
 		result.Endpoint = &controlv1.ServiceEndpoint{Hostname: t.Hostname, Port: t.Port, Public: t.Public}

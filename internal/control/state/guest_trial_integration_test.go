@@ -117,8 +117,7 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentService(t *testing.T) {
 	if _, err := d.AllocateGuestDemoService(t.Context(), second); !errors.Is(err, ErrServiceConflict) {
 		t.Fatalf("allocated second current service: %v", err)
 	}
-	deleteCtx := WithGuestServiceCredential(t.Context(), credential)
-	if err := d.DeleteService(deleteCtx, first.ID, "", now.Add(2*time.Second)); err != nil {
+	if err := d.DeleteGuestService(t.Context(), first.ID, credential, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.AllocateGuestDemoService(t.Context(), request); !errors.Is(err, ErrServiceConflict) {
@@ -135,11 +134,11 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentService(t *testing.T) {
 	if _, err := d.AllocateGuestDemoService(t.Context(), second); err != nil {
 		t.Fatalf("READY exhaustion blocked recovery for cleanup: %v", err)
 	}
-	if err := d.DeleteService(deleteCtx, replacement.ID, "", now.Add(4*time.Second)); err != nil {
+	if err := d.DeleteGuestService(t.Context(), replacement.ID, credential, now.Add(4*time.Second)); err != nil {
 		t.Fatalf("READY exhaustion blocked deletion: %v", err)
 	}
 	for range 2 {
-		if err := d.DeleteService(deleteCtx, replacement.ID, "", now.Add(4*time.Second)); err != nil {
+		if err := d.DeleteGuestService(t.Context(), replacement.ID, credential, now.Add(4*time.Second)); err != nil {
 			t.Fatalf("deletion was not idempotent: %v", err)
 		}
 	}

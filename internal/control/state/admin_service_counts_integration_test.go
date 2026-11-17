@@ -69,7 +69,7 @@ func TestIntegrationAdminRuntimeCountsUseCanonicalServicesAndRuns(t *testing.T) 
 		t.Fatal(err)
 	}
 	deleted := create("deleted", false)
-	if err := d.DeleteService(t.Context(), deleted.ID, f.project.ActorID, now); err != nil {
+	if err := d.DeleteService(t.Context(), deleted.ID, f.project.ActorID, observedServiceDeletion(t, d, deleted.ID), now); err != nil {
 		t.Fatal(err)
 	}
 	expired := create("expired", false)

@@ -948,6 +948,7 @@ type ControlService struct {
 	StorageKeyID            pgtype.Text
 	TrustRevision           int64
 	EndpointRevision        int64
+	ServiceRevision         int64
 	VisitorRevision         int64
 	PublisherPool           bool
 	Ephemeral               bool

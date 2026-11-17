@@ -191,7 +191,7 @@ func TestIntegrationStandaloneSharedCustomHostnameRemainsTeamOwned(t *testing.T)
 	if _, _, err := d.GetServiceConfiguration(ctx, service.ID, creator.IdentityID); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("demoted creator read the shared service declaration", err)
 	}
-	if err := d.DeleteService(ctx, service.ID, creator.IdentityID, now.Add(time.Second)); !errors.Is(err, ErrServiceAccess) {
+	if err := d.DeleteService(ctx, service.ID, creator.IdentityID, observedServiceDeletion(t, d, service.ID), now.Add(time.Second)); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("demoted creator deleted a team-owned service", err)
 	}
 	if err := d.RemoveMembership(ctx, owner, team.ID, creator.ID, now.Add(2*time.Second)); err != nil {

@@ -210,7 +210,7 @@ func exerciseServiceFixture(t *testing.T, anonymous, denySource bool) {
 			t.Fatal("browser visitor permission was not admitted", status, err)
 		}
 		before := requests.Load()
-		if err := owner.DeleteService(t.Context(), service.Id); err != nil {
+		if err := owner.DeleteService(t.Context(), service.Id, controlv1.DeleteServiceParams{ExpectedServiceRevision: &service.ServiceRevision}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := f.OwnerVisitorToken(t.Context(), service.Id); err == nil {

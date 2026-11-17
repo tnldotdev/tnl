@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
@@ -278,7 +279,7 @@ func inspectAppliedPrivateResource(t *testing.T, d *Database, r ApplyProjectConf
 		}
 		grants = append(grants, g)
 	}
-	if err = d.DeleteService(ctx, id, r.ActorID, r.Now); !errors.Is(err, ErrProjectManaged) {
+	if err = d.DeleteService(ctx, id, r.ActorID, observedServiceDeletion(t, d, id), r.Now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("transition lost definition ownership", err)
 	}
 	return appliedPrivateResource{record: value, grants: grants}
@@ -535,10 +536,15 @@ func assertPrivateOwnershipRollback(t *testing.T, d *Database, r ApplyProjectCon
 
 func privateOwnershipSnapshot(t *testing.T, d *Database) map[string]string {
 	t.Helper()
+	return privateOwnershipSnapshotQuery(t, d.pool)
+}
+
+func privateOwnershipSnapshotQuery(t *testing.T, q controlstatedb.DBTX) map[string]string {
+	t.Helper()
 	result := map[string]string{}
 	for _, table := range []string{"applied_projects", "applied_project_services", "local_project_services", "deployments", "deployment_publisher_service_grants", "services", "visitor_grants", "publisher_grants", "service_runs", "service_connection_slots", "connector_peer_pairs", "service_audit_events"} {
 		var rows string
-		if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb)::text FROM control.`+table+` r`).Scan(&rows); err != nil {
+		if err := q.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb)::text FROM control.`+table+` r`).Scan(&rows); err != nil {
 			t.Fatal(err)
 		}
 		result[table] = rows

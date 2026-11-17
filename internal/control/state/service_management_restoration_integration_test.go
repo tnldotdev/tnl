@@ -84,7 +84,7 @@ func TestIntegrationServiceRestoredAdminCleanupDoesNotRewriteAnotherMemberDeclar
 	if err != nil || digest != nextDigest || !reflect.DeepEqual(before, after) {
 		t.Error("denied cross-member declaration update changed saved configuration", err)
 	}
-	if err := f.d.DeleteService(t.Context(), f.local.ID, admin.IdentityID, f.now); err != nil {
+	if err := f.d.DeleteService(t.Context(), f.local.ID, admin.IdentityID, observedServiceDeletion(t, f.d, f.local.ID), f.now); err != nil {
 		t.Fatal("administrator lost cleanup permission for another member service", err)
 	}
 	if _, err := f.d.GetService(t.Context(), f.local.ID, f.member.IdentityID); !errors.Is(err, ErrServiceAccess) {
@@ -125,7 +125,7 @@ func TestIntegrationServiceRestoredReleasingDomainDeniesNewWorkButAllowsCleanup(
 		t.Error("releasing domain permitted a prepared run to start", err)
 	}
 	for _, fixture := range fixtures {
-		if err := f.database.DeleteService(ctx, fixture.service.ID, member.IdentityID, f.now); err != nil {
+		if err := f.database.DeleteService(ctx, fixture.service.ID, member.IdentityID, observedServiceDeletion(t, f.database, fixture.service.ID), f.now); err != nil {
 			t.Fatal("releasing domain prevented stored-owner cleanup", err)
 		}
 	}

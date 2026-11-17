@@ -433,7 +433,7 @@ func (f *PublishingFixture) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value := controlv1.Service{Id: publishingID(f.t, opaqueid.ServicePrefix), TeamId: request.TeamId, Name: request.Name, DomainId: c.DomainId,
-		Enabled: true, CreatedAt: time.Now(), Protocol: *c.Protocol, TrustRevision: 1, EndpointRevision: 1, TargetTls: trust,
+		Enabled: true, CreatedAt: time.Now(), Protocol: *c.Protocol, TrustRevision: 1, EndpointRevision: 1, ServiceRevision: 1, TargetTls: trust,
 		Ephemeral: c.Ephemeral != nil && *c.Ephemeral, RequirePostQuantum: c.RequirePostQuantum != nil && *c.RequirePostQuantum,
 		Endpoint: &controlv1.ServiceEndpoint{Hostname: *c.Hostname, Port: 443, Public: c.Public != nil && *c.Public}}
 	if c.Http != nil {

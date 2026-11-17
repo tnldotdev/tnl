@@ -309,7 +309,11 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 		Configuration: &controlv1.ProjectServiceConfiguration{Target: "localhost:4000"},
 	})
 	assertManaged(managedErr)
-	assertManaged(owner.DeleteService(ctx, web.ServiceId))
+	managedService, err := owner.GetService(ctx, web.ServiceId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertManaged(owner.DeleteService(ctx, web.ServiceId, controlv1.DeleteServiceParams{ExpectedServiceRevision: &managedService.ServiceRevision}))
 	assertManaged(owner.RevokePublisherGrant(ctx, team, member.PublisherIdentityId, web.GrantId))
 	_, managedErr = owner.CreatePublisherGrant(ctx, member.PublisherIdentityId, controlv1.CreatePublisherGrantRequest{TeamId: team, ServiceId: &web.ServiceId})
 	assertManaged(managedErr)

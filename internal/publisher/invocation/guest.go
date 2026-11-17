@@ -137,7 +137,7 @@ func prepareGuestDemoService(ctx context.Context, state *clientstate.Database, s
 
 type guestServiceControl interface {
 	AllocateGuestDemoService(context.Context, string, controlv1.AllocateGuestDemoServiceRequest) (controlv1.Service, error)
-	DeleteService(context.Context, string) error
+	DeleteGuestService(context.Context, string) error
 }
 
 // this owner retains only trial identity, fixed time, and original allocation
@@ -208,7 +208,7 @@ func (a *guestServiceAllocation) cleanup(ctx context.Context) error {
 			return err
 		}
 	}
-	err := a.control.DeleteService(ctx, a.serviceID)
+	err := a.control.DeleteGuestService(ctx, a.serviceID)
 	if err == nil || errors.Is(err, clientcontrol.ErrNotFound) {
 		a.deleted = true
 		return nil

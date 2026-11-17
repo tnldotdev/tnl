@@ -32,6 +32,7 @@ func TestIntegrationServiceDeletionLateAuditFailureRollsBackActivePublication(t 
 		t.Fatal("deletion fixture lacks active slots, a public port, or managed DNS work", err)
 	}
 	before := serviceSecuritySnapshot(t, d)
+	conditions := observedServiceDeletion(t, d, service.ID)
 	for _, statement := range []string{
 		`CREATE FUNCTION control.reject_service_delete_audit() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
@@ -53,7 +54,7 @@ func TestIntegrationServiceDeletionLateAuditFailureRollsBackActivePublication(t 
 			t.Fatal(err)
 		}
 	}
-	err = d.DeleteService(ctx, service.ID, authority.ActingIdentityID, now)
+	err = d.DeleteService(ctx, service.ID, authority.ActingIdentityID, conditions, now)
 	requireRestoredPostgresFailure(t, err, "23514", "reject_service_delete_audit", "publication retirement observed")
 	if after := serviceSecuritySnapshot(t, d); !reflect.DeepEqual(after, before) {
 		t.Fatal("failed actual deletion retained closure, tombstone, port/DNS retirement, policy, or audit changes")
@@ -64,7 +65,7 @@ func TestIntegrationServiceDeletionLateAuditFailureRollsBackActivePublication(t 
 	if _, err := d.pool.Exec(ctx, `DROP TRIGGER reject_service_delete_audit ON control.service_audit_events`); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.DeleteService(ctx, service.ID, authority.ActingIdentityID, now); err != nil {
+	if err := d.DeleteService(ctx, service.ID, authority.ActingIdentityID, conditions, now); err != nil {
 		t.Fatal("failed deletion could not retry through its ordinary owner", err)
 	}
 	var deleted bool

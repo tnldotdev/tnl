@@ -133,7 +133,7 @@ func TestInstalledHTTPPreparationRecreatesDeletedService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.services.routes.DeleteService(t.Context(), first.Id); err != nil {
+	if err := f.services.routes.DeleteService(t.Context(), first.Id, controlv1.DeleteServiceParams{ExpectedServiceRevision: &first.ServiceRevision}); err != nil {
 		t.Fatal(err)
 	}
 	second, err := prepareInstalledHTTPService(t.Context(), f.services, InstallationOptions{}, foregroundPlan(), resolvedVisitorAccess{})
