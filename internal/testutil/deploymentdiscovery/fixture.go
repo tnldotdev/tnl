@@ -50,6 +50,7 @@ type Fixture struct {
 	Key              ed25519.PrivateKey
 	Profile          *clientstate.Store
 	Heartbeat        chan controlv1.ServiceRunHeartbeat
+	RunClosed        chan struct{}
 	TargetHandshake  chan struct{}
 	DiscoveryStarted chan struct{}
 	DiscoveryStopped chan struct{}
@@ -85,7 +86,7 @@ func New(t *testing.T) *Fixture {
 	}
 	member := controlv1.DeploymentPublisherIdentity{TeamId: id(opaqueid.TeamPrefix), PublisherIdentityId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), DeploymentId: id("dpl_"), DeploymentName: "cloud", ProjectKey: strings.Repeat("a", 56)}
 	serviceID, runID, grantID := id(opaqueid.ServicePrefix), id(opaqueid.ServiceRunPrefix), id(opaqueid.PublisherGrantPrefix)
-	f := &Fixture{Key: key, Heartbeat: make(chan controlv1.ServiceRunHeartbeat, 16), TargetHandshake: make(chan struct{}, 1), DiscoveryStarted: make(chan struct{}), DiscoveryStopped: make(chan struct{}), proofs: map[string]bool{}}
+	f := &Fixture{Key: key, Heartbeat: make(chan controlv1.ServiceRunHeartbeat, 16), RunClosed: make(chan struct{}, 1), TargetHandshake: make(chan struct{}, 1), DiscoveryStarted: make(chan struct{}), DiscoveryStopped: make(chan struct{}), proofs: map[string]bool{}}
 	protocol := controlv1.ServiceProtocol("kubernetes")
 	f.assignment = controlv1.DeploymentPublisherAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), CertificateStatePlans: []controlv1.CertificatePlan{}, Services: []controlv1.DeploymentPublisherServiceAssignment{{Service: "cluster", ServiceId: serviceID, GrantId: grantID, TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}}}
 	f.service = controlv1.Service{Id: serviceID, TeamId: member.TeamId, Name: "cluster", Protocol: protocol, Enabled: true, TrustRevision: 1, EndpointRevision: 1, PublisherPool: true, CreatedAt: time.Now(), Endpoint: &controlv1.ServiceEndpoint{Hostname: "managed.example.test", Port: 25443}}
@@ -255,6 +256,10 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId:
 		f.Closes.Add(1)
 		w.WriteHeader(http.StatusNoContent)
+		select {
+		case f.RunClosed <- struct{}{}:
+		default:
+		}
 	case "/v1/services/" + f.service.Id + "/runs/" + f.setup.ServiceRunId + "/renew":
 		var health controlv1.ServiceRunHeartbeat
 		_ = json.NewDecoder(r.Body).Decode(&health)
