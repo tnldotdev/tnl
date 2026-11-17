@@ -69,10 +69,14 @@ func (c *connectorCleanup) observe(until time.Time) {
 }
 
 func (c *connectorCleanup) begin() {
+	c.beginAt(time.Now())
+}
+
+func (c *connectorCleanup) beginAt(at time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.until.IsZero() {
-		c.until = time.Now().Add(5 * time.Second)
+		c.until = at.Add(5 * time.Second)
 		// signed retirement is negative work with retained proof, not another
 		// serving operation. retain the actual caller deadline, not the expired
 		// authority horizon; bound still fences packet/terminal work by authority.
@@ -205,7 +209,14 @@ func connectorTerminalKey(entry tunnelv1.ConnectorPeerVisitorEntry) tunnelv1.Con
 	return tunnelv1.ConnectorVisitorTerminalKey{VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration}
 }
 
-func (p *connectorConnection) terminalUse(use *connectorUse, operation error) error {
+func (p *connectorConnection) terminalUse(use *connectorUse, operation error) (result error) {
+	defer func() {
+		if use.prepared != nil {
+			cleanupErr := p.preparedRetirementResult(use.prepared, use.prepared.releaseTerminal())
+			p.recordUseCleanup(cleanupErr)
+			result = errors.Join(result, cleanupErr)
+		}
+	}()
 	if !use.admitted || p.permissions == nil {
 		return operation
 	}
@@ -232,7 +243,11 @@ func (p *connectorConnection) terminalUse(use *connectorUse, operation error) er
 	if use.prepared != nil {
 		use.prepared.mu.Lock()
 		until = earliestConnectorDeadline(until, use.prepared.permissionUntil)
+		selected := use.prepared.stdio
 		use.prepared.mu.Unlock()
+		if selected != nil {
+			until = selected.owner.cleanupBound(until)
+		}
 	} else {
 		until = earliestConnectorDeadline(until, use.until)
 	}
@@ -266,7 +281,10 @@ func (p *connectorConnection) terminalUse(use *connectorUse, operation error) er
 }
 
 func (p *connectorConnection) closePreparedForRetirement(prepared *PreparedConnector) error {
-	result := prepared.Close()
+	return p.preparedRetirementResult(prepared, prepared.Close())
+}
+
+func (p *connectorConnection) preparedRetirementResult(prepared *PreparedConnector, result error) error {
 	p.mu.Lock()
 	now := time.Now()
 	expired := !p.until.After(now) || !p.run.ValidUntil.After(now) || !p.permission.ExpiresAt.After(now)
@@ -278,7 +296,7 @@ func (p *connectorConnection) closePreparedForRetirement(prepared *PreparedConne
 	// here. neither joined results nor an entered renewal get this provenance.
 	if stopped, ok := prepared.permissionErr.(*preparedPermissionOwnerStop); ok && stopped != nil &&
 		stopped.owner == prepared && stopped.lifetime == p.ctx && prepared.ctx == p.ctx && p.ctx.Err() != nil {
-		return prepared.closeErr
+		return errors.Join(prepared.closeErr, prepared.physicalErr)
 	}
 	if !expired {
 		return result
@@ -289,11 +307,11 @@ func (p *connectorConnection) closePreparedForRetirement(prepared *PreparedConne
 	if cause, ok := prepared.permissionErr.(*preparedPermissionExpiry); ok &&
 		cause.owner == prepared && cause.until.Equal(prepared.permissionUntil) && !cause.until.After(now) {
 		if cause.cause == nil {
-			return prepared.closeErr
+			return errors.Join(prepared.closeErr, prepared.physicalErr)
 		}
 		if authority, ok := cause.cause.(*connectorAuthorityExpiry); ok &&
 			authority.owner == p && authority == context.Cause(p.ctx) && !authority.until.After(now) {
-			return prepared.closeErr
+			return errors.Join(prepared.closeErr, prepared.physicalErr)
 		}
 	}
 	return result

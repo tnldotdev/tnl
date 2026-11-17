@@ -215,7 +215,7 @@ func fixtureAbortOnly(err error) bool {
 		return true
 	}
 	if stream, ok := err.(*quic.StreamError); ok {
-		return stream.ErrorCode == 0
+		return !stream.Remote && stream.ErrorCode == 0
 	}
 	switch err.(type) {
 	case *muxsession.QUICTransportCloseError, *quic.ApplicationError, *quic.TransportError,

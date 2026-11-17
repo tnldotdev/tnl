@@ -106,7 +106,9 @@ type stdioTerminalReset struct {
 	resets atomic.Int32
 }
 
-func (s *stdioTerminalReset) Reset(uint32) error { s.resets.Add(1); return nil }
+func (s *stdioTerminalReset) Reset(uint32) error             { s.resets.Add(1); return nil }
+func (*stdioTerminalReset) SetReadDeadline(time.Time) error  { return nil }
+func (*stdioTerminalReset) SetWriteDeadline(time.Time) error { return nil }
 
 func TestStdioTerminalAbortJoinsOneFailedExchange(t *testing.T) {
 	local, input := net.Pipe()
@@ -132,7 +134,18 @@ func TestStdioTerminalAbortJoinsOneFailedExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel()
+	<-o.abortDone
+	first := make(chan error, 1)
+	go func() {
+		first <- o.terminalUse(context.Canceled, func(error) error {
+			t.Error("selected abort did not retain its terminal exchange")
+			return nil
+		})
+	}()
 	<-entered
+	if raw.resets.Load() != 0 {
+		t.Fatal("physical reset preceded the authenticated abort result")
+	}
 	started, done := make(chan struct{}), make(chan error, 1)
 	go func() {
 		close(started)
@@ -148,7 +161,7 @@ func TestStdioTerminalAbortJoinsOneFailedExchange(t *testing.T) {
 	default:
 	}
 	release()
-	result := <-done
+	result := errors.Join(<-first, <-done)
 	o.complete()
 	if err := o.finish(result); !errors.Is(err, fault) || exchanges.Load() != 1 || raw.resets.Load() != 1 {
 		t.Fatal("terminal acknowledgment failure was hidden, duplicated, or not joined", err, exchanges.Load(), raw.resets.Load())

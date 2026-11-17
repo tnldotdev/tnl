@@ -338,11 +338,13 @@ func (s *Conn) Close() error {
 		s.closeErr = errors.Join(s.raw.Close(), s.forwardErr)
 		s.readMu.Lock()
 		s.writeMu.Lock()
-		s.writeMu.Unlock()
-		s.readMu.Unlock()
 		s.owner.mu.Lock()
+		// remove the stream only after entered reads, writes, and TLS setup
+		// have joined. the connection owner never holds mu while joining us.
 		delete(s.owner.streams, s)
 		s.owner.mu.Unlock()
+		s.writeMu.Unlock()
+		s.readMu.Unlock()
 	})
 	return s.closeErr
 }

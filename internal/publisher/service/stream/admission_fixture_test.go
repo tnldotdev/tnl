@@ -24,4 +24,5 @@ func (a AdmissionFixture) CheckUse(ctx context.Context) (time.Time, error) {
 }
 func (AdmissionFixture) SetupDeadline() time.Time { return time.Now().Add(10 * time.Second) }
 func (AdmissionFixture) FinishSetup() error       { return nil }
+func (AdmissionFixture) TargetAborting() bool     { return false }
 func (AdmissionFixture) Stop()                    {}

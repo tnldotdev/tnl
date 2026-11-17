@@ -526,7 +526,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		use := &connectorUse{entry: opening.entry, until: opening.until, terminalKey: connectorTerminalKey(opening.entry)}
 		p.warm = use
 		p.active[use] = struct{}{}
-		prepared, err := prepareConnector(life, setup, p.session, preparedRun, opening.entry, func() { use.admitted = true })
+		prepared, err := prepareConnector(life, setup, p.session, preparedRun, opening.entry, true, func() { use.admitted = true })
 		use.prepared = prepared
 		if err != nil {
 			return nil, err
@@ -1235,6 +1235,9 @@ func connectorReconnectError(err error) reconnectDisposition {
 }
 
 func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (result error) {
+	if operation := stdioOperationFor(ctx); operation != nil {
+		operation.bindCleanup(p.cleanup)
+	}
 	p.mu.Lock()
 	if !p.currentLocked() || ctx.Err() != nil || len(p.active) >= p.config.MaxConnections && p.warm == nil {
 		p.mu.Unlock()
@@ -1305,7 +1308,7 @@ func (p *connectorConnection) forwardUse(ctx context.Context, local net.Conn, us
 				<-stopped
 			}
 		}()
-		prepared, err := prepareConnector(p.ctx, setup, p.session, run, entry, func() {
+		prepared, err := prepareConnector(p.ctx, setup, p.session, run, entry, false, func() {
 			p.mu.Lock()
 			use.admitted = true
 			p.mu.Unlock()

@@ -135,7 +135,7 @@ func (c stdioReadCompleted) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func TestStdioResetJoinsReaderBeforeResetReturns(t *testing.T) {
+func TestStdioInterruptionJoinsReaderBeforePhysicalReset(t *testing.T) {
 	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			raw, _ := stdioTransportPair(t, transport)
@@ -156,7 +156,7 @@ func TestStdioResetJoinsReaderBeforeResetReturns(t *testing.T) {
 			}
 			done := make(chan error, 1)
 			go func() {
-				// the reset wakes the remote copy, whose failure closes stdin.
+				// local interruption joins stdin before physical reset cleanup.
 				// hold Reset until the stdin result has been classified.
 				_, err := streamcopy.Copy(stdioReadCompleted{Conn: o.local, done: release}, selected)
 				o.complete()
@@ -220,7 +220,7 @@ func TestStdioAbortRealTransportOppositeResetOrders(t *testing.T) {
 				o.complete()
 				result := o.finish(errors.Join(copied, cleanup))
 				if order == "caller first" {
-					var evidence *stdioAbortError
+					var evidence *stdioInterruptError
 					if result != nil || !errors.As(copied, &evidence) || evidence.owner != o || evidence.stream != selected {
 						t.Fatal("selected stream did not carry exact abort evidence", result, copied)
 					}

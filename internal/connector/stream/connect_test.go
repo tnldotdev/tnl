@@ -536,7 +536,14 @@ func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, n
 	if err := secure.HandshakeContext(ctx); err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, secure.Close()) }()
+	defer func() {
+		// authenticated fixture Abort closes the raw stream, just as the real
+		// publisher admission does. do not introduce a new TLS close-notify
+		// write after that close; the actual read/write failures remain joined.
+		if ctx.Err() == nil {
+			result = errors.Join(result, secure.Close())
+		}
+	}()
 	_ = stream.SetDeadline(time.Time{})
 	if f.target != "" {
 		target, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", f.target)
