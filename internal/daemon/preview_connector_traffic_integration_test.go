@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -288,15 +287,11 @@ func TestIntegrationPreviewConnectorOnlyHTTPIndependentGrantTraffic(t *testing.T
 		t.Fatal(err)
 	}
 	denied, err := client.Do(after)
-	if denied != nil {
+	if denied != nil && denied.Body != nil {
 		_ = denied.Body.Close()
-		if denied.StatusCode != http.StatusForbidden {
-			t.Fatalf("revoked connector returned HTTP %d instead of denying new visitor work", denied.StatusCode)
-		}
 	}
-	var timeout net.Error
-	if errors.As(err, &timeout) && timeout.Timeout() || original.Err() != nil {
-		t.Fatal("revoked connector delayed new work until the original request deadline", err)
+	if !previewConnectorNewWorkDenied(denied, err) || original.Err() != nil {
+		t.Fatal("revoked connector did not refuse new work within the original request deadline", err)
 	}
 	if requests.Load() != 1 {
 		t.Fatal("revocation replayed the original request or forwarded new work")
