@@ -51,13 +51,18 @@ func testPublicFrameworkHMR(t *testing.T, framework string) {
 	} else {
 		// next itself owns its port-0 listener before withTnl loads config.
 		// no reserve-close-rebind port probe or fabricated post-bind origin.
-		command = exec.Command("node", filepath.Join(repo, "packages/ts/node_modules/next/dist/bin/next"),
+		command = exec.Command("node", "--import", filepath.Join(repo, "packages/ts/test/fixtures/next/hmr-subscription.ts"),
+			filepath.Join(repo, "packages/ts/node_modules/next/dist/bin/next"),
 			"dev", "--hostname", "127.0.0.1", "--port", "0")
 	}
 	command.Dir = directory
 	command.Env = append(os.Environ(), "TNL_APP_ENDPOINT="+native.endpoint, "TNL_NO_TELEMETRY=1", "TNL_PREVIEW=required")
 	var output synchronizedBuffer
 	command.Stdout, command.Stderr = &output, &output
+	nextOutput := publicNextHMROutput{synchronizedBuffer: &output, subscribed: make(chan string, 1)}
+	if framework == "next" {
+		command.Stdout, command.Stderr = &nextOutput, &nextOutput
+	}
 	process, err := startOwnedCommand(command, isolateIntegrationCommand(t, command))
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +200,7 @@ func testPublicFrameworkHMR(t *testing.T, framework string) {
 			t.Fatalf("public Next development asset accepted an unrelated origin: response=%v body=%s err=%v", response, body, err)
 		}
 	}
-	connection := publicFrameworkWebSocket(t, f, base, socketPath, protocol)
+	connection, hmrDeadline := publicFrameworkWebSocket(t, f, base, socketPath, protocol)
 	defer func() {
 		if err := connection.Close(); err != nil {
 			t.Error("close public framework websocket", err)
@@ -212,6 +217,22 @@ func testPublicFrameworkHMR(t *testing.T, framework string) {
 			Path string `json:"path"`
 		}{Type: "turbopack-subscribe", Path: nextChunkList}); err != nil {
 			t.Fatal("subscribe to public Next page HMR", err)
+		}
+		// sending subscribe does not capture turbopack's baseline. an edit
+		// compiled before its first result becomes the baseline, with no update.
+		// the next-only observer reports that result without consuming it.
+		subscribed := time.NewTimer(time.Until(hmrDeadline))
+		defer subscribed.Stop()
+		select {
+		case path := <-nextOutput.subscribed:
+			if path != nextChunkList {
+				t.Fatalf("Next subscribed to %q instead of the page chunk list %q", path, nextChunkList)
+			}
+			t.Log("public HMR: Next captured the page subscription baseline before the edit")
+		case <-process.done:
+			t.Fatal("Next exited before the HMR subscription baseline", process.result(), output.String())
+		case <-subscribed.C:
+			t.Fatal("Next did not capture the HMR subscription baseline before the websocket deadline", output.String())
 		}
 	}
 	original, err := os.ReadFile(source)
@@ -256,7 +277,9 @@ func testPublicFrameworkHMR(t *testing.T, framework string) {
 				Instruction struct {
 					Type   string `json:"type"`
 					Merged []struct {
-						Entries map[string]json.RawMessage `json:"entries"`
+						Entries map[string]struct {
+							Code string `json:"code"`
+						} `json:"entries"`
 					} `json:"merged"`
 				} `json:"instruction"`
 			}
@@ -274,8 +297,8 @@ func testPublicFrameworkHMR(t *testing.T, framework string) {
 					continue
 				}
 				for _, merged := range update.Instruction.Merged {
-					for module := range merged.Entries {
-						if strings.Contains(module, "/app/page.tsx [app-client]") {
+					for module, entry := range merged.Entries {
+						if strings.Contains(module, "/app/page.tsx [app-client]") && strings.Contains(entry.Code, refreshed) {
 							t.Logf("public Next HMR updated module %s", module)
 							return true
 						}
@@ -293,6 +316,26 @@ func testPublicFrameworkHMR(t *testing.T, framework string) {
 		}
 	}
 	t.Logf("%s: real file edit -> public WSS HMR update -> changed public HTTPS content at %s", framework, base)
+}
+
+type publicNextHMROutput struct {
+	*synchronizedBuffer
+	subscribed chan string
+	notified   bool
+}
+
+func (b *publicNextHMROutput) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n, err := b.buffer.Write(data)
+	if !b.notified {
+		_, rest, found := strings.Cut(b.buffer.String(), "\ntnl-next-hmr-subscribed:")
+		if path, _, complete := strings.Cut(rest, "\n"); found && complete {
+			b.notified = true
+			b.subscribed <- path
+		}
+	}
+	return n, err
 }
 
 func publicFrameworkWorkspace(t *testing.T, repo, framework string) string {
@@ -340,7 +383,7 @@ func publicFrameworkWorkspace(t *testing.T, repo, framework string) string {
 	return directory
 }
 
-func publicFrameworkWebSocket(t *testing.T, f *splitPublishFixture, base, path, protocol string) *websocket.Conn {
+func publicFrameworkWebSocket(t *testing.T, f *splitPublishFixture, base, path, protocol string) (*websocket.Conn, time.Time) {
 	t.Helper()
 	settings, err := websocket.NewConfig("wss://"+strings.TrimPrefix(base, "https://")+path, base)
 	if err != nil {
@@ -375,11 +418,12 @@ func publicFrameworkWebSocket(t *testing.T, f *splitPublishFixture, base, path, 
 		t.Fatal("public WSS upgrade", err)
 	}
 	connection.MaxPayloadBytes = 1 << 20
-	if err := connection.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+	deadline = time.Now().Add(30 * time.Second)
+	if err := connection.SetDeadline(deadline); err != nil {
 		_ = connection.Close()
 		t.Fatal(err)
 	}
-	return connection
+	return connection, deadline
 }
 
 type publicHMRMessage struct {
