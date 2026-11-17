@@ -56,6 +56,7 @@ test.each([false, true])(
         });
       } else {
         await expect(closeFramework(handle, primary)).resolves.toBeUndefined();
+        await expect(handle.close()).rejects.toBe(primary);
       }
       expect(unregisters).toBe(1);
       expect(listener.listening).toBe(true);

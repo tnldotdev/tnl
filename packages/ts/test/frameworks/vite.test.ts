@@ -34,6 +34,7 @@ vi.mock("../../dist/internal/publisher/app.js", async (importOriginal) => {
       framework: Parameters<typeof actual.createPreparedService>[1],
       signal?: AbortSignal,
     ) => {
+      let closeRequested = false;
       const prepared = await actual.createPreparedService(
         options,
         framework,
@@ -45,10 +46,16 @@ vi.mock("../../dist/internal/publisher/app.js", async (importOriginal) => {
           },
           request: actual.runtimeRequest,
         },
-        () => {},
+        () => {
+          closeRequested = true;
+        },
         signal,
       );
-      onTestFinished(() => prepared.close());
+      onTestFinished(async () => {
+        // the framework observes its own close result; teardown only joins it.
+        if (closeRequested) await Promise.allSettled([prepared.close()]);
+        else await prepared.close();
+      });
       return prepared;
     },
   };
