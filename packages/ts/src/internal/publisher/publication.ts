@@ -25,8 +25,8 @@ import { httpsOriginSchema, pathTextSchema, registrationIDSchema } from "../valu
 import { parseStatus } from "./status.js";
 import { parseAssignment } from "./app.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
-import type { PublicationRun } from "./run.js";
-export type { PublicationRun } from "./run.js";
+import type { PublicationRun } from "../publication_run.js";
+export type { PublicationRun } from "../publication_run.js";
 
 type PublisherCredentialFile = {
   readonly publisherCredentialFile: string;

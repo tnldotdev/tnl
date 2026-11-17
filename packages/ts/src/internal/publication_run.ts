@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { hostnameSchema, httpsOriginSchema, serviceIDSchema } from "../values.js";
+import { hostnameSchema, httpsOriginSchema, serviceIDSchema } from "./values.js";
 
 export const publicationRunSchema = z.strictObject({
   serviceID: serviceIDSchema,

@@ -1,7 +1,7 @@
 import * as z from "zod";
 import { TnlError } from "../../errors.js";
 import { parseValue } from "../validation.js";
-import { publicationRunSchema, type PublicationRun } from "./run.js";
+import { publicationRunSchema, type PublicationRun } from "../publication_run.js";
 import {
   hostnameSchema,
   httpsOriginSchema,

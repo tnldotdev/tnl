@@ -11,7 +11,7 @@ import type {
 } from "../publisher/publication.js";
 import type { PublisherStorageHost } from "./storage-host.js";
 import { preserveRequestHeaders } from "./request.js";
-import { publicationRunSchema, publicationRunURLSchema } from "../publisher/run.js";
+import { publicationRunSchema, publicationRunURLSchema } from "../publication_run.js";
 
 const optionsSchema = z.strictObject({
   targetHostname: z.string().min(1).exactOptional(),
