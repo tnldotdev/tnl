@@ -1021,9 +1021,12 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 			receipt, err = leg.session.RenewConnectorLeg(call, request, proof, leg.receipt)
 			if leg.session.ConnectorLegRenewalDenied(err) {
 				p.denyTerminalAuthority(err)
-			}
-			if leg.session.ConnectorLegRenewalDeniedOnly(err) {
-				return terminateConnection, &connectorReceivedLegDenial{owner: p, err: err}
+				if leg.session.ConnectorLegRenewalDeniedOnly(err) {
+					return terminateConnection, &connectorReceivedLegDenial{owner: p, err: err}
+				}
+				// carrier loss after denial cannot replace an entered physical
+				// failure with reconnect's later state decision.
+				return terminateConnection, err
 			}
 		}
 	}
