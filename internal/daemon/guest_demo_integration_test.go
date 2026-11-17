@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -34,6 +35,7 @@ import (
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/demo"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -868,21 +870,75 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	if err != nil || !strings.Contains(string(html), "/__tnl/feedback/toolbar.") || !strings.Contains(page.Header.Get("Content-Security-Policy"), "style-src 'unsafe-inline'") {
 		t.Fatalf("demo toolbar or original styles missing: %v", err)
 	}
-	reportRequest, err := http.NewRequest(http.MethodPost, serviceHTTPAddress(ready)+"/__tnl/feedback", strings.NewReader(`{"schema_version":1,"text":"Demo suggestion","display_name":"Sam","page_path":"/","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`))
+	report := func() *http.Response {
+		t.Helper()
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, serviceHTTPAddress(ready)+"/__tnl/feedback", strings.NewReader(`{"schema_version":1,"text":"Demo suggestion","page_path":"/","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Idempotency-Key", "demo-report")
+		response, err := visitor.client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	// guest publication and share visits need no sign-in; feedback authors do.
+	unsigned := report()
+	unsignedBody, readErr := io.ReadAll(unsigned.Body)
+	unsigned.Body.Close()
+	if readErr != nil || unsigned.StatusCode != http.StatusUnauthorized || string(unsignedBody) != "feedback requires sign-in; sign in and retry\n" {
+		t.Fatalf("unsigned guest feedback = %d, %q, %v", unsigned.StatusCode, unsignedBody, readErr)
+	}
+	var unsignedReports int
+	if err := inspect.QueryRow(`SELECT count(*) FROM control.feedback_threads WHERE service_id=$1`, ready.ServiceId).Scan(&unsignedReports); err != nil || unsignedReports != 0 {
+		t.Fatalf("unsigned guest created feedback: count=%d, %v", unsignedReports, err)
+	}
+	privateState, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reportRequest.Header.Set("Content-Type", "application/json")
-	reportRequest.Header.Set("Idempotency-Key", "demo-report")
-	reported, err := visitor.client.Do(reportRequest)
-	if err != nil {
-		t.Fatal(err)
+	defer privateState.Close()
+	// session issuance is fixture setup, not a login proof. the separate
+	// reviewer's one-use handoff and report still cross the real publisher.
+	now := time.Now()
+	reviewer, err := privateState.CreateOIDCControlSession(t.Context(), cfg.ManagedDomain, controlstate.OIDCIdentity{
+		Issuer: cfg.OIDCIssuer, Subject: "guest-feedback-reviewer", DisplayName: "Sam",
+		AssertionDigest: sha256.Sum256([]byte("guest-feedback-reviewer")), AssertionExpiry: now.Add(time.Hour),
+	}, cfg.AccessTokenLifetime, cfg.RefreshTokenLifetime, now)
+	if err != nil || reviewer.Identity.Identity.Administrator {
+		t.Fatalf("independent guest reviewer session: %v", err)
 	}
+	handoff, err := privateState.IssueBrowserHandoff(t.Context(), controlstate.BrowserLoginAttempt{
+		Subject:       visitorscope.Scope{Kind: visitorscope.Service, ID: ready.ServiceId},
+		ServiceRunIDs: []string{ready.ServiceRunId}, ReturnPath: "/",
+	}, controlstate.BrowserAccessSession{
+		IdentityID: reviewer.Identity.Identity.ID, AccessToken: reviewer.AccessToken.String(), RefreshToken: reviewer.RefreshToken.String(),
+		AccessExpiresAt: reviewer.AccessExpiresAt, ExpiresAt: reviewer.RefreshExpiresAt,
+	}, time.Now())
+	if err != nil {
+		t.Fatal("issue guest reviewer handoff", err)
+	}
+	signedIn, err := shareClient.Get(handoff.Origin + "/__tnl/team/handoff/" + handoff.Token)
+	if err != nil {
+		// the request URL contains a one-use secret.
+		t.Fatal("redeem guest reviewer handoff")
+	}
+	signedIn.Body.Close()
+	if signedIn.StatusCode != http.StatusSeeOther || strings.TrimSuffix(signedIn.Header.Get("Location"), "/") != serviceHTTPAddress(ready) {
+		t.Fatalf("guest reviewer handoff = %d", signedIn.StatusCode)
+	}
+	reported := report()
 	var thread controlv1.FeedbackThread
 	decodeErr = json.NewDecoder(reported.Body).Decode(&thread)
 	reported.Body.Close()
 	if decodeErr != nil || reported.StatusCode != http.StatusOK || thread.SchemaVersion != 1 || thread.SourceAtReport.Complete || thread.SourceAtReport.HeadCommit != "" || len(thread.SourceAtReport.ChangedFiles) != 0 {
 		t.Fatalf("guest feedback = %d, %+v, %v", reported.StatusCode, thread, decodeErr)
+	}
+	if thread.Report.Author == nil || !thread.Report.Author.Verified || thread.Report.Author.IdentityId == nil ||
+		*thread.Report.Author.IdentityId != reviewer.Identity.Identity.ID || thread.Report.Author.DisplayName != "Sam" {
+		t.Fatalf("guest feedback lost its independent verified author: %+v", thread.Report.Author)
 	}
 	stopIntegrationPublisher(t, handle)
 	if err := authenticated.Control.DeleteGuestService(t.Context(), service.Id); err != nil && !errors.Is(err, clientcontrol.ErrNotFound) {
@@ -898,11 +954,6 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		FROM control.services WHERE id = $1`, ready.ServiceId).Scan(&deleted); err != nil || !deleted {
 		t.Fatalf("stopped demo retained a live service or run: %t, %v", deleted, err)
 	}
-	privateState, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer privateState.Close()
 	if _, err := privateState.ForgetGuestPrivateState(t.Context(), time.Now().Add(73*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
