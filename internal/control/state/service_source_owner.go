@@ -13,8 +13,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-// a source owner is the existing durable namespace claim, not a publisher or
-// visitor grant. standalone creation and configuration use the same owner.
+// a source owner is captured for each service and used to claim its namespace,
+// not a publisher or visitor grant. endpoint handoff never transfers this owner.
 type serviceSourceOwner struct {
 	scope            NamespaceScope
 	membership, team string
@@ -80,22 +80,32 @@ func storedServiceSourceOwner(ctx context.Context, tx pgx.Tx, service controlsta
 	var owner serviceSourceOwner
 	var membership, team pgtype.Text
 	var consistent bool
-	err := tx.QueryRow(ctx, `SELECT endpoint.local_source_key,claim.membership_id,claim.owner_team_id,
-	    EXISTS(SELECT 1 FROM control.local_project_services local WHERE local.service_id=service.id),
-	    endpoint.namespace=endpoint.hostname AND endpoint.domain_id=service.domain_id
-	      AND endpoint.deployment_id IS NULL AND claim.deployment_id IS NULL
-	      AND NOT EXISTS(SELECT 1 FROM control.applied_project_services applied WHERE applied.service_id=service.id)
+	// a tombstone may have handed off its endpoint and local project binding.
+	// validate any remaining exact endpoint receipt, but never look up ownership
+	// through a replacement service at the same hostname.
+	err := tx.QueryRow(ctx, `SELECT source.local_source_key,source.membership_id,source.owner_team_id,source.local,
+	      NOT EXISTS(SELECT 1 FROM control.applied_project_services applied WHERE applied.service_id=service.id)
 	      AND NOT EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation WHERE allocation.service_id=service.id)
-	      AND (SELECT count(*)=1 FROM control.service_endpoints current_endpoint
-	          WHERE current_endpoint.service_id=service.id AND (current_endpoint.retired_at IS NULL OR $2 AND current_endpoint.hostname=service.certificate_hostname))
-	      AND (claim.membership_id IS NULL OR EXISTS(SELECT 1 FROM control.team_memberships member
-	          WHERE member.id=claim.membership_id AND member.team_id=service.team_id))
+	      AND ($2 AND service.deleted_at IS NOT NULL OR source.local=
+	          EXISTS(SELECT 1 FROM control.local_project_services local WHERE local.service_id=service.id))
+	      AND (EXISTS(SELECT 1 FROM control.service_endpoints endpoint
+	          JOIN control.service_namespace_claims claim ON claim.namespace=endpoint.namespace
+	            AND claim.local_source_key=endpoint.local_source_key AND claim.domain_id=endpoint.domain_id
+	            AND claim.membership_id IS NOT DISTINCT FROM source.membership_id
+	            AND claim.owner_team_id IS NOT DISTINCT FROM source.owner_team_id
+	            AND claim.deployment_id IS NULL AND (claim.retired_at IS NULL OR $2)
+	          WHERE endpoint.service_id=service.id AND endpoint.hostname=service.certificate_hostname
+	            AND endpoint.namespace=endpoint.hostname AND endpoint.domain_id=service.domain_id
+	            AND endpoint.deployment_id IS NULL AND endpoint.local_source_key=source.local_source_key
+	            AND (endpoint.retired_at IS NULL OR $2)
+	            AND (SELECT count(*)=1 FROM control.service_endpoints current_endpoint
+	                WHERE current_endpoint.service_id=service.id
+	                  AND (current_endpoint.retired_at IS NULL OR $2 AND current_endpoint.hostname=service.certificate_hostname)))
+	        OR $2 AND service.deleted_at IS NOT NULL
+	          AND NOT EXISTS(SELECT 1 FROM control.service_endpoints endpoint WHERE endpoint.service_id=service.id
+	              AND (endpoint.retired_at IS NULL OR endpoint.hostname=service.certificate_hostname)))
 	    FROM control.services service
-	    JOIN control.service_endpoints endpoint ON endpoint.service_id=service.id
-	      AND endpoint.hostname=service.certificate_hostname AND (endpoint.retired_at IS NULL OR $2)
-	    JOIN control.service_namespace_claims claim ON claim.namespace=endpoint.namespace
-	      AND claim.local_source_key=endpoint.local_source_key AND claim.domain_id=endpoint.domain_id
-	      AND (claim.retired_at IS NULL OR $2)
+	    JOIN control.service_source_owners source ON source.service_id=service.id AND source.team_id=service.team_id
 	    WHERE service.id=$1 AND service.guest_id IS NULL AND (service.deleted_at IS NULL OR $2)`,
 		service.ID, retained).Scan(&owner.key, &membership, &team, &owner.local, &consistent)
 	if err != nil {
@@ -109,6 +119,15 @@ func storedServiceSourceOwner(ctx context.Context, tx pgx.Tx, service controlsta
 		return serviceSourceOwner{}, ErrServiceAccess
 	}
 	return owner, nil
+}
+
+func recordServiceSourceOwner(ctx context.Context, tx pgx.Tx, service, team string, owner serviceSourceOwner) error {
+	if !owner.valid(team) {
+		return ErrServiceAccess
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO control.service_source_owners(service_id,team_id,local_source_key,membership_id,owner_team_id,local)
+	    VALUES($1,$2,$3,$4,$5,$6)`, service, team, owner.key, nullableText(owner.membership), nullableText(owner.team), owner.local)
+	return err
 }
 
 func (d *Database) authorizeOwnedServiceHostname(ctx context.Context, tx pgx.Tx, facts serviceHostnameFacts, owner serviceSourceOwner, team, domain, hostname string, now time.Time) error {

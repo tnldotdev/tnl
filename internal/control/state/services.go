@@ -133,8 +133,8 @@ func requireServiceManagement(ctx context.Context, tx pgx.Tx, service controlsta
 	return requireStoredServiceManagement(ctx, tx, service, member, false)
 }
 
-// retained feedback may read a service tombstone and its original endpoint
-// receipt. ordinary management still requires the live saved service.
+// revocation and retained feedback may read a service tombstone and its source
+// ownership receipt. ordinary management still requires the live saved service.
 func requireStoredServiceManagement(ctx context.Context, tx pgx.Tx, service controlstatedb.ControlService, member serviceMembership, retained bool) error {
 	denied := ErrServiceAccess
 	if _, signed := serviceActor(ctx); signed {
@@ -172,6 +172,7 @@ func requireStoredServiceManagement(ctx context.Context, tx pgx.Tx, service cont
 	var owned bool
 	err := tx.QueryRow(ctx, `SELECT
 	        NOT EXISTS(SELECT 1 FROM control.local_project_services WHERE service_id=$1)
+	        AND NOT EXISTS(SELECT 1 FROM control.service_source_owners WHERE service_id=$1)
 	        AND NOT EXISTS(SELECT 1 FROM control.service_endpoints
 	            WHERE service_id=$1 AND (local_source_key<>'' OR deployment_id IS NOT NULL))
 	        AND EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation

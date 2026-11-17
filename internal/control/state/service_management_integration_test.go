@@ -188,6 +188,10 @@ func TestIntegrationServiceManagementMissingAndConflictingProvenance(t *testing.
 		{"different member", `UPDATE control.service_namespace_claims SET membership_id=$2 WHERE namespace=$1`, f.local, []any{f.local.Endpoint.Hostname, f.unrelated.ID}},
 		{"both sources", `INSERT INTO control.publisher_namespace_allocations(service_id,publisher_identity_id,publisher_grant_id,invocation_id,required_temporary_approval)
 		    VALUES($1,$2,$3,$4,'restricted')`, f.local, []any{f.local.ID, f.publisher.ID, f.publisher.GrantID, mustOpaqueID(t, opaqueid.InvocationPrefix)}},
+		{"allocation hides source endpoint", `WITH changed AS (
+		    UPDATE control.service_endpoints SET local_source_key='' WHERE service_id=$1 RETURNING service_id)
+		    INSERT INTO control.publisher_namespace_allocations(service_id,publisher_identity_id,publisher_grant_id,invocation_id,required_temporary_approval)
+		    SELECT service_id,$2,$3,$4,'restricted' FROM changed`, f.local, []any{f.local.ID, f.publisher.ID, f.publisher.GrantID, mustOpaqueID(t, opaqueid.InvocationPrefix)}},
 		{"allocation with local source", `UPDATE control.service_endpoints SET local_source_key='conflicting-local-source' WHERE service_id=$1`, f.allocation, []any{f.allocation.ID}},
 		{"shared namespace grant", `UPDATE control.publisher_grants SET namespace_scope='shared',membership_id=NULL WHERE id=$1`, f.allocation, []any{f.publisher.GrantID}},
 	} {

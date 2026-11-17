@@ -1230,6 +1230,15 @@ type ControlServiceRun struct {
 	AssignmentsOpen            pgtype.Bool
 }
 
+type ControlServiceSourceOwner struct {
+	ServiceID      string
+	TeamID         string
+	LocalSourceKey string
+	MembershipID   pgtype.Text
+	OwnerTeamID    pgtype.Text
+	Local          bool
+}
+
 type ControlServiceVisitorCapacity struct {
 	VisitorConnectionID string
 	ServiceRunID        string

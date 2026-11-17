@@ -97,12 +97,12 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 	if _, err = d.RealizeLocalProjectService(t.Context(), spoof); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("manager adopted another member's hostname", err)
 	}
-	// matching created_by is insufficient if the immutable membership binding
-	// points at a different member (including a corrupt or old imported row).
+	// matching created_by is insufficient when the namespace claim disagrees
+	// with the service's captured membership owner.
 	if _, err = d.pool.Exec(t.Context(), `UPDATE control.service_namespace_claims SET membership_id=$2 WHERE namespace=$1`, local.Configuration.Hostname, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.RealizeLocalProjectService(t.Context(), local); !errors.Is(err, ErrServiceConflict) {
+	if _, err = d.RealizeLocalProjectService(t.Context(), local); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("member binding was ignored", err)
 	}
 }

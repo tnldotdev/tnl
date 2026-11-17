@@ -118,6 +118,9 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 	if err != nil {
 		return err
 	}
+	if err = recordServiceSourceOwner(ctx, tx, service, row.TeamID.String, sourceOwner); err != nil {
+		return err
+	}
 	if err = claimServiceSourceHostname(ctx, tx, hostname, domainID, sourceOwner, now); err != nil {
 		return err
 	}

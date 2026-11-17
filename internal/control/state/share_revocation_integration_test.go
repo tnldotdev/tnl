@@ -23,7 +23,7 @@ func shareTeamVisitorAllowed(t *testing.T, f serviceHTTPFixture, principal Contr
 }
 
 func TestIntegrationShareAndTeamAccessRevocationRetainsUnavailableServiceOwnership(t *testing.T) {
-	for _, state := range []string{"disabled", "deleted"} {
+	for _, state := range []string{"disabled", "deleted", "replaced", "replacing"} {
 		t.Run(state, func(t *testing.T) {
 			f := ordinaryShareFixture(t, "organization")
 			d, owner := f.database, f.project.ActorID
@@ -95,6 +95,29 @@ func TestIntegrationShareAndTeamAccessRevocationRetainsUnavailableServiceOwnersh
 			} else if err := d.DeleteService(creatorCtx, api.ID, creator.IdentityID, ServiceDeleteConditions{Unconditional: true}, f.now); err != nil {
 				t.Fatal(err)
 			}
+			type replacementResult struct {
+				service ServiceRecord
+				err     error
+			}
+			replace := func() replacementResult {
+				service, err := d.CreateServiceAt(creatorCtx, f.project.TeamID, creator.IdentityID, api.Name, "replacement",
+					ServicePlacement{DomainID: api.DomainID, Hostname: api.Endpoint.Hostname, Reserve: true}, f.now,
+					ServiceMetadata{Protocol: "http"}, &ProjectServiceConfiguration{Target: "localhost:3000", Public: new(true)})
+				return replacementResult{service, err}
+			}
+			checkReplacement := func(result replacementResult) {
+				t.Helper()
+				if result.err != nil || result.service.ID == api.ID || result.service.Endpoint.Hostname != api.Endpoint.Hostname {
+					t.Fatal("same-source replacement fixture failed", result)
+				}
+				var receipts int
+				if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_endpoints WHERE service_id=$1`, api.ID).Scan(&receipts); err != nil || receipts != 0 {
+					t.Fatal("replacement retained the predecessor endpoint", receipts, err)
+				}
+			}
+			if state == "replaced" {
+				checkReplacement(replace())
+			}
 			denyUnrelated()
 			var webLive, apiClosed bool
 			if err := d.pool.QueryRow(t.Context(), `SELECT
@@ -117,6 +140,11 @@ func TestIntegrationShareAndTeamAccessRevocationRetainsUnavailableServiceOwnersh
 			if !shareTeamVisitorAllowed(t, f, visitor) {
 				t.Fatal("unavailable sibling alone removed the live sibling's team grant")
 			}
+			var replacing chan replacementResult
+			if state == "replacing" {
+				replacing = make(chan replacementResult, 1)
+				go func() { replacing <- replace() }()
+			}
 			teamRequest.Enabled = false
 			disabled, teamErr := d.SetPreviewTeamAccess(creatorCtx, teamRequest, f.now)
 			if teamErr != nil || disabled.TeamAccessEnabled {
@@ -126,6 +154,9 @@ func TestIntegrationShareAndTeamAccessRevocationRetainsUnavailableServiceOwnersh
 			if shareErr != nil || revoked.RevokedAt == nil {
 				t.Error("current creator could not revoke a share with an unavailable captured service", shareErr)
 			}
+			if replacing != nil {
+				checkReplacement(<-replacing)
+			}
 			if t.Failed() {
 				return
 			}
@@ -133,18 +164,21 @@ func TestIntegrationShareAndTeamAccessRevocationRetainsUnavailableServiceOwnersh
 				t.Fatal("disabled team grant still authorized the live sibling")
 			}
 			assertShareSources(t, f, share, raw[:], redeemed.CookieSecret, f.now, false)
-			// the creator is an ordinary member, not an administrator. losing
-			// the retained namespace receipt still fences both revoke operations,
-			// even when retrying an already completed revocation.
+			// an original endpoint must still agree with its source owner. after
+			// handoff, a replacement's namespace claim cannot change that owner.
 			if _, err := d.pool.Exec(t.Context(), `UPDATE control.service_namespace_claims SET membership_id=$2 WHERE namespace=$1`,
 				api.Endpoint.Hostname, outsider.ID); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := d.SetPreviewTeamAccess(creatorCtx, teamRequest, f.now); !errors.Is(err, ErrServiceAccess) {
-				t.Fatal("stale captured ownership disabled team access", err)
+			var want error
+			if state == "disabled" || state == "deleted" {
+				want = ErrServiceAccess
 			}
-			if _, err := d.RevokeShare(creatorCtx, share.ID, creator.IdentityID, f.now); !errors.Is(err, ErrServiceAccess) {
-				t.Fatal("stale captured ownership revoked the share", err)
+			if _, err := d.SetPreviewTeamAccess(creatorCtx, teamRequest, f.now); !errors.Is(err, want) {
+				t.Fatal("team access revocation used the wrong service's namespace claim", err)
+			}
+			if _, err := d.RevokeShare(creatorCtx, share.ID, creator.IdentityID, f.now); !errors.Is(err, want) {
+				t.Fatal("share revocation used the wrong service's namespace claim", err)
 			}
 			savedPreview, err := d.GetPreview(t.Context(), preview.ID)
 			if err != nil || savedPreview.TeamAccessEnabled {

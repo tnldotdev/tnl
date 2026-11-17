@@ -2029,6 +2029,30 @@ CREATE TABLE control.service_endpoints (
     CHECK ((dns_work_owner IS NULL)=(dns_work_expires_at IS NULL))
 );
 CREATE INDEX service_endpoints_dns_work ON control.service_endpoints(dns_available_at,hostname) WHERE dns_available_at IS NOT NULL;
+-- exact service ownership survives endpoint handoff and local binding replacement.
+-- this captures the validated source, not publication or visitor authority.
+CREATE TABLE control.service_source_owners (
+    service_id text PRIMARY KEY,
+    team_id text NOT NULL,
+    local_source_key text NOT NULL CHECK (local_source_key<>''),
+    membership_id text,
+    owner_team_id text,
+    local boolean NOT NULL,
+    FOREIGN KEY (service_id,team_id) REFERENCES control.services(id,team_id) ON DELETE RESTRICT,
+    FOREIGN KEY (membership_id,team_id) REFERENCES control.team_memberships(id,team_id) ON DELETE RESTRICT,
+    FOREIGN KEY (owner_team_id) REFERENCES control.teams(id) ON DELETE RESTRICT,
+    CHECK (num_nonnulls(membership_id,owner_team_id)=1),
+    CHECK (owner_team_id IS NULL OR owner_team_id=team_id AND NOT local)
+);
+-- +goose StatementBegin
+CREATE FUNCTION control.protect_service_source_owner() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'service source ownership is immutable';
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER protect_service_source_owner BEFORE UPDATE OR DELETE ON control.service_source_owners
+FOR EACH ROW EXECUTE FUNCTION control.protect_service_source_owner();
 -- one resource-scoped identity permission rule reads current authentication and
 -- grant facts. allocation ownership comes from its original grant and actual
 -- namespace/deployment endpoint, never a creator or a presented publisher token.
