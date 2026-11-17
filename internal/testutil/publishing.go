@@ -86,8 +86,9 @@ type publishingRunState struct {
 }
 
 type publishingConnection struct {
-	session *tunnel.Session
-	ref     tunnelv1.ServicePublisherConnectionRef
+	session  *tunnel.Session
+	ref      tunnelv1.ServicePublisherConnectionRef
+	accepted chan struct{}
 }
 
 // publishingfixture is a local fake control boundary with real TLS/yamux
@@ -101,7 +102,7 @@ type PublishingFixture struct {
 	publishers                          map[string]authorityv1.PublisherEnrollmentResult
 	runs                                map[string]*publishingRunState
 	current                             map[string]string
-	connections                         map[string]publishingConnection
+	connections                         map[string]*publishingConnection
 	relayAddress                        string
 	ca                                  *x509.Certificate
 	key                                 *ecdsa.PrivateKey
@@ -159,7 +160,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 	f := &PublishingFixture{Namespace: "member.services.example", CAFile: filepath.Join(t.TempDir(), "ca.pem"), ca: ca, key: key, hooks: hooks, t: t,
 		services: map[string]controlv1.Service{}, configurations: map[string]controlv1.ProjectServiceConfiguration{}, createKeys: map[string]string{},
 		publishers: map[string]authorityv1.PublisherEnrollmentResult{}, runs: map[string]*publishingRunState{}, current: map[string]string{},
-		connections: map[string]publishingConnection{}}
+		connections: map[string]*publishingConnection{}}
 	if err := os.WriteFile(f.CAFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -226,11 +227,39 @@ func (f *PublishingFixture) Connection(service string) (*tunnel.Session, tunnelv
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, connection := range f.connections {
-		if connection.ref.ServiceID == service && connection.ref.ServiceRunID == f.current[service] {
+		if connection.session != nil && connection.ref.ServiceID == service && connection.ref.ServiceRunID == f.current[service] {
 			return connection.session, connection.ref, true
 		}
 	}
 	return nil, tunnelv1.ServicePublisherConnectionRef{}, false
+}
+
+// waitforpublishingconnections joins authenticated handshakes already in flight.
+// the client can read hello_accepted before the relay's Accept returns; fixture
+// renewals must observe its completed registration rather than that scheduler gap.
+func (f *PublishingFixture) waitForPublishingConnections(ctx context.Context, run string) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		f.mu.Lock()
+		var accepted <-chan struct{}
+		for _, connection := range f.connections {
+			if connection.ref.ServiceRunID == run && connection.session == nil {
+				accepted = connection.accepted
+				break
+			}
+		}
+		f.mu.Unlock()
+		if accepted == nil {
+			return nil
+		}
+		select {
+		case <-accepted:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // OpenHTTPVisitor sends signed source metadata over the claimed relay session.
@@ -637,11 +666,20 @@ func (f *PublishingFixture) runOperation(w http.ResponseWriter, r *http.Request,
 			w.WriteHeader(400)
 			return
 		}
+		if err := f.waitForPublishingConnections(r.Context(), id); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		f.mu.Lock()
+		if run.closed || f.current[service] != id {
+			f.mu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
 		run.healthy = body.Healthy
 		connected := 0
 		for _, connection := range f.connections {
-			if connection.ref.ServiceRunID == id {
+			if connection.session != nil && connection.ref.ServiceRunID == id {
 				connected++
 			}
 		}
@@ -755,7 +793,19 @@ func publishingRelay(t *testing.T, tlsConfig *tls.Config, f *PublishingFixture) 
 				if err != nil {
 					return
 				}
-				session, hello, err := tunnel.Accept(ctx, transport, func(_ context.Context, hello tunnelv1.Message) error {
+				var claimed *publishingConnection
+				defer func() {
+					if claimed == nil {
+						return
+					}
+					f.mu.Lock()
+					defer f.mu.Unlock()
+					delete(f.connections, claimed.ref.PublisherConnectionID)
+					if claimed.session == nil {
+						close(claimed.accepted)
+					}
+				}()
+				session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, hello tunnelv1.Message) error {
 					ref := hello.ServiceConnection
 					if ref == nil {
 						return errors.New("service publisher reference missing")
@@ -769,6 +819,11 @@ func publishingRelay(t *testing.T, tlsConfig *tls.Config, f *PublishingFixture) 
 					for _, assignment := range run.Setup.PublisherConnections {
 						if ref.PublisherConnectionID == assignment.PublisherConnectionId && ref.ConnectionSlot == uint8(assignment.ConnectionSlot) &&
 							ref.ConnectionAssignmentRevision == uint64(assignment.ConnectionAssignmentRevision) && ref.RelayServiceID == assignment.RelayServiceId && hello.Credential == assignment.PublisherConnectionCredential {
+							if f.connections[ref.PublisherConnectionID] != nil {
+								return errors.New("service connection assignment already claimed")
+							}
+							claimed = &publishingConnection{ref: *ref, accepted: make(chan struct{})}
+							f.connections[ref.PublisherConnectionID] = claimed
 							return nil
 						}
 					}
@@ -777,12 +832,11 @@ func publishingRelay(t *testing.T, tlsConfig *tls.Config, f *PublishingFixture) 
 				if err != nil {
 					return
 				}
-				ref := *hello.ServiceConnection
 				defer session.Close()
 				f.mu.Lock()
-				f.connections[ref.PublisherConnectionID] = publishingConnection{session, ref}
+				claimed.session = session
+				close(claimed.accepted)
 				f.mu.Unlock()
-				defer func() { f.mu.Lock(); delete(f.connections, ref.PublisherConnectionID); f.mu.Unlock() }()
 				drained := make(chan struct{})
 				go func() {
 					defer close(drained)
