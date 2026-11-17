@@ -139,13 +139,14 @@ func TestIntegrationPreparedConnectorHasNoArrivalRPCOrSigning(t *testing.T) {
 						t.Fatalf("target replay count = %d", count)
 					}
 				}
+				expectedSource := runtimeSourceDigest(t, "service-audit", service.Id, "127.0.0.1")
 				privateWait(t, 5*time.Second, func(ctx context.Context) (bool, error) {
 					var opened, closed, foreign int
 					err := f.inspect.QueryRowContext(ctx, `SELECT
 						count(*) FILTER (WHERE event_type='connection.open' AND outcome='allowed'),
 						count(*) FILTER (WHERE event_type='connection.close'),
-						count(*) FILTER (WHERE actor_identity_id IS DISTINCT FROM $2 OR device_id IS NULL OR source_ip IS DISTINCT FROM '127.0.0.1'::inet)
-						FROM control.service_audit_events WHERE service_id=$1 AND event_type IN ('connection.open','connection.close')`, service.Id, person.Identity.Id).
+						count(*) FILTER (WHERE actor_identity_id IS DISTINCT FROM $2 OR device_id IS NULL OR source_digest IS DISTINCT FROM $3)
+						FROM control.service_audit_events WHERE service_id=$1 AND event_type IN ('connection.open','connection.close')`, service.Id, person.Identity.Id, expectedSource).
 						Scan(&opened, &closed, &foreign)
 					if foreign != 0 {
 						return false, fmt.Errorf("native audit lost authenticated identity or source")

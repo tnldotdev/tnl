@@ -115,19 +115,20 @@ func TestIntegrationServiceAuditRuntimePublic(t *testing.T) {
 				t.Fatal("joined publisher did not flush its authorized connection")
 			}
 			var pairs int
+			expectedSource := runtimeSourceDigest(t, "service-audit", ready.ServiceId, "127.0.0.1")
 			err = inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_audit_events opened JOIN control.service_audit_events closed
 		    ON closed.visitor_connection_id=opened.visitor_connection_id AND closed.service_id=opened.service_id AND closed.run_id=opened.run_id
 		    WHERE opened.service_id=$1 AND opened.event_type='connection.open' AND opened.outcome='allowed'
-		    AND closed.event_type='connection.close' AND opened.source_ip='127.0.0.1' AND closed.source_ip=opened.source_ip
-		    AND opened.visitor_connection_id=$2 AND opened.run_id=$3`, ready.ServiceId, visitorID, ready.ServiceRunId).Scan(&pairs)
+		    AND closed.event_type='connection.close' AND opened.source_digest=$4 AND closed.source_digest=opened.source_digest
+		    AND opened.visitor_connection_id=$2 AND opened.run_id=$3`, ready.ServiceId, visitorID, ready.ServiceRunId, expectedSource).Scan(&pairs)
 			if err != nil || pairs < 1 {
 				t.Fatalf("real public producer not flushed into audit: %d %v", pairs, err)
 			}
 			var denials int
 			err = inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_audit_events
 				WHERE service_id=$1 AND event_type='connection.open' AND outcome='denied' AND reason='ip_policy'
-				AND source_ip='127.0.0.1' AND run_id IS NULL AND publisher_identity_id IS NULL
-				AND actor_identity_id IS NULL AND device_id IS NULL`, deniedReady.ServiceId).Scan(&denials)
+				AND source_digest=$2 AND run_id IS NULL AND publisher_identity_id IS NULL
+				AND actor_identity_id IS NULL AND device_id IS NULL`, deniedReady.ServiceId, runtimeSourceDigest(t, "service-audit", deniedReady.ServiceId, "127.0.0.1")).Scan(&denials)
 			if err != nil || denials != 1 {
 				t.Fatal("joined ingress did not flush its run-less HTTP selection denial", denials, err)
 			}
@@ -290,15 +291,15 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			}
 			for _, visitorID := range visitorIDs {
 				var count int
-				err = f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_audit_events WHERE service_id=$1 AND visitor_connection_id=$2 AND event_type IN('connection.open','connection.close') AND actor_identity_id=$3 AND publisher_identity_id=$4 AND device_id IS NOT NULL AND source_ip='127.0.0.1'`, service.Id, visitorID, person.Identity.Id, identity.ClientId).Scan(&count)
+				err = f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_audit_events WHERE service_id=$1 AND visitor_connection_id=$2 AND event_type IN('connection.open','connection.close') AND actor_identity_id=$3 AND publisher_identity_id=$4 AND device_id IS NOT NULL AND source_digest=$5`, service.Id, visitorID, person.Identity.Id, identity.ClientId, runtimeSourceDigest(t, "service-audit", service.Id, "127.0.0.1")).Scan(&count)
 				if err != nil || count != 2 {
 					t.Fatalf("real private producer not flushed: %d %v", count, err)
 				}
 			}
 			if standalone {
 				oldID := serviceaudit.NewID()
-				_, err = f.inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,event_type,occurred_at,received_at)
-				    VALUES($1,$2,$3,'connection.close',$4,$4)`, oldID, service.TeamId, service.Id, time.Now().Add(-serviceaudit.Retention-time.Hour))
+				_, err = f.inspect.ExecContext(t.Context(), `INSERT INTO control.service_audit_events(id,team_id,service_id,event_type,occurred_at,received_at,source_digest)
+				    VALUES($1,$2,$3,'connection.close',$4,$4,$5)`, oldID, service.TeamId, service.Id, time.Now().Add(-serviceaudit.Retention-time.Hour), runtimeSourceDigest(t, "service-audit", service.Id, "127.0.0.1"))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -328,7 +329,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 					t.Fatal("audit cleanup worker did not join", cleanupErr)
 				}
 			}
-			rows, err := f.inspect.QueryContext(t.Context(), `SELECT event_type,source_ip::text,reason FROM control.service_audit_events WHERE service_id=$1`, service.Id)
+			rows, err := f.inspect.QueryContext(t.Context(), `SELECT event_type,source_digest,reason FROM control.service_audit_events WHERE service_id=$1`, service.Id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -340,8 +341,8 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 					t.Fatal(err)
 				}
 				encoded, _ := json.Marshal([]any{kind, source.String, reason.String})
-				if strings.Contains(string(encoded), "never-audit") {
-					t.Fatal("private command reached service audit")
+				if strings.Contains(string(encoded), "never-audit") || strings.Contains(string(encoded), "127.0.0.1") {
+					t.Fatal("private command or raw source reached service audit")
 				}
 			}
 		})

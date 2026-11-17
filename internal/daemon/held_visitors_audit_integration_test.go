@@ -344,7 +344,7 @@ func assertHeldVisitorAuditHistory(t *testing.T, database *sql.DB, team string, 
 		byID[event.EventID] = event
 	}
 	rows, err := database.QueryContext(integrationOperationContext(t), `
-		SELECT to_jsonb(e) || jsonb_build_object('cursor',e.cursor::text,'source_ip',host(e.source_ip))
+		SELECT to_jsonb(e) || jsonb_build_object('cursor',e.cursor::text)
 		FROM control.service_audit_events e WHERE service_id=$1 AND visitor_connection_id IS NOT NULL ORDER BY cursor
 	`, run.ready.ServiceId)
 	if err != nil {
@@ -377,7 +377,8 @@ func assertHeldVisitorAuditHistory(t *testing.T, database *sql.DB, team string, 
 		}
 		if event.RunID == "" {
 			if event.EventType != "connection.open" || event.Outcome != "denied" || event.Reason != "ip_policy" ||
-				event.SourceIP != "192.0.2.7" || event.PublisherIdentityID != "" || seen[event.VisitorConnectionID] {
+				event.SourceIP != "" || event.SourceDigest != runtimeSourceDigest(t, "service-audit", run.ready.ServiceId, "192.0.2.7") ||
+				strings.Contains(string(raw), "192.0.2.7") || event.PublisherIdentityID != "" || seen[event.VisitorConnectionID] {
 				t.Fatal("real ingress queue lost its run-less source-policy denial")
 			}
 			seen[event.VisitorConnectionID] = true
@@ -390,7 +391,8 @@ func assertHeldVisitorAuditHistory(t *testing.T, database *sql.DB, team string, 
 		queued, exists := byID[event.ID]
 		if !exists || queued.VisitorConnectionID != event.VisitorConnectionID || queued.EventType != event.EventType ||
 			queued.Outcome != event.Outcome || queued.Reason != event.Reason || event.RunID != run.ready.ServiceRunId ||
-			event.PublisherIdentityID != run.ready.PublisherIdentityId || event.SourceIP != "127.0.0.1" {
+			event.PublisherIdentityID != run.ready.PublisherIdentityId || event.SourceIP != "" ||
+			event.SourceDigest != runtimeSourceDigest(t, "service-audit", run.ready.ServiceId, queued.SourceIP) || strings.Contains(string(raw), queued.SourceIP) {
 			t.Fatal("durable history differs from its real queued publisher event")
 		}
 		delete(byID, event.ID)

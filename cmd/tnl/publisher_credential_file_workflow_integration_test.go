@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"io"
 	"net/http"
@@ -78,6 +79,17 @@ func TestIntegrationCLINamedPublisherCredentialFileWithoutPersonSession(t *testi
 		t.Fatal(err)
 	}
 	project := projectConfiguration{Project: clientproject.Project{Selection: clientproject.Selection{Path: configuration, Explicit: true}, Config: selected, Declared: document.TNL, Deployment: "local", Root: root, Worktree: clientproject.Worktree{Root: root, IsGit: true, Label: clientproject.WorktreeLabel{FullLabel: "portable-worktree"}}}}
+	publisherState := f.state(t, "file-only-publisher")
+	publisherLocal, err := clientstate.Open(t.Context(), publisherState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// local IDs belong to the publishing state, not the person authorizing setup.
+	// creating that mapping must not install the person's session there.
+	project.Project, err = project.Project.BindLocalIdentity(t.Context(), publisherLocal)
+	if err := errors.Join(err, publisherLocal.Close()); err != nil {
+		t.Fatal(err)
+	}
 	current, err := session.Current(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +109,6 @@ func TestIntegrationCLINamedPublisherCredentialFileWithoutPersonSession(t *testi
 		t.Fatal(err)
 	}
 	assertWorkflowPublisherRuntime(t, session.Authenticated().Control, team, identity.PublisherIdentityID, 0, false)
-	publisherState := f.state(t, "file-only-publisher")
 	ctx, stop := context.WithCancel(t.Context())
 	ready, joined := f.command(t, ctx, stop, []string{"--config", configuration, "publish", "api", "--foreground", "--publisher-credential-file", credential, "--state-dir", publisherState})
 	select {

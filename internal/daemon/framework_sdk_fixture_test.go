@@ -109,6 +109,10 @@ func startFrameworkNativeOwner(t *testing.T, directory string, services config.S
 		transport.CloseIdleConnections()
 	})
 	project := clientproject.Project{Root: directory, Config: config.TNL{Server: new(setup.controlURL), Services: services}}
+	project, err = project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	snapshot, _, err := project.Snapshot()
 	if err != nil {
 		t.Fatal(err)

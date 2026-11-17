@@ -235,6 +235,8 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 						candidate.Configuration.Services = maps.Clone(localApplied.Configuration.Services)
 						service := candidate.Configuration.Services["local"]
 						service.Target = "replacement.internal:5432"
+						// targets stay local; change shared policy to enter reconciliation.
+						service.Access = &ProjectServiceAccess{Team: true}
 						candidate.Configuration.Services["local"] = service
 					}
 					_, err := d.ApplyProjectConfiguration(ctx, candidate)

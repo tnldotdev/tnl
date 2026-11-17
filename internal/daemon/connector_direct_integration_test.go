@@ -151,12 +151,13 @@ func TestIntegrationConnectorDirectSourceRebinding(t *testing.T) {
 		// session close, spoofed address, or control request triggers recovery.
 		packets[0].blockDirect.Store(true)
 		source.Store(next)
+		expectedSource := runtimeSourceDigest(t, "connector-source-binding", prepared.service.Id, fmt.Sprintf("127.0.0.%d", next))
 		privateWait(t, 25*time.Second, func(ctx context.Context) (bool, error) {
 			var generation int64
 			var sourceCurrent bool
-			err := f.inspect.QueryRowContext(ctx, `SELECT p.delivery_generation,count(c.connection_slot)=2 AND bool_and(c.source_ip=$2::inet)
+			err := f.inspect.QueryRowContext(ctx, `SELECT p.delivery_generation,count(c.connection_slot)=2 AND bool_and(c.source_digest=$2)
 				FROM control.connector_peer_pairs p LEFT JOIN control.connector_peer_pair_leg_claims c ON c.pair_id=p.id AND c.delivery_generation=p.delivery_generation
-				WHERE p.id=$1 GROUP BY p.delivery_generation`, before.pairID, fmt.Sprintf("127.0.0.%d", next)).Scan(&generation, &sourceCurrent)
+				WHERE p.id=$1 GROUP BY p.delivery_generation`, before.pairID, expectedSource).Scan(&generation, &sourceCurrent)
 			return generation > previous.generation && sourceCurrent, err
 		})
 		t.Logf("source handoff=%d address=127.0.0.%d previous generation=%d current generation=%d", round, next, previous.generation, readRebindingObservation(t, f, prepared.service.Id).generation)
