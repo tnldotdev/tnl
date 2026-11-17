@@ -11,6 +11,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
 func TestIntegrationDeploymentCRUDSharesSavedBindingsWithApply(t *testing.T) {
@@ -198,9 +199,45 @@ func TestIntegrationDeploymentRejectsKubernetesTargetWithoutTLS(t *testing.T) {
 	}
 	update.Targets["kube"] = DeploymentTarget{Address: "replacement.example:6443", TLS: &DeploymentTargetTLS{}}
 	updated, err := d.UpdateDeployment(ctx, update)
-	if err != nil || updated.Revision != created.Revision+1 || updated.Services["kube"].ID != created.Services["kube"].ID || updated.Targets["kube"].TLS == nil || updated.Targets["kube"].TLS.Hostname != "replacement.example" {
-		t.Fatal("verified replacement did not preserve the binding and capture new trust", updated, err)
+	if err != nil || updated.Revision != created.Revision+1 || updated.Services["kube"].ID != created.Services["kube"].ID ||
+		updated.Targets["kube"].Address != "replacement.example:6443" || updated.Targets["kube"].TLS == nil ||
+		updated.Targets["kube"].TLS.Hostname != "" || updated.Targets["kube"].TLS.CA != "system" {
+		t.Fatal("verified replacement did not preserve the binding and automatic hostname intent", updated, err)
 	}
+	assertApprovedTarget := func(deployment Deployment, address, hostname string, automatic bool, trustRevision int64) {
+		t.Helper()
+		expected, err := targettrust.NewDeclaration(hostname, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		saved, _, err := d.GetServiceConfiguration(ctx, deployment.Services["kube"].ID, r.ActorID)
+		if err != nil || saved == nil || saved.Target != address ||
+			!reflect.DeepEqual(saved.TargetTLS, &ProjectTargetTLS{Hostname: hostname, Digest: expected.Digest, HostnameFromTarget: automatic}) {
+			t.Fatal("saved configuration lost the approved TLS identity or its provenance", saved, err)
+		}
+		snapshot, err := expected.Snapshot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		service, err := d.GetService(ctx, deployment.Services["kube"].ID, r.ActorID)
+		if err != nil || service.TrustRevision != trustRevision || deployment.Services["kube"].TrustRevision != trustRevision ||
+			!reflect.DeepEqual(service.TLS, &ServiceTargetTLS{Hostname: hostname, System: true, Digest: snapshot.Digest}) {
+			t.Fatal("service metadata did not approve the exact target identity and trust revision", service, err)
+		}
+	}
+	trustRevision := created.Services["kube"].TrustRevision + 1
+	assertApprovedTarget(updated, "replacement.example:6443", "replacement.example", true, trustRevision)
+
+	// explicitly naming the old target pins it, even when the dial target changes.
+	update.ExpectedRevision = updated.Revision
+	update.Targets["kube"] = DeploymentTarget{Address: "another.example:6443", TLS: &DeploymentTargetTLS{Hostname: "replacement.example"}}
+	pinned, err := d.UpdateDeployment(ctx, update)
+	if err != nil || pinned.Revision != updated.Revision+1 || pinned.Services["kube"].ID != updated.Services["kube"].ID ||
+		pinned.Targets["kube"].Address != "another.example:6443" || pinned.Targets["kube"].TLS == nil ||
+		pinned.Targets["kube"].TLS.Hostname != "replacement.example" || pinned.Targets["kube"].TLS.CA != "system" {
+		t.Fatal("target replacement changed an explicitly pinned TLS identity", pinned, err)
+	}
+	assertApprovedTarget(pinned, "another.example:6443", "replacement.example", false, trustRevision)
 }
 
 func TestIntegrationDeploymentSavedConfigurationConsumers(t *testing.T) {
