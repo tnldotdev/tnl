@@ -3,7 +3,6 @@ package tunnel
 import (
 	"context"
 	"errors"
-	"net"
 	"sync"
 	"time"
 
@@ -133,7 +132,7 @@ func (s *Session) ServeServiceCapacity(ctx context.Context) (result error) {
 	for {
 		stream, err := s.transport.AcceptStream(ctx)
 		if err != nil {
-			if failure.Only(err, net.ErrClosed) || failure.Only(err, muxsession.ErrClosed) ||
+			if muxsession.NormalSessionCloseOnly(err) ||
 				ctx.Err() != nil && (failure.Only(err, context.Cause(ctx)) || failure.Only(err, ctx.Err())) {
 				return nil
 			}

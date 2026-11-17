@@ -442,13 +442,19 @@ func startPrivateClaimCandidate(t *testing.T, parent context.Context, transport 
 	address := traceMuxServer(t, ctx, transport, serverTLS, func(owner context.Context, mux muxsession.Session) error {
 		peer, ok := mux.(muxsession.AcceptedPeer)
 		var peerErr error
-		network := "tcp"
+		// net/http's forced HTTP/1 upgrade clears client ALPN. the accepted
+		// WSS session still requires the exact HTTP upgrade and subprotocol.
+		network, alpn := "tcp", ""
 		if transport == tunnel.TransportQUIC {
-			network = "udp"
+			network, alpn = "udp", muxsession.ALPN
 		}
-		if !ok || peer.RemoteAddr().Network() != network || peer.LocalAddr().Network() != network ||
-			!peer.TLSConnectionState().HandshakeComplete || peer.TLSConnectionState().NegotiatedProtocol != muxsession.ALPN {
-			peerErr = fmt.Errorf("%s candidate did not use its real authenticated %s transport", transport, network)
+		if !ok {
+			peerErr = fmt.Errorf("%s candidate has no accepted transport facts", transport)
+		} else if state := peer.TLSConnectionState(); peer.RemoteAddr().Network() != network || peer.LocalAddr().Network() != network ||
+			!state.HandshakeComplete || state.NegotiatedProtocol != alpn ||
+			state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768 {
+			peerErr = fmt.Errorf("%s candidate did not use its real authenticated %s transport: local=%s remote=%s handshake=%t alpn=%q", transport, network,
+				peer.LocalAddr().Network(), peer.RemoteAddr().Network(), state.HandshakeComplete, state.NegotiatedProtocol)
 		}
 		if transport == tunnel.TransportQUIC {
 			bound, ok := mux.(muxsession.IPBoundPeer)
