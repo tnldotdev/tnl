@@ -123,6 +123,11 @@ func TestIntegrationGuestFirstReadinessWaitsForPublicDNS(t *testing.T) {
 					after.ReadyDeadline != before.ReadyDeadline || after.ExpiresAt != before.ExpiresAt || after.UsedReadyNs != before.UsedReadyNs {
 					t.Fatal("later DNS paused, refilled, or reset the guest clock")
 				}
+				if !after.ServingUntil.Valid || !after.ServingUntil.Time.Equal(state.ServingUntil) ||
+					!state.ServingUntil.After(state.ExpiresAt) || state.ServingUntil.After(after.ReadyDeadline.Time) ||
+					state.ServingUntil.After(after.ExpiresAt.Time) {
+					t.Fatal("DNS heartbeat lost separately bounded issued serving authority")
+				}
 			}
 			if !strings.Contains(metricText(), "tnl_control_service_runs_ready_total 1\n") {
 				t.Fatal("DNS recovery counted another first-ready transition")
@@ -131,9 +136,10 @@ func TestIntegrationGuestFirstReadinessWaitsForPublicDNS(t *testing.T) {
 				t.Fatal(err)
 			}
 			closed := f.stored(t)
-			issued := state.ExpiresAt.Sub(before.ActiveReadyAt.Time)
+			issued := state.ServingUntil.Sub(before.ActiveReadyAt.Time)
 			if closed.UsedReadyNs != int64(issued) || closed.ReadyDeadline.Valid || closed.ActiveReadyAt.Valid ||
-				closed.ExpiresAt != before.ExpiresAt || !closed.ServingUntil.Time.Equal(state.ExpiresAt) {
+				closed.ActiveServiceRunID.Valid || closed.ExpiresAt != before.ExpiresAt ||
+				!closed.ServingUntil.Time.Equal(state.ServingUntil) {
 				t.Fatal("DNS failure or recovery changed fixed-deadline issued-tail settlement")
 			}
 		})
