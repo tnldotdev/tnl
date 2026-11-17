@@ -80,6 +80,12 @@ type diagnosticForwardingFailure interface {
 	ForwardingPhase() string
 	ForwardingCopyResult() error
 	ForwardingCleanup() error
+	ForwardingCopyMethodsObserved() bool
+}
+
+type diagnosticCopyOperation interface {
+	error
+	ForwardingCopyOperation() (operation, endpoint, direction string)
 }
 
 type forwardingDiagnosticObserver struct {
@@ -298,8 +304,19 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 				if service != header.ServiceID || run != header.ServiceRunID || visitor != header.VisitorConnectionID ||
 					number != header.RunNumber || scoped.ForwardingPhase() != "copy" ||
 					scoped.ForwardingCopyResult() != transfer.err ||
+					!scoped.ForwardingCopyMethodsObserved() ||
 					test.independent != errors.Is(scoped.ForwardingCleanup(), cleanup) {
 					t.Fatal("actual relay report changed its exact scope or copy/final-cleanup boundary")
+				}
+				if test.code != 0 || test.copyFailure {
+					var step diagnosticCopyOperation
+					if !errors.As(scoped.ForwardingCopyResult(), &step) {
+						t.Fatal("copy failure lost its exact returning method, endpoint, and direction")
+					}
+					operation, endpoint, direction := step.ForwardingCopyOperation()
+					if operation != "half_close" || endpoint != "publisher" || direction != "visitor_to_publisher" {
+						t.Fatal("copy failure was attributed to another method or endpoint", operation, endpoint, direction)
+					}
 				}
 			}
 			var stopped *quic.StreamError
@@ -336,6 +353,11 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 			select {
 			case <-reports:
 				t.Fatal("completed forwarding emitted an unexpected or duplicate diagnostic")
+			default:
+			}
+			select {
+			case <-transfers:
+				t.Fatal("completed forwarding emitted a duplicate transfer observation")
 			default:
 			}
 			t.Logf("report boundary=relay.Report service_id=%s run_id=%s visitor_connection_id=%s native_half_close_type=%T remote=%t code=%d reported=%t independent_close=%t independent_copy_half_close=%t upload=%d download=%d",

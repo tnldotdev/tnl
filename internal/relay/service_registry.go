@@ -448,7 +448,9 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 	// visitor byte unchanged, once, through this exact publisher stream.
 	_, finishForward := observability.Start(ctx, "relay.forward_connector_visitor")
 	diagnostic.phase = "copy"
-	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
+	copyIngress, copyPublisher, observed := copyDiagnosticArguments(incoming.Stream(), publisher)
+	diagnostic.copyMethodsObserved = observed
+	copied, err := streamcopy.Copy(copyIngress, copyPublisher)
 	diagnostic.copyResult = err
 	finishForward(err)
 	if a.observer != nil {

@@ -25,6 +25,7 @@ type operationalReport struct {
 	admitted                                     bool
 	phase, denial                                string
 	admissionCause, admissionOnly                bool
+	copyMethodsObserved                          bool
 	result, operationResult, copyResult, cleanup causeSnapshot
 }
 
@@ -34,13 +35,14 @@ type causeSnapshot struct {
 }
 
 type causeNode struct {
-	kind                               string
-	parent                             int
-	eof, canceled, deadline, admission bool
-	native                             string
-	streamID                           int64
-	code                               uint64
-	remote                             bool
+	kind                                       string
+	parent                                     int
+	eof, canceled, deadline, admission         bool
+	native                                     string
+	streamID                                   int64
+	code                                       uint64
+	remote                                     bool
+	copyOperation, copyEndpoint, copyDirection string
 }
 
 func (d *daemon) reportOperationalError(ctx context.Context, operation failure.Operation, reason failure.Reason, cause error) {
@@ -66,6 +68,7 @@ func snapshotOperationalReport(operation failure.Operation, reason failure.Reaso
 	case errors.As(cause, &forwarded):
 		result.service, result.run, result.visitor, result.number = forwarded.ForwardingScope()
 		result.phase = forwarded.ForwardingPhase()
+		result.copyMethodsObserved = forwarded.ForwardingCopyMethodsObserved()
 		result.operationResult = snapshotCauses(forwarded.ForwardingOperation())
 		result.copyResult = snapshotCauses(forwarded.ForwardingCopyResult())
 		result.cleanup = snapshotCauses(forwarded.ForwardingCleanup())
@@ -105,6 +108,18 @@ func snapshotCauses(cause error) causeSnapshot {
 		case *quic.TransportError:
 			node.native, node.code, node.remote = "transport", uint64(native.ErrorCode), native.Remote
 		}
+		if step, ok := err.(interface {
+			ForwardingCopyOperation() (string, string, string)
+		}); ok {
+			operation, endpoint, direction := step.ForwardingCopyOperation()
+			// this is a consumer-owned observation interface, not permission to
+			// export arbitrary strings supplied by another error implementation.
+			if validCopyOperationLabels(operation, endpoint, direction) {
+				node.copyOperation, node.copyEndpoint, node.copyDirection = operation, endpoint, direction
+			} else {
+				node.copyOperation = "unknown"
+			}
+		}
 		index := len(result.nodes)
 		result.nodes = append(result.nodes, node)
 		switch wrapper := err.(type) {
@@ -122,4 +137,21 @@ func snapshotCauses(cause error) causeSnapshot {
 	}
 	walk(cause, -1, 0)
 	return result
+}
+
+func validCopyOperationLabels(operation, endpoint, direction string) bool {
+	if endpoint != "ingress" && endpoint != "publisher" {
+		return false
+	}
+	if operation == "copy_abort_close" {
+		return direction == "not_applicable"
+	}
+	if operation != "read" && operation != "write" && operation != "half_close" {
+		return false
+	}
+	toPublisher := operation == "read" && endpoint == "ingress" || operation != "read" && endpoint == "publisher"
+	if toPublisher {
+		return direction == "visitor_to_publisher"
+	}
+	return direction == "publisher_to_visitor"
 }
