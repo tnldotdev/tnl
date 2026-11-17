@@ -17,7 +17,7 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   state:shard:
-    desc: Check control state with disposable PostgreSQL (optional SHARD=1/4)
+    desc: Check control state with disposable PostgreSQL (optional SHARD=1/8)
     vars:
       SHARD: '{{default "1/1" .SHARD}}'
       RUN: '{{default "^TestIntegration" .RUN}}'

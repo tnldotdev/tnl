@@ -17,7 +17,7 @@ func TestShardsCoverEveryTestOnceAndRemainStable(t *testing.T) {
 	for i := range 300 {
 		names = append(names, fmt.Sprintf("TestIntegrationCase%d", i))
 	}
-	for _, count := range []int{3, 4} {
+	for _, count := range []int{3, 4, 8} {
 		seen := make(map[string]int)
 		for index := 1; index <= count; index++ {
 			shard := testShard{index: index, count: count}
@@ -50,6 +50,43 @@ func TestShardsCoverEveryTestOnceAndRemainStable(t *testing.T) {
 		for _, name := range names {
 			if seen[name] != 1 {
 				t.Fatalf("test %s assigned %d times with %d shards", name, seen[name], count)
+			}
+		}
+	}
+}
+
+func TestEightShardsRefineFourWithoutOmittingOrReassigningTests(t *testing.T) {
+	var names []string
+	for i := range 665 {
+		names = append(names, fmt.Sprintf("TestIntegrationCase%d", i))
+	}
+	inventory := strings.Join(names, "\n")
+	for parent := 1; parent <= 4; parent++ {
+		pattern, _, _, err := shardTestPattern(inventory, "^TestIntegration", "", testShard{parent, 4})
+		if err != nil {
+			t.Fatal(err)
+		}
+		original := regexp.MustCompile(pattern)
+		seen := make(map[string]int)
+		for _, child := range []int{parent, parent + 4} {
+			pattern, _, _, err := shardTestPattern(inventory, "^TestIntegration", "", testShard{child, 8})
+			if err != nil {
+				t.Fatal(err)
+			}
+			refined := regexp.MustCompile(pattern)
+			for _, name := range names {
+				if refined.MatchString(name) {
+					seen[name]++
+				}
+			}
+		}
+		for _, name := range names {
+			want := 0
+			if original.MatchString(name) {
+				want = 1
+			}
+			if seen[name] != want {
+				t.Fatalf("old shard %d/4 test %s executes %d times in its children, want %d", parent, name, seen[name], want)
 			}
 		}
 	}
