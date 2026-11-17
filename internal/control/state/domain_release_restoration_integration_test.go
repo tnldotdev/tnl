@@ -155,7 +155,8 @@ func TestIntegrationDomainReleaseRestoredIssuedCertificateAndCleanupFences(t *te
 		}
 		var captured bool
 		if err := d.pool.QueryRow(ctx, `SELECT certificate_domain_id=$2 AND closed_at IS NULL AND serving_until>$3
-			FROM control.service_runs WHERE id=$1`, f.run.RunID, domain.ID, at).Scan(&captured); err != nil || !captured {
+			AND certificate_hostname=$4 FROM control.service_runs WHERE id=$1`,
+			f.run.RunID, domain.ID, at, f.prepared.Hostname).Scan(&captured); err != nil || !captured {
 			t.Fatal("endpoint move rewrote the run's captured certificate plan or closed it", captured, err)
 		}
 		// claim while the captured domain and consumer are still authorized.
