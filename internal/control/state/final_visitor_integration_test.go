@@ -421,8 +421,8 @@ func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T)
 		t.Fatalf("HTTP decision outlived its share: %+v %v", permission, err)
 	}
 	redeemed, err := d.RedeemShare(t.Context(), auth, share.ID, secret, nil, f.now)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || !redeemed.ExpiresAt.Equal(share.ExpiresAt) {
+		t.Fatal("redemption changed the share's original deadline", err)
 	}
 	cookie, _ := base64.RawURLEncoding.Strict().DecodeString(redeemed.CookieSecret)
 	input.ShareSecret, input.ShareCookieSecret = nil, cookie
@@ -433,22 +433,55 @@ func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T)
 	if err := d.CloseServiceRun(t.Context(), auth.Subject.ID, auth.RunID, auth.Token.String(), f.now); err != nil {
 		t.Fatal(err)
 	}
+	previousAuth, previousService := auth, f.service
 	f.service = f.local(t, "web", &config.HTTPService{Access: &config.Access{IP: []string{"192.0.2.0/24"}}})
 	f.run = f.publish(t, f.service)
 	auth = f.auth()
-	check(f.now, false)
+	if f.service.ID != previousService.ID || f.service.TeamID != previousService.TeamID || f.service.DomainID != previousService.DomainID ||
+		f.service.Endpoint.Hostname != previousService.Endpoint.Hostname || f.service.Endpoint.Port != previousService.Endpoint.Port ||
+		f.service.EndpointRevision != previousService.EndpointRevision || auth.RunID == previousAuth.RunID || auth.Number <= previousAuth.Number {
+		t.Fatal("app restart changed the captured service endpoint or reused its previous run")
+	}
+	if _, err := preparedServiceHTTPPermission(t.Context(), d, previousAuth, input, f.now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("service-bound share cookie revived the closed run", err)
+	}
+	mismatched := auth
+	mismatched.Token = previousAuth.Token
+	if _, err := preparedServiceHTTPPermission(t.Context(), d, mismatched, input, f.now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("share cookie supplied the replacement run's publisher credential", err)
+	}
+	// installed cookies follow the same saved service, not a retired run. the
+	// replacement still needs its own authority and applies current source policy.
+	check(f.now, true)
+	if permission, err := preparedServiceHTTPPermission(t.Context(), d, auth, input, f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(share.ExpiresAt) {
+		t.Fatal("app restart extended the installed share cookie's deadline", err)
+	}
+	other := f.local(t, "other", nil)
+	otherScope := auth.Subject
+	otherScope.ID = other.ID
+	for _, source := range []VisitorTokenSource{
+		ShareTokenSource{ShareID: share.ID, Secret: base64.RawURLEncoding.EncodeToString(secret)},
+		ShareSessionTokenSource{ShareID: share.ID, Secret: base64.RawURLEncoding.EncodeToString(cookie), RunID: auth.RunID},
+	} {
+		if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, otherScope, source, f.now); !errors.Is(err, ErrVisitorPermission) {
+			t.Fatal("share secret or cookie widened its captured service scope", err)
+		}
+	}
 	redeemed, err = d.RedeemShare(t.Context(), auth, share.ID, secret, nil, f.now)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || !redeemed.ExpiresAt.Equal(share.ExpiresAt) {
+		t.Fatal("replacement run extended the share's original deadline", err)
 	}
 	input.ShareCookieSecret, _ = base64.RawURLEncoding.Strict().DecodeString(redeemed.CookieSecret)
 	input.SourceIP = "198.51.100.9"
 	check(f.now, false)
 	input.SourceIP = "192.0.2.1"
-	check(f.now.Add(time.Hour), false)
+	// this expires before publisher liveness or serving authority, so neither
+	// independent run deadline can mask an overlong share permission.
+	check(share.ExpiresAt, false)
 	input.ShareID = "shr_other"
 	check(f.now, false)
 	input.ShareID, input.ShareSecret, input.ShareCookieSecret = share.ID, secret, nil
+	check(share.ExpiresAt, false)
 	if _, err := d.RevokeShare(t.Context(), share.ID, f.project.ActorID, f.now); err != nil {
 		t.Fatal(err)
 	}

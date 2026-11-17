@@ -200,17 +200,38 @@ func TestIntegrationPublicReadinessIngressRenewalCannotExtendRunDeadline(t *test
 	f := publicServingFixture(t, newServicePublicationFixture(t))
 	prepareServingPublisher(t, f)
 	owner := registerServingIngress(t, f, "receiver", f.now)
-	at := f.run.ExpiresAt
-	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: owner}, at, time.Minute); err != nil {
+	assertUnchanged := func() {
+		t.Helper()
+		var liveness, observed, serving time.Time
+		if err := f.database.pool.QueryRow(t.Context(), `SELECT publisher_expires_at,serving_observed_at,serving_until FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&liveness, &observed, &serving); err != nil ||
+			!liveness.Equal(f.run.ExpiresAt) || !observed.Equal(f.run.ObservedAt) || !serving.Equal(f.run.ServingUntil) {
+			t.Fatal("ingress renewal or denied heartbeat changed the run's confirmed authority", err)
+		}
+	}
+	assertUnchanged()
+	// publisher liveness can expire while the same run is still allowed to serve.
+	if _, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: owner}, f.run.ExpiresAt, time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	admission, err := readServingRun(t, f, owner, f.run.ExpiresAt)
+	if err != nil || admission.ServiceID != f.service.ID || admission.RunID != f.run.RunID || admission.RunNumber != f.run.RunNumber ||
+		admission.Hostname != f.service.Endpoint.Hostname || admission.Port != f.service.Endpoint.Port || admission.EndpointRevision != f.service.EndpointRevision ||
+		!admission.ValidUntil.Equal(f.run.ServingUntil) {
+		t.Fatal("expired liveness changed the exact run, endpoint, or original serving deadline", err)
+	}
+	assertUnchanged()
+	at := f.run.ServingUntil
+	if renewed, err := f.database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: owner}, at, time.Minute); err != nil || !renewed.ServingUntil.After(at) {
+		t.Fatal("ingress did not retain independent serving authority", err)
+	}
 	if _, err := readServingRun(t, f, owner, at); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("ingress renewal revived an expired publisher", err)
+		t.Fatal("ingress renewal revived expired run serving authority", err)
 	}
 	if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, at,
 		ServiceRunHealth{Healthy: true, StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("first-ready history revived an expired publisher", err)
+		t.Fatal("first-ready history revived expired run serving authority", err)
 	}
+	assertUnchanged()
 }
 
 func TestIntegrationServiceReadinessStartsGuestClockAndMetricTogether(t *testing.T) {

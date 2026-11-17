@@ -227,25 +227,51 @@ func TestIntegrationConcurrentRouteCreation(t *testing.T) {
 }
 
 func TestIntegrationRouteMutationAndExpiredSession(t *testing.T) {
-	f := newServicePublicationFixture(t)
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`, f.run.RunID, f.now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	actor, err := f.database.GetServiceForPublisher(t.Context(), f.service.ID, f.publisher, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var creator string
-	if err := f.database.pool.QueryRow(t.Context(), `SELECT created_by_identity_id FROM control.services WHERE id=$1`, f.service.ID).Scan(&creator); err != nil {
-		t.Fatal(err)
-	}
-	declaration := ProjectServiceConfiguration{Target: "localhost:5000", HTTP: &config.HTTPService{Access: &config.Access{IP: []string{"192.0.2.0/24"}}}}
-	updated, err := f.database.ConfigureService(t.Context(), f.service.ID, creator, actor.ServiceMetadata, &declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now.Add(2*time.Second))
-	if err != nil || updated.ID != f.service.ID || updated.TeamID != f.service.TeamID || updated.DomainID != f.service.DomainID || updated.Endpoint.Hostname != f.service.Endpoint.Hostname {
-		t.Fatal("configuration update changed saved ownership", err)
-	}
-	if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now.Add(2*time.Second), ServiceRunHealth{StreamCapacity: 64}); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("configuration update revived the expired publisher", err)
+	for _, expiredServing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("serving_expired=%t", expiredServing), func(t *testing.T) {
+			f := newServicePublicationFixture(t)
+			publisherExpiry := f.now.Add(time.Second)
+			if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`, f.run.RunID, publisherExpiry); err != nil {
+				t.Fatal(err)
+			}
+			actor, err := f.database.GetServiceForPublisher(t.Context(), f.service.ID, f.publisher, f.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var creator string
+			if err := f.database.pool.QueryRow(t.Context(), `SELECT created_by_identity_id FROM control.services WHERE id=$1`, f.service.ID).Scan(&creator); err != nil {
+				t.Fatal(err)
+			}
+			at := f.now.Add(2 * time.Second)
+			if expiredServing {
+				at = f.run.ServingUntil
+			}
+			declaration := ProjectServiceConfiguration{Target: "localhost:5000", HTTP: &config.HTTPService{Access: &config.Access{IP: []string{"192.0.2.0/24"}}}}
+			updated, err := f.database.ConfigureService(t.Context(), f.service.ID, creator, actor.ServiceMetadata, &declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, at)
+			if err != nil || updated.ID != f.service.ID || updated.TeamID != f.service.TeamID || updated.DomainID != f.service.DomainID ||
+				!reflect.DeepEqual(updated.Endpoint, f.service.Endpoint) || updated.TrustRevision != f.service.TrustRevision || updated.EndpointRevision != f.service.EndpointRevision {
+				t.Fatal("configuration update changed saved ownership or endpoint authority", err)
+			}
+			assertUnchanged := func() {
+				t.Helper()
+				var liveness, observed, serving time.Time
+				if err := f.database.pool.QueryRow(t.Context(), `SELECT publisher_expires_at,serving_observed_at,serving_until FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&liveness, &observed, &serving); err != nil ||
+					!liveness.Equal(publisherExpiry) || !observed.Equal(f.run.ObservedAt) || !serving.Equal(f.run.ServingUntil) {
+					t.Fatal("configuration update or denied heartbeat renewed publication authority", err)
+				}
+			}
+			assertUnchanged()
+			heartbeat, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, at, ServiceRunHealth{StreamCapacity: 64})
+			if expiredServing {
+				if !errors.Is(err, ErrServiceAccess) {
+					t.Fatal("configuration update revived expired serving authority", err)
+				}
+				assertUnchanged()
+			} else if err != nil || heartbeat.ServiceID != f.service.ID || heartbeat.RunID != f.run.RunID || heartbeat.RunNumber != f.run.RunNumber ||
+				!heartbeat.ExpiresAt.Equal(at.Add(45*time.Second)) || !heartbeat.ServingUntil.Equal(at.Add(f.database.servingTolerance())) {
+				t.Fatal("expired liveness prevented confirmation within the existing serving allowance", err)
+			}
+		})
 	}
 }
 

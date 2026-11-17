@@ -178,8 +178,8 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), a.Subject, a.RunID, a.Number+1, a.Token.String(), 0, now); err == nil {
 		t.Fatal("wrong run number fetched policy")
 	}
-	// browser credentials capture ready runs and stay separate from bearer
-	// grants. a new pool member cannot redeem them.
+	// one-use browser handoffs capture ready runs and stay separate from bearer
+	// grants. a new pool member cannot redeem a previously issued handoff.
 	binding := bytes.Repeat([]byte{7}, 32)
 	state, err := d.BeginServiceBrowserLogin(t.Context(), a.Subject, "", "/settings?tab=1", strings.Repeat("n", 43), strings.Repeat("v", 43), binding, nil, now)
 	if err != nil {
@@ -284,8 +284,49 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	if _, err = d.IssueVisitorToken(t.Context(), testVisitorIssuer, visitorscope.Scope{Kind: "public_url", ID: "url_" + strings.Repeat("A", 22)}, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, now); err == nil {
 		t.Fatal("service browser accepted a retired scope")
 	}
-	if _, err = d.ServiceBrowserSession(t.Context(), later, redemption.CookieSecret, false, now); err == nil {
-		t.Fatal("browser session widened run scope")
+	// an installed cookie supplies service-bound browser identity, not publisher
+	// authority. each caller must still authenticate its own exact current run.
+	mismatchedRun, mismatchedNumber, mismatchedToken := later, later, later
+	mismatchedRun.RunID = b.RunID
+	mismatchedNumber.Number = a.Number
+	mismatchedToken.Token = a.Token
+	for _, test := range []struct {
+		name string
+		auth ServiceHTTPRun
+		want error
+	}{
+		{"mismatched run", mismatchedRun, ErrServiceAccess},
+		{"mismatched number", mismatchedNumber, ErrServiceAccess},
+		{"mismatched token", mismatchedToken, ErrServiceAccess},
+		{"uninstalled hostname", b, ErrVisitorSignIn},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := d.ServiceBrowserSession(t.Context(), test.auth, redemption.CookieSecret, false, now); !errors.Is(err, test.want) {
+				t.Fatal("browser identity supplied missing run or hostname authority", err)
+			}
+		})
+	}
+	identity, err := d.ServiceBrowserSession(t.Context(), later, redemption.CookieSecret, false, now)
+	if err != nil || !identity.Authenticated || !identity.VisitAllowed || identity.IdentityID != r.ActorID || identity.ExpiresAt == nil || identity.ExpiresAt.After(redemption.ExpiresAt) {
+		t.Fatal("current same-service run lost browser identity or extended its original lifetime", err)
+	}
+	digest, err := browserDigest(redemption.CookieSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoffDigest, err := browserDigest(handoff.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var browserExpiry time.Time
+	var browserParent, capturedService string
+	var capturedRuns []string
+	if err := d.pool.QueryRow(t.Context(), `SELECT browser.expires_at,browser.control_session_id,handoff.service_id,handoff.run_ids
+	    FROM control.service_http_browser_sessions browser
+	    JOIN control.service_http_browser_handoffs handoff ON handoff.session_digest=browser.token_digest
+	    WHERE browser.token_digest=$1 AND handoff.token_digest=$2`, digest, handoffDigest).Scan(&browserExpiry, &browserParent, &capturedService, &capturedRuns); err != nil ||
+		!browserExpiry.Equal(redemption.ExpiresAt) || browserParent != issued.SessionID || capturedService != a.Subject.ID || len(capturedRuns) != 1 || capturedRuns[0] != a.RunID {
+		t.Fatal("another ready run changed the browser session, handoff capture, or original expiry", err)
 	}
 	t.Run("outside reviewer identity and share permission", func(t *testing.T) {
 		ctx := WithControlPrincipal(t.Context(), ControlPrincipal{SessionID: issued.SessionID, IdentityID: r.ActorID})
