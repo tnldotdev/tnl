@@ -46,9 +46,14 @@ func TestIntegrationServiceRestoredTargetlessHTTPPolicyUpdate(t *testing.T) {
 	if status != 201 || json.Unmarshal(wire, &service) != nil || service.Protocol != "http" {
 		t.Fatalf("targetless HTTP metadata creation status=%d", status)
 	}
+	configuration, digest := f.readConfiguration(service.Id)
+	if configuration != nil {
+		t.Fatal("targetless HTTP service invented an initial declaration")
+	}
 	// a full app-owned declaration defers its listener; it is not a target patch.
 	body = fmt.Sprintf(`{"protocol":"http","publisher_pool":false,"expected_trust_revision":%q,
-		"configuration":{"target":"app","http":{"access":{"mode":"anonymous","ip":["192.0.2.9/24"]}}}}`, fmt.Sprint(service.TrustRevision))
+		"expected_configuration_digest":%q,
+		"configuration":{"target":"app","http":{"access":{"mode":"anonymous","ip":["192.0.2.9/24"]}}}}`, fmt.Sprint(service.TrustRevision), digest)
 	status, wire, _ = f.call(f.owner, http.MethodPut, "/v1/services/"+service.Id, "", []byte(body))
 	if status != 200 {
 		t.Fatalf("saved HTTP service rejected its complete app-owned policy: status=%d body=%s", status, wire)

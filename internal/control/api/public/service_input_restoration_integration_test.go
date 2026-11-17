@@ -10,7 +10,9 @@ import (
 	"reflect"
 	"testing"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -59,6 +61,19 @@ func (f restoredServiceHTTP) call(token, method, path, key string, data []byte) 
 	return response.StatusCode, wire, response.Header
 }
 
+func (f restoredServiceHTTP) readConfiguration(serviceID string) (*controlv1.ProjectServiceConfiguration, string) {
+	f.t.Helper()
+	client, err := clientcontrol.New(f.server.URL, f.server.Client(), credentials.AccessToken(f.owner))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	configuration, digest, err := client.GetServiceConfiguration(f.t.Context(), serviceID)
+	if err != nil || digest == "" {
+		f.t.Fatal("protected full configuration read lost its declaration condition", err)
+	}
+	return configuration, digest
+}
+
 func TestIntegrationServiceRestoredCanonicalIPAndPostQuantumIdempotency(t *testing.T) {
 	f := newRestoredServiceHTTP(t)
 	create := func(configuration string, want int) controlv1.Service {
@@ -94,13 +109,48 @@ func TestIntegrationServiceRestoredCanonicalIPAndPostQuantumIdempotency(t *testi
 	}
 }
 
+func TestIntegrationServiceRestoredDuplicateCanonicalIPCreateAndConfigure(t *testing.T) {
+	f := newRestoredServiceHTTP(t)
+	checkCanonical := func(serviceID, target string) {
+		t.Helper()
+		configuration, digest := f.readConfiguration(serviceID)
+		if configuration == nil || configuration.Target != target || configuration.Http == nil || configuration.Http.Access == nil ||
+			configuration.Http.Access.Ip == nil || !reflect.DeepEqual(*configuration.Http.Access.Ip, []string{"192.0.2.0/24"}) {
+			t.Fatal("protected configuration did not return one canonical prefix for both submitted entries")
+		}
+		saved, savedDigest, err := f.database.GetServiceConfiguration(t.Context(), serviceID, f.actor)
+		if err != nil || saved == nil || saved.Target != target || saved.HTTP == nil || saved.HTTP.Access == nil ||
+			!reflect.DeepEqual(saved.HTTP.Access.IP, []string{"192.0.2.0/24"}) || savedDigest != digest {
+			t.Fatal("duplicate prefix input did not persist the exact canonical policy and protected digest", err)
+		}
+	}
+	body := fmt.Sprintf(`{"team_id":%q,"name":"duplicate-policy","configuration":{"target":"localhost:3000",
+		"http":{"access":{"ip":["192.0.2.1/24","192.0.2.0/24"]}}}}`, f.team)
+	status, wire, _ := f.call(f.owner, http.MethodPost, "/v1/services", "duplicate-policy", []byte(body))
+	var created controlv1.Service
+	if status != http.StatusCreated || json.Unmarshal(wire, &created) != nil || created.Id == "" {
+		t.Fatalf("duplicate prefix create status=%d body=%s", status, wire)
+	}
+	checkCanonical(created.Id, "localhost:3000")
+
+	_, digest := f.readConfiguration(f.service.ID)
+	body = fmt.Sprintf(`{"protocol":"http","publisher_pool":false,"expected_trust_revision":%q,
+		"expected_configuration_digest":%q,"configuration":{"target":"localhost:4000",
+		"http":{"access":{"ip":["192.0.2.1/24","192.0.2.0/24"]}}}}`, fmt.Sprint(f.service.TrustRevision), digest)
+	status, wire, _ = f.call(f.owner, http.MethodPut, "/v1/services/"+f.service.ID, "", []byte(body))
+	var updated controlv1.Service
+	if status != http.StatusOK || json.Unmarshal(wire, &updated) != nil || updated.Id != f.service.ID {
+		t.Fatalf("duplicate prefix configure status=%d body=%s", status, wire)
+	}
+	checkCanonical(updated.Id, "localhost:4000")
+}
+
 func TestIntegrationServiceRestoredInvalidCreateAndConfigureMatrices(t *testing.T) {
 	f := newRestoredServiceHTTP(t)
 	for index, test := range []struct{ name, configuration string }{
 		{"null target", `{"target":null}`},
 		{"null IP policy", `{"target":"localhost:3000","http":{"access":{"mode":"restricted","ip":null}}}`},
 		{"null PQ", `{"target":"localhost:3000","require_post_quantum":null}`},
-		{"duplicate canonical prefix", `{"target":"localhost:3000","http":{"access":{"ip":["192.0.2.1/24","192.0.2.0/24"]}}}`},
 		{"target path", `{"target":"https://localhost:3000/path"}`},
 		{"unknown declaration field", `{"target":"localhost:3000","credential":"private-value"}`},
 	} {
@@ -147,15 +197,18 @@ func TestIntegrationServiceRestoredInvalidCreateAndConfigureMatrices(t *testing.
 			}
 		})
 	}
-	settings := fmt.Sprintf(`"protocol":"http","publisher_pool":false,"expected_trust_revision":%q,"unconditional_configuration":true`, fmt.Sprint(f.service.TrustRevision))
+	_, digest := f.readConfiguration(f.service.ID)
+	metadata := fmt.Sprintf(`"protocol":"http","publisher_pool":false,"expected_trust_revision":%q`, fmt.Sprint(f.service.TrustRevision))
+	condition := fmt.Sprintf(`"expected_configuration_digest":%q`, digest)
+	settings := metadata + `,` + condition
 	for _, test := range []struct{ name, body string }{
-		{"missing trust revision", `{"protocol":"http","publisher_pool":false,"configuration":{"target":"localhost:4000"}}`},
-		{"unsafe numeric revision", `{"protocol":"http","publisher_pool":false,"expected_trust_revision":9007199254740992,"configuration":{"target":"localhost:4000"}}`},
+		{"missing trust revision", `{"protocol":"http","publisher_pool":false,` + condition + `,"configuration":{"target":"localhost:4000"}}`},
+		{"unsafe numeric revision", `{"protocol":"http","publisher_pool":false,"expected_trust_revision":9007199254740992,` + condition + `,"configuration":{"target":"localhost:4000"}}`},
+		{"missing configuration protection", `{` + metadata + `,"configuration":{"target":"localhost:4000"}}`},
 		{"null declaration", `{` + settings + `,"configuration":null}`},
 		{"null target", `{` + settings + `,"configuration":{"target":null}}`},
 		{"null IP policy", `{` + settings + `,"configuration":{"target":"localhost:4000","http":{"access":{"ip":null}}}}`},
 		{"null PQ", `{` + settings + `,"configuration":{"target":"localhost:4000","require_post_quantum":null}}`},
-		{"duplicate canonical prefix", `{` + settings + `,"configuration":{"target":"localhost:4000","http":{"access":{"ip":["192.0.2.1/24","192.0.2.0/24"]}}}}`},
 		{"target path", `{` + settings + `,"configuration":{"target":"https://localhost:4000/path"}}`},
 		{"unknown field", `{` + settings + `,"unexpected":true}`},
 	} {

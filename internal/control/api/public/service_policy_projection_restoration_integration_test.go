@@ -12,9 +12,11 @@ import (
 
 func TestIntegrationServiceRestoredDualStackUpdateAndPostQuantumListProjection(t *testing.T) {
 	f := newRestoredServiceHTTP(t)
+	_, digest := f.readConfiguration(f.service.ID)
 	body := fmt.Sprintf(`{"protocol":"http","publisher_pool":false,"expected_trust_revision":%q,
+		"expected_configuration_digest":%q,
 		"configuration":{"target":"localhost:4000","require_post_quantum":true,
-		"http":{"access":{"mode":"restricted","ip":["2001:db8::9/64","192.0.2.9/24"]}}}}`, fmt.Sprint(f.service.TrustRevision))
+		"http":{"access":{"mode":"restricted","ip":["2001:db8::9/64","192.0.2.9/24"]}}}}`, fmt.Sprint(f.service.TrustRevision), digest)
 	status, wire, _ := f.call(f.owner, http.MethodPut, "/v1/services/"+f.service.ID, "", []byte(body))
 	var updated controlv1.Service
 	if status != 200 || json.Unmarshal(wire, &updated) != nil || updated.Id != f.service.ID || !updated.RequirePostQuantum {
