@@ -1,7 +1,9 @@
 package ingress
 
 import (
+	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -11,7 +13,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func runAliasSnapshot(t *testing.T, count int) (Config, ingressv1.IngressLease, ingressv1.IngressServices) {
@@ -113,7 +117,7 @@ func TestRunAliasRejectsAmbiguousAndInvalidSnapshotsAtomically(t *testing.T) {
 }
 
 func TestRunAliasSelectionNeverFallsBackAndSharesCanonicalBudget(t *testing.T) {
-	for _, mode := range []string{"healthy", "expired", "relays expired", "IP denial", "capacity", "canonical spent total"} {
+	for _, mode := range []string{"healthy", "unknown alias", "expired", "relays expired", "IP denial", "capacity", "canonical spent total"} {
 		t.Run(mode, func(t *testing.T) {
 			config, lease, snapshot := runAliasSnapshot(t, 2)
 			target := &snapshot.Runs[0]
@@ -157,8 +161,12 @@ func TestRunAliasSelectionNeverFallsBackAndSharesCanonicalBudget(t *testing.T) {
 				t.Fatal(reason)
 			}
 			defer capacity.close()
+			hostname := *target.RunHostname
+			if mode == "unknown alias" {
+				hostname = "r-unknown.example"
+			}
 			selected, err := server.selectPublicRun(t.Context(), lease, netip.MustParseAddrPort("192.0.2.4:42000"),
-				netip.MustParseAddrPort("203.0.113.10:443"), *target.RunHostname, capacity)
+				netip.MustParseAddrPort("203.0.113.10:443"), hostname, capacity)
 			if mode == "healthy" {
 				if err != nil || selected.runID != target.ServiceRunId || selected.number != target.RunNumber ||
 					capacity.key != key || selected.http.selectedHostname != *target.RunHostname {
@@ -171,6 +179,91 @@ func TestRunAliasSelectionNeverFallsBackAndSharesCanonicalBudget(t *testing.T) {
 			if server.traffic.runs[trafficKey{service: sibling.ServiceId, id: sibling.ServiceRunId, run: uint64(sibling.RunNumber)}] != nil {
 				t.Fatal("alias spent a sibling's budget")
 			}
+		})
+	}
+}
+
+func TestRunAliasForwardingKeepsExactRunAndFirstByteBoundary(t *testing.T) {
+	for _, mode := range []string{"replace before first byte", "committed first attempt", "no replacement"} {
+		t.Run(mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				config, lease, snapshot := runAliasSnapshot(t, 2)
+				config.OpenTimeout = 100 * time.Millisecond
+				snapshot.ObservedAt = snapshot.ObservedAt.Add(-time.Millisecond)
+				target := &snapshot.Runs[0]
+				target.Traffic.TotalConnections = new(int64(1))
+				originalRelay := target.ConnectedRelays[0]
+				problem := errors.New("exact-run relay opening failed")
+				var headers []tunnelv1.ServiceForwardingHeader
+				firstFailed := make(chan struct{})
+				config.Forwarder = promotionTestForwarder(func(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, reserve func(context.Context) error) (net.Conn, error) {
+					headers = append(headers, header)
+					if header.ServiceID != target.ServiceId || header.ServiceRunID != target.ServiceRunId || header.RunNumber != uint64(target.RunNumber) {
+						t.Error("alias forwarded to a sibling run")
+					}
+					if err := reserve(ctx); err != nil {
+						t.Error("exact-run capacity reservation failed", err)
+					}
+					committed := mode == "committed first attempt" || len(headers) > 1
+					if len(headers) == 1 {
+						close(firstFailed)
+					}
+					return nil, &tunnel.OpeningError{Committed: committed, Err: problem}
+				})
+				server := serviceSelectionServer(t, config)
+				server.config.Control = preparedSelectionControl{}
+				if err := server.services.apply(time.Now().Add(-time.Millisecond), lease, snapshot); err != nil {
+					t.Fatal(err)
+				}
+				updated := make(chan error, 1)
+				if mode == "replace before first byte" {
+					fresh := restorationCloneSnapshot(t, snapshot)
+					fresh.Runs[0].ConnectedRelays[0].PublisherConnectionId = publicServiceTestID(t, "pc_")
+					fresh.Runs[0].ConnectedRelays[0].ConnectionAssignmentRevision++
+					go func() {
+						<-firstFailed
+						fresh.ObservedAt = time.Now()
+						updated <- server.services.apply(time.Now(), lease, fresh)
+					}()
+				}
+				connection, visitor := net.Pipe()
+				defer visitor.Close()
+				err := server.AcceptPublic(t.Context(), connection, netip.MustParseAddrPort("192.0.2.4:42000"),
+					netip.MustParseAddrPort("203.0.113.10:443"), *target.RunHostname, nil)
+				if !errors.Is(err, problem) {
+					t.Fatal("forwarding lost the exact opening error", err)
+				}
+				wantAttempts := 1
+				if mode == "replace before first byte" {
+					if err := <-updated; err != nil {
+						t.Fatal(err)
+					}
+					wantAttempts = 2
+				}
+				if len(headers) != wantAttempts || headers[0].PublisherConnectionID != originalRelay.PublisherConnectionId {
+					t.Fatal("alias changed the first-byte retry boundary", len(headers))
+				}
+				if wantAttempts == 2 {
+					before, after := headers[0], headers[1]
+					if before.VisitorConnectionID != after.VisitorConnectionID || !before.ExpiresAt.Equal(after.ExpiresAt) ||
+						after.ConnectionAssignmentRevision != before.ConnectionAssignmentRevision+1 ||
+						after.PublisherConnectionID == before.PublisherConnectionID {
+						t.Fatal("replacement changed the visitor, deadline, or assignment tuple")
+					}
+				}
+				if mode == "no replacement" && !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("replacement wait did not retain its original setup deadline", err)
+				}
+				key := trafficKey{service: target.ServiceId, id: target.ServiceRunId, run: uint64(target.RunNumber)}
+				budget := server.traffic.runs[key]
+				if budget == nil || budget.connections != 1 || budget.active != 0 || server.Load() != 0 {
+					t.Fatal("alias relay attempts duplicated or retained capacity", budget)
+				}
+				sibling := snapshot.Runs[1]
+				if server.traffic.runs[trafficKey{service: sibling.ServiceId, id: sibling.ServiceRunId, run: uint64(sibling.RunNumber)}] != nil {
+					t.Fatal("relay failure spent a sibling's quota")
+				}
+			})
 		})
 	}
 }
