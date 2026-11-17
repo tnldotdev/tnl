@@ -280,6 +280,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	permissionPort := int(serviceendpoint.PermissionPort(protocol))
 	native := connectorfixture.NewConnector(t, ca, caKey, service, serviceRun, sessionID, managedHostname, providerAddress)
 	var revoked atomic.Bool
+	var retirements atomic.Int32
 	renewed := make(chan struct{})
 	var renewedOnce sync.Once
 	var certificateRequests atomic.Int64
@@ -596,6 +597,22 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceSelection{ServiceId: service, ServiceRunId: serviceRun, RunNumber: 1,
 				Protocol: controlv1.ServiceProtocol(protocol), TrustRevision: trustRevision, ExpiresAt: time.Now().Add(time.Minute), Subject: current.Subject,
 				Endpoint: &controlv1.ServiceEndpoint{Hostname: managedHostname, Port: publicPort, Public: true}, PairReady: &native.Ready})
+		case strings.HasPrefix(r.URL.Path, "/v1/services/"+service+"/connector-peer-pairs/") && strings.HasSuffix(r.URL.Path, "/retire"):
+			parts := strings.Split(r.URL.Path, "/")
+			var requested controlv1.ConnectorPeerPairRetireRequest
+			if r.Method != http.MethodPost || len(parts) != 7 || len(r.Header.Values("Authorization")) != 0 || json.NewDecoder(r.Body).Decode(&requested) != nil {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			// retirement authenticates the exact retained pair, independently of
+			// workload revocation racing the owner's joined cleanup.
+			receipt, err := native.Retire(r.Context(), parts[5], requested)
+			if err != nil {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			retirements.Add(1)
+			_ = json.NewEncoder(w).Encode(receipt)
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			var requested controlv1.ConnectorPeerPairRequest
 			var source controlv1.VisitorTokenWorkloadSource
@@ -1509,6 +1526,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 	}
 	if !revoked.Load() {
 		t.Fatal("owner stop did not revoke workload")
+	}
+	if retirements.Load() != 1 {
+		t.Fatal("owner stop did not authenticate retirement of its exact connector pair")
 	}
 	if exchangeAttempts.Load() != 2 {
 		t.Fatal("lost exchange response was not recovered by the same owner")
