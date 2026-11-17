@@ -85,6 +85,10 @@ with `mise exec -- task go:test:race:service` and
 example. `mise exec -- task go:test:race` still runs the complete routine suite.
 Both CI partitions must pass the `Go race` check.
 
+Linux Go CI runs routine tests separately from generation, static analysis,
+vulnerability scanning, and command builds. Both jobs retain their ten-minute
+limits and must pass the `Go (Linux)` check.
+
 The separated HTTP transport load workload explicitly disables WAF inspection
 to measure forwarding capacity, recovery, and unbounded bandwidth. It does not
 measure WAF throughput; HTTP protection and its fail-fast capacity limits have
