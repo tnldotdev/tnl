@@ -109,6 +109,123 @@ func TestIntegrationRunAliasPreparationAndManagedCertificate(t *testing.T) {
 	}
 }
 
+func TestIntegrationRunAliasManagedDNSReadinessAndWithdrawal(t *testing.T) {
+	f, _, declaration := newRunAliasServiceFixture(t)
+	var err error
+	f.service, err = f.database.CreateServiceAt(t.Context(), f.project.TeamID, f.project.ActorID, "managed-alias", "managed-alias",
+		ServicePlacement{DomainID: f.service.DomainID, DNSAutomation: true}, f.now, f.service.ServiceMetadata, &declaration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(time.Second)
+	lease := registerServiceHTTPAdmissionIngress(t, t.Context(), f, "managed-alias-reader")
+	claim := func(hostname string, state ServiceEndpointDNSState) ServiceEndpointDNSWork {
+		t.Helper()
+		work, found, err := f.database.ClaimServiceEndpointDNSWork(t.Context(), "alias-dns-worker", f.now, time.Minute)
+		if err != nil || !found || work.Hostname != hostname || work.State != state {
+			t.Fatal("unexpected exact-run DNS work", work, found, err)
+		}
+		if err := f.database.ValidateServiceEndpointDNSWork(t.Context(), work, f.now); err != nil {
+			t.Fatal("current DNS work lost provider authority", err)
+		}
+		return work
+	}
+	save := func(work ServiceEndpointDNSWork, state ServiceEndpointDNSState) {
+		t.Helper()
+		work.State, work.AvailableAt = state, time.Time{}
+		if _, err := f.database.SaveServiceEndpointDNSWork(t.Context(), work, f.now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertReady := func(canonical, alias bool) {
+		t.Helper()
+		state, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now,
+			ServiceRunHealth{Healthy: true, StreamCapacity: 20})
+		if err != nil || state.State != "ready" || state.PublicEndpointReady != canonical || state.RunAliasReady != alias {
+			t.Fatal("DNS readiness changed run authority or selected the wrong endpoint", state, err)
+		}
+		routing, err := readIngressServiceRun(t.Context(), f.database, lease.IngressLeaseIdentity, f.service.ID, f.run.RunID, f.now)
+		if err != nil || (routing.RunHostname != nil) != alias {
+			t.Fatal("ingress advertised an alias before its DNS was ready", err)
+		}
+	}
+	if _, found, err := f.database.ClaimServiceEndpointDNSWork(t.Context(), "early", f.now, time.Minute); err != nil || found {
+		t.Fatal("DNS published without a ready run and certificate", found, err)
+	}
+	f.run = f.publish(t, f.service)
+	f.now = f.now.Add(time.Second)
+	// claim both names before publishing either; their lexicographic order is
+	// not part of the lifecycle contract.
+	pending := make(map[string]ServiceEndpointDNSWork)
+	for range 2 {
+		work, found, err := f.database.ClaimServiceEndpointDNSWork(t.Context(), "alias-dns-worker", f.now, time.Minute)
+		if err != nil || !found || work.State != ServiceEndpointDNSPending {
+			t.Fatal("ready certificate did not queue both DNS names", found, err)
+		}
+		pending[work.Hostname] = work
+	}
+	canonical, canonicalFound := pending[f.service.Endpoint.Hostname]
+	alias, aliasFound := pending[f.run.RunHostname]
+	if !canonicalFound || !aliasFound || len(pending) != 2 {
+		t.Fatal("DNS work did not retain the exact endpoint names")
+	}
+	// routing keeps ready runs before DNS publication, but excludes their alias.
+	assertReady(false, false)
+	save(canonical, ServiceEndpointDNSPublished)
+	assertReady(true, false)
+	parent := declaration.RunAliasParent
+	declaration.RunAliasParent = ""
+	f.service, err = f.database.ConfigureService(t.Context(), f.service.ID, f.project.ActorID, f.service.ServiceMetadata,
+		&declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(time.Second)
+	if err := f.database.ValidateServiceEndpointDNSWork(t.Context(), alias, f.now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
+		t.Fatal("withdrawn alias retained in-flight DNS authority", err)
+	}
+	stale := alias
+	stale.State, stale.AvailableAt = ServiceEndpointDNSPublished, time.Time{}
+	if _, err := f.database.SaveServiceEndpointDNSWork(t.Context(), stale, f.now); !errors.Is(err, ErrServiceEndpointDNSWorkStale) {
+		t.Fatal("stale DNS worker republished a withdrawn alias", err)
+	}
+	save(claim(f.run.RunHostname, ServiceEndpointDNSRemoving), ServiceEndpointDNSRemoved)
+	assertReady(true, false)
+	declaration.RunAliasParent = parent
+	f.service, err = f.database.ConfigureService(t.Context(), f.service.ID, f.project.ActorID, f.service.ServiceMetadata,
+		&declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(time.Second)
+	assertReady(true, false)
+	// a ready sibling cannot publish this run's pending DNS while this run is
+	// unhealthy. it can publish only its own independently allocated name.
+	if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now,
+		ServiceRunHealth{Healthy: false, StreamCapacity: 20}); err != nil {
+		t.Fatal(err)
+	}
+	sibling := f.publish(t, f.service)
+	f.now = f.now.Add(time.Second)
+	save(claim(sibling.RunHostname, ServiceEndpointDNSPending), ServiceEndpointDNSPublished)
+	if _, found, err := f.database.ClaimServiceEndpointDNSWork(t.Context(), "sibling-cannot-publish", f.now, time.Minute); err != nil || found {
+		t.Fatal("a sibling made unhealthy run DNS claimable", found, err)
+	}
+	assertReady(true, false)
+	save(claim(f.run.RunHostname, ServiceEndpointDNSPending), ServiceEndpointDNSPublished)
+	assertReady(true, true)
+	if err := f.database.CloseServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(time.Second)
+	save(claim(f.run.RunHostname, ServiceEndpointDNSRemoving), ServiceEndpointDNSRemoved)
+	var retainedUntil time.Time
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT reusable_after FROM control.service_endpoints WHERE hostname=$1`,
+		f.run.RunHostname).Scan(&retainedUntil); err != nil || !retainedUntil.After(f.now) {
+		t.Fatal("DNS removal released the alias certificate reservation", err)
+	}
+}
+
 func TestIntegrationRunAliasConfigurationPreservesRunAndTargetTrust(t *testing.T) {
 	f, _, declaration := newRunAliasServiceFixture(t)
 	f.run = f.publish(t, f.service)
