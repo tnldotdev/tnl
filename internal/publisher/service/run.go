@@ -371,7 +371,11 @@ func (b *Bound) ConnectSlot(ctx context.Context, slot uint8, options ConnectOpti
 	}
 	b.mu.Unlock()
 	if !current {
-		return nil, errors.Join(ErrPrivateStream, claimed.Close())
+		cleanup := claimed.Close()
+		if cleanup != nil {
+			cleanup = &tunnel.SessionCleanupError{Err: cleanup}
+		}
+		return nil, errors.Join(ErrPrivateStream, claimed.acceptError(), cleanup)
 	}
 	return claimed, nil
 }
@@ -386,11 +390,21 @@ type Claimed struct {
 	endObservation func(error, bool)
 	packets        *peer.SharedSession
 	dispatcher     *tunnel.ServiceStreamDispatcher
+	lifetimeMu     sync.Mutex
+	serving        bool
+	closing        bool
 	closeOnce      sync.Once
 	closeErr       error
 }
 
 func (c *Claimed) Transport() tunnel.Transport { return c.transport }
+
+func (c *Claimed) acceptError() error {
+	if c.dispatcher != nil {
+		return c.dispatcher.AcceptError()
+	}
+	return nil
+}
 
 func (c *Claimed) Drain(ctx context.Context) error {
 	id, err := opaqueid.New(opaqueid.IdempotencyPrefix)
@@ -411,6 +425,10 @@ func (c *Claimed) Close() error {
 		return nil
 	}
 	c.closeOnce.Do(func() {
+		c.lifetimeMu.Lock()
+		c.closing = true
+		unserved := !c.serving
+		c.lifetimeMu.Unlock()
 		c.bound.mu.Lock()
 		var obsolete []struct {
 			p       *PeerSession
@@ -434,9 +452,6 @@ func (c *Claimed) Close() error {
 		for _, old := range obsolete {
 			old.p.detachDelivery(old.network)
 		}
-		if c.endObservation != nil {
-			c.endObservation(nil, true)
-		}
 		if c.dispatcher != nil {
 			c.closeErr = errors.Join(c.closeErr, c.dispatcher.CloseCleanup())
 		}
@@ -446,6 +461,12 @@ func (c *Claimed) Close() error {
 		if c.session != nil {
 			c.closeErr = errors.Join(c.closeErr, c.session.Close())
 		}
+		if unserved && c.endObservation != nil {
+			// an unused claim has no Serve result. retain a failed accept in
+			// its observation, without relabeling it as physical cleanup.
+			operation := c.acceptError()
+			c.endObservation(errors.Join(operation, c.closeErr), operation == nil)
+		}
 	})
 	return c.closeErr
 }
@@ -454,6 +475,16 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 	if c == nil || c.bound == nil || c.session == nil {
 		return ErrPrivateStream
 	}
+	c.lifetimeMu.Lock()
+	if c.closing {
+		c.lifetimeMu.Unlock()
+		cleanup := c.Close()
+		return errors.Join(c.acceptError(), cleanup)
+	}
+	// once serving starts, only its joined result may consume the observation.
+	// Close can interrupt it, but cannot publish an earlier expected close.
+	c.serving = true
+	c.lifetimeMu.Unlock()
 	owner := ctx
 	defer func() {
 		if c.endObservation != nil {

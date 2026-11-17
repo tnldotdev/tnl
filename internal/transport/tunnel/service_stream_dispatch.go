@@ -176,7 +176,9 @@ func (d *ServiceStreamDispatcher) closeStream(stream muxsession.Stream) {
 	d.recordError(stream.Close())
 }
 
-func (d *ServiceStreamDispatcher) terminalAcceptError() error {
+// AcceptError returns the terminal accept operation, not owned cleanup. Close
+// joins the accept loop before a retiring owner collects its final value.
+func (d *ServiceStreamDispatcher) AcceptError() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.acceptErr
@@ -296,9 +298,9 @@ func (d *ServiceStreamDispatcher) AcceptForwardingStream(ctx context.Context) (m
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, errors.Join(ctx.Err(), d.terminalAcceptError())
+			return nil, errors.Join(ctx.Err(), d.AcceptError())
 		case <-d.ctx.Done():
-			return nil, errors.Join(net.ErrClosed, d.terminalAcceptError())
+			return nil, errors.Join(net.ErrClosed, d.AcceptError())
 		case q := <-d.queue:
 			if !q.stop() {
 				// an unclaimed opening expired, not the dispatcher or its
@@ -307,7 +309,7 @@ func (d *ServiceStreamDispatcher) AcceptForwardingStream(ctx context.Context) (m
 			}
 			if d.ctx.Err() != nil || ctx.Err() != nil {
 				d.closeStream(q.stream)
-				return nil, errors.Join(net.ErrClosed, d.terminalAcceptError())
+				return nil, errors.Join(net.ErrClosed, d.AcceptError())
 			}
 			return q.stream, nil
 		}
