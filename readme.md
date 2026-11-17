@@ -6,7 +6,8 @@
   <br/>
   by <a href="https://github.com/0xcadams">@0xcadams</a>
   <br/><br/>
-  <i><code>tnl</code> is in private beta. <a href="mailto:chase@tnl.dev?subject=tnl.dev%20beta%20access&amp;body=I'd%20like%20to%20try%20https%3A%2F%2Ftnl.dev.%20My%20email%20is%3A">email chase@tnl.dev for access</a>.</i>
+  <i>hosted <code>tnl</code> is in private beta. email <a href="mailto:chase@tnl.dev?subject=tnl.dev%20beta%20access&amp;body=I'd%20like%20to%20try%20https%3A%2F%2Ftnl.dev.%20My%20email%20is%3A">chase@tnl.dev</a> for access,
+  or feel free to <a href="#custom-domains-or-self-hosting">self-host</a>.</i>
 </p>
 <br/>
 
@@ -385,8 +386,7 @@ See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actio
 
 You can also add a subdomain you own, for URLs like `https://app.chase.dev.example.com`.
 
-Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates.
-See [setting up a custom domain](https://tnl.dev/docs/domains).
+Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates. See [setting up a custom domain](https://tnl.dev/docs/domains).
 
 Or, you can even run the whole stack yourself (control, ingress, and relays), forever free. See [running your own server](https://tnl.dev/docs/self-hosting).
 
