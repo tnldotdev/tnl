@@ -50,7 +50,11 @@ func TestIntegrationDomainReleaseFacts(t *testing.T) {
 			}
 			if phase != "saved-services" {
 				for _, fixture := range fixtures {
-					if err := d.DeleteService(ctx, fixture.service.ID, owner, now); err != nil {
+					current, err := d.GetService(ctx, fixture.service.ID, owner)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := d.DeleteService(ctx, current.ID, owner, ServiceDeleteConditions{Revision: current.ServiceRevision}, now); err != nil {
 						t.Fatal(err)
 					}
 				}
