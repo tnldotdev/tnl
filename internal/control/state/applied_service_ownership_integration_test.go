@@ -163,7 +163,7 @@ func testAppliedPrivateOwnershipTransitions(t *testing.T, worktrees, members int
 		shared.access = append(shared.access, access)
 		approved, err := d.GetServiceForPublisher(ctx, shared.record.ID, access.PublisherIdentity, now)
 		if err != nil || !reflect.DeepEqual(approved, shared.record) {
-			t.Fatal("assignment did not authorize exact saved metadata", approved, err)
+			t.Fatalf("assignment did not authorize exact saved metadata: got=%+v want=%+v err=%v", approved, shared.record, err)
 		}
 		if active {
 			shared.runs = append(shared.runs, readyAppliedServiceRun(t, d, access, replica.private, approved, netip.MustParseAddr("127.0.0.1"), leases, now))
@@ -273,11 +273,48 @@ func inspectAppliedPrivateResource(t *testing.T, d *Database, r ApplyProjectConf
 		t.Fatal("new resource inherited old visitor grants", grants)
 	}
 	if extra {
+		declaration, digest, err := d.GetServiceConfiguration(ctx, id, r.ActorID)
+		if err != nil || declaration == nil {
+			t.Fatal("cannot inspect private resource configuration before visitor grant", err)
+		}
 		g, err := d.CreateServiceGrant(ctx, id, r.ActorID, "extra/"+id, "identity", outsider, nil, r.Now)
-		if err != nil {
-			t.Fatal(err)
+		if err != nil || !opaqueid.Valid(g.ID, opaqueid.ServiceGrantPrefix) || g.ServiceID != id || g.Kind != "identity" || g.IdentityID != outsider || g.InvitationID != "" || !g.CreatedAt.Equal(r.Now) || g.ExpiresAt != nil || g.RevokedAt != nil {
+			t.Fatal("extra visitor grant is not exact and current", g, err)
 		}
 		grants = append(grants, g)
+		// one new visitor grant advances the saved-service revision, not target
+		// trust, endpoint settings, or configuration. derive that sole change
+		// from the mutation rather than accepting a new metadata snapshot.
+		value.ServiceRevision++
+		assertRecord := func() {
+			t.Helper()
+			saved, err := d.GetService(ctx, id, r.ActorID)
+			if err != nil || !reflect.DeepEqual(saved, value) {
+				t.Fatalf("visitor grant changed unexpected saved metadata: got=%+v want=%+v err=%v", saved, value, err)
+			}
+		}
+		assertRecord()
+		retry, err := d.CreateServiceGrant(ctx, id, r.ActorID, "extra/"+id, "identity", outsider, nil, r.Now)
+		if err != nil || !reflect.DeepEqual(retry, g) {
+			t.Fatal("extra visitor grant retry did not preserve the exact grant", retry, g, err)
+		}
+		if _, err = d.CreateServiceGrant(ctx, id, r.ActorID, "extra/"+id, "identity", r.ActorID, nil, r.Now); !errors.Is(err, ErrServiceConflict) {
+			t.Fatal("extra visitor grant retry accepted a different identity", err)
+		}
+		assertRecord()
+		savedDeclaration, savedDigest, err := d.GetServiceConfiguration(ctx, id, r.ActorID)
+		if err != nil || !reflect.DeepEqual(savedDeclaration, declaration) || savedDigest != digest {
+			t.Fatal("visitor grant replaced private resource configuration or its digest", err)
+		}
+		if _, err = d.GetService(ctx, id, outsider); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("extra visitor grant authorized management metadata", err)
+		}
+		if _, _, err = d.GetServiceConfiguration(ctx, id, outsider); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("extra visitor grant authorized manager configuration", err)
+		}
+		if _, _, err = d.ListServices(ctx, r.TeamID, outsider, ""); !errors.Is(err, ErrServiceAccess) {
+			t.Fatal("extra visitor grant authorized team management inventory", err)
+		}
 	}
 	if err = d.DeleteService(ctx, id, r.ActorID, observedServiceDeletion(t, d, id), r.Now); !errors.Is(err, ErrProjectManaged) {
 		t.Fatal("transition lost definition ownership", err)
