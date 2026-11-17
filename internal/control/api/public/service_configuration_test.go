@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -148,15 +149,20 @@ func (s *serviceConfigurationStore) GetServiceConfiguration(_ context.Context, s
 
 func TestGetServiceConfigurationWire(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
+	configuration := &controlstate.ProjectServiceConfiguration{Target: "private-listener.internal:3000"}
 	for _, test := range []struct {
 		name          string
 		configuration *controlstate.ProjectServiceConfiguration
 		err           error
 		status        int
+		code          controlv1.ProblemCode
 	}{
-		{"absent", nil, nil, 204},
-		{"present", &controlstate.ProjectServiceConfiguration{Target: "private-listener.internal:3000"}, nil, 200},
-		{"denied", nil, controlstate.ErrServiceAccess, 404},
+		{"absent", nil, nil, 204, ""},
+		{"present", configuration, nil, 200, ""},
+		{"denied", configuration, controlstate.ErrServiceAccess, 404, controlv1.NotFound},
+		{"corrupt", configuration, errors.Join(controlstate.ErrServiceAccess, errors.New("private stored ciphertext failure")), 500, controlv1.Internal},
+		{"denial with storage outage", configuration, errors.Join(controlstate.ErrServiceAccess, context.DeadlineExceeded), 500, controlv1.Internal},
+		{"storage outage", configuration, context.DeadlineExceeded, 503, controlv1.Unavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &serviceConfigurationStore{configuration: test.configuration, digest: digest, err: test.err}
@@ -170,7 +176,17 @@ func TestGetServiceConfigurationWire(t *testing.T) {
 			}
 			if test.err != nil {
 				if response.Header().Get("ETag") != "" {
-					t.Fatal("denied read exposed a configuration digest")
+					t.Fatal("failed read exposed a configuration digest")
+				}
+				var problem controlv1.Problem
+				if json.Unmarshal(response.Body.Bytes(), &problem) != nil || problem.Code != test.code || problem.Status != test.status ||
+					problem.RequestId == "" || problem.Details != nil && len(*problem.Details) != 0 || response.Header().Get("Content-Type") != "application/problem+json" {
+					t.Fatal("failed read lost its redacted, correlated problem")
+				}
+				for _, secret := range []string{configuration.Target, digest, "private stored ciphertext failure", `"target"`, `"configuration"`} {
+					if strings.Contains(response.Body.String(), secret) {
+						t.Fatal("failed read disclosed private configuration or its storage cause")
+					}
 				}
 				return
 			}

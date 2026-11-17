@@ -158,7 +158,15 @@ func TestIntegrationServiceConfigurationManagementBoundary(t *testing.T) {
 	if _, err := q.SetServiceConfiguration(ctx, controlstatedb.SetServiceConfigurationParams{ServiceID: service.ID, Ciphertext: corrupt, StorageKeyID: stored.StorageKeyID}); err != nil {
 		t.Fatal(err)
 	}
-	if declaration, digest, err := owner.GetServiceConfiguration(ctx, service.ID); !errors.Is(err, clientcontrol.ErrNotFound) || declaration != nil || digest != "" {
-		t.Fatal("corrupt declaration returned configuration or a usable digest", err)
+	// corruption retains its independent storage fault, not just access denial.
+	declaration, corruptDigest, err := owner.GetServiceConfiguration(ctx, service.ID)
+	var problem *clientcontrol.ProblemError
+	if !errors.As(err, &problem) || problem.Status != http.StatusInternalServerError || problem.Problem.Code != controlv1.Internal ||
+		declaration != nil || corruptDigest != "" {
+		t.Fatal("corrupt declaration lost its internal fault or returned configuration or a usable digest", err)
+	}
+	if problem.Problem.Title != "internal server error" || problem.Problem.Detail != "internal server error" ||
+		problem.Problem.Details != nil && len(*problem.Problem.Details) != 0 || problem.Problem.RequestId == "" {
+		t.Fatal("corrupt declaration did not return a redacted, correlated problem")
 	}
 }
