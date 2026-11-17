@@ -343,11 +343,45 @@ func serveConnector(ctx context.Context, session *Session, listener net.Listener
 			}
 		}()
 	}
+	finishShutdown := func(error) {}
+	if deadline == nil {
+		ctx, finishShutdown = connectorShutdownHandoff(ctx)
+	}
 	result := connectorstream.Serve(ctx, listener, configuration)
+	finishShutdown(result)
 	if bounded != nil {
 		result = errors.Join(result, context.Cause(bounded))
 	}
 	return result
+}
+
+// metadata replacement retires a connection, not the foreground process. retain
+// the exact cleanup limit but hand it to final exports only when this runner ends.
+func connectorShutdownHandoff(parent context.Context) (context.Context, func(error)) {
+	var mu sync.Mutex
+	var original time.Time
+	ctx := observability.WithShutdownDeadline(parent, func(until time.Time) time.Time {
+		if parent.Err() != nil {
+			until = observability.ShutdownDeadline(parent, until)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if original.IsZero() || until.Before(original) {
+			original = until
+		}
+		return original
+	})
+	return ctx, func(result error) {
+		if connectorstream.IsMetadataReload(result) {
+			return
+		}
+		mu.Lock()
+		until := original
+		mu.Unlock()
+		if !until.IsZero() {
+			observability.ShutdownDeadline(parent, until)
+		}
+	}
 }
 
 func connectConfiguration(ctx context.Context, session *Session, job installedjobs.Job) (connectorstream.Config, error) {

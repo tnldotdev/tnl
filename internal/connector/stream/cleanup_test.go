@@ -8,13 +8,44 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestConnectorCleanupHandsOnlyStandaloneStopBudgetToProcess(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var recorded time.Time
+		parent := observability.WithShutdownDeadline(t.Context(), func(until time.Time) time.Time {
+			recorded = until
+			return until
+		})
+		borrowed := newConnectorCleanup(parent, func() context.Context { return context.WithoutCancel(parent) })
+		defer borrowed.close()
+		borrowed.begin()
+		if !recorded.IsZero() {
+			t.Fatal("a borrowed connection consumed its process owner's exit budget", recorded)
+		}
+		until := time.Now().Add(time.Second)
+		parent, cancel := context.WithDeadline(parent, until)
+		defer cancel()
+		standalone := newConnectorCleanup(parent, nil)
+		defer standalone.close()
+		standalone.begin()
+		if !recorded.Equal(until) {
+			t.Fatal("standalone cleanup did not retain the earlier parent deadline", recorded, until)
+		}
+		<-standalone.context().Done()
+		if got, _ := standalone.context().Deadline(); !got.Equal(recorded) {
+			t.Fatal("standalone cleanup restarted its original process budget", got, recorded)
+		}
+	})
+}
 
 func TestConnectorCleanupUsesOneOriginalStopBudget(t *testing.T) {
 	caller, stop := context.WithTimeout(t.Context(), time.Second)

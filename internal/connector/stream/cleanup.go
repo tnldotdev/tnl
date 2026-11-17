@@ -18,6 +18,7 @@ import (
 // the existing connection and adapter share one first-stop cleanup budget.
 type connectorCleanup struct {
 	mu        sync.Mutex
+	caller    context.Context
 	base      context.Context
 	source    func() context.Context
 	authority time.Time
@@ -27,7 +28,7 @@ type connectorCleanup struct {
 }
 
 func newConnectorCleanup(ctx context.Context, source func() context.Context) *connectorCleanup {
-	return &connectorCleanup{base: observability.Independent(context.WithoutCancel(ctx)), source: source}
+	return &connectorCleanup{caller: ctx, base: observability.Independent(context.WithoutCancel(ctx)), source: source}
 }
 
 func (c *connectorCleanup) observe(until time.Time) {
@@ -45,6 +46,11 @@ func (c *connectorCleanup) begin() {
 		c.until = time.Now().Add(5 * time.Second)
 		if !c.authority.IsZero() {
 			c.until = earliestConnectorDeadline(c.until, c.authority)
+		}
+		// borrowed cleanup belongs to its composing owner. only a standalone
+		// connector hands its stop budget to the final process flush.
+		if c.source == nil {
+			c.until = observability.ShutdownDeadline(c.caller, c.until)
 		}
 	}
 }

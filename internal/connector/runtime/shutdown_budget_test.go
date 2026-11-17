@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type shutdownBudgetBackend struct {
@@ -35,7 +37,12 @@ func TestConnectionOwnerStopIPCUsesCallerBudgetAndRecordsUnconfirmedCleanup(t *t
 	failure := errors.New("remote cleanup unconfirmed")
 	backend := &shutdownBudgetBackend{fixtureBackend: &fixtureBackend{deadline: time.Now().Add(time.Hour)}, until: make(chan time.Time, 1), joined: make(chan struct{}), failure: failure}
 	reader, writer := io.Pipe()
-	ctx, cancel := context.WithCancel(t.Context())
+	var recorded time.Time
+	parent := observability.WithShutdownDeadline(t.Context(), func(until time.Time) time.Time {
+		recorded = until
+		return until
+	})
+	ctx, cancel := context.WithCancel(parent)
 	done := make(chan error, 1)
 	go func() { done <- Serve(ctx, scope, directory, "/test/tnl", OwnerConfig{Backend: backend}, writer) }()
 	defer cancel()
@@ -59,6 +66,9 @@ func TestConnectionOwnerStopIPCUsesCallerBudgetAndRecordsUnconfirmedCleanup(t *t
 	}
 	if got := <-backend.until; !got.Equal(until) {
 		t.Fatal("owner replaced the caller stop budget", got, until)
+	}
+	if !recorded.Equal(until) {
+		t.Fatal("owner did not hand its original IPC stop budget to final process flushing", recorded, until)
 	}
 	select {
 	case <-backend.joined:

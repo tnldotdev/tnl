@@ -331,6 +331,10 @@ func Serve(ctx context.Context, options Options) (result error) {
 	if err != nil {
 		return err
 	}
+	processDeadline := a.manager.ShutdownDeadline
+	a.manager.ShutdownDeadline = sync.OnceValue(func() time.Time {
+		return observability.ShutdownDeadline(ctx, processDeadline())
+	})
 	a.workers.Manager = a.manager
 	a.manager.Cleanup = a.cleanupPreparation
 	a.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }

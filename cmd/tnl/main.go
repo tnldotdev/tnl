@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
@@ -153,18 +154,11 @@ type aliasChoiceCommand struct {
 func main() {
 	received := make(chan os.Signal, 1)
 	signal.Notify(received, os.Interrupt, syscall.SIGTERM)
-	ctx, stop := processSignalContext(context.Background(), received, func() { signal.Stop(received) })
+	ctx, stop := processSignalContext((&nativeProcess{}).context(context.Background()), received, func() { signal.Stop(received) })
 	defer stop()
-	var telemetry *clienttelemetry.Collector
 	launchCtx := observability.ExtractLaunch(ctx, os.Getenv(observability.LaunchTraceparent))
 	_ = os.Unsetenv(observability.LaunchTraceparent)
-	err := run(context.WithValue(launchCtx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(config clienttelemetry.Config) *clienttelemetry.Collector {
-		telemetry, _ = clienttelemetry.New(context.WithoutCancel(launchCtx), config)
-		return telemetry
-	})
-	if telemetry != nil {
-		closeTelemetry(telemetry)
-	}
+	err := runNativeProcess(launchCtx, os.Args[1:], os.Stdout, os.Stderr)
 	stop() // command observation and the final telemetry flush have already joined.
 	if err != nil {
 		code, render := terminalResult(err)
@@ -175,6 +169,95 @@ func main() {
 			os.Exit(code)
 		}
 	}
+}
+
+type nativeProcess struct {
+	shutdownMetrics func(context.Context) error
+	metricsTimeout  time.Duration
+	closeTelemetry  func(context.Context)
+	shutdownMu      sync.Mutex
+	shutdownUntil   time.Time
+}
+
+func (p *nativeProcess) context(ctx context.Context) context.Context {
+	ctx = context.WithValue(ctx, nativeProcessKey{}, p)
+	return observability.WithShutdownDeadline(ctx, p.limitShutdown)
+}
+
+// this is only the deadline handoff between existing owners, not another
+// lifetime: command drain, forced I/O closure, and export joins stay with them.
+func (p *nativeProcess) limitShutdown(until time.Time) time.Time {
+	p.shutdownMu.Lock()
+	defer p.shutdownMu.Unlock()
+	if p.shutdownUntil.IsZero() || until.Before(p.shutdownUntil) {
+		p.shutdownUntil = until
+	}
+	return p.shutdownUntil
+}
+
+func runNativeProcess(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	return runNativeCommand(ctx, func(ctx context.Context, factory telemetryFactory) error {
+		return run(ctx, args, stdout, stderr, factory)
+	})
+}
+
+// the process joins the command before closing either optional export owner.
+func runNativeCommand(ctx context.Context, command func(context.Context, telemetryFactory) error) error {
+	process, ok := ctx.Value(nativeProcessKey{}).(*nativeProcess)
+	if !ok {
+		process = &nativeProcess{}
+		ctx = process.context(ctx)
+	}
+	stopped := make(chan struct{})
+	stopDeadline := context.AfterFunc(ctx, func() {
+		defer close(stopped)
+		observability.ShutdownDeadline(ctx, time.Now().Add(10*time.Second))
+	})
+	defer func() {
+		if !stopDeadline() {
+			<-stopped
+		}
+	}()
+	result := command(ctx, func(config clienttelemetry.Config) *clienttelemetry.Collector {
+		collector, _ := clienttelemetry.New(context.WithoutCancel(ctx), config)
+		if collector != nil {
+			process.closeTelemetry = collector.Close
+		}
+		return collector
+	})
+	if process.shutdownMetrics != nil {
+		closeProcessMetrics(ctx, process.metricsTimeout, process.shutdownMetrics)
+	}
+	if process.closeTelemetry != nil {
+		closeTelemetry(ctx, process.closeTelemetry)
+	}
+	return result
+}
+
+func closeProcessMetrics(ctx context.Context, budget time.Duration, shutdown func(context.Context) error) {
+	ctx, cancel := processFlushContext(ctx, budget)
+	defer cancel()
+	_ = shutdown(ctx)
+}
+
+func processFlushContext(ctx context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	until := time.Now().Add(budget)
+	if parent, ok := ctx.Deadline(); ok && parent.Before(until) {
+		until = parent
+	}
+	if process, ok := ctx.Value(nativeProcessKey{}).(*nativeProcess); ok {
+		process.shutdownMu.Lock()
+		// a finite command with no earlier stop starts its bounded final flush
+		// here. an export-specific cap must not replace an existing stop limit.
+		if process.shutdownUntil.IsZero() {
+			process.shutdownUntil = until
+		}
+		if process.shutdownUntil.Before(until) {
+			until = process.shutdownUntil
+		}
+		process.shutdownMu.Unlock()
+	}
+	return context.WithDeadline(context.WithoutCancel(ctx), until)
 }
 
 // only this registered signal producer turns SIGINT/SIGTERM into ordinary
@@ -200,6 +283,7 @@ func processSignalContext(parent context.Context, received <-chan os.Signal, unr
 				// restore default handling before publishing cancellation, so a
 				// second signal can terminate a command that stalls during cleanup.
 				stopNotifications()
+				observability.ShutdownDeadline(parent, time.Now().Add(10*time.Second))
 				stopContext()
 				return
 			case <-ctx.Done():
@@ -385,21 +469,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		}
 		return runCheck(project, stdout)
 	}
-	if native, _ := ctx.Value(nativeProcessKey{}).(bool); native && parsedCommand != "version" {
+	process, native := ctx.Value(nativeProcessKey{}).(*nativeProcess)
+	if native && parsedCommand != "version" {
 		var metrics *observability.Metrics
 		ctx, metrics, err = observability.StartProcess(ctx, commandObservabilityRole(parsedCommand, flags).String())
 		if err != nil {
 			return err
 		}
-		defer func() {
-			budget := observability.CLIShutdownTimeout
-			if persistentObservabilityOwner(parsedCommand, flags) {
-				budget = observability.ShutdownTimeout
-			}
-			shutdown, cancel := context.WithTimeout(context.Background(), budget)
-			defer cancel()
-			_ = metrics.Shutdown(shutdown)
-		}()
+		budget := observability.CLIShutdownTimeout
+		if persistentObservabilityOwner(parsedCommand, flags) {
+			budget = observability.ShutdownTimeout
+		}
+		process.shutdownMetrics, process.metricsTimeout = metrics.Shutdown, budget
 	}
 	ctx, finishCommand := observability.ClientCommand(ctx, parsedCommand)
 	defer func() { finishCommand(result) }()

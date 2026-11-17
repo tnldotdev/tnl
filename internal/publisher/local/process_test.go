@@ -18,6 +18,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -263,8 +264,16 @@ func TestAppWorkflowProcessStartupFailureReleasesLockAndStopsManager(t *testing.
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
+	var recorded time.Time
+	ctx = observability.WithShutdownDeadline(ctx, func(until time.Time) time.Time {
+		recorded = until
+		return until
+	})
 	if err := Serve(ctx, Options{Directory: project.Root, StateDir: state.Root(), Snapshot: bytes.NewReader(snapshot)}); err == nil {
 		t.Fatal("startup accepted an unusable descriptor path")
+	}
+	if parent, _ := ctx.Deadline(); !recorded.Equal(parent) {
+		t.Fatal("local process did not hand its earlier parent stop budget to final flushing", recorded, parent)
 	}
 	assertProcessStopped(t, state, project, initial.Cursor)
 	if err := os.Remove(path); err != nil {

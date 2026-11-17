@@ -66,7 +66,7 @@ func (r *recordingTelemetry) factory(config clienttelemetry.Config) *clienttelem
 
 func (r *recordingTelemetry) events() []api.Event {
 	for _, c := range r.collectors {
-		closeTelemetry(c)
+		closeTelemetry(context.Background(), c.Close)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

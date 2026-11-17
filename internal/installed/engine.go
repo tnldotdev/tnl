@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/filelock"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/observability"
 	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	processidentity "github.com/tnldotdev/tnl/internal/publisher/processidentity"
@@ -110,6 +111,16 @@ func (e Engine) Serve(ctx context.Context) (result error) {
 		return ErrScope
 	}
 	var joinShutdown func() error
+	parentDeadline := e.ShutdownDeadline
+	e.ShutdownDeadline = func() time.Time {
+		until := time.Now().Add(e.DrainTime)
+		if parentDeadline != nil {
+			if parent := parentDeadline(); !parent.IsZero() && parent.Before(until) {
+				until = parent
+			}
+		}
+		return observability.ShutdownDeadline(ctx, until)
+	}
 	e.ShutdownDeadline, e.ShutdownContext, joinShutdown = installedShutdown(ctx, e.DrainTime, e.ShutdownDeadline, e.ShutdownContext)
 	defer func() { result = errors.Join(result, joinShutdown()) }()
 	if err := e.Registry.validate(); err != nil {

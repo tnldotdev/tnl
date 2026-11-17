@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 )
 
@@ -31,7 +32,7 @@ func startDeployedPublisher(ctx context.Context, n *publisheridentity.Native, se
 func publicationShutdown(parent context.Context) (context.Context, func() time.Time, func()) {
 	ctx, cancel := context.WithCancel(parent)
 	deadline := sync.OnceValue(func() time.Time {
-		until := time.Now().Add(10 * time.Second)
+		until := observability.ShutdownDeadline(parent, time.Now().Add(10*time.Second))
 		cancel()
 		return until
 	})

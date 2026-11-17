@@ -44,6 +44,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 				shutdownUntil = outer
 			}
 		}
+		shutdownUntil = observability.ShutdownDeadline(ctx, shutdownUntil)
 		return shutdownUntil
 	}
 	stopped := make(chan struct{})

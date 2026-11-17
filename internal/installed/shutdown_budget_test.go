@@ -8,6 +8,7 @@ import (
 	"time"
 
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func TestInstalledShutdownSharesDeadlineAcrossJobsAndJoinsFailures(t *testing.T) {
@@ -40,7 +41,15 @@ func TestInstalledShutdownSharesDeadlineAcrossJobsAndJoinsFailures(t *testing.T)
 			joined <- struct{}{}
 			return errors.Join(ctx.Err(), finish.Err(), cleanup)
 		}}
-	ctx, cancel := context.WithCancel(t.Context())
+	var recorded time.Time
+	var recordedMu sync.Mutex
+	parent := observability.WithShutdownDeadline(t.Context(), func(until time.Time) time.Time {
+		recordedMu.Lock()
+		defer recordedMu.Unlock()
+		recorded = until
+		return until
+	})
+	ctx, cancel := context.WithCancel(parent)
 	done := make(chan error, 1)
 	go func() { done <- engine.Serve(ctx) }()
 	defer cancel()
@@ -69,5 +78,8 @@ func TestInstalledShutdownSharesDeadlineAcrossJobsAndJoinsFailures(t *testing.T)
 		default:
 			t.Fatal("supervisor returned before joining an owned job")
 		}
+	}
+	if !recorded.Equal(deadline()) {
+		t.Fatal("supervisor did not hand its original stop budget to final process flushing", recorded, deadline())
 	}
 }

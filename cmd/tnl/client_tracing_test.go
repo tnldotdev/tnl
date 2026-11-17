@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/pem"
 	"io"
 	"net/http"
@@ -20,7 +19,7 @@ import (
 func TestClientTracingRuntimeInitializesOwnerBeforeDispatch(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://private-invalid")
 	var out, diagnostics bytes.Buffer
-	err := run(context.WithValue(t.Context(), nativeProcessKey{}, true), []string{"--no-telemetry", "runtime", "connections", "capabilities"}, &out, &diagnostics)
+	err := runNativeProcess(t.Context(), []string{"--no-telemetry", "runtime", "connections", "capabilities"}, &out, &diagnostics)
 	if err == nil || out.Len() != 0 || strings.Contains(err.Error(), "private-invalid") {
 		t.Fatal("runtime bypassed safe exporter initialization")
 	}
@@ -57,7 +56,7 @@ func TestClientTracingExporterDownDoesNotFailCLIAndFlushIsBounded(t *testing.T) 
 	}
 	var out, diagnostics bytes.Buffer
 	before := time.Now()
-	err = run(context.WithValue(t.Context(), nativeProcessKey{}, true), []string{"--no-telemetry", "runtime", "connections", "recover", "--handle", filepath.Join(directory, "handle.json")}, &out, &diagnostics)
+	err = runNativeProcess(t.Context(), []string{"--no-telemetry", "runtime", "connections", "recover", "--handle", filepath.Join(directory, "handle.json")}, &out, &diagnostics)
 	if err != nil || !strings.Contains(out.String(), `"state":"stopped"`) || diagnostics.Len() != 0 {
 		t.Fatal("export failure changed command result", err)
 	}
