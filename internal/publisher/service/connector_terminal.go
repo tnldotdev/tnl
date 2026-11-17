@@ -30,6 +30,10 @@ func connectorAdmissionRoutineError(err error) bool {
 	if errors.As(err, &physical) {
 		return false
 	}
+	var localTLS *servicestream.VisitorTLSCallbackFailure
+	if errors.As(err, &localTLS) {
+		return false
+	}
 	// inspect connector provenance before the shared classifier can unwrap it.
 	switch cause := err.(type) {
 	case *connectorOpeningProofRefusal:
@@ -40,6 +44,12 @@ func connectorAdmissionRoutineError(err error) bool {
 		return cause != nil
 	case *servicestream.VisitorHostnameRefusal:
 		return cause != nil
+	case *servicestream.VisitorProtocolRefusal:
+		return cause != nil && cause.Unwrap() != nil
+	case *servicestream.VisitorTLSCallbackFailure:
+		return false
+	case *servicestream.VisitorTLSIOFailure:
+		return cause != nil && connectorAdmissionRoutineError(cause.Unwrap())
 	case *tunnel.ConnectorControlFailure, *tunnel.SessionCleanupError:
 		// required work cannot borrow a visitor-local refusal's provenance.
 		return httpAdmissionRoutineError(err)

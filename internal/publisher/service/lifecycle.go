@@ -388,7 +388,17 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	bound.streamCapacity = int(config.StreamCapacity)
 	var certificateDone <-chan error
 	{
-		maintain, cancel, err := configureServiceRun(runCtx, config, prepared, setup, managedControl, config.State, audit)
+		// synchronous discovery and preview setup still belong to the caller.
+		// detach that stop request once setup joins; serving workers then retain
+		// the run lifetime through admitted visitors' bounded drain.
+		startupCtx, stopStartup := context.WithCancel(runCtx)
+		defer stopStartup()
+		startupCanceled := make(chan struct{})
+		detach := context.AfterFunc(ctx, func() { defer close(startupCanceled); stopStartup() })
+		maintain, cancel, err := configureServiceRun(startupCtx, config, prepared, setup, managedControl, config.State, audit)
+		if !detach() {
+			<-startupCanceled
+		}
 		if err != nil {
 			return err
 		}

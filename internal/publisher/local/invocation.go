@@ -397,8 +397,13 @@ func invocationCleanup(remove func(context.Context) error, expiresAt time.Time, 
 			permanent = errors.Join(publisherapp.ErrCleanupPermanent, auth.ErrDeploymentCredential)
 			return permanent
 		}
-		ctx, cancel := context.WithDeadline(ctx, deadline())
-		defer cancel()
+		// the manager supplies the current operation's bound, including a later
+		// explicit retry. only unbounded callers need the original fallback.
+		if _, bounded := ctx.Deadline(); !bounded {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, deadline())
+			defer cancel()
+		}
 		err := remove(ctx)
 		if err == nil || failure.Only(err, clientcontrol.ErrNotFound) {
 			cleaned = true

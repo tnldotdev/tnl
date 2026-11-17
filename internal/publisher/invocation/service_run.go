@@ -118,7 +118,6 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
 		ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved), InspectionMode: policy.Mode,
 		ProjectRoot: project.Root, ProjectService: service.Name}
-	base.ShutdownDeadline = func() time.Time { return a.manager.PublicationShutdownDeadline(service.RegistrationID) }
 	base.ShutdownContext = a.manager.PublicationShutdownContext(service.RegistrationID)
 	if saved.Protocol == controlv1.ServiceProtocolHTTP {
 		base.ResolveHTTPTarget = func(request *http.Request) (string, string, error) {
@@ -150,6 +149,14 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		base.PreviewID, base.Feedback = preview, effective.Feedback != nil && *effective.Feedback
 	}
 	publication.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
+		base.ShutdownDeadline = func() time.Time {
+			if ctx.Err() == nil {
+				// an internal attempt retires on its own bounded run budget.
+				// only registration shutdown starts the terminal worker fence.
+				return time.Time{}
+			}
+			return a.manager.PublicationShutdownDeadline(service.RegistrationID)
+		}
 		base.ObserveSummary = summary
 		address, closeTarget, err := targetplan.ServiceTarget(ctx, plan)
 		if err != nil {

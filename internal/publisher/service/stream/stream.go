@@ -312,17 +312,16 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		}
 		return nil, nil
 	}
-	secured := tls.Server(visitor, frontTLS)
-	var client net.Conn = secured
-	if connector != nil {
-		client = &connectorServiceConn{conn: secured, ctx: ctx, admission: connector}
-	}
 	tlsCtx, tlsDone := observability.PublisherOperation(setup, "visitor_tls")
-	err = secured.HandshakeContext(tlsCtx)
+	secured, err := negotiateVisitorTLS(tlsCtx, visitor, frontTLS)
 	observability.PublisherTLS(tlsCtx, "visitor", secured.ConnectionState(), err)
 	tlsDone(err)
 	if err != nil {
 		return err
+	}
+	var client net.Conn = secured
+	if connector != nil {
+		client = &connectorServiceConn{conn: secured, ctx: ctx, admission: connector}
 	}
 	if httpVisitor, ok := s.Visitor.(HTTPVisitor); ok {
 		if s.Protocol != config.ProtocolHTTP {
