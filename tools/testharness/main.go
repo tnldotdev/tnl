@@ -122,7 +122,8 @@ func runDNS(ctx context.Context, root string) error {
 		}
 		if !state.Running {
 			logs, logErr := container.Logs(ctx)
-			if logErr == nil && state.ExitCode != 0 {
+			// successful DNS proofs contain bounded per-service measurements too.
+			if logErr == nil {
 				defer logs.Close()
 				_, _ = io.Copy(os.Stdout, io.LimitReader(logs, 1<<20))
 			} else if logs != nil {

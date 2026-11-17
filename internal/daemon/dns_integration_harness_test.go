@@ -110,9 +110,10 @@ type integrationDNSZone struct {
 }
 
 type integrationDNSChange struct {
-	Action string
-	Record integrationDNSRecord `xml:"ResourceRecordSet"`
-	zoneID string
+	Action      string
+	Record      integrationDNSRecord `xml:"ResourceRecordSet"`
+	zoneID      string
+	committedAt time.Time
 }
 
 // this is only the Route 53 HTTP wire boundary, not a replacement provider or
@@ -287,6 +288,10 @@ func (f *integrationRoute53) applyChanges(ctx context.Context, changes []integra
 		}
 	}
 	f.zone.records = records
+	committedAt := time.Now()
+	for i := range changes {
+		changes[i].committedAt = committedAt
+	}
 	f.changes = append(f.changes, changes...)
 	return nil
 }

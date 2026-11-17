@@ -66,11 +66,19 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 
 	quic, tcp := fixture.connectors()
 	finalizing := make(chan controlv1.ServiceCertificateIssuance, 1)
-	publicationStarted := time.Now()
-	_, config := fixture.identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{})
-	config.Control = &certificateObservingControlClient{
+	certificateObserved, readyObserved := make(chan time.Time, 1), make(chan time.Time, 1)
+	observation := integrationDNSStartupObservation{started: time.Now()}
+	saved, config := fixture.identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{})
+	observation.ownerPrepared = time.Now()
+	certificateClient := &certificateObservingControlClient{
 		Native: config.Control.(*publisheridentity.Native),
 		observe: func(issuance controlv1.ServiceCertificateIssuance) {
+			if issuance.CertificatePem != nil && *issuance.CertificatePem != "" {
+				select {
+				case certificateObserved <- time.Now():
+				default:
+				}
+			}
 			if issuance.State == controlv1.CertificateIssuanceStateFinalizing {
 				select {
 				case finalizing <- issuance:
@@ -79,6 +87,17 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 			}
 		},
 	}
+	config.Control = certificateClient
+	// observe the real publisher callback before the fixture records its event;
+	// this does not grant readiness or wait for routing installation.
+	config.Ready = func() error {
+		select {
+		case readyObserved <- time.Now():
+		default:
+		}
+		return nil
+	}
+	observation.publisherStarted = time.Now()
 	handle := startOwnedIntegrationPublisher(t, fixture.owner, config, func() string {
 		return integrationPublisherDiagnostics(fixture.inspect, fixture.pebble.logPath)
 	})
@@ -90,7 +109,19 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 	// finalizing can finish before the publisher's next poll; readiness must not
 	// wait for DNS challenge cleanup to finish.
 	ready := waitForPublisherReady(t, handle)
-	readyAt := time.Now()
+	if ready.ServiceId != saved.Id {
+		t.Fatal("startup observation changed the saved service")
+	}
+	select {
+	case observation.ready = <-readyObserved:
+	default:
+		t.Fatal("publisher Ready callback was not observed")
+	}
+	select {
+	case observation.certificateObserved = <-certificateObserved:
+	default:
+		t.Fatal("cold service certificate material was not observed before Ready")
+	}
 	// resolve the service name against the configured authoritative DNS, not
 	// the fixture's usual pinned ingress dial. only the disposable front port
 	// differs from public 443; DNS still selects its IP and TLS checks its name.
@@ -111,7 +142,9 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 		}
 		return dialer.DialContext(ctx, network, net.JoinHostPort(hostname, frontPort))
 	}
+	observation.firstGETStarted = time.Now()
 	first, body, err := fixture.visitor.requestURLContext(t.Context(), http.MethodGet, serviceHTTPAddress(ready), nil)
+	observation.firstGETFinished = time.Now()
 	if err != nil {
 		t.Fatal("first configured-DNS request after Ready", err)
 	}
@@ -119,8 +152,26 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 		first.TLS == nil || len(first.TLS.VerifiedChains) == 0 || targetRequests.Load() != 1 {
 		t.Fatal("first configured-DNS request did not reach the target once over verified TLS", first.Status, string(body), targetRequests.Load())
 	}
-	t.Logf("one service publication to Ready=%s, Ready to first configured-DNS HTTPS response=%s; local authoritative DNS, not global propagation",
-		readyAt.Sub(publicationStarted), time.Since(readyAt))
+	changesAtFirstGET := dnsFixture.serviceChanges(ready.Hostname, observation.started, observation.firstGETFinished)
+	phases, err := observation.phases(changesAtFirstGET)
+	if err != nil {
+		t.Fatal("per-service startup observation", err)
+	}
+	orders := integrationServiceOrderCount(t, fixture.inspect, ready.ServiceId)
+	if orders != 1 || certificateClient.createCalls.Load() < 1 {
+		t.Fatal("cold service did not record its certificate order and publisher issuance operation", orders, certificateClient.createCalls.Load())
+	}
+	measurement, err := json.Marshal(map[string]any{
+		"sample": "one_cold_service_ready_roles", "service_id": ready.ServiceId, "service_run_number": ready.RunNumber,
+		"phase_ns": phases, "dns_record_mutations_at_first_get": changesAtFirstGET,
+		"publisher_certificate_create_calls": certificateClient.createCalls.Load(), "publisher_certificate_poll_calls": certificateClient.pollCalls.Load(),
+		"persisted_service_certificate_orders": orders, "first_get_target_requests": targetRequests.Load(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("startup sample uses local authoritative DNS, the Route 53 HTTP fixture, and Pebble; excludes role startup, cloud cost, and Internet DNS convergence; DNS/certificate offsets overlap")
+	t.Logf("service_startup_measurement %s", measurement)
 	select {
 	case issuance := <-finalizing:
 		if issuance.CertificatePem != nil || issuance.NotBefore != nil || issuance.NotAfter != nil {
@@ -141,6 +192,11 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 		t.Fatalf("service endpoint DNS lost exact ownership or published a broader namespace: A=%t, owner=%t, wildcard=%t", exact, owner, wildcard)
 	}
 	assertIntegrationDNSChanges(t, dnsFixture, fixture.identity.hostname, true)
+	changesAfterCleanup, err := json.Marshal(dnsFixture.serviceChanges(ready.Hostname, observation.started, time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("service_dns_record_mutations_after_challenge_cleanup service_id=%s %s", ready.ServiceId, changesAfterCleanup)
 
 	for _, relay := range []splitRelayFixture{fixture.relayA, fixture.relayB} {
 		if relay.config.RelayTLSCertificateFile != "" || relay.config.RelayTLSPrivateKeyFile != "" {
@@ -174,7 +230,8 @@ func TestDNSIntegrationSplitAutomaticRelayCertificates(t *testing.T) {
 
 type certificateObservingControlClient struct {
 	*publisheridentity.Native
-	observe func(controlv1.ServiceCertificateIssuance)
+	observe                func(controlv1.ServiceCertificateIssuance)
+	createCalls, pollCalls atomic.Int64
 }
 
 func (c *certificateObservingControlClient) CreateServiceCertificateIssuance(
@@ -185,6 +242,7 @@ func (c *certificateObservingControlClient) CreateServiceCertificateIssuance(
 	csr []byte,
 	idempotencyKey string,
 ) (controlv1.ServiceCertificateIssuance, error) {
+	c.createCalls.Add(1)
 	issuance, err := c.Native.CreateServiceCertificateIssuance(
 		ctx, serviceID, runID, runNumber, token, csr, idempotencyKey,
 	)
@@ -197,6 +255,7 @@ func (c *certificateObservingControlClient) GetServiceCertificateIssuance(
 	serviceID, runID, issuanceID string,
 	token credentials.ServiceRunToken,
 ) (controlv1.ServiceCertificateIssuance, error) {
+	c.pollCalls.Add(1)
 	issuance, err := c.Native.GetServiceCertificateIssuance(ctx, serviceID, runID, issuanceID, token)
 	c.observeResponse(issuance, err)
 	return issuance, err
