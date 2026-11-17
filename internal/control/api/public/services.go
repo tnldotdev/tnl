@@ -74,7 +74,7 @@ func serviceVisitorError(ctx context.Context, w http.ResponseWriter, operation s
 	switch {
 	case errors.Is(err, controlstate.ErrProjectConfigurationInvalid):
 		writeProblem(w, 400, controlv1.InvalidRequest, "provide a valid service declaration and select a ready team domain")
-	case errors.Is(err, controlstate.ErrServiceAccess):
+	case failure.Only(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 404, controlv1.NotFound, "service not found or unavailable")
 	case errors.Is(err, controlstate.ErrServiceEndpointPublic):
 		writeProblem(w, 409, controlv1.Conflict, "disable public access in the service binding and apply before releasing its reservation")

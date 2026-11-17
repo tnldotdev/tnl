@@ -68,6 +68,8 @@ func TestServiceOperationsSeparateStorageOutageAndFault(t *testing.T) {
 				{"wrapped outage with fault", fmt.Errorf("storage: %w", errors.Join(outage, fault)), 500, controlv1.Internal},
 				{"cancellation with fault", errors.Join(context.Canceled, fault), 500, controlv1.Internal},
 				{"permission denial", controlstate.ErrServiceAccess, 404, controlv1.NotFound},
+				{"permission with independent fault", errors.Join(controlstate.ErrServiceAccess, fault), 500, controlv1.Internal},
+				{"permission with independent outage", errors.Join(controlstate.ErrServiceAccess, outage), 500, controlv1.Internal},
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					var logs bytes.Buffer
