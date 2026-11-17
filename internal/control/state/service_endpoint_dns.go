@@ -56,7 +56,7 @@ func reconcileServiceEndpoint(ctx context.Context, tx pgx.Tx, endpoint serviceEn
 	          AND control.service_endpoints.retired_at IS NULL AND control.service_endpoints.dns_state NOT IN('unmanaged','removed','failed') THEN control.service_endpoints.dns_available_at
 	        ELSE EXCLUDED.dns_available_at END,
 	      dns_revision=control.service_endpoints.dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL
-	    WHERE control.service_endpoints.service_id=EXCLUDED.service_id
+	    WHERE control.service_endpoints.service_run_id IS NULL AND (control.service_endpoints.service_id=EXCLUDED.service_id
 	      OR(control.service_endpoints.dns_state IN('unmanaged','removed')
 	        AND control.service_endpoints.deployment_id=EXCLUDED.deployment_id AND EXCLUDED.deployment_id IS NOT NULL
 	        AND EXISTS(SELECT 1 FROM control.services previous WHERE previous.id=control.service_endpoints.service_id AND previous.deleted_at IS NOT NULL))
@@ -67,7 +67,7 @@ func reconcileServiceEndpoint(ctx context.Context, tx pgx.Tx, endpoint serviceEn
 	        AND (control.service_endpoints.namespace=EXCLUDED.namespace OR control.service_namespace_reusable(control.service_endpoints.namespace,$10))
 	        AND EXISTS(SELECT 1 FROM control.service_namespace_claims claim
 	          WHERE claim.namespace=EXCLUDED.namespace AND claim.deployment_id=EXCLUDED.deployment_id
-	            AND claim.domain_id=EXCLUDED.domain_id AND claim.retired_at IS NULL))
+	            AND claim.domain_id=EXCLUDED.domain_id AND claim.retired_at IS NULL)))
 	    RETURNING hostname`, endpoint.Hostname, endpoint.ServiceID, nullableText(endpoint.DeploymentID), endpoint.DomainID, endpoint.Namespace, endpoint.PoolID, endpoint.Public, string(state), available, now, endpoint.LocalSourceKey, endpoint.Automation).Scan(&hostname)
 	return projectConstraintError(publisherLookupError(err, ErrServiceConflict))
 }

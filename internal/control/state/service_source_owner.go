@@ -99,10 +99,10 @@ func storedServiceSourceOwner(ctx context.Context, tx pgx.Tx, service controlsta
 	            AND endpoint.deployment_id IS NULL AND endpoint.local_source_key=source.local_source_key
 	            AND (endpoint.retired_at IS NULL OR $2)
 	            AND (SELECT count(*)=1 FROM control.service_endpoints current_endpoint
-	                WHERE current_endpoint.service_id=service.id
+	                WHERE current_endpoint.service_id=service.id AND current_endpoint.service_run_id IS NULL
 	                  AND (current_endpoint.retired_at IS NULL OR $2 AND current_endpoint.hostname=service.certificate_hostname)))
 	        OR $2 AND service.deleted_at IS NOT NULL
-	          AND NOT EXISTS(SELECT 1 FROM control.service_endpoints endpoint WHERE endpoint.service_id=service.id
+	          AND NOT EXISTS(SELECT 1 FROM control.service_endpoints endpoint WHERE endpoint.service_id=service.id AND endpoint.service_run_id IS NULL
 	              AND (endpoint.retired_at IS NULL OR endpoint.hostname=service.certificate_hostname)))
 	    FROM control.services service
 	    JOIN control.service_source_owners source ON source.service_id=service.id AND source.team_id=service.team_id

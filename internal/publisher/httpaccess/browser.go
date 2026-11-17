@@ -32,13 +32,13 @@ type BrowserClient interface {
 // Browser binds sign-in endpoints to one resource and publisher run. run owners
 // prepare policy and renewal once, then share this immutable composition.
 type Browser struct {
-	Subject                      visitorscope.Scope
-	Client                       BrowserClient
-	PreviewID, RunID, ControlURL string
-	Number                       int64
-	Token                        credentials.ServiceRunToken
-	Tokens                       *Tokens
-	Policy                       *Policy
+	Subject                                visitorscope.Scope
+	Client                                 BrowserClient
+	PreviewID, RunID, ControlURL, Hostname string
+	Number                                 int64
+	Token                                  credentials.ServiceRunToken
+	Tokens                                 *Tokens
+	Policy                                 *Policy
 }
 
 // MarshalJSON keeps run credentials and live clients out of diagnostic snapshots.
@@ -73,7 +73,7 @@ func (a *Browser) checkCurrent(request *http.Request) (controlv1.BrowserAccessRe
 	if err != nil {
 		return controlv1.BrowserAccessResponse{}, err
 	}
-	result, err := a.Client.CheckServiceBrowserSession(request.Context(), a.Subject.ID, a.RunID, a.Token, controlv1.ServiceBrowserRequest{RunNumber: a.Number, Secret: secret})
+	result, err := a.Client.CheckServiceBrowserSession(request.Context(), a.Subject.ID, a.RunID, a.Token, controlv1.ServiceBrowserRequest{RunNumber: a.Number, Hostname: a.Hostname, Secret: secret})
 	if err != nil {
 		return controlv1.BrowserAccessResponse{}, err
 	}
@@ -122,6 +122,9 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 			query.Set("switch_account", "true")
 		}
 		query.Set("service_id", a.Subject.ID)
+		if a.Hostname != "" {
+			query.Set("hostname", a.Hostname)
+		}
 		query.Set("return_path", path)
 		endpoint.RawQuery = query.Encode()
 		markBrowserLoginAttempt(response)
@@ -139,7 +142,7 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 			browserpage.Error(response, request, "invalid share session", http.StatusForbidden)
 			return true
 		}
-		input := controlv1.ServiceBrowserRequest{RunNumber: a.Number, Secret: ticket}
+		input := controlv1.ServiceBrowserRequest{RunNumber: a.Number, Hostname: a.Hostname, Secret: ticket}
 		if shareID != "" {
 			input.ShareId, input.ShareCookieSecret = &shareID, &shareSecret
 		}
@@ -247,7 +250,7 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 			return true
 		}
 		issue := func(source json.RawMessage) (controlv1.VisitorTokenResponse, error) {
-			return a.Tokens.client.IssueVisitorToken(request.Context(), controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(a.Subject.Kind), Id: a.Subject.ID}, Source: source})
+			return a.Tokens.client.IssueVisitorToken(request.Context(), controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(a.Subject.Kind), Id: a.Subject.ID}, Hostname: a.Hostname, Source: source})
 		}
 		result, err := issue(source)
 		// a revoked share does not revoke an independent browser sign-in. only
@@ -304,7 +307,7 @@ func (a *Browser) Handle(response http.ResponseWriter, request *http.Request) bo
 			return true
 		}
 		if cookie, err := request.Cookie(BrowserCookieName); err == nil {
-			if err := a.Client.RevokeServiceBrowserSession(request.Context(), a.Subject.ID, a.RunID, a.Token, controlv1.ServiceBrowserRequest{RunNumber: a.Number, Secret: cookie.Value}); err != nil {
+			if err := a.Client.RevokeServiceBrowserSession(request.Context(), a.Subject.ID, a.RunID, a.Token, controlv1.ServiceBrowserRequest{RunNumber: a.Number, Hostname: a.Hostname, Secret: cookie.Value}); err != nil {
 				browserpage.Error(response, request, "could not sign out", http.StatusServiceUnavailable)
 				return true
 			}
@@ -399,7 +402,7 @@ func (a *Browser) preparePermission(ctx context.Context, source json.RawMessage,
 		// policy can advance after control redeemed the session. the signed old
 		// token proves its subject, not current access; control must authorize a
 		// replacement for that same session before any cookie is installed.
-		next, err := a.Tokens.client.IssueVisitorToken(call, controlv1.VisitorTokenRequest{Resource: permission.Resource, Source: source})
+		next, err := a.Tokens.client.IssueVisitorToken(call, controlv1.VisitorTokenRequest{Resource: permission.Resource, Hostname: a.Hostname, Source: source})
 		if err != nil {
 			return controlv1.VisitorTokenResponse{}, err
 		}

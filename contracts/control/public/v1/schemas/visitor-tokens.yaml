@@ -76,6 +76,12 @@ schemas:
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       source: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenSource" }
+      hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        x-go-type-skip-optional-pointer: true
+        description: Select the canonical or a current exact-run HTTP hostname. Only browser, share, and HTTP grant sources support this selection; connector sources remain canonical.
   VisitorTokenResponse:
     type: object
     additionalProperties: false

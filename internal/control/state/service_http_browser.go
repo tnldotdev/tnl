@@ -28,6 +28,7 @@ const browserSessionLifetime = 24 * time.Hour
 
 type BrowserLoginAttempt struct {
 	Subject       visitorscope.Scope
+	Hostname      string
 	ServiceRunIDs []string
 	PreviewID     string
 	CompanyIntent *CompanyIntentBinding
@@ -81,15 +82,48 @@ func browserContext(digest []byte) string { return "browser-access:" + hex.Encod
 // ServiceHTTPRun carries an exact service/run credential. browser/share scopes
 // cannot be interpreted as publisher permission.
 type ServiceHTTPRun struct {
-	Subject visitorscope.Scope
-	RunID   string
-	Number  int64
-	Token   credentials.ServiceRunToken
+	Subject  visitorscope.Scope
+	RunID    string
+	Number   int64
+	Token    credentials.ServiceRunToken
+	Hostname string
 }
 
 func (a ServiceHTTPRun) valid() bool {
 	_, err := credentials.ParseServiceRunToken(a.Token)
-	return a.Subject.Kind == visitorscope.Service && a.Subject.Valid() && opaqueid.Valid(a.RunID, opaqueid.ServiceRunPrefix) && a.Number > 0 && err == nil
+	_, hostErr := serviceHTTPHostnameSelection([]string{a.Hostname})
+	return a.Subject.Kind == visitorscope.Service && a.Subject.Valid() && opaqueid.Valid(a.RunID, opaqueid.ServiceRunPrefix) && a.Number > 0 && err == nil && hostErr == nil
+}
+
+// omission selects the canonical hostname; an explicit selection is always exact.
+func serviceHTTPHostnameSelection(hostnames []string) (string, error) {
+	if len(hostnames) > 1 {
+		return "", ErrServiceAccess
+	}
+	if len(hostnames) == 0 || hostnames[0] == "" {
+		return "", nil
+	}
+	hostname, err := naming.CanonicalizeHostname(hostnames[0])
+	if err != nil || hostname != hostnames[0] {
+		return "", ErrServiceAccess
+	}
+	return hostname, nil
+}
+
+// the resource guard is held by the caller. explicit aliases must still have
+// their own ready run; canonical preparation preserves its existing lifecycle.
+func selectServiceHTTPHostname(ctx context.Context, q *controlstatedb.Queries, service, canonical, hostname string, now time.Time) (string, error) {
+	if hostname == "" {
+		return canonical, nil
+	}
+	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: service, Hostname: hostname, Now: timestamptz(now)})
+	if err != nil {
+		return "", publisherLookupError(err, ErrServiceAccess)
+	}
+	if hostname != canonical && len(endpoint.RunIds) == 0 {
+		return "", ErrServiceAccess
+	}
+	return endpoint.CertificateHostname, nil
 }
 
 func (d *Database) lockServiceHTTPRun(ctx context.Context, tx pgx.Tx, auth ServiceHTTPRun, now time.Time) error {
@@ -111,7 +145,7 @@ func validateServiceHTTPRun(ctx context.Context, q *controlstatedb.Queries, auth
 	if run.RunNumber != auth.Number || run.State != "ready" || !run.Healthy || !run.CertificateExpiresAt.Time.After(now) {
 		return ErrServiceAccess
 	}
-	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: auth.Subject.ID, Now: timestamptz(now)})
+	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: auth.Subject.ID, Hostname: auth.Hostname, Now: timestamptz(now)})
 	if err != nil {
 		return publisherLookupError(err, ErrServiceAccess)
 	}
@@ -143,12 +177,16 @@ func (d *Database) ServiceHTTPBrowserTeam(ctx context.Context, subject visitorsc
 	return endpoint.TeamID.String, nil
 }
 
-func (d *Database) BeginServiceBrowserLogin(ctx context.Context, subject visitorscope.Scope, preview, path, nonce, verifier string, binding []byte, intent *CompanyLoginIntent, now time.Time) (string, error) {
+func (d *Database) BeginServiceBrowserLogin(ctx context.Context, subject visitorscope.Scope, preview, path, nonce, verifier string, binding []byte, intent *CompanyLoginIntent, now time.Time, hostnames ...string) (string, error) {
+	hostname, err := serviceHTTPHostnameSelection(hostnames)
+	if err != nil {
+		return "", err
+	}
 	if subject.Kind != visitorscope.Service || !subject.Valid() || !naming.ValidRequestPath(path) || len(path) > 2048 || len(nonce) < 16 || len(nonce) > 256 || len(verifier) < 43 || len(verifier) > 128 || len(binding) != 32 || d.storageKey == nil {
 		return "", ErrPreviewAccess
 	}
 	q := controlstatedb.New(d.pool)
-	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: subject.ID, Now: timestamptz(now)})
+	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: subject.ID, Hostname: hostname, Now: timestamptz(now)})
 	if err != nil {
 		return "", publisherLookupError(err, ErrServiceAccess)
 	}
@@ -166,7 +204,7 @@ func (d *Database) BeginServiceBrowserLogin(ctx context.Context, subject visitor
 			return "", ErrPreviewAccess
 		}
 	}
-	private := BrowserLoginAttempt{Verifier: verifier, Subject: subject, PreviewID: preview}
+	private := BrowserLoginAttempt{Verifier: verifier, Subject: subject, PreviewID: preview, Hostname: endpoint.CertificateHostname}
 	if intent != nil {
 		private.CompanyIntent = &CompanyIntentBinding{ID: intent.ID, BindingToken: intent.BindingToken, RedirectURI: intent.RedirectURI}
 	}
@@ -236,7 +274,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	if _, err = d.serviceHTTPIdentityPermission(ctx, tx, attempt.Subject.ID, session.IdentityID, now); err != nil {
 		return result, err
 	}
-	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: attempt.Subject.ID, Now: timestamptz(now)})
+	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: attempt.Subject.ID, Hostname: attempt.Hostname, Now: timestamptz(now)})
 	if err != nil {
 		return result, err
 	}
@@ -268,7 +306,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 		return result, err
 	}
 	next := result.Origin + attempt.ReturnPath
-	issue := func(service string, captured []string, redirect string, bridge bool) (string, error) {
+	issue := func(service, hostname string, captured []string, redirect string, bridge bool) (string, error) {
 		ticket, _, err := randomBrowserSecret()
 		if err != nil {
 			return "", err
@@ -279,7 +317,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 			return "", err
 		}
 		err = q.InsertServiceHTTPBrowserHandoff(ctx, controlstatedb.InsertServiceHTTPBrowserHandoffParams{
-			TokenDigest: ticketDigest, SessionDigest: digest, ServiceID: service, RunIds: captured,
+			TokenDigest: ticketDigest, SessionDigest: digest, ServiceID: service, Hostname: hostname, RunIds: captured,
 			CookieCiphertext: sealed, StorageKeyID: d.storageKey.CurrentID(), ReturnPath: attempt.ReturnPath,
 			RedirectUrl: redirect, Bridge: bridge, ExpiresAt: timestamptz(minTime(until, now.Add(time.Minute))),
 		})
@@ -289,13 +327,13 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 		if host.ServiceID == attempt.Subject.ID {
 			continue
 		}
-		ticket, err := issue(host.ServiceID, host.RunIds, next, index%8 == 7)
+		ticket, err := issue(host.ServiceID, host.CertificateHostname, host.RunIds, next, index%8 == 7)
 		if err != nil {
 			return result, err
 		}
 		next = "https://" + host.CertificateHostname + "/__tnl/team/handoff/" + ticket
 	}
-	result.Token, err = issue(attempt.Subject.ID, runs, next, false)
+	result.Token, err = issue(attempt.Subject.ID, endpoint.CertificateHostname, runs, next, false)
 	if err != nil {
 		return result, err
 	}
@@ -305,8 +343,8 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 
 // callers validate their exact current service run before consulting the
 // service-bound browser identity. only one-use handoffs retain run captures.
-func (d *Database) serviceBrowserPermission(ctx context.Context, tx pgx.Tx, service string, digest []byte, now time.Time) (VisitorPermission, error) {
-	row, err := controlstatedb.New(tx).ServiceHTTPBrowserPermission(ctx, controlstatedb.ServiceHTTPBrowserPermissionParams{ServiceID: service, CookieDigest: digest, Now: timestamptz(now)})
+func (d *Database) serviceBrowserPermission(ctx context.Context, tx pgx.Tx, service, hostname string, digest []byte, now time.Time) (VisitorPermission, error) {
+	row, err := controlstatedb.New(tx).ServiceHTTPBrowserPermission(ctx, controlstatedb.ServiceHTTPBrowserPermissionParams{ServiceID: service, Hostname: hostname, CookieDigest: digest, Now: timestamptz(now)})
 	if err != nil {
 		return VisitorPermission{}, publisherLookupError(err, ErrVisitorSignIn)
 	}
@@ -427,7 +465,7 @@ func (d *Database) RedeemServiceBrowserHandoff(ctx context.Context, auth Service
 	if err = d.lockServiceHTTPRun(ctx, tx, auth, now); err != nil {
 		return result, err
 	}
-	row, err := controlstatedb.New(tx).RedeemServiceHTTPBrowserHandoff(ctx, controlstatedb.RedeemServiceHTTPBrowserHandoffParams{TokenDigest: digest, ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID, Now: timestamptz(now)})
+	row, err := controlstatedb.New(tx).RedeemServiceHTTPBrowserHandoff(ctx, controlstatedb.RedeemServiceHTTPBrowserHandoffParams{TokenDigest: digest, ServiceID: auth.Subject.ID, Hostname: auth.Hostname, ServiceRunID: auth.RunID, Now: timestamptz(now)})
 	if err != nil {
 		return result, publisherLookupError(err, ErrVisitorSignIn)
 	}
@@ -435,7 +473,7 @@ func (d *Database) RedeemServiceBrowserHandoff(ctx context.Context, auth Service
 	if err != nil {
 		return result, err
 	}
-	if _, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, row.SessionDigest, now); err != nil {
+	if _, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.Hostname, row.SessionDigest, now); err != nil {
 		return result, err
 	}
 	result = controlv1.BrowserHandoffResponse{CookieSecret: string(cookie), ReturnPath: row.ReturnPath, NextUrl: &row.RedirectUrl, Bridge: &row.Bridge, ExpiresAt: row.ExpiresAt.Time}
@@ -456,9 +494,9 @@ func (d *Database) ServiceBrowserSession(ctx context.Context, auth ServiceHTTPRu
 		return result, err
 	}
 	if revoke {
-		err = controlstatedb.New(tx).RevokeServiceHTTPBrowserSession(ctx, controlstatedb.RevokeServiceHTTPBrowserSessionParams{ServiceID: auth.Subject.ID, CookieDigest: digest, Now: timestamptz(now)})
+		err = controlstatedb.New(tx).RevokeServiceHTTPBrowserSession(ctx, controlstatedb.RevokeServiceHTTPBrowserSessionParams{ServiceID: auth.Subject.ID, Hostname: auth.Hostname, CookieDigest: digest, Now: timestamptz(now)})
 	} else {
-		result, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, digest, now)
+		result, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.Hostname, digest, now)
 	}
 	if errors.Is(err, ErrServiceAccess) {
 		err = ErrVisitorSignIn
@@ -475,9 +513,13 @@ func (d *Database) ServiceBrowserSession(ctx context.Context, auth ServiceHTTPRu
 // an authority network request, so busy-row retries have a longer, capped budget
 // than local visitor preparation. service and expiry remain fixed.
 func (d *Database) RefreshServiceBrowserSession(ctx context.Context, service, secret string, now time.Time,
-	refresh func(context.Context, string) (BrowserTokenRotation, error)) (BrowserAccessSession, error) {
+	refresh func(context.Context, string) (BrowserTokenRotation, error), hostnames ...string) (BrowserAccessSession, error) {
+	hostname, err := serviceHTTPHostnameSelection(hostnames)
+	if err != nil {
+		return BrowserAccessSession{}, err
+	}
 	result, err := retryVisitorPreparationWithLockAttempts(ctx, now, 64, func(at time.Time) (BrowserAccessSession, error) {
-		return d.refreshServiceBrowserSession(ctx, service, secret, at, refresh)
+		return d.refreshServiceBrowserSession(ctx, service, secret, hostname, at, refresh)
 	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr != nil && pgErr.Code == "55P03" {
@@ -486,7 +528,7 @@ func (d *Database) RefreshServiceBrowserSession(ctx context.Context, service, se
 	return result, err
 }
 
-func (d *Database) refreshServiceBrowserSession(ctx context.Context, service, secret string, now time.Time,
+func (d *Database) refreshServiceBrowserSession(ctx context.Context, service, secret, hostname string, now time.Time,
 	refresh func(context.Context, string) (BrowserTokenRotation, error)) (result BrowserAccessSession, retErr error) {
 	digest, err := browserDigest(secret)
 	if err != nil || d.storageKey == nil {
@@ -504,7 +546,7 @@ func (d *Database) refreshServiceBrowserSession(ctx context.Context, service, se
 	// read the parent under a fresh statement snapshot after taking the browser
 	// lock. a locking join can pair updated ciphertext with an old parent expiry.
 	// locking the parent instead would block the authority's own rotation.
-	row, err := q.ReadServiceHTTPBrowserSession(ctx, controlstatedb.ReadServiceHTTPBrowserSessionParams{ServiceID: service, CookieDigest: digest, ExpiresAt: timestamptz(now)})
+	row, err := q.ReadServiceHTTPBrowserSession(ctx, controlstatedb.ReadServiceHTTPBrowserSessionParams{ServiceID: service, Hostname: hostname, CookieDigest: digest, ExpiresAt: timestamptz(now)})
 	if err != nil {
 		return result, publisherLookupError(err, ErrPreviewAccess)
 	}

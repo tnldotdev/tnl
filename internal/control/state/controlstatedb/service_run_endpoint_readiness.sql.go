@@ -47,12 +47,13 @@ SELECT EXISTS(
       AND endpoint.hostname=$2::text AND endpoint.domain_id=$3::text
       AND endpoint.ingress_pool_id=$4::text
       AND endpoint.public AND endpoint.retired_at IS NULL
+      AND (endpoint.service_run_id IS NULL OR endpoint.service_run_id=$5::text)
       AND (endpoint.dns_state='published' OR endpoint.dns_state='unmanaged' AND NOT endpoint.dns_automation)
-      AND (pool.state IN('enabled','draining') OR pool.id=$5::text AND pool.state='disabled')
+      AND (pool.state IN('enabled','draining') OR pool.id=$6::text AND pool.state='disabled')
       AND EXISTS(SELECT 1 FROM control.service_connection_slots slot
         JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
           AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-        WHERE slot.service_run_id=$6::text AND slot.state='ready' AND slot.session_open
+        WHERE slot.service_run_id=$5::text AND slot.state='ready' AND slot.session_open
           AND NOT relay.draining AND relay.lease_expires_at>$7::timestamptz)
       AND EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=$4::text
         AND (CASE WHEN $8::text='http' THEN ingress.https ELSE $9::integer=ANY(ingress.service_ports) END)
@@ -68,8 +69,8 @@ type ServiceRunPublicEndpointReadyParams struct {
 	Hostname             string
 	DomainID             string
 	IngressPoolID        string
-	PrimaryIngressPoolID string
 	ServiceRunID         string
+	PrimaryIngressPoolID string
 	Now                  pgtype.Timestamptz
 	Protocol             string
 	ServicePort          int32
@@ -83,8 +84,8 @@ func (q *Queries) ServiceRunPublicEndpointReady(ctx context.Context, arg Service
 		arg.Hostname,
 		arg.DomainID,
 		arg.IngressPoolID,
-		arg.PrimaryIngressPoolID,
 		arg.ServiceRunID,
+		arg.PrimaryIngressPoolID,
 		arg.Now,
 		arg.Protocol,
 		arg.ServicePort,

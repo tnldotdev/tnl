@@ -202,6 +202,12 @@ schemas:
     properties:
       run_number:
         $ref: "#/schemas/ServiceRunPreviewRequest/properties/run_number"
+      hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        x-go-type-skip-optional-pointer: true
+        description: Exact HTTP hostname receiving the share cookie. Omission selects the canonical service hostname.
       share_id:
         $ref: "../openapi.yaml#/components/schemas/ShareID"
       secret:

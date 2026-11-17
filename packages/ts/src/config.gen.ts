@@ -141,6 +141,10 @@ export interface TnlConfig {
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
+                  /**
+                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  runAliasParent?: string;
                 }
               | {
                   type?: "address";
@@ -249,6 +253,10 @@ export interface TnlConfig {
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
+                  /**
+                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  runAliasParent?: string;
                 }
               | {
                   type: "compose";
@@ -357,6 +365,10 @@ export interface TnlConfig {
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
+                  /**
+                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  runAliasParent?: string;
                 }
               | {
                   type: "docker";
@@ -465,6 +477,10 @@ export interface TnlConfig {
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
+                  /**
+                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  runAliasParent?: string;
                 }
               | {
                   type: "eks";
@@ -561,6 +577,10 @@ export interface TnlConfig {
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
+                  /**
+                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  runAliasParent?: string;
                 }
               | {
                   type: "rds";
@@ -657,6 +677,10 @@ export interface TnlConfig {
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
+                  /**
+                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  runAliasParent?: string;
                 }
               | {
                   type: "rds";
@@ -753,6 +777,10 @@ export interface TnlConfig {
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
+                  /**
+                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  runAliasParent?: string;
                 }
               | undefined;
           };

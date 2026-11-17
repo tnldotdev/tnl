@@ -21,7 +21,7 @@ type httpPolicyAuthorizationStore struct {
 	err   error
 }
 
-func (s *httpPolicyAuthorizationStore) ReadPublisherVisitorPolicy(_ context.Context, scope visitorscope.Scope, run string, number int64, token string, _ int64, _ time.Time) (controlv1.VisitorPolicyUpdate, error) {
+func (s *httpPolicyAuthorizationStore) ReadPublisherVisitorPolicy(_ context.Context, scope visitorscope.Scope, run string, number int64, token string, _ int64, _ time.Time, _ ...string) (controlv1.VisitorPolicyUpdate, error) {
 	s.auth = serviceHTTPRun(scope.ID, run, token, number)
 	s.calls++
 	return controlv1.VisitorPolicyUpdate{}, s.err

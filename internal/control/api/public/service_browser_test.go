@@ -33,7 +33,7 @@ func (s *serviceBrowserHandoffStore) ServiceBrowserSession(context.Context, cont
 	return controlstate.VisitorPermission{Authenticated: true, IdentityID: "person", DisplayName: "Sam"}, s.identity
 }
 
-func (s *serviceBrowserHandoffStore) IssueVisitorToken(_ context.Context, _ string, scope visitorscope.Scope, source controlstate.VisitorTokenSource, now time.Time) (controlstate.IssuedVisitorToken, error) {
+func (s *serviceBrowserHandoffStore) IssueVisitorToken(_ context.Context, _ string, scope visitorscope.Scope, source controlstate.VisitorTokenSource, now time.Time, _ ...string) (controlstate.IssuedVisitorToken, error) {
 	s.source = source
 	return controlstate.IssuedVisitorToken{Permission: visitortoken.Permission{Scope: scope, ExpiresAt: now.Add(time.Minute)}}, s.permission
 }

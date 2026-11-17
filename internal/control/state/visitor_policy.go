@@ -216,15 +216,19 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	return result, nil
 }
 
-func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time) (result controlv1.VisitorPolicyUpdate, retErr error) {
+func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time, hostnames ...string) (result controlv1.VisitorPolicyUpdate, retErr error) {
+	hostname, err := serviceHTTPHostnameSelection(hostnames)
+	if err != nil {
+		return result, ErrVisitorPolicy
+	}
 	// retry a rolled-back observation with fresh time and current run authority.
 	// this never replays a credential redemption or an application admission.
 	return retryVisitorPreparation(ctx, now, func(at time.Time) (controlv1.VisitorPolicyUpdate, error) {
-		return d.readPublisherVisitorPolicyTransaction(ctx, scope, run, number, token, after, at)
+		return d.readPublisherVisitorPolicyTransaction(ctx, scope, run, number, token, after, at, hostname)
 	})
 }
 
-func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time) (result controlv1.VisitorPolicyUpdate, retErr error) {
+func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time, hostname string) (result controlv1.VisitorPolicyUpdate, retErr error) {
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
@@ -251,6 +255,18 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	// endpoint edits do not change this publisher's connector TLS identity.
 	// current policy and target trust still apply to the captured run.
 	result.Policy.Hostname = row.CertificateHostname
+	if hostname != "" && hostname != row.CertificateHostname {
+		var authorized bool
+		if err := tx.QueryRow(ctx, `SELECT control.service_run_alias_current($1,$2)`,
+			row.ID, hostname).Scan(&authorized); err != nil {
+			return result, err
+		}
+		if hostname != row.RunHostname || !authorized || result.Policy.PublicEndpoint == nil {
+			return result, ErrServiceAccess
+		}
+		result.Policy.Hostname = hostname
+		result.Policy.PublicEndpoint.Hostname = hostname
+	}
 	result.Policy.ValidUntil = minTime(result.Policy.ValidUntil, row.ServingUntil.Time)
 	if row.CertificateExpiresAt.Valid {
 		result.Policy.ValidUntil = minTime(result.Policy.ValidUntil, row.CertificateExpiresAt.Time)

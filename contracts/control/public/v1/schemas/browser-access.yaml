@@ -47,6 +47,12 @@ schemas:
           x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       secret: { type: string, maxLength: 256 }
+      hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        x-go-type-skip-optional-pointer: true
+        description: Exact HTTP hostname receiving this browser credential. Omission selects the canonical service hostname.
       share_id: { $ref: "../openapi.yaml#/components/schemas/ShareID" }
       share_cookie_secret:
         type: string

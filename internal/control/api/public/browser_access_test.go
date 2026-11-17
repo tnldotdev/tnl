@@ -39,7 +39,7 @@ type shareReviewerTokenIssuer struct {
 	requested []controlstate.VisitorTokenSource
 }
 
-func (s *shareReviewerTokenIssuer) IssueVisitorToken(_ context.Context, _ string, scope visitorscope.Scope, source controlstate.VisitorTokenSource, now time.Time) (controlstate.IssuedVisitorToken, error) {
+func (s *shareReviewerTokenIssuer) IssueVisitorToken(_ context.Context, _ string, scope visitorscope.Scope, source controlstate.VisitorTokenSource, now time.Time, _ ...string) (controlstate.IssuedVisitorToken, error) {
 	s.requested = append(s.requested, source)
 	if _, ok := source.(controlstate.BrowserSessionTokenSource); ok {
 		return controlstate.IssuedVisitorToken{}, controlstate.ErrVisitorPermission
@@ -81,7 +81,7 @@ func (s *browserFlowStore) ServiceHTTPBrowserTeam(context.Context, visitorscope.
 	return "team_1", nil
 }
 
-func (s *browserFlowStore) BeginServiceBrowserLogin(_ context.Context, subject visitorscope.Scope, previewID, path, nonce, verifier string, binding []byte, _ *controlstate.CompanyLoginIntent, _ time.Time) (string, error) {
+func (s *browserFlowStore) BeginServiceBrowserLogin(_ context.Context, subject visitorscope.Scope, previewID, path, nonce, verifier string, binding []byte, _ *controlstate.CompanyLoginIntent, _ time.Time, _ ...string) (string, error) {
 	s.login = controlstate.BrowserLoginAttempt{PreviewID: previewID, Subject: subject, ReturnPath: path, Nonce: nonce, Verifier: verifier}
 	s.binding = bytes.Clone(binding)
 	return "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", s.err
@@ -287,6 +287,6 @@ type browserSessionStoreStub struct {
 	err error
 }
 
-func (s browserSessionStoreStub) RefreshServiceBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error) {
+func (s browserSessionStoreStub) RefreshServiceBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error), ...string) (controlstate.BrowserAccessSession, error) {
 	return controlstate.BrowserAccessSession{}, s.err
 }

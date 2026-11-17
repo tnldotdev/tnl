@@ -35,7 +35,7 @@ func (d *Database) currentShareVisitorAuthority(ctx context.Context, tx pgx.Tx, 
 // every share consumer rechecks the same captured service membership and current
 // issuer management. a cookie keeps its service scope and original deadline;
 // obtaining permission after an app restart still requires a current ready run.
-func (d *Database) shareVisitorPermission(ctx context.Context, tx pgx.Tx, service, run, shareID, secret string, cookie bool, now time.Time) (time.Time, error) {
+func (d *Database) shareVisitorPermission(ctx context.Context, tx pgx.Tx, service, run, shareID, secret string, cookie bool, now time.Time, hostname string) (time.Time, error) {
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(secret)
 	if err != nil || len(raw) != 32 || base64.RawURLEncoding.EncodeToString(raw) != secret {
 		return time.Time{}, ErrVisitorPermission
@@ -59,6 +59,7 @@ func (d *Database) shareVisitorPermission(ctx context.Context, tx pgx.Tx, servic
 	var deadline time.Time
 	err = tx.QueryRow(ctx, `SELECT cookie.expires_at FROM control.share_cookies cookie
 		WHERE cookie.share_id=$1 AND cookie.service_id=$2 AND cookie.token_digest=$3 AND cookie.expires_at>$4
+		AND cookie.hostname=COALESCE(NULLIF($6::text,''),(SELECT certificate_hostname FROM control.services WHERE id=$2))
 		AND EXISTS(SELECT 1 FROM control.service_runs current_run WHERE
 		    ($5='' OR current_run.id=$5) AND current_run.service_id=cookie.service_id
 		    AND current_run.state='ready' AND current_run.healthy AND current_run.closed_at IS NULL
@@ -69,7 +70,7 @@ func (d *Database) shareVisitorPermission(ctx context.Context, tx pgx.Tx, servic
 		        JOIN control.publisher_identity_keys signing ON signing.id=current_run.publisher_key_id
 		            AND signing.publisher_identity_id=current_run.publisher_identity_id
 		            AND (grant_record.kind='service' OR signing.retired_at IS NULL))) FOR SHARE OF cookie`,
-		shareID, service, digest[:], now, run).Scan(&deadline)
+		shareID, service, digest[:], now, run, hostname).Scan(&deadline)
 	if err != nil {
 		return time.Time{}, publisherLookupError(err, ErrVisitorPermission)
 	}
@@ -99,7 +100,7 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: auth.Subject.ID, Now: timestamptz(now)})
+	endpoint, err := q.ServiceHTTPBrowserEndpoint(ctx, controlstatedb.ServiceHTTPBrowserEndpointParams{ServiceID: auth.Subject.ID, Hostname: auth.Hostname, Now: timestamptz(now)})
 	if err != nil {
 		return result, err
 	}
@@ -113,7 +114,7 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 		// the installed cookie then follows the service's current authorized runs.
 		digest := sha256.Sum256(handoff)
 		consumed, err := q.ConsumeShareHandoff(ctx, controlstatedb.ConsumeShareHandoffParams{
-			Now: timestamptz(now), TokenDigest: digest[:], ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID})
+			Now: timestamptz(now), TokenDigest: digest[:], ServiceID: auth.Subject.ID, Hostname: endpoint.CertificateHostname, ServiceRunID: auth.RunID})
 		if err != nil {
 			return result, publisherLookupError(err, ErrShareNotFound)
 		}
@@ -143,6 +144,14 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 		if err != nil {
 			return result, err
 		}
+		if auth.Hostname != "" && auth.Hostname != entry.CertificateHostname && share.EntryServiceID == auth.Subject.ID {
+			// opening a share on an exact-run address returns to that address,
+			// rather than silently selecting a sibling through the pooled host.
+			nextURL, err = serviceHTTPOrigin(endpoint)
+			if err != nil {
+				return result, err
+			}
+		}
 		hosts, err := q.ListReadyShareServices(ctx, controlstatedb.ListReadyShareServicesParams{ShareID: shareID, Now: timestamptz(now)})
 		if err != nil {
 			return result, err
@@ -169,7 +178,7 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 				return result, err
 			}
 			if _, err = q.InsertShareHandoff(ctx, controlstatedb.InsertShareHandoffParams{
-				TokenDigest: digest, ServiceID: host.ServiceID, RunIds: host.RunIds, NextUrl: nextURL,
+				TokenDigest: digest, ServiceID: host.ServiceID, Hostname: host.CertificateHostname, RunIds: host.RunIds, NextUrl: nextURL,
 				Bridge: (len(other)-index-1)%8 == 7, CreatedAt: timestamptz(now),
 				ExpiresAt: timestamptz(minTime(until, now.Add(shareHandoffLifetime))), ShareID: shareID,
 			}); err != nil {
@@ -192,7 +201,7 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 		return result, err
 	}
 	if _, err = q.InsertShareCookie(ctx, controlstatedb.InsertShareCookieParams{TokenDigest: digest, ServiceID: auth.Subject.ID,
-		CreatedAt: timestamptz(now), ExpiresAt: timestamptz(until), ShareID: shareID}); err != nil {
+		Hostname: endpoint.CertificateHostname, CreatedAt: timestamptz(now), ExpiresAt: timestamptz(until), ShareID: shareID}); err != nil {
 		return result, publisherLookupError(err, ErrShareNotFound)
 	}
 	if err = tx.Commit(ctx); err != nil {

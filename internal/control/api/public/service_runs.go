@@ -123,6 +123,9 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 		plan := managedCertificatePlan(prepared.CertificatePlan)
 		response.CertificatePlan = &plan
 	}
+	if prepared.RunHostname != "" {
+		response.RunHostname = &prepared.RunHostname
+	}
 	writeJSON(w, http.StatusCreated, response)
 }
 
@@ -173,13 +176,17 @@ func (h *handler) RenewServiceRun(w http.ResponseWriter, r *http.Request, servic
 		serviceRunProblem(r.Context(), w, "heartbeat service run", err)
 		return
 	}
-	writeJSON(w, 200, controlv1.ServiceRunState{
+	response := controlv1.ServiceRunState{
 		ServiceId: state.ServiceID, ServiceRunId: state.RunID, RunNumber: state.RunNumber,
 		State: controlv1.ServiceRunStateState(state.State), PublisherExpiresAt: state.ServingUntil, ObservedAt: state.ObservedAt,
 		EndpointRevision: state.EndpointRevision, PublicEndpointReady: state.PublicEndpointReady,
 		Healthy: &state.Healthy, StreamCapacity: &state.StreamCapacity, ActiveStreams: &state.ReportedStreams,
 		PublisherConnections: serviceRunConnections(state.Connections),
-	})
+	}
+	if state.RunHostname != "" {
+		response.RunHostname, response.RunAliasReady = &state.RunHostname, &state.RunAliasReady
+	}
+	writeJSON(w, 200, response)
 }
 
 func (h *handler) CloseServiceRun(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID) {

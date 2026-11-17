@@ -214,6 +214,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 			return result, ErrServiceConflict
 		}
 		metadata.Protocol, metadata.TLS = normalized.Protocol, trust
+		placement.RunAliasParent = normalized.RunAliasParent
 		if normalized.Hostname != "" {
 			placement.Hostname = normalized.Hostname
 		}

@@ -905,6 +905,7 @@ type ControlService struct {
 	DomainID                pgtype.Text
 	CertificateHostname     string
 	CertificateScope        string
+	RunAliasParent          string
 	ServicePort             pgtype.Int4
 	IngressPoolID           string
 	Public                  bool
@@ -996,6 +997,7 @@ type ControlServiceCreationRequest struct {
 type ControlServiceEndpoint struct {
 	Hostname              string
 	ServiceID             string
+	ServiceRunID          pgtype.Text
 	DeploymentID          pgtype.Text
 	LocalSourceKey        string
 	DomainID              string
@@ -1021,6 +1023,7 @@ type ControlServiceHttpBrowserHandoff struct {
 	TokenDigest      []byte
 	SessionDigest    []byte
 	ServiceID        string
+	Hostname         string
 	RunIds           []string
 	CookieCiphertext []byte
 	StorageKeyID     string
@@ -1173,6 +1176,8 @@ type ControlServiceRun struct {
 	CertificateDomainID        pgtype.Text
 	CertificateHostname        string
 	CertificateNamespace       string
+	RunHostname                string
+	RunAliasParent             string
 	RequirePostQuantum         bool
 	CertificateIssuanceID      pgtype.Text
 	CertificateExpiresAt       pgtype.Timestamptz
@@ -1227,6 +1232,7 @@ type ControlShareCookie struct {
 	TokenDigest []byte
 	ShareID     string
 	ServiceID   string
+	Hostname    string
 	CreatedAt   pgtype.Timestamptz
 	ExpiresAt   pgtype.Timestamptz
 }
@@ -1235,6 +1241,7 @@ type ControlShareHandoff struct {
 	TokenDigest []byte
 	ShareID     string
 	ServiceID   string
+	Hostname    string
 	RunIds      []string
 	RedirectUrl string
 	Bridge      bool

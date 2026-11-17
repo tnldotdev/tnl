@@ -15,19 +15,11 @@ import (
 )
 
 func newEphemeralHostname(namespace string) (string, error) {
-	canonical, err := naming.CanonicalizeHostname(namespace)
-	if err != nil || canonical != namespace {
+	host, err := naming.RandomHostname(naming.ServiceHostnameKind, namespace)
+	if errors.Is(err, naming.ErrGeneratedHostname) {
 		return "", ErrProjectConfigurationInvalid
 	}
-	label, err := naming.RandomHostnameLabel()
-	if err != nil {
-		return "", err
-	}
-	host := label + "." + namespace
-	if len(host) > naming.MaxHostnameBytes {
-		return "", ErrProjectConfigurationInvalid
-	}
-	return host, nil
+	return host, err
 }
 
 type AllocateServiceRequest struct {

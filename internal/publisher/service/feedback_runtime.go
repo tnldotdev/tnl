@@ -30,6 +30,7 @@ type feedbackRuntime struct {
 	service     string
 	projectRoot string
 	runID       string
+	hostname    string
 	number      int64
 	token       credentials.ServiceRunToken
 	mu          sync.Mutex
@@ -53,7 +54,7 @@ func newFeedbackRuntime(config HTTP) (*feedbackRuntime, error) {
 		demo:   config.Demo,
 		client: config.Control, state: config.State, previewID: config.PreviewID, serviceID: config.Subject.ID,
 		service: config.ProjectService, projectRoot: config.ProjectRoot,
-		runID: config.RunID, number: config.Number, token: config.Token,
+		runID: config.RunID, hostname: config.Hostname, number: config.Number, token: config.Token,
 		browsers: make(map[[32]byte]*browserTrail), asset: asset, assetPath: assetPath,
 	}, nil
 }
@@ -67,7 +68,7 @@ func (f *feedbackRuntime) local(ctx context.Context, access controlv1.FeedbackRe
 			return controlv1.FeedbackAuthorization{}, clientstate.ErrFeedbackNotFound
 		}
 		return f.client.AuthorizeReviewerFeedback(ctx, service, f.runID, controlv1.AuthorizeReviewerFeedbackRequest{
-			PreviewId: f.previewID, RunNumber: f.number, Operation: controlv1.FeedbackOperation(operation), Access: access,
+			PreviewId: f.previewID, Hostname: f.hostname, RunNumber: f.number, Operation: controlv1.FeedbackOperation(operation), Access: access,
 		}, f.token)
 	}
 	if f.demo {

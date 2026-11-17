@@ -131,6 +131,12 @@ func ValidateTNL(config TNL) error {
 		if err := validateServiceEndpoint(service.Hostname, service.Domain); err != nil {
 			return fmt.Errorf("services.%s: %w", name, err)
 		}
+		if service.RunAliasParent != nil && *service.RunAliasParent != "" {
+			parent := *service.RunAliasParent
+			if Protocol(service) != "http" || !naming.ValidGeneratedHostnameParent(parent) {
+				return fmt.Errorf("services.%s: run_alias_parent must be a canonical HTTP DNS parent of at most %d bytes", name, naming.MaxGeneratedHostnameParentBytes)
+			}
+		}
 		if service.Hostname != nil {
 			if existing := hostnames[*service.Hostname]; existing != "" {
 				return fmt.Errorf("services.%s: hostname is already used by services.%s", name, existing)

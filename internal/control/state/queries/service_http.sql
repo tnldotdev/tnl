@@ -1,9 +1,12 @@
 -- name: ServiceHTTPBrowserEndpoint :one
-SELECT s.team_id,s.guest_id,s.certificate_hostname,s.service_port,
+SELECT s.team_id,s.guest_id,
+    COALESCE(NULLIF(sqlc.arg(hostname)::text,''),s.certificate_hostname)::text AS certificate_hostname,s.service_port,
     ARRAY(SELECT run.id FROM control.service_runs run
          WHERE run.service_id=s.id AND run.state='ready' AND run.healthy
          AND run.closed_at IS NULL AND run.publisher_expires_at>sqlc.arg(now)
-         AND run.certificate_expires_at>sqlc.arg(now)
+          AND run.certificate_expires_at>sqlc.arg(now)
+          AND (sqlc.arg(hostname)::text IN('',s.certificate_hostname)
+              OR control.service_run_alias_current(run.id,sqlc.arg(hostname)::text))
          AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
              run.publisher_grant_id,s.id,sqlc.arg(now)) permission
              JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
@@ -47,8 +50,8 @@ INSERT INTO control.service_http_browser_sessions(token_digest,control_session_i
 VALUES($1,$2,sqlc.narg(parent_control_session_id),$3,$4,$5);
 
 -- name: InsertServiceHTTPBrowserHandoff :exec
-INSERT INTO control.service_http_browser_handoffs(token_digest,session_digest,service_id,run_ids,cookie_ciphertext,storage_key_id,return_path,redirect_url,bridge,expires_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
+INSERT INTO control.service_http_browser_handoffs(token_digest,session_digest,service_id,run_ids,cookie_ciphertext,storage_key_id,return_path,redirect_url,bridge,expires_at,hostname)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,sqlc.arg(hostname));
 
 -- name: LockServiceHTTPBrowserSession :one
 SELECT token_digest
@@ -67,6 +70,7 @@ LEFT JOIN control.control_sessions original ON original.id=session.parent_contro
 WHERE session.token_digest=sqlc.arg(cookie_digest) AND session.revoked_at IS NULL AND session.expires_at>sqlc.arg(expires_at)
     AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
         WHERE bound.session_digest=session.token_digest AND bound.service_id=sqlc.arg(service_id)
+        AND bound.hostname=COALESCE(NULLIF(sqlc.arg(hostname)::text,''),(SELECT certificate_hostname FROM control.services WHERE id=sqlc.arg(service_id)))
         AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL);
 
 -- name: RotateServiceHTTPBrowserSession :exec
@@ -77,6 +81,7 @@ WHERE token_digest=$1;
 UPDATE control.service_http_browser_handoffs handoff SET consumed_at=sqlc.arg(now)
 FROM control.service_http_browser_sessions session
 WHERE handoff.token_digest=sqlc.arg(token_digest) AND handoff.service_id=sqlc.arg(service_id)
+AND handoff.hostname=COALESCE(NULLIF(sqlc.arg(hostname)::text,''),(SELECT certificate_hostname FROM control.services WHERE id=sqlc.arg(service_id)))
 AND sqlc.arg(service_run_id)::text=ANY(handoff.run_ids) AND handoff.consumed_at IS NULL AND handoff.revoked_at IS NULL
 AND handoff.expires_at>sqlc.arg(now) AND session.token_digest=handoff.session_digest
 AND session.revoked_at IS NULL AND session.expires_at>sqlc.arg(now)
@@ -95,6 +100,7 @@ AND browser.expires_at>sqlc.arg(now) AND session.access_expires_at>sqlc.arg(now)
 AND (browser.parent_control_session_id IS NULL OR original.revoked_at IS NULL AND original.refresh_expires_at>sqlc.arg(now))
 AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
     WHERE bound.session_digest=browser.token_digest AND bound.service_id=sqlc.arg(service_id)
+    AND bound.hostname=COALESCE(NULLIF(sqlc.arg(hostname)::text,''),(SELECT certificate_hostname FROM control.services WHERE id=sqlc.arg(service_id)))
     AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL);
 
 -- name: ServiceHTTPPreviewTeamPermission :one
@@ -112,6 +118,7 @@ UPDATE control.service_http_browser_sessions browser SET revoked_at=COALESCE(bro
 WHERE browser.token_digest=sqlc.arg(cookie_digest)
 AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
     WHERE bound.session_digest=browser.token_digest AND bound.service_id=sqlc.arg(service_id)
+    AND bound.hostname=COALESCE(NULLIF(sqlc.arg(hostname)::text,''),(SELECT certificate_hostname FROM control.services WHERE id=sqlc.arg(service_id)))
     AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL);
 
 -- name: InsertServiceHTTPGrant :exec

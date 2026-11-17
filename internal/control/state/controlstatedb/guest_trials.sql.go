@@ -92,7 +92,7 @@ func (q *Queries) CountRecentGuestTrialsByIP(ctx context.Context, arg CountRecen
 }
 
 const findGuestServiceAllocation = `-- name: FindGuestServiceAllocation :one
-SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, run_alias_parent, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
 WHERE guest_id = $1 AND idempotency_key = $2
 `
 
@@ -128,6 +128,7 @@ func (q *Queries) FindGuestServiceAllocation(ctx context.Context, arg FindGuestS
 		&i.DomainID,
 		&i.CertificateHostname,
 		&i.CertificateScope,
+		&i.RunAliasParent,
 		&i.ServicePort,
 		&i.IngressPoolID,
 		&i.Public,
@@ -498,7 +499,7 @@ UPDATE control.service_runs
 SET publisher_expires_at = LEAST(publisher_expires_at, $1::timestamptz),
     serving_until = LEAST(serving_until, $1::timestamptz)
 WHERE id = $2
-RETURNING preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open
+RETURNING preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, run_hostname, run_alias_parent, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open
 `
 
 type LimitGuestServiceRunExpiryParams struct {
@@ -538,6 +539,8 @@ func (q *Queries) LimitGuestServiceRunExpiry(ctx context.Context, arg LimitGuest
 		&i.CertificateDomainID,
 		&i.CertificateHostname,
 		&i.CertificateNamespace,
+		&i.RunHostname,
+		&i.RunAliasParent,
 		&i.RequirePostQuantum,
 		&i.CertificateIssuanceID,
 		&i.CertificateExpiresAt,

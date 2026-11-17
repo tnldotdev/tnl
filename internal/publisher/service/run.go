@@ -59,6 +59,7 @@ type Prepared struct {
 	prepareRequest         func(*http.Request) (func(context.Context) error, error)
 	targetResolver         TargetResolver
 	managedHostname        string
+	runHostname            string
 	managedProtocol        config.ProtocolName
 	managedTargetTLS       *tls.Config
 	visitorTLS             *tls.Config
@@ -884,6 +885,7 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 		return err
 	}
 	managed := servicestream.Stream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, Handler: b.prepared.handler, HTTPRequests: b.prepared.serviceHTTPRequests,
+		RunHostname:            b.prepared.runHostname,
 		RequestBodyIdleTimeout: b.prepared.requestBodyIdleTimeout,
 		Mounts:                 b.prepared.mounts, ResolveHTTPTarget: b.prepared.resolveHTTPTarget,
 		InspectionMode: b.prepared.inspectionMode, ObserveSummary: b.prepared.observeSummary,

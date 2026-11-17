@@ -6,7 +6,10 @@
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["none", "summary"]
+          "enum": [
+            "none",
+            "summary"
+          ]
         },
         "retention": {
           "type": "string",
@@ -45,7 +48,13 @@
             "properties": {
               "protocol": {
                 "type": "string",
-                "enum": ["http", "tcp", "mysql", "postgres", "kubernetes"],
+                "enum": [
+                  "http",
+                  "tcp",
+                  "mysql",
+                  "postgres",
+                  "kubernetes"
+                ],
                 "default": "http"
               }
             },
@@ -124,7 +133,9 @@
                           },
                           "additionalProperties": false,
                           "type": "object",
-                          "required": ["team"]
+                          "required": [
+                            "team"
+                          ]
                         },
                         "public": {
                           "type": "boolean",
@@ -138,6 +149,11 @@
                           "maxLength": 253,
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "run_alias_parent": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -215,13 +231,19 @@
                               "oneOf": [
                                 {
                                   "type": "string",
-                                  "enum": ["restricted", "anonymous"]
+                                  "enum": [
+                                    "restricted",
+                                    "anonymous"
+                                  ]
                                 },
                                 {
                                   "properties": {
                                     "mode": {
                                       "type": "string",
-                                      "enum": ["restricted", "anonymous"]
+                                      "enum": [
+                                        "restricted",
+                                        "anonymous"
+                                      ]
                                     },
                                     "ip": {
                                       "items": {
@@ -283,7 +305,9 @@
                               },
                               "additionalProperties": false,
                               "type": "object",
-                              "required": ["path"],
+                              "required": [
+                                "path"
+                              ],
                               "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
                             },
                             "open": {
@@ -308,7 +332,9 @@
                                     },
                                     "additionalProperties": false,
                                     "type": "object",
-                                    "required": ["service"]
+                                    "required": [
+                                      "service"
+                                    ]
                                   }
                                 ]
                               },
@@ -385,7 +411,9 @@
                           },
                           "additionalProperties": false,
                           "type": "object",
-                          "required": ["team"]
+                          "required": [
+                            "team"
+                          ]
                         },
                         "public": {
                           "type": "boolean",
@@ -399,6 +427,11 @@
                           "maxLength": 253,
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "run_alias_parent": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -476,13 +509,19 @@
                               "oneOf": [
                                 {
                                   "type": "string",
-                                  "enum": ["restricted", "anonymous"]
+                                  "enum": [
+                                    "restricted",
+                                    "anonymous"
+                                  ]
                                 },
                                 {
                                   "properties": {
                                     "mode": {
                                       "type": "string",
-                                      "enum": ["restricted", "anonymous"]
+                                      "enum": [
+                                        "restricted",
+                                        "anonymous"
+                                      ]
                                     },
                                     "ip": {
                                       "items": {
@@ -544,7 +583,9 @@
                               },
                               "additionalProperties": false,
                               "type": "object",
-                              "required": ["path"],
+                              "required": [
+                                "path"
+                              ],
                               "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
                             },
                             "open": {
@@ -569,7 +610,9 @@
                                     },
                                     "additionalProperties": false,
                                     "type": "object",
-                                    "required": ["service"]
+                                    "required": [
+                                      "service"
+                                    ]
                                   }
                                 ]
                               },
@@ -584,7 +627,9 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["address"]
+                      "required": [
+                        "address"
+                      ]
                     },
                     {
                       "properties": {
@@ -649,7 +694,9 @@
                           },
                           "additionalProperties": false,
                           "type": "object",
-                          "required": ["team"]
+                          "required": [
+                            "team"
+                          ]
                         },
                         "public": {
                           "type": "boolean",
@@ -663,6 +710,11 @@
                           "maxLength": 253,
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "run_alias_parent": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -740,13 +792,19 @@
                               "oneOf": [
                                 {
                                   "type": "string",
-                                  "enum": ["restricted", "anonymous"]
+                                  "enum": [
+                                    "restricted",
+                                    "anonymous"
+                                  ]
                                 },
                                 {
                                   "properties": {
                                     "mode": {
                                       "type": "string",
-                                      "enum": ["restricted", "anonymous"]
+                                      "enum": [
+                                        "restricted",
+                                        "anonymous"
+                                      ]
                                     },
                                     "ip": {
                                       "items": {
@@ -808,7 +866,9 @@
                               },
                               "additionalProperties": false,
                               "type": "object",
-                              "required": ["path"],
+                              "required": [
+                                "path"
+                              ],
                               "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
                             },
                             "open": {
@@ -833,7 +893,9 @@
                                     },
                                     "additionalProperties": false,
                                     "type": "object",
-                                    "required": ["service"]
+                                    "required": [
+                                      "service"
+                                    ]
                                   }
                                 ]
                               },
@@ -848,7 +910,11 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["type", "service", "port"]
+                      "required": [
+                        "type",
+                        "service",
+                        "port"
+                      ]
                     },
                     {
                       "properties": {
@@ -906,7 +972,9 @@
                           },
                           "additionalProperties": false,
                           "type": "object",
-                          "required": ["team"]
+                          "required": [
+                            "team"
+                          ]
                         },
                         "public": {
                           "type": "boolean",
@@ -920,6 +988,11 @@
                           "maxLength": 253,
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "run_alias_parent": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -997,13 +1070,19 @@
                               "oneOf": [
                                 {
                                   "type": "string",
-                                  "enum": ["restricted", "anonymous"]
+                                  "enum": [
+                                    "restricted",
+                                    "anonymous"
+                                  ]
                                 },
                                 {
                                   "properties": {
                                     "mode": {
                                       "type": "string",
-                                      "enum": ["restricted", "anonymous"]
+                                      "enum": [
+                                        "restricted",
+                                        "anonymous"
+                                      ]
                                     },
                                     "ip": {
                                       "items": {
@@ -1065,7 +1144,9 @@
                               },
                               "additionalProperties": false,
                               "type": "object",
-                              "required": ["path"],
+                              "required": [
+                                "path"
+                              ],
                               "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
                             },
                             "open": {
@@ -1090,7 +1171,9 @@
                                     },
                                     "additionalProperties": false,
                                     "type": "object",
-                                    "required": ["service"]
+                                    "required": [
+                                      "service"
+                                    ]
                                   }
                                 ]
                               },
@@ -1105,7 +1188,11 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["type", "container", "port"]
+                      "required": [
+                        "type",
+                        "container",
+                        "port"
+                      ]
                     },
                     {
                       "properties": {
@@ -1145,7 +1232,9 @@
                           },
                           "additionalProperties": false,
                           "type": "object",
-                          "required": ["team"]
+                          "required": [
+                            "team"
+                          ]
                         },
                         "public": {
                           "type": "boolean",
@@ -1159,6 +1248,11 @@
                           "maxLength": 253,
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "run_alias_parent": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -1236,13 +1330,19 @@
                               "oneOf": [
                                 {
                                   "type": "string",
-                                  "enum": ["restricted", "anonymous"]
+                                  "enum": [
+                                    "restricted",
+                                    "anonymous"
+                                  ]
                                 },
                                 {
                                   "properties": {
                                     "mode": {
                                       "type": "string",
-                                      "enum": ["restricted", "anonymous"]
+                                      "enum": [
+                                        "restricted",
+                                        "anonymous"
+                                      ]
                                     },
                                     "ip": {
                                       "items": {
@@ -1304,7 +1404,9 @@
                               },
                               "additionalProperties": false,
                               "type": "object",
-                              "required": ["path"],
+                              "required": [
+                                "path"
+                              ],
                               "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
                             },
                             "open": {
@@ -1329,7 +1431,9 @@
                                     },
                                     "additionalProperties": false,
                                     "type": "object",
-                                    "required": ["service"]
+                                    "required": [
+                                      "service"
+                                    ]
                                   }
                                 ]
                               },
@@ -1344,7 +1448,11 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["type", "region", "cluster"]
+                      "required": [
+                        "type",
+                        "region",
+                        "cluster"
+                      ]
                     },
                     {
                       "properties": {
@@ -1390,7 +1498,9 @@
                           },
                           "additionalProperties": false,
                           "type": "object",
-                          "required": ["team"]
+                          "required": [
+                            "team"
+                          ]
                         },
                         "public": {
                           "type": "boolean",
@@ -1404,6 +1514,11 @@
                           "maxLength": 253,
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "run_alias_parent": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -1481,13 +1596,19 @@
                               "oneOf": [
                                 {
                                   "type": "string",
-                                  "enum": ["restricted", "anonymous"]
+                                  "enum": [
+                                    "restricted",
+                                    "anonymous"
+                                  ]
                                 },
                                 {
                                   "properties": {
                                     "mode": {
                                       "type": "string",
-                                      "enum": ["restricted", "anonymous"]
+                                      "enum": [
+                                        "restricted",
+                                        "anonymous"
+                                      ]
                                     },
                                     "ip": {
                                       "items": {
@@ -1549,7 +1670,9 @@
                               },
                               "additionalProperties": false,
                               "type": "object",
-                              "required": ["path"],
+                              "required": [
+                                "path"
+                              ],
                               "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
                             },
                             "open": {
@@ -1574,7 +1697,9 @@
                                     },
                                     "additionalProperties": false,
                                     "type": "object",
-                                    "required": ["service"]
+                                    "required": [
+                                      "service"
+                                    ]
                                   }
                                 ]
                               },
@@ -1589,7 +1714,11 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["type", "region", "instance"]
+                      "required": [
+                        "type",
+                        "region",
+                        "instance"
+                      ]
                     },
                     {
                       "properties": {
@@ -1612,7 +1741,10 @@
                         "instance": false,
                         "endpoint": {
                           "type": "string",
-                          "enum": ["writer", "reader"],
+                          "enum": [
+                            "writer",
+                            "reader"
+                          ],
                           "default": "writer"
                         },
                         "tls": false,
@@ -1636,7 +1768,9 @@
                           },
                           "additionalProperties": false,
                           "type": "object",
-                          "required": ["team"]
+                          "required": [
+                            "team"
+                          ]
                         },
                         "public": {
                           "type": "boolean",
@@ -1650,6 +1784,11 @@
                           "maxLength": 253,
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
+                        },
+                        "run_alias_parent": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -1727,13 +1866,19 @@
                               "oneOf": [
                                 {
                                   "type": "string",
-                                  "enum": ["restricted", "anonymous"]
+                                  "enum": [
+                                    "restricted",
+                                    "anonymous"
+                                  ]
                                 },
                                 {
                                   "properties": {
                                     "mode": {
                                       "type": "string",
-                                      "enum": ["restricted", "anonymous"]
+                                      "enum": [
+                                        "restricted",
+                                        "anonymous"
+                                      ]
                                     },
                                     "ip": {
                                       "items": {
@@ -1795,7 +1940,9 @@
                               },
                               "additionalProperties": false,
                               "type": "object",
-                              "required": ["path"],
+                              "required": [
+                                "path"
+                              ],
                               "description": "Readiness probe for a local HTTP service. Remote publisher assignments do not support HTTP settings."
                             },
                             "open": {
@@ -1820,7 +1967,9 @@
                                     },
                                     "additionalProperties": false,
                                     "type": "object",
-                                    "required": ["service"]
+                                    "required": [
+                                      "service"
+                                    ]
                                   }
                                 ]
                               },
@@ -1835,7 +1984,11 @@
                       },
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["type", "region", "cluster"]
+                      "required": [
+                        "type",
+                        "region",
+                        "cluster"
+                      ]
                     }
                   ]
                 },
@@ -1872,12 +2025,23 @@
               },
               "delivery": {
                 "type": "string",
-                "enum": ["fanout", "selected"]
+                "enum": [
+                  "fanout",
+                  "selected"
+                ]
               },
               "methods": {
                 "items": {
                   "type": "string",
-                  "enum": ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"]
+                  "enum": [
+                    "GET",
+                    "HEAD",
+                    "OPTIONS",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE"
+                  ]
                 },
                 "type": "array",
                 "minItems": 1,
@@ -1923,7 +2087,11 @@
             },
             "additionalProperties": false,
             "type": "object",
-            "required": ["path", "service", "provider"]
+            "required": [
+              "path",
+              "service",
+              "provider"
+            ]
           },
           "propertyNames": {
             "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
@@ -1936,12 +2104,18 @@
             "allOf": [
               {
                 "not": {
-                  "required": ["name", "hostname"]
+                  "required": [
+                    "name",
+                    "hostname"
+                  ]
                 }
               },
               {
                 "not": {
-                  "required": ["domain", "hostname"]
+                  "required": [
+                    "domain",
+                    "hostname"
+                  ]
                 }
               }
             ],
@@ -1972,13 +2146,19 @@
                 "oneOf": [
                   {
                     "type": "string",
-                    "enum": ["restricted", "anonymous"]
+                    "enum": [
+                      "restricted",
+                      "anonymous"
+                    ]
                   },
                   {
                     "properties": {
                       "mode": {
                         "type": "string",
-                        "enum": ["restricted", "anonymous"]
+                        "enum": [
+                          "restricted",
+                          "anonymous"
+                        ]
                       },
                       "ip": {
                         "items": {
@@ -1998,7 +2178,9 @@
             },
             "additionalProperties": false,
             "type": "object",
-            "required": ["service"]
+            "required": [
+              "service"
+            ]
           },
           "propertyNames": {
             "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
@@ -2045,7 +2227,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["file"]
+                        "required": [
+                          "file"
+                        ]
                       },
                       {
                         "properties": {
@@ -2059,7 +2243,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["env"]
+                        "required": [
+                          "env"
+                        ]
                       }
                     ]
                   },
@@ -2102,14 +2288,18 @@
                             "type": "array",
                             "minItems": 1,
                             "uniqueItems": true,
-                            "default": ["push"]
+                            "default": [
+                              "push"
+                            ]
                           },
                           "branch": false,
                           "tag": false
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["workflow"]
+                        "required": [
+                          "workflow"
+                        ]
                       },
                       {
                         "properties": {
@@ -2148,7 +2338,9 @@
                             "type": "array",
                             "minItems": 1,
                             "uniqueItems": true,
-                            "default": ["push"]
+                            "default": [
+                              "push"
+                            ]
                           },
                           "branch": {
                             "type": "string",
@@ -2158,7 +2350,10 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["workflow", "branch"]
+                        "required": [
+                          "workflow",
+                          "branch"
+                        ]
                       },
                       {
                         "properties": {
@@ -2197,7 +2392,9 @@
                             "type": "array",
                             "minItems": 1,
                             "uniqueItems": true,
-                            "default": ["push"]
+                            "default": [
+                              "push"
+                            ]
                           },
                           "branch": false,
                           "tag": {
@@ -2207,7 +2404,10 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["workflow", "tag"]
+                        "required": [
+                          "workflow",
+                          "tag"
+                        ]
                       }
                     ]
                   },
@@ -2221,7 +2421,11 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["github", "services", "deployment"]
+                "required": [
+                  "github",
+                  "services",
+                  "deployment"
+                ]
               },
               {
                 "properties": {
@@ -2259,7 +2463,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["file"]
+                        "required": [
+                          "file"
+                        ]
                       },
                       {
                         "properties": {
@@ -2273,7 +2479,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["env"]
+                        "required": [
+                          "env"
+                        ]
                       }
                     ]
                   },
@@ -2289,12 +2497,18 @@
                       },
                       "environment": {
                         "type": "string",
-                        "enum": ["production", "preview", "development"]
+                        "enum": [
+                          "production",
+                          "preview",
+                          "development"
+                        ]
                       }
                     },
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["environment"]
+                    "required": [
+                      "environment"
+                    ]
                   },
                   "deployment": {
                     "not": {
@@ -2306,7 +2520,11 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["vercel", "services", "deployment"]
+                "required": [
+                  "vercel",
+                  "services",
+                  "deployment"
+                ]
               },
               {
                 "properties": {
@@ -2344,7 +2562,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["file"]
+                        "required": [
+                          "file"
+                        ]
                       },
                       {
                         "properties": {
@@ -2358,7 +2578,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["env"]
+                        "required": [
+                          "env"
+                        ]
                       }
                     ]
                   },
@@ -2389,7 +2611,11 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["fly", "services", "deployment"]
+                "required": [
+                  "fly",
+                  "services",
+                  "deployment"
+                ]
               },
               {
                 "properties": {
@@ -2427,7 +2653,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["file"]
+                        "required": [
+                          "file"
+                        ]
                       },
                       {
                         "properties": {
@@ -2441,7 +2669,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["env"]
+                        "required": [
+                          "env"
+                        ]
                       }
                     ]
                   },
@@ -2467,7 +2697,10 @@
                     },
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["issuer", "claims"]
+                    "required": [
+                      "issuer",
+                      "claims"
+                    ]
                   },
                   "deployment": {
                     "not": {
@@ -2479,7 +2712,11 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["oidc", "services", "deployment"]
+                "required": [
+                  "oidc",
+                  "services",
+                  "deployment"
+                ]
               },
               {
                 "properties": {
@@ -2517,7 +2754,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["file"]
+                        "required": [
+                          "file"
+                        ]
                       },
                       {
                         "properties": {
@@ -2531,7 +2770,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["env"]
+                        "required": [
+                          "env"
+                        ]
                       }
                     ]
                   },
@@ -2548,7 +2789,9 @@
                     },
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["service_account"]
+                    "required": [
+                      "service_account"
+                    ]
                   },
                   "deployment": {
                     "not": {
@@ -2560,7 +2803,11 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["google", "services", "deployment"]
+                "required": [
+                  "google",
+                  "services",
+                  "deployment"
+                ]
               },
               {
                 "properties": {
@@ -2598,7 +2845,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["file"]
+                        "required": [
+                          "file"
+                        ]
                       },
                       {
                         "properties": {
@@ -2612,7 +2861,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["env"]
+                        "required": [
+                          "env"
+                        ]
                       }
                     ]
                   },
@@ -2636,7 +2887,9 @@
                     },
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["service_account"]
+                    "required": [
+                      "service_account"
+                    ]
                   },
                   "deployment": {
                     "not": {
@@ -2648,7 +2901,11 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["kubernetes", "services", "deployment"]
+                "required": [
+                  "kubernetes",
+                  "services",
+                  "deployment"
+                ]
               },
               {
                 "properties": {
@@ -2686,7 +2943,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["file"]
+                        "required": [
+                          "file"
+                        ]
                       },
                       {
                         "properties": {
@@ -2700,7 +2959,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["env"]
+                        "required": [
+                          "env"
+                        ]
                       }
                     ]
                   },
@@ -2796,7 +3057,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["branch"]
+                        "required": [
+                          "branch"
+                        ]
                       },
                       {
                         "properties": {
@@ -2844,7 +3107,9 @@
                         },
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["tag"]
+                        "required": [
+                          "tag"
+                        ]
                       }
                     ]
                   },
@@ -2858,7 +3123,11 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["gitlab", "services", "deployment"]
+                "required": [
+                  "gitlab",
+                  "services",
+                  "deployment"
+                ]
               }
             ]
           },
@@ -2887,7 +3156,12 @@
       "properties": {
         "role": {
           "type": "string",
-          "enum": ["standalone", "control", "ingress", "relay"],
+          "enum": [
+            "standalone",
+            "control",
+            "ingress",
+            "relay"
+          ],
           "description": "Process role: ${enum}.",
           "default": "standalone"
         },
@@ -2914,7 +3188,10 @@
         },
         "control_client_ip_header": {
           "type": "string",
-          "enum": ["X-Forwarded-For", "Fly-Client-IP"],
+          "enum": [
+            "X-Forwarded-For",
+            "Fly-Client-IP"
+          ],
           "description": "Source header overwritten by the trusted control HTTPS proxy.",
           "default": "X-Forwarded-For"
         },
@@ -2969,7 +3246,10 @@
         },
         "managed_url_mode": {
           "type": "string",
-          "enum": ["simple", "generated"],
+          "enum": [
+            "simple",
+            "generated"
+          ],
           "description": "Managed-domain service hostname labels: ${enum}.",
           "default": "simple"
         },
@@ -3340,7 +3620,9 @@
           "maxItems": 128,
           "minItems": 1,
           "description": "Managed TCP ports exposed by this ingress pool: 1-128 non-overlapping declarations, at most 256 ports from 1024 to 65535. Direct ingress binds every port; proxied ingress requires destination metadata.",
-          "default": ["20000-20015"]
+          "default": [
+            "20000-20015"
+          ]
         },
         "relay_service_id": {
           "type": "string",
@@ -3442,5 +3724,7 @@
   },
   "additionalProperties": false,
   "type": "object",
-  "required": ["version"]
+  "required": [
+    "version"
+  ]
 }

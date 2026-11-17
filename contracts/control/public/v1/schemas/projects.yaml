@@ -306,6 +306,10 @@ schemas:
         type: boolean
         default: false
         description: Remove this service after its publication stops rather than retaining it for a later run.
+      run_alias_parent:
+        type: string
+        maxLength: 224
+        description: Opt in to exact-run HTTP addresses beneath this authorized DNS parent. Empty disables aliases without changing target trust or stopping connector sessions.
       require_post_quantum:
         type: boolean
         description: Require hybrid post-quantum key agreement for visitor TLS, independently of target TLS.

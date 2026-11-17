@@ -18,15 +18,15 @@ import (
 )
 
 type visitorTokenIssuer interface {
-	IssueVisitorToken(context.Context, string, visitorscope.Scope, controlstate.VisitorTokenSource, time.Time) (controlstate.IssuedVisitorToken, error)
+	IssueVisitorToken(context.Context, string, visitorscope.Scope, controlstate.VisitorTokenSource, time.Time, ...string) (controlstate.IssuedVisitorToken, error)
 }
 
-func (h *handler) redeemedVisitorPermission(ctx context.Context, scope visitorscope.Scope, source controlstate.VisitorTokenSource) (controlv1.VisitorTokenResponse, error) {
+func (h *handler) redeemedVisitorPermission(ctx context.Context, scope visitorscope.Scope, source controlstate.VisitorTokenSource, hostnames ...string) (controlv1.VisitorTokenResponse, error) {
 	issuer, ok := h.dependencies.VisitorTokens, h.dependencies.VisitorTokens != nil
 	if !ok {
 		return controlv1.VisitorTokenResponse{}, controlstate.ErrVisitorSigningKey
 	}
-	issued, err := issuer.IssueVisitorToken(ctx, h.config.ControlURL, scope, source, time.Now())
+	issued, err := issuer.IssueVisitorToken(ctx, h.config.ControlURL, scope, source, time.Now(), hostnames...)
 	if err != nil {
 		return controlv1.VisitorTokenResponse{}, err
 	}
@@ -70,12 +70,12 @@ func (h *handler) IssueVisitorToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if browser, ok := source.(controlstate.BrowserSessionTokenSource); ok {
-		if _, err := h.refreshBrowserSignIn(ctx, scope, browser.Secret); err != nil {
+		if _, err := h.refreshBrowserSignIn(ctx, scope, browser.Secret, body.Hostname); err != nil {
 			writeVisitorTokenProblem(r.Context(), w, err)
 			return
 		}
 	}
-	result, err := store.IssueVisitorToken(ctx, h.config.ControlURL, scope, source, time.Now())
+	result, err := store.IssueVisitorToken(ctx, h.config.ControlURL, scope, source, time.Now(), body.Hostname)
 	if err != nil {
 		writeVisitorTokenProblem(r.Context(), w, err)
 		return

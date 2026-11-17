@@ -308,7 +308,7 @@ func (b *Tokens) refresh(ctx context.Context, report func(error)) {
 		}
 		if source.response.VisitorPolicyRevision != view.VisitorPolicyRevision || !source.response.ExpiresAt.After(view.AuthorityTime(now).Add(time.Minute)) {
 			due = append(due, browserTokenRenewal{key: key, source: source, generation: source.generation,
-				request: controlv1.VisitorTokenRequest{Resource: source.response.Resource, Source: bytes.Clone(source.source)}, permission: source.permission, parentDeadline: source.parentDeadline, reprepared: source.reprepared})
+				request: controlv1.VisitorTokenRequest{Resource: source.response.Resource, Hostname: source.response.Hostname, Source: bytes.Clone(source.source)}, permission: source.permission, parentDeadline: source.parentDeadline, reprepared: source.reprepared})
 		}
 	}
 	b.mu.Unlock()

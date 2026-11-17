@@ -36,6 +36,7 @@ func TestServiceTLSWildcardSNIIsServiceBound(t *testing.T) {
 		{"uppercase_same_name", strings.ToUpper(hostname), true},
 		{"covered_sibling", "api.production.storefront.example.test", false},
 		{"another_covered_sibling", "other.production.storefront.example.test", false},
+		{"configured_alias_is_not_tcp_authority", "r-aaaaaaaaaaaaaaaaaaaaaaaaaa.production.storefront.example.test", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			// a certificate-name failure must not substitute for service sni isolation.
@@ -60,7 +61,7 @@ func TestServiceTLSWildcardSNIIsServiceBound(t *testing.T) {
 			var authorizations, targetConnections atomic.Int32
 			// tcp isolates the shared tls/sni gate from later http authority checks.
 			stream := servicestream.Stream{
-				Protocol: config.ProtocolTCP, Hostname: hostname, Target: target.Addr().String(),
+				Protocol: config.ProtocolTCP, Hostname: hostname, RunHostname: "r-aaaaaaaaaaaaaaaaaaaaaaaaaa.production.storefront.example.test", Target: target.Addr().String(),
 				TLS: &tls.Config{
 					Certificates: []tls.Certificate{certificates.server},
 					MinVersion:   tls.VersionTLS13, MaxVersion: tls.VersionTLS13,

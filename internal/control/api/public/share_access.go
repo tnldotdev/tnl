@@ -40,12 +40,13 @@ func (h *handler) RedeemServiceShare(response http.ResponseWriter, request *http
 		return
 	}
 	auth := serviceHTTPRun(service, run, token, body.RunNumber)
+	auth.Hostname = body.Hostname
 	result, err := h.shareAccess.RedeemShare(request.Context(), auth, shareID, secret, handoff, time.Now())
 	if err != nil {
 		writeControlStateProblem(request.Context(), response, "redeem share", err)
 		return
 	}
-	permission, err := h.redeemedVisitorPermission(request.Context(), auth.Subject, controlstate.ShareSessionTokenSource{ShareID: result.ShareID, Secret: result.CookieSecret})
+	permission, err := h.redeemedVisitorPermission(request.Context(), auth.Subject, controlstate.ShareSessionTokenSource{ShareID: result.ShareID, Secret: result.CookieSecret, RunID: run}, body.Hostname)
 	if err != nil {
 		writeVisitorTokenProblem(request.Context(), response, err)
 		return

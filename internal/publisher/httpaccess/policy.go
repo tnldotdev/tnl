@@ -7,6 +7,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -26,8 +27,8 @@ type Policy struct {
 
 // PreparePolicy starts one run-bound policy owner. close joins refresh before
 // retiring its guards; the same owner serves HTTP and connector admission.
-func PreparePolicy(ctx context.Context, client PolicyClient, scope visitorscope.Scope, run string, number int64, token string, report func(error)) (*Policy, error) {
-	if client == nil || run == "" || number < 1 || token == "" {
+func PreparePolicy(ctx context.Context, client PolicyClient, scope visitorscope.Scope, run string, number int64, token string, report func(error), hostnames ...string) (*Policy, error) {
+	if client == nil || run == "" || number < 1 || token == "" || len(hostnames) > 1 {
 		return nil, errors.New("visitor policy needs the current publisher run")
 	}
 	lease, err := visitorlease.New(scope, nil)
@@ -35,6 +36,9 @@ func PreparePolicy(ctx context.Context, client PolicyClient, scope visitorscope.
 		return nil, err
 	}
 	p := &Policy{lease: lease, client: client, token: token, done: make(chan struct{}), gate: make(chan struct{}, 1), request: controlv1.PublisherVisitorPolicyRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, RunId: run, RunNumber: number}}
+	if len(hostnames) == 1 {
+		p.request.Hostname = hostnames[0]
+	}
 	if err := p.Refresh(ctx); err != nil {
 		lease.Close()
 		return nil, err
@@ -90,6 +94,9 @@ func (p *Policy) Refresh(ctx context.Context) error {
 	}
 	if err := refreshContextError(call); err != nil {
 		return err
+	}
+	if body.Hostname != "" && response.Policy.Hostname != body.Hostname {
+		return visitortoken.ErrBinding
 	}
 	update, err := visitorlease.Decode(response)
 	if err != nil {

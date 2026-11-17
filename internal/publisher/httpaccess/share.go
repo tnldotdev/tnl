@@ -55,7 +55,7 @@ func (a *Shares) Redeem(ctx context.Context, path string) (controlv1.ShareRedemp
 	}
 	const linkPrefix = "/__tnl/share/"
 	const handoffPrefix = "/__tnl/share/handoff/"
-	request := controlv1.RedeemServiceShareRequest{RunNumber: browser.Number}
+	request := controlv1.RedeemServiceShareRequest{RunNumber: browser.Number, Hostname: browser.Hostname}
 	if token, found := strings.CutPrefix(path, handoffPrefix); found {
 		if decoded, err := base64.RawURLEncoding.Strict().DecodeString(token); err != nil || len(decoded) != 32 {
 			return controlv1.ShareRedemption{}, visitortoken.ErrToken
