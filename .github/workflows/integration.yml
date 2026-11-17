@@ -21,7 +21,8 @@ jobs:
       fail-fast: false
       matrix:
         suite: [runtime:shard]
-        shard: [1/4, 2/4, 3/4, 4/4]
+        # modulo eight splits each old runtime shard into i and i+4.
+        shard: [1/8, 2/8, 3/8, 4/8, 5/8, 6/8, 7/8, 8/8]
         include:
           # modulo eight splits each old state shard into i and i+4.
           - suite: state:shard

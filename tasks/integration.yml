@@ -34,7 +34,7 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
 
   runtime:shard:
-    desc: Run a runtime shard, excluding separately scheduled lease, direct UDP, and rebinding proofs
+    desc: Run a runtime shard (SHARD=1/8), excluding separately scheduled lease, workload, direct UDP, and rebinding proofs
     requires:
       vars: [SHARD]
     cmds:
