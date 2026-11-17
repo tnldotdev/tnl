@@ -557,7 +557,11 @@ func (d *Database) ReviewerFeedbackScope(ctx context.Context, auth ServiceHTTPRu
 
 func (state FeedbackThreadState) transition(event FeedbackEventType) (FeedbackThreadState, error) {
 	switch event {
-	case FeedbackReply, FeedbackUpdate:
+	case FeedbackReply:
+		if state == FeedbackOpen || state == FeedbackResolved {
+			return state, nil
+		}
+	case FeedbackUpdate:
 		if state == FeedbackOpen {
 			return state, nil
 		}

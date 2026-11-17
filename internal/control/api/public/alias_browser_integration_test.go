@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -256,6 +257,15 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 		thread.Report.Author.DisplayName != reviewer.Identity.Identity.DisplayName {
 		t.Fatal("API report lost the authenticated reviewer snapshot", err)
 	}
+	resolution, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "explicit-resolve",
+		controlv1.AppendReviewerFeedbackEventRequest{RunNumber: auth.Number, Type: controlv1.ReviewerFeedbackInputResolved, Access: report.Access}, auth.Token)
+	if err != nil {
+		t.Fatal("authorized reviewer could not explicitly resolve feedback", err)
+	}
+	resolved, err := f.d.GetFeedback(ctx, thread.Id)
+	if err != nil || resolved.State != controlstate.FeedbackResolved {
+		t.Fatal("explicit resolve did not persist resolved state", err)
+	}
 	reply := controlv1.AppendReviewerFeedbackEventRequest{RunNumber: auth.Number, Type: controlv1.ReviewerFeedbackInputReply,
 		Text: new("A signed-in follow-up"), Access: report.Access}
 	reply.Access.BrowserCookieSecret = nil
@@ -263,16 +273,44 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 		t.Fatal("share-only API reply bypassed required sign-in", err)
 	}
 	reply.Access = report.Access
+	noPermission := reply
+	noPermission.Access.ShareId, noPermission.Access.CookieSecret = nil, nil
+	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "resolved-without-preview-access", noPermission, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+		t.Fatal("verified author alone authorized a resolved reply", err)
+	}
 	event, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "signed-reply", reply, auth.Token)
 	if err != nil || event.Author == nil || !event.Author.Verified || event.Author.IdentityId == nil ||
-		*event.Author.IdentityId != reviewer.Identity.Identity.Id {
+		*event.Author.IdentityId != reviewer.Identity.Identity.Id || event.Cursor != resolution.Cursor+1 {
 		t.Fatal("API reply lost its verified author", err)
+	}
+	duplicate, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "signed-reply", reply, auth.Token)
+	if err != nil || duplicate.Cursor != event.Cursor {
+		t.Fatal("resolved API reply retry appended another event", err)
+	}
+	changed := reply
+	changed.Text = new("Different intent")
+	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "signed-reply", changed, auth.Token); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+		t.Fatal("resolved API reply accepted changed idempotent intent", err)
+	}
+	current, err := client.GetReviewerFeedbackThread(ctx, service.ID, auth.RunID, thread.Id,
+		controlv1.ReviewerFeedbackReadRequest{PreviewId: preview.ID, RunNumber: auth.Number, Access: report.Access}, auth.Token)
+	if err != nil || current.State != controlv1.Resolved || !reflect.DeepEqual(current.Report, thread.Report) ||
+		!reflect.DeepEqual(current.Evidence, thread.Evidence) || !reflect.DeepEqual(current.SourceAtReport, thread.SourceAtReport) ||
+		!reflect.DeepEqual(current.Anchor, thread.Anchor) || current.LatestEventCursor != event.Cursor {
+		t.Fatal("resolved API reply reopened feedback or rewrote its immutable report", err)
+	}
+	currentStored, err := f.d.GetFeedback(ctx, thread.Id)
+	if err != nil || !currentStored.StateUpdatedAt.Equal(resolved.StateUpdatedAt) {
+		t.Fatal("reply changed the explicit status timestamp", err)
 	}
 	if _, err := f.d.SetTeamFeedbackPolicy(ctx, p.IdentityID, m.TeamId, "team_members", f.now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.CreateFeedbackReport(ctx, service.ID, auth.RunID, "team-members-only", report, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
 		t.Fatal("signed-in share reviewer bypassed team-only feedback", err)
+	}
+	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "team-only-resolved-reply", reply, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+		t.Fatal("resolved reply bypassed the current author policy", err)
 	}
 	if _, err := f.d.SetTeamFeedbackPolicy(ctx, p.IdentityID, m.TeamId, "signed_in", f.now); err != nil {
 		t.Fatal(err)
@@ -302,6 +340,28 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 			t.Fatal("unrelated signed-in CLI/API actor gained management access", err)
 		}
 	}
+	history, err := client.ListReviewerFeedbackEvents(ctx, service.ID, auth.RunID, thread.Id,
+		controlv1.ReviewerFeedbackReadRequest{PreviewId: preview.ID, RunNumber: auth.Number, Access: report.Access, AfterCursor: &resolution.Cursor}, auth.Token)
+	if err != nil || len(history.Events) != 2 || history.Events[0].Type != controlv1.Reply ||
+		history.Events[1].Type != controlv1.Reply || history.Events[0].Cursor != event.Cursor ||
+		history.Events[1].Cursor != event.Cursor+1 || history.EventCursor != history.Events[1].Cursor {
+		t.Fatal("resolved reviewer/implementer replies lost append order or cursor resume", err)
+	}
+	afterReplies, err := f.d.GetFeedback(ctx, thread.Id)
+	if err != nil || afterReplies.State != controlstate.FeedbackResolved || afterReplies.MessageCount != 3 {
+		t.Fatal("implementer reply implicitly reopened resolved feedback", err)
+	}
+	// expire only the share, not its browser author or publisher. the API must
+	// recheck current permission even for a retry of an already accepted reply.
+	if _, err := f.sql.Exec(ctx, `UPDATE control.shares SET created_at=$2::timestamptz-interval '1 hour', expires_at=$2 WHERE id=$1`, share.ID, f.now.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "signed-reply", reply, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
+		t.Fatal("resolved reply retry outlived its share permission", err)
+	}
+	if _, err := f.sql.Exec(ctx, `UPDATE control.shares SET created_at=$2, expires_at=$2::timestamptz+interval '1 hour' WHERE id=$1`, share.ID, f.now); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.d.RevokeShare(ctx, share.ID, p.IdentityID, f.now); err != nil {
 		t.Fatal(err)
 	}
@@ -310,6 +370,10 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	}
 	if _, err := client.AppendReviewerFeedbackEvent(ctx, service.ID, auth.RunID, thread.Id, "revoked-reply", reply, auth.Token); !errors.As(err, &problem) || problem.Status != 403 {
 		t.Fatal("verified browser author bypassed current reply permission", err)
+	}
+	afterDenied, err := f.d.GetFeedback(ctx, thread.Id)
+	if err != nil || !reflect.DeepEqual(afterDenied, afterReplies) {
+		t.Fatal("denied resolved replies changed feedback history or state", err)
 	}
 	if err := f.d.RevokeControlSession(ctx, p, f.now); err != nil {
 		t.Fatal(err)

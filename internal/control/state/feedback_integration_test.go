@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -158,13 +159,33 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 		t.Fatal("implementer author was not derived from the transaction", updated)
 	}
 	resolve := AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackThreadResolved, Text: "Looks good", IdempotencyKey: "reviewer-resolve", Actor: actor}
-	if _, err := database.AppendFeedback(t.Context(), resolve, now.Add(4*time.Second)); err != nil {
+	resolution, err := database.AppendFeedback(t.Context(), resolve, now.Add(4*time.Second))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.AppendFeedback(t.Context(), AppendFeedbackRequest{
-		FeedbackID: thread.ID, Type: FeedbackReply, Text: "late", IdempotencyKey: "late", Actor: actor,
-	}, now.Add(5*time.Second)); !errors.Is(err, ErrFeedbackState) {
-		t.Fatalf("resolved thread received another reply: %v", err)
+	beforeReply, err := database.GetFeedback(t.Context(), thread.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replyWhileResolved := AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply,
+		Text: "One clarification without reopening", IdempotencyKey: "resolved-reply", Actor: actor}
+	clarification, err := database.AppendFeedback(t.Context(), replyWhileResolved, now.Add(5*time.Second))
+	if err != nil || clarification.Type != FeedbackReply || clarification.Cursor != resolution.Cursor+1 ||
+		!clarification.AuthorVerified || clarification.AuthorIdentityID != identity {
+		t.Fatalf("authorized resolved reply = %+v, %v", clarification, err)
+	}
+	duplicate, err = database.AppendFeedback(t.Context(), replyWhileResolved, now.Add(5*time.Second))
+	if err != nil || duplicate.Cursor != clarification.Cursor {
+		t.Fatalf("resolved reply retry appended another event: %+v, %v", duplicate, err)
+	}
+	afterReply, err := database.GetFeedback(t.Context(), thread.ID)
+	if err != nil || afterReply.State != FeedbackResolved || afterReply.MessageCount != beforeReply.MessageCount+1 ||
+		afterReply.LatestEventCursor != clarification.Cursor {
+		t.Fatalf("resolved reply changed status or lost activity: %+v, %v", afterReply, err)
+	}
+	afterReply.MessageCount, afterReply.LatestEventCursor = beforeReply.MessageCount, beforeReply.LatestEventCursor
+	if !reflect.DeepEqual(afterReply, beforeReply) {
+		t.Fatal("resolved reply rewrote the original report or status timestamp")
 	}
 	reopen := AppendFeedbackRequest{
 		FeedbackID: thread.ID, Type: FeedbackThreadReopened, Text: "One more suggestion",
@@ -203,19 +224,21 @@ func TestIntegrationFeedbackReportEventsResolveReopenAndResume(t *testing.T) {
 		t.Fatalf("revoked reviewer wrote feedback: %v", err)
 	}
 	events, err := database.ListFeedbackEventsForTeam(t.Context(), f.project.TeamID, firstPage.EventCursor)
-	if err != nil || len(events.Events) != 6 || events.EventCursor != events.Events[len(events.Events)-1].Cursor {
+	if err != nil || len(events.Events) != 7 || events.EventCursor != events.Events[len(events.Events)-1].Cursor {
 		t.Fatalf("resumed events = %+v, %v", events, err)
 	}
+	eventTypes := []FeedbackEventType{FeedbackReply, FeedbackUpdate, FeedbackThreadResolved, FeedbackReply,
+		FeedbackThreadReopened, FeedbackThreadResolved, FeedbackThreadReopened}
 	for index, event := range events.Events {
-		if event.Cursor != firstPage.EventCursor+uint64(index)+1 {
-			t.Fatalf("feedback cursor gap at %d: %+v", index, events.Events)
+		if event.Cursor != firstPage.EventCursor+uint64(index)+1 || event.Type != eventTypes[index] {
+			t.Fatalf("feedback cursor gap or reordered history at %d: %+v", index, events.Events)
 		}
 	}
 	listed, err := database.ListFeedbackForPage(t.Context(), preview.ID, f.service.ID, "/settings/profile", "")
 	if err != nil || len(listed.Threads) != 1 || listed.Threads[0].State != FeedbackOpen {
 		t.Fatalf("page feedback = %+v, %v", listed, err)
 	}
-	if listed.Threads[0].MessageCount != 3 || listed.Threads[0].LatestEventCursor != events.EventCursor || listed.Threads[0].PageTitle != "Profile settings" {
+	if listed.Threads[0].MessageCount != 4 || listed.Threads[0].LatestEventCursor != events.EventCursor || listed.Threads[0].PageTitle != "Profile settings" {
 		t.Fatalf("summary activity = %+v", listed.Threads[0])
 	}
 	all, err := database.ListFeedbackForService(t.Context(), preview.ID, f.service.ID, "", "open", "")
@@ -263,5 +286,83 @@ func TestIntegrationFeedbackCursorsOrderConcurrentReports(t *testing.T) {
 	page, err := f.database.ListFeedbackEventsForTeam(t.Context(), f.project.TeamID, 0)
 	if err != nil || len(page.Events) != 2 || page.Events[0].Cursor != 1 || page.Events[1].Cursor != 2 || page.EventCursor != 2 {
 		t.Fatalf("concurrent creation event cursors = %+v, %v", page, err)
+	}
+}
+
+func TestIntegrationFeedbackResolvedReplyRechecksAuthorAndPreviewAccess(t *testing.T) {
+	for _, change := range []string{"missing author", "no preview access", "share revoked", "share expired",
+		"author session revoked", "author session wrong service", "author policy", "preview removed"} {
+		t.Run(change, func(t *testing.T) {
+			f := newServiceHTTPFixture(t)
+			d, ctx := f.database, t.Context()
+			f.run = f.publish(t, f.service)
+			preview := f.preview(t, "resolved-access", f.service)
+			secret := []byte(strings.Repeat("s", 32))
+			share := f.share(t, preview.ID, "resolved-share", secret, f.service)
+			identity := finalVisitorIdentity(t, d, f.now, "resolved-reviewer@example.test")
+			cookie, session := finalBrowserSession(t, f, preview.ID, identity)
+			browser, err := base64.RawURLEncoding.Strict().DecodeString(cookie)
+			if err != nil {
+				t.Fatal(err)
+			}
+			auth := f.auth()
+			actor := FeedbackActor{Kind: "reviewer", SourceIP: "192.0.2.9", ServiceRun: &auth,
+				ShareID: share.ID, ShareSecret: secret, BrowserCookieSecret: browser}
+			thread, err := d.CreateFeedback(ctx, auth, feedbackProofRequest(t, preview.ID, actor, "report"), f.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolution, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackThreadResolved,
+				IdempotencyKey: "resolve", Actor: actor}, f.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := d.GetFeedback(ctx, thread.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			at, want := f.now, ErrFeedbackAccess
+			switch change {
+			case "missing author":
+				actor.BrowserCookieSecret = nil
+				want = ErrVisitorSignIn
+			case "no preview access":
+				actor.ShareID, actor.ShareSecret = "", nil
+			case "share revoked":
+				_, err = d.RevokeShare(ctx, share.ID, f.project.ActorID, f.now)
+			case "share expired":
+				_, err = d.pool.Exec(ctx, `UPDATE control.shares SET expires_at=$2 WHERE id=$1`, share.ID, f.now.Add(time.Second))
+				at = f.now.Add(2 * time.Second)
+			case "author session revoked":
+				err = d.RevokeControlSession(ctx, ControlPrincipal{IdentityID: identity, SessionID: session.SessionID}, f.now)
+				want = ErrVisitorSignIn
+			case "author session wrong service":
+				other := f
+				other.service = f.local(t, "other", nil)
+				other.run = f.publish(t, other.service)
+				otherPreview := other.preview(t, "other-preview", other.service)
+				actor.BrowserCookieSecret = feedbackBrowserSecret(t, ctx, other, otherPreview.ID, identity)
+				want = ErrVisitorSignIn
+			case "author policy":
+				_, err = d.SetTeamFeedbackPolicy(ctx, f.project.ActorID, f.project.TeamID, "team_members", f.now)
+			case "preview removed":
+				_, err = d.pool.Exec(ctx, `DELETE FROM control.preview_services WHERE preview_id=$1 AND service_id=$2`, preview.ID, f.service.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: thread.ID, Type: FeedbackReply,
+				Text: "Denied clarification", IdempotencyKey: "denied", Actor: actor}, at); !errors.Is(err, want) {
+				t.Fatal("resolved feedback bypassed current author or preview permission", err)
+			}
+			after, err := d.GetFeedback(ctx, thread.ID)
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatal("denied resolved reply changed the report, state, or activity", err)
+			}
+			history, err := d.ListFeedbackEventsForThread(ctx, thread.ID, 0)
+			if err != nil || len(history.Events) != 2 || history.EventCursor != resolution.Cursor {
+				t.Fatal("denied resolved reply appended history or consumed a cursor", err)
+			}
+		})
 	}
 }

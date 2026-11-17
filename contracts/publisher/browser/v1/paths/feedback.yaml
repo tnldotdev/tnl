@@ -37,6 +37,8 @@ paths:
         body after an uncertain response; a different body with the same key
         conflicts. The publisher captures source state and control sanitizes
         submitted evidence. A report without an anchor refers to the page.
+        Activity is optional and is not added by the publisher. Review labels
+        and paths before sharing; sanitization does not detect every secret.
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
       requestBody:
@@ -48,7 +50,6 @@ paths:
             example:
               schema_version: 1
               text: Save says it worked, but the change disappears after reload.
-              display_name: Sam
               page_path: /settings
               page_title: settings
               evidence: { schema_version: 1, actions: [], failed_requests: [] }
@@ -67,7 +68,7 @@ paths:
     get:
       operationId: getBrowserFeedbackThread
       summary: Read the immutable report and current thread state
-      description: The thread must belong to this publisher's preview and public URL.
+      description: The thread must belong to this publisher's preview and service.
       responses:
         "200":
           description: Report, anchor, evidence, source state, and current thread state
@@ -106,9 +107,10 @@ paths:
       summary: Reply, resolve, or reopen a thread through current preview access
       description: >-
         Reuse the same Idempotency-Key and body when retrying. Replies require
-        text and an open thread. Resolution and reopening accept an optional
-        note. Browser visitors cannot post an implementer update or select its
-        source state. The body is bounded to 64 KiB.
+        text and may be appended to open or resolved threads without changing
+        their state. Resolution and reopening require an explicit event and
+        accept an optional note. Browser visitors cannot post an implementer
+        update or select its source state. The body is bounded to 64 KiB.
       parameters:
         - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
       requestBody:

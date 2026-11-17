@@ -64,6 +64,28 @@ func TestIntegrationDemoFeedbackCleanupAndRetainedProjectFeedback(t *testing.T) 
 			if _, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: projectThread.ID, Type: FeedbackThreadResolved, IdempotencyKey: "after-stop", Actor: FeedbackActor{Kind: "implementer", IdentityID: f.project.ActorID}}, now.Add(10*time.Minute)); err != nil {
 				t.Fatalf("retained feedback could not be resolved: %v", err)
 			}
+			reply, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: projectThread.ID, Type: FeedbackReply,
+				Text: "A clarification after service deletion", IdempotencyKey: "retained-reply",
+				Actor: FeedbackActor{Kind: "implementer", IdentityID: f.project.ActorID}}, now.Add(10*time.Minute))
+			if err != nil || !reply.AuthorVerified || reply.AuthorIdentityID != f.project.ActorID {
+				t.Fatal("authorized manager could not reply to retained resolved feedback", err)
+			}
+			if _, err := d.AppendFeedback(ctx, AppendFeedbackRequest{FeedbackID: projectThread.ID, Type: FeedbackReply,
+				Text: "Stale reviewer", IdempotencyKey: "deleted-service-reviewer",
+				Actor: FeedbackActor{Kind: "reviewer", ServiceRun: new(f.auth()), SourceIP: "192.0.2.9", BrowserCookieSecret: browser}}, now.Add(10*time.Minute)); !errors.Is(err, ErrServiceAccess) {
+				t.Fatal("retained history restored deleted service reviewer authority", err)
+			}
+			retained, err := d.GetFeedback(ctx, projectThread.ID)
+			if err != nil || retained.State != FeedbackResolved || retained.ReportText != projectThread.ReportText ||
+				string(retained.SourceAtReport) != string(projectThread.SourceAtReport) || retained.MessageCount != 2 {
+				t.Fatal("retained reply reopened feedback or changed the first report", err)
+			}
+			history, err := d.ListFeedbackEventsForThread(ctx, projectThread.ID, 0)
+			if err != nil || len(history.Events) != 3 || history.Events[0].Type != FeedbackCreated ||
+				history.Events[1].Type != FeedbackThreadResolved || history.Events[2].Type != FeedbackReply ||
+				history.EventCursor != reply.Cursor {
+				t.Fatal("retained feedback lost its ordered history", err)
+			}
 		})
 	}
 }

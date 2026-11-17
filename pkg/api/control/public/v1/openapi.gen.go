@@ -5513,7 +5513,7 @@ type ClientInterface interface {
 
 	// AppendFeedbackEventWithBody Reply, record a checkout update, resolve, or reopen feedback
 	//
-	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5522,7 +5522,7 @@ type ClientInterface interface {
 
 	// AppendFeedbackEvent Reply, record a checkout update, resolve, or reopen feedback
 	//
-	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6751,7 +6751,7 @@ type ClientInterface interface {
 
 	// AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
 	//
-	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6760,7 +6760,7 @@ type ClientInterface interface {
 
 	// AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
 	//
-	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7347,7 +7347,7 @@ func (c *Client) ListFeedbackThreadEvents(ctx context.Context, feedbackId Feedba
 
 // AppendFeedbackEventWithBody Reply, record a checkout update, resolve, or reopen feedback
 //
-// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7366,7 +7366,7 @@ func (c *Client) AppendFeedbackEventWithBody(ctx context.Context, feedbackId Fee
 
 // AppendFeedbackEvent Reply, record a checkout update, resolve, or reopen feedback
 //
-// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10045,7 +10045,7 @@ func (c *Client) ListPreviewPageFeedback(ctx context.Context, serviceId ServiceI
 
 // AppendReviewerFeedbackEventWithBody Reply, resolve, or reopen feedback through preview access
 //
-// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10064,7 +10064,7 @@ func (c *Client) AppendReviewerFeedbackEventWithBody(ctx context.Context, servic
 
 // AppendReviewerFeedbackEvent Reply, resolve, or reopen feedback through preview access
 //
-// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -17743,7 +17743,7 @@ type ClientWithResponsesInterface interface {
 
 	// AppendFeedbackEventWithBodyWithResponse Reply, record a checkout update, resolve, or reopen feedback
 	//
-	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -17752,7 +17752,7 @@ type ClientWithResponsesInterface interface {
 
 	// AppendFeedbackEventWithResponse Reply, record a checkout update, resolve, or reopen feedback
 	//
-	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+	// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19057,7 +19057,7 @@ type ClientWithResponsesInterface interface {
 
 	// AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
 	//
-	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -19066,7 +19066,7 @@ type ClientWithResponsesInterface interface {
 
 	// AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
 	//
-	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+	// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -25823,7 +25823,7 @@ func (c *ClientWithResponses) ListFeedbackThreadEventsWithResponse(ctx context.C
 
 // AppendFeedbackEventWithBodyWithResponse Reply, record a checkout update, resolve, or reopen feedback
 //
-// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -25838,7 +25838,7 @@ func (c *ClientWithResponses) AppendFeedbackEventWithBodyWithResponse(ctx contex
 
 // AppendFeedbackEventWithResponse Reply, record a checkout update, resolve, or reopen feedback
 //
-// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Control derives the verified author from the current sign-in; events never edit the immutable first report.
+// Append an authorized reply, source-state update, resolution, or reopening using an idempotency key. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author from the current sign-in; events never edit the immutable first report.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28013,7 +28013,7 @@ func (c *ClientWithResponses) ListPreviewPageFeedbackWithResponse(ctx context.Co
 
 // AppendReviewerFeedbackEventWithBodyWithResponse Reply, resolve, or reopen feedback through preview access
 //
-// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28028,7 +28028,7 @@ func (c *ClientWithResponses) AppendReviewerFeedbackEventWithBodyWithResponse(ct
 
 // AppendReviewerFeedbackEventWithResponse Reply, resolve, or reopen feedback through preview access
 //
-// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Control derives the verified author; the first report and previous events stay immutable.
+// Append a reply, resolution, or reopening through the exact service run token and the reviewer's current body access proof. Replies are allowed on open and resolved threads without changing their state; resolving or reopening requires an explicit event. Control derives the verified author; the first report and previous events stay immutable.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

@@ -108,7 +108,7 @@ export function ThreadView({
             }}
           >
             <label>
-              {data.thread.state === "open" ? "Reply" : "Note (optional)"}
+              Reply
               <textarea
                 disabled={!signedIn || append.isPending}
                 maxLength={4000}
@@ -116,11 +116,9 @@ export function ThreadView({
                 onInput={(event) => setText(event.currentTarget.value)}
               />
             </label>
-            {data.thread.state === "open" && (
-              <button type="submit" disabled={!signedIn || append.isPending || !text.trim()}>
-                Send reply
-              </button>
-            )}
+            <button type="submit" disabled={!signedIn || append.isPending || !text.trim()}>
+              Send reply
+            </button>
             <button
               type="button"
               disabled={!signedIn || append.isPending}

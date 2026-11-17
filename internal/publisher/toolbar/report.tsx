@@ -31,7 +31,7 @@ export function ReportForm({
   browserName?: string | undefined;
 }) {
   const [text, setText] = useState("");
-  const [includeActivity, setIncludeActivity] = useState(true);
+  const [includeActivity, setIncludeActivity] = useState(false);
   const [activity] = useState(() => actions().slice(-20));
   const [draftKey] = useState(() => crypto.randomUUID());
   const key = useRef(mutationKey());
@@ -109,6 +109,11 @@ export function ReportForm({
             />
             Include activity
           </label>
+          {includeActivity && (
+            <small>
+              Review context before sharing. Labels and paths may contain sensitive text.
+            </small>
+          )}
           {includeActivity && failures.isPending && <small>loading request context…</small>}
           {includeActivity && failures.error && (
             <small>request context unavailable; omit activity to send</small>

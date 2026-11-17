@@ -200,6 +200,7 @@ test("placement creates only a local draft, prevents app activation, and sends s
     screen.getByRole("textbox", { name: "Feedback", exact: true }),
     "Improve this label",
   );
+  await user.click(screen.getByRole("checkbox", { name: "Include activity" }));
   await user.click(screen.getByText(/^context/));
   await screen.findByText(/POST \/api/);
   expect(screen.queryByText(/"selectors"/)).toBeNull();
@@ -212,6 +213,61 @@ test("placement creates only a local draft, prevents app activation, and sends s
     anchor: { schema_version: 1, selectors: expect.arrayContaining(["#save"]) },
     evidence: { actions: [], failed_requests: [] },
   });
+});
+
+test("activity is omitted by default and draft creation does not fetch request context", async () => {
+  const { api, user } = mount();
+  const app = appButton();
+  await user.click(app);
+  await openDraft(user, app);
+  expect(
+    (screen.getByRole("checkbox", { name: "Include activity" }) as HTMLInputElement).checked,
+  ).toBe(false);
+  expect(api.evidence).not.toHaveBeenCalled();
+  expect(api.report).not.toHaveBeenCalled();
+  await user.type(
+    screen.getByRole("textbox", { name: "Feedback", exact: true }),
+    "Only this report",
+  );
+  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await waitFor(() => expect(api.report).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(api.report).mock.calls[0]?.[0].evidence).toMatchObject({
+    element: { label: "Save" },
+    actions: [],
+    failed_requests: [],
+  });
+  expect(api.evidence).not.toHaveBeenCalled();
+});
+
+test("activity is explicitly selected, reviewable, bounded, and frozen across a manual retry", async () => {
+  const { api, user } = mount();
+  const app = appButton();
+  for (let index = 0; index < 25; index++) await user.click(app);
+  await openDraft(user, app);
+  expect(api.evidence).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("checkbox", { name: "Include activity" }));
+  await user.click(screen.getByText(/^context/));
+  await screen.findByText(/POST \/api/);
+  expect(screen.getByText("recent activity")).toBeTruthy();
+  expect(screen.getByText(/labels and paths may contain sensitive text/i)).toBeTruthy();
+  expect(api.report).not.toHaveBeenCalled();
+  await user.type(
+    screen.getByRole("textbox", { name: "Feedback", exact: true }),
+    "Reviewed context",
+  );
+  vi.mocked(api.report).mockRejectedValueOnce(new Error("lost reply"));
+  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await screen.findByRole("alert");
+  await user.click(app);
+  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await waitFor(() => expect(api.report).toHaveBeenCalledTimes(2));
+  const [first, second] = vi.mocked(api.report).mock.calls;
+  expect(first?.[0].evidence.actions).toHaveLength(20);
+  expect(first?.[0].evidence.failed_requests).toEqual([
+    { method: "POST", path: "/api", status: 500, duration_ms: 25 },
+  ]);
+  expect(second?.slice(0, 2)).toEqual(first?.slice(0, 2));
+  expect(api.evidence).toHaveBeenCalledTimes(1);
 });
 
 test("cancel discards an unsent draft without creating a server thread", async () => {
@@ -259,16 +315,30 @@ test("reply, resolve, and reopen share the same conversation and preserve histor
   });
   await user.click(screen.getByRole("button", { name: "Resolve", exact: true }));
   await screen.findByRole("button", { name: "Reopen", exact: true });
-  expect(screen.queryByRole("button", { name: "Send reply" })).toBeNull();
+  await user.type(screen.getByRole("textbox", { name: "Reply", exact: true }), "A clarification");
+  vi.mocked(api.append).mockResolvedValueOnce({
+    ...created,
+    cursor: "4",
+    type: "reply",
+    text: "A clarification",
+  });
+  await user.click(screen.getByRole("button", { name: "Send reply" }));
+  await waitFor(() => expect(api.append).toHaveBeenCalledTimes(3));
+  expect(vi.mocked(api.append).mock.calls[2]?.slice(0, 3)).toEqual([
+    id,
+    "reply",
+    "A clarification",
+  ]);
+  expect(screen.getByRole("button", { name: "Reopen", exact: true })).toBeTruthy();
   vi.mocked(api.append).mockImplementationOnce(async () => {
     vi.mocked(api.inspect).mockResolvedValue(report);
-    return { ...created, cursor: "4", type: "thread.reopened" };
+    return { ...created, cursor: "5", type: "thread.reopened" };
   });
   await user.click(screen.getByRole("button", { name: "Reopen", exact: true }));
   await screen.findByRole("button", { name: "Send reply" });
   expect(
     within(screen.getByRole("list", { name: "History" })).getAllByRole("listitem"),
-  ).toHaveLength(4);
+  ).toHaveLength(5);
 });
 
 test("page and status filters are sent to the hostname-scoped API", async () => {

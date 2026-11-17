@@ -35,7 +35,8 @@ func TestFeedbackConversationTransitions(t *testing.T) {
 			{FeedbackOpen, FeedbackReply, FeedbackOpen},
 			{FeedbackOpen, FeedbackThreadResolved, FeedbackResolved},
 			{FeedbackResolved, FeedbackThreadReopened, FeedbackOpen},
-			{FeedbackResolved, FeedbackReply, ""},
+			{FeedbackResolved, FeedbackReply, FeedbackResolved},
+			{FeedbackResolved, FeedbackUpdate, ""},
 			{FeedbackOpen, FeedbackThreadReopened, ""},
 			{FeedbackResolved, FeedbackThreadResolved, ""},
 		} {

@@ -188,6 +188,32 @@ func TestFeedbackResolveAndReopenUsePreviewAccess(t *testing.T) {
 	}
 }
 
+func TestFeedbackReportDoesNotAddUnselectedBrowserActivity(t *testing.T) {
+	control := &feedbackControlStub{}
+	runtime := &feedbackRuntime{client: control, previewID: "pv_0123456789abcdefghijkl", service: "web",
+		serviceID: "svc_0123456789abcdefghijkl", runID: "srun_0123456789abcdefghijkl", number: 2,
+		token: "run-token", demo: true, browsers: make(map[[32]byte]*browserTrail)}
+	cookie := &http.Cookie{Name: httpaccess.FeedbackBrowserCookieName, Value: visitorfixture.BrowserCookie}
+	failed := httptest.NewRequest(http.MethodGet, "https://preview.example.test/fail?token=private", nil)
+	failed.AddCookie(cookie)
+	failed = runtime.prepareBrowser(httptest.NewRecorder(), failed)
+	runtime.observe(failed, http.StatusInternalServerError)
+	if len(runtime.evidenceForBrowser(failed)) != 1 {
+		t.Fatal("fixture did not capture a browser-local failure")
+	}
+	request := httptest.NewRequest(http.MethodPost, "/__tnl/feedback", strings.NewReader(
+		`{"schema_version":1,"text":"Only the reviewed report","page_path":"/","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`))
+	request.AddCookie(cookie)
+	request.Header.Set("Idempotency-Key", "omit-activity")
+	response := httptest.NewRecorder()
+	runtime.handle(response, request, feedbackAuthorization{allowed: true})
+	if response.Code != http.StatusOK || control.create.Report.Text != "Only the reviewed report" ||
+		control.create.Evidence.SchemaVersion != 1 || len(control.create.Evidence.Actions) != 0 ||
+		len(control.create.Evidence.FailedRequests) != 0 || control.create.Evidence.Element != nil {
+		t.Fatal("publisher added unselected activity to the report", response.Code, response.Body.String())
+	}
+}
+
 func TestFeedbackListFiltersKeepPublisherScope(t *testing.T) {
 	for _, path := range []string{"/__tnl/feedback?state=resolved", "/__tnl/feedback?state=resolved&path=%2Fsettings"} {
 		client := &feedbackControlStub{}

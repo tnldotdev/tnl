@@ -269,7 +269,7 @@ type ClientInterface interface {
 
 	// CreateBrowserFeedbackReportWithBody Create a report and its first history event
 	//
-	// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page.
+	// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page. Activity is optional and is not added by the publisher. Review labels and paths before sharing; sanitization does not detect every secret.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -278,7 +278,7 @@ type ClientInterface interface {
 
 	// CreateBrowserFeedbackReport Create a report and its first history event
 	//
-	// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page.
+	// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page. Activity is optional and is not added by the publisher. Review labels and paths before sharing; sanitization does not detect every secret.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -294,7 +294,7 @@ type ClientInterface interface {
 
 	// GetBrowserFeedbackThread Read the immutable report and current thread state
 	//
-	// The thread must belong to this publisher's preview and public URL.
+	// The thread must belong to this publisher's preview and service.
 	//
 	// Corresponds with GET /__tnl/feedback/{feedback_id} (the `GetBrowserFeedbackThread` operationId).
 	GetBrowserFeedbackThread(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -308,7 +308,7 @@ type ClientInterface interface {
 
 	// AppendBrowserFeedbackEventWithBody Reply, resolve, or reopen a thread through current preview access
 	//
-	// Reuse the same Idempotency-Key and body when retrying. Replies require text and an open thread. Resolution and reopening accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
+	// Reuse the same Idempotency-Key and body when retrying. Replies require text and may be appended to open or resolved threads without changing their state. Resolution and reopening require an explicit event and accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -317,7 +317,7 @@ type ClientInterface interface {
 
 	// AppendBrowserFeedbackEvent Reply, resolve, or reopen a thread through current preview access
 	//
-	// Reuse the same Idempotency-Key and body when retrying. Replies require text and an open thread. Resolution and reopening accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
+	// Reuse the same Idempotency-Key and body when retrying. Replies require text and may be appended to open or resolved threads without changing their state. Resolution and reopening require an explicit event and accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -361,7 +361,7 @@ func (c *Client) ListBrowserFeedback(ctx context.Context, params *ListBrowserFee
 
 // CreateBrowserFeedbackReportWithBody Create a report and its first history event
 //
-// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page.
+// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page. Activity is optional and is not added by the publisher. Review labels and paths before sharing; sanitization does not detect every secret.
 //
 // Takes any type of body and a specified content type.
 //
@@ -380,7 +380,7 @@ func (c *Client) CreateBrowserFeedbackReportWithBody(ctx context.Context, params
 
 // CreateBrowserFeedbackReport Create a report and its first history event
 //
-// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page.
+// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page. Activity is optional and is not added by the publisher. Review labels and paths before sharing; sanitization does not detect every secret.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -416,7 +416,7 @@ func (c *Client) GetBrowserFeedbackEvidence(ctx context.Context, reqEditors ...R
 
 // GetBrowserFeedbackThread Read the immutable report and current thread state
 //
-// The thread must belong to this publisher's preview and public URL.
+// The thread must belong to this publisher's preview and service.
 //
 // Corresponds with GET /__tnl/feedback/{feedback_id} (the `GetBrowserFeedbackThread` operationId).
 func (c *Client) GetBrowserFeedbackThread(ctx context.Context, feedbackId FeedbackID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -450,7 +450,7 @@ func (c *Client) ListBrowserFeedbackEvents(ctx context.Context, feedbackId Feedb
 
 // AppendBrowserFeedbackEventWithBody Reply, resolve, or reopen a thread through current preview access
 //
-// Reuse the same Idempotency-Key and body when retrying. Replies require text and an open thread. Resolution and reopening accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
+// Reuse the same Idempotency-Key and body when retrying. Replies require text and may be appended to open or resolved threads without changing their state. Resolution and reopening require an explicit event and accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
 //
 // Takes any type of body and a specified content type.
 //
@@ -469,7 +469,7 @@ func (c *Client) AppendBrowserFeedbackEventWithBody(ctx context.Context, feedbac
 
 // AppendBrowserFeedbackEvent Reply, resolve, or reopen a thread through current preview access
 //
-// Reuse the same Idempotency-Key and body when retrying. Replies require text and an open thread. Resolution and reopening accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
+// Reuse the same Idempotency-Key and body when retrying. Replies require text and may be appended to open or resolved threads without changing their state. Resolution and reopening require an explicit event and accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -890,7 +890,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateBrowserFeedbackReportWithBodyWithResponse Create a report and its first history event
 	//
-	// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page.
+	// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page. Activity is optional and is not added by the publisher. Review labels and paths before sharing; sanitization does not detect every secret.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -899,7 +899,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateBrowserFeedbackReportWithResponse Create a report and its first history event
 	//
-	// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page.
+	// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page. Activity is optional and is not added by the publisher. Review labels and paths before sharing; sanitization does not detect every secret.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -917,7 +917,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetBrowserFeedbackThreadWithResponse Read the immutable report and current thread state
 	//
-	// The thread must belong to this publisher's preview and public URL.
+	// The thread must belong to this publisher's preview and service.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -935,7 +935,7 @@ type ClientWithResponsesInterface interface {
 
 	// AppendBrowserFeedbackEventWithBodyWithResponse Reply, resolve, or reopen a thread through current preview access
 	//
-	// Reuse the same Idempotency-Key and body when retrying. Replies require text and an open thread. Resolution and reopening accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
+	// Reuse the same Idempotency-Key and body when retrying. Replies require text and may be appended to open or resolved threads without changing their state. Resolution and reopening require an explicit event and accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -944,7 +944,7 @@ type ClientWithResponsesInterface interface {
 
 	// AppendBrowserFeedbackEventWithResponse Reply, resolve, or reopen a thread through current preview access
 	//
-	// Reuse the same Idempotency-Key and body when retrying. Replies require text and an open thread. Resolution and reopening accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
+	// Reuse the same Idempotency-Key and body when retrying. Replies require text and may be appended to open or resolved threads without changing their state. Resolution and reopening require an explicit event and accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -1278,7 +1278,7 @@ func (c *ClientWithResponses) ListBrowserFeedbackWithResponse(ctx context.Contex
 
 // CreateBrowserFeedbackReportWithBodyWithResponse Create a report and its first history event
 //
-// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page.
+// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page. Activity is optional and is not added by the publisher. Review labels and paths before sharing; sanitization does not detect every secret.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1293,7 +1293,7 @@ func (c *ClientWithResponses) CreateBrowserFeedbackReportWithBodyWithResponse(ct
 
 // CreateBrowserFeedbackReportWithResponse Create a report and its first history event
 //
-// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page.
+// The body is bounded to 64 KiB. Reuse the same Idempotency-Key and frozen body after an uncertain response; a different body with the same key conflicts. The publisher captures source state and control sanitizes submitted evidence. A report without an anchor refers to the page. Activity is optional and is not added by the publisher. Review labels and paths before sharing; sanitization does not detect every secret.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1323,7 +1323,7 @@ func (c *ClientWithResponses) GetBrowserFeedbackEvidenceWithResponse(ctx context
 
 // GetBrowserFeedbackThreadWithResponse Read the immutable report and current thread state
 //
-// The thread must belong to this publisher's preview and public URL.
+// The thread must belong to this publisher's preview and service.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -1353,7 +1353,7 @@ func (c *ClientWithResponses) ListBrowserFeedbackEventsWithResponse(ctx context.
 
 // AppendBrowserFeedbackEventWithBodyWithResponse Reply, resolve, or reopen a thread through current preview access
 //
-// Reuse the same Idempotency-Key and body when retrying. Replies require text and an open thread. Resolution and reopening accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
+// Reuse the same Idempotency-Key and body when retrying. Replies require text and may be appended to open or resolved threads without changing their state. Resolution and reopening require an explicit event and accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1368,7 +1368,7 @@ func (c *ClientWithResponses) AppendBrowserFeedbackEventWithBodyWithResponse(ctx
 
 // AppendBrowserFeedbackEventWithResponse Reply, resolve, or reopen a thread through current preview access
 //
-// Reuse the same Idempotency-Key and body when retrying. Replies require text and an open thread. Resolution and reopening accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
+// Reuse the same Idempotency-Key and body when retrying. Replies require text and may be appended to open or resolved threads without changing their state. Resolution and reopening require an explicit event and accept an optional note. Browser visitors cannot post an implementer update or select its source state. The body is bounded to 64 KiB.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
