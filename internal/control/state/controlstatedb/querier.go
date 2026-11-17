@@ -236,6 +236,9 @@ type Querier interface {
 	// the exact run token grants negative reads only while an existing window remains.
 	HasRetainedConnectorPeerPair(ctx context.Context, arg HasRetainedConnectorPeerPairParams) (bool, error)
 	HasTeamMembershipHistory(ctx context.Context, arg HasTeamMembershipHistoryParams) (bool, error)
+	// a refused upsert retains the lease row lock. distinguish only its expired
+	// same-run drain from configuration conflicts and another live process.
+	IngressRegistrationDrainExpired(ctx context.Context, arg IngressRegistrationDrainExpiredParams) (bool, error)
 	InitializeConnectorPeerSession(ctx context.Context, arg InitializeConnectorPeerSessionParams) (ControlConnectorPeerPair, error)
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
 	InsertCertificateIssuanceAuditEvent(ctx context.Context, arg InsertCertificateIssuanceAuditEventParams) error

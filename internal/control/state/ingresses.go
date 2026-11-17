@@ -98,6 +98,17 @@ func (d *Database) RegisterIngress(
 		ServingUntil:   timestamptz(now.Add(d.servingTolerance())),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
+		expired, lookupErr := queries.IngressRegistrationDrainExpired(ctx, controlstatedb.IngressRegistrationDrainExpiredParams{
+			IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
+			Region: string(registration.Region), IngressPoolID: registration.IngressPoolID,
+			Https: registration.HTTPS, ServicePorts: append([]int32{}, registration.ServicePorts...), Now: timestamptz(now),
+		})
+		if lookupErr != nil {
+			return IngressLease{}, fmt.Errorf("controlstate: classify refused ingress registration: %w", lookupErr)
+		}
+		if expired {
+			return IngressLease{}, ErrIngressLeaseStale
+		}
 		return IngressLease{}, ErrIngressAlreadyRunning
 	}
 	if err != nil {

@@ -80,10 +80,24 @@ WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
     AND control.ingress_leases.region=EXCLUDED.region
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
     AND control.ingress_leases.https=EXCLUDED.https
-    AND control.ingress_leases.service_ports=EXCLUDED.service_ports)
+    AND control.ingress_leases.service_ports=EXCLUDED.service_ports
+    AND (NOT control.ingress_leases.draining
+        OR (control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
+            AND control.ingress_leases.drain_deadline > EXCLUDED.registered_at)))
    OR (control.ingress_leases.ingress_run_id <> EXCLUDED.ingress_run_id
        AND control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at)
 RETURNING *;
+
+-- name: IngressRegistrationDrainExpired :one
+-- a refused upsert retains the lease row lock. distinguish only its expired
+-- same-run drain from configuration conflicts and another live process.
+SELECT EXISTS (
+    SELECT 1 FROM control.ingress_leases
+    WHERE ingress_id=sqlc.arg(ingress_id) AND ingress_run_id=sqlc.arg(ingress_run_id)
+        AND region=sqlc.arg(region) AND ingress_pool_id=sqlc.arg(ingress_pool_id)
+        AND https=sqlc.arg(https) AND service_ports=sqlc.arg(service_ports)
+        AND draining AND (lease_expires_at<=sqlc.arg(now) OR drain_deadline<=sqlc.arg(now))
+);
 
 -- name: FenceIngressRun :one
 INSERT INTO control.ingress_run_fences (ingress_id, ingress_run_id, ingress_lease_revision)
@@ -106,6 +120,7 @@ WHERE ingress_id = sqlc.arg(ingress_id)
   AND ingress_run_id = sqlc.arg(ingress_run_id)
   AND ingress_lease_revision = sqlc.arg(ingress_lease_revision)
   AND serving_until > sqlc.arg(renewed_at)
+  AND (NOT draining OR (lease_expires_at > sqlc.arg(renewed_at) AND drain_deadline > sqlc.arg(renewed_at)))
 RETURNING *;
 
 -- name: BeginIngressDrain :one

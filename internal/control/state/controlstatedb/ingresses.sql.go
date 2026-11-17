@@ -177,6 +177,43 @@ func (q *Queries) GetIngressServingLease(ctx context.Context, arg GetIngressServ
 	return i, err
 }
 
+const ingressRegistrationDrainExpired = `-- name: IngressRegistrationDrainExpired :one
+SELECT EXISTS (
+    SELECT 1 FROM control.ingress_leases
+    WHERE ingress_id=$1 AND ingress_run_id=$2
+        AND region=$3 AND ingress_pool_id=$4
+        AND https=$5 AND service_ports=$6
+        AND draining AND (lease_expires_at<=$7 OR drain_deadline<=$7)
+)
+`
+
+type IngressRegistrationDrainExpiredParams struct {
+	IngressID     string
+	IngressRunID  string
+	Region        string
+	IngressPoolID string
+	Https         bool
+	ServicePorts  []int32
+	Now           pgtype.Timestamptz
+}
+
+// a refused upsert retains the lease row lock. distinguish only its expired
+// same-run drain from configuration conflicts and another live process.
+func (q *Queries) IngressRegistrationDrainExpired(ctx context.Context, arg IngressRegistrationDrainExpiredParams) (bool, error) {
+	row := q.db.QueryRow(ctx, ingressRegistrationDrainExpired,
+		arg.IngressID,
+		arg.IngressRunID,
+		arg.Region,
+		arg.IngressPoolID,
+		arg.Https,
+		arg.ServicePorts,
+		arg.Now,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const lockIngressLease = `-- name: LockIngressLease :one
 SELECT region, id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, https, service_ports, reported_connections, draining, drain_deadline, registered_at, renewed_at, lease_expires_at, serving_until
 FROM control.ingress_leases
@@ -306,7 +343,10 @@ WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
     AND control.ingress_leases.region=EXCLUDED.region
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
     AND control.ingress_leases.https=EXCLUDED.https
-    AND control.ingress_leases.service_ports=EXCLUDED.service_ports)
+    AND control.ingress_leases.service_ports=EXCLUDED.service_ports
+    AND (NOT control.ingress_leases.draining
+        OR (control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
+            AND control.ingress_leases.drain_deadline > EXCLUDED.registered_at)))
    OR (control.ingress_leases.ingress_run_id <> EXCLUDED.ingress_run_id
        AND control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at)
 RETURNING region, id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, https, service_ports, reported_connections, draining, drain_deadline, registered_at, renewed_at, lease_expires_at, serving_until
@@ -378,6 +418,7 @@ WHERE ingress_id = $5
   AND ingress_run_id = $6
   AND ingress_lease_revision = $7
   AND serving_until > $2
+  AND (NOT draining OR (lease_expires_at > $2 AND drain_deadline > $2))
 RETURNING region, id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, https, service_ports, reported_connections, draining, drain_deadline, registered_at, renewed_at, lease_expires_at, serving_until
 `
 
