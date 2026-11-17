@@ -399,7 +399,7 @@ type Querier interface {
 	// run closure holds its parent first. lock shared orders in stable order before
 	// taking a fresh consumer snapshot, so concurrent final closes cannot miss both.
 	LockServiceCertificateOrdersForConsumer(ctx context.Context, serviceRunID string) ([]string, error)
-	LockServiceHTTPBrowserSession(ctx context.Context, arg LockServiceHTTPBrowserSessionParams) (LockServiceHTTPBrowserSessionRow, error)
+	LockServiceHTTPBrowserSession(ctx context.Context, tokenDigest []byte) ([]byte, error)
 	LockServiceRecoveryEpisode(ctx context.Context, id int64) (ControlServiceRecoveryEpisode, error)
 	LockServiceRun(ctx context.Context, arg LockServiceRunParams) (ControlServiceRun, error)
 	// guest first readiness retains DNS publication through the clock transition.
@@ -452,6 +452,7 @@ type Querier interface {
 	ReadConnectorPeerObservationRelayBounds(ctx context.Context, arg ReadConnectorPeerObservationRelayBoundsParams) ([]ReadConnectorPeerObservationRelayBoundsRow, error)
 	ReadPublisherGrant(ctx context.Context, arg ReadPublisherGrantParams) (ControlPublisherGrant, error)
 	ReadPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
+	ReadServiceHTTPBrowserSession(ctx context.Context, arg ReadServiceHTTPBrowserSessionParams) (ReadServiceHTTPBrowserSessionRow, error)
 	ReadServiceIPKey(ctx context.Context, arg ReadServiceIPKeyParams) (ReadServiceIPKeyRow, error)
 	ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error)
 	ReadVisitorPolicyRevision(ctx context.Context, resourceID string) (int64, error)

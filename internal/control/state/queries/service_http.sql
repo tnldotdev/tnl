@@ -51,6 +51,12 @@ INSERT INTO control.service_http_browser_handoffs(token_digest,session_digest,se
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
 
 -- name: LockServiceHTTPBrowserSession :one
+SELECT token_digest
+FROM control.service_http_browser_sessions
+WHERE token_digest=$1
+FOR UPDATE NOWAIT;
+
+-- name: ReadServiceHTTPBrowserSession :one
 SELECT session.*, parent.identity_id,person.display_name,parent.access_expires_at,
     LEAST(parent.refresh_expires_at,original.refresh_expires_at)::timestamptz AS refresh_expires_at,
     COALESCE(parent.revoked_at,original.revoked_at) AS parent_revoked_at
@@ -61,8 +67,7 @@ LEFT JOIN control.control_sessions original ON original.id=session.parent_contro
 WHERE session.token_digest=sqlc.arg(cookie_digest) AND session.revoked_at IS NULL AND session.expires_at>sqlc.arg(expires_at)
     AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
         WHERE bound.session_digest=session.token_digest AND bound.service_id=sqlc.arg(service_id)
-        AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
-FOR UPDATE OF session NOWAIT;
+        AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL);
 
 -- name: RotateServiceHTTPBrowserSession :exec
 UPDATE control.service_http_browser_sessions SET refresh_ciphertext=$2,storage_key_id=$3
