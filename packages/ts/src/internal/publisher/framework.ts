@@ -104,6 +104,9 @@ export async function closeFramework(prepared: PreparedService, error: unknown):
   try {
     await prepared.close(AbortSignal.timeout(3_000));
   } catch (cleanupError) {
+    // close also reports pending operation failures already observed by setup.
+    // the same error is not evidence that unregister failed independently.
+    if (cleanupError === error) return;
     throw new TnlCleanupError(error, cleanupError);
   }
 }

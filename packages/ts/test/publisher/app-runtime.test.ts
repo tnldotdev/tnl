@@ -23,8 +23,47 @@ import {
 import { invocationIDSchema } from "../../dist/internal/values.js";
 import { parseEndpoint, type RuntimeEndpoint } from "../../dist/internal/publisher/local.js";
 import { withProcessEnvironment } from "../helpers/environment.js";
+import { closeFramework } from "../../dist/internal/publisher/framework.js";
 
 afterEach(() => vi.useRealTimers());
+
+test.each([false, true])(
+  "framework cleanup distinguishes an observed registration failure from independent cleanup (%s)",
+  async (independent) => {
+    const listener = createServer();
+    await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    const primary = new TnlError("sdk.listener_failed");
+    const cleanup = new Error("independent unregister failure");
+    let unregisters = 0;
+    const handle = await createPreparedService({}, "vite", {
+      start: async () => testEndpoint,
+      request: async (_endpoint, name) => {
+        if (name === "prepare") return assignment();
+        if (name === "register") throw primary;
+        if (name === "unregister") {
+          unregisters++;
+          if (independent) throw cleanup;
+        }
+        return undefined;
+      },
+    });
+    try {
+      await expect(handle.register(listener)).rejects.toBe(primary);
+      if (independent) {
+        await expect(closeFramework(handle, primary)).rejects.toMatchObject({
+          code: "sdk.cleanup_failed",
+          errors: [primary, { code: "sdk.cleanup_failed", errors: [primary, cleanup] }],
+        });
+      } else {
+        await expect(closeFramework(handle, primary)).resolves.toBeUndefined();
+      }
+      expect(unregisters).toBe(1);
+      expect(listener.listening).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+    }
+  },
+);
 
 test.each(["node", "bun", "vite", "next"] as const)(
   "%s default and explicit telemetry choices stay independent across owner rediscovery",
