@@ -117,11 +117,12 @@ func TestIntegrationWorkloadHTTPPublicStreamRenewal(t *testing.T) {
 		return outagePublisherControl{control, gate}
 	})
 	type original struct {
-		job        *workload.Client
-		first      authorityv1.WorkloadSession
-		stream     *outageHTTPStream
-		permission time.Time
-		execution  string
+		job               *workload.Client
+		first             authorityv1.WorkloadSession
+		stream            *outageHTTPStream
+		permission        time.Time
+		certificateExpiry time.Time
+		execution         string
 	}
 	streams := make(map[string]original)
 	for i, name := range []string{"fixed", "revoked"} {
@@ -164,7 +165,15 @@ func TestIntegrationWorkloadHTTPPublicStreamRenewal(t *testing.T) {
 		if stream.response.TLS == nil || len(stream.response.TLS.VerifiedChains) == 0 {
 			t.Fatal("public workload stream did not verify its visitor TLS chain")
 		}
-		streams["/"+name] = original{job: job, first: session, stream: stream, permission: certificate.Leaf.NotAfter, execution: execution}
+		permissionUntil := minTime(session.LeaseExpiresAt, workload.SessionDeadline(session))
+		if !certificate.Leaf.NotAfter.After(permissionUntil) {
+			t.Fatal("workload identity certificate still carries only the initial short permission")
+		}
+		streams["/"+name] = original{job: job, first: session, stream: stream, permission: permissionUntil,
+			certificateExpiry: certificate.Leaf.NotAfter, execution: execution}
+		t.Logf("original public workload path=/%s session=%s initial_permission=%s credential_expiry=%s provider_expiry=%s hard_expiry=%v",
+			name, session.Id, permissionUntil.Format(time.RFC3339Nano), certificate.Leaf.NotAfter.Format(time.RFC3339Nano),
+			session.IdentityExpiresAt.Format(time.RFC3339Nano), session.ExpiresAt)
 	}
 	receive := func(path, want string) {
 		t.Helper()
@@ -197,8 +206,9 @@ func TestIntegrationWorkloadHTTPPublicStreamRenewal(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				t.Fatalf("original public target ended: path=%s at=%s initial_permission=%s current_sequence=%d current_lease=%s current_proof=%s hard_expiry=%v target_requests=%d error=%v",
+				t.Fatalf("original public consumer ended: path=%s at=%s initial_permission=%s certificate_expiry=%s current_sequence=%d current_lease=%s current_proof=%s hard_expiry=%v target_requests=%d error=%v",
 					path, end.at.Format(time.RFC3339Nano), original.permission.Format(time.RFC3339Nano),
+					original.certificateExpiry.Format(time.RFC3339Nano),
 					current.RenewalSequence, current.LeaseExpiresAt.Format(time.RFC3339Nano),
 					current.IdentityExpiresAt.Format(time.RFC3339Nano), current.ExpiresAt, counts[path].Load(), end.err)
 			case <-time.After(3 * time.Second):
@@ -208,6 +218,7 @@ func TestIntegrationWorkloadHTTPPublicStreamRenewal(t *testing.T) {
 			if counts[path].Load() != 1 {
 				t.Fatal("workload progress reopened the original GET", path, counts[path].Load())
 			}
+			t.Logf("same original public response path=%s phase=%s target_requests=%d", path, label, counts[path].Load())
 		}
 	}
 	for path := range streams {
@@ -302,11 +313,13 @@ func TestIntegrationWorkloadHTTPPublicStreamRenewal(t *testing.T) {
 			if end.at.Before(earliest) || end.at.After(latest) {
 				t.Fatal("original public stream ended outside its terminal authority bound", path, end.at, earliest, latest, end.err)
 			}
+			t.Logf("original public consumer closed path=%s at=%s error=%v", path, end.at.Format(time.RFC3339Nano), end.err)
 		case <-timer.C:
 			t.Fatal("original public stream survived its terminal authority", path)
 		}
 		select {
-		case <-targetDone[path]:
+		case joinedAt := <-targetDone[path]:
+			t.Logf("original public target handler joined path=%s at=%s target_requests=%d", path, joinedAt.Format(time.RFC3339Nano), counts[path].Load())
 		case <-time.After(3 * time.Second):
 			t.Fatal("original public target handler did not join after authority ended", path)
 		}
@@ -325,6 +338,9 @@ func TestIntegrationWorkloadHTTPPublicStreamRenewal(t *testing.T) {
 		t.Fatal("fixed original target stopped after sibling revocation")
 	}
 	receive("/fixed", "sibling-revoked\n")
-	requireEnd("/fixed", fixed.first.ExpiresAt.Add(-time.Second), fixed.first.ExpiresAt.Add(time.Second))
+	// DER's whole-second certificate expiry can precede the absolute session
+	// limit. that real earlier credential fence must still terminate this stream.
+	fixedFence := minTime(fixed.certificateExpiry, *fixed.first.ExpiresAt)
+	requireEnd("/fixed", fixedFence.Add(-time.Second), fixedFence.Add(time.Second))
 	t.Log("the same two public HTTPS responses crossed permission renewals, provider turnover, and control outage/recovery; fixed expiry and revocation closed their original handlers without replay")
 }

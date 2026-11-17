@@ -31,6 +31,8 @@ jobs:
             shard: 1/1
           - suite: runtime:workload:closure
             shard: 1/1
+          - suite: runtime:workload:public
+            shard: 1/1
           - suite: connector-rebinding
             shard: 1/1
           - suite: connector-direct
