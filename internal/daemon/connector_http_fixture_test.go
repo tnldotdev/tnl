@@ -22,7 +22,7 @@ func startPrivateHTTPTestTarget(t *testing.T, owner *runtimeTopology, handler ht
 		target.TLS = secured
 		target.StartTLS()
 	}
-	t.Cleanup(target.Close)
+	cleanupIntegrationHTTPServer(t, target, owner)
 	return target
 }
 
@@ -39,6 +39,11 @@ func TestPrivateHTTPTargetOutlivesPublisherJoin(t *testing.T) {
 				target := startPrivateHTTPTestTarget(t, owner, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					_, _ = io.WriteString(w, "target still available")
 				}), config)
+				if secured {
+					// httptest trusts its leaf, but this fixture uses a named
+					// target certificate rather than a loopback IP certificate.
+					target.Client().Transport.(*http.Transport).TLSClientConfig.ServerName = "target.private.integration.test"
+				}
 				owner.publishers = append(owner.publishers, runtimeProcess{
 					name: "private HTTP publisher", cancel: func() {},
 					wait: func() error {
