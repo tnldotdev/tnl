@@ -14,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -40,11 +41,13 @@ func (s *actionExpirySession) Close() error { s.closes++; return s.err }
 
 type actionExpiryConn struct {
 	net.Conn
-	reads, writes int
+	reads, writes, closes int
+	closeErr              error
 }
 
 func (c *actionExpiryConn) Read([]byte) (int, error)  { c.reads++; return 0, nil }
 func (c *actionExpiryConn) Write([]byte) (int, error) { c.writes++; return 0, nil }
+func (c *actionExpiryConn) Close() error              { c.closes++; return c.closeErr }
 
 func actionExpiryRetirement(t *testing.T, p *connectorConnection) *connectorfixture.Retirement {
 	t.Helper()
@@ -232,4 +235,85 @@ func TestActionExpiryRetirementDoesNotRestartSpentStopBudget(t *testing.T) {
 			t.Fatal("spent shutdown attempted another signed mutation", err, calls)
 		}
 	})
+}
+
+func TestActionExpiryRetirementKeepsPreparedCleanupProvenance(t *testing.T) {
+	for _, kind := range []string{"idle timer", "physical deadline", "entered renewal deadline", "actual parent deadline"} {
+		t.Run(kind, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				now := time.Now()
+				parent := t.Context()
+				if kind == "actual parent deadline" {
+					var cancel context.CancelFunc
+					parent, cancel = context.WithDeadline(parent, now.Add(500*time.Millisecond))
+					defer cancel()
+				}
+				physical := errors.New("independent expired stream close")
+				conn := &actionExpiryConn{}
+				if kind == "physical deadline" {
+					conn.closeErr = errors.Join(context.DeadlineExceeded, physical)
+				}
+				prepared := &PreparedConnector{ctx: parent, conn: conn, stream: streamPrepared{}, permission: permissionUsable{},
+					permissionUntil: now.Add(time.Second), stop: func() bool { return true }}
+				defer prepared.Close()
+				if kind == "entered renewal deadline" {
+					if err := prepared.queuePermission(preparedPermissionRenewal{
+						until: now.Add(time.Minute),
+						writer: preparedRenewalFunc(func(ctx context.Context, _ tunnelv1.ConnectorPermissionUpdate) error {
+							<-ctx.Done()
+							return context.Cause(ctx)
+						}),
+					}); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					prepared.mu.Lock()
+					prepared.startPermissionWorkerLocked()
+					prepared.mu.Unlock()
+				}
+				synctest.Wait()
+				time.Sleep(2 * time.Second)
+				synctest.Wait()
+				p := &connectorConnection{until: now.Add(time.Second), run: Run{ValidUntil: now.Add(time.Second)},
+					permission: controlv1.VisitorTokenResponse{ExpiresAt: now.Add(time.Second)}}
+				if err := prepared.Close(); !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("direct close lost its authority/operation stop", err)
+				}
+				err := p.closePreparedForRetirement(prepared)
+				if kind == "idle timer" {
+					if err != nil {
+						t.Fatal("pair retirement confused its exact idle expiry with failed cleanup", err)
+					}
+				} else if !errors.Is(err, context.DeadlineExceeded) ||
+					kind == "physical deadline" && !errors.Is(err, physical) {
+					t.Fatal("expiry hid an independent physical, renewal, or parent failure", err)
+				}
+				if conn.closes != 1 {
+					t.Fatal("expiry and retirement repeated physical close", conn.closes)
+				}
+			})
+		})
+	}
+}
+
+func TestActionExpiryRetirementDoesNotStartUnauthorizedTerminalExchange(t *testing.T) {
+	// the real terminal writer would be unusable here. reaching it is a test
+	// failure, not a successful remote observation or a permission extension.
+	for _, operation := range []error{nil, context.Canceled, errors.New("independent visitor failure")} {
+		until := time.Now().Add(-time.Second)
+		p := &connectorConnection{permissions: &tunnel.ConnectorPermissionWriter{}, ctx: t.Context(), recoveryState: connectorRebinding,
+			until: until, run: Run{ValidUntil: until}, permission: controlv1.VisitorTokenResponse{ExpiresAt: until}}
+		use := &connectorUse{admitted: true, until: until}
+		result := p.terminalUse(use, operation)
+		if operation == nil && result != ErrServiceConnection || operation != nil && result != operation || p.useErr != nil {
+			t.Fatal("expired admission started terminal work or changed its operation", result, p.useErr)
+		}
+		// an exchange that actually entered still owns its failure, even when
+		// the same deadline sentinel is also used by an idle authority timer.
+		independent := errors.New("entered terminal exchange failed")
+		p.recordTerminalCleanup(tunnel.ConnectorTerminalExchange{}, errors.Join(context.DeadlineExceeded, independent))
+		if !errors.Is(p.useErr, context.DeadlineExceeded) || !errors.Is(p.useErr, independent) {
+			t.Fatal("expired authority hid entered terminal cleanup", p.useErr)
+		}
+	}
 }

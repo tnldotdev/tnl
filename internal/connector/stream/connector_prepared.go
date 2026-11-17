@@ -105,6 +105,16 @@ func (*preparedPermissionStop) Error() string {
 	return "the prepared stream finished its permission work"
 }
 
+// only this visitor's idle authority timer produces this cause. an entered
+// renewal's deadline or an actual parent deadline remains its own failure.
+type preparedPermissionExpiry struct {
+	owner *PreparedConnector
+	until time.Time
+}
+
+func (*preparedPermissionExpiry) Error() string { return "the prepared stream's permission expired" }
+func (*preparedPermissionExpiry) Unwrap() error { return context.DeadlineExceeded }
+
 // PrepareConnector consumes a source-prepared opening without RPC or signing.
 // setup retains the caller's original preparation deadline; lifetime owns the
 // promoted stream after preparation succeeds. stopping setup cannot close it.
@@ -300,7 +310,7 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 		wait := ctx
 		stopWait := func() {}
 		if !until.IsZero() {
-			wait, stopWait = context.WithDeadline(ctx, until)
+			wait, stopWait = context.WithDeadlineCause(ctx, until, &preparedPermissionExpiry{owner: p, until: until})
 		}
 		select {
 		case <-wait.Done():

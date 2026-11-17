@@ -44,8 +44,11 @@ func (c *connectorCleanup) begin() {
 	defer c.mu.Unlock()
 	if c.until.IsZero() {
 		c.until = time.Now().Add(5 * time.Second)
-		if !c.authority.IsZero() {
-			c.until = earliestConnectorDeadline(c.until, c.authority)
+		// signed retirement is negative work with retained proof, not another
+		// serving operation. retain the actual caller deadline, not the expired
+		// authority horizon; bound still fences packet/terminal work by authority.
+		if parent, ok := c.caller.Deadline(); ok {
+			c.until = earliestConnectorDeadline(c.until, parent)
 		}
 		// borrowed cleanup belongs to its composing owner. only a standalone
 		// connector hands its stop budget to the final process flush.
@@ -72,6 +75,9 @@ func (c *connectorCleanup) context() context.Context {
 func (c *connectorCleanup) bound(until time.Time) time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !c.authority.IsZero() {
+		until = earliestConnectorDeadline(until, c.authority)
+	}
 	if c.ctx != nil {
 		deadline, _ := c.ctx.Deadline()
 		return earliestConnectorDeadline(until, deadline)
@@ -172,16 +178,25 @@ func (p *connectorConnection) terminalUse(use *connectorUse, operation error) er
 		until = earliestConnectorDeadline(until, p.permission.ExpiresAt)
 	}
 	p.mu.Unlock()
-	if unavailable {
-		p.recordUseCleanup(ErrServiceConnection)
-		return errors.Join(operation, ErrServiceConnection)
-	}
 	if use.prepared != nil {
 		use.prepared.mu.Lock()
 		until = earliestConnectorDeadline(until, use.prepared.permissionUntil)
 		use.prepared.mu.Unlock()
 	} else {
 		until = earliestConnectorDeadline(until, use.until)
+	}
+	if !until.After(time.Now()) {
+		// no terminal exchange has entered: this admission no longer grants
+		// terminal authority. retain the visitor's failure, then require signed
+		// pair retirement and local joins under the separate stop budget.
+		if operation == nil {
+			return ErrServiceConnection
+		}
+		return operation
+	}
+	if unavailable {
+		p.recordUseCleanup(ErrServiceConnection)
+		return errors.Join(operation, ErrServiceConnection)
 	}
 	until = p.cleanup.bound(until)
 	ctx, finish := context.WithDeadline(p.packetCtx, until)
@@ -197,6 +212,27 @@ func (p *connectorConnection) terminalUse(use *connectorUse, operation error) er
 		p.recordTerminalCleanup(exchange, err)
 	}
 	return errors.Join(operation, err)
+}
+
+func (p *connectorConnection) closePreparedForRetirement(prepared *PreparedConnector) error {
+	result := prepared.Close()
+	p.mu.Lock()
+	now := time.Now()
+	expired := !p.until.After(now) || !p.run.ValidUntil.After(now) || !p.permission.ExpiresAt.After(now)
+	p.mu.Unlock()
+	if !expired {
+		return result
+	}
+	prepared.mu.Lock()
+	defer prepared.mu.Unlock()
+	// Close still exposes expiry to its direct caller. only pair-owner
+	// retirement distinguishes this exact idle stop from failed cleanup.
+	// never inspect the physical error tree or an entered renewal's result.
+	if cause, ok := prepared.permissionErr.(*preparedPermissionExpiry); ok &&
+		cause.owner == prepared && cause.until.Equal(prepared.permissionUntil) && !cause.until.After(now) {
+		return prepared.closeErr
+	}
+	return result
 }
 
 func (p *connectorConnection) recordTerminalCleanup(exchange tunnel.ConnectorTerminalExchange, err error) {

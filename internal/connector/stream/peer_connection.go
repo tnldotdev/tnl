@@ -1234,7 +1234,7 @@ func (p *connectorConnection) forwardUse(ctx context.Context, local net.Conn, us
 			<-localDone
 		}
 		if use.prepared != nil {
-			cleanupErr = errors.Join(cleanupErr, use.prepared.Close())
+			cleanupErr = errors.Join(cleanupErr, p.closePreparedForRetirement(use.prepared))
 		}
 		p.recordUseCleanup(cleanupErr)
 		result = errors.Join(result, cleanupErr)
@@ -1331,7 +1331,7 @@ func (p *connectorConnection) Close(ctx context.Context) error {
 		if warm != nil {
 			var err error
 			if warm.prepared != nil {
-				err = warm.prepared.Close()
+				err = p.closePreparedForRetirement(warm.prepared)
 			}
 			// unused accepted preparation is genuine joined abort work.
 			abortErr := p.terminalUse(warm, errors.Join(context.Canceled, err))
