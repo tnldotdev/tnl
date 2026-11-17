@@ -144,6 +144,9 @@ async function chromeSmoke(configuration: PublisherFixture) {
     lifetime.signal.addEventListener("abort", interrupted, { once: true });
     try {
       const page = await browser.newPage();
+      page.on("console", (message) => {
+        if (/^publisher fixture phase: [a-z-]+$/.test(message.text())) console.log(message.text());
+      });
       const network: string[] = [];
       page.on("response", (response) => {
         if (response.url().startsWith(configuration.control_url)) {

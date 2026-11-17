@@ -26,9 +26,14 @@ export async function smoke(input: unknown) {
   const handler = publisherHandler(crypto.randomUUID());
   const restrictedHandler = publisherHandler(crypto.randomUUID());
   let phase = "publish";
+  const step = (value: string) => {
+    phase = value;
+    console.info(`publisher fixture phase: ${value}`);
+  };
   const operation = async () => {
+    step("publish");
     const publication = await publisher.publish("web", handler.handle);
-    phase = "public-exercise";
+    step("public-exercise");
     const publicProof = await fixtureCall(fixture, "/exercise", publication.url);
     check(
       publicProof.status === 200 &&
@@ -36,9 +41,9 @@ export async function smoke(input: unknown) {
         publicProof.certificate_sha256.length === 64,
       "public visitor did not verify publisher TLS",
     );
-    phase = "connector";
+    step("connector");
     const connection = await connector.connect("web");
-    phase = "response-stream";
+    step("response-stream");
     const response = await connection.fetch(connection.url + "/stream");
     check(response.ok && response.body !== null, "connector-to-WASM publisher stream failed");
     const reader = response.body.getReader();
@@ -59,7 +64,7 @@ export async function smoke(input: unknown) {
     );
     reader.releaseLock();
 
-    phase = "upload";
+    step("upload");
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("upload-first\n"));
@@ -76,7 +81,7 @@ export async function smoke(input: unknown) {
       "streamed request body changed",
     );
 
-    phase = "cancel";
+    step("cancel");
     const controller = new AbortController();
     const cancel = await connection.fetch(connection.url + "/cancel", {
       signal: controller.signal,
@@ -106,14 +111,14 @@ export async function smoke(input: unknown) {
       );
       canceled = evidence.canceled && evidence.requestAborted;
     }
-    phase = "restricted";
+    step("restricted");
     const restricted = await publisher.publish("restricted", restrictedHandler.handle);
     const denied = await fixtureCall(fixture, "/observe", restricted.url);
     check(
       denied.status === 403 && restrictedHandler.calls() === 0,
       "restricted public request reached the handler",
     );
-    phase = "named-close";
+    step("named-close");
     await restricted.close();
     await restricted.wait();
     await publication.close();
@@ -124,7 +129,7 @@ export async function smoke(input: unknown) {
       "named publication cleanup removed its saved service or retained a run",
     );
 
-    phase = "temporary";
+    step("temporary");
     const temporary = await publisher.publish(handler.handle, { access: "anonymous" });
     const temporaryProof = await fixtureCall(fixture, "/observe", temporary.url);
     check(
@@ -155,6 +160,7 @@ export async function smoke(input: unknown) {
     };
   };
   const [result] = await Promise.allSettled([operation()]);
+  console.info("publisher fixture phase: cleanup");
   const cleanup = await Promise.allSettled([connector.close(), publisher.close()]);
   const failures = [
     ...(result?.status === "rejected" ? publisherFailures(result.reason, phase) : []),
