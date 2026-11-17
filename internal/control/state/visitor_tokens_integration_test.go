@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitorcert"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -336,8 +338,25 @@ func TestIntegrationVisitorTokenWorkloadKeepsSelectedServicesKeyAndFixedDeadline
 		t.Fatal(err)
 	}
 	certificate, err := d.IssueVisitorClientCertificate(t.Context(), testVisitorIssuer, scope, source, csr, now)
-	if err != nil || certificate.ExpiresAt.After(session.LeaseExpiresAt) {
-		t.Fatal("workload certificate outlived current source authority", err)
+	if err != nil || !certificate.ExpiresAt.Equal(visitorcert.WorkloadDeadline(now, session.ExpiresAt).Truncate(time.Second)) {
+		t.Fatal("workload identity certificate lost its independent fixed bound", err)
+	}
+	block, _ := pem.Decode([]byte(certificate.CertificatePEM))
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := visitortoken.CertificateToken(leaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := stateTestVisitorView(issued.Permission, stateTestVisitorKeys(t, d, now), now).
+		WithWorkloadLeases(map[string]visitortoken.WorkloadLease{session.ID: {KeySHA256: parent.KeySHA256, ExpiresAt: session.LeaseExpiresAt}})
+	client := tls.ConnectionState{HandshakeComplete: true, PeerCertificates: []*x509.Certificate{leaf}}
+	verified, err := visitortoken.VerifyCertificate(token, view, client, now)
+	current, renewable := verified.WorkloadPermission()
+	if err != nil || !renewable || current.Identity().ExpiresAt != leaf.NotAfter || verified.Facts().ExpiresAt.After(session.LeaseExpiresAt) {
+		t.Fatal("identity certificate substituted for current short permission", err)
 	}
 	_, wrong, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -355,6 +374,10 @@ func TestIntegrationVisitorTokenWorkloadKeepsSelectedServicesKeyAndFixedDeadline
 	}
 	if err := d.RevokeWorkloadSession(t.Context(), session.ID, session.Credential, now); err != nil {
 		t.Fatal(err)
+	}
+	view = view.WithWorkloadLeases(nil)
+	if _, err := visitortoken.VerifyCertificate(token, view, client, now); err == nil {
+		t.Fatal("still-valid identity certificate bypassed revoked current permission")
 	}
 	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, source, now); err == nil {
 		t.Fatal("revoked workload minted permission")

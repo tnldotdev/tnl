@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitorcert"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
@@ -230,9 +231,10 @@ func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer stri
 // visitorAuthority keeps the permission and its proof key from one locked source
 // decision. connector preparation consumes these facts without reauthenticating.
 type visitorAuthority struct {
-	Permission     visitortoken.Permission
-	PublicKey      ed25519.PublicKey
-	ConnectorUntil time.Time
+	Permission              visitortoken.Permission
+	PublicKey               ed25519.PublicKey
+	ConnectorUntil          time.Time
+	WorkloadCredentialUntil time.Time
 }
 
 func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, source VisitorTokenSource, clock authorizationClock) (result visitorAuthority, retErr error) {
@@ -358,6 +360,7 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		subject = visitortoken.Workload{SessionID: workloadSource.ID, KeySHA256: digest}
 		result.PublicKey = ed25519.PublicKey(workloadSource.PublicKey)
 		result.ConnectorUntil = minTime(until, now.Add(WorkloadLease))
+		result.WorkloadCredentialUntil = visitorcert.WorkloadDeadline(now, workloadSource.ExpiresAt)
 	case RegisteredKeyTokenSource:
 		if scope.Kind != visitorscope.Service {
 			return result, ErrVisitorPermission

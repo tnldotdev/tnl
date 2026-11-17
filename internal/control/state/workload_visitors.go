@@ -105,10 +105,7 @@ func (d *Database) IssueWorkloadServiceClientCertificate(ctx context.Context, cr
 	}
 	// a certificate binds the existing key, not a startup proof's authority.
 	// each admission and active visitor still needs the current proof-bound lease.
-	public, until := source.PublicKey, now.Add(visitorcert.MaxWorkloadLifetime)
-	if source.ExpiresAt != nil {
-		until = minTime(until, *source.ExpiresAt)
-	}
+	public, until := source.PublicKey, visitorcert.WorkloadDeadline(now, source.ExpiresAt)
 	key, ok := csr.PublicKey.(ed25519.PublicKey)
 	if !ok || !bytes.Equal(key, public) {
 		return result, ErrWorkloadDenied

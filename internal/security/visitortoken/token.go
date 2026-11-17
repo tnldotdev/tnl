@@ -48,16 +48,19 @@ type Permission struct {
 	ExpiresAt             time.Time
 }
 
-// VerifiedPermission is signed evidence, not permanent authorization. only the
-// verification boundary constructs it; admission still checks current policy.
-// its zero value cannot be bound to a visitor lease.
-type VerifiedPermission struct{ facts Permission }
+// VerifiedPermission binds a verified credential to current scoped permission.
+// fixed signed permission and policy-confirmed workload permission stay distinct.
+// only verification constructs it; its zero value cannot bind a visitor lease.
+type VerifiedPermission struct {
+	facts    Permission
+	workload *WorkloadPermission
+}
 
 func (p VerifiedPermission) Facts() Permission { return p.facts }
 func (p VerifiedPermission) Valid() bool       { return p.facts.SigningKeyID != "" }
 
 func (p VerifiedPermission) SameSubject(other VerifiedPermission) bool {
-	return p.Valid() && other.Valid() && p.facts.Subject == other.facts.Subject
+	return p.Valid() && other.Valid() && (p.workload == nil) == (other.workload == nil) && p.facts.Subject == other.facts.Subject
 }
 
 func (p VerifiedPermission) SameIdentity(other VerifiedPermission) bool {
@@ -112,7 +115,11 @@ func Sign(issuer, keyID string, private ed25519.PrivateKey, permission Permissio
 	if err != nil {
 		return "", ErrToken
 	}
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: private}, (&jose.SignerOptions{}).WithType(Type).WithHeader("kid", keyID))
+	return signPayload(Type, keyID, private, payload)
+}
+
+func signPayload(profile, keyID string, private ed25519.PrivateKey, payload []byte) (Token, error) {
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: private}, (&jose.SignerOptions{}).WithType(jose.ContentType(profile)).WithHeader("kid", keyID))
 	if err != nil {
 		return "", ErrToken
 	}
@@ -232,35 +239,11 @@ func verify(token Token, view View, now time.Time) (Permission, error) {
 }
 
 func verifySignature(token Token, view View, now time.Time) (Permission, error) {
-	if !view.current(now) {
-		return Permission{}, ErrPolicy
+	payload, keyID, err := verifyPayload(token, view, Type, now)
+	if err != nil {
+		return Permission{}, err
 	}
 	authorityNow := view.AuthorityTime(now)
-	raw := token.Reveal()
-	if len(raw) == 0 || len(raw) > MaxTokenBytes {
-		return Permission{}, ErrToken
-	}
-	parts := strings.Split(raw, ".")
-	if len(parts) != 3 {
-		return Permission{}, ErrToken
-	}
-	headerBytes, err := base64.RawURLEncoding.Strict().DecodeString(parts[0])
-	var header protectedHeader
-	if err != nil || decode(headerBytes, &header) != nil || header.Algorithm != string(jose.EdDSA) || header.Type != Type || !validText(header.KeyID, 128) {
-		return Permission{}, ErrToken
-	}
-	public := view.keys[header.KeyID]
-	if len(public) != ed25519.PublicKeySize {
-		return Permission{}, ErrKey
-	}
-	signed, err := jose.ParseSigned(raw, []jose.SignatureAlgorithm{jose.EdDSA})
-	if err != nil || len(signed.Signatures) != 1 {
-		return Permission{}, ErrToken
-	}
-	payload, err := signed.Verify(public)
-	if err != nil {
-		return Permission{}, ErrToken
-	}
 	var value claims
 	if decode(payload, &value) != nil || value.Version != 1 || value.Issuer != view.Issuer || value.Scope != view.Scope || value.Hostname != view.Hostname || value.Port != view.Port ||
 		value.Revision < 1 || value.Issued > authorityNow.Unix() || value.Issued <= 0 || value.Expires <= value.Issued || value.Expires <= authorityNow.Unix() {
@@ -273,8 +256,45 @@ func verifySignature(token Token, view View, now time.Time) (Permission, error) 
 	if err != nil {
 		return Permission{}, err
 	}
-	permission := Permission{SigningKeyID: header.KeyID, Scope: value.Scope, Hostname: value.Hostname, Port: value.Port, VisitorPolicyRevision: value.Revision, Subject: subject, ExpiresAt: time.Unix(value.Expires, 0).UTC()}
+	permission := Permission{SigningKeyID: keyID, Scope: value.Scope, Hostname: value.Hostname, Port: value.Port, VisitorPolicyRevision: value.Revision, Subject: subject, ExpiresAt: time.Unix(value.Expires, 0).UTC()}
 	return permission, nil
+}
+
+func credentialHeader(token Token) (protectedHeader, error) {
+	raw := token.Reveal()
+	parts := strings.Split(raw, ".")
+	if len(raw) == 0 || len(raw) > MaxTokenBytes || len(parts) != 3 {
+		return protectedHeader{}, ErrToken
+	}
+	headerBytes, err := base64.RawURLEncoding.Strict().DecodeString(parts[0])
+	var header protectedHeader
+	if err != nil || decode(headerBytes, &header) != nil || header.Algorithm != string(jose.EdDSA) || !validText(header.KeyID, 128) {
+		return protectedHeader{}, ErrToken
+	}
+	return header, nil
+}
+
+func verifyPayload(token Token, view View, profile string, now time.Time) ([]byte, string, error) {
+	if !view.current(now) {
+		return nil, "", ErrPolicy
+	}
+	header, err := credentialHeader(token)
+	if err != nil || header.Type != profile {
+		return nil, "", ErrToken
+	}
+	public := view.keys[header.KeyID]
+	if len(public) != ed25519.PublicKeySize {
+		return nil, "", ErrKey
+	}
+	signed, err := jose.ParseSigned(token.Reveal(), []jose.SignatureAlgorithm{jose.EdDSA})
+	if err != nil || len(signed.Signatures) != 1 {
+		return nil, "", ErrToken
+	}
+	payload, err := signed.Verify(public)
+	if err != nil {
+		return nil, "", ErrToken
+	}
+	return payload, header.KeyID, nil
 }
 
 // CheckCurrent rechecks an already verified, proof-bound admission. it does not
@@ -282,6 +302,9 @@ func verifySignature(token Token, view View, now time.Time) (Permission, error) 
 func CheckCurrent(permission VerifiedPermission, view View, now time.Time) error {
 	if !permission.Valid() {
 		return ErrToken
+	}
+	if permission.workload != nil {
+		return permission.workload.checkCurrent(view, now)
 	}
 	return checkCurrent(permission.facts, view, now)
 }

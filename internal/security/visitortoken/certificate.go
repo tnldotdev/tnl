@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 )
 
-// CertificateURI carries the key-bound permission in the standard subjectAltName
+// CertificateURI carries a distinctly typed credential in the standard subjectAltName
 // extension (OID 2.5.29.17), using one tnl://visitor-token/<compact-JWS> URI.
 // CSR-supplied names and extensions never supply this value.
 func CertificateURI(token Token) (*url.URL, error) {
@@ -55,9 +55,8 @@ func CertificateIssuanceBinding(chains [][]*x509.Certificate) (visitorscope.Scop
 	if len(parts) != 3 {
 		return deny()
 	}
-	headerBytes, err := base64.RawURLEncoding.Strict().DecodeString(parts[0])
-	var header protectedHeader
-	if err != nil || decode(headerBytes, &header) != nil || header.Algorithm != "EdDSA" || header.Type != Type || !validText(header.KeyID, 128) {
+	header, err := credentialHeader(token)
+	if err != nil {
 		return deny()
 	}
 	signature, err := base64.RawURLEncoding.Strict().DecodeString(parts[2])
@@ -65,6 +64,21 @@ func CertificateIssuanceBinding(chains [][]*x509.Certificate) (visitorscope.Scop
 		return deny()
 	}
 	payload, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
+	if err != nil {
+		return deny()
+	}
+	if header.Type == WorkloadIdentityType {
+		identity, _, err := decodeWorkloadIdentity(payload)
+		digest, keyErr := KeyDigest(leaf.PublicKey)
+		if err != nil || keyErr != nil || leaf.SerialNumber == nil || identity.Certificate.Serial != leaf.SerialNumber.Text(16) ||
+			identity.Certificate.KeySHA256 != digest || !identity.ExpiresAt.Equal(leaf.NotAfter) {
+			return deny()
+		}
+		return identity.Scope, identity.Certificate.Source, nil
+	}
+	if header.Type != Type {
+		return deny()
+	}
 	var value claims
 	if err != nil || decode(payload, &value) != nil || value.Version != 1 || !validText(value.Issuer, 256) || !validResource(value.Scope, value.Hostname) || value.Revision < 1 || value.Issued <= 0 || value.Expires <= value.Issued || value.Expires != leaf.NotAfter.Unix() {
 		return deny()

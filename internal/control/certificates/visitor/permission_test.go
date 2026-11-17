@@ -46,7 +46,7 @@ func TestVisitorCertificateCarriesSharedTokenAndRequiresTLSKeyPossession(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	material, err := issuer.IssuePermission(csr, permission.ExpiresAt, now, func(serial string, public any, expires time.Time) (visitortoken.Token, error) {
+	material, err := issuer.IssueBoundCredential(csr, permission.ExpiresAt, now, func(serial string, public any, expires time.Time) (visitortoken.Token, error) {
 		digest, err := visitortoken.KeyDigest(public)
 		if err != nil {
 			return "", err

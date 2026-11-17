@@ -15,8 +15,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
-// IssueVisitorClientCertificate uses the same source permission as token
-// preparation, then binds it to the CSR's proven TLS key and exact certificate.
+// IssueVisitorClientCertificate checks the same current source as token preparation.
+// devices carry fixed signed permission; workloads carry distinct fixed key
+// identity and require current run-owned policy for every short permission.
 // stored certificate rows support issuance and revocation, never stream admission.
 func (d *Database) IssueVisitorClientCertificate(ctx context.Context, issuerURL string, scope visitorscope.Scope, source VisitorTokenSource, csrDER []byte, now time.Time) (result ServiceClientCertificate, retErr error) {
 	if scope.Kind != visitorscope.Service {
@@ -59,12 +60,22 @@ func (d *Database) issueVisitorClientCertificateTransaction(ctx context.Context,
 			return result, ErrVisitorPermission
 		}
 	}
-	material, err := issuer.IssuePermission(csrDER, permission.ExpiresAt, now, func(serial string, public any, expires time.Time) (visitortoken.Token, error) {
+	until := permission.ExpiresAt
+	if _, workload := origin.(visitortoken.Workload); workload {
+		// key identity is fixed at issuance; current permission remains in the
+		// run-owned policy's exact-service workload lease, never in this expiry.
+		until = authority.WorkloadCredentialUntil
+	}
+	material, err := issuer.IssueBoundCredential(csrDER, until, now, func(serial string, public any, expires time.Time) (visitortoken.Token, error) {
 		digest, err := visitortoken.KeyDigest(public)
 		if err != nil {
 			return "", err
 		}
 		permission.Subject = visitortoken.Certificate{Serial: serial, KeySHA256: digest, Source: origin}
+		if _, workload := origin.(visitortoken.Workload); workload {
+			return d.signWorkloadIdentity(ctx, tx, issuerURL, visitortoken.WorkloadIdentity{Scope: scope, Hostname: permission.Hostname,
+				Port: permission.Port, Certificate: permission.Subject.(visitortoken.Certificate), ExpiresAt: expires}, now)
+		}
 		permission.ExpiresAt = expires
 		return d.signVisitorPermission(ctx, tx, issuerURL, permission, now)
 	})

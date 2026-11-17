@@ -89,9 +89,30 @@ func (l *Lease) Apply(request Request, update Update) error {
 	l.mu.Lock()
 	now := l.now()
 	stopped := l.expireLocked(now)
+	// an overdue timer is not authority. retire expired workload admissions
+	// against their previous accepted permission before installing newer policy.
+	for guard := range l.guards {
+		if _, workload := guard.permission.WorkloadPermission(); workload && !guard.allowedLocked(now) {
+			delete(l.guards, guard)
+			stopped = append(stopped, guard)
+		}
+	}
 	err := l.applyLocked(request, update, now)
 	if err == nil {
 		for guard := range l.guards {
+			if workload, ok := guard.permission.WorkloadPermission(); ok {
+				// only this distinctly verified identity profile follows current
+				// control-confirmed workload permission. fixed tokens never do.
+				permission, err := workload.Renew(l.update.View, now)
+				if err == nil {
+					guard.permission = permission
+				} else {
+					delete(l.guards, guard)
+					guard.policyRefused = true
+					stopped = append(stopped, guard)
+					continue
+				}
+			}
 			if !guard.allowedLocked(now) {
 				delete(l.guards, guard)
 				guard.policyRefused = true
@@ -244,6 +265,7 @@ type Guard struct {
 	confirmedUntil                     time.Time
 	permissionUntil, permissionExpires time.Time
 	parentUntil, parentExpires         time.Time
+	workloadCredentialUntil            time.Time
 	policyRefused                      bool
 	connector                          *connectorPermission
 	publicEndpoint                     *controlv1.VisitorPublicEndpoint
@@ -252,7 +274,8 @@ type Guard struct {
 func (g *Guard) allowedLocked(now time.Time) bool {
 	l := g.lease
 	if !g.permissionUntil.IsZero() && !now.Before(g.permissionUntil) ||
-		!g.parentUntil.IsZero() && !now.Before(g.parentUntil) {
+		!g.parentUntil.IsZero() && !now.Before(g.parentUntil) ||
+		!g.workloadCredentialUntil.IsZero() && !now.Before(g.workloadCredentialUntil) {
 		return false
 	}
 	if g.publicEndpoint != nil {
@@ -365,6 +388,15 @@ func (g *Guard) resetLocked() {
 		g.parentUntil = retainedCredentialDeadline(g.parentUntil, g.parentExpires, view.LocalDeadline(parent.ExpiresAt), parent.ExpiresAt)
 		g.parentExpires = parent.ExpiresAt
 		until = earlier(until, g.parentUntil)
+	}
+	if permission, ok := g.permission.WorkloadPermission(); ok {
+		deadline := view.LocalDeadline(permission.Identity().ExpiresAt)
+		if g.workloadCredentialUntil.IsZero() {
+			g.workloadCredentialUntil = deadline
+		} else {
+			g.workloadCredentialUntil = earlier(g.workloadCredentialUntil, deadline)
+		}
+		until = earlier(until, g.workloadCredentialUntil)
 	}
 	if key, ok := subject.(visitortoken.RegisteredKey); ok {
 		parent, _ := view.RegisteredKey(key.AuthorityID())
