@@ -67,6 +67,7 @@ type privateSeparatedFixture struct {
 	publisherConnections        chan<- *publisherservice.Claimed
 	publisherTCPOnly            bool
 	relayProcesses              map[string]*privateRelayFixture
+	ingressAddresses            map[int]string
 }
 
 type privateRelayFixture struct {

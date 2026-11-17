@@ -95,6 +95,10 @@ func startSeparatedPrivateIngressRuntime(t *testing.T, f *privateSeparatedFixtur
 		t.Fatal(err)
 	}
 	listener := serviceRuntimeListener(t, f.owner)
+	if f.ingressAddresses == nil {
+		f.ingressAddresses = make(map[int]string)
+	}
+	f.ingressAddresses[index] = listener.Addr().String()
 	if len(serviceListeners) != 0 {
 		listener = combineIngressListeners(append([]net.Listener{listener}, serviceListeners...))
 		f.owner.cleanupResource(t, func() {

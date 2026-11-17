@@ -280,10 +280,10 @@ func assertWorkloadRuntimeInventory(t *testing.T, job *workload.Client, services
 	}
 }
 
-func newWorkloadTransportFixture(t *testing.T) (*privateSeparatedFixture, *githubtest.Issuer) {
+func newWorkloadTransportFixture(t *testing.T, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) (*privateSeparatedFixture, *githubtest.Issuer) {
 	t.Helper()
 	issuer := githubtest.New(t)
-	f := newServiceRuntimeFixtureTiming(t, false, nil, true, func(_ *daemonconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
+	options := []func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority){func(_ *daemonconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
 		base := tr.Clone()
 		t.Cleanup(base.CloseIdleConnections)
 		tr.RegisterProtocol("https", splitACMERoundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -292,7 +292,8 @@ func newWorkloadTransportFixture(t *testing.T) (*privateSeparatedFixture, *githu
 			}
 			return base.RoundTrip(r)
 		}))
-	})
+	}}
+	f := newServiceRuntimeFixtureTiming(t, false, nil, true, append(options, configure...)...)
 	return f, issuer
 }
 

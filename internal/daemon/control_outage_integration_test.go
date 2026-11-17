@@ -257,9 +257,10 @@ func newOutagePrivateProxy(t *testing.T, cfg *daemonconfig.Config, ca *testCerti
 type outageRequestStarted struct{}
 
 type outageHTTPStream struct {
-	body  io.ReadCloser
-	lines chan string
-	done  chan outageHTTPStreamEnd
+	body     io.ReadCloser
+	response *http.Response
+	lines    chan string
+	done     chan outageHTTPStreamEnd
 }
 
 type outageHTTPStreamEnd struct {
@@ -284,7 +285,7 @@ func openOutageHTTPStream(t *testing.T, client *http.Client, address, token stri
 		_ = response.Body.Close()
 		t.Fatal("stream admission failed", response.StatusCode)
 	}
-	stream := &outageHTTPStream{body: response.Body, lines: make(chan string, 8), done: make(chan outageHTTPStreamEnd, 1)}
+	stream := &outageHTTPStream{body: response.Body, response: response, lines: make(chan string, 8), done: make(chan outageHTTPStreamEnd, 1)}
 	joined := make(chan struct{})
 	go func() {
 		defer close(joined)
