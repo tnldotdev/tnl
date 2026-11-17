@@ -27,6 +27,9 @@ func validateHeldForwardingReport(report operationalReport, history heldForwardi
 			return errors.New("callback cause tree is incomplete")
 		}
 	}
+	if err := validateHeldCopyOperations(report); err != nil {
+		return err
+	}
 	if history.kind == "source-denied" {
 		if report.operation != "serve ingress connection" || report.run != "" || report.number != 0 ||
 			report.candidate != history.run || report.candidateNumber != history.number || report.admitted ||
@@ -44,6 +47,43 @@ func validateHeldForwardingReport(report operationalReport, history heldForwardi
 	}
 	if history.kind == "held" && report.operation == "serve ingress connection" && !report.admitted {
 		return errors.New("completed held visitor lost its admitted capacity fact")
+	}
+	return nil
+}
+
+// follow only recorded parent positions. a native code (including zero), nearby
+// report, or final close never supplies a missing returning-method observation.
+func heldCopyOperation(causes causeSnapshot, index int) (operation, endpoint, direction string) {
+	for depth := 0; index >= 0 && index < len(causes.nodes) && depth < 32; depth++ {
+		node := causes.nodes[index]
+		if validCopyOperationLabels(node.copyOperation, node.copyEndpoint, node.copyDirection) {
+			return node.copyOperation, node.copyEndpoint, node.copyDirection
+		}
+		if node.copyOperation != "" {
+			break
+		}
+		index = node.parent
+	}
+	return "UNKNOWN", "UNKNOWN", "UNKNOWN"
+}
+
+func validateHeldCopyOperations(report operationalReport) error {
+	for _, node := range report.cleanup.nodes {
+		if node.copyOperation != "" {
+			return errors.New("copy marker crossed into final physical cleanup")
+		}
+	}
+	for i, node := range report.copyResult.nodes {
+		if node.copyOperation != "" && !validCopyOperationLabels(node.copyOperation, node.copyEndpoint, node.copyDirection) {
+			return errors.New("copy result contains an invalid operation marker")
+		}
+		if node.copyOperation != "" && !report.copyMethodsObserved {
+			return errors.New("unobserved copy claimed an exact returning method")
+		}
+		operation, _, _ := heldCopyOperation(report.copyResult, i)
+		if report.copyMethodsObserved && node.native != "" && operation == "UNKNOWN" {
+			return errors.New("observed native copy cause lost its returning method")
+		}
 	}
 	return nil
 }
@@ -79,18 +119,19 @@ func assertHeldForwardingReports(t *testing.T, recorder *eventRecorder[operation
 			report.candidate != "" && !opaqueid.Valid(report.candidate, opaqueid.ServiceRunPrefix) {
 			t.Logf("current forwarding report index=%d origin=%s scope=unavailable", index, origin)
 		} else {
-			t.Logf("current forwarding report index=%d origin=%s history=%s service_id=%s service_run_id=%s run_number=%d visitor_connection_id=%s candidate_run_id=%s candidate_run_number=%d phase=%s admitted=%t reason=%s admission_only=%t",
+			t.Logf("current forwarding report index=%d origin=%s history=%s service_id=%s service_run_id=%s run_number=%d visitor_connection_id=%s candidate_run_id=%s candidate_run_number=%d phase=%s admitted=%t reason=%s admission_only=%t copy_methods_observed=%t",
 				index, origin, history.kind, report.service, report.run, report.number, report.visitor, report.candidate, report.candidateNumber,
-				report.phase, report.admitted, report.reason, report.admissionOnly)
+				report.phase, report.admitted, report.reason, report.admissionOnly, report.copyMethodsObserved)
 		}
 		for _, group := range []struct {
 			name   string
 			causes causeSnapshot
 		}{{"result", report.result}, {"operation_result", report.operationResult}, {"copy_result_including_abort_cleanup", report.copyResult}, {"final_physical_cleanup", report.cleanup}} {
 			for nodeIndex, cause := range group.causes.nodes {
-				t.Logf("current forwarding cause report=%d group=%s node=%d parent=%d type=%s native=%s stream_id=%d code=%d remote=%t eof=%t canceled=%t deadline=%t admission=%t",
+				operation, endpoint, direction := heldCopyOperation(group.causes, nodeIndex)
+				t.Logf("current forwarding cause report=%d group=%s node=%d parent=%d type=%s native=%s stream_id=%d code=%d remote=%t eof=%t canceled=%t deadline=%t admission=%t copy_operation=%s copy_endpoint=%s copy_direction=%s",
 					index, group.name, nodeIndex, cause.parent, cause.kind, cause.native, cause.streamID, cause.code, cause.remote,
-					cause.eof, cause.canceled, cause.deadline, cause.admission)
+					cause.eof, cause.canceled, cause.deadline, cause.admission, operation, endpoint, direction)
 			}
 		}
 	}
@@ -102,6 +143,48 @@ func assertHeldForwardingReports(t *testing.T, recorder *eventRecorder[operation
 		}
 	}
 	t.Logf("current forwarding reports joined=%t relay=%d ingress=%d total=%d", complete, relayReports, ingressReports, len(reports))
+}
+
+func TestHeldForwardingCopyOperationsUseOnlyExactAncestorOrExplicitUnknown(t *testing.T) {
+	native := &causeNode{kind: "*quic.StreamError", native: "stream", streamID: 5, code: 0, remote: true, parent: 1}
+	causes := causeSnapshot{nodes: []causeNode{
+		{kind: "*errors.joinError", parent: -1},
+		{kind: "*relay.copyOperationError", parent: 0, copyOperation: "half_close", copyEndpoint: "publisher", copyDirection: "visitor_to_publisher"},
+		*native,
+		{kind: "*errors.errorString", parent: 0},
+	}}
+	report := operationalReport{copyMethodsObserved: true, copyResult: causes}
+	if err := validateHeldCopyOperations(report); err != nil {
+		t.Fatal(err)
+	}
+	op, end, dir := heldCopyOperation(causes, 2)
+	if op != "half_close" || end != "publisher" || dir != "visitor_to_publisher" {
+		t.Fatal("native cause lost its exact observed ancestor")
+	}
+	op, end, dir = heldCopyOperation(causes, 3)
+	if op != "UNKNOWN" || end != "UNKNOWN" || dir != "UNKNOWN" {
+		t.Fatal("unmarked independent cause borrowed provenance")
+	}
+	report.copyMethodsObserved = false
+	if validateHeldCopyOperations(report) == nil {
+		t.Fatal("unobserved copy claimed provenance")
+	}
+	report.copyResult = causeSnapshot{nodes: []causeNode{{native: "stream", code: 0, remote: true, parent: -1}}}
+	if err := validateHeldCopyOperations(report); err != nil {
+		t.Fatal("fallback must remain explicitly unknown", err)
+	}
+	op, _, _ = heldCopyOperation(report.copyResult, 0)
+	if op != "UNKNOWN" {
+		t.Fatal("code zero alone supplied provenance")
+	}
+	report.copyMethodsObserved = true
+	if validateHeldCopyOperations(report) == nil {
+		t.Fatal("observed native cause silently lost provenance")
+	}
+	report.copyResult, report.cleanup = causes, causes
+	if validateHeldCopyOperations(report) == nil {
+		t.Fatal("final physical close was marked as a copy operation")
+	}
 }
 
 func TestHeldForwardingReportCorrelationKeepsDenialsRunlessAndCleanupIndependent(t *testing.T) {
