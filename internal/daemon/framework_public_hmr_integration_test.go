@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"golang.org/x/net/websocket"
 )
@@ -38,12 +40,23 @@ func testPublicFrameworkHMR(t *testing.T, framework string) {
 	f := newSplitPublishFixture(t, "public-"+framework)
 	repo := integrationRepositoryRoot(t)
 	directory := publicFrameworkWorkspace(t, repo, framework)
+	web := config.Service{Public: new(true), HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}}
+	var viteEnvironmentPath string
+	if framework == "vite" {
+		environment, err := filepath.EvalSymlinks(filepath.Join(repo, "packages/ts/node_modules/vite/dist/client/env.mjs"))
+		if err != nil {
+			t.Fatal("resolve the installed Vite environment module", err)
+		}
+		viteEnvironmentPath = (&url.URL{Path: "/@fs" + filepath.ToSlash(environment)}).EscapedPath()
+		// CRS 930130 deliberately restricts /@fs/. opt this fixture into only
+		// its real runtime module, not arbitrary files or other attack rules.
+		web.HTTP.Protection = &httpprotection.Settings{Exclusions: []httpprotection.Exclusion{{RuleID: 930130, Path: viteEnvironmentPath}}}
+	}
 	quic, tcp := f.connectors()
-	native := startFrameworkNativeOwner(t, directory, config.Services{
-		"web": {Public: new(true), HTTP: &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}},
-	}, frameworkNativeSetup{controlURL: f.identity.controlOrigin, state: f.identity.state, controlHTTP: f.controlHTTP,
-		publicHTTP: f.visitor.client, publicDomain: f.controlConfig.ManagedDomain, publicRootPEM: f.pebble.rootPEM,
-		relayTLS: f.roots, quic: quic, tcp: tcp})
+	native := startFrameworkNativeOwner(t, directory, config.Services{"web": web},
+		frameworkNativeSetup{controlURL: f.identity.controlOrigin, state: f.identity.state, controlHTTP: f.controlHTTP,
+			publicHTTP: f.visitor.client, publicDomain: f.controlConfig.ManagedDomain, publicRootPEM: f.pebble.rootPEM,
+			relayTLS: f.roots, quic: quic, tcp: tcp})
 	defer native.stop()
 	var command *exec.Cmd
 	if framework == "vite" {
@@ -131,9 +144,29 @@ func testPublicFrameworkHMR(t *testing.T, framework string) {
 		if len(token) != 2 || len(environment) != 2 {
 			t.Fatal("served Vite client omitted its HMR token or environment module")
 		}
+		environmentURL, err := url.Parse(environment[1])
+		if err != nil || environmentURL.EscapedPath() != viteEnvironmentPath {
+			t.Fatalf("served Vite environment module does not match its exact WAF exclusion: %q err=%v", environment[1], err)
+		}
 		metadata := read(environment[1], "")
 		if !strings.Contains(metadata, base) || !strings.Contains(metadata, service.Endpoint.Hostname) {
 			t.Fatal("public Vite runtime metadata lost the assigned endpoint")
+		}
+		for _, path := range []string{
+			"/.env",
+			viteEnvironmentPath + ".bak",
+			viteEnvironmentPath + "?q=" + url.QueryEscape("' OR 1=1 --"),
+			viteEnvironmentPath + "?q=" + url.QueryEscape("<script>alert(1)</script>"),
+		} {
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, body, err := f.visitor.request(request)
+			if err != nil || response.StatusCode != http.StatusForbidden || response.Header.Get("Tnl-Error-Code") != string(diagnostic.HttpProtectionRejected) {
+				t.Fatalf("public Vite WAF exclusion allowed a restricted file or attack at %s: response=%v body=%s err=%v", path, response, body, err)
+			}
+			assertIntegrationPublicURLCertificate(t, response, service.Endpoint.Hostname)
 		}
 		socketPath = "/?token=" + url.QueryEscape(token[1])
 	} else {
