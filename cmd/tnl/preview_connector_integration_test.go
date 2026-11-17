@@ -200,9 +200,9 @@ func TestIntegrationConnectorOnlyPreviewAttachmentAndPresentation(t *testing.T) 
 		}
 		_, tokenErr := reviewerControl.IssueVisitorToken(ctx, controlv1.VisitorTokenRequest{Resource: resource, Source: deviceSource})
 		assertDenied(tokenErr, "device permission without an independent connector grant")
-		// the certificate API currently misclassifies ErrVisitorPermission as
-		// HTTP 500. assert its authority decision at the owning state boundary;
-		// the token API above separately proves the current HTTP 403 decision.
+		_, apiCertificateErr := reviewerControl.IssueServiceClientCertificate(ctx, private.Id, device.Id, csr)
+		assertDenied(apiCertificateErr, "connector certificate without an independent connector grant")
+		// retain the independent owning-state decision as well as the real API.
 		_, certificateErr := d.IssueVisitorClientCertificate(reviewerContext, server.URL,
 			visitorscope.Scope{Kind: visitorscope.Service, ID: private.Id}, controlstate.DeviceTokenSource{DeviceID: device.Id}, csr, time.Now())
 		if !errors.Is(certificateErr, controlstate.ErrVisitorPermission) {
