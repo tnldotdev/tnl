@@ -18,9 +18,22 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
+// accept fencing, HTTP shutdown, and setup cleanup share one raw close. keep its
+// result even if the server's accept loop unregisters before Shutdown observes it.
+type ownerIPCListener struct {
+	net.Listener
+	close func() error
+}
+
+func (l *ownerIPCListener) Close() error { return l.close() }
+
 // Serve owns private IPC and joins cleanup. process-owned adapters distinguish
 // their process lifetime from bounded session and per-service authorization.
 func Serve(ctx context.Context, scope Context, directory, executable string, config OwnerConfig, output io.Writer) (result error) {
+	return serveOwner(ctx, scope, directory, executable, config, output, net.Listen)
+}
+
+func serveOwner(ctx context.Context, scope Context, directory, executable string, config OwnerConfig, output io.Writer, listen func(string, string) (net.Listener, error)) (result error) {
 	startup, finishStartup := observability.ClientOperation(ctx, "connector.connections.startup")
 	defer func() { finishStartup(result) }()
 	backend := config.Backend
@@ -95,11 +108,12 @@ func Serve(ctx context.Context, scope Context, directory, executable string, con
 		expires = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 		localDeadline = expires
 	}
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	rawListener, err := listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	listener := &ownerIPCListener{Listener: rawListener, close: sync.OnceValue(rawListener.Close)}
+	defer func() { result = errors.Join(result, listener.Close()) }()
 	key, err := randomKey()
 	if err != nil {
 		return err
