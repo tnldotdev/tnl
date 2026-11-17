@@ -24,10 +24,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -317,6 +319,12 @@ func outageTerminalOnly(err error) bool {
 	var physical *muxsession.QUICTransportCloseError
 	if errors.As(err, &physical) {
 		return false
+	}
+	// this scenario expires role leases before shutdown can acknowledge a drain.
+	// only that exact refusal is expected; other control or cleanup errors remain.
+	if problem, ok := err.(*relay.ControlProblemError); ok {
+		return problem.Operation == "drain relay" && problem.Status == http.StatusConflict &&
+			problem.Problem != nil && problem.Problem.Code == relayv1.RelayLeaseStale
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		for _, child := range joined.Unwrap() {

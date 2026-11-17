@@ -274,6 +274,7 @@ func TestServiceHTTPSRejectsInvalidSNIAndWrongPortBeforeForwarding(t *testing.T)
 			} else if timeout, ok := errors.AsType[net.Error](err); ok && timeout.Timeout() {
 				t.Fatal("ingress did not close the rejected connection", err)
 			}
+			server.StopAccepting()
 			server.active.Wait()
 			if opened.Load() != 0 || handedOff.Load() != 0 {
 				t.Fatal("invalid SNI or destination selected a service or control handoff", opened.Load(), handedOff.Load())

@@ -12,14 +12,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 )
 
 func TestOutageTerminalOnlyPreservesEveryJoinedCause(t *testing.T) {
+	staleDrain := &relay.ControlProblemError{Operation: "drain relay", Status: 409, Problem: &relayv1.Problem{Code: relayv1.RelayLeaseStale}}
 	expected := []error{
 		clientcontrol.ErrUnavailable, context.Canceled, context.DeadlineExceeded,
 		publisherservice.ErrPrivateStream, controloutage.ErrDeadline,
-		ingress.ErrIngressLeaseLost, connectorstream.ErrServiceConnection,
+		ingress.ErrIngressLeaseLost, connectorstream.ErrServiceConnection, staleDrain,
 	}
 	for _, cause := range expected {
 		if !outageTerminalOnly(cause) {
@@ -46,6 +49,10 @@ func TestOutageTerminalOnlyPreservesEveryJoinedCause(t *testing.T) {
 		{"wrapped mixed expiry and independent cleanup", fmt.Errorf("terminal result: %w",
 			&connectorstream.CleanupError{Err: errors.Join(mixed, independent)}), false},
 		{"joined independent cleanup", errors.Join(mixed, &connectorstream.CleanupError{Err: independent}), false},
+		{"stale drain and independent cleanup", errors.Join(staleDrain, independent), false},
+		{"stale renewal", &relay.ControlProblemError{Operation: "renew relay", Status: 409, Problem: &relayv1.Problem{Code: relayv1.RelayLeaseStale}}, false},
+		{"drain unavailable", &relay.ControlProblemError{Operation: "drain relay", Status: 503, Problem: &relayv1.Problem{Code: relayv1.RelayLeaseStale}}, false},
+		{"unclassified drain", &relay.ControlProblemError{Operation: "drain relay", Status: 409}, false},
 		{"unexpected forwarding failure", &connectorstream.CleanupError{Err: errors.Join(mixed, io.ErrUnexpectedEOF)}, false},
 		{"physical close cannot borrow expiry", &muxsession.QUICTransportCloseError{Err: context.DeadlineExceeded}, false},
 		{"nested physical close cannot borrow expiry", &connectorstream.CleanupError{Err: errors.Join(mixed,
