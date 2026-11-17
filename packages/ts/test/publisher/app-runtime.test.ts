@@ -116,7 +116,6 @@ test("close joins pending registration and preserves independent operation and c
   }
 });
 
-
 test("an optional preparation that finishes after its deadline releases its reservation", async () => {
   const beforeExitListeners = process.listenerCount("beforeExit");
   const controller = new AbortController();
