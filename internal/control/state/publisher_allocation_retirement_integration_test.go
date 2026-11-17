@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -109,6 +110,30 @@ func TestIntegrationDeploymentAllocationCertificateSurvivesEndpointReassignment(
 	web := r.Configuration.Services["web"]
 	web.Hostname = certified.service.Endpoint.Hostname
 	r.Configuration.Services["web"] = web
+	var cleanupAt time.Time
+	if err := f.d.pool.QueryRow(t.Context(), `SELECT dns_available_at FROM control.service_endpoints
+		WHERE service_id=$1 AND hostname=$2 AND retired_at IS NOT NULL AND dns_state='removing'`,
+		certified.service.ID, web.Hostname).Scan(&cleanupAt); err != nil {
+		t.Fatal("deleted allocation did not retain pending endpoint DNS removal", err)
+	}
+	r.Now = cleanupAt
+	removal, found, err := f.d.ClaimServiceEndpointDNSWork(t.Context(), "allocation-reassignment", cleanupAt, time.Minute)
+	if err != nil || !found || removal.ServiceID != certified.service.ID || removal.Hostname != web.Hostname ||
+		removal.OwnerID != f.production.ID || removal.State != ServiceEndpointDNSRemoving {
+		t.Fatal("allocation lost its predecessor DNS cleanup receipt", removal, found, err)
+	}
+	if _, err := f.d.ApplyProjectConfiguration(t.Context(), r); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("endpoint reassignment discarded pending predecessor DNS cleanup", err)
+	}
+	if err := f.d.ValidateServiceEndpointDNSWork(t.Context(), removal, cleanupAt); err != nil {
+		t.Fatal("rejected reassignment fenced predecessor DNS removal", err)
+	}
+	// complete the predecessor's worker receipt before transferring the endpoint;
+	// DNS cleanup does not shorten the allocation's captured certificate authority.
+	removal.State, removal.AvailableAt = ServiceEndpointDNSRemoved, time.Time{}
+	if _, err := f.d.SaveServiceEndpointDNSWork(t.Context(), removal, cleanupAt); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal("same-deployment exact hostname could not replace its deleted service", err)
 	}
@@ -120,12 +145,15 @@ func TestIntegrationDeploymentAllocationCertificateSurvivesEndpointReassignment(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.d.DeleteDeployment(t.Context(), DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}, production.ID, production.Revision, f.now); err != nil {
+	if err := f.d.DeleteDeployment(t.Context(), DeploymentScope{TeamID: r.TeamID, ProjectKey: r.ProjectKey, ActorID: r.ActorID}, production.ID, production.Revision, r.Now); err != nil {
 		t.Fatal(err)
 	}
-	completeAllocationRetirementDNS(t, f.d, f.now)
+	completeAllocationRetirementDNS(t, f.d, r.Now)
 	var reusable bool
 	if err := f.d.pool.QueryRow(t.Context(), `SELECT control.service_namespace_reusable($1,$2)`, namespace, f.now.Add(8*24*time.Hour)).Scan(&reusable); err != nil || reusable {
 		t.Fatal("endpoint reassignment lost the allocation's outstanding exact-host certificate authority", err)
+	}
+	if err := f.d.pool.QueryRow(t.Context(), `SELECT control.service_namespace_reusable($1,$2)`, namespace, f.now.Add(11*24*time.Hour)).Scan(&reusable); err != nil || !reusable {
+		t.Fatal("settled reassignment retained namespace authority beyond the actual certificate lifetime", err)
 	}
 }
