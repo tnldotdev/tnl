@@ -29,10 +29,10 @@ func TestInstalledShutdownSharesDeadlineAcrossJobsAndJoinsFailures(t *testing.T)
 	cleanup := errors.New("remote cleanup unconfirmed")
 	deadline := sync.OnceValue(func() time.Time { return time.Now().Add(80 * time.Millisecond) })
 	engine := Engine{Registry: registry, PollInterval: time.Millisecond, ShutdownDeadline: deadline,
-		Connect: func(ctx context.Context, _ Job, _ *clienttelemetry.Collector, _ func() error, until func() time.Time) error {
+		Connect: func(ctx context.Context, _ Job, _ *clienttelemetry.Collector, _ func() error, until func() time.Time, shutdown context.Context) error {
 			started <- struct{}{}
 			<-ctx.Done()
-			finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), until())
+			finish, cancel := context.WithDeadline(shutdown, until())
 			defer cancel()
 			value, _ := finish.Deadline()
 			deadlines <- value

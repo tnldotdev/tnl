@@ -61,7 +61,7 @@ func TestConnectorIsUserOnlyAndJoinsBeforeRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	started, joined := make(chan struct{}), make(chan struct{})
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Connect: func(ctx context.Context, got Job, _ *clienttelemetry.Collector, ready func() error, _ func() time.Time) error {
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Connect: func(ctx context.Context, got Job, _ *clienttelemetry.Collector, ready func() error, _ func() time.Time, _ context.Context) error {
 		if got.ServiceID != service || got.IdentityID != job.IdentityID || got.Target != job.Target {
 			return ErrScope
 		}

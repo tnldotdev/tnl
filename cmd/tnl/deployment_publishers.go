@@ -129,7 +129,7 @@ func runFixedDeploymentRuntime(ctx context.Context, flags publisherServeCommand,
 		runners[input.job.ID] = input.runner
 	}
 	var outputMu sync.Mutex
-	engine := installedjobs.Engine{Telemetry: flags.telemetry, Registry: registry, Initialize: func(ctx context.Context) error { return registry.ReplaceDeployments(ctx, jobs) }, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, deadline func() time.Time) error {
+	engine := installedjobs.Engine{Telemetry: flags.telemetry, Registry: registry, Initialize: func(ctx context.Context) error { return registry.ReplaceDeployments(ctx, jobs) }, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, deadline func() time.Time, shutdown context.Context) error {
 		_, private, profile, err := registry.DeploymentIdentity(ctx, job)
 		if err != nil {
 			return err
@@ -137,6 +137,7 @@ func runFixedDeploymentRuntime(ctx context.Context, flags publisherServeCommand,
 		runner := runners[job.ID]
 		runner.Telemetry = telemetry
 		runner.ShutdownDeadline = deadline
+		runner.ShutdownContext = shutdown
 		return runner.Serve(ctx, job, profile, private, observe)
 	}, Observe: func(job installedjobs.Job, status installedjobs.Status) error {
 		outputMu.Lock()

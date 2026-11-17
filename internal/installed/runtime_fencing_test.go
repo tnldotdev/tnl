@@ -75,7 +75,7 @@ func TestInstalledDeploymentRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	var attempts atomic.Int64
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 5 * time.Millisecond, RetryMax: 10 * time.Millisecond, Deployment: func(ctx context.Context, job Job, _ *clienttelemetry.Collector, observe func(int64, bool) error, _ func() time.Time) error {
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 5 * time.Millisecond, RetryMax: 10 * time.Millisecond, Deployment: func(ctx context.Context, job Job, _ *clienttelemetry.Collector, observe func(int64, bool) error, _ func() time.Time, _ context.Context) error {
 		attempts.Add(1)
 		current, private, _, err := r.DeploymentIdentity(ctx, job)
 		if err != nil {

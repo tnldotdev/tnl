@@ -89,9 +89,13 @@ type RunConfig struct {
 	HeartbeatInterval time.Duration
 	DrainTime         time.Duration
 	// shutdown deadline is owned by the composing operation and includes drain
-	// and exact-run cleanup. it is evaluated once when shutdown first starts.
+	// and exact-run cleanup. without an active fence the first value is fixed;
+	// with a fence later values may only narrow the first local stop cap.
 	ShutdownDeadline func() time.Time
-	Connect          func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error)
+	// shutdown context carries the owner's active expiry fence. cancellation of
+	// ordinary publication work must not be used as this cleanup lifetime.
+	ShutdownContext context.Context
+	Connect         func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error)
 	// prepared observes validated control facts once, before starting that run.
 	Prepared     func(controlv1.ServiceRunPreparation) error
 	Ready        func() error
@@ -148,17 +152,26 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		config.DrainTime = 10 * time.Second
 	}
 	parentDeadline := config.ShutdownDeadline
-	config.ShutdownDeadline = sync.OnceValue(func() time.Time {
+	if parentDeadline != nil && config.ShutdownContext == nil {
+		parentDeadline = sync.OnceValue(parentDeadline)
+	}
+	var deadlineMu sync.Mutex
+	var shutdownUntil time.Time
+	config.ShutdownDeadline = func() time.Time {
 		var parent time.Time
 		if parentDeadline != nil {
 			parent = parentDeadline()
 		}
-		until := time.Now().Add(config.DrainTime)
-		if !parent.IsZero() && parent.Before(until) {
-			until = parent
+		deadlineMu.Lock()
+		defer deadlineMu.Unlock()
+		if shutdownUntil.IsZero() {
+			shutdownUntil = time.Now().Add(config.DrainTime)
 		}
-		return until
-	})
+		if !parent.IsZero() && parent.Before(shutdownUntil) {
+			shutdownUntil = parent
+		}
+		return shutdownUntil
+	}
 	canceled := make(chan struct{})
 	stopShutdown := context.AfterFunc(ctx, func() { defer close(canceled); config.ShutdownDeadline() })
 	defer func() {
@@ -368,8 +381,8 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	bound.audit = audit
 	defer func() {
 		bound.Invalidate()
-		flush, cancel := context.WithDeadline(context.WithoutCancel(ctx), config.ShutdownDeadline())
-		defer cancel()
+		flush, finish := config.cleanupContext(ctx, config.ShutdownDeadline())
+		defer func() { result = errors.Join(result, finish()) }()
 		result = errors.Join(result, audit.Close(flush))
 	}()
 	bound.streamCapacity = int(config.StreamCapacity)
@@ -469,8 +482,8 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		if publisherExpires.Before(until) {
 			until = publisherExpires
 		}
-		finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
-		defer cancel()
+		finish, join := config.cleanupContext(ctx, until)
+		defer func() { result = errors.Join(result, join()) }()
 		interrupt := bound.fenceDrain(until)
 		status.Ready, status.Draining = false, true
 		status.LastCheck = time.Now()

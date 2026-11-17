@@ -29,6 +29,7 @@ type DeploymentRunner struct {
 	// Startup bounds finite setup only, never a deployment's lease lifetime.
 	Startup          *OperationLimiter
 	ShutdownDeadline func() time.Time
+	ShutdownContext  context.Context
 }
 
 type deploymentRunnerScope struct {
@@ -38,9 +39,9 @@ type deploymentRunnerScope struct {
 }
 
 func (r DeploymentRunner) Serve(ctx context.Context, job Job, profile *clientstate.Store, private ed25519.PrivateKey, observe func(int64, bool) error) (result error) {
-	var joinShutdown func()
-	r.ShutdownDeadline, joinShutdown = installedShutdown(ctx, 10*time.Second, r.ShutdownDeadline)
-	defer joinShutdown()
+	var joinShutdown func() error
+	r.ShutdownDeadline, r.ShutdownContext, joinShutdown = installedShutdown(ctx, 10*time.Second, r.ShutdownDeadline, r.ShutdownContext)
+	defer func() { result = errors.Join(result, joinShutdown()) }()
 	if validateJob(&job) != nil || job.Kind != KindDeployment || profile == nil || r.Discovery == nil || publisherprovenance.Validate(r.Deployment) != nil || r.Deployment != nil && r.Deployment.Instance != job.DeploymentInstance {
 		return ErrScope
 	}
@@ -107,13 +108,13 @@ func (r DeploymentRunner) Serve(ctx context.Context, job Job, profile *clientsta
 	}
 	// Runtime.Serve joins assignments before shared discovery is canceled/joined.
 	defer resolver.Close()
-	publications := publisherdeployment.AssignmentPublisher{Telemetry: r.Telemetry, Member: member, Private: private, State: profile, Control: control.NativeControl, Authority: authority, Discovery: resolver, ServerDiscovery: control.Discovery}
+	publications := publisherdeployment.AssignmentPublisher{Telemetry: r.Telemetry, Member: member, Private: private, State: profile, Control: control.NativeControl, Authority: authority, Discovery: resolver, ServerDiscovery: control.Discovery, ShutdownContext: r.ShutdownContext}
 	return WithCertificateState(setupCtx, job, profile, private, client, func(_ context.Context) error {
 		finishStartup(nil)
 		ctx = observability.Independent(setup)
 		cancelSetup()
 		release()
-		err := (publisherdeployment.Runtime{Control: client, Member: member, Private: private, Deployment: r.Deployment, ShutdownDeadline: r.ShutdownDeadline, Observe: observe, MemberChanged: func(current controlv1.DeploymentPublisherIdentity) error {
+		err := (publisherdeployment.Runtime{Control: client, Member: member, Private: private, Deployment: r.Deployment, ShutdownDeadline: r.ShutdownDeadline, ShutdownContext: r.ShutdownContext, Observe: observe, MemberChanged: func(current controlv1.DeploymentPublisherIdentity) error {
 			value, err := credentialfile.NewDeployment(job.Server, job.DeploymentInstance, current, private)
 			if err != nil {
 				return err

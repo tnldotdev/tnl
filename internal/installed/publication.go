@@ -62,6 +62,9 @@ func (e Engine) publishJob(ctx context.Context, job Job, attempts uint64, runtim
 	readiness := newPublicationReadiness(worker, cancel, job, service, attempts, func(ctx context.Context, status Status) error {
 		return e.status(ctx, job, status)
 	})
+	if e.ShutdownContext != nil {
+		readiness.shutdownContext = e.ShutdownContext
+	}
 	if e.ShutdownDeadline != nil {
 		readiness.shutdownDeadline = func() time.Time {
 			if until := e.ShutdownDeadline(); !until.IsZero() {
@@ -75,7 +78,7 @@ func (e Engine) publishJob(ctx context.Context, job Job, attempts uint64, runtim
 		Control: native, State: profile, Access: native.Access,
 		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
 		ServiceID: job.ServiceID, Target: job.Target, Metadata: publisheridentity.ServiceMetadata(service),
-		StreamCapacity: job.StreamCapacity, DrainTime: e.DrainTime, ShutdownDeadline: e.ShutdownDeadline,
+		StreamCapacity: job.StreamCapacity, DrainTime: e.DrainTime, ShutdownDeadline: e.ShutdownDeadline, ShutdownContext: e.ShutdownContext,
 		Prepared: readiness.Prepared, ObserveReadiness: readiness.Observe, Healthy: readiness.Healthy,
 	}
 	if job.Protocol == config.ProtocolHTTP {

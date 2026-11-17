@@ -230,7 +230,7 @@ func TestInstalledTelemetryOptOutSurvivesSupervisorRestart(t *testing.T) {
 			for range 2 {
 				observed := make(chan bool, 1)
 				engine := Engine{Telemetry: &clienttelemetry.Collector{}, Registry: registry, PollInterval: 5 * time.Millisecond,
-					Connect: func(ctx context.Context, _ Job, telemetry *clienttelemetry.Collector, _ func() error, _ func() time.Time) error {
+					Connect: func(ctx context.Context, _ Job, telemetry *clienttelemetry.Collector, _ func() error, _ func() time.Time, _ context.Context) error {
 						observed <- telemetry == nil
 						<-ctx.Done()
 						return nil
@@ -252,7 +252,9 @@ func TestInstalledTelemetryOptOutSurvivesSupervisorRestart(t *testing.T) {
 
 type testUserRunner func(context.Context) error
 
-func (f testUserRunner) Serve(ctx context.Context, _ func() time.Time) error { return f(ctx) }
+func (f testUserRunner) Serve(ctx context.Context, _ func() time.Time, _ context.Context) error {
+	return f(ctx)
+}
 
 func TestUserJobRunnerSharesSupervisorLifetime(t *testing.T) {
 	r := testRegistry(t)
@@ -546,7 +548,7 @@ func TestReconcileDoesNotBlockOnAnotherJobsDrain(t *testing.T) {
 	var once sync.Once
 	defer once.Do(func() { close(release) })
 	var draining, running atomic.Bool
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Connect: func(ctx context.Context, j Job, _ *clienttelemetry.Collector, ready func() error, _ func() time.Time) error {
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Connect: func(ctx context.Context, j Job, _ *clienttelemetry.Collector, ready func() error, _ func() time.Time, _ context.Context) error {
 		if err := ready(); err != nil {
 			return err
 		}

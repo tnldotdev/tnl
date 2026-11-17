@@ -54,8 +54,8 @@ type Engine struct {
 	// own registry and credentials. the system publisher service leaves it empty.
 	UserJobs   []UserJobRunner
 	Clients    ClientFactory
-	Connect    func(context.Context, Job, *clienttelemetry.Collector, func() error, func() time.Time) error
-	Deployment func(context.Context, Job, *clienttelemetry.Collector, func(int64, bool) error, func() time.Time) error
+	Connect    func(context.Context, Job, *clienttelemetry.Collector, func() error, func() time.Time, context.Context) error
+	Deployment func(context.Context, Job, *clienttelemetry.Collector, func(int64, bool) error, func() time.Time, context.Context) error
 	Observe    func(Job, Status) error
 	// Initialize runs local desired-state setup while holding service.lock,
 	// before any worker starts. it must not contact remote services.
@@ -65,12 +65,16 @@ type Engine struct {
 	RetryMax         time.Duration
 	DrainTime        time.Duration
 	ShutdownDeadline func() time.Time
+	// shutdown context is an expiry fence, not the canceled work context.
+	// descendants inherit it before stopping so an earlier parent expiry can
+	// interrupt already-active cleanup without another deadline getter call.
+	ShutdownContext context.Context
 }
 
 // UserJobRunner owns its own registry and reconciliation. Serve joins its
 // workers before returning when the shared user-login context is canceled.
 type UserJobRunner interface {
-	Serve(context.Context, func() time.Time) error
+	Serve(context.Context, func() time.Time, context.Context) error
 }
 
 type worker struct {
@@ -105,9 +109,9 @@ func (e Engine) Serve(ctx context.Context) (result error) {
 	if e.PollInterval < time.Millisecond || e.RetryMin < time.Millisecond || e.RetryMax < e.RetryMin || e.RetryMax > 5*time.Minute || e.DrainTime < 0 || e.DrainTime > time.Minute {
 		return ErrScope
 	}
-	var joinShutdown func()
-	e.ShutdownDeadline, joinShutdown = installedShutdown(ctx, e.DrainTime, e.ShutdownDeadline)
-	defer joinShutdown()
+	var joinShutdown func() error
+	e.ShutdownDeadline, e.ShutdownContext, joinShutdown = installedShutdown(ctx, e.DrainTime, e.ShutdownDeadline, e.ShutdownContext)
+	defer func() { result = errors.Join(result, joinShutdown()) }()
 	if err := e.Registry.validate(); err != nil {
 		return err
 	}
@@ -130,7 +134,7 @@ func (e Engine) Serve(ctx context.Context) (result error) {
 	userDone := make(chan error, len(e.UserJobs))
 	var userWorkers sync.WaitGroup
 	for _, runner := range e.UserJobs {
-		userWorkers.Go(func() { userDone <- runner.Serve(userCtx, e.ShutdownDeadline) })
+		userWorkers.Go(func() { userDone <- runner.Serve(userCtx, e.ShutdownDeadline, e.ShutdownContext) })
 	}
 	defer func() {
 		e.ShutdownDeadline()
@@ -157,7 +161,7 @@ func (e Engine) Serve(ctx context.Context) (result error) {
 			result = errors.Join(result, w.err)
 		}
 		// record the joined boundary with a fresh revision, including local stops.
-		finish, cancel := context.WithDeadline(context.Background(), e.ShutdownDeadline())
+		finish, cancel := context.WithDeadline(e.ShutdownContext, e.ShutdownDeadline())
 		defer cancel()
 		jobs, err := e.Registry.List(finish)
 		if err == nil {
@@ -238,16 +242,16 @@ func (e Engine) Serve(ctx context.Context) (result error) {
 }
 
 func (e Engine) run(ctx context.Context, job Job) (result error) {
-	var joinShutdown func()
-	e.ShutdownDeadline, joinShutdown = installedShutdown(ctx, e.DrainTime, e.ShutdownDeadline)
-	defer joinShutdown()
+	var joinShutdown func() error
+	e.ShutdownDeadline, e.ShutdownContext, joinShutdown = installedShutdown(ctx, e.DrainTime, e.ShutdownDeadline, e.ShutdownContext)
+	defer func() { result = errors.Join(result, joinShutdown()) }()
 	if job.TelemetryDisabled {
 		e.Telemetry = nil
 	}
 	var runtime *processidentity.Owner
 	defer func() {
 		if runtime != nil {
-			finish, cancel := context.WithDeadline(context.Background(), e.ShutdownDeadline())
+			finish, cancel := context.WithDeadline(e.ShutdownContext, e.ShutdownDeadline())
 			defer cancel()
 			result = errors.Join(result, runtime.Stop(finish))
 		}
@@ -350,7 +354,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 				state = JobReady
 			}
 			return e.status(ctx, job, Status{State: state, Attempts: attempts, ObservedRevision: revision})
-		}, e.ShutdownDeadline)
+		}, e.ShutdownDeadline, e.ShutdownContext)
 		return ready.Load(), err
 	}
 	if job.Kind == KindConnector {
@@ -361,7 +365,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		err := e.Connect(ctx, job, e.Telemetry, func() error {
 			ready.Store(true)
 			return e.Registry.status(ctx, job.ID, job.Revision, Status{State: JobReady, Attempts: attempts})
-		}, e.ShutdownDeadline)
+		}, e.ShutdownDeadline, e.ShutdownContext)
 		return ready.Load(), err
 	}
 	return e.publishJob(ctx, job, attempts, runtime)
@@ -369,28 +373,70 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 
 // installedShutdown starts the job's budget on its first stop and caps it at the
 // supervisor's original deadline only when that supervisor is also stopping.
-func installedShutdown(ctx context.Context, duration time.Duration, parent func() time.Time) (func() time.Time, func()) {
+func installedShutdown(ctx context.Context, duration time.Duration, parent func() time.Time, parentFence context.Context) (func() time.Time, context.Context, func() error) {
 	if duration == 0 {
 		duration = 10 * time.Second
 	}
-	deadline := sync.OnceValue(func() time.Time {
+	if parentFence == nil {
+		parentFence = context.WithoutCancel(ctx)
+	}
+	cleanup, expire := context.WithCancelCause(parentFence)
+	var mu sync.Mutex
+	var until time.Time
+	closed := false
+	var timer *time.Timer
+	var timerDone chan struct{}
+	stopTimer := func() {
+		if timer != nil {
+			if timer.Stop() {
+				close(timerDone)
+			}
+			<-timerDone
+			timer, timerDone = nil, nil
+		}
+	}
+	deadline := func() time.Time {
 		var outer time.Time
 		if parent != nil {
 			outer = parent()
 		}
-		until := time.Now().Add(duration)
+		mu.Lock()
+		defer mu.Unlock()
+		previous := until
+		if until.IsZero() {
+			until = time.Now().Add(duration)
+		}
 		if !outer.IsZero() && outer.Before(until) {
 			until = outer
 		}
+		if !closed && !until.Equal(previous) {
+			stopTimer()
+			done := make(chan struct{})
+			timerDone = done
+			timer = time.AfterFunc(time.Until(until), func() {
+				defer close(done)
+				expire(context.DeadlineExceeded)
+			})
+		}
+		if !closed && !time.Now().Before(until) {
+			expire(context.DeadlineExceeded)
+		}
 		return until
-	})
+	}
 	done := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() { defer close(done); deadline() })
-	return deadline, func() {
+	return deadline, cleanup, func() error {
 		deadline()
 		if !stop() {
 			<-done
 		}
+		mu.Lock()
+		stopTimer()
+		closed = true
+		mu.Unlock()
+		cause := context.Cause(cleanup)
+		expire(context.Canceled)
+		return cause
 	}
 }
 

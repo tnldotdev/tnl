@@ -80,8 +80,8 @@ func (r *runPreparation) close(ctx context.Context) (result error) {
 	if r.config.ShutdownDeadline != nil {
 		until = r.config.ShutdownDeadline()
 	}
-	finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), until)
-	defer cancel()
+	finish, join := r.config.cleanupContext(ctx, until)
+	defer func() { result = errors.Join(result, join()) }()
 	defer func() {
 		// this context is detached from the caller. its own canceled recovery
 		// or close is an independent failure, not a successful caller stop.

@@ -25,6 +25,7 @@ type Operations struct {
 	Telemetry        *clienttelemetry.Collector
 	OpenSession      SessionOpener
 	ShutdownDeadline func() time.Time
+	ShutdownContext  context.Context
 }
 
 type SessionOptions struct {

@@ -43,6 +43,10 @@ type registration struct {
 	// retain that exact cleanup request without claiming a bound listener.
 	cleanupTarget *string
 	shutdownUntil time.Time
+	shutdown      context.Context
+	stopShutdown  context.CancelCauseFunc
+	shutdownTimer *time.Timer
+	shutdownDone  chan struct{}
 }
 
 // stopped outcomes contain no worker, key, or cleanup callback. they only let an
@@ -120,6 +124,7 @@ func New(ctx context.Context, project string, database *clientstate.Database, se
 }
 
 func (m *Manager) emitLocked(kind string, service *Service) {
+	base := context.WithoutCancel(m.ctx)
 	until := time.Now().Add(5 * time.Second)
 	if (m.closed || m.ctx.Err() != nil) && m.ShutdownDeadline != nil {
 		if parent := m.ShutdownDeadline(); parent.Before(until) {
@@ -130,8 +135,11 @@ func (m *Manager) emitLocked(kind string, service *Service) {
 		if reg := m.registrations[service.Name]; reg != nil && !reg.shutdownUntil.IsZero() && reg.shutdownUntil.Before(until) {
 			until = reg.shutdownUntil
 		}
+		if reg := m.registrations[service.Name]; reg != nil && reg.shutdown != nil {
+			base = reg.shutdown
+		}
 	}
-	ctx, cancel := context.WithDeadline(context.WithoutCancel(m.ctx), until)
+	ctx, cancel := context.WithDeadline(base, until)
 	defer cancel()
 	if err := CommitSnapshot(ctx, m.database, &m.snapshot, kind, service); err != nil {
 		m.writeErr = err
@@ -386,6 +394,9 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 		return err
 	}
 	reg.expires = time.Now().Add(LeaseDuration)
+	if !reg.shutdownUntil.IsZero() {
+		reg.finishShutdown()
+	}
 	reg.shutdownUntil = time.Time{}
 	ctx, cancel := context.WithCancel(observability.LinkContext(m.ctx, scheduling))
 	reg.cancel, reg.done = cancel, make(chan struct{})
@@ -672,6 +683,12 @@ func (m *Manager) unregister(id, owner string) error {
 	}
 	m.mu.Lock()
 	runErr := reg.err
+	if !time.Now().Before(reg.shutdownUntil) {
+		reg.stopShutdown(context.DeadlineExceeded)
+	}
+	if cause := context.Cause(reg.shutdown); errors.Is(cause, context.DeadlineExceeded) {
+		runErr = errors.Join(runErr, cause)
+	}
 	reg.err = nil
 	m.retirementErr = errors.Join(m.retirementErr, runErr)
 	m.mu.Unlock()
@@ -689,6 +706,7 @@ func (m *Manager) unregister(id, owner string) error {
 		service.Failure = "runtime.publication_cleanup_failed"
 	}
 	m.emitLocked("service.stopped", service)
+	reg.finishShutdown()
 	delete(m.registrations, service.Name)
 	if len(m.registrations) == 0 {
 		m.idleSince = time.Now()
@@ -895,13 +913,73 @@ func (m *Manager) shutdownLocked(reg *registration) time.Time {
 	if (m.closed || m.ctx.Err() != nil) && m.ShutdownDeadline != nil {
 		parent = m.ShutdownDeadline()
 	}
-	if reg.shutdownUntil.IsZero() {
-		reg.shutdownUntil = time.Now().Add(10 * time.Second)
+	until := reg.shutdownUntil
+	if until.IsZero() {
+		until = time.Now().Add(10 * time.Second)
 	}
-	if !parent.IsZero() && parent.Before(reg.shutdownUntil) {
-		reg.shutdownUntil = parent
+	if !parent.IsZero() && parent.Before(until) {
+		until = parent
 	}
+	m.limitShutdownLocked(reg, until)
 	return reg.shutdownUntil
+}
+
+// the registration owns this fence before its first stop. a tighter limit
+// interrupts contexts already handed to service drain and allocation cleanup.
+func (m *Manager) shutdownContextLocked(reg *registration) context.Context {
+	if reg.shutdown == nil {
+		reg.shutdown, reg.stopShutdown = context.WithCancelCause(context.WithoutCancel(m.ctx))
+	}
+	return reg.shutdown
+}
+
+func (m *Manager) limitShutdownLocked(reg *registration, until time.Time) {
+	m.shutdownContextLocked(reg)
+	if !reg.shutdownUntil.IsZero() && !until.Before(reg.shutdownUntil) {
+		return
+	}
+	reg.stopShutdownTimer()
+	reg.shutdownUntil = until
+	done, cancel := make(chan struct{}), reg.stopShutdown
+	reg.shutdownDone = done
+	reg.shutdownTimer = time.AfterFunc(time.Until(until), func() {
+		defer close(done)
+		cancel(context.DeadlineExceeded)
+	})
+	if !time.Now().Before(until) {
+		cancel(context.DeadlineExceeded)
+	}
+}
+
+func (reg *registration) stopShutdownTimer() {
+	if reg.shutdownTimer != nil {
+		if reg.shutdownTimer.Stop() {
+			close(reg.shutdownDone)
+		}
+		<-reg.shutdownDone
+		reg.shutdownTimer, reg.shutdownDone = nil, nil
+	}
+}
+
+func (reg *registration) finishShutdown() {
+	reg.stopShutdownTimer()
+	if reg.stopShutdown != nil {
+		reg.stopShutdown(context.Canceled)
+	}
+	reg.shutdown, reg.stopShutdown = nil, nil
+}
+
+// PublicationShutdownContext does not start a budget. its exact registration's
+// owner cancels it with DeadlineExceeded when the current stop limit expires.
+func (m *Manager) PublicationShutdownContext(id string) context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for name, reg := range m.registrations {
+		if service := m.serviceLocked(name); service != nil && service.RegistrationID == id {
+			return m.shutdownContextLocked(reg)
+		}
+	}
+	return context.WithoutCancel(m.ctx)
 }
 
 // PublicationShutdownDeadline keeps worker drain, cleanup, and its terminal
@@ -938,7 +1016,7 @@ func (m *Manager) LimitShutdown(id, owner, target string, until time.Time) error
 	}
 	current := m.shutdownLocked(reg)
 	if until.Before(current) {
-		reg.shutdownUntil = until
+		m.limitShutdownLocked(reg, until)
 	}
 	return nil
 }

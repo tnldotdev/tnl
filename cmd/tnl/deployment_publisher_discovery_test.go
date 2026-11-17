@@ -18,7 +18,7 @@ func TestDeploymentPublisherDiscoveryForegroundUsesNativeTLS(t *testing.T) {
 	var result error
 	go func() {
 		defer close(done)
-		result = serveDeploymentPublisherWithDiscovery(ctx, fixture.Job, fixture.Profile, fixture.Key, nil, nil, fixture, nil)
+		result = serveDeploymentPublisherWithDiscovery(ctx, fixture.Job, fixture.Profile, fixture.Key, nil, nil, fixture, nil, nil)
 	}()
 	defer func() { cancel(); <-done }()
 	deadline := time.NewTimer(5 * time.Second)
@@ -84,18 +84,18 @@ func TestDeploymentPublisherDiscoveryShutdownJoinsAWSLookupsAndWorkers(t *testin
 				if err := registry.InstallDeployment(t.Context(), fixture.Job, *fixture.Job.DeploymentMember, fixture.Key); err != nil {
 					t.Fatal(err)
 				}
-				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, deadline func() time.Time) error {
+				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, deadline func() time.Time, shutdown context.Context) error {
 					_, private, profile, err := registry.DeploymentIdentity(ctx, job)
 					if err != nil {
 						return err
 					}
-					return serveDeploymentPublisherWithDiscovery(ctx, job, profile, private, telemetry, observe, fixture, deadline)
+					return serveDeploymentPublisherWithDiscovery(ctx, job, profile, private, telemetry, observe, fixture, deadline, shutdown)
 				}}
 				go func() { defer close(done); result = engine.Serve(ctx) }()
 			} else {
 				go func() {
 					defer close(done)
-					result = serveDeploymentPublisherWithDiscovery(ctx, fixture.Job, fixture.Profile, fixture.Key, nil, nil, fixture, nil)
+					result = serveDeploymentPublisherWithDiscovery(ctx, fixture.Job, fixture.Profile, fixture.Key, nil, nil, fixture, nil, nil)
 				}()
 			}
 			defer func() { cancel(); <-done }()

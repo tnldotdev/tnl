@@ -119,6 +119,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved), InspectionMode: policy.Mode,
 		ProjectRoot: project.Root, ProjectService: service.Name}
 	base.ShutdownDeadline = func() time.Time { return a.manager.PublicationShutdownDeadline(service.RegistrationID) }
+	base.ShutdownContext = a.manager.PublicationShutdownContext(service.RegistrationID)
 	if saved.Protocol == controlv1.ServiceProtocolHTTP {
 		base.ResolveHTTPTarget = func(request *http.Request) (string, string, error) {
 			selected, err := readiness.captureHTTP(request.Context())

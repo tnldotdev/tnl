@@ -192,6 +192,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	}
 	service := publisherapp.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}
 	cfg.ShutdownDeadline = deadline
+	cfg.ShutdownContext = a.manager.PublicationShutdownContext(id)
 	cfg.TransportTLS = &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg.InspectionMode = policy.Mode
 	if !request.TelemetryDisabled {
@@ -285,6 +286,7 @@ func (a *appRuntime) invocationPublication(service publisherapp.Service, base pu
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		cfg := base
+		cfg.ShutdownContext = a.manager.PublicationShutdownContext(service.RegistrationID)
 		cfg.ObserveSummary = func(value inspection.Summary) {
 			if summary != nil {
 				summary(value)

@@ -274,10 +274,10 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 }
 
 func serveDeploymentPublisher(ctx context.Context, job installedjobs.Job, profile *clientstate.Store, private ed25519.PrivateKey, telemetry *clienttelemetry.Collector, observe func(int64, bool) error) error {
-	return serveDeploymentPublisherWithDiscovery(ctx, job, profile, private, telemetry, observe, nil, nil)
+	return serveDeploymentPublisherWithDiscovery(ctx, job, profile, private, telemetry, observe, nil, nil, nil)
 }
 
-func serveDeploymentPublisherWithDiscovery(ctx context.Context, job installedjobs.Job, profile *clientstate.Store, private ed25519.PrivateKey, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, provider publisherdiscovery.Provider, deadline func() time.Time) error {
+func serveDeploymentPublisherWithDiscovery(ctx context.Context, job installedjobs.Job, profile *clientstate.Store, private ed25519.PrivateKey, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, provider publisherdiscovery.Provider, deadline func() time.Time, shutdown context.Context) error {
 	deployment, err := publisherprovenance.ReadEnvironment(os.LookupEnv, job.DeploymentInstance, buildinfo.Version)
 	if err != nil {
 		return err
@@ -285,5 +285,5 @@ func serveDeploymentPublisherWithDiscovery(ctx context.Context, job installedjob
 	if provider == nil {
 		provider = publisherdiscovery.AWS{}
 	}
-	return (installedjobs.DeploymentRunner{Telemetry: telemetry, Discovery: provider, Deployment: deployment, ShutdownDeadline: deadline}).Serve(ctx, job, profile, private, observe)
+	return (installedjobs.DeploymentRunner{Telemetry: telemetry, Discovery: provider, Deployment: deployment, ShutdownDeadline: deadline, ShutdownContext: shutdown}).Serve(ctx, job, profile, private, observe)
 }

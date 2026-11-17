@@ -112,10 +112,11 @@ func validateConnectMode(flags connectStartCommand) error {
 	return connector.ValidateMode(flags.options())
 }
 
-func runInstalledConnector(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, ready func() error, deadline func() time.Time) error {
+func runInstalledConnector(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, ready func() error, deadline func() time.Time, shutdown context.Context) error {
 	operations := connectorOperations()
 	operations.Telemetry = telemetry
 	operations.ShutdownDeadline = deadline
+	operations.ShutdownContext = shutdown
 	return operations.RunInstalled(ctx, job, ready)
 }
 func runKubeCredential(ctx context.Context, flags kubeCredentialCommand, output io.Writer) error {

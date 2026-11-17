@@ -414,7 +414,7 @@ func (a *appRuntime) cleanupPreparation(service publisherapp.Service) error {
 	preparation := a.prepared[service.RegistrationID]
 	a.mu.Unlock()
 	if preparation.configuration.Cleanup != nil {
-		finish, cancel := context.WithDeadline(context.Background(), a.manager.PublicationShutdownDeadline(service.RegistrationID))
+		finish, cancel := context.WithDeadline(a.manager.PublicationShutdownContext(service.RegistrationID), a.manager.PublicationShutdownDeadline(service.RegistrationID))
 		defer cancel()
 		return preparation.configuration.Cleanup(finish)
 	}

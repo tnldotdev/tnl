@@ -62,13 +62,14 @@ func (w *Workers) beginPublication(ctx context.Context, service Service, cfg Con
 	return journal, nil
 }
 
-func (j *publicationJournal) close(result error, cleanup func(context.Context) error, until time.Time) error {
-	finish, cancel := context.WithDeadline(context.Background(), until)
+func (j *publicationJournal) close(result error, cleanup func(context.Context) error, until time.Time, shutdown context.Context) error {
+	finish, cancel := context.WithDeadline(shutdown, until)
 	defer cancel()
 	result = errors.Join(result, j.recorder.Close(finish))
 	if cleanup != nil {
 		result = errors.Join(result, cleanup(finish))
 	}
+	result = errors.Join(result, context.Cause(finish))
 	return errors.Join(result, j.tunnel.Finish(finish, result))
 }
 
@@ -92,6 +93,7 @@ type Workers struct {
 }
 
 func (w *Workers) Run(ctx context.Context, service Service, observe func(PublicationUpdate) error) (result error) {
+	shutdown := w.Manager.PublicationShutdownContext(service.RegistrationID)
 	configuration, err := w.Configure(ctx, service)
 	if err != nil {
 		return err
@@ -101,11 +103,12 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(Publica
 		if journal != nil {
 			// operation workers have joined before recorder drain. include
 			// independent configuration cleanup failures in the terminal row.
-			result = journal.close(result, configuration.Cleanup, w.Manager.PublicationShutdownDeadline(service.RegistrationID))
+			result = journal.close(result, configuration.Cleanup, w.Manager.PublicationShutdownDeadline(service.RegistrationID), shutdown)
 		} else if configuration.Cleanup != nil {
-			finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), w.Manager.PublicationShutdownDeadline(service.RegistrationID))
+			finish, cancel := context.WithDeadline(shutdown, w.Manager.PublicationShutdownDeadline(service.RegistrationID))
 			defer cancel()
 			result = errors.Join(result, configuration.Cleanup(finish))
+			result = errors.Join(result, context.Cause(finish))
 		}
 	}()
 	publication := configuration.Service

@@ -32,6 +32,7 @@ type AssignmentPublisher struct {
 	Authority       publisheridentity.AssertionExchanger
 	Discovery       *publisherdiscovery.Resolver
 	ServerDiscovery ServerDiscovery
+	ShutdownContext context.Context
 }
 
 type ServerDiscovery interface {
@@ -83,7 +84,7 @@ func (p AssignmentPublisher) Publish(ctx context.Context, assignment controlv1.D
 	if health != nil {
 		defer health(false)
 	}
-	run := publisherservice.RunConfig{Telemetry: p.Telemetry, Control: native, State: p.State, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, ShutdownDeadline: deadline, Metadata: publisheridentity.ServiceMetadata(service), BrowserLoginAvailable: browserLogin, ObserveReadiness: func(status publisherservice.RunStatus) {
+	run := publisherservice.RunConfig{Telemetry: p.Telemetry, Control: native, State: p.State, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, ShutdownDeadline: deadline, ShutdownContext: p.ShutdownContext, Metadata: publisheridentity.ServiceMetadata(service), BrowserLoginAvailable: browserLogin, ObserveReadiness: func(status publisherservice.RunStatus) {
 		if health != nil {
 			health(status.Ready)
 		}

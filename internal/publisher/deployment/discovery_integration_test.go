@@ -62,7 +62,7 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 				if err := registry.InstallDeployment(t.Context(), fixture.Job, *fixture.Job.DeploymentMember, fixture.Key); err != nil {
 					t.Fatal(err)
 				}
-				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, _ func() time.Time) error {
+				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, _ func() time.Time, _ context.Context) error {
 					member, key, profile, err := registry.DeploymentIdentity(ctx, job)
 					if err != nil {
 						return err

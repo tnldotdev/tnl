@@ -37,6 +37,7 @@ type publicationReadiness struct {
 	current          *installedReadinessRun
 	failures         error
 	shutdownDeadline func() time.Time
+	shutdownContext  context.Context
 }
 
 type installedReadinessRun struct {
@@ -64,6 +65,7 @@ func newPublicationReadiness(ctx context.Context, cancel context.CancelCauseFunc
 		target: job.Target, resolver: targetplan.Resolver{}}
 	r.localProbe = r.checkTarget
 	r.shutdownDeadline = sync.OnceValue(func() time.Time { return time.Now().Add(10 * time.Second) })
+	r.shutdownContext = context.WithoutCancel(ctx)
 	if job.Protocol == "http" && job.Project != nil {
 		r.targets = &targetplan.TargetBinding{Resolve: func(ctx context.Context) (targetplan.TargetSnapshot, error) {
 			return targetplan.ResolveTargetSnapshot(ctx, *job.Project, job.ProjectService, r.resolver)
@@ -250,7 +252,7 @@ func (r *installedReadinessRun) serve() {
 	verified := false
 	last := Status{}
 	defer func() {
-		finish, cancel := context.WithDeadline(context.WithoutCancel(r.ctx), r.owner.shutdownDeadline())
+		finish, cancel := context.WithDeadline(r.owner.shutdownContext, r.owner.shutdownDeadline())
 		r.err = errors.Join(r.err, r.owner.observe(finish, Status{State: JobDraining, Attempts: r.owner.attempts, RunNumber: r.run.Number, Address: r.address}))
 		cancel()
 	}()

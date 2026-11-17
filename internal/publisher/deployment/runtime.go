@@ -38,6 +38,7 @@ type Runtime struct {
 	PollInterval     time.Duration
 	Deployment       *controlv1.PublisherDeploymentReport
 	ShutdownDeadline func() time.Time
+	ShutdownContext  context.Context
 }
 
 func (Runtime) String() string   { return "deployment runtime" }
@@ -65,6 +66,9 @@ func (r Runtime) Serve(ctx context.Context) (result error) {
 		return ErrAssignment
 	}
 	workers := map[string]*running{}
+	if r.ShutdownContext == nil {
+		r.ShutdownContext = context.WithoutCancel(ctx)
+	}
 	runtimeContext := ctx
 	var stopping atomic.Bool
 	parentDeadline := r.ShutdownDeadline
@@ -91,12 +95,12 @@ func (r Runtime) Serve(ctx context.Context) (result error) {
 		return err
 	}
 	defer func() {
-		finish, cancel := context.WithDeadline(context.WithoutCancel(ctx), r.ShutdownDeadline())
+		finish, cancel := context.WithDeadline(r.ShutdownContext, r.ShutdownDeadline())
 		defer cancel()
 		finish, end := observability.PublisherOperation(observability.Independent(finish), "deployment_shutdown")
 		err := owner.Stop(finish)
 		end(err)
-		result = errors.Join(result, err)
+		result = errors.Join(result, err, context.Cause(finish))
 	}()
 	var mu sync.Mutex
 	var joinedErr error

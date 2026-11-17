@@ -35,7 +35,7 @@ func TestStandaloneDeploymentsIsolateBlockedStoppedAndHealthyWorkers(t *testing.
 		t.Fatal("same publisher accepted under another instance", err)
 	}
 	var healthyStarts, healthyJoins atomic.Int32
-	engine := Engine{Registry: r, PollInterval: time.Millisecond, RetryMin: time.Millisecond, RetryMax: 2 * time.Millisecond, Deployment: func(ctx context.Context, job Job, _ *clienttelemetry.Collector, observe func(int64, bool) error, _ func() time.Time) error {
+	engine := Engine{Registry: r, PollInterval: time.Millisecond, RetryMin: time.Millisecond, RetryMax: 2 * time.Millisecond, Deployment: func(ctx context.Context, job Job, _ *clienttelemetry.Collector, observe func(int64, bool) error, _ func() time.Time, _ context.Context) error {
 		if job.ID == a.ID {
 			return clientcontrol.ErrUnauthenticated
 		}
