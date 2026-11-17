@@ -135,7 +135,7 @@ func dialHostWebSocket(ctx context.Context, address string) (*hostWebSocketNetwo
 		close(c.open)
 	})
 	c.on("message", c.message)
-	c.on("error", func(js.Value) { c.finish(&WebSocketError{Code: "upgrade_failed"}) })
+	c.on("error", func(js.Value) { c.finish(&WebSocketError{Code: "host_upgrade_failed"}) })
 	c.on("close", func(event js.Value) {
 		err := error(io.ErrUnexpectedEOF)
 		if code := event.Get("code").Int(); code == 1000 || code == 1001 {

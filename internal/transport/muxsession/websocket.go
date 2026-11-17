@@ -47,6 +47,11 @@ func (e *WebSocketError) Unwrap() error { return e.Err }
 // Retryable distinguishes proxy/server outages from certificate and protocol
 // rejection. an HTTP upgrade never conveys a tnl authorization decision.
 func (e *WebSocketError) Retryable() bool {
+	if e.Code == "host_upgrade_failed" {
+		// browsers expose no status or TLS cause for an error event. retry
+		// this opaque host failure under the caller's original authority bound.
+		return e.Status == 0 && e.Err == nil
+	}
 	if e.Code != "upgrade_failed" {
 		return false
 	}

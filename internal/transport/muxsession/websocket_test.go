@@ -303,11 +303,17 @@ func TestWebSocketFailureClassificationPreservesCauseAndSafeOutput(t *testing.T)
 		{"upgrade_failed", 401, cause, false},
 		{"upgrade_failed", 307, cause, false},
 		{"upgrade_failed", 0, io.EOF, true},
+		{"upgrade_failed", 0, nil, false},
 		{"upgrade_failed", 0, context.Canceled, false},
+		{"upgrade_failed", 0, &tls.CertificateVerificationError{Err: cause}, false},
+		{"host_upgrade_failed", 0, nil, true},
+		{"host_upgrade_failed", 401, nil, false},
+		{"host_upgrade_failed", 0, cause, false},
 		{"subprotocol_invalid", 101, cause, false},
 	} {
 		problem := &WebSocketError{Code: test.code, Status: test.status, Err: test.cause}
-		if problem.Retryable() != test.retry || !errors.Is(problem, test.cause) ||
+		if problem.Retryable() != test.retry || problem.Unwrap() != test.cause ||
+			test.cause != nil && !errors.Is(problem, test.cause) ||
 			problem.Error() != "relay websocket "+test.code {
 			t.Fatal("lost classification, cause, or safe output", problem)
 		}

@@ -134,6 +134,25 @@ func TestWASMWebSocketSessionCapabilitiesAndSetupCancellation(t *testing.T) {
 	}
 }
 
+func TestWASMWebSocketHostErrorPermitsBoundedRetry(t *testing.T) {
+	fakeHostWebSocket(t)
+	failed := js.FuncOf(func(js.Value, []js.Value) any {
+		fakeHostSocket().Call("dispatchEvent", js.Global().Get("Event").New("error"))
+		return nil
+	})
+	defer failed.Release()
+	js.Global().Call("setTimeout", failed, 0)
+	_, err := (WebSocketConnector{}).Connect(t.Context(), Endpoint{"relay.test:443", "relay.test"})
+	var problem *WebSocketError
+	if !errors.As(err, &problem) || problem.Code != "host_upgrade_failed" ||
+		!problem.Retryable() || problem.Status != 0 || problem.Err != nil {
+		t.Fatal("opaque host error lost its retry classification", err)
+	}
+	if fakeHostSocket().Get("listeners").Int() != 0 || !fakeHostSocket().Get("closed").Bool() {
+		t.Fatal("failed host connection retained callbacks or its socket")
+	}
+}
+
 func TestWASMWebSocketUsesYamuxReceiptsWhenHostHasNoCapacitySignal(t *testing.T) {
 	fakeHostWebSocket(t)
 	ready := js.FuncOf(func(js.Value, []js.Value) any {
