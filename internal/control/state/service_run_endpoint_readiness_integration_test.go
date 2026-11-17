@@ -262,7 +262,7 @@ func TestIntegrationServiceRunEndpointReadinessPreservesConnectorAuthorityDuring
 }
 
 func TestIntegrationServiceRunEndpointReadinessCannotReviveExpiredAuthority(t *testing.T) {
-	for _, boundary := range []string{"publisher lease", "publisher grant", "certificate"} {
+	for _, boundary := range []string{"publisher lease", "publisher grant", "certificate", "missing certificate"} {
 		t.Run(boundary, func(t *testing.T) {
 			f := endpointReadinessFixture(t, false)
 			registerTestIngress(t, f.database, f.now)
@@ -270,27 +270,68 @@ func TestIntegrationServiceRunEndpointReadinessCannotReviveExpiredAuthority(t *t
 			current := assertEndpointReadinessHeartbeat(t, f, true)
 			switch boundary {
 			case "publisher lease":
+				if !current.ServingUntil.After(current.ExpiresAt) {
+					t.Fatal("fixture did not separate publisher liveness from serving authority")
+				}
+				// the same ready run may recover after liveness expiry, but
+				// published DNS cannot revive it at actual serving expiry.
 				f.now = current.ExpiresAt
+				recovered := assertEndpointReadinessHeartbeat(t, f, true)
+				if recovered.RunID != current.RunID || recovered.RunNumber != current.RunNumber ||
+					!recovered.ObservedAt.Equal(f.now) || !recovered.ExpiresAt.After(f.now) ||
+					!recovered.ServingUntil.After(recovered.ExpiresAt) {
+					t.Fatal("liveness recovery replaced the run or lost its distinct serving authority", recovered)
+				}
+				f.now = recovered.ServingUntil
 			case "publisher grant":
 				if err := f.database.RevokePublisherGrant(t.Context(), f.service.TeamID, f.publisher.ID, f.publisher.GrantID, f.actor(t), f.now); err != nil {
 					t.Fatal(err)
 				}
 			case "certificate":
-				if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET certificate_expires_at=$2 WHERE id=$1`, f.run.RunID, f.now); err != nil {
+				// shorten both future bounds before crossing certificate
+				// expiry; never seed authority at or before its observation.
+				until := f.now.Add(time.Second)
+				if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs
+				    SET certificate_expires_at=$2,serving_until=LEAST(serving_until,$2) WHERE id=$1`, f.run.RunID, until); err != nil {
+					t.Fatal(err)
+				}
+				bounded := assertEndpointReadinessHeartbeat(t, f, true)
+				if !bounded.ServingUntil.Equal(until) || !bounded.ServingUntil.Before(current.ServingUntil) {
+					t.Fatal("certificate expiry did not shorten existing serving authority", bounded)
+				}
+				f.now = until
+			case "missing certificate":
+				if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs
+				    SET certificate_issuance_id=NULL,certificate_expires_at=NULL WHERE id=$1`, f.run.RunID); err != nil {
 					t.Fatal(err)
 				}
 			}
+			snapshot := func() string {
+				t.Helper()
+				var row string
+				if err := f.database.pool.QueryRow(t.Context(), `SELECT to_jsonb(run)::text FROM control.service_runs run WHERE id=$1`, f.run.RunID).Scan(&row); err != nil {
+					t.Fatal(err)
+				}
+				return row
+			}
+			before := snapshot()
 			state, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now,
 				ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 			if state.PublicEndpointReady {
 				t.Fatal("expired authority retained public endpoint readiness", boundary)
 			}
-			if boundary == "certificate" {
-				if err != nil || state.State != "starting" || state.EndpointRevision != f.service.EndpointRevision {
-					t.Fatal("certificate expiry lost the existing run or current endpoint facts", err)
+			if boundary == "missing certificate" {
+				if err != nil || state.State != "starting" || state.EndpointRevision != f.service.EndpointRevision ||
+					state.RunID != current.RunID || state.RunNumber != current.RunNumber {
+					t.Fatal("missing certificate lost the existing run or current endpoint facts", state, err)
 				}
-			} else if !errors.Is(err, ErrServiceAccess) || state.EndpointRevision != 0 {
-				t.Fatal("expired publication authority returned a successful endpoint observation", boundary, err)
+			} else {
+				if !errors.Is(err, ErrServiceAccess) || state.EndpointRevision != 0 {
+					t.Fatal("expired publication authority returned a successful endpoint observation", boundary, err)
+				}
+				if snapshot() != before {
+					t.Fatal("denied endpoint observation revived readiness or authority", boundary)
+				}
 			}
 		})
 	}
