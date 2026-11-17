@@ -212,7 +212,12 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 }
 
 func (p *PreparedConnector) closePhysical() error {
-	p.physicalOnce.Do(func() { p.physicalErr = p.conn.Close() })
+	p.physicalOnce.Do(func() {
+		p.physicalErr = p.conn.Close()
+		if _, secured := p.conn.(*tls.Conn); secured && p.stdio != nil {
+			p.physicalErr = p.stdio.tlsCloseResult(p.physicalErr)
+		}
+	})
 	return p.physicalErr
 }
 

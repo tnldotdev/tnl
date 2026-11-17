@@ -1213,6 +1213,9 @@ func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (resu
 	default:
 	}
 	result = p.forwardUse(ctx, local, use, run, entry)
+	if operation := stdioOperationFor(ctx); operation != nil {
+		return operation.terminalUse(result, func(result error) error { return p.terminalUse(use, result) })
+	}
 	result = p.terminalUse(use, result)
 	// a visitor's setup/copy failure is not an owner authority decision. the
 	// control and authority workers still fence the owner on their own failures.
@@ -1264,7 +1267,13 @@ func (p *connectorConnection) forwardUse(ctx context.Context, local net.Conn, us
 		}
 	}
 	if operation := stdioOperationFor(ctx); operation != nil {
-		if err := operation.activate(use.prepared.stdio); err != nil {
+		if err := operation.activateWithAbort(use.prepared.stdio, func() error {
+			err := p.terminalUse(use, context.Canceled)
+			if failure.Only(err, context.Canceled) {
+				return nil
+			}
+			return err
+		}); err != nil {
 			return err
 		}
 	}

@@ -109,7 +109,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			cleanupMu.Unlock()
 		}
 	}
-	visitor = &streamSocket{Conn: visitor, closed: recordClose}
+	visitor = &streamSocket{Conn: visitor, closed: recordClose, lifetime: ctx}
 	defer func() {
 		if connector != nil {
 			defer connector.Stop()
@@ -180,7 +180,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		}
 	}()
 	trackTarget := func(conn net.Conn) net.Conn {
-		tracked := &streamSocket{Conn: conn}
+		tracked := &streamSocket{Conn: conn, lifetime: ctx}
 		tracked.closed = func(err error) {
 			recordClose(err)
 			socketsMu.Lock()

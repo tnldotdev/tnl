@@ -554,6 +554,14 @@ func (c *connectorOwnedConn) Read(p []byte) (int, error) {
 	return n, connectorAbortOperation(err, c.admission.ctx)
 }
 
+func (c *connectorOwnedConn) Write(p []byte) (int, error) {
+	if context.Cause(c.admission.ctx) == errConnectorAdmissionAbort {
+		return 0, errConnectorAdmissionAbort
+	}
+	n, err := c.Conn.Write(p)
+	return n, connectorAbortOperation(err, c.admission.ctx)
+}
+
 func (c *connectorOwnedConn) Close() error {
 	return c.admission.closeStream()
 }

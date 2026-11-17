@@ -153,7 +153,7 @@ type aliasChoiceCommand struct {
 
 func main() {
 	received := make(chan os.Signal, 1)
-	signal.Notify(received, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(received, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	ctx, stop := processSignalContext((&nativeProcess{}).context(context.Background()), received, func() { signal.Stop(received) })
 	defer stop()
 	launchCtx := observability.ExtractLaunch(ctx, os.Getenv(observability.LaunchTraceparent))
@@ -260,7 +260,7 @@ func processFlushContext(ctx context.Context, budget time.Duration) (context.Con
 	return context.WithDeadline(context.WithoutCancel(ctx), until)
 }
 
-// only this registered signal producer turns SIGINT/SIGTERM into ordinary
+// only this registered signal producer turns SIGINT/SIGTERM/SIGHUP into ordinary
 // cancellation. parent causes are inherited unchanged; consumers never infer
 // signal origin from an opaque error's text, type name or Is method.
 func processSignalContext(parent context.Context, received <-chan os.Signal, unregister func()) (context.Context, context.CancelFunc) {
@@ -277,7 +277,7 @@ func processSignalContext(parent context.Context, received <-chan os.Signal, unr
 				if !ok {
 					return
 				}
-				if value != os.Interrupt && value != syscall.SIGTERM {
+				if value != os.Interrupt && value != syscall.SIGTERM && value != syscall.SIGHUP {
 					continue
 				}
 				// restore default handling before publishing cancellation, so a

@@ -70,6 +70,7 @@ type connectorFixture struct {
 	tlsGate               *fixtureTLSGate
 	drainRejections       bool
 	rejectionClosing      chan struct{}
+	visitorReadResult     func(context.Context, error)
 }
 
 func connectorID(t *testing.T, prefix string) string {
@@ -536,7 +537,7 @@ func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, n
 			return err
 		}
 	}
-	secure := tls.Server(stream, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.NoClientCert})
+	secure := tls.Server(&fixtureVisitorTLSConn{Conn: stream, ctx: ctx, readResult: f.visitorReadResult}, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.NoClientCert})
 	if err := secure.HandshakeContext(ctx); err != nil {
 		return err
 	}

@@ -72,6 +72,10 @@ func connectorAbortOperation(err error, ctx context.Context) error {
 		return errConnectorAdmissionAbort
 	}
 	switch cause := err.(type) {
+	case *servicestream.SocketInterruption:
+		if cause.StoppedBy(errConnectorAdmissionAbort) {
+			return errConnectorAdmissionAbort
+		}
 	case *muxsession.QUICTransportCloseError:
 		return err
 	case *quic.StreamError:

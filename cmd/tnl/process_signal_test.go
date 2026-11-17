@@ -77,7 +77,7 @@ func TestProcessSignalsSubprocess(t *testing.T) {
 		<-ctx.Done()
 		<-unregistered
 	} else {
-		signal.Notify(received, os.Interrupt, syscall.SIGTERM)
+		signal.Notify(received, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		ctx, stop = processSignalContext(context.Background(), received, func() { signal.Stop(received) })
 		_ = json.NewEncoder(os.Stdout).Encode(processSignalRecord{Stage: "ready"})
 		<-ctx.Done()
@@ -90,7 +90,11 @@ func TestProcessSignalsSubprocess(t *testing.T) {
 
 func TestProcessSignalsRestoreActualSecondSignal(t *testing.T) {
 	for _, version := range []string{"old", "new"} {
-		for _, first := range []os.Signal{os.Interrupt, syscall.SIGTERM} {
+		signals := []os.Signal{os.Interrupt, syscall.SIGTERM}
+		if version == "new" {
+			signals = append(signals, syscall.SIGHUP)
+		}
+		for _, first := range signals {
 			t.Run(version+"/"+first.String(), func(t *testing.T) {
 				executable, err := os.Executable()
 				if err != nil {

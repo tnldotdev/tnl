@@ -27,23 +27,28 @@ func (c stdioContext) Deadline() (time.Time, bool) { return c.caller.Deadline() 
 // stdioOperation orders the caller's abort before local and stream cleanup.
 // the retained connector stays alive until the selected copy has joined.
 type stdioOperation struct {
-	caller       context.Context
-	ctx          context.Context
-	cancel       context.CancelCauseFunc
-	local        net.Conn
-	stopParent   func() bool
-	parentDone   chan struct{}
-	abortDone    chan struct{}
-	mu           sync.Mutex
-	stopping     bool
-	cause        error
-	expected     bool
-	selected     *stdioStream
-	active       bool
-	resetStarted bool
-	resetOK      bool
-	localClosing bool
-	failures     []error
+	caller          context.Context
+	ctx             context.Context
+	cancel          context.CancelCauseFunc
+	local           net.Conn
+	stopParent      func() bool
+	parentDone      chan struct{}
+	abortDone       chan struct{}
+	mu              sync.Mutex
+	stopping        bool
+	cause           error
+	expected        bool
+	selected        *stdioStream
+	active          bool
+	resetStarted    bool
+	resetOK         bool
+	localClosing    bool
+	failures        []error
+	abortTerminal   func() error
+	terminalOnce    sync.Once
+	terminalErr     error
+	terminalStarted bool
+	terminalOK      bool
 }
 
 func newStdioOperation(caller context.Context, local net.Conn) *stdioOperation {
@@ -83,10 +88,24 @@ func (o *stdioOperation) stop(cause error, caller bool) {
 	o.localClosing = true
 	selected, active := o.selected, o.active
 	o.resetStarted = active && selected != nil && selected.closeDone == nil
+	terminal := o.abortTerminal
 	o.mu.Unlock()
+	if o.resetStarted && terminal != nil {
+		// authenticate the abort before interrupting visitor TLS. the publisher
+		// must own and join that exact stop before a remote zero reset is ours.
+		o.terminalOnce.Do(func() {
+			o.mu.Lock()
+			o.terminalStarted = true
+			o.mu.Unlock()
+			o.terminalErr = terminal()
+			o.mu.Lock()
+			o.terminalOK = o.terminalErr == nil
+			o.mu.Unlock()
+		})
+	}
 	if o.resetStarted {
-		// only this exact stream's successful local reset may be considered an
-		// ordinary abort; remote and nonzero resets retain their own causes.
+		// the local reset must succeed too. a remote zero reset additionally
+		// requires the exact terminal abort's joined success.
 		err := selected.Stream.Reset(0)
 		o.mu.Lock()
 		o.resetOK = err == nil
@@ -131,7 +150,7 @@ func (o *stdioOperation) finish(result error) error {
 	<-o.abortDone
 	o.cancel(o.cause)
 	o.mu.Lock()
-	result = errors.Join(append([]error{result}, o.failures...)...)
+	result = errors.Join(append([]error{result, o.terminalErr}, o.failures...)...)
 	expected := o.expected && (!o.resetStarted || o.resetOK)
 	o.mu.Unlock()
 	if expected && context.Cause(o.caller) == context.Canceled && o.abortOnly(result) {
@@ -152,13 +171,25 @@ func (o *stdioOperation) bind(stream muxsession.Stream) (*stdioStream, error) {
 }
 
 func (o *stdioOperation) activate(stream *stdioStream) error {
+	return o.activateWithAbort(stream, nil)
+}
+
+func (o *stdioOperation) activateWithAbort(stream *stdioStream, abort func() error) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.stopping || stream == nil || o.selected != stream {
 		return errors.Join(ErrServiceConnection, context.Cause(o.caller))
 	}
 	o.active = true
+	o.abortTerminal = abort
 	return nil
+}
+
+func (o *stdioOperation) terminalUse(operation error, exchange func(error) error) error {
+	// caller abort and natural EOF join one exact visitor exchange, rather than
+	// issuing competing terminal numbers or turning a failed ack into success.
+	o.terminalOnce.Do(func() { o.terminalErr = exchange(operation) })
+	return errors.Join(operation, o.terminalErr)
 }
 
 type stdioAbortError struct {
@@ -276,11 +307,26 @@ func stdioLocalZeroAbort(err error) bool {
 	return false
 }
 
+func stdioRemoteZeroAbort(err error) bool {
+	switch typed := err.(type) {
+	case *quic.StreamError:
+		return typed != nil && typed.Remote && typed.ErrorCode == 0
+	case *yamux.StreamError:
+		return typed != nil && typed.Remote && typed.ErrorCode == 0
+	}
+	return false
+}
+
+func (o *stdioOperation) ownsStreamAbortLocked(cause error) bool {
+	return stdioLocalZeroAbort(cause) || o.terminalStarted && o.terminalOK && stdioRemoteZeroAbort(cause)
+}
+
 func (s *stdioStream) result(err error) error {
-	if stdioLocalZeroAbort(err) && !s.foreignReset.Load() {
+	if (stdioLocalZeroAbort(err) || stdioRemoteZeroAbort(err)) && !s.foreignReset.Load() {
 		o := s.owner
 		o.mu.Lock()
-		expected := o.stopping && o.expected && o.resetStarted && o.selected == s
+		expected := o.stopping && o.expected && o.resetStarted && o.selected == s &&
+			(stdioLocalZeroAbort(err) || o.terminalStarted && stdioRemoteZeroAbort(err))
 		o.mu.Unlock()
 		if expected {
 			return &stdioAbortError{owner: o, stream: s, cause: err}
@@ -331,6 +377,37 @@ func (s *stdioStream) Close() error {
 	return err
 }
 
+// tls may send its close alert after this exact stdio stream was reset. only
+// wrappers around that owned write result belong to the successful local reset;
+// joined failures, foreign resets and unrelated close results remain failures.
+func (s *stdioStream) tlsCloseResult(err error) error {
+	o := s.owner
+	o.mu.Lock()
+	expected := o.expected && o.resetStarted && o.resetOK && o.selected == s
+	o.mu.Unlock()
+	if !expected {
+		return err
+	}
+	cause := err
+	for range 16 {
+		switch typed := cause.(type) {
+		case *stdioAbortError:
+			o.mu.Lock()
+			owned := typed != nil && typed.owner == o && typed.stream == s && o.ownsStreamAbortLocked(typed.cause)
+			o.mu.Unlock()
+			if owned {
+				return nil
+			}
+			return err
+		case interface{ Unwrap() error }:
+			cause = typed.Unwrap()
+		default:
+			return err
+		}
+	}
+	return err
+}
+
 // abortOnly inspects every leaf without invoking custom Is methods. errors
 // from another stream, an output writer, permission, or cleanup are not aborts.
 func (o *stdioOperation) abortOnly(err error) bool {
@@ -360,7 +437,10 @@ func (o *stdioOperation) abortOnly(err error) bool {
 				return false
 			}
 		case *stdioAbortError:
-			if typed == nil || typed.owner != o || typed.stream != o.selected || !stdioLocalZeroAbort(typed.cause) {
+			o.mu.Lock()
+			owned := typed != nil && typed.owner == o && typed.stream == o.selected && o.ownsStreamAbortLocked(typed.cause)
+			o.mu.Unlock()
+			if !owned {
 				return false
 			}
 		case *net.OpError:
