@@ -2,6 +2,8 @@ package integrations
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
 	"io"
 	"net"
@@ -22,6 +24,7 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -42,6 +45,20 @@ type oauthReturnHTTPFixture struct {
 	run   publisherservice.HTTPRun
 	group clientstate.IntegrationScope
 	cfg   publisherservice.RunConfig
+}
+
+type oauthReturnHTTPControl struct {
+	publisherservice.HTTPControl
+	policy   *visitorfixture.PolicyClient
+	hostname string
+}
+
+func (c oauthReturnHTTPControl) ControlURL() string { return "https://control.example.test" }
+
+func (c oauthReturnHTTPControl) ReadPublisherVisitorPolicy(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	update, err := c.policy.ReadPublisherVisitorPolicy(ctx, body, token)
+	update.Policy.Hostname = c.hostname
+	return update, err
 }
 
 func newOAuthReturnHTTPFixture(t *testing.T, alias bool) oauthReturnHTTPFixture {
@@ -119,7 +136,11 @@ func testOAuthReturnSurvivesReversibleHTTPRejection(t *testing.T, alias bool) {
 			saturated.Store(rejection == "ingress_capacity")
 			var prepared, consumed, reached atomic.Int32
 			scope := visitorscope.Scope{Kind: visitorscope.Service, ID: run.ServiceID}
-			lease, _, signed := visitorfixture.ScopePolicy(t, scope, run.Hostname, 443, false)
+			_, key, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			control := oauthReturnHTTPControl{policy: &visitorfixture.PolicyClient{Key: key}, hostname: run.Hostname}
 			certificate := visitorfixture.Certificate(t, run.Hostname)
 			header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
 				ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: run.ServiceID,
@@ -132,9 +153,9 @@ func testOAuthReturnSurvivesReversibleHTTPRejection(t *testing.T, alias bool) {
 			if err := header.Validate(); err != nil {
 				t.Fatal(err)
 			}
-			frontend := publisherservice.HTTP{Subject: scope, RunID: header.ServiceRunID, Number: run.Number,
-				Token: credentials.ServiceRunToken("fixture-run"), Hostname: run.Hostname, Port: 443,
-				Header: header, Source: netip.MustParseAddrPort("192.0.2.1:1234"), Policy: lease, Requests: budget, AdmitRequest: fixture.cfg.AdmitRequest,
+			frontend, closeHTTP, err := publisherservice.PrepareHTTP(t.Context(), publisherservice.HTTP{Control: control, Subject: scope, RunID: header.ServiceRunID, Number: run.Number,
+				Token: credentials.ServiceRunToken("run-secret"), Hostname: run.Hostname, Port: 443,
+				Header: header, Source: netip.MustParseAddrPort("192.0.2.1:1234"), Requests: budget, AdmitRequest: fixture.cfg.AdmitRequest,
 				ReserveCapacity: func(context.Context) error {
 					if saturated.Load() {
 						return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
@@ -157,7 +178,24 @@ func testOAuthReturnSurvivesReversibleHTTPRejection(t *testing.T, alias bool) {
 						consumed.Add(1)
 						return nil
 					}, nil
-				}}
+				}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := closeHTTP(); err != nil {
+					t.Error(err)
+				}
+			})
+			view, _, _ := frontend.Policy.Current()
+			signed, err := visitortoken.Sign(view.Issuer, "test-key", key, visitortoken.Permission{
+				Scope: scope, Hostname: run.Hostname, Port: 443, VisitorPolicyRevision: view.VisitorPolicyRevision,
+				Subject:   visitortoken.Browser{IdentityID: "ident_" + strings.Repeat("B", 22), SessionID: "cs_" + strings.Repeat("C", 22)},
+				ExpiresAt: time.Now().Add(5 * time.Minute),
+			}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
 			target := servicestream.HTTPTarget{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.RawQuery != "state=return-state&code=a%2fb%2Bc+z&provider=&provider=x%2Fy" {
 					t.Error("application lost provider query bytes", r.URL.RawQuery)
