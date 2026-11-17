@@ -18,6 +18,8 @@ function isBridge(value: unknown): value is WasmBridge {
     value !== null &&
     "createDeployment" in value &&
     typeof value.createDeployment === "function" &&
+    "publish" in value &&
+    typeof value.publish === "function" &&
     "close" in value &&
     typeof value.close === "function"
   );

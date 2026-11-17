@@ -18,6 +18,7 @@ export type {
 } from "./internal/publisher/publication.js";
 export type { FetchHandler } from "./internal/publisher/fetch_types.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
+export { response } from "./response.js";
 export {
   createClient,
   type ServiceFacts,

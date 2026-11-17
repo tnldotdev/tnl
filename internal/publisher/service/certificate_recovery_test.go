@@ -12,7 +12,6 @@ import (
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -20,7 +19,7 @@ import (
 
 type certificateRecoveryControl struct {
 	*lifecycleControl
-	store     *clientstate.Store
+	store     CertificateStore
 	create    func([]byte, string) (controlv1.ServiceCertificateIssuance, error)
 	get       func(context.Context, string) (controlv1.ServiceCertificateIssuance, error)
 	installed func(string, time.Time) error

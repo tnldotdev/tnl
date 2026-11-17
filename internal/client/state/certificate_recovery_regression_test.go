@@ -29,7 +29,8 @@ func TestPublisherCertificatePartialRestoreCannotHideMissingPlan(t *testing.T) {
 	if _, err := b.Pending(t.Context(), "current.example"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(b.files.Path(), certificateFilename(b.planJSON))); err != nil {
+	files := certificateTestFiles(t, store, "team", id)
+	if err := os.Remove(filepath.Join(files.Path(), certificateTestFilename(planB))); err != nil {
 		t.Fatal(err)
 	}
 	if found, err := store.PublisherCertificateMaterialExists(t.Context(), "team", id); err == nil && found {
@@ -53,7 +54,8 @@ func TestPublisherCertificateCurrentCheckpointSnapshotsFailClosed(t *testing.T) 
 			if _, err := a.Pending(t.Context(), "route.example"); err != nil {
 				t.Fatal(err)
 			}
-			checkpoint, found, err := a.files.Read("certificate-plans-v1.json", maxCertificateFileBytes)
+			files := certificateTestFiles(t, store, "team", id)
+			checkpoint, found, err := files.Read("certificate-plans-v1.json", maxCertificateFileBytes)
 			if err != nil || !found {
 				t.Fatal("plan checkpoint not durable before Pending returned", err)
 			}
@@ -65,17 +67,18 @@ func TestPublisherCertificateCurrentCheckpointSnapshotsFailClosed(t *testing.T) 
 			if _, err := b.Pending(t.Context(), "next.example"); err != nil {
 				t.Fatal(err)
 			}
-			material, _, err := b.files.Read(certificateFilename(b.planJSON), maxCertificateFileBytes)
+			name := certificateTestFilename(plan)
+			material, _, err := files.Read(name, maxCertificateFileBytes)
 			if err != nil {
 				t.Fatal(err)
 			}
 			switch mode {
 			case "missing":
-				err = os.Remove(filepath.Join(a.files.Path(), "certificate-plans-v1.json"))
+				err = os.Remove(filepath.Join(files.Path(), "certificate-plans-v1.json"))
 			case "corrupt":
-				err = a.files.Write("certificate-plans-v1.json", []byte(`{"version":1,"plans":null}`))
+				err = files.Write("certificate-plans-v1.json", []byte(`{"version":1,"plans":null}`))
 			case "older":
-				err = a.files.Write("certificate-plans-v1.json", checkpoint)
+				err = files.Write("certificate-plans-v1.json", checkpoint)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -89,7 +92,7 @@ func TestPublisherCertificateCurrentCheckpointSnapshotsFailClosed(t *testing.T) 
 			if _, err := b.NewPending(t.Context(), "next.example"); err == nil {
 				t.Fatal("checkpoint failure created replacement keys")
 			}
-			after, _, err := b.files.Read(certificateFilename(b.planJSON), maxCertificateFileBytes)
+			after, _, err := files.Read(name, maxCertificateFileBytes)
 			if err != nil || !bytes.Equal(material, after) {
 				t.Fatal("rejected checkpoint changed private material", err)
 			}

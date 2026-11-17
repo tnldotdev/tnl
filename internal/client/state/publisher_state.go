@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/state/certificatestore"
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
 )
 
@@ -41,7 +42,7 @@ type PublisherSelection struct {
 	Key  string
 }
 
-var ErrPublisherStateConflict = errors.New("clientstate: publisher identity or enrollment changed")
+var ErrPublisherStateConflict = certificatestore.ErrPublisherStateConflict
 
 func pendingKeyContext(id string) string    { return "publisher-enrollment:" + id + ":key" }
 func pendingSecretContext(id string) string { return "publisher-enrollment:" + id + ":secret" }

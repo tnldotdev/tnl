@@ -55,6 +55,15 @@
       "require": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./durable-object": {
+      "workerd": {
+        "types": "./dist/durable-object.worker.d.ts",
+        "default": "./dist/durable-object.worker.js"
+      },
+      "types": "./dist/durable-object.d.ts",
+      "import": "./dist/durable-object.js",
+      "default": "./dist/durable-object.js"
+    },
     "./config": {
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js",

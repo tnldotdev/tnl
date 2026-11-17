@@ -148,17 +148,27 @@ deadline while waiting for local state. There is no cross-machine feedback store
 ## browser and worker sdk
 
 The TypeScript SDK uses native Go on Node and Bun. Its browser and Worker exports
-compose the same connector owners in Go/WASM, without a loopback listener. Go owns
-selection, authorization, renewal, visitor TLS, and the retained inner connection;
-TypeScript supplies Fetch, WebSockets, and bounded Web Streams. Portable clients
-use WSS relays only. Their HTTP and Kubernetes settings expose Fetch; TCP and
-database settings expose streams rather than machine-local ports.
+compose the same connector and service-run owners in Go/WASM, without a loopback
+listener. Go owns selection, authorization, renewal, visitor TLS, and the retained
+inner connection; TypeScript supplies Fetch, WebSockets, bounded Web Streams, and
+publisher storage. Portable clients use WSS relays only. Their HTTP and Kubernetes
+settings expose Fetch; TCP and database settings expose streams rather than
+machine-local ports. Portable HTTP publication dispatches to a Fetch handler
+through the existing service HTTP frontend, including visitor access checks.
 
 `packages/ts/wasm` is the SDK's Go entrypoint, not another connector engine. It
 binds JavaScript calls to existing operations and joins its resources before
 exiting. A deployment handle owns a fresh Go instance. Workers share compiled
 code, never a live scheduler or a connection across requests. Browser control
 requests use explicit credentials with uncredentialed CORS, not ambient cookies.
+
+Browsers and Durable Objects can own hosted publishers; ordinary Workers own
+request-scoped connectors. A Durable Object persists running or stopped intent
+and restarts a publisher with fresh live connections. Certificate transitions
+belong to `client/state/certificatestore`; native state and host-backed storage
+implement that owner's storage contract. This keeps certificate approval and
+recovery shared without importing native SQLite or filesystem composition into
+the portable runtime.
 
 ## find the code
 

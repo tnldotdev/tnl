@@ -1,6 +1,14 @@
 version: "3"
 
 tasks:
+  publisher-wasm:
+    desc: Check browser and Durable Object Go/WASM publishers with disposable PostgreSQL
+    vars:
+      RUNTIME: '{{default "all" .RUNTIME}}'
+    cmds:
+      - task: :js:build
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationPublisherWASMFixture$' -count=1 -timeout=15m -args -tnl-test-tier=integration -tnl-publisher-wasm-fixture-command='["node","scripts/test/portable-publisher.ts","--fixture","{fixture}","--runtime","{{.RUNTIME}}"]'
+
   websocket:
     desc: Check Chrome and workerd WASM WebSocket/yamux bytes and authentication against the native relay transport
     cmds:

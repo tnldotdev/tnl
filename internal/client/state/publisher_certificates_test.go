@@ -49,9 +49,6 @@ func testPublisherCertificateCacheIsolationAndOwnReuse(t *testing.T, team string
 	if firstPending.Key.PublicKey.Equal(&secondPending.Key.PublicKey) || bytes.Equal(firstPending.CSRDER, secondPending.CSRDER) {
 		t.Fatal("private keys/CSRs crossed publisher boundaries")
 	}
-	if first.plan.CacheKey != plan.CacheKey || second.plan.CacheKey != plan.CacheKey {
-		t.Fatal("local cache scoping changed the server's certificate plan")
-	}
 	lock, err := first.Lock(t.Context())
 	if err != nil {
 		t.Fatal(err)

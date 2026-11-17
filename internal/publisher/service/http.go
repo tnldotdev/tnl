@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -55,7 +54,7 @@ type HTTPRun struct {
 // http binds each request to one trusted forwarding header. policy and
 // browser credential renewal are prepared once by the service run owner.
 type HTTP struct {
-	State                 *clientstate.Store
+	State                 LocalState
 	AuditSink             serviceaudit.Sink
 	InspectionMode        inspection.Mode
 	ObserveSummary        inspection.Observer
@@ -83,12 +82,15 @@ type HTTP struct {
 	Policy                *visitorlease.Lease
 	ReserveCapacity       func(context.Context) error
 	browser               *httpaccess.Browser
-	feedback              *feedbackRuntime
+	feedback              feedbackFrontend
 	probes                *requestlimit.HTTP
 	preparations          chan struct{}
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
+	if err := validateFeedbackPlatform(f.Feedback, f.Demo); err != nil {
+		return HTTP{}, nil, err
+	}
 	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || !f.InspectionMode.Valid() ||
 		!opaqueid.Valid(f.RunID, opaqueid.ServiceRunPrefix) || f.Number < 1 || f.Token == "" {
 		return HTTP{}, nil, servicestream.ErrEndpoint
@@ -138,7 +140,7 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 	}
 	f.Policy = policy.Lease()
 	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: f.Control, PreviewID: f.PreviewID, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: controlURL, Policy: policy, Tokens: tokens}
-	f.feedback, err = newFeedbackRuntime(f)
+	f.feedback, err = prepareFeedback(f)
 	if err != nil {
 		tokens.Close()
 		policy.Close()
@@ -150,7 +152,10 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 	return f, func() error {
 		tokens.Close()
 		policy.Close()
-		return f.feedback.close(ctx)
+		if f.feedback != nil {
+			return f.feedback.close(ctx)
+		}
+		return nil
 	}, nil
 }
 

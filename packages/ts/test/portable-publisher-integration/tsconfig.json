@@ -1,0 +1,17 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "declaration": false,
+    "noEmit": true,
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "skipLibCheck": true,
+    "paths": {
+      "@tnldotdev/tnl": ["../../src/index.browser.ts"],
+      "@tnldotdev/tnl/durable-object": ["../../src/durable-object.worker.ts"]
+    },
+    "types": ["node"]
+  },
+  "references": [{ "path": "../../tsconfig.management.json" }],
+  "include": ["*.ts", "../../src/wasm.d.ts", "../../../../scripts/test/portable-publisher*.ts"]
+}

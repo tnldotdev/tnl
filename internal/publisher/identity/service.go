@@ -6,12 +6,10 @@ import (
 	"encoding/json"
 	"time"
 
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
-	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -31,23 +29,6 @@ type serviceRunControl interface {
 	CloseServiceRun(context.Context, string, string, credentials.ServiceRunToken) error
 	StartServiceRun(context.Context, string, string, string, int64) (controlv1.ServiceRunSetup, error)
 	AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error)
-}
-
-type ServiceOwnerControl interface {
-	OwnerControl
-	ServiceControl
-}
-
-// EnsureServiceOwner saves a pending enrollment before redemption, so
-// response loss never issues a second grant or abandons the original key.
-func EnsureServiceOwner(ctx context.Context, state *clientstate.Store, control ServiceOwnerControl, authority EnrollmentAuthority, service controlv1.Service) (*Native, authorityv1.PublisherEnrollmentResult, error) {
-	if state == nil || control == nil || authority == nil || !service.Enabled || !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) || service.TeamId == "" {
-		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
-	}
-	if _, err := ServiceTrust(service); err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, err
-	}
-	return ensureSelectedEnrollment(ctx, state, control, NativeControl{Services: control}, authority, enrollmentSelection{kind: "service", team: service.TeamId, id: service.Id})
 }
 
 func (n *Native) serviceControl(serviceID string) (serviceRunControl, error) {
