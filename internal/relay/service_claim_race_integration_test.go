@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -359,14 +360,72 @@ type privateClaimCandidate struct {
 	ready     chan struct{}
 }
 
+func newPrivateClaimCandidateController(client ControlClient, lease controlstate.RelayLease) *Controller {
+	return &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{
+		RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
+		RelayLeaseRevision: int64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt,
+		ServingUntil: lease.ServingUntil, ConnectionCapacity: 1}}
+}
+
+func TestPrivateClaimCandidateServingAuthority(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name    string
+		live    time.Time
+		serving time.Time
+		want    bool
+	}{
+		{"distinct deadlines", now.Add(time.Minute), now.Add(5 * time.Minute), true},
+		{"expired liveness", now, now.Add(time.Minute), true},
+		{"missing serving authority", now.Add(time.Minute), time.Time{}, false},
+		{"expired serving authority", now.Add(time.Minute), now, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lease := controlstate.RelayLease{
+				RelayLeaseIdentity: controlstate.RelayLeaseIdentity{RelayServiceID: "relay-a", RelayID: "relay-a-1", RelayRunID: "process", RelayLeaseRevision: 7},
+				LeaseExpiresAt:     test.live, ServingUntil: test.serving,
+			}
+			client := &privateClaimControlStub{}
+			controller := newPrivateClaimCandidateController(client, lease)
+			controller.now = func() time.Time { return now }
+			candidate := &privateClaimCandidate{transport: tunnel.TransportQUIC, registry: NewServiceRegistry()}
+			acceptor := &PublisherAcceptor{selectTarget: func(string) (ServicePublisherTarget, bool) {
+				return ServicePublisherTarget{Control: controller, Registry: candidate.registry}, true
+			}}
+			ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: privateRelayID(opaqueid.ServicePrefix),
+				ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 1,
+				PublisherConnectionID:        privateRelayID(opaqueid.PublisherConnectionPrefix),
+				ConnectionAssignmentRevision: 1, RelayServiceID: lease.RelayServiceID}
+			claim, err := acceptor.claim(t.Context(), tunnelv1.Message{Role: tunnelv1.Publisher, ServiceConnection: &ref, Credential: "credential"}, netip.MustParseAddr("127.0.0.1"))
+			if !test.want {
+				if claim != nil || err == nil || err.Error() != "relay: control lease is unavailable\ntunnel: internal" || client.claims.Load() != 0 {
+					t.Fatalf("invalid serving authority reached control or changed its local rejection: claim=%v err=%v calls=%d", claim != nil, err, client.claims.Load())
+				}
+				candidate.assertLocalOwnership(t, 0, 0)
+				return
+			}
+			if err != nil || claim == nil || client.claims.Load() != 1 {
+				t.Fatalf("control-issued serving authority did not reach the claim: err=%v calls=%d", err, client.claims.Load())
+			}
+			if claim.lease.RelayServiceId != lease.RelayServiceID || claim.lease.RelayId != lease.RelayID ||
+				claim.lease.RelayRunId != lease.RelayRunID || claim.lease.RelayLeaseRevision != int64(lease.RelayLeaseRevision) ||
+				!claim.lease.LeaseExpiresAt.Equal(test.live) || !claim.lease.ServingUntil.Equal(test.serving) ||
+				claim.lease.ConnectionCapacity != 1 {
+				t.Fatal("candidate changed its control-issued lease identity, deadlines, or capacity")
+			}
+			candidate.assertLocalOwnership(t, 1, 0)
+			candidate.registry.release(claim)
+			candidate.assertLocalOwnership(t, 0, 0)
+		})
+	}
+}
+
 func startPrivateClaimCandidate(t *testing.T, parent context.Context, transport tunnel.Transport, lease controlstate.RelayLease, client *HTTPControlClient, hello tunnelv1.Message, serverTLS, clientTLS *tls.Config) *privateClaimCandidate {
 	t.Helper()
 	ctx, cancel := context.WithCancel(parent)
 	c := &privateClaimCandidate{transport: transport, lease: lease, registry: NewServiceRegistry(), cancel: cancel,
 		peer: make(chan error, 1), dial: make(chan privateClaimDial, 1), served: make(chan error, 1), ready: make(chan struct{}, 1)}
-	controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{
-		RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
-		RelayLeaseRevision: int64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt, ConnectionCapacity: 1}}
+	controller := newPrivateClaimCandidateController(client, lease)
 	acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{
 		Select: func(id string) (ServicePublisherTarget, bool) {
 			return ServicePublisherTarget{Control: controller, Registry: c.registry}, id == lease.RelayServiceID
