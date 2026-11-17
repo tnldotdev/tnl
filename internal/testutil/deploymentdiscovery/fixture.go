@@ -181,10 +181,12 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 			// publication waits without blocking signed control cleanup.
 			// HTTP/1 disconnect detection starts only after the body is read.
 			// a client that cancels during that read has already ended the wait.
-			if _, err := io.Copy(io.Discard, r.Body); err != nil {
-				return
+			if _, err := io.Copy(io.Discard, r.Body); err == nil {
+				<-r.Context().Done()
 			}
-			<-r.Context().Done()
+			// returning would let net/http send an empty implicit HTTP 200
+			// while the peer's response side may still be readable.
+			panic(http.ErrAbortHandler)
 		}
 	}()
 	if r.TLS == nil {

@@ -1,8 +1,12 @@
 package deploymentdiscovery
 
 import (
+	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -37,7 +41,11 @@ func TestHeldPublicationCannotRaceCancellationWithFixtureFailure(t *testing.T) {
 				request := httptest.NewRequest(http.MethodPost, "https://control.fixture"+path, strings.NewReader(`{"healthy":true}`)).WithContext(ctx)
 				response := httptest.NewRecorder()
 				done := make(chan struct{})
-				go func() { defer close(done); f.serve(t, response, request) }()
+				var aborted any
+				go func() {
+					defer func() { aborted = recover(); close(done) }()
+					f.serve(t, response, request)
+				}()
 				defer func() { cancel(); <-done }()
 				synctest.Wait()
 				select {
@@ -51,6 +59,9 @@ func TestHeldPublicationCannotRaceCancellationWithFixtureFailure(t *testing.T) {
 				f.mu.Unlock()
 				cancel()
 				<-done
+				if aborted != http.ErrAbortHandler {
+					t.Fatal("held publication did not abort HTTP response after cancellation", aborted)
+				}
 				if response.Body.Len() != 0 {
 					t.Fatal("cancellation invented an independent fixture failure", response.Body.String())
 				}
@@ -127,5 +138,69 @@ func TestHeldPublicationJoinsAfterHTTPClientCancellation(t *testing.T) {
 				t.Fatal("held fixture did not observe client cancellation before server shutdown")
 			}
 		})
+	}
+}
+
+func TestHeldPublicationDisconnectCannotReturnEmptySuccess(t *testing.T) {
+	for _, path := range publicationPaths {
+		for _, missingBytes := range []int{0, 1} {
+			t.Run(fmt.Sprintf("%s/missing_bytes=%d", path, missingBytes), func(t *testing.T) {
+				f := publicationFixture()
+				f.HoldPublication.Store(true)
+				done := make(chan struct{})
+				serverContext, stopServer := context.WithCancel(t.Context())
+				server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					defer close(done)
+					f.serve(t, w, r)
+				}))
+				server.Config.BaseContext = func(net.Listener) context.Context { return serverContext }
+				server.StartTLS()
+				defer func() { stopServer(); server.Close() }()
+				connection, err := tls.DialWithDialer(&net.Dialer{Timeout: 3 * time.Second},
+					"tcp", server.Listener.Addr().String(), server.Client().Transport.(*http.Transport).TLSClientConfig)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer connection.Close()
+				if err := connection.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				const body = `{"healthy":true}`
+				request, err := http.NewRequest(http.MethodPost, server.URL+path, strings.NewReader(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := fmt.Fprintf(connection, "POST %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\n\r\n%s",
+					request.URL.RequestURI(), request.URL.Host, len(body)+missingBytes, body); err != nil {
+					t.Fatal(err)
+				}
+				if strings.HasSuffix(path, "/renew") {
+					select {
+					case <-f.Heartbeat:
+					case <-time.After(3 * time.Second):
+						t.Fatal("heartbeat body did not decode before disconnect")
+					}
+				}
+				// ending the write side cancels the server request while its
+				// response side remains readable. returning would invent HTTP 200.
+				// a missing byte also exercises cancellation during body drainage.
+				if err := connection.CloseWrite(); err != nil {
+					t.Fatal(err)
+				}
+				response, err := http.ReadResponse(bufio.NewReader(connection), request)
+				if response != nil {
+					_ = response.Body.Close()
+					t.Fatalf("held publication invented HTTP %d after disconnect", response.StatusCode)
+				}
+				if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+					t.Fatalf("held publication did not abort its response: %v", err)
+				}
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Fatal("held publication did not join after disconnect")
+				}
+			})
+		}
 	}
 }
