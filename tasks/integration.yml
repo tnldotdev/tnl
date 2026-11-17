@@ -128,6 +128,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationServiceShareManagerLookup$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
+  preview-access:
+    desc: Check connector-only preview attachment, independent access preparation, and public-link exclusion
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationConnectorOnlyPreviewAttachmentAndPresentation$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
   local-database:
     desc: Check the explicit local deployment SDK against disposable PostgreSQL without sign-in
     deps: [":js:build"]
