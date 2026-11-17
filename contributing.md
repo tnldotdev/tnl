@@ -78,6 +78,13 @@ CI downloads and verifies both Go modules before running checks. Only transient
 dependency downloads retry; tests do not. Go module caches are shared across
 build variants, while compiled caches stay separate for ordinary and race builds.
 
+Routine race CI runs the publisher service tree and the remaining packages in
+parallel so the longer service tests can start earlier. Run the same partitions
+with `mise exec -- task go:test:race:service` and
+`mise exec -- task go:test:race:rest`; the latter also compiles the public SDK
+example. `mise exec -- task go:test:race` still runs the complete routine suite.
+Both CI partitions must pass the `Go race` check.
+
 For warm PostgreSQL latency, run `mise exec -- task go:test:load:postgres`.
 It compares a direct database connection with the connector/publisher path using
 the same query and retained sessions. The task owns its disposable databases;

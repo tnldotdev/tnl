@@ -212,10 +212,14 @@ jobs:
       - name: Run Go tests
         run: task go:test
 
-  go-race:
-    name: Go race
+  go-race-tests:
+    name: Go race (${{ matrix.partition }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [service, rest]
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -226,10 +230,27 @@ jobs:
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
           go-cache: race
-          save-cache: true
+          save-cache: ${{ matrix.partition == 'rest' }}
 
       - name: Run race tests
-        run: task go:test:race
+        env:
+          PARTITION: ${{ matrix.partition }}
+        run: task "go:test:race:$PARTITION"
+
+  go-race:
+    name: Go race
+    if: always()
+    needs: [go-race-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify race partitions passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "- \(.key): \(.value.result)"' <<< "$RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
+          jq --exit-status 'all(.[]; .result == "success")' <<< "$RESULTS" > /dev/null
 
   container:
     name: Container

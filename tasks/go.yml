@@ -41,6 +41,32 @@ tasks:
       - go test -race -json ./...
       - go test -race -json ./pkg/tnl/testdata/publicapi
 
+  test:race:service:
+    desc: Run routine publisher service-tree tests with the race detector
+    cmds:
+      - |
+        set -eu
+        packages="$(go list -race ./internal/publisher/service/...)"
+        if [ -z "$packages" ]; then
+          echo "No publisher service packages found" >&2
+          exit 1
+        fi
+        go test -race -json $packages
+
+  test:race:rest:
+    desc: Run remaining routine Go race tests and compile the public SDK example
+    cmds:
+      - |
+        set -eu
+        packages="$(go list -race ./...)"
+        packages="$(printf '%s\n' "$packages" | grep -Ev '/internal/publisher/service(/|$)')"
+        if [ -z "$packages" ]; then
+          echo "No Go packages found outside the publisher service tree" >&2
+          exit 1
+        fi
+        go test -race -json $packages
+      - go test -race -json ./pkg/tnl/testdata/publicapi
+
   test:harness:
     desc: Check disposable orchestration and stable shard selection
     cmds:
