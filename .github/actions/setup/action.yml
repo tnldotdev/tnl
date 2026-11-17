@@ -34,7 +34,7 @@ runs:
       run: |
         echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
         echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-        prefix="go-build-$RUNNER_OS-$RUNNER_ARCH-$ImageOS-$(go env GOVERSION)-$CACHE_SCOPE"
+        prefix="go-build-v2-$RUNNER_OS-$RUNNER_ARCH-$ImageOS-$(go env GOVERSION)-$CACHE_SCOPE"
         echo "module-key=go-modules-$RUNNER_OS-$RUNNER_ARCH-$DEPENDENCIES" >> "$GITHUB_OUTPUT"
         echo "module-prefix=go-modules-$RUNNER_OS-$RUNNER_ARCH-" >> "$GITHUB_OUTPUT"
         echo "build-key=$prefix-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
