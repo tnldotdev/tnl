@@ -99,6 +99,8 @@ class PreparedService:
         # track native discovery and reservation together so close joins the
         # complete acquisition before collecting registrations to unregister.
         await task
+        if isinstance(self._phase, _Closed):
+            raise self._closed_error
 
     def _preparation_finished(self, task: asyncio.Task[None]) -> None:
         self._preparations.discard(task)

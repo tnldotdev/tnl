@@ -271,6 +271,87 @@ def test_close_bounds_initial_discovery_and_fences_late_preparation(
     asyncio.run(asyncio.wait_for(scenario(), 5))
 
 
+@pytest.mark.parametrize("outcome", ["prepared", "error", "joined"])
+def test_close_after_preparation_completes_before_register_resumes(outcome: str) -> None:
+    async def scenario() -> None:
+        failure: BaseException = InvalidResponse()
+        if outcome == "joined":
+            failure = BaseExceptionGroup(
+                "preparation and cancellation failed", [asyncio.CancelledError(), failure]
+            )
+        closing: list[asyncio.Task[None]] = []
+        close_saw_completed_preparation = asyncio.Event()
+
+        class Runtime(AssignmentRuntime):
+            def __init__(self) -> None:
+                super().__init__(private_assignment())
+                self.prepare_count = 0
+                self.register_count = 0
+                self.active = False
+                self.cleanups: list[dict[str, object]] = []
+
+            async def request(
+                self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
+            ) -> object:
+                if operation == "register":
+                    self.register_count += 1
+                    raise _protocol.NativeUnavailable()
+                result = await super().request(endpoint, operation, payload)
+                if operation == "prepare":
+                    self.active = True
+                    self.prepare_count += 1
+                    if self.prepare_count == 2:
+                        # queue close before the request wakes preparation. its
+                        # cleanup then runs after preparation finishes but before
+                        # the register caller resumes from joining that task.
+                        closing.append(asyncio.create_task(prepared.close()))
+                        if outcome != "prepared":
+                            raise failure
+                elif operation == "unregister":
+                    assert payload is not None
+                    self.cleanups.append(dict(payload))
+                    self.active = False
+                return result
+
+        class Prepared(tnl.PreparedService):
+            async def _close(self, until: float) -> None:
+                assert self._preparations
+                assert all(task.done() for task in self._preparations)
+                close_saw_completed_preparation.set()
+                await super()._close(until)
+
+        native = Runtime()
+        prepared = Prepared("/project", "web", None, native)
+        await prepared.start()
+        result = (
+            await asyncio.gather(prepared.register("http://127.0.0.1:8000"), return_exceptions=True)
+        )[0]
+        assert close_saw_completed_preparation.is_set()
+        assert len(closing) == 1
+        cleanup = (await asyncio.gather(*closing, return_exceptions=True))[0]
+        if outcome == "prepared":
+            assert result is prepared._closed_error
+            assert cleanup is None
+            await prepared.close()
+        else:
+            assert result is failure
+            assert isinstance(cleanup, BaseExceptionGroup)
+            assert failure in cleanup.exceptions
+            repeated = (await asyncio.gather(prepared.close(), return_exceptions=True))[0]
+            assert repeated is cleanup
+        assert native.prepare_count == 2
+        assert native.register_count == 1
+        assert not native.active
+        assert not prepared._preparations
+        assert len(native.cleanups) == 1
+        assert native.cleanups[0]["registration_id"] == native.assignment["registration_id"]
+        assert native.cleanups[0]["owner"] == native.preparations[0]["owner"]
+        assert native.cleanups[0]["target"] == "http://127.0.0.1:8000"
+        assert isinstance(prepared._phase, _app._Closed)
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+
+
 def test_changed_registration_compensation_does_not_start_owner_shutdown_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

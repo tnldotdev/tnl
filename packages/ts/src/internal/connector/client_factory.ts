@@ -12,7 +12,9 @@ type Entry<Client> = {
 // native selects the exact binding; this cache owns only ordinary driver values.
 // expiry is deliberately absent from its key: native owns renewable authority.
 export function clientFactory<Connection, Client>(
-  acquire: () => Promise<{ readonly key: string; readonly connection: Connection }>,
+  acquire: (
+    closedError: TnlError,
+  ) => Promise<{ readonly key: string; readonly connection: Connection }>,
   options: TnlClientOptions<Connection, Client>,
   parent?: () => number | undefined,
 ): TnlClientFactory<Client> {
@@ -32,7 +34,7 @@ export function clientFactory<Connection, Client>(
     // every admitted getter, including one still waiting for native selection.
     const operation = Promise.resolve().then(async () => {
       if (closed) throw closedError;
-      const binding = await acquire();
+      const binding = await acquire(closedError);
       if (closed) throw closedError;
       let entry = entries.get(binding.key);
       if (entry === undefined) {

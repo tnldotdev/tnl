@@ -584,9 +584,16 @@ export function createClient<const Services extends ServiceFacts = Record<never,
           validate(service);
           if (factories.size >= 64) throw new TnlError("sdk.client_capacity");
           const factory = clientFactory(
-            async () => {
-              const value = await acquire(service);
-              return { key: value.key, connection: value.connection };
+            async (factoryClosedError) => {
+              try {
+                const value = await acquire(service);
+                return { key: value.key, connection: value.connection };
+              } catch (cause) {
+                // only the parent's exact intentional stop becomes factory
+                // closure. independent acquisition and driver failures survive.
+                if (closed && cause === closedError) throw factoryClosedError;
+                throw cause;
+              }
             },
             driver,
             () => shutdownUntil,

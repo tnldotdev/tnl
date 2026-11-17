@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { TnlError } from "../../src/errors.js";
 import { clientFactory } from "../../src/internal/connector/client_factory.js";
 
 function deferred<Value>() {
@@ -12,6 +13,50 @@ function deferred<Value>() {
 }
 
 describe("ordinary client factories", () => {
+  test.each(["acquire", "create", "close"] as const)(
+    "an independent %s failure with the closure code remains observable",
+    async (phase) => {
+      const entered = deferred<void>();
+      const failed = deferred<number>();
+      const independent = new TnlError("sdk.client_closed");
+      const close = vi.fn(() => {
+        if (phase === "close") {
+          entered.resolve();
+          return failed.promise.then(() => {});
+        }
+        return undefined;
+      });
+      const factory = clientFactory(
+        async () => {
+          if (phase === "acquire") {
+            entered.resolve();
+            await failed.promise;
+          }
+          return { key: "a", connection: 1 };
+        },
+        {
+          create() {
+            if (phase === "create") {
+              entered.resolve();
+              return failed.promise;
+            }
+            return 1;
+          },
+          close,
+        },
+      );
+      const getter = factory().catch((cause: unknown) => cause);
+      if (phase === "close") await getter;
+      else await entered.promise;
+      const stopping = factory.close().catch((cause: unknown) => cause);
+      await entered.promise;
+      failed.reject(independent);
+      expect(await getter).toBe(phase === "close" ? 1 : independent);
+      expect(await stopping).toBe(independent);
+      expect(close).toHaveBeenCalledTimes(phase === "close" ? 1 : 0);
+    },
+  );
+
   test("slow creation does not delay existing cleanup and late clients are closed once", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     const entered = deferred<void>();
