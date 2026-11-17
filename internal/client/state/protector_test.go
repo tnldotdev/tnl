@@ -23,6 +23,19 @@ func openFileDatabase(t *testing.T, root string) *Database {
 	return database
 }
 
+func TestExplicitFileProtectionDoesNotConsultSelectedKeychain(t *testing.T) {
+	t.Setenv("TNL_STATE_KEYCHAIN", filepath.Join(t.TempDir(), "selected.keychain"))
+	root := filepath.Join(t.TempDir(), "state")
+	database, err := OpenWithOptions(t.Context(), root, OpenOptions{Protection: ProtectionFile})
+	if err != nil {
+		t.Fatal("explicit file-backed state consulted ambient Keychain selection", err)
+	}
+	defer database.Close()
+	if _, err := os.Stat(WrappingKeyPath(database.Root())); err != nil {
+		t.Fatal("explicit file-backed state did not create its wrapping key", err)
+	}
+}
+
 func TestSharedCipherAuthenticatesRootScopeContextAndCiphertext(t *testing.T) {
 	key := make([]byte, wrappingKeySize)
 	if _, err := rand.Read(key); err != nil {

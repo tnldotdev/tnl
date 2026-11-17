@@ -1,6 +1,14 @@
 version: "3"
 
 tasks:
+  state-keychain:
+    desc: Check real macOS Keychain state across native subprocesses without changing login Keychain settings
+    preconditions:
+      - sh: test "$(uname -s)" = Darwin
+        msg: Real Keychain qualification requires macOS
+    cmds:
+      - go test -race -v ./internal/client/state -run='^TestIntegrationKeychainStateAcrossProcesses$' -count=1 -timeout=2m -args -tnl-test-tier=integration
+
   publisher-wasm:
     desc: Check browser and Durable Object Go/WASM publishers with disposable PostgreSQL
     vars:

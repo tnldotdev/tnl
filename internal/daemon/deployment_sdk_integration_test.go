@@ -36,9 +36,7 @@ import (
 // calls cross real private IPC; control authorizes the registered signing key.
 func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	if runtime.GOOS != "linux" {
-		t.Skip("SDK subprocess publication requires Linux's isolated client-state protection")
-	}
+	testutil.UseClientKeychain(t)
 	f := newSplitPublishFixture(t, "sdk-publication")
 	repo, directory := integrationRepositoryRoot(t), t.TempDir()
 	binary := filepath.Join(directory, "tnl")

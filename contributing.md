@@ -86,6 +86,22 @@ as needed; mise installs Pebble and kind. Tasks that need test databases create
 and clean up their own. Some CLI integration tests need Linux. The full CI matrix
 lives in [the workflows](.github/workflows/).
 
+On macOS, qualify real encrypted state across subprocesses with:
+
+```sh
+mise exec -- task go:test:integration:state-keychain
+```
+
+The fixture creates and unlocks a disposable Keychain with a generated password,
+selects it through `TNL_STATE_KEYCHAIN`, and deletes it after its workers stop.
+It does not change your default Keychain or search list and does not need your
+login password. Setup and cleanup failures fail the test rather than skip it.
+The control-backed SDK publication suite uses the same fixture on macOS:
+
+```sh
+mise exec -- task go:test:integration:runtime RUN='^TestIntegrationDeploymentSDKPublication$'
+```
+
 PostgreSQL-backed suites and the connector suite compile their test executables
 before starting disposable services, then discover, shard, and run those same
 executables. CLI and connector
