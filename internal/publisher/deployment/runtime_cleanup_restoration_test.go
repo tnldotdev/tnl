@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -31,6 +32,15 @@ type deploymentCleanupControl struct {
 	shutdownDeadline func() time.Time
 	joined           func() bool
 	stopBeforeJoin   bool
+	assignmentRead   func()
+}
+
+func (c *deploymentCleanupControl) Assignments(ctx context.Context, access string) (controlv1.DeploymentPublisherAssignments, error) {
+	assignment, err := c.deploymentControl.Assignments(ctx, access)
+	if c.assignmentRead != nil {
+		c.assignmentRead()
+	}
+	return assignment, err
 }
 
 func (c *deploymentCleanupControl) PublisherRuntime(ctx context.Context, request controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
@@ -303,6 +313,95 @@ func TestDeploymentRuntimeReplacementKeepsJoinedFailureAndNonoverlap(t *testing.
 			}
 			control.assertOwnerStopped(t)
 		})
+	}
+}
+
+func TestDeploymentRuntimeCancellationFencesInFlightAssignment(t *testing.T) {
+	for _, boundary := range []string{"poll", "replacement_join"} {
+		for _, faults := range []string{"none", "worker", "stop", "worker_and_stop", "retryable_worker", "retryable_worker_and_stop"} {
+			t.Run(boundary+"/"+faults, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					base, key := deploymentFixture(t)
+					control := &deploymentCleanupControl{deploymentControl: base}
+					var workerFailure error
+					if faults == "worker" || faults == "worker_and_stop" {
+						workerFailure = errors.New("independent publication cleanup failure")
+					}
+					if faults == "retryable_worker" || faults == "retryable_worker_and_stop" {
+						workerFailure = clientcontrol.ErrUnavailable
+					}
+					if faults == "stop" || faults == "worker_and_stop" || faults == "retryable_worker_and_stop" {
+						control.stopFailure = errors.New("independent process stop failure")
+					}
+					pollHeld, releasePoll := make(chan struct{}), make(chan struct{})
+					var polls int
+					if boundary == "poll" {
+						control.assignmentRead = func() {
+							polls++
+							if polls == 2 {
+								close(pollHeld)
+								<-releasePoll
+							}
+						}
+					}
+					started := make(chan controlv1.DeploymentPublisherServiceAssignment, 1)
+					canceled, releaseCleanup := make(chan struct{}), make(chan struct{})
+					resumePoll := sync.OnceFunc(func() { close(releasePoll) })
+					release := sync.OnceFunc(func() { close(releaseCleanup) })
+					var joined atomic.Bool
+					var attempts atomic.Int32
+					control.joined = joined.Load
+					expected := base.assignment.Services[0]
+					run := startDeploymentCleanupRun(t, Runtime{
+						Control: control, Member: base.assignment.Member, Private: key, PollInterval: time.Millisecond,
+						Publish: func(ctx context.Context, assignment controlv1.DeploymentPublisherServiceAssignment, healthy func(bool), _ func() time.Time) error {
+							if attempts.Add(1) != 1 {
+								return errors.New("shutdown restarted an assignment")
+							}
+							started <- assignment
+							healthy(true)
+							<-ctx.Done()
+							close(canceled)
+							<-releaseCleanup
+							joined.Store(true)
+							return errors.Join(context.Cause(ctx), workerFailure)
+						},
+					}, func() { release(); resumePoll() })
+					if actual := awaitDeploymentCleanup(t, started); !reflect.DeepEqual(actual, expected) {
+						t.Fatal("runtime changed the exact initial assignment")
+					}
+					if boundary == "poll" {
+						awaitDeploymentCleanup(t, pollHeld)
+					} else {
+						base.mu.Lock()
+						base.assignment.Services = append([]controlv1.DeploymentPublisherServiceAssignment(nil), base.assignment.Services...)
+						base.assignment.Services[0].Configuration.Target = "replacement.internal:5432"
+						base.assignment.Revision = 2
+						base.assignment.ConfigurationHash = strings.Repeat("b", 64)
+						base.mu.Unlock()
+						awaitDeploymentCleanup(t, canceled)
+					}
+					run.cancel()
+					awaitDeploymentCleanup(t, canceled)
+					synctest.Wait()
+					select {
+					case <-run.finished:
+						t.Fatal("runtime returned before joining held publication cleanup")
+					default:
+					}
+					release()
+					// finish the canceled worker while the successful poll is held,
+					// or finish replacement cleanup after the caller has canceled.
+					synctest.Wait()
+					resumePoll()
+					assertDeploymentCleanupResult(t, run, workerFailure, control.stopFailure)
+					if !joined.Load() || attempts.Load() != 1 {
+						t.Error("canceled reconciliation started another publication", attempts.Load())
+					}
+					control.assertOwnerStopped(t)
+				})
+			})
+		}
 	}
 }
 

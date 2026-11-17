@@ -217,6 +217,11 @@ func (r Runtime) Serve(ctx context.Context) (result error) {
 					}
 					select {
 					case <-w.done:
+						// a successful poll can race caller cancellation. keep
+						// this worker owned so shutdown joins its actual result.
+						if ctx.Err() != nil {
+							return nil
+						}
 						w.lease.Stop()
 						w.cancel()
 						delete(workers, name)
@@ -227,6 +232,11 @@ func (r Runtime) Serve(ctx context.Context) (result error) {
 					}
 				}
 				for _, service := range assignment.Services {
+					// polling or joining a replaced worker can outlive the caller.
+					// canceled reconciliation must not start another publication.
+					if ctx.Err() != nil {
+						return nil
+					}
 					if workers[service.Service] != nil {
 						continue
 					}
