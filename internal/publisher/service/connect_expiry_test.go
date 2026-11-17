@@ -29,7 +29,7 @@ func TestPrivateExpiredAssignmentStopsTransportAttempts(t *testing.T) {
 		})
 		slots, err := tunnel.NewSlots(t.Context(), tunnel.SlotsConfig{SingleUse: true, BackoffMin: 10 * time.Millisecond, BackoffMax: 10 * time.Millisecond,
 			Connect: func(ctx context.Context, slot uint8, _ bool) (tunnel.SlotSession, error) {
-				claimed, err := bound.ConnectSlot(ctx, slot, ConnectOptions{QUIC: connector, TCP: connector})
+				claimed, err := bound.ConnectSlot(ctx, slot, ConnectOptions{QUIC: connector, WebSocket: connector})
 				if err != nil {
 					return nil, err
 				}

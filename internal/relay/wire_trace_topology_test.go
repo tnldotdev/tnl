@@ -83,7 +83,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(receiver.Certificate())
 	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
-	for _, transport := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportTLSTCP} {
+	for _, transport := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportWSS} {
 		t.Run(string(transport), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
@@ -126,7 +126,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 				}
 				return nil
 			})
-			var connector muxsession.Connector = muxsession.TLSYamuxConnector{TLSConfig: clientTLS}
+			var connector muxsession.Connector = muxsession.WebSocketConnector{TLSConfig: clientTLS}
 			if transport == tunnel.TransportQUIC {
 				connector = muxsession.QUICConnector{TLSConfig: clientTLS, Dialer: transporttest.QUICTransport(t)}
 			}
@@ -153,8 +153,8 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// internal ingress forwarding is TLS/yamux for both publisher transports.
-			address := traceMuxServer(t, relayCtx, tunnel.TransportTLSTCP, serverTLS, acceptor.Accept)
+			// internal ingress forwarding is WSS/yamux for both publisher transports.
+			address := traceMuxServer(t, relayCtx, tunnel.TransportWSS, serverTLS, acceptor.Accept)
 			forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{Context: ingressCtx, TLSConfig: clientTLS, ClusterSecret: secret})
 			if err != nil {
 				t.Fatal(err)
@@ -284,7 +284,7 @@ func traceMuxServer(t *testing.T, ctx context.Context, transport tunnel.Transpor
 			if err != nil {
 				return nil, err
 			}
-			return muxsession.AcceptTLSYamux(ctx, c, config, muxsession.TLSYamuxConfig{})
+			return muxsession.AcceptWebSocket(ctx, c, config, muxsession.WebSocketConfig{})
 		}
 	}
 	done := make(chan struct{})

@@ -443,7 +443,7 @@ func TestIntegrationControlOutageTraffic(t *testing.T) {
 	_, tcp := f.connectors()
 	local, stopConnector := startRuntimeConnector(t, f, service,
 		connectorstream.Config{Control: outageConnectorControl{control, gate}, IdentityID: person.Identity.Id,
-			RelayQUIC: privateDisabledConnector(), RelayTCP: tcp}, outageTerminalOnly)
+			RelayQUIC: privateDisabledConnector(), RelayWebSocket: tcp}, outageTerminalOnly)
 	defer stopConnector()
 	localTransport := &http.Transport{TLSClientConfig: roots.Clone()}
 	defer localTransport.CloseIdleConnections()

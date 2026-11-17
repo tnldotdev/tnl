@@ -44,7 +44,7 @@ func TestRelayTransportRejectsConnectorPublisherRoleConfusion(t *testing.T) {
 	if err := proof.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, transport := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportTLSTCP} {
+	for _, transport := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportWSS} {
 		for _, variant := range []string{"publisher with connector proof", "connector with publisher credential", "connector with publisher connection", "retired native connector role"} {
 			t.Run(string(transport)+"/"+variant, func(t *testing.T) {
 				certificate := httptest.NewTLSServer(nil)
@@ -71,8 +71,8 @@ func TestRelayTransportRejectsConnectorPublisherRoleConfusion(t *testing.T) {
 					return err
 				})
 				var connector muxsession.Connector = muxsession.QUICConnector{TLSConfig: &tls.Config{RootCAs: roots}, Dialer: transporttest.QUICTransport(t)}
-				if transport == tunnel.TransportTLSTCP {
-					connector = muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}}
+				if transport == tunnel.TransportWSS {
+					connector = muxsession.WebSocketConnector{TLSConfig: &tls.Config{RootCAs: roots}}
 				}
 				session, err := connector.Connect(ctx, muxsession.Endpoint{Address: address, ServerName: "example.com"})
 				if err != nil {

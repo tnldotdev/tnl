@@ -52,7 +52,7 @@ func TestConnectorRebindingStopsOldReconnectBeforeReplacement(t *testing.T) {
 					replacements.Add(1)
 					return nil, errors.New("stopped binding started a replacement")
 				})
-				p.config.RelayTCP = p.config.RelayQUIC
+				p.config.RelayWebSocket = p.config.RelayQUIC
 				type result struct {
 					disposition reconnectDisposition
 					err         error

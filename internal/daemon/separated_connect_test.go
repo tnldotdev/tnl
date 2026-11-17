@@ -131,13 +131,13 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 			t.Fatal(err)
 		}
 		var quicConnector muxsession.Connector = muxsession.QUICConnector{TLSConfig: separatedRelayTLS(t), Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: transporttest.QUICTransport(t)}
-		var tcp muxsession.Connector = muxsession.TLSYamuxConnector{TLSConfig: separatedRelayTLS(t)}
+		var tcp muxsession.Connector = muxsession.WebSocketConnector{TLSConfig: separatedRelayTLS(t)}
 		transport := "quic"
 		if index%2 == 0 {
 			tcp = privateDisabledConnector()
 		} else {
 			quicConnector = privateDisabledConnector()
-			transport = "tls-tcp"
+			transport = "wss"
 		}
 		ready, done := make(chan struct{}), make(chan error, 1)
 		publishers.Go(func() {
@@ -146,7 +146,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 				ServiceID: service.Id, Target: target, StreamCapacity: 256,
 				Metadata:  controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
 				Ready:     func() error { close(ready); return nil },
-				RelayQUIC: quicConnector, RelayTCP: tcp,
+				RelayQUIC: quicConnector, RelayWebSocket: tcp,
 			})
 			done <- err
 			if err != nil {

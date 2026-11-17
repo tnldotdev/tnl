@@ -58,7 +58,7 @@ func TestIntegrationWorkloadHTTPPublicStreamRenewal(t *testing.T) {
 		}
 		return base.RoundTrip(r)
 	}))
-	startSeparatedPrivateIngress(t, f, 0, "tls-tcp", nil)
+	startSeparatedPrivateIngress(t, f, 0, "wss", nil)
 	publicFront := serviceRuntimeListener(t, f.owner)
 	startSplitIngressProxy(t, f.owner, publicFront, f.ingressAddresses[0])
 	progress := map[string]chan string{"/fixed": make(chan string), "/revoked": make(chan string)}
@@ -113,7 +113,7 @@ func TestIntegrationWorkloadHTTPPublicStreamRenewal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	startWorkloadPublishers(t, f, deployment, "tls-tcp", func(control publisherservice.RunControl) publisherservice.RunControl {
+	startWorkloadPublishers(t, f, deployment, "wss", func(control publisherservice.RunControl) publisherservice.RunControl {
 		return outagePublisherControl{control, gate}
 	})
 	type original struct {

@@ -242,7 +242,7 @@ func (i *integrationPublishingIdentity) prepareService(t *testing.T, target stri
 		Control: native, Access: native.Access, State: i.state, ServiceID: saved.Id,
 		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
 		Target: strings.TrimPrefix(target, "http://"), Metadata: publisheridentity.ServiceMetadata(saved),
-		RelayQUIC: quic, RelayTCP: tcp, DrainTime: time.Second, HeartbeatInterval: 15 * time.Second,
+		RelayQUIC: quic, RelayWebSocket: tcp, DrainTime: time.Second, HeartbeatInterval: 15 * time.Second,
 	}
 }
 

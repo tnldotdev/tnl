@@ -272,7 +272,7 @@ func newActiveHTTPFailureFixture(t *testing.T, options activeHTTPFailureOptions)
 	serverTLS, roots := privateTransportTLS(t)
 	cfg.TransportTLS = roots
 	cfg.RelayQUIC = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
-		return nil, errors.New("active HTTP failure fixture requires TLS/yamux")
+		return nil, errors.New("active HTTP failure fixture requires WSS/yamux")
 	})
 	var listeners [2]net.Listener
 	for slot := range 2 {
@@ -303,9 +303,9 @@ func newActiveHTTPFailureFixture(t *testing.T, options activeHTTPFailureOptions)
 			relayStarted[slot] = true
 			go f.serveRelay(slot, listeners[slot], serverTLS, ref, credential)
 		})
-		connectionOptions.PreferTCP = true
-		tcp := connectionOptions.TCP
-		connectionOptions.TCP = muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
+		connectionOptions.PreferWebSocket = true
+		tcp := connectionOptions.WebSocket
+		connectionOptions.WebSocket = muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
 			outer, err := tcp.Connect(ctx, endpoint)
 			if err == nil {
 				f.transports[slot] = outer
@@ -390,7 +390,7 @@ func (f *activeHTTPFailureFixture) serveRelay(slot uint8, listener net.Listener,
 		return
 	}
 	defer conn.Close()
-	outer, err := muxsession.AcceptTLSYamux(f.ctx, conn, config, muxsession.TLSYamuxConfig{})
+	outer, err := muxsession.AcceptWebSocket(f.ctx, conn, config, muxsession.WebSocketConfig{})
 	if err != nil {
 		return
 	}

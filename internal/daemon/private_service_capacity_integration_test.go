@@ -45,7 +45,7 @@ func TestIntegrationPrivatePostgresWithoutPublicCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	quic, tcp := f.connectors()
-	listener, stop := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp})
+	listener, stop := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayWebSocket: tcp})
 	defer stop()
 	host, port, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {

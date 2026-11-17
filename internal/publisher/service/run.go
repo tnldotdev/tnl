@@ -315,14 +315,14 @@ func (b *Bound) reserveStream(ref tunnelv1.ServicePublisherConnectionRef) (func(
 // ConnectOptions supplies both address-aware, WebPKI-verified relay transports.
 // no target CA or private TLS key is used for relay authentication.
 type ConnectOptions struct {
-	QUIC, TCP muxsession.Connector
-	PreferTCP bool
+	QUIC, WebSocket muxsession.Connector
+	PreferWebSocket bool
 }
 
 // ConnectSlot races the configured transports until the relay accepts this exact
 // private claim, then installs one dispatcher only while its assignment is current.
 func (b *Bound) ConnectSlot(ctx context.Context, slot uint8, options ConnectOptions) (*Claimed, error) {
-	if options.QUIC == nil || options.TCP == nil {
+	if options.QUIC == nil || options.WebSocket == nil {
 		return nil, ErrPrivateStream
 	}
 	endpoint, hello, err := b.Hello(slot)
@@ -330,16 +330,16 @@ func (b *Bound) ConnectSlot(ctx context.Context, slot uint8, options ConnectOpti
 		return nil, err
 	}
 	primary := tunnel.Candidate{Connector: requirePeerDatagrams(options.QUIC), Endpoint: endpoint, Transport: tunnel.TransportQUIC, Observe: b.telemetry.RelayAttempt}
-	fallback := tunnel.Candidate{Connector: options.TCP, Endpoint: endpoint, Transport: tunnel.TransportTLSTCP, Observe: b.telemetry.RelayAttempt}
-	if options.PreferTCP {
+	fallback := tunnel.Candidate{Connector: options.WebSocket, Endpoint: endpoint, Transport: tunnel.TransportWSS, Observe: b.telemetry.RelayAttempt}
+	if options.PreferWebSocket {
 		primary, fallback = fallback, primary
 	}
 	connectCtx, finish := observability.PublisherOperation(ctx, "private_connect")
 	session, transport, err := tunnel.Race(connectCtx, primary, fallback, 250*time.Millisecond, hello)
 	finish(err)
-	observability.PublisherConnection(ctx, string(transport), options.PreferTCP, err)
-	if err == nil && transport == tunnel.TransportTLSTCP && !options.PreferTCP {
-		b.telemetry.Record(telemetryv1.Fallback, telemetryv1.TlsTcp, telemetryv1.Succeeded, 0)
+	observability.PublisherConnection(ctx, string(transport), options.PreferWebSocket, err)
+	if err == nil && transport == tunnel.TransportWSS && !options.PreferWebSocket {
+		b.telemetry.Record(telemetryv1.Fallback, telemetryv1.Wss, telemetryv1.Succeeded, 0)
 	}
 	if err != nil {
 		return nil, err

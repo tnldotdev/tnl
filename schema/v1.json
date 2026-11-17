@@ -2928,7 +2928,7 @@
         },
         "relay_tcp_listen": {
           "type": "string",
-          "description": "Public TLS/TCP publisher-connection listen address."
+          "description": "Public WSS publisher-connection listen address."
         },
         "relay_udp_listen": {
           "type": "string",
@@ -2941,7 +2941,7 @@
         },
         "internal_relay_listen": {
           "type": "string",
-          "description": "Internal forwarding listen address."
+          "description": "Internal forwarding listen address (QUIC/UDP and WSS/TCP)."
         },
         "dns_server": {
           "type": "string",

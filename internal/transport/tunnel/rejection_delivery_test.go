@@ -21,7 +21,7 @@ import (
 // hold physical output after the peer consumes the header. only the producer's
 // acknowledgement read releases it; no test barrier delays session cleanup.
 func TestPublisherRejectionRetainsQueuedFrame(t *testing.T) {
-	for _, kind := range []string{"tls_yamux", "quic"} {
+	for _, kind := range []string{"wss", "quic"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx := tunnelContext(t)
 			serverTLS, clientTLS := realTunnelTLS(t)
@@ -55,9 +55,9 @@ func TestPublisherRejectionRetainsQueuedFrame(t *testing.T) {
 					if err != nil {
 						return nil, err
 					}
-					return muxsession.AcceptTLSYamux(ctx, &rejectionPhysicalConn{Conn: network, probe: probe}, serverTLS, muxsession.TLSYamuxConfig{})
+					return muxsession.AcceptWebSocket(ctx, &rejectionPhysicalConn{Conn: network, probe: probe}, serverTLS, muxsession.WebSocketConfig{})
 				}
-				connector = muxsession.TLSYamuxConnector{TLSConfig: clientTLS}
+				connector = muxsession.WebSocketConnector{TLSConfig: clientTLS}
 			}
 			t.Cleanup(func() { probe.releaseWrites(); _ = closeListener() })
 			cause := errors.New("durable claim rejected")

@@ -34,7 +34,7 @@ type SlotsConfig struct {
 	BackoffMin, BackoffMax time.Duration
 	// adapters may distinguish a normal serving exit from transport loss.
 	// the default prefers TCP after any QUIC session ends.
-	PreferTCPAfter func(SlotSession, error) bool
+	PreferWebSocketAfter func(SlotSession, error) bool
 	// readiness is removed and the session is closed before this callback.
 	SessionEnded func(uint8, SlotSession, error)
 }
@@ -143,7 +143,7 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 			current := s.workers[slot] == w && s.phase == slotsAccepting && ctx.Err() == nil
 			if current {
 				w.phase = slotServing{session: session}
-				if session.Transport() == TransportTLSTCP {
+				if session.Transport() == TransportWSS {
 					s.preferTCP[slot] = false
 				}
 				s.notifyLocked()
@@ -165,11 +165,11 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 				w.phase = slotConnecting{}
 			}
 			if s.workers[slot] == w {
-				// a failed QUIC path gives TLS/TCP the first attempt on its
+				// a failed QUIC path gives WSS the first attempt on its
 				// replacement. successful TCP recovery restores QUIC-first.
 				if !rotate {
-					if s.config.PreferTCPAfter != nil {
-						s.preferTCP[slot] = s.config.PreferTCPAfter(session, serveErr)
+					if s.config.PreferWebSocketAfter != nil {
+						s.preferTCP[slot] = s.config.PreferWebSocketAfter(session, serveErr)
 					} else {
 						s.preferTCP[slot] = session.Transport() == TransportQUIC
 					}

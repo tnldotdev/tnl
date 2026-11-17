@@ -63,6 +63,9 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 				result = errors.Join(result, fmt.Errorf("close relay QUIC listener: %w", err))
 			}
 		}
+		if runtime.internalUDP != nil {
+			result = errors.Join(result, runtime.internalUDP.StopAccepting())
+		}
 		if runtime.serviceRegistry != nil {
 			err := shutdownStep("relay_connections", func() error { return runtime.serviceRegistry.Drain(drainCtx) })
 			if err != nil && !failure.Only(err, context.DeadlineExceeded) && !failure.Only(err, context.Canceled) &&
@@ -90,6 +93,9 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 			if err := closeNetworkListener(runtime.udpListener); err != nil {
 				result = errors.Join(result, fmt.Errorf("close relay QUIC transport: %w", err))
 			}
+		}
+		if runtime.internalUDP != nil {
+			result = errors.Join(result, closeNetworkListener(runtime.internalUDP))
 		}
 	}
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(owner), 6*time.Second)

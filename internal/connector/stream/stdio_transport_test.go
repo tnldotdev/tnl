@@ -59,7 +59,7 @@ func stdioTransportSessions(t *testing.T, transport string) (muxsession.Session,
 				failed <- err
 				return
 			}
-			session, err := muxsession.AcceptTLSYamux(ctx, connection, serverTLS, muxsession.TLSYamuxConfig{})
+			session, err := muxsession.AcceptWebSocket(ctx, connection, serverTLS, muxsession.WebSocketConfig{})
 			if err != nil {
 				_ = connection.Close()
 				failed <- err
@@ -70,7 +70,7 @@ func stdioTransportSessions(t *testing.T, transport string) (muxsession.Session,
 	}
 	var connector muxsession.Connector = muxsession.QUICConnector{TLSConfig: clientTLS, Dialer: transporttest.QUICTransport(t)}
 	if transport != "quic" {
-		connector = muxsession.TLSYamuxConnector{TLSConfig: clientTLS}
+		connector = muxsession.WebSocketConnector{TLSConfig: clientTLS}
 	}
 	client, err := connector.Connect(ctx, endpoint)
 	if err != nil {
@@ -136,7 +136,7 @@ func (c stdioReadCompleted) Read(p []byte) (int, error) {
 }
 
 func TestStdioResetJoinsReaderBeforeResetReturns(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			raw, _ := stdioTransportPair(t, transport)
 			local, peer := net.Pipe()
@@ -176,7 +176,7 @@ func TestStdioResetJoinsReaderBeforeResetReturns(t *testing.T) {
 }
 
 func TestStdioAbortRealTransportOppositeResetOrders(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, order := range []string{"remote first", "caller first", "unpublished local zero", "local nonzero first"} {
 			t.Run(transport+"/"+order, func(t *testing.T) {
 				raw, remote := stdioTransportPair(t, transport)

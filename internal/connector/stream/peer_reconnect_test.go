@@ -17,7 +17,7 @@ import (
 )
 
 func TestConnectorInterruptedRenewalReconnectsWithoutReplacingApplication(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newConnectorFixture(t, transport)
 			setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
@@ -93,7 +93,7 @@ func TestConnectorInterruptedRenewalReconnectsWithoutReplacingApplication(t *tes
 }
 
 func TestConnectorReconnectRetainsInnerSessionAndApplication(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newConnectorFixture(t, transport)
 			setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
@@ -160,7 +160,7 @@ func TestConnectorReconnectRetainsInnerSessionAndApplication(t *testing.T) {
 }
 
 func TestConnectorReconnectRetainsOperationAcrossLostHelloAndActivationReplies(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newConnectorFixture(t, transport)
 			setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
@@ -241,7 +241,7 @@ func TestConnectorReconnectCancellationAndAuthorityDeadline(t *testing.T) {
 				<-ctx.Done()
 				return nil, context.Cause(ctx)
 			})
-			config.RelayQUIC, config.RelayTCP = gate, gate
+			config.RelayQUIC, config.RelayWebSocket = gate, gate
 			setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
 			p, err := prepareConnectorConnection(t.Context(), setup, config, f.device)
 			stop()

@@ -53,13 +53,13 @@ func dialPrivateClaim(t *testing.T, accept func(context.Context, muxsession.Sess
 			return err
 		}
 		defer conn.Close()
-		transport, err := muxsession.AcceptTLSYamux(ctx, conn, certificate.TLS, muxsession.TLSYamuxConfig{})
+		transport, err := muxsession.AcceptWebSocket(ctx, conn, certificate.TLS, muxsession.WebSocketConfig{})
 		if err != nil {
 			return err
 		}
 		return accept(ctx, transport)
 	})
-	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "example.com"})
+	transport, err := (muxsession.WebSocketConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}

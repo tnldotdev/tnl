@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -39,6 +40,7 @@ type relayRuntime struct {
 	tcpListener        net.Listener
 	udpListener        *muxsession.QUICListener
 	internalListener   net.Listener
+	internalUDP        *muxsession.QUICListener
 	drainOnce          sync.Once
 }
 
@@ -113,7 +115,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 		tcpListener, err = net.Listen("tcp", settings.tcpListen)
 		if err != nil {
 			_ = internalListener.Close()
-			return fmt.Errorf("listen for TLS/TCP publisher connections: %w", err)
+			return fmt.Errorf("listen for WSS publisher connections: %w", err)
 		}
 	}
 	udpListener, err := listenRelayQUIC(settings.udpListen, settings.udpPacket, transportTLS, settings.quic, settings.runtime.publisherConnectionLimit)
@@ -139,9 +141,9 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 	d.start("serve relay STUN discovery", func() error {
 		return relay.ServeSTUN(ctx, udpListener.NonQUICPackets(ctx), nil)
 	})
-	d.start("serve TLS/TCP publisher connections", func() error {
-		return serveTLSYamuxSessions(ctx, tcpListener, runtime.transportTLS,
-			muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, runtime.publisher.Accept)
+	d.start("serve WSS publisher connections", func() error {
+		return serveWebSocketSessions(ctx, tcpListener, runtime.transportTLS,
+			muxsession.WebSocketConfig{MaxIncomingStreams: maxStreams}, runtime.publisher.AcceptSetup)
 	})
 	d.start("serve QUIC publisher connections", func() error {
 		return serveQUICSessions(ctx, udpListener, runtime.publisher.Accept)
@@ -357,13 +359,22 @@ func (d *daemon) startRelayRuntime(
 	if err != nil {
 		return nil, err
 	}
+	internalUDP, err := muxsession.ListenQUIC(runtimeConfig.internalListener.Addr().String(), runtimeConfig.transportTLS,
+		muxsession.QUICConfig{Config: &quic.Config{MaxIncomingStreams: int64(streamCapacity)}})
+	if err != nil {
+		return nil, fmt.Errorf("listen for internal QUIC forwarding: %w", err)
+	}
+	runtime.internalUDP = internalUDP
 	runtime.transportTLS = runtimeConfig.transportTLS
 	d.relays = append(d.relays, runtime)
 
 	d.start("run relay control", func() error { return controller.Run(ctx) })
 	d.start("serve internal forwarding", func() error {
-		return serveTLSYamuxSessions(ctx, runtimeConfig.internalListener, runtimeConfig.transportTLS,
-			muxsession.TLSYamuxConfig{MaxIncomingStreams: streamCapacity}, forwardingAcceptor.Accept)
+		return serveWebSocketSessions(ctx, runtimeConfig.internalListener, runtimeConfig.transportTLS,
+			muxsession.WebSocketConfig{MaxIncomingStreams: streamCapacity}, forwardingAcceptor.AcceptSetup)
+	})
+	d.start("serve internal QUIC forwarding", func() error {
+		return serveQUICSessions(ctx, internalUDP, forwardingAcceptor.Accept)
 	})
 	log.Printf("relay internal forwarding listening on %s", runtimeConfig.internalListener.Addr())
 	return runtime, nil
@@ -392,13 +403,14 @@ func newRelayControlClient(endpoint, clusterSecret string, base *http.Client, di
 }
 
 type sessionAcceptFunc func(context.Context, muxsession.Session) error
+type sessionSetupAcceptFunc func(context.Context, context.Context, muxsession.Session, func()) error
 
-func serveTLSYamuxSessions(
+func serveWebSocketSessions(
 	ctx context.Context,
 	listener net.Listener,
 	tlsConfig *tls.Config,
-	transportConfig muxsession.TLSYamuxConfig,
-	accept sessionAcceptFunc,
+	transportConfig muxsession.WebSocketConfig,
+	accept sessionSetupAcceptFunc,
 ) error {
 	var active sync.WaitGroup
 	defer active.Wait()
@@ -418,19 +430,18 @@ func serveTLSYamuxSessions(
 			continue
 		}
 		active.Go(func() {
-			transport, err := func() (muxsession.Session, error) {
-				// pending capacity covers TLS setup only, not an authenticated
-				// session's lifetime. reserve it before starting this worker.
-				defer func() { <-pending }()
-				setupCtx, cancel := context.WithTimeout(ctx, relaySessionSetupTimeout)
-				defer cancel()
-				return muxsession.AcceptTLSYamux(setupCtx, connection, tlsConfig, transportConfig)
-			}()
+			stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
+			defer stop()
+			defer connection.Close()
+			setupCtx, cancel := context.WithTimeout(ctx, relaySessionSetupTimeout)
+			authenticated := sync.OnceFunc(func() { cancel(); <-pending })
+			defer authenticated()
+			transport, err := muxsession.AcceptWebSocket(setupCtx, connection, tlsConfig, transportConfig)
 			if err == nil {
-				err = accept(ctx, transport)
+				err = accept(ctx, setupCtx, transport, authenticated)
 			}
 			if err != nil && ctx.Err() == nil {
-				logOperationalError(ctx, "serve relay TLS/TCP session", failure.ServerConnectionFailed, err)
+				logOperationalError(ctx, "serve relay WSS session", failure.ServerConnectionFailed, err)
 			}
 		})
 	}

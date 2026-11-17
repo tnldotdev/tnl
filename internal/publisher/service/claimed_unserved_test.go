@@ -333,7 +333,7 @@ func TestPrivateConnectSlotLateStaleClaimRetainsUnservedOperationAndCleanup(t *t
 					bound: bound, operation: operation, cleanup: cleanup, entered: make(chan struct{})}
 				return wire, nil
 			})
-			options.TCP = muxsession.DisabledConnector{}
+			options.WebSocket = muxsession.DisabledConnector{}
 			metrics := observability.New("publisher")
 			defer metrics.Shutdown(context.Background())
 			claimed, err := bound.ConnectSlot(observability.WithMetrics(t.Context(), metrics), 0, options)

@@ -50,7 +50,7 @@ func startPendingRetryRefresh(t *testing.T, p *connectorConnection) <-chan struc
 }
 
 func TestConnectorPendingLostHelloKeepsLiveOwner(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				budget, stop := context.WithTimeout(t.Context(), 5*time.Second)
@@ -97,9 +97,9 @@ func TestConnectorPendingLostHelloKeepsLiveOwner(t *testing.T) {
 						return nil, errors.New("unexpected pending relay endpoint")
 					})
 				}
-				p.config = Config{RelayQUIC: connector(true), RelayTCP: connector(false)}
-				if transport == "tls-tcp" {
-					p.config.RelayQUIC, p.config.RelayTCP = p.config.RelayTCP, p.config.RelayQUIC
+				p.config = Config{RelayQUIC: connector(true), RelayWebSocket: connector(false)}
+				if transport == "wss" {
+					p.config.RelayQUIC, p.config.RelayWebSocket = p.config.RelayWebSocket, p.config.RelayQUIC
 				}
 				startPendingRetryRefresh(t, p)
 				for _, session := range sessions {
@@ -133,7 +133,7 @@ func TestConnectorPendingLostHelloKeepsLiveOwner(t *testing.T) {
 }
 
 func TestConnectorPendingRetryRequiresEveryFailedSlot(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, kind := range []string{"unrelated operation", "joined operation", "denial", "connector cleanup", "session cleanup", "physical cleanup"} {
 			for _, fatalSlot := range []int{0, 1} {
 				t.Run(fmt.Sprintf("%s/%s/fatal-slot=%d", transport, kind, fatalSlot), func(t *testing.T) {
@@ -183,9 +183,9 @@ func TestConnectorPendingRetryRequiresEveryFailedSlot(t *testing.T) {
 								return nil, errors.New("unexpected pending relay endpoint")
 							})
 						}
-						p.config = Config{RelayQUIC: connector(true), RelayTCP: connector(false)}
-						if transport == "tls-tcp" {
-							p.config.RelayQUIC, p.config.RelayTCP = p.config.RelayTCP, p.config.RelayQUIC
+						p.config = Config{RelayQUIC: connector(true), RelayWebSocket: connector(false)}
+						if transport == "wss" {
+							p.config.RelayQUIC, p.config.RelayWebSocket = p.config.RelayWebSocket, p.config.RelayQUIC
 						}
 						startPendingRetryRefresh(t, p)
 						assertLegRetryHello(t, budget, session)
@@ -424,7 +424,7 @@ func TestConnectorRecoveryDiscardAndStageCleanup(t *testing.T) {
 				dials.Add(1)
 				return nil, errors.New("new dial after failed cleanup")
 			})
-			p.config.RelayQUIC, p.config.RelayTCP = gate, gate
+			p.config.RelayQUIC, p.config.RelayWebSocket = gate, gate
 			var result connectorRecoveryResult
 			if boundary == "discard" {
 				result = p.connectPendingLegs(op)
@@ -599,7 +599,7 @@ func TestConnectorPendingCanceledRecoveryRetainsIndependentCleanup(t *testing.T)
 				}
 				return nil, errors.New("second slot did not connect")
 			}),
-			RelayTCP: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+			RelayWebSocket: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 				return nil, errors.New("alternate did not connect")
 			}),
 		}
@@ -692,7 +692,7 @@ func TestConnectorRecoveryCancellationOrigin(t *testing.T) {
 						dials.Add(1)
 						return nil, errors.New("stopped local guard dialed a relay")
 					})
-					p.config.RelayQUIC, p.config.RelayTCP = dial, dial
+					p.config.RelayQUIC, p.config.RelayWebSocket = dial, dial
 					sign := p.signer.Sign
 					p.signer.Sign = func(message []byte) []byte { signs.Add(1); return sign(message) }
 					ownerUntil, runUntil, permissionUntil, pendingUntil := p.until, p.run.ValidUntil, p.permission.ExpiresAt, op.until
@@ -836,7 +836,7 @@ func TestConnectorRecoveryCancellationOrigin(t *testing.T) {
 						dials++
 						return nil, errors.New("received control failure started a relay dial")
 					})
-					p.config.RelayQUIC, p.config.RelayTCP = dial, dial
+					p.config.RelayQUIC, p.config.RelayWebSocket = dial, dial
 					ownerUntil, runUntil, permissionUntil, highWater := p.until, p.run.ValidUntil, p.permission.ExpiresAt, p.highWater
 					var got error
 					if boundary == "phase call" {

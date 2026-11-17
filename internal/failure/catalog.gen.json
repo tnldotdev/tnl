@@ -916,8 +916,8 @@
       "code": "TNL_CLIENT_TRANSPORT_FALLBACK",
       "slug": "transport-fallback",
       "class": "degraded",
-      "message": "QUIC did not establish before TLS/TCP; continuing over TLS/TCP",
-      "action": "the tunnel remains available over TLS/TCP"
+      "message": "QUIC did not establish before WSS; continuing over WSS",
+      "action": "the tunnel remains available over WSS"
     },
     {
       "code": "TNL_CLIENT_TRANSPORT_UNAVAILABLE",

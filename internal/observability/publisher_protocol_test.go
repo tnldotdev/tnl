@@ -15,7 +15,7 @@ func TestPublisherLifecycleInstrumentsRetainKnownProtocolAndBoundedFields(t *tes
 		ctx = WithPublisherProtocol(ctx, protocol)
 		PublisherLease(ctx, time.Now().Add(time.Minute))
 		PublisherReadinessStatus(ctx, true, true, true, time.Now(), time.Now())
-		PublisherConnection(ctx, "tls-tcp", false, nil)
+		PublisherConnection(ctx, "wss", false, nil)
 	}
 	families, err := m.Gather()
 	if err != nil {

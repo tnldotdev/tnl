@@ -50,7 +50,7 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 	}
 	cfg := publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target,
 		Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
-		RelayQUIC: quic, RelayTCP: tcp,
+		RelayQUIC: quic, RelayWebSocket: tcp,
 		Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
 			claimed, err := bound.ConnectSlot(ctx, slot, options)
 			if err == nil && f.publisherConnections != nil {
@@ -187,7 +187,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				}
 				control := production
 				quic, tcp := f.connectors()
-				listener, stopConnector := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp}, revokedConnectorOwnerStop)
+				listener, stopConnector := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayWebSocket: tcp}, revokedConnectorOwnerStop)
 				defer stopConnector()
 				verification := f.visitorRoots.Clone()
 				verification.ServerName = service.Endpoint.Hostname

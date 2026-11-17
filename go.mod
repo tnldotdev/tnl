@@ -12,6 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.70.3
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.3
 	github.com/aws/smithy-go v1.28.5
+	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/evanw/esbuild v0.28.2
 	github.com/go-jose/go-jose/v4 v4.1.6

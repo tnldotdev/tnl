@@ -1,5 +1,5 @@
 // package publishingtest exercises service-only native clients against signed
-// enrollment exchanges, exact service runs, and real publisher TLS/yamux streams.
+// enrollment exchanges, exact service runs, and real publisher WSS/yamux streams.
 package publishingtest
 
 import (

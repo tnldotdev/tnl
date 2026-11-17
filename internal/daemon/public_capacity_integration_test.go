@@ -24,7 +24,7 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 		if standalone {
 			name = "standalone"
 		}
-		for _, transport := range []string{"quic", "tls-tcp"} {
+		for _, transport := range []string{"quic", "wss"} {
 			t.Run(name+"/"+transport, func(t *testing.T) {
 				const capacity = 4
 				var owner *runtimeTopology
@@ -84,7 +84,7 @@ func TestIntegrationPublicRunCapacity(t *testing.T) {
 				}))
 				cleanupIntegrationHTTPServer(t, target, owner)
 				if transport == "quic" {
-					tcp, _ = disabledIntegrationConnector("TLS/TCP disabled by capacity test")
+					tcp, _ = disabledIntegrationConnector("WSS disabled by capacity test")
 				} else {
 					quic, _ = disabledIntegrationConnector("QUIC disabled by capacity test")
 				}

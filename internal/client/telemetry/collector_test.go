@@ -201,7 +201,7 @@ func TestTelemetryPreferenceFencesRapidOffOnAndScopeCounters(t *testing.T) {
 		t.Fatalf("revived old epoch: %+v %v", rows, err)
 	}
 	c.refreshPreference()
-	scope.Record(api.RelayConnect, api.TlsTcp, api.Succeeded, time.Second)
+	scope.Record(api.RelayConnect, api.Wss, api.Succeeded, time.Second)
 	scope.Close()
 	flushForTest(t, c)
 	rows, err = c.state.PendingTelemetryEvents(t.Context(), 25)
@@ -322,7 +322,7 @@ func TestTelemetrySiblingScopesStaySeparate(t *testing.T) {
 	for range 10 {
 		optedOut.Record(api.RelayConnect, api.Quic, api.Succeeded, time.Second)
 	}
-	optedIn.Record(api.RelayConnect, api.TlsTcp, api.Succeeded, time.Second)
+	optedIn.Record(api.RelayConnect, api.Wss, api.Succeeded, time.Second)
 	optedOut.Close()
 	optedIn.Close()
 	flushForTest(t, c)
@@ -333,7 +333,7 @@ func TestTelemetrySiblingScopesStaySeparate(t *testing.T) {
 	var event api.CollectedEvent
 	_ = json.Unmarshal(rows[0].JSON, &event)
 	report, _ := event.Event.AsTransportEvent()
-	if len(report.Payload.Measurements) != 1 || report.Payload.Measurements[0].Count != 1 || report.Payload.Measurements[0].Path != api.TlsTcp {
+	if len(report.Payload.Measurements) != 1 || report.Payload.Measurements[0].Count != 1 || report.Payload.Measurements[0].Path != api.Wss {
 		t.Fatalf("mixed siblings: %+v", report)
 	}
 }

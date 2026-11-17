@@ -184,7 +184,7 @@ func exerciseServiceFixture(t *testing.T, anonymous, denySource bool) {
 		headers := http.Header{httpaccess.VisitorTokenHeader: {permission.VisitorToken}}
 		status, _, body, err := f.VisitWithHeaders(t.Context(), address, headers)
 		if err != nil || status != http.StatusOK || string(body) != "service fixture" {
-			t.Fatal("owner visitor permission did not carry real TLS/yamux bytes", status, err)
+			t.Fatal("owner visitor permission did not carry real WSS/yamux bytes", status, err)
 		}
 		grant, err := owner.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: controlv1.CreateVisitorCredentialRequestKind("token"), ExpiresAt: time.Now().Add(time.Minute)})
 		if err != nil {

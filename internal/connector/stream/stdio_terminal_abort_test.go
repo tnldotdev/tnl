@@ -17,7 +17,7 @@ import (
 )
 
 func TestStdioTerminalAbortOwnsPublisherStopBeforeReset(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			observed := make(chan error, 4)
 			joined := make(chan struct{})

@@ -1,6 +1,11 @@
 version: "3"
 
 tasks:
+  websocket:
+    desc: Check installed Chrome WebSocket/yamux bytes and authentication against the native relay transport
+    cmds:
+      - go test -race -v ./internal/transport/muxsession -run='^TestIntegrationWebSocketPortableClient$' -count=1 -timeout=1m -args -tnl-test-tier=integration
+
   default:
     desc: Run PostgreSQL-backed integration boundaries
     cmds:
@@ -178,7 +183,7 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=15m -args -tnl-test-tier=binary -tnl-test-compose-host-address='{{.COMPOSE_HOST_ADDRESS}}'
 
   sshd:
-    desc: Check an existing OpenSSH daemon through QUIC and TLS/TCP visitor streams
+    desc: Check an existing OpenSSH daemon through QUIC and WSS visitor streams
     cmds:
       - go test -race -v ./internal/connector/stream -run='^TestIntegrationExistingOpenSSHOverPrivateTCP$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 

@@ -73,10 +73,10 @@ func TestServiceDrainClassifiesWriteFailuresBeforeSessionNotification(t *testing
 			_, bound, _, _ := privateFixture(t, "127.0.0.1:1")
 			relay := newPrivateSlotRelay(t, bound, true, nil, nil)
 			options := relay.options(t, relay.roots)
-			options.PreferTCP = true
-			connector := options.TCP
+			options.PreferWebSocket = true
+			connector := options.WebSocket
 			var transport *drainFailureTransport
-			options.TCP = muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
+			options.WebSocket = muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
 				outer, err := connector.Connect(ctx, endpoint)
 				if err != nil {
 					return nil, err

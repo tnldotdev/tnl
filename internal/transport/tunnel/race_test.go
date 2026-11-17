@@ -18,7 +18,7 @@ import (
 func TestRacePrimarySuccessDoesNotStartFallback(t *testing.T) {
 	var primaryCalls, fallbackCalls atomic.Int32
 	primary, fallback := authenticatedConnector(t, &primaryCalls), authenticatedConnector(t, &fallbackCalls)
-	s, transport, err := Race(tunnelContext(t), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, time.Hour, publisherHello())
+	s, transport, err := Race(tunnelContext(t), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportWSS}, time.Hour, publisherHello())
 	if s != nil {
 		t.Cleanup(func() { _ = s.Close() })
 	}
@@ -48,11 +48,11 @@ func TestRaceUsesFallbackAfterPrimaryFailure(t *testing.T) {
 			failed    bool
 		}{transport, err != nil}
 	}
-	s, transport, err := Race(observability.WithMetrics(tunnelContext(t), metrics), Candidate{Connector: primary, Transport: TransportQUIC, Observe: observe}, Candidate{Connector: fallback, Transport: TransportTLSTCP, Observe: observe}, time.Hour, publisherHello())
+	s, transport, err := Race(observability.WithMetrics(tunnelContext(t), metrics), Candidate{Connector: primary, Transport: TransportQUIC, Observe: observe}, Candidate{Connector: fallback, Transport: TransportWSS, Observe: observe}, time.Hour, publisherHello())
 	if s != nil {
 		t.Cleanup(func() { _ = s.Close() })
 	}
-	if err != nil || transport != TransportTLSTCP || calls.Load() != 1 {
+	if err != nil || transport != TransportWSS || calls.Load() != 1 {
 		t.Fatalf("race=%s, %v; fallback=%d", transport, err, calls.Load())
 	}
 	for range 2 {
@@ -82,7 +82,7 @@ func TestRaceUsesFallbackAfterPrimaryFailure(t *testing.T) {
 			counts[labels["tnl_transport"]+"/"+labels["tnl_outcome"]] += point.GetHistogram().GetSampleCount()
 		}
 	}
-	if len(counts) != 2 || counts["quic/error"] != 1 || counts["tls-tcp/success"] != 1 {
+	if len(counts) != 2 || counts["quic/error"] != 1 || counts["wss/success"] != 1 {
 		t.Fatal("failed primary candidate disappeared behind successful race result", counts)
 	}
 }
@@ -90,7 +90,7 @@ func TestRaceUsesFallbackAfterPrimaryFailure(t *testing.T) {
 func TestRaceStopsOnTerminalProtocolError(t *testing.T) {
 	var calls atomic.Int32
 	fallback := authenticatedConnector(t, &calls)
-	_, _, err := Race(tunnelContext(t), Candidate{Connector: rejectingConnector(t, tunnelv1.Unauthenticated), Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, time.Hour, publisherHello())
+	_, _, err := Race(tunnelContext(t), Candidate{Connector: rejectingConnector(t, tunnelv1.Unauthenticated), Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportWSS}, time.Hour, publisherHello())
 	var p *ProtocolError
 	if !errors.As(err, &p) || p.Code != tunnelv1.Unauthenticated || calls.Load() != 0 {
 		t.Fatalf("race=%v; fallback=%d", err, calls.Load())
@@ -100,7 +100,7 @@ func TestRaceStopsOnTerminalProtocolError(t *testing.T) {
 func TestRaceDuplicateClaimRemainsTerminalWithoutRunningSibling(t *testing.T) {
 	var calls atomic.Int32
 	fallback := authenticatedConnector(t, &calls)
-	_, _, err := Race(tunnelContext(t), Candidate{Connector: rejectingConnector(t, tunnelv1.DuplicatePublisherConnection), Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, time.Hour, publisherHello())
+	_, _, err := Race(tunnelContext(t), Candidate{Connector: rejectingConnector(t, tunnelv1.DuplicatePublisherConnection), Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportWSS}, time.Hour, publisherHello())
 	var protocolError *ProtocolError
 	if !errors.As(err, &protocolError) || protocolError.Code != tunnelv1.DuplicatePublisherConnection || calls.Load() != 0 {
 		t.Fatalf("race=%v; fallback=%d", err, calls.Load())
@@ -121,14 +121,14 @@ func TestRaceDuplicateClaimDoesNotCancelRunningSibling(t *testing.T) {
 		session, transport, err := Race(
 			t.Context(),
 			Candidate{Connector: primary, Transport: TransportQUIC},
-			Candidate{Connector: fallback, Transport: TransportTLSTCP},
+			Candidate{Connector: fallback, Transport: TransportWSS},
 			0,
 			publisherHello(),
 		)
 		if session != nil {
 			t.Cleanup(func() { _ = session.Close() })
 		}
-		if err != nil || transport != TransportTLSTCP || calls.Load() != 1 {
+		if err != nil || transport != TransportWSS || calls.Load() != 1 {
 			t.Fatalf("race: %s, %v; fallback=%d", transport, err, calls.Load())
 		}
 	})
@@ -146,7 +146,7 @@ func TestRaceDuplicateClaimDoesNotWaitPastSiblingSetupDeadline(t *testing.T) {
 		_, _, err := Race(
 			t.Context(),
 			Candidate{Connector: primary, Transport: TransportQUIC},
-			Candidate{Connector: fallback, Transport: TransportTLSTCP},
+			Candidate{Connector: fallback, Transport: TransportWSS},
 			0,
 			publisherHello(),
 		)
@@ -163,14 +163,14 @@ func TestRaceRetriesDrainingPublisherConnection(t *testing.T) {
 	session, transport, err := Race(
 		tunnelContext(t),
 		Candidate{Connector: rejectingConnector(t, tunnelv1.DrainingPublisherConnection), Transport: TransportQUIC},
-		Candidate{Connector: fallback, Transport: TransportTLSTCP},
+		Candidate{Connector: fallback, Transport: TransportWSS},
 		time.Hour,
 		publisherHello(),
 	)
 	if session != nil {
 		t.Cleanup(func() { _ = session.Close() })
 	}
-	if err != nil || transport != TransportTLSTCP || calls.Load() != 1 {
+	if err != nil || transport != TransportWSS || calls.Load() != 1 {
 		t.Fatalf("race: %s, %v; fallback=%d", transport, err, calls.Load())
 	}
 }
@@ -185,11 +185,11 @@ func TestRaceTransportWithoutAuthenticationCannotWin(t *testing.T) {
 		})
 		var calls atomic.Int32
 		fallback := authenticatedConnector(t, &calls)
-		s, winner, err := Race(tunnelContext(t), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, time.Second, publisherHello())
+		s, winner, err := Race(tunnelContext(t), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportWSS}, time.Second, publisherHello())
 		if s != nil {
 			t.Cleanup(func() { _ = s.Close() })
 		}
-		if err != nil || winner != TransportTLSTCP {
+		if err != nil || winner != TransportWSS {
 			t.Fatalf("unauthenticated winner: %s, %v", winner, err)
 		}
 		await(t, pending)
@@ -213,7 +213,7 @@ func TestRaceCancellationStopsBothCandidates(t *testing.T) {
 	t.Cleanup(func() { cancel(); await(t, joined) })
 	go func() {
 		defer close(joined)
-		_, _, err := Race(ctx, Candidate{Connector: blocked, Transport: TransportQUIC}, Candidate{Connector: blocked, Transport: TransportTLSTCP}, 0, publisherHello())
+		_, _, err := Race(ctx, Candidate{Connector: blocked, Transport: TransportQUIC}, Candidate{Connector: blocked, Transport: TransportWSS}, 0, publisherHello())
 		done <- err
 	}()
 	await(t, started)
@@ -236,7 +236,7 @@ func TestRaceTerminalRejectionAfterBothStarted(t *testing.T) {
 		return nil, ctx.Err()
 	})
 	t.Cleanup(func() { await(t, stopped) })
-	_, _, err := Race(tunnelContext(t), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, 0, publisherHello())
+	_, _, err := Race(tunnelContext(t), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportWSS}, 0, publisherHello())
 	var p *ProtocolError
 	if !errors.As(err, &p) || p.Code != tunnelv1.StaleConnectionAssignment {
 		t.Fatalf("terminal rejection: %v", err)
@@ -283,7 +283,7 @@ func testRaceClosesLateSuccessfulLoser(t *testing.T) {
 	done := make(chan struct{})
 	var result raceOutcome
 	go func() {
-		result.session, result.transport, result.err = Race(t.Context(), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: wrapped, Transport: TransportTLSTCP}, 0, publisherHello())
+		result.session, result.transport, result.err = Race(t.Context(), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: wrapped, Transport: TransportWSS}, 0, publisherHello())
 		close(done)
 	}()
 	loserCtx := <-started
@@ -346,7 +346,7 @@ func TestRacePreservesBothTransportFailures(t *testing.T) {
 	failed := func(err error) muxsession.Connector {
 		return muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return nil, err })
 	}
-	s, transport, err := Race(tunnelContext(t), Candidate{Connector: failed(one), Transport: TransportQUIC}, Candidate{Connector: failed(two), Transport: TransportTLSTCP}, time.Hour, publisherHello())
+	s, transport, err := Race(tunnelContext(t), Candidate{Connector: failed(one), Transport: TransportQUIC}, Candidate{Connector: failed(two), Transport: TransportWSS}, time.Hour, publisherHello())
 	if s != nil || transport != "" || !errors.Is(err, one) || !errors.Is(err, two) {
 		t.Fatalf("both failures: %v, %s, %v", s, transport, err)
 	}
@@ -393,7 +393,7 @@ func (s *raceBlockedSession) Close() error {
 }
 
 func TestRaceJoinsLosingCandidatesBeforeReturning(t *testing.T) {
-	for _, losingTransport := range []Transport{TransportQUIC, TransportTLSTCP} {
+	for _, losingTransport := range []Transport{TransportQUIC, TransportWSS} {
 		for _, stage := range []string{"dialing", "authenticating", "closing"} {
 			t.Run(string(losingTransport)+"/"+stage, func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
@@ -417,7 +417,7 @@ func TestRaceJoinsLosingCandidatesBeforeReturning(t *testing.T) {
 					})
 					winningTransport := TransportQUIC
 					if losingTransport == TransportQUIC {
-						winningTransport = TransportTLSTCP
+						winningTransport = TransportWSS
 					}
 					metrics := observability.New("publisher")
 					t.Cleanup(func() { _ = metrics.Shutdown(context.Background()) })
@@ -506,7 +506,7 @@ func TestRaceCleanupFailuresCloseWinnerAndPreserveCauses(t *testing.T) {
 					done := make(chan struct{})
 					var result raceOutcome
 					go func() {
-						result.session, result.transport, result.err = Race(ctx, Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, 0, publisherHello())
+						result.session, result.transport, result.err = Race(ctx, Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportWSS}, 0, publisherHello())
 						close(done)
 					}()
 					synctest.Wait()
@@ -546,7 +546,7 @@ func TestRaceCanceledBeforeEntryNeverAllocates(t *testing.T) {
 		calls.Add(1)
 		return nil, errors.New("late canceled candidate allocated")
 	})
-	primary, fallback := Candidate{Connector: connector, Transport: TransportQUIC}, Candidate{Connector: connector, Transport: TransportTLSTCP}
+	primary, fallback := Candidate{Connector: connector, Transport: TransportQUIC}, Candidate{Connector: connector, Transport: TransportWSS}
 	if session, _, err := Race(ctx, primary, fallback, 0, publisherHello()); session != nil || !errors.Is(err, cause) || !errors.Is(err, context.Canceled) {
 		t.Error("canceled race lost its cause", err)
 	}
@@ -570,7 +570,7 @@ func TestRaceTerminalRejectionJoinsSiblingCleanup(t *testing.T) {
 		done := make(chan struct{})
 		var result raceOutcome
 		go func() {
-			result.session, result.transport, result.err = Race(t.Context(), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportTLSTCP}, 0, publisherHello())
+			result.session, result.transport, result.err = Race(t.Context(), Candidate{Connector: primary, Transport: TransportQUIC}, Candidate{Connector: fallback, Transport: TransportWSS}, 0, publisherHello())
 			close(done)
 		}()
 		synctest.Wait()

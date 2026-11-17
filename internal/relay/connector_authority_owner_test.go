@@ -129,7 +129,7 @@ func TestConnectorPreparationTracksBorrowedPublisherTLSTransport(t *testing.T) {
 	opened := make(chan *connectorPacketSession, 1)
 	released := make(chan struct{})
 	defer close(released)
-	address := traceMuxServer(t, ctx, tunnel.TransportTLSTCP, certificate.TLS, func(ctx context.Context, transport muxsession.Session) error {
+	address := traceMuxServer(t, ctx, tunnel.TransportWSS, certificate.TLS, func(ctx context.Context, transport muxsession.Session) error {
 		packets, err := newConnectorPacketSession(ctx, transport, packetStreamReader)
 		if err != nil {
 			return err
@@ -144,7 +144,7 @@ func TestConnectorPreparationTracksBorrowedPublisherTLSTransport(t *testing.T) {
 		}
 		return nil
 	})
-	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(ctx, muxsession.Endpoint{Address: address, ServerName: "example.com"})
+	transport, err := (muxsession.WebSocketConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(ctx, muxsession.Endpoint{Address: address, ServerName: "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}

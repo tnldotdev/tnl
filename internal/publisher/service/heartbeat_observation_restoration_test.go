@@ -78,7 +78,7 @@ func TestServiceHeartbeatObservationRestorationAcceptsOnlyCompleteState(t *testi
 					t.Error("heartbeat observation fixture attempted a network relay")
 					return nil, ErrPrivateStream
 				})
-				cfg.RelayQUIC, cfg.RelayTCP = unused, unused
+				cfg.RelayQUIC, cfg.RelayWebSocket = unused, unused
 				// fake slots isolate renewal observations, not transport qualification.
 				cfg.Connect = func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error) {
 					return &heldSlot{stopped: make(chan struct{})}, nil

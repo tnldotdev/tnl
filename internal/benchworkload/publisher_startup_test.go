@@ -144,7 +144,7 @@ func TestPublisherStartupTraceBoundsHistoryAndStopsAfterReady(t *testing.T) {
 	status := publisherservice.RunStatus{
 		Ready: false, TargetHealthy: true, ConfigurationCurrent: true,
 		LastCheck: time.Now(), LastSuccess: time.Now().Add(-time.Second), LeaseExpiresAt: time.Now().Add(time.Minute),
-		Connected: [2]bool{true, true}, Transports: [2]tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportTLSTCP},
+		Connected: [2]bool{true, true}, Transports: [2]tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportWSS},
 	}
 	control := &publisherStartupTestControl{
 		get: func(context.Context, string, string) (controlv1.Service, error) {

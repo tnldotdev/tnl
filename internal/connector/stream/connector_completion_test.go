@@ -15,7 +15,7 @@ import (
 )
 
 func TestConnectorCompletionFollowsReturnDeliveryNotRequestFIN(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, failure := range []string{"completed", "reset", "cleanup", "remote-cleanup"} {
 			t.Run(transport+"/"+failure, func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

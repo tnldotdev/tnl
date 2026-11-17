@@ -42,7 +42,7 @@ func (c *Collector) BeginScope(role api.TransportReportRole) *Scope {
 }
 
 var operations = [...]api.Operation{api.RelayConnect, api.DirectConnect, api.Fallback, api.Recovery}
-var paths = [...]api.Path{api.Quic, api.TlsTcp, api.DirectUdp}
+var paths = [...]api.Path{api.Quic, api.Wss, api.DirectUdp}
 var outcomes = [...]api.Outcome{api.Succeeded, api.Failed, api.Canceled}
 var durations = [...]api.Duration{api.Lt1s, api.Lt10s, api.Lt1m, api.Longer}
 

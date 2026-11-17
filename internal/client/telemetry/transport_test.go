@@ -22,7 +22,7 @@ func TestTelemetryTransportAdaptersKeepBoundedFactsAndExistingObservers(t *testi
 	options.ObserveAttempt(peer.ConnectivityAttempt{Outcome: "failed", Duration: 10 * time.Second})
 	options.ObserveFallback()
 	s.RelayAttempt(t.Context(), tunnel.TransportQUIC, time.Second, errors.New("private relay address"))
-	s.RelayAttempt(t.Context(), tunnel.TransportTLSTCP, time.Second, nil)
+	s.RelayAttempt(t.Context(), tunnel.TransportWSS, time.Second, nil)
 	canceled, stop := context.WithCancel(t.Context())
 	stop()
 	s.RelayAttempt(canceled, tunnel.TransportQUIC, time.Second, context.Canceled)

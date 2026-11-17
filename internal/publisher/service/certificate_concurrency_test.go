@@ -55,7 +55,7 @@ func TestConcurrentServiceNamespaceCertificateLifecycle(t *testing.T) {
 					unused := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 						return nil, errors.New("certificate fixture must use its claimed slot")
 					})
-					cfg.RelayQUIC, cfg.RelayTCP = unused, unused
+					cfg.RelayQUIC, cfg.RelayWebSocket = unused, unused
 					cfg.Connect = func(_ context.Context, bound *Bound, slot uint8, _ ConnectOptions) (SlotSession, error) {
 						mu.Lock()
 						prepared[index] = bound.prepared

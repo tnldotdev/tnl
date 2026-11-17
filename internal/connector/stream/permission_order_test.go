@@ -180,7 +180,7 @@ func (s *permissionWatchSession) Done() <-chan struct{} {
 }
 
 func TestConnectorTerminalPermissionControlWatchWinsRetirement(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, mode := range []string{"eof", "session closed", "eof then session closed"} {
 			t.Run(transport+"/"+mode, func(t *testing.T) {
 				client, server := stdioTransportSessions(t, transport)

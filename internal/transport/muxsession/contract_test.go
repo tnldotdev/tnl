@@ -57,7 +57,7 @@ func TestSessionContract(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		pair pairFactory
-	}{{"quic", newQUICPair}, {"tls_yamux", newTLSYamuxPair}} {
+	}{{"quic", newQUICPair}, {"wss", newWebSocketPair}} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Run("accepted peer identity", func(t *testing.T) {
 				client, server := test.pair(t)
@@ -83,7 +83,11 @@ func TestSessionContract(t *testing.T) {
 				if state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768 {
 					t.Fatalf("native transport lost hybrid post-quantum key agreement: %s", state.CurveID)
 				}
-				if !state.HandshakeComplete || state.NegotiatedProtocol != ALPN || state.ServerName != "relay.test" {
+				validALPN := state.NegotiatedProtocol == ALPN
+				if test.name == "wss" {
+					validALPN = state.NegotiatedProtocol == "" || state.NegotiatedProtocol == "http/1.1"
+				}
+				if !state.HandshakeComplete || !validALPN || state.ServerName != "relay.test" {
 					t.Fatalf("accepted peer lost TLS identity: %+v", state)
 				}
 			})

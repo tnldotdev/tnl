@@ -69,7 +69,15 @@ func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor
 }
 
 func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Session) error {
-	session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, message tunnelv1.Message) error {
+	return a.AcceptSetup(ctx, ctx, transport, func() {})
+}
+
+// AcceptSetup separates bounded authentication from the pooled session lifetime.
+func (a *ForwardingAcceptor) AcceptSetup(ctx, setup context.Context, transport muxsession.Session, authenticated func()) error {
+	if authenticated == nil {
+		return errors.New("relay: setup completion callback is required")
+	}
+	session, _, err := tunnel.Accept(setup, transport, func(_ context.Context, message tunnelv1.Message) error {
 		if message.Role != tunnelv1.Ingress || !a.secrets.Matches(message.Credential) {
 			return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 		}
@@ -78,6 +86,7 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 	if err != nil {
 		return err
 	}
+	authenticated()
 	// bounded concurrent header readers keep one slow ingress stream from
 	// blocking others on the same ingress session. accepted streams run independently.
 	const headerReaders = 4

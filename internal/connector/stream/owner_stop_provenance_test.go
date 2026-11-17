@@ -80,8 +80,8 @@ func TestConnectorOwnerStopIdleLegDoesNotBecomeCleanup(t *testing.T) {
 		signer, _, pair, _, _ := rebindFixture(t)
 		raw := newLegRetrySession(t, p.packetCtx, pair, 0, legRetryScript{response: tunnelv1.HelloAccepted})
 		leg, err := dialConnectorLeg(t.Context(), p.packetCtx, Config{
-			RelayQUIC: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return raw, nil }),
-			RelayTCP:  muxsession.DisabledConnector{},
+			RelayQUIC:      muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return raw, nil }),
+			RelayWebSocket: muxsession.DisabledConnector{},
 		}, signer, pair, [32]byte{1}, 0, nil, tunnelv1.ConnectorHandoffID{1})
 		if err != nil {
 			t.Fatal(err)

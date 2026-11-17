@@ -67,6 +67,9 @@ jobs:
       - name: Test embedded toolbar
         run: task js:test:browser
 
+      - name: Test portable relay WebSockets
+        run: task go:test:integration:websocket
+
   python:
     name: Python
     runs-on: ubuntu-latest

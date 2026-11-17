@@ -409,7 +409,7 @@
       },
       "Path": {
         "type": "string",
-        "enum": ["quic", "tls_tcp", "direct_udp"]
+        "enum": ["quic", "wss", "direct_udp"]
       },
       "Outcome": {
         "type": "string",

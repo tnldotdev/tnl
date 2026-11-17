@@ -38,7 +38,7 @@ func (c DatagramCarrier) Receive(ctx context.Context) ([]byte, error) {
 
 func (c DatagramCarrier) Close() error { return c.Conn.CloseWithError(0, "") }
 
-// StreamCarrier preserves packet boundaries over a dedicated TLS/yamux stream.
+// StreamCarrier preserves packet boundaries over a dedicated WSS/yamux stream.
 // only the endpoint's writer calls Send; Receive runs independently.
 type StreamCarrier struct {
 	Conn net.Conn

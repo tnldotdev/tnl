@@ -14,7 +14,7 @@ func TestConnectorOwnsOneRelayUDPSocketUntilClose(t *testing.T) {
 		t.Run(map[bool]string{false: "direct enabled", true: "relay only"}[disabled], func(t *testing.T) {
 			f := newConfiguredConnectorFixture(t, "quic", "", func(_ *connectorFixture, config *Config) {
 				config.Connectivity.DisableDirect = disabled
-				config.RelayTCP = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+				config.RelayWebSocket = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 					return nil, net.ErrClosed
 				})
 			})
@@ -63,5 +63,30 @@ func TestConnectorOwnsOneRelayUDPSocketUntilClose(t *testing.T) {
 			}
 			_ = packet.Close()
 		})
+	}
+}
+
+func TestConnectorWebSocketOnlyOwnsNoUDPSockets(t *testing.T) {
+	f := newConfiguredConnectorFixture(t, "wss", "", func(_ *connectorFixture, config *Config) {
+		config.WebSocketOnly = true
+		config.RelayQUIC = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+			t.Error("WSS-only connector attempted QUIC")
+			return nil, net.ErrClosed
+		})
+	})
+	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	defer stop()
+	p, err := prepareConnectorConnection(t.Context(), setup, f.config, f.device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close(context.WithoutCancel(t.Context()))
+	if p.socket != nil || p.udpTransport != nil || p.connectivity != nil || p.ownedSocket {
+		t.Fatal("WSS-only operation created native UDP resources")
+	}
+	for _, path := range p.paths {
+		if path.leg.transport != "wss" {
+			t.Fatal("non-WSS relay leg", path.leg.transport)
+		}
 	}
 }

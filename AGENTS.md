@@ -189,7 +189,7 @@ not _inbox_, for the collection of threads.
 | **connected relay**                 | The specific relay process that claimed and holds a publisher connection for a service run.        |
 | **ready publisher connection**      | An authenticated, current publisher connection that can carry visitor streams.                     |
 | **publisher connection credential** | A secret that lets one publisher establish one assigned publisher connection.                      |
-| **transport**                       | The mechanism carrying a publisher connection: QUIC or TLS/TCP with yamux.                         |
+| **transport**                       | The mechanism carrying a relay connection: QUIC or WSS with yamux.                                 |
 | **service run token**               | A credential authorizing the publisher to update one service run.                                  |
 | **publisher identity**              | A native publisher's signed identity, independent of a person's control session.                   |
 | **publisher grant**                 | Revocable permission for one saved service or authorized service namespace.                        |

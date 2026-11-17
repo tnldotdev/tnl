@@ -48,10 +48,10 @@ type Config struct {
 	ControlClientIPHeader string   `name:"control-client-ip-header" env:"TNLD_CONTROL_CLIENT_IP_HEADER" default:"X-Forwarded-For" enum:"X-Forwarded-For,Fly-Client-IP" help:"Source header overwritten by the trusted control HTTPS proxy."`
 	PrivateControlListen  string   `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private control API listen address for ingress and relays."`
 	IngressListen         string   `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
-	RelayTCPListen        string   `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public TLS/TCP publisher-connection listen address."`
+	RelayTCPListen        string   `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public WSS publisher-connection listen address."`
 	RelayUDPListen        string   `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
 	RelayQUICProfile      string   `name:"relay-quic-profile" env:"TNLD_RELAY_QUIC_PROFILE" default:"standard" help:"Relay QUIC listener profile: standard or fly."`
-	InternalRelayListen   string   `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
+	InternalRelayListen   string   `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address (QUIC/UDP and WSS/TCP)."`
 	DNSServer             string   `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used to verify custom domains. Defaults to the system resolver."`
 
 	ServerDomain                      string                `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`

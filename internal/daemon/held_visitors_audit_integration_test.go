@@ -71,7 +71,7 @@ func TestIntegrationHeldVisitorsShareIngressAndKeepExactAuditHistories(t *testin
 	quic, _ := f.connectors()
 	// one transport is sufficient for this composition proof; the transport
 	// matrix belongs to the existing public stream and run-capacity suites.
-	tcp, _ := disabledIntegrationConnector("TLS/TCP disabled by held visitor proof")
+	tcp, _ := disabledIntegrationConnector("WSS disabled by held visitor proof")
 	release := make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	defer unblock()

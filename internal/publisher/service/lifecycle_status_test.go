@@ -100,7 +100,7 @@ func TestServiceRunStatusReportsConnectedTransportsAndActualDrain(t *testing.T) 
 				return nil, ctx.Err()
 			case <-allowTCP:
 			}
-			transport = tunnel.TransportTLSTCP
+			transport = tunnel.TransportWSS
 		}
 		return &transportedSlot{heldSlot: &heldSlot{stopped: make(chan struct{})}, transport: transport}, nil
 	}
@@ -138,7 +138,7 @@ func TestServiceRunStatusReportsConnectedTransportsAndActualDrain(t *testing.T) 
 	}
 	close(allowTCP)
 	ready := wait(func(s RunStatus) bool { return s.Ready })
-	if ready.Transports != [2]tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportTLSTCP} || ready.Draining {
+	if ready.Transports != [2]tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportWSS} || ready.Draining {
 		t.Fatal("run status did not use the actual connected session transports", ready)
 	}
 	cancel()

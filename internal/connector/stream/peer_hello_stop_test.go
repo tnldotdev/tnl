@@ -60,7 +60,7 @@ func TestConnectorHelloStopRetainsIndependentCandidateAndCleanup(t *testing.T) {
 						<-ctx.Done()
 						return nil, context.Cause(ctx)
 					}),
-					RelayTCP: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+					RelayWebSocket: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 						calls[1].Add(1)
 						return session, nil
 					}),

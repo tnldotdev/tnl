@@ -47,7 +47,7 @@ func readyAuthorityFixture(t *testing.T) (RunConfig, *readyAuthorityControl, <-c
 	unused := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 		return nil, ErrPrivateStream
 	})
-	cfg.RelayQUIC, cfg.RelayTCP = unused, unused
+	cfg.RelayQUIC, cfg.RelayWebSocket = unused, unused
 	authority := &readyAuthorityControl{heldCertificateAcknowledgment: &heldCertificateAcknowledgment{
 		lifecycleControl: control, entered: make(chan struct{}), release: make(chan struct{}),
 	}}

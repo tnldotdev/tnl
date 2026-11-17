@@ -126,7 +126,7 @@ func TestIntegrationURLPublisherTerminatesVisitorTLSLocally(t *testing.T) {
 }
 
 func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			fixture := newStandalonePublishFixture(t, "denied-"+transport)
 			var contacted atomic.Int32
@@ -137,7 +137,7 @@ func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
 			cleanupIntegrationHTTPServer(t, target, fixture.owner)
 			quic, tcp := fixture.connectors()
 			if transport == "quic" {
-				tcp, _ = disabledIntegrationConnector("TLS/TCP disabled by denial test")
+				tcp, _ = disabledIntegrationConnector("WSS disabled by denial test")
 			} else {
 				quic, _ = disabledIntegrationConnector("QUIC disabled by denial test")
 			}
@@ -215,7 +215,7 @@ func assertRuntimeOperations(t *testing.T, processes []*integrationProcess, mini
 }
 
 func TestIntegrationPublisherTransportMatrix(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			fixture := newStandalonePublishFixture(t, "transport-"+transport)
 			const concurrentRequests = 16
@@ -258,7 +258,7 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 			var quicConnector, tcpConnector muxsession.Connector
 			if transport == "quic" {
 				quicConnector, quicStats = observeIntegrationConnector(quicBase)
-				tcpConnector, tcpStats = disabledIntegrationConnector("TLS/TCP disabled by integration test")
+				tcpConnector, tcpStats = disabledIntegrationConnector("WSS disabled by integration test")
 			} else {
 				quicConnector, quicStats = disabledIntegrationConnector("QUIC disabled by integration test")
 				tcpConnector, tcpStats = observeIntegrationConnector(tcpBase)
@@ -331,8 +331,8 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 				t.FailNow()
 			}
 			wantTransport := tunnel.TransportQUIC
-			if transport == "tls-tcp" {
-				wantTransport = tunnel.TransportTLSTCP
+			if transport == "wss" {
+				wantTransport = tunnel.TransportWSS
 			}
 			statuses := handle.observedEvents()
 			if len(statuses) == 0 {
@@ -369,11 +369,11 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 			}
 			if transport == "quic" {
 				if quicStats.successful.Load() != 2 || tcpStats.successful.Load() != 0 {
-					t.Fatalf("transport sessions = QUIC %d, TLS/TCP %d", quicStats.successful.Load(), tcpStats.successful.Load())
+					t.Fatalf("transport sessions = QUIC %d, WSS %d", quicStats.successful.Load(), tcpStats.successful.Load())
 				}
 			} else if tcpStats.successful.Load() != 2 || quicStats.successful.Load() != 0 || quicStats.attempts.Load() < 2 {
 				t.Fatalf(
-					"transport sessions = QUIC %d/%d attempts, TLS/TCP %d",
+					"transport sessions = QUIC %d/%d attempts, WSS %d",
 					quicStats.successful.Load(), quicStats.attempts.Load(), tcpStats.successful.Load(),
 				)
 			}
@@ -382,7 +382,7 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 }
 
 func TestIntegrationLongLivedHTTPStreams(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			fixture := newStandalonePublishFixture(t, "long-lived-http-"+transport)
 			websocketGate := make(chan struct{})
@@ -452,7 +452,7 @@ func TestIntegrationLongLivedHTTPStreams(t *testing.T) {
 			var quicConnector, tcpConnector muxsession.Connector
 			if transport == "quic" {
 				quicConnector = quicBase
-				tcpConnector, _ = disabledIntegrationConnector("TLS/TCP disabled by integration test")
+				tcpConnector, _ = disabledIntegrationConnector("WSS disabled by integration test")
 			} else {
 				quicConnector, _ = disabledIntegrationConnector("QUIC disabled by integration test")
 				tcpConnector = tcpBase

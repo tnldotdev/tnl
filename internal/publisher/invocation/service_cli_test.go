@@ -149,8 +149,8 @@ func TestServiceCLIDiagnosticsUseActualTransportHealthTransitionsAndDrain(t *tes
 	targetWarnings, drains := 0, 0
 	output := &Presentation{
 		TransportFallback: func(number uint64, transport string) error {
-			if transport != string(tunneltransport.TransportTLSTCP) {
-				t.Error("fallback did not describe an established TLS/TCP session")
+			if transport != string(tunneltransport.TransportWSS) {
+				t.Error("fallback did not describe an established WSS session")
 			}
 			fallback = append(fallback, number)
 			return nil
@@ -170,7 +170,7 @@ func TestServiceCLIDiagnosticsUseActualTransportHealthTransitionsAndDrain(t *tes
 			return err
 		}
 		current := publisherservice.RunStatus{TargetHealthy: true, LastCheck: time.Now(),
-			Transports: [2]tunneltransport.Transport{tunneltransport.TransportQUIC, tunneltransport.TransportTLSTCP}}
+			Transports: [2]tunneltransport.Transport{tunneltransport.TransportQUIC, tunneltransport.TransportWSS}}
 		run.ObserveReadiness(current)
 		if len(fallback) != 0 {
 			t.Fatal("a transport without a connected session was reported as fallback")
@@ -181,7 +181,7 @@ func TestServiceCLIDiagnosticsUseActualTransportHealthTransitionsAndDrain(t *tes
 		if len(fallback) != 0 {
 			t.Fatal("healthy QUIC sessions were reported as fallback")
 		}
-		current.Transports[1] = tunneltransport.TransportTLSTCP
+		current.Transports[1] = tunneltransport.TransportWSS
 		run.ObserveReadiness(current)
 		run.ObserveReadiness(current)
 		for _, healthy := range []bool{false, false, true, true, false, false, true} {
@@ -248,7 +248,7 @@ func TestServiceCLIReportingFailuresCancelAndSurviveIndependentCleanup(t *testin
 				case "ready", "ready hook":
 					_ = run.Ready()
 				case "transport":
-					current.Connected[0], current.Transports[0] = true, tunneltransport.TransportTLSTCP
+					current.Connected[0], current.Transports[0] = true, tunneltransport.TransportWSS
 					run.ObserveReadiness(current)
 				case "target":
 					current.TargetHealthy = false

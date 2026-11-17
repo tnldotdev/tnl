@@ -73,8 +73,8 @@ func TestConnectorRenewalDenialKeepsAcknowledgmentFailureAfterCarrierClosure(t *
 		}()
 		defer func() { _ = raw.Close(); <-served }()
 		leg, err := dialConnectorLeg(budget, budget, Config{
-			RelayQUIC: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return transport, nil }),
-			RelayTCP:  muxsession.DisabledConnector{},
+			RelayQUIC:      muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return transport, nil }),
+			RelayWebSocket: muxsession.DisabledConnector{},
 		}, p.signer, p.pair, [32]byte{1}, 0, nil, tunnelv1.ConnectorHandoffID{1})
 		if err != nil {
 			t.Fatal(err)

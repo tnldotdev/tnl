@@ -91,7 +91,7 @@ type publishingConnection struct {
 	accepted chan struct{}
 }
 
-// publishingfixture is a local fake control boundary with real TLS/yamux
+// publishingfixture is a local fake control boundary with real WSS/yamux
 // connections. it contains no second publication engine or PostgreSQL dependency.
 type PublishingFixture struct {
 	URL, CAFile, AccessToken, Namespace string
@@ -789,7 +789,7 @@ func publishingRelay(t *testing.T, tlsConfig *tls.Config, f *PublishingFixture) 
 				defer connection.Close()
 				stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
 				defer stop()
-				transport, err := muxsession.AcceptTLSYamux(ctx, connection, tlsConfig, muxsession.TLSYamuxConfig{})
+				transport, err := muxsession.AcceptWebSocket(ctx, connection, tlsConfig, muxsession.WebSocketConfig{})
 				if err != nil {
 					return
 				}

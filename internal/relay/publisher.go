@@ -58,6 +58,15 @@ func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, e
 }
 
 func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Session) (retErr error) {
+	return a.AcceptSetup(ctx, ctx, transport, func() {})
+}
+
+// AcceptSetup releases pending capacity only after the hello has authenticated.
+// setup bounds admission; ctx remains the owner of the established session.
+func (a *PublisherAcceptor) AcceptSetup(ctx, setup context.Context, transport muxsession.Session, authenticated func()) (retErr error) {
+	if authenticated == nil {
+		return errors.New("relay: setup completion callback is required")
+	}
 	finishAdmission := startOperation(ctx, a.observer, observability.OpRelayAdmitPublisherConnection)
 	var claimed *publisherClaim
 	var connector *ConnectorAcceptor
@@ -68,7 +77,7 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 			releaseConnector()
 		}
 	}()
-	session, hello, err := tunnel.AcceptWithResult(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) (*tunnelv1.ConnectorPairLegAccepted, error) {
+	session, hello, err := tunnel.AcceptWithResult(setup, transport, func(authCtx context.Context, message tunnelv1.Message) (*tunnelv1.ConnectorPairLegAccepted, error) {
 		if message.Role == tunnelv1.Connector {
 			if a.connector == nil || message.ConnectorPairLegProof == nil {
 				return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
@@ -109,6 +118,9 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		}
 		return nil, err
 	})
+	if err == nil {
+		authenticated()
+	}
 	if connector != nil {
 		finishAdmission(err)
 		if err != nil {

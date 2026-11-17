@@ -31,7 +31,7 @@ type PeerStreamIntroduction interface {
 }
 
 // ServiceStreamDispatcher is the sole AcceptStream reader on an already
-// authenticated TLS/yamux session. it borrows the session and never grants
+// authenticated WSS/yamux session. it borrows the session and never grants
 // permission to forward a visitor or to register a peer pair.
 type ServiceStreamDispatcher struct {
 	ctx       context.Context

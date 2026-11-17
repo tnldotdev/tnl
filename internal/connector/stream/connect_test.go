@@ -221,7 +221,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 				}
 				workers.Go(func() {
 					setup, stop := context.WithTimeout(ctx, time.Second)
-					session, err := muxsession.AcceptTLSYamux(setup, network, serverTLS, muxsession.TLSYamuxConfig{})
+					session, err := muxsession.AcceptWebSocket(setup, network, serverTLS, muxsession.WebSocketConfig{})
 					stop()
 					if err == nil {
 						f.accept(ctx, session, slot)
@@ -270,7 +270,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 func TestOpaquePreflightVerifiesTLSBeforeReadyWithoutApplicationBytes(t *testing.T) {
 	for _, invalid := range []bool{false, true} {
 		t.Run(map[bool]string{false: "verified", true: "wrong certificate"}[invalid], func(t *testing.T) {
-			f := newConfiguredConnectorFixture(t, "tls_tcp", "", func(f *connectorFixture, c *Config) {
+			f := newConfiguredConnectorFixture(t, "wss", "", func(f *connectorFixture, c *Config) {
 				f.wantStartupError = invalid
 				f.wrongCertificate.Store(invalid)
 			})
@@ -617,7 +617,7 @@ func (f *connectorFixture) local(t *testing.T) net.Conn {
 func TestManagedConnectorReadinessAcrossReachabilityAndProtocols(t *testing.T) {
 	for _, public := range []bool{false, true} {
 		for _, protocol := range []string{"http", "postgres", "mysql", "tcp", "kubernetes"} {
-			for _, transport := range []string{"quic", "tls-tcp"} {
+			for _, transport := range []string{"quic", "wss"} {
 				for _, outcome := range []string{"ready", "wrong-tls", "denied"} {
 					t.Run(fmt.Sprintf("public=%v/%s/%s/%s", public, protocol, transport, outcome), func(t *testing.T) {
 						f := newConfiguredConnectorFixture(t, transport, "", func(f *connectorFixture, c *Config) {
@@ -678,7 +678,7 @@ func TestManagedConnectorReadinessAcrossReachabilityAndProtocols(t *testing.T) {
 }
 
 func TestConnectorTwoAuthenticatedMuxPathsAndSurvivingIngress(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newConnectorFixture(t, transport)
 			for range 3 {
@@ -786,7 +786,7 @@ func TestConnectorInvalidAdmissionOrServiceCertificateNeverForwardsOrRetries(t *
 }
 
 func TestConnectorRevokedSessionStopsOnlyItsActiveStreams(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newConnectorFixture(t, transport)
 			healthy := f.local(t)
@@ -861,7 +861,7 @@ func TestConnectorReconnectUsesFreshProofAndRetainsSibling(t *testing.T) {
 }
 
 func TestConnectorRejectsStaleApprovedRevisionBeforeOpeningStream(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newConnectorFixture(t, transport)
 			active := f.local(t)

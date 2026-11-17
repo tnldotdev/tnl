@@ -58,7 +58,7 @@ func TestIntegrationRelayQUICProfiles(t *testing.T) {
 				}
 				quic, _ := f.connectors()
 				listener, stop := startRuntimeConnector(t, f, service, connectorstream.Config{
-					Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: privateDisabledConnector(),
+					Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayWebSocket: privateDisabledConnector(),
 				})
 				defer stop()
 				connection, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)

@@ -209,7 +209,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 						defer conn.Close()
 						stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 						defer stop()
-						mux, err := muxsession.AcceptTLSYamux(ctx, conn, secure, muxsession.TLSYamuxConfig{})
+						mux, err := muxsession.AcceptWebSocket(ctx, conn, secure, muxsession.WebSocketConfig{})
 						if err != nil {
 							return
 						}
@@ -295,7 +295,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			t.Cleanup(stopFixture)
 			setup, stopSetup := context.WithTimeout(ctx, 5*time.Second)
 			defer stopSetup()
-			transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: ca.roots}}).Connect(setup, muxsession.Endpoint{Address: relay.Addr().String(), ServerName: "pool.example"})
+			transport, err := (muxsession.WebSocketConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: ca.roots}}).Connect(setup, muxsession.Endpoint{Address: relay.Addr().String(), ServerName: "pool.example"})
 			if err != nil {
 				t.Fatal(err)
 			}

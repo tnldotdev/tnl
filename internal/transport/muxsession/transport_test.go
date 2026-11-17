@@ -588,7 +588,7 @@ func newQUICPairWithConfig(t *testing.T, serverConfig, clientConfig *quic.Config
 	return client, server
 }
 
-func newTLSYamuxPair(t *testing.T) (Session, Session) {
+func newWebSocketPair(t *testing.T) (Session, Session) {
 	t.Helper()
 	serverTLS, clientTLS := testTLSConfigs(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -614,7 +614,7 @@ func newTLSYamuxPair(t *testing.T) (Session, Session) {
 		}
 		defer connection.Close()
 		_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
-		session, err := AcceptTLSYamux(ctx, connection, serverTLS, TLSYamuxConfig{})
+		session, err := AcceptWebSocket(ctx, connection, serverTLS, WebSocketConfig{})
 		if session != nil {
 			defer session.Close()
 		}
@@ -623,22 +623,22 @@ func newTLSYamuxPair(t *testing.T) (Session, Session) {
 			<-ctx.Done()
 		}
 	}()
-	client, err := (TLSYamuxConnector{TLSConfig: clientTLS}).Connect(ctx, Endpoint{
+	client, err := (WebSocketConnector{TLSConfig: clientTLS}).Connect(ctx, Endpoint{
 		Address: listener.Addr().String(), ServerName: "relay.test",
 	})
 	if err != nil {
-		t.Fatalf("connect TLS/yamux: %v", err)
+		t.Fatalf("connect WSS/yamux: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	var server Session
 	select {
 	case result := <-accepted:
 		if result.err != nil {
-			t.Fatalf("accept TLS/yamux: %v", result.err)
+			t.Fatalf("accept WSS/yamux: %v", result.err)
 		}
 		server = result.session
 	case <-time.After(5 * time.Second):
-		t.Fatal("accept TLS/yamux timed out")
+		t.Fatal("accept WSS/yamux timed out")
 	}
 	t.Cleanup(func() { _ = server.Close() })
 	return client, server

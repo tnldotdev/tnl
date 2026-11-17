@@ -201,9 +201,9 @@ func TestIntegrationConnectorCarrierSwitchRetainsApplicationAndTarget(t *testing
 						selected = tls
 					}
 					recorded := &recordedConnectorConnector{Connector: selected, opened: make(chan connectorOuter, 8)}
-					config := connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: recorded, RelayTCP: privateDisabledConnector()}
+					config := connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: recorded, RelayWebSocket: privateDisabledConnector()}
 					if tcp {
-						config.RelayQUIC, config.RelayTCP = privateDisabledConnector(), recorded
+						config.RelayQUIC, config.RelayWebSocket = privateDisabledConnector(), recorded
 					}
 					listener, stopConnector := startRuntimeConnector(t, f, service, config)
 					defer stopConnector()

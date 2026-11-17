@@ -159,9 +159,9 @@ func (d *daemon) startStandalone(
 		return err
 	}
 	d.relays[0].tcpListener = relayListener
-	d.start("serve TLS/TCP publisher connections", func() error {
-		return serveTLSYamuxSessions(ctx, relayListener, transportTLS,
-			muxsession.TLSYamuxConfig{MaxIncomingStreams: maxStreams}, publisher.Accept)
+	d.start("serve WSS publisher connections", func() error {
+		return serveWebSocketSessions(ctx, relayListener, transportTLS,
+			muxsession.WebSocketConfig{MaxIncomingStreams: maxStreams}, publisher.AcceptSetup)
 	})
 
 	ingressClient, err := controlingress.NewDirectClient(controlingress.DirectConfig{

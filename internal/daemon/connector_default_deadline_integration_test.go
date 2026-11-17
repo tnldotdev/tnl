@@ -268,7 +268,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		ready, done := make(chan struct{}), make(chan error, 1)
 		go func() {
-			done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: string(service.Protocol), TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: privateDisabledConnector(), RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
+			done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: string(service.Protocol), TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: privateDisabledConnector(), RelayWebSocket: tcp, Ready: func() error { close(ready); return nil }})
 		}()
 		joined := false
 		join := func(accept func(error) bool) {

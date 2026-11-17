@@ -254,7 +254,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		t.Fatal("backend TCP half-close failed", halfClose)
 	}
 	if err := completionAwait(t, ctx, peerResult); err != nil {
-		t.Fatal("peer TLS/TCP completion failed", err)
+		t.Fatal("peer WSS completion failed", err)
 	}
 	completionAwait(t, ctx, peerDone)
 	outcome := completionAwait(t, ctx, metrics.visitorOutcomes)

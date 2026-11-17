@@ -464,23 +464,20 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 	if roots == nil {
 		roots = &tls.Config{MinVersion: tls.VersionTLS13}
 	}
-	quicConnector, tcpConnector := config.RelayQUIC, config.RelayTCP
+	quicConnector, tcpConnector := config.RelayQUIC, config.RelayWebSocket
 	if quicConnector == nil {
 		return nil, ErrServiceConnection
 	}
 	if tcpConnector == nil {
-		tcpConnector = muxsession.TLSYamuxConnector{TLSConfig: roots}
+		tcpConnector = muxsession.WebSocketConnector{TLSConfig: roots}
 	}
 	type result struct {
 		leg    *connectorRelayLeg
 		outer  muxsession.Session
 		failed connectorCandidateFailure
 	}
-	results := make(chan result, 2)
-	race, cancel := context.WithCancel(ctx)
-	defer cancel()
-	start := func(connector muxsession.Connector, transport tunnel.Transport) {
-		go func() {
+	attemptCandidate := func(connector muxsession.Connector, transport tunnel.Transport) func(context.Context) tunnel.AttemptResult[result] {
+		return func(race context.Context) tunnel.AttemptResult[result] {
 			startedAttempt := time.Now()
 			next := func() result {
 				proof, err := connectorLegProof(signer, pair, slot)
@@ -513,51 +510,33 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 			}()
 			next.failed.canceled = race.Err() != nil && ctx.Err() == nil && connectorCanceledCandidate(next.failed.cause)
 			config.telemetry.RelayAttempt(race, transport, time.Since(startedAttempt), errors.Join(next.failed.cause, next.failed.cleanup))
-			results <- next
-		}()
+			return tunnel.AttemptResult[result]{Value: next, Accepted: next.leg != nil,
+				Err: next.failed.cause, CleanupErr: next.failed.cleanup}
+		}
 	}
 	primary, fallback := quicConnector, tcpConnector
-	primaryKind, fallbackKind := tunnel.TransportQUIC, tunnel.TransportTLSTCP
-	start(primary, primaryKind)
-	remaining, fallbackStarted := 1, false
-	timer := time.NewTimer(250 * time.Millisecond)
-	defer timer.Stop()
-	var winner result
+	primaryKind, fallbackKind := tunnel.TransportQUIC, tunnel.TransportWSS
+	if config.WebSocketOnly {
+		primary, fallback = fallback, primary
+		primaryKind, fallbackKind = fallbackKind, primaryKind
+	}
+	selected, failures, raceErr := tunnel.RaceAttempts(ctx, 250*time.Millisecond,
+		attemptCandidate(primary, primaryKind), attemptCandidate(fallback, fallbackKind),
+		func(next result) error { return next.leg.Close() })
+	winner := selected.Value
 	attempt := &connectorLegAttemptError{}
-	stopped := ctx.Done()
-	for remaining > 0 {
-		select {
-		case <-stopped:
-			stopped = nil
-			cancel()
-			attempt.context = context.Cause(ctx)
-		case <-timer.C:
-			if !fallbackStarted && winner.leg == nil {
-				fallbackStarted = true
-				remaining++
-				start(fallback, fallbackKind)
-			}
-		case next := <-results:
-			remaining--
-			if next.leg != nil {
-				if winner.leg == nil && ctx.Err() == nil {
-					winner = next
-					cancel()
-				} else {
-					attempt.cleanup = errors.Join(attempt.cleanup, connectorCleanupFailure(next.leg.Close()))
-				}
-			} else {
-				attempt.candidates[attempt.count] = next.failed
-				attempt.count++
-				if !fallbackStarted && winner.leg == nil && ctx.Err() == nil {
-					fallbackStarted = true
-					remaining++
-					start(fallback, fallbackKind)
-				}
-			}
+	for _, failure := range failures {
+		if failure.Accepted {
+			attempt.cleanup = errors.Join(attempt.cleanup, connectorCleanupFailure(failure.CleanupErr))
+		} else {
+			attempt.candidates[attempt.count] = failure.Value.failed
+			attempt.count++
 		}
 	}
 	attempt.context = context.Cause(ctx)
+	if attempt.context == nil && len(failures) == 0 && !selected.Accepted {
+		attempt.context = raceErr
+	}
 	if winner.leg == nil {
 		causes := []error{attempt.context, attempt.cleanup}
 		for _, candidate := range attempt.candidates[:attempt.count] {
@@ -579,8 +558,8 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 			retErr = errors.Join(retErr, connectorCleanupFailure(l.Close()))
 		}
 	}()
-	if l.transport == tunnel.TransportTLSTCP {
-		config.telemetry.Record(telemetryv1.Fallback, telemetryv1.TlsTcp, telemetryv1.Succeeded, 0)
+	if l.transport == tunnel.TransportWSS && !config.WebSocketOnly {
+		config.telemetry.Record(telemetryv1.Fallback, telemetryv1.Wss, telemetryv1.Succeeded, 0)
 	}
 	hello, err := tunnelv1.ParseConnectorHelloNonce(l.proof.Nonce)
 	if err != nil {

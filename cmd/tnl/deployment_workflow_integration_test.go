@@ -1022,14 +1022,14 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 		t.Fatal(err)
 	}
 	f.serve(t, public, func(connection net.Conn) error {
-		transport, err := muxsession.AcceptTLSYamux(f.ctx, connection, f.tls, muxsession.TLSYamuxConfig{MaxIncomingStreams: 128})
+		transport, err := muxsession.AcceptWebSocket(f.ctx, connection, f.tls, muxsession.WebSocketConfig{MaxIncomingStreams: 128})
 		if err != nil {
 			return err
 		}
 		return acceptor.Accept(f.ctx, transport)
 	})
 	f.serve(t, internal, func(connection net.Conn) error {
-		transport, err := muxsession.AcceptTLSYamux(f.ctx, connection, f.tls, muxsession.TLSYamuxConfig{MaxIncomingStreams: 128})
+		transport, err := muxsession.AcceptWebSocket(f.ctx, connection, f.tls, muxsession.WebSocketConfig{MaxIncomingStreams: 128})
 		if err != nil {
 			return err
 		}

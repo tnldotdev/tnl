@@ -19,7 +19,7 @@ import (
 )
 
 func TestStdioOrdinaryCancellationJoinsOneStream(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newConnectorFixture(t, transport)
 			local, peer := net.Pipe()
@@ -84,7 +84,7 @@ func (c stdioResolveControl) ResolveService(ctx context.Context, _ string) (Run,
 }
 
 func TestStdioCancellationDuringPreparationJoins(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newConnectorFixture(t, transport)
 			local, peer := net.Pipe()
@@ -161,7 +161,7 @@ type stdioFailureControl struct {
 func (c stdioFailureControl) Close(context.Context) error { return c.cleanup }
 
 func TestStdioCancellationPreservesIndependentFailureAndCleanup(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, cause := range []error{context.Canceled, context.DeadlineExceeded, errors.New("caller stopped")} {
 			t.Run(transport+"/"+cause.Error(), func(t *testing.T) {
 				f := newConnectorFixture(t, transport)
@@ -207,7 +207,7 @@ func (c *gatedStdioOutput) Close() error {
 }
 
 func TestStdioCancellationDoesNotHideIndependentOutput(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, failure := range []error{syscall.EPIPE, io.ErrClosedPipe} {
 			t.Run(transport+"/"+failure.Error(), func(t *testing.T) {
 				f := newConnectorFixture(t, transport)
@@ -257,7 +257,7 @@ type failingStdioClose struct {
 func (c *failingStdioClose) Close() error { return errors.Join(c.Conn.Close(), c.err) }
 
 func TestStdioActiveCancellationRetainsCallerCauseAndCleanup(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, cause := range []error{context.Canceled, context.DeadlineExceeded, errors.New("custom caller stop")} {
 			t.Run(transport+"/"+cause.Error(), func(t *testing.T) {
 				f := newConnectorFixture(t, transport)

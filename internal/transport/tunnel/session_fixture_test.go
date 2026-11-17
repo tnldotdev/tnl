@@ -14,7 +14,7 @@ import (
 )
 
 // this fixture models session closure and ordered directional stream delivery.
-// transport half-close/reset behavior is tested against real quic and tls/yamux.
+// transport half-close/reset behavior is tested against real QUIC and WSS/yamux.
 type memoryPair struct {
 	mu       sync.Mutex
 	done     chan struct{}

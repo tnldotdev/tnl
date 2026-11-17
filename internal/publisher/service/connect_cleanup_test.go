@@ -52,7 +52,7 @@ func TestPrivateConnectSlotStaleCleanupRetainsCauseAndClassification(t *testing.
 				}
 				return physical, nil
 			})
-			options.TCP = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+			options.WebSocket = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 				return nil, net.ErrClosed
 			})
 			connected := make(chan error, 1)

@@ -11,8 +11,8 @@ import (
 )
 
 func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
-	for _, name := range []string{"quic", "quic-basic", "tls-tcp"} {
-		tcp := name == "tls-tcp"
+	for _, name := range []string{"quic", "quic-basic", "wss"} {
+		tcp := name == "wss"
 		for _, variant := range []string{"current", "classical only", "retired alpn", "unknown alpn", "wrong hostname", "untrusted certificate"} {
 			t.Run(name+"/"+variant, func(t *testing.T) {
 				serverTLS, roots := testTLSConfigs(t)
@@ -32,7 +32,7 @@ func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 						if err != nil {
 							return nil, err
 						}
-						return AcceptTLSYamux(ctx, conn, serverTLS, TLSYamuxConfig{})
+						return AcceptWebSocket(ctx, conn, serverTLS, WebSocketConfig{})
 					}
 				} else {
 					config := QUICConfig{}
@@ -65,6 +65,9 @@ func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 				t.Cleanup(func() { cancel(); _ = closeListener(); <-done })
 				client := roots.Clone()
 				client.ServerName, client.NextProtos = "relay.test", []string{ALPN}
+				if tcp {
+					client.NextProtos = []string{"http/1.1"}
+				}
 				switch variant {
 				case "classical only":
 					client.CurvePreferences = []tls.CurveID{tls.X25519}
@@ -77,6 +80,9 @@ func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 				case "untrusted certificate":
 					_, client = testTLSConfigs(t)
 					client.ServerName, client.NextProtos = "relay.test", []string{ALPN}
+					if tcp {
+						client.NextProtos = []string{"http/1.1"}
+					}
 				}
 				var err error
 				if tcp {

@@ -34,7 +34,7 @@ func (c *observationVisitor) Close() error {
 }
 
 func TestServiceRecoveryObservationRestorationRegisteredHTTPVisitorsStayRunLocal(t *testing.T) {
-	for _, transport := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportTLSTCP} {
+	for _, transport := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportWSS} {
 		t.Run(string(transport), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()

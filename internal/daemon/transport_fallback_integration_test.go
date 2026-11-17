@@ -20,7 +20,7 @@ import (
 func TestIntegrationPublisherFallsBackWhenQUICStalls(t *testing.T) {
 	fixture := newStandalonePublishFixture(t, "fallback")
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(response, "TLS/TCP fallback")
+		_, _ = io.WriteString(response, "WSS fallback")
 	}))
 	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 
@@ -41,7 +41,7 @@ func TestIntegrationPublisherFallsBackWhenQUICStalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || string(body) != "TLS/TCP fallback" {
+	if response.StatusCode != http.StatusOK || string(body) != "WSS fallback" {
 		t.Fatalf("fallback visitor response = %s, %q", response.Status, body)
 	}
 }
@@ -125,9 +125,9 @@ func TestIntegrationPublisherFallsBackAfterQUICConnectionFails(t *testing.T) {
 	for {
 		status, err := handle.events.next(recoveryCtx, &statusCursor)
 		if err != nil {
-			t.Fatalf("publisher did not recover on TLS/TCP: %v, result %v%s", err, handle.result(), fixture.diagnostics())
+			t.Fatalf("publisher did not recover on WSS: %v, result %v%s", err, handle.result(), fixture.diagnostics())
 		}
-		if status.Ready && status.Transports == [2]tunnel.Transport{tunnel.TransportTLSTCP, tunnel.TransportTLSTCP} {
+		if status.Ready && status.Transports == [2]tunnel.Transport{tunnel.TransportWSS, tunnel.TransportWSS} {
 			break
 		}
 	}
@@ -188,7 +188,7 @@ func TestIntegrationPublisherFallsBackAfterQUICConnectionFails(t *testing.T) {
 	t.Logf("service recovery episode %d opened at %s and completed after actual visitor delivery", episode, openedAt)
 	select {
 	case <-quicSessions:
-		t.Fatal("replacement attempted QUIC before TLS/TCP")
+		t.Fatal("replacement attempted QUIC before WSS")
 	default:
 	}
 }

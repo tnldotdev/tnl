@@ -17,11 +17,17 @@ import (
 
 const relaySessionSetupTimeout = 10 * time.Second
 
+// leave time for upgrade and authentication inside a visitor's 250ms relay budget.
+const relayTransportFallbackDelay = 50 * time.Millisecond
+
 type ForwarderConfig struct {
 	Context         context.Context
 	TLSConfig       *tls.Config
 	ClusterSecret   string
-	TransportConfig muxsession.TLSYamuxConfig
+	TransportConfig muxsession.WebSocketConfig
+	// QUIC optionally supplies a borrowed transport; nil uses an owned UDP socket
+	// per pooled connection. DisabledConnector selects WSS without opening UDP.
+	QUIC            muxsession.Connector
 	Observer        OperationObserver
 	OnSessionClosed func(relayServiceID, relayID, origin string, cause error)
 }
@@ -30,6 +36,7 @@ type ForwarderConfig struct {
 // each internal-forwarding stream's acceptance before sending visitor bytes.
 type Forwarder struct {
 	connector       relayConnector
+	quic            muxsession.Connector
 	observer        OperationObserver
 	context         context.Context
 	cancel          context.CancelFunc
@@ -44,11 +51,15 @@ type Forwarder struct {
 }
 
 func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
-	connector, err := newTLSRelayConnector(config.TLSConfig, config.ClusterSecret, config.TransportConfig)
+	connector, err := newWebSocketRelayConnector(config.TLSConfig, config.ClusterSecret, config.TransportConfig)
 	if err != nil {
 		return nil, err
 	}
 	f := newForwarderContext(config.Context, connector)
+	f.quic = config.QUIC
+	if f.quic == nil {
+		f.quic = muxsession.OwnedQUICConnector{TLSConfig: config.TLSConfig.Clone()}
+	}
 	f.observer = config.Observer
 	f.onSessionClosed = config.OnSessionClosed
 	return f, nil
@@ -180,14 +191,21 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 	defer f.workers.Done()
 	ctx, finish := observability.Start(ctx, "ingress.relay_connect")
 	started := time.Now()
-	transport, err := f.connector.Connect(ctx, target)
-	var session *tunnel.Session
-	if err == nil {
-		session, err = tunnel.Dial(ctx, transport, tunnelv1.Message{
+	quic := f.quic
+	if quic == nil {
+		quic = muxsession.DisabledConnector{}
+	}
+	endpoint := muxsession.Endpoint{Address: target.address, ServerName: target.serverName}
+	fallback := muxsession.ConnectorFunc(func(ctx context.Context, _ muxsession.Endpoint) (muxsession.Session, error) {
+		return f.connector.Connect(ctx, target)
+	})
+	session, _, err := tunnel.Race(ctx,
+		tunnel.Candidate{Connector: quic, Endpoint: endpoint, Transport: tunnel.TransportQUIC},
+		tunnel.Candidate{Connector: fallback, Endpoint: endpoint, Transport: tunnel.TransportWSS},
+		relayTransportFallbackDelay, tunnelv1.Message{
 			Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Ingress,
 			Credential: f.connector.Credential(),
 		})
-	}
 	entry.cancel()
 	finish(err)
 	f.observe(ctx, observability.OpIngressRelayConnect, err, started)
@@ -318,27 +336,29 @@ type relayConnector interface {
 	Credential() string
 }
 
-type tlsRelayConnector struct {
+type webSocketRelayConnector struct {
 	tlsConfig       *tls.Config
 	clusterSecret   string
-	transportConfig muxsession.TLSYamuxConfig
+	transportConfig muxsession.WebSocketConfig
 }
 
-func newTLSRelayConnector(tlsConfig *tls.Config, clusterSecret string, transportConfig muxsession.TLSYamuxConfig) (relayConnector, error) {
+func newWebSocketRelayConnector(tlsConfig *tls.Config, clusterSecret string, transportConfig muxsession.WebSocketConfig) (relayConnector, error) {
 	if tlsConfig == nil || clusterSecret == "" {
 		return nil, errors.New("ingress: forwarding TLS and cluster secret are required")
 	}
 	if tlsConfig.InsecureSkipVerify || tlsConfig.VerifyPeerCertificate != nil || tlsConfig.VerifyConnection != nil {
 		return nil, errors.New("ingress: forwarding TLS verification must be configured by the forwarder")
 	}
-	return tlsRelayConnector{tlsConfig: tlsConfig.Clone(), clusterSecret: clusterSecret, transportConfig: transportConfig}, nil
+	return webSocketRelayConnector{tlsConfig: tlsConfig.Clone(), clusterSecret: clusterSecret, transportConfig: transportConfig}, nil
 }
 
-func (c tlsRelayConnector) Connect(ctx context.Context, target relayTarget) (muxsession.Session, error) {
+func (c webSocketRelayConnector) Connect(ctx context.Context, target relayTarget) (muxsession.Session, error) {
 	tlsConfig := c.tlsConfig.Clone()
-	return (muxsession.TLSYamuxConnector{
-		TLSConfig: tlsConfig, Config: c.transportConfig,
+	options := c.transportConfig
+	options.DisableProxy = true
+	return (muxsession.WebSocketConnector{
+		TLSConfig: tlsConfig, Config: options,
 	}).Connect(ctx, muxsession.Endpoint{Address: target.address, ServerName: target.serverName})
 }
 
-func (c tlsRelayConnector) Credential() string { return c.clusterSecret }
+func (c webSocketRelayConnector) Credential() string { return c.clusterSecret }

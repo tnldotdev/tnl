@@ -204,6 +204,6 @@ schemas:
         description: Measured setup or recovery duration. Omitted for fallback counts.
       count: { type: integer, format: int64, minimum: 1, maximum: 1000000000 }
   Operation: { type: string, enum: [relay_connect, direct_connect, fallback, recovery] }
-  Path: { type: string, enum: [quic, tls_tcp, direct_udp] }
+  Path: { type: string, enum: [quic, wss, direct_udp] }
   Outcome: { type: string, enum: [succeeded, failed, canceled] }
   Duration: { type: string, enum: [lt_1s, lt_10s, lt_1m, longer] }

@@ -113,7 +113,7 @@ func TestReturnDecisionCancellationAndJoin(t *testing.T) {
 }
 
 func TestReturnDecisionRealCancellationKeepsSibling(t *testing.T) {
-	for _, transport := range []string{"quic", "tls_yamux"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, decision := range []string{"rejection", "end"} {
 			t.Run(transport+"/"+decision, func(t *testing.T) {
 				client, server := realTunnelPair(t, transport)

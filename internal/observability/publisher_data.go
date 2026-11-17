@@ -60,7 +60,7 @@ func (m *Metrics) initPublisherData() {
 // PublisherTransportCandidate records each bounded candidate independently of
 // the race winner. connector/client owners retain spans but not publisher metrics.
 func PublisherTransportCandidate(ctx context.Context, transport string, elapsed time.Duration, err error) {
-	if transport != "quic" && transport != "tls-tcp" || elapsed < 0 {
+	if transport != "quic" && transport != "wss" || elapsed < 0 {
 		return
 	}
 	if m := FromContext(ctx); m != nil {
@@ -74,7 +74,7 @@ func PublisherTransportCandidate(ctx context.Context, transport string, elapsed 
 // replacements. a shutdown close remains expected even if the transport errs.
 func PublisherConnectionLifetime(ctx context.Context, transport string, slot int) func(error, bool) {
 	m := FromContext(ctx)
-	if m == nil || (transport != "quic" && transport != "tls-tcp") || slot < 0 || slot > 1 {
+	if m == nil || (transport != "quic" && transport != "wss") || slot < 0 || slot > 1 {
 		return func(error, bool) {}
 	}
 	parsed, _ := ParseTransport(transport)

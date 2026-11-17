@@ -206,7 +206,7 @@ func TestConnectorPairRenewalPreservesExpiredCallCause(t *testing.T) {
 }
 
 func TestConnectorRenewalReplyAfterCallTimeoutRetainsApplication(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			var renewals atomic.Int32
 			retried := make(chan struct{})

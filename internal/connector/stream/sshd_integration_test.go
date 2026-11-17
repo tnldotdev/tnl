@@ -27,7 +27,7 @@ func TestIntegrationExistingOpenSSHOverPrivateTCP(t *testing.T) {
 		}
 		sshd = "/usr/sbin/sshd"
 	}
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			directory := t.TempDir()
 			hostKey, clientKey := filepath.Join(directory, "host"), filepath.Join(directory, "client")

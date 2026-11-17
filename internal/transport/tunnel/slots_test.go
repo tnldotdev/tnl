@@ -195,7 +195,7 @@ func TestSingleUseSlotsWaitForReplacementAndResetFallbackPreference(t *testing.T
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	initial := &transportedSlot{newDrainingSlot(), TransportQUIC}
-	recovered := &transportedSlot{newDrainingSlot(), TransportTLSTCP}
+	recovered := &transportedSlot{newDrainingSlot(), TransportWSS}
 	afterRecovery := &transportedSlot{newDrainingSlot(), TransportQUIC}
 	healthy := &transportedSlot{newDrainingSlot(), TransportQUIC}
 	preferences := make(chan bool, 4)

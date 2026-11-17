@@ -79,7 +79,7 @@ func TestIntegrationDeploymentPublicationRealControlAndVisitor(t *testing.T) {
 			Control: native, Access: native.Access, State: f.identity.state, ServiceID: selected.Id,
 			PublisherIdentityID: approval.ClientId, PublisherGrantID: approval.GrantId, PublisherKeyID: approval.KeyId,
 			Metadata: publisheridentity.ServiceMetadata(*selected), Target: strings.TrimPrefix(target.URL, "http://"),
-			RelayQUIC: quic, RelayTCP: tcp, HeartbeatInterval: 100 * time.Millisecond, DrainTime: time.Second,
+			RelayQUIC: quic, RelayWebSocket: tcp, HeartbeatInterval: 100 * time.Millisecond, DrainTime: time.Second,
 		}
 		handle := startOwnedIntegrationPublisher(t, f.owner, config, nil)
 		ready := waitForPublisherReady(t, handle)

@@ -208,7 +208,7 @@ func (n *Connector) accept(connection net.Conn, slot int) {
 	defer connection.Close()
 	stop := context.AfterFunc(n.ctx, func() { _ = connection.Close() })
 	defer stop()
-	transport, err := muxsession.AcceptTLSYamux(n.ctx, connection, n.tls, muxsession.TLSYamuxConfig{})
+	transport, err := muxsession.AcceptWebSocket(n.ctx, connection, n.tls, muxsession.WebSocketConfig{})
 	if err != nil {
 		return
 	}

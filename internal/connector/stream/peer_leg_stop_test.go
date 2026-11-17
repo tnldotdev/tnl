@@ -34,7 +34,7 @@ func TestConnectorCanceledLegDialRetainsIndependentFailures(t *testing.T) {
 			done := make(chan error, 1)
 			joined := false
 			go func() {
-				_, err := dialConnectorLeg(ctx, t.Context(), Config{RelayQUIC: gate, RelayTCP: gate}, signer, pair, [32]byte{1}, 0, nil, tunnelv1.ConnectorHandoffID{1})
+				_, err := dialConnectorLeg(ctx, t.Context(), Config{RelayQUIC: gate, RelayWebSocket: gate}, signer, pair, [32]byte{1}, 0, nil, tunnelv1.ConnectorHandoffID{1})
 				done <- err
 			}()
 			defer func() {
@@ -64,7 +64,7 @@ func TestConnectorCanceledLegDialRetainsIndependentFailures(t *testing.T) {
 }
 
 func TestConnectorPairDenialKeepsEnteredLegRenewalsUntilReply(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			var gates [2]*fixtureTLSGate
 			for slot := range gates {

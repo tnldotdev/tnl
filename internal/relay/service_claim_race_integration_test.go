@@ -36,7 +36,7 @@ import (
 // separate live relay processes in one assigned service let both real
 // transports reach postgres; a shared registry would reject one locally.
 func TestIntegrationPrivateClaimCompetingTransports(t *testing.T) {
-	for _, first := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportTLSTCP} {
+	for _, first := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportWSS} {
 		t.Run(string(first)+"-first", func(t *testing.T) {
 			testPrivateClaimCompetingTransports(t, first)
 		})
@@ -169,7 +169,7 @@ func testPrivateClaimCompetingTransports(t *testing.T, firstTransport tunnel.Tra
 	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
 	secondTransport := tunnel.TransportQUIC
 	if firstTransport == tunnel.TransportQUIC {
-		secondTransport = tunnel.TransportTLSTCP
+		secondTransport = tunnel.TransportWSS
 	}
 	candidates := []*privateClaimCandidate{
 		startPrivateClaimCandidate(t, ctx, firstTransport, first, client, hello, serverTLS, clientTLS),
@@ -465,7 +465,7 @@ func startPrivateClaimCandidate(t *testing.T, parent context.Context, transport 
 		c.served <- err
 		return err
 	})
-	var connector muxsession.Connector = muxsession.TLSYamuxConnector{TLSConfig: clientTLS}
+	var connector muxsession.Connector = muxsession.WebSocketConnector{TLSConfig: clientTLS}
 	if transport == tunnel.TransportQUIC {
 		connector = muxsession.QUICConnector{TLSConfig: clientTLS, Dialer: transporttest.QUICTransport(t)}
 	}

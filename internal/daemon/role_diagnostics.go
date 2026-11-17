@@ -55,7 +55,7 @@ func (d *daemon) roleDiagnostics(role daemonconfig.Role, now time.Time) processD
 			continue
 		}
 		lease := runtime.controller.Lease()
-		entry := roleDiagnostic{Role: "relay", ConfiguredIdentity: runtime.configuredIdentity, ProcessRunID: runtime.processRunID, LastSeenAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt, ServingUntil: lease.ServingUntil, LeaseRevision: lease.RelayLeaseRevision, Ready: !snapshot.Draining && runtime.controller.Ready(now) && runtime.serviceRegistry != nil && runtime.internalListener != nil, Draining: snapshot.Draining || lease.Draining, DrainDeadline: lease.DrainDeadline}
+		entry := roleDiagnostic{Role: "relay", ConfiguredIdentity: runtime.configuredIdentity, ProcessRunID: runtime.processRunID, LastSeenAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt, ServingUntil: lease.ServingUntil, LeaseRevision: lease.RelayLeaseRevision, Ready: !snapshot.Draining && runtime.controller.Ready(now) && runtime.serviceRegistry != nil && runtime.internalListener != nil && runtime.internalUDP != nil, Draining: snapshot.Draining || lease.Draining, DrainDeadline: lease.DrainDeadline}
 		if runtime.serviceRegistry != nil {
 			entry.RegisteredPublisherConnections, entry.VisitorStreams = runtime.serviceRegistry.Load()
 		}

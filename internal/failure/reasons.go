@@ -593,8 +593,8 @@ var definitions = map[Reason]Definition{
 		Action: "check connectivity to the assigned relay and retry", Retry: RetryLater,
 	},
 	TransportFallback: {
-		Class: Degraded, Message: "QUIC did not establish before TLS/TCP; continuing over TLS/TCP",
-		Action: "the tunnel remains available over TLS/TCP", Retry: NoRetry,
+		Class: Degraded, Message: "QUIC did not establish before WSS; continuing over WSS",
+		Action: "the tunnel remains available over WSS", Retry: NoRetry,
 	},
 	Authentication: {
 		Class: Unauthenticated, Message: "tnl could not authenticate this request",

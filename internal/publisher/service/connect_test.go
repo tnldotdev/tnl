@@ -29,15 +29,15 @@ func TestPrivateConnectOptionsKeepRelayTrustSeparate(t *testing.T) {
 		t.Fatal(err)
 	}
 	udp := options.QUIC.(muxsession.QUICConnector)
-	tcp := options.TCP.(muxsession.TLSYamuxConnector)
+	tcp := options.WebSocket.(muxsession.WebSocketConnector)
 	if udp.TLSConfig == roots || udp.TLSConfig != tcp.TLSConfig || udp.TLSConfig.RootCAs != roots.RootCAs ||
 		udp.TLSConfig.MinVersion < tls.VersionTLS13 || roots.MinVersion != tls.VersionTLS12 ||
-		udp.TLSConfig.InsecureSkipVerify || !udp.Config.Config.EnableDatagrams || options.PreferTCP || udp.Dialer != dialer {
+		udp.TLSConfig.InsecureSkipVerify || !udp.Config.Config.EnableDatagrams || options.PreferWebSocket || udp.Dialer != dialer {
 		t.Fatal("relay composition changed trust, mutated caller TLS, or disabled peer datagrams")
 	}
 	defaults, err := (RunConfig{}).connectionOptions(dialer, nil)
 	if err != nil || defaults.QUIC.(muxsession.QUICConnector).TLSConfig.RootCAs != nil ||
-		defaults.TCP.(muxsession.TLSYamuxConnector).TLSConfig.MinVersion < tls.VersionTLS13 {
+		defaults.WebSocket.(muxsession.WebSocketConnector).TLSConfig.MinVersion < tls.VersionTLS13 {
 		t.Fatal("default relay connectors did not retain system roots and TLS 1.3", err)
 	}
 	config, control := lifecycleFixture(t)
@@ -56,22 +56,22 @@ func TestPrivateConnectSlotPreferenceAndFallback(t *testing.T) {
 		want      tunnel.Transport
 	}{
 		{"quic-first", false, false, true, tunnel.TransportQUIC},
-		{"tcp-first", true, false, true, tunnel.TransportTLSTCP},
-		{"quic-failure", false, true, true, tunnel.TransportTLSTCP},
+		{"tcp-first", true, false, true, tunnel.TransportWSS},
+		{"quic-failure", false, true, true, tunnel.TransportWSS},
 		{"tcp-failure", true, true, true, tunnel.TransportQUIC},
-		{"quic-without-datagrams", false, false, false, tunnel.TransportTLSTCP},
+		{"quic-without-datagrams", false, false, false, tunnel.TransportWSS},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, bound, _, _ := privateFixture(t, "127.0.0.1:1")
 			relay := newPrivateSlotRelay(t, bound, test.datagrams, nil, nil)
 			options := relay.options(t, relay.roots)
-			options.PreferTCP = test.preferTCP
+			options.PreferWebSocket = test.preferTCP
 			if test.failFirst {
 				failed := muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 					return nil, net.ErrClosed
 				})
 				if test.preferTCP {
-					options.TCP = failed
+					options.WebSocket = failed
 				} else {
 					options.QUIC = failed
 				}
@@ -104,7 +104,7 @@ func TestPrivateConnectSlotPreferenceAndFallback(t *testing.T) {
 			}
 			awaitPrivateSlot(t, claimed.packets.Done())
 			winner := 0
-			if test.want == tunnel.TransportTLSTCP {
+			if test.want == tunnel.TransportWSS {
 				winner = 1
 			}
 			awaitPrivateSlot(t, relay.closed[winner])
@@ -127,8 +127,8 @@ func TestPrivateConnectSlotUsesTCPWhenOwnerCannotOpenUDP(t *testing.T) {
 	if session, err := options.QUIC.Connect(t.Context(), muxsession.Endpoint{}); session != nil || !errors.Is(err, udpErr) {
 		t.Fatal("UDP failure was replaced with another transport", err)
 	}
-	tcp := options.TCP
-	options.TCP = muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
+	tcp := options.WebSocket
+	options.WebSocket = muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
 		endpoint.Address = relay.address
 		return tcp.Connect(ctx, endpoint)
 	})
@@ -137,8 +137,8 @@ func TestPrivateConnectSlotUsesTCPWhenOwnerCannotOpenUDP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = claimed.Close() })
-	if claimed.Transport() != tunnel.TransportTLSTCP || relay.hellos[0].Load() != 0 || relay.hellos[1].Load() != 1 {
-		t.Fatal("UDP setup failure did not use only the TLS/TCP relay")
+	if claimed.Transport() != tunnel.TransportWSS || relay.hellos[0].Load() != 0 || relay.hellos[1].Load() != 1 {
+		t.Fatal("UDP setup failure did not use only the WSS relay")
 	}
 }
 
@@ -154,7 +154,7 @@ func TestPrivateConnectSlotRejectsQUICBeforeRelayAccept(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = claimed.Close() })
-	if claimed.Transport() != tunnel.TransportTLSTCP || bound.packetSlots[0] != claimed || claimed.dispatcher == nil || claimed.packets == nil {
+	if claimed.Transport() != tunnel.TransportWSS || bound.packetSlots[0] != claimed || claimed.dispatcher == nil || claimed.packets == nil {
 		t.Fatal("unaccepted QUIC session prevented a claimed TCP fallback")
 	}
 	relay.assertRejectedQUICClosed(t)
@@ -206,7 +206,7 @@ func TestPrivateConnectSlotRequiresExplicitTransports(t *testing.T) {
 		t.Error("incomplete options started a transport")
 		return nil, net.ErrClosed
 	})
-	for _, options := range []ConnectOptions{{}, {QUIC: unused}, {TCP: unused}} {
+	for _, options := range []ConnectOptions{{}, {QUIC: unused}, {WebSocket: unused}} {
 		if claimed, err := bound.ConnectSlot(t.Context(), 0, options); claimed != nil || !errors.Is(err, ErrPrivateStream) {
 			t.Fatal("incomplete options supplied an implicit transport", err)
 		}
@@ -217,10 +217,10 @@ func TestPrivateConnectSlotOwnsOneDispatcherAndJoinsOnClose(t *testing.T) {
 	_, bound, _, _ := privateFixture(t, "127.0.0.1:1")
 	relay := newPrivateSlotRelay(t, bound, true, nil, nil)
 	options := relay.options(t, relay.roots)
-	options.PreferTCP = true
-	tcp := options.TCP
+	options.PreferWebSocket = true
+	tcp := options.WebSocket
 	var tracked *privateSlotAccepts
-	options.TCP = muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
+	options.WebSocket = muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
 		outer, err := tcp.Connect(ctx, endpoint)
 		if err != nil {
 			return nil, err
@@ -290,7 +290,7 @@ func TestPrivateConnectSlotWaitsForClaimAndClosesLosingTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = claimed.Close() })
-	if claimed.Transport() != tunnel.TransportTLSTCP {
+	if claimed.Transport() != tunnel.TransportWSS {
 		t.Fatal("TLS handshake won before hello acceptance", claimed.Transport())
 	}
 	awaitPrivateSlot(t, relay.closed[0])
@@ -313,7 +313,7 @@ func TestPrivateConnectSlotRejectsAssignmentChangedDuringHello(t *testing.T) {
 			}, nil)
 			options := relay.options(t, relay.roots)
 			// only the gated hello may replace this assignment in this proof.
-			options.TCP = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+			options.WebSocket = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 				return nil, net.ErrClosed
 			})
 			claimed, err := bound.ConnectSlot(t.Context(), 0, options)
@@ -415,7 +415,7 @@ func (r *privateSlotRelay) options(t *testing.T, roots *tls.Config) ConnectOptio
 			return observed, nil
 		})
 	}
-	options.QUIC, options.TCP = redirect(0, options.QUIC), redirect(1, options.TCP)
+	options.QUIC, options.WebSocket = redirect(0, options.QUIC), redirect(1, options.WebSocket)
 	return options
 }
 
@@ -454,11 +454,11 @@ func newPrivateSlotRelay(t *testing.T, bound *Bound, datagrams bool, authenticat
 				}
 				outer, err = udp.Accept(ctx)
 			} else {
-				transport = tunnel.TransportTLSTCP
+				transport = tunnel.TransportWSS
 				var network net.Conn
 				network, err = tcp.Accept()
 				if err == nil {
-					outer, err = muxsession.AcceptTLSYamux(ctx, network, serverTLS, muxsession.TLSYamuxConfig{})
+					outer, err = muxsession.AcceptWebSocket(ctx, network, serverTLS, muxsession.WebSocketConfig{})
 				}
 			}
 			if err != nil {

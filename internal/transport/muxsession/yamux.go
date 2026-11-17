@@ -22,83 +22,6 @@ const streamCloseTimeout = time.Second
 
 var errStreamCleanupBlocked = errors.New("muxsession: stream cleanup blocked transport writer")
 
-// TLSYamuxConfig configures the raw TLS/TCP plus yamux transport.
-type TLSYamuxConfig struct {
-	MaxIncomingStreams int
-	Dialer             *net.Dialer
-}
-
-// TLSYamuxConnector establishes raw TLS/TCP plus yamux sessions.
-type TLSYamuxConnector struct {
-	TLSConfig *tls.Config
-	Config    TLSYamuxConfig
-}
-
-func (c TLSYamuxConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config)
-}
-
-func connectTLSYamux(ctx context.Context, endpoint Endpoint, config *tls.Config, transport TLSYamuxConfig) (Session, error) {
-	if endpoint.Address == "" || endpoint.ServerName == "" {
-		return nil, errors.New("muxsession: TLS/yamux endpoint requires address and server name")
-	}
-	tlsConfig, err := transportTLSConfig(config, endpoint.ServerName, false)
-	if err != nil {
-		return nil, err
-	}
-	dialer := transport.Dialer
-	if dialer == nil {
-		dialer = new(net.Dialer)
-	}
-	network, err := dialer.DialContext(ctx, "tcp", endpoint.Address)
-	if err != nil {
-		return nil, fmt.Errorf("muxsession: dial TLS/yamux: %w", err)
-	}
-	secure := tls.Client(network, tlsConfig)
-	if err := secure.HandshakeContext(ctx); err != nil {
-		_ = network.Close()
-		return nil, fmt.Errorf("muxsession: TLS/yamux handshake: %w", err)
-	}
-	if err := requireTransportALPN(secure.ConnectionState(), ALPN); err != nil {
-		_ = secure.Close()
-		return nil, err
-	}
-	return newYamuxSession(secure, true, transport.MaxIncomingStreams)
-}
-
-// AcceptTLSYamux authenticates an accepted TCP connection and starts yamux.
-// the caller must dispatch by SNI before calling this function when TCP 443
-// is shared with visitor ingress.
-func AcceptTLSYamux(
-	ctx context.Context,
-	network net.Conn,
-	tlsConfig *tls.Config,
-	config TLSYamuxConfig,
-) (Session, error) {
-	return acceptTLSYamux(ctx, network, tlsConfig, config)
-}
-
-func acceptTLSYamux(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig) (Session, error) {
-	if network == nil {
-		return nil, errors.New("muxsession: accepted TLS/yamux connection is nil")
-	}
-	serverConfig, err := transportTLSConfig(tlsConfig, "", true)
-	if err != nil {
-		_ = network.Close()
-		return nil, err
-	}
-	secure := tls.Server(network, serverConfig)
-	if err := secure.HandshakeContext(ctx); err != nil {
-		_ = network.Close()
-		return nil, fmt.Errorf("muxsession: accept TLS/yamux handshake: %w", err)
-	}
-	if err := requireTransportALPN(secure.ConnectionState(), ALPN); err != nil {
-		_ = secure.Close()
-		return nil, err
-	}
-	return newYamuxSession(secure, false, config.MaxIncomingStreams)
-}
-
 func transportTLSConfig(config *tls.Config, serverName string, server bool) (*tls.Config, error) {
 	return transportTLSConfigForALPN(config, serverName, server, ALPN)
 }
@@ -144,12 +67,13 @@ type acceptResult struct {
 }
 
 type yamuxSession struct {
-	session   *yamux.Session
-	network   net.Conn
-	accepted  chan acceptResult
-	done      <-chan struct{}
-	closeOnce sync.Once
-	closeErr  error
+	session    *yamux.Session
+	network    net.Conn
+	accepted   chan acceptResult
+	acceptDone chan struct{}
+	done       <-chan struct{}
+	closeOnce  sync.Once
+	closeErr   error
 
 	mu       sync.Mutex
 	err      error
@@ -175,10 +99,11 @@ func newYamuxSession(network net.Conn, client bool, maxIncoming int) (Session, e
 		return nil, fmt.Errorf("muxsession: start yamux: %w", err)
 	}
 	result := &yamuxSession{
-		session:  session,
-		network:  network,
-		accepted: make(chan acceptResult),
-		done:     session.CloseChan(),
+		session:    session,
+		network:    network,
+		accepted:   make(chan acceptResult),
+		acceptDone: make(chan struct{}),
+		done:       session.CloseChan(),
 	}
 	go result.acceptLoop()
 	return result, nil
@@ -222,6 +147,7 @@ func (s *yamuxSession) Close() error {
 			err = nil
 		}
 		s.closeErr = normalizeYamuxError(errors.Join(err, s.session.Close()))
+		<-s.acceptDone
 		s.recordError(s.closeErr)
 	})
 	return s.closeErr
@@ -232,6 +158,9 @@ func (s *yamuxSession) Done() <-chan struct{} { return s.done }
 func (s *yamuxSession) LocalAddr() net.Addr  { return s.network.LocalAddr() }
 func (s *yamuxSession) RemoteAddr() net.Addr { return s.network.RemoteAddr() }
 func (s *yamuxSession) TLSConnectionState() tls.ConnectionState {
+	if secure, ok := s.network.(interface{ TLSConnectionState() tls.ConnectionState }); ok {
+		return secure.TLSConnectionState()
+	}
 	if secure, ok := s.network.(*tls.Conn); ok {
 		return secure.ConnectionState()
 	}
@@ -264,6 +193,7 @@ func (s *yamuxSession) Err() error {
 }
 
 func (s *yamuxSession) acceptLoop() {
+	defer close(s.acceptDone)
 	for {
 		stream, err := s.session.AcceptStream()
 		if err != nil {

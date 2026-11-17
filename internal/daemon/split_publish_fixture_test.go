@@ -350,7 +350,7 @@ func (f *splitPublishFixture) contextFor(role string) context.Context {
 func (f *splitPublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
 	quicAddresses := map[string]string{f.relayA.config.RelayAddress: f.relayA.config.RelayUDPListen, f.relayB.config.RelayAddress: f.relayB.config.RelayUDPListen}
 	tcpAddresses := map[string]string{f.relayA.config.RelayAddress: f.relayA.config.RelayTCPListen, f.relayB.config.RelayAddress: f.relayB.config.RelayTCPListen}
-	return publicURLIntegrationConnector(quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: f.relayTransport}), publicURLIntegrationConnector(tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
+	return publicURLIntegrationConnector(quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: f.relayTransport}), publicURLIntegrationConnector(tcpAddresses, muxsession.WebSocketConnector{TLSConfig: f.roots})
 }
 
 func (f *splitPublishFixture) startPublisher(t *testing.T, target string, quicConnector, tcpConnector muxsession.Connector) *integrationPublisher {

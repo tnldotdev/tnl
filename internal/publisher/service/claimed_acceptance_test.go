@@ -31,7 +31,7 @@ func claimedAwait[T any](t *testing.T, result <-chan T) T {
 	}
 }
 
-// both sides use real verified TLS/yamux and the production tunnel handshake.
+// both sides use real verified WSS/yamux and the production tunnel handshake.
 // wrapping the publisher transport changes only the explicitly injected fault.
 func newClaimedTestPair(t *testing.T, bound *Bound, slot uint8, wrap func(muxsession.Session) muxsession.Session, wrapRelay ...func(muxsession.Session) muxsession.Session) (*Claimed, *tunnel.Session) {
 	t.Helper()
@@ -56,7 +56,7 @@ func newClaimedTestPair(t *testing.T, bound *Bound, slot uint8, wrap func(muxses
 			remote <- accepted{err: err}
 			return
 		}
-		outer, err := muxsession.AcceptTLSYamux(ctx, conn, serverTLS, muxsession.TLSYamuxConfig{})
+		outer, err := muxsession.AcceptWebSocket(ctx, conn, serverTLS, muxsession.WebSocketConfig{})
 		if err != nil {
 			_ = conn.Close()
 			remote <- accepted{err: err}
@@ -77,7 +77,7 @@ func newClaimedTestPair(t *testing.T, bound *Bound, slot uint8, wrap func(muxses
 		remote <- accepted{session, err}
 	}()
 	t.Cleanup(func() { cancel(); _ = listener.Close(); claimedAwait(t, joined) })
-	outer, err := (muxsession.TLSYamuxConnector{TLSConfig: roots}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
+	outer, err := (muxsession.WebSocketConnector{TLSConfig: roots}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func newClaimedTestPair(t *testing.T, bound *Bound, slot uint8, wrap func(muxses
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed := &Claimed{bound: bound, ref: ref, session: session, dispatcher: dispatcher, transport: tunnel.TransportTLSTCP}
+	claimed := &Claimed{bound: bound, ref: ref, session: session, dispatcher: dispatcher, transport: tunnel.TransportWSS}
 	t.Cleanup(func() { _ = claimed.Close() })
 	return claimed, relay.session
 }
