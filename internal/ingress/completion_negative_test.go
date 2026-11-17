@@ -212,20 +212,20 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	// the publisher waits for access before asking ingress for capacity.
 	completionAwait(t, ctx, checking)
 	p.mu.Lock()
-	sessions, streams := p.admitted[serviceConnection], len(p.backends)
+	native, streams := p.admitted[serviceConnection], len(p.backends)
 	p.mu.Unlock()
 	pending, active := publicServiceAdmissionCounts(p)
-	if sessions != 1 || pending != 1 || active != 0 || streams != 1 || metrics.streams.Load() != 1 {
-		t.Fatalf("restricted service skipped pending capacity: sessions=%d pending=%d active=%d streams=%d", sessions, pending, active, streams)
+	if native != 0 || pending != 1 || active != 0 || streams != 1 || metrics.streams.Load() != 1 {
+		t.Fatalf("restricted HTTP used the wrong admission classes: native=%d pending=%d active=%d streams=%d", native, pending, active, streams)
 	}
 	allowAccess()
 	completionAwait(t, ctx, reserved)
 	p.mu.Lock()
-	sessions, streams = p.admitted[serviceConnection], len(p.backends)
+	native, streams = p.admitted[serviceConnection], len(p.backends)
 	p.mu.Unlock()
 	pending, active = publicServiceAdmissionCounts(p)
-	if sessions != 1 || pending != 0 || active != 1 || streams != 1 {
-		t.Fatalf("authenticated service did not promote exactly once: sessions=%d pending=%d active=%d streams=%d", sessions, pending, active, streams)
+	if native != 0 || pending != 0 || active != 1 || streams != 1 || metrics.streams.Load() != 1 {
+		t.Fatalf("authenticated HTTP did not transfer pending capacity exactly once: native=%d pending=%d active=%d streams=%d", native, pending, active, streams)
 	}
 	if err := visitor.CloseWrite(); err != nil {
 		t.Fatal("visitor TLS close-notify failed")
@@ -302,15 +302,15 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		}
 	}
 	p.mu.Lock()
-	sessions, streams = p.admitted[serviceConnection], len(p.backends)
+	native, streams = p.admitted[serviceConnection], len(p.backends)
 	connections = len(p.connections)
 	p.mu.Unlock()
 	pending, active = publicServiceAdmissionCounts(p)
 	control.mu.Lock()
 	rechecks, closed := control.rechecks, control.closed
 	control.mu.Unlock()
-	if sessions != 0 || pending != 0 || active != 0 || streams != 0 || connections != 0 || !publicServiceCapacityReleased(p) || metrics.streams.Load() != 0 {
-		t.Fatalf("completion retained service ownership: sessions=%d pending=%d active=%d streams=%d connections=%d gauge=%d", sessions, pending, active, streams, connections, metrics.streams.Load())
+	if native != 0 || pending != 0 || active != 0 || streams != 0 || connections != 0 || !publicServiceCapacityReleased(p) || metrics.streams.Load() != 0 {
+		t.Fatalf("completion retained service ownership: native=%d pending=%d active=%d streams=%d connections=%d gauge=%d", native, pending, active, streams, connections, metrics.streams.Load())
 	}
 	if control.recheckActive.Load() != 0 || rechecks != 0 || closed != 0 {
 		t.Fatalf("completion missed a service lifecycle boundary: rechecks=%d active rechecks=%d closed=%d", rechecks, control.recheckActive.Load(), closed)
