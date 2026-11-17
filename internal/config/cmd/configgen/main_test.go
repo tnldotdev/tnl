@@ -35,6 +35,23 @@ func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {
 	}
 }
 
+func TestSchemaPublisherEnrollmentOptionalCeilings(t *testing.T) {
+	schema := tnldSchema()
+	for _, expected := range []struct {
+		name, kind string
+		value      any
+	}{
+		{"publisher_enrollment_max_members", "integer", int64(256)},
+		{"publisher_enrollment_max_lifetime", "string", "24h"},
+		{"project_max_publishers", "integer", int64(256)},
+	} {
+		field, found := schema.Properties.Get(expected.name)
+		if !found || field.Type != expected.kind || field.Default != expected.value {
+			t.Fatal("optional ceiling lost its schema type or default", expected.name, field)
+		}
+	}
+}
+
 func TestAccessSchemaDescribesNormalizedNotRawPrefixLimit(t *testing.T) {
 	ip, found := accessSchema("restricted", "anonymous").OneOf[1].Properties.Get("ip")
 	if !found || ip.MinItems == nil || *ip.MinItems != 1 || ip.MaxItems != nil || ip.UniqueItems ||

@@ -12,10 +12,11 @@ import (
 )
 
 type DeploymentRuntimeStore interface {
-	RedeemDeploymentPublisherEnrollment(context.Context, string, ed25519.PublicKey, time.Time) (controlstate.DeploymentPublisherIdentity, error)
+	RedeemScopedDeploymentPublisherEnrollment(context.Context, string, ed25519.PublicKey, string, string, time.Time) (controlstate.DeploymentPublisherIdentity, error)
 	AcquireDeploymentPublisherLease(context.Context, string, string, string, string, time.Time) (controlstate.DeploymentPublisherLease, error)
 	VerifyDeploymentIdentity(context.Context, string, string, string, string, time.Time) (controlstate.DeploymentPublisherVerification, error)
 	GetDeploymentPublisherAssignments(context.Context, string, time.Time) (controlstate.DeploymentPublisherAssignments, error)
+	GetDeploymentPublisherAppAssignments(context.Context, string, time.Time) (controlstate.DeploymentPublisherAssignments, error)
 	AcknowledgeDeploymentPublisherConfiguration(context.Context, string, int64, string, bool, time.Time) error
 }
 
@@ -91,7 +92,14 @@ func (h *handler) RedeemDeploymentPublisherEnrollment(w http.ResponseWriter, r *
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid Ed25519 public key")
 		return
 	}
-	result, err := store.RedeemDeploymentPublisherEnrollment(r.Context(), body.EnrollmentKey, public, time.Now())
+	var deploymentID, projectKey string
+	if body.DeploymentId != nil {
+		deploymentID = *body.DeploymentId
+	}
+	if body.ProjectKey != nil {
+		projectKey = *body.ProjectKey
+	}
+	result, err := store.RedeemScopedDeploymentPublisherEnrollment(r.Context(), body.EnrollmentKey, public, deploymentID, projectKey, time.Now())
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "redeem deployment enrollment", err)
 		return
@@ -143,7 +151,7 @@ func (h *handler) VerifyDeploymentIdentity(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *handler) GetDeploymentPublisherAssignments(w http.ResponseWriter, r *http.Request) {
+func (h *handler) GetDeploymentPublisherAssignments(w http.ResponseWriter, r *http.Request, params controlv1.GetDeploymentPublisherAssignmentsParams) {
 	store, ok := h.deploymentPublisherStore(w)
 	if !ok {
 		return
@@ -153,7 +161,11 @@ func (h *handler) GetDeploymentPublisherAssignments(w http.ResponseWriter, r *ht
 		writeBearerProblem(w)
 		return
 	}
-	result, err := store.GetDeploymentPublisherAssignments(r.Context(), token, time.Now())
+	assignments := store.GetDeploymentPublisherAssignments
+	if params.AppOwned != nil && *params.AppOwned {
+		assignments = store.GetDeploymentPublisherAppAssignments
+	}
+	result, err := assignments(r.Context(), token, time.Now())
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "get deployment assignments", err)
 		return

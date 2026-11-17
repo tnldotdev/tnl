@@ -31,6 +31,7 @@ test("concurrent deployments capture private Go instances and restore the global
     readonly bridge = {
       createDeployment: vi.fn(),
       publish: vi.fn(),
+      enrollPublisher: vi.fn(),
       close: vi.fn(async () => this.exited.resolve()),
     };
     constructor() {

@@ -20,6 +20,7 @@ import (
 	"github.com/pressly/goose/v3"
 	"github.com/tnldotdev/tnl/internal/control/storagekey"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/publisherenrollment"
 )
 
 const (
@@ -36,14 +37,15 @@ var migrationFiles embed.FS
 // Database is the PostgreSQL connection pool for control state. its database
 // details remain private to this package.
 type Database struct {
-	controlOutageTolerance atomic.Int64
-	oidcAdmissions         map[string]configuredAdmission
-	pool                   *pgxpool.Pool
-	storageKey             *storagekey.Keyring
-	managedURLMode         naming.ManagedURLMode
-	diagnosticsMu          sync.Mutex
-	activity               *queryActivity
-	connections            *connectionActivity
+	controlOutageTolerance    atomic.Int64
+	publisherEnrollmentLimits atomic.Pointer[publisherenrollment.Limits]
+	oidcAdmissions            map[string]configuredAdmission
+	pool                      *pgxpool.Pool
+	storageKey                *storagekey.Keyring
+	managedURLMode            naming.ManagedURLMode
+	diagnosticsMu             sync.Mutex
+	activity                  *queryActivity
+	connections               *connectionActivity
 }
 
 // Migrate applies every embedded control-state migration through a direct

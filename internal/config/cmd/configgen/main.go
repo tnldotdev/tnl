@@ -432,7 +432,11 @@ func tnldSchema() *jsonschema.Schema {
 		if name == "" || name == "database_direct_url" {
 			continue
 		}
-		fieldSchema := primitiveSchema(field.Type, field.Type == durationType)
+		fieldType := field.Type
+		if fieldType.Kind() == reflect.Pointer {
+			fieldType = fieldType.Elem()
+		}
+		fieldSchema := primitiveSchema(fieldType, fieldType == durationType)
 		fieldSchema.Description = field.Tag.Get("help")
 		if values := strings.Split(field.Tag.Get("enum"), ","); len(values) > 1 {
 			fieldSchema.Enum = make([]any, len(values))
@@ -441,7 +445,7 @@ func tnldSchema() *jsonschema.Schema {
 			}
 		}
 		if value := field.Tag.Get("default"); value != "" {
-			fieldSchema.Default = defaultValue(value, field.Type, field.Type == durationType)
+			fieldSchema.Default = defaultValue(value, fieldType, fieldType == durationType)
 		}
 		if name == "service_port_ranges" {
 			fieldSchema.MinItems = integerPointer(1)

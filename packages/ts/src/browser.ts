@@ -10,10 +10,18 @@ import type {
 } from "./internal/publisher/publication.js";
 import { portableOperation } from "./internal/connector/portable_operations.js";
 import { loadWasm } from "./internal/connector/wasm_loader.js";
+import {
+  enrollPortablePublisher,
+  type PublisherEnrollmentOptions,
+} from "./internal/portable/enrollment.js";
 
 export * from "./index.js";
 export { portableDeployment as deployment } from "./internal/connector/portable_operations.js";
 export { createBrowserPublisherStorage } from "./internal/portable/storage-browser.js";
+export type {
+  EnrolledPublisher,
+  PublisherEnrollmentOptions,
+} from "./internal/portable/enrollment.js";
 export {
   PublisherStorageError,
   type PublisherStorage,
@@ -24,6 +32,10 @@ export {
 // or instantiate the publisher.
 const loadConnector = () => loadWasm(new URL("./wasm/connector.wasm", import.meta.url));
 const loadPublisher = () => loadWasm(new URL("./wasm/publisher.wasm", import.meta.url));
+
+export function enrollPublisher(options: PublisherEnrollmentOptions) {
+  return enrollPortablePublisher(options, loadPublisher);
+}
 
 export const connect = ((owner: object, name: string) =>
   portableOperation(owner, "connector", loadConnector).connect(

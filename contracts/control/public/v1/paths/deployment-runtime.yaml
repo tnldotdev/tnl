@@ -136,8 +136,12 @@ paths:
       operationId: getDeploymentPublisherAssignments
       tags: [deployment-runtime]
       summary: Read services and grants assigned to one leased deployment replica
-      description: "Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. Assignments can include targets. A pta_ publisher token cannot read them."
+      description: "Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. By default returns socket targets only; app_owned=true returns only app-owned bindings. A pta_ publisher token cannot read them."
       security: [{ deploymentPublisherLeaseAuth: [] }]
+      parameters:
+        - name: app_owned
+          in: query
+          schema: { type: boolean, default: false }
       responses:
         "200":
           {
