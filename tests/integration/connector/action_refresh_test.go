@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -217,6 +218,27 @@ func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 		if f.providerCalls.Load() != before {
 			t.Fatal("acquisition continued after accepted proof expiry")
 		}
+		// stop joins the existing expiry cleanup; it must not grant another
+		// budget or turn skipped negative retirement into a clean record.
+		f.call(nil, "stop", "--handle", f.state.ConnectionHandle)
+		calls, _, _ = f.inspect()
+		retirements := 0
+		for path, count := range calls {
+			if strings.HasPrefix(path, "POST /v1/services/{service}/connector-peer-pairs/") && strings.HasSuffix(path, "/retire") {
+				retirements += count
+			}
+		}
+		data, err := os.ReadFile(filepath.Join(filepath.Dir(f.state.ConnectionHandle), "stopped.json"))
+		var stopped struct {
+			Schema int  `json:"schema"`
+			Clean  bool `json:"clean"`
+		}
+		if err != nil || json.Unmarshal(data, &stopped) != nil || stopped.Schema != 1 || !stopped.Clean ||
+			retirements != 1 || calls["DELETE /v1/workload-sessions/{session}"] != 1 {
+			t.Fatal("expired owner did not join one signed retirement and revocation within its original stop budget",
+				err, stopped.Schema, stopped.Clean, retirements, calls["DELETE /v1/workload-sessions/{session}"])
+		}
+		t.Log("expired Action owner joined one signed pair retirement and one workload revocation; stopped cleanly")
 	}
 	if f.redirectedCalls.Load() != 0 {
 		t.Fatal("job-runtime refresh followed a redirect with its request bearer")
