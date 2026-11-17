@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
