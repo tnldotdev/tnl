@@ -144,8 +144,10 @@ their existing authority and the original drain deadline. For connector access,
 the connector reports completion only after both copy directions and its stream
 cleanup join. The publisher returns an exact matched result after its admission
 work joins; the connector then acknowledges that result. This exchange uses the
-existing authenticated control stream and grants no access or renewal. Packet
-carriers remain until the exchange ends or the original deadline expires.
+existing authenticated control stream and grants no access or renewal. While
+access remains authorized, packet carriers remain until the exchange ends or the
+original deadline expires. A current denial prevents new completion exchanges;
+already-entered exchanges still require their matched result and observation.
 Unready openings close when drain starts. Explicit retirement revokes one exact
 connector pair; it does not prove response delivery, result observation, or
 remote cleanup. Missing confirmations do not extend the original deadlines.
