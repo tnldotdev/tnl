@@ -32,6 +32,22 @@ func TestIntegrationIngressHTTPSelectionDenialUsesSignedRoutingAuthority(t *test
 	// delayed reporting can follow routing expiry, but the observation still
 	// belongs to the delegation's original deadline and exact ingress process.
 	reported := snapshot.ValidUntil.Add(time.Second)
+	renewReporter := func(current IngressLease) IngressLease {
+		t.Helper()
+		at := snapshot.ValidUntil.Add(-time.Second)
+		if !at.After(current.LeaseExpiresAt) || !at.Before(current.ServingUntil) {
+			t.Fatal("fixture did not separate reporter liveness from serving authority")
+		}
+		renewed, err := d.RenewIngress(ctx, IngressRenewal{IngressLeaseIdentity: current.IngressLeaseIdentity}, at, time.Minute)
+		if err != nil || renewed.IngressLeaseIdentity != current.IngressLeaseIdentity ||
+			!renewed.LeaseExpiresAt.After(reported) {
+			t.Fatal("reporter renewal lost the original ingress identity or delivery lease", err)
+		}
+		return renewed
+	}
+	// keep the sender current at delivery without replacing the original
+	// routing evidence or increasing its one-minute liveness duration.
+	lease = renewReporter(lease)
 	result, err := d.IngestIngressServiceObservations(ctx, lease.IngressLeaseIdentity,
 		serviceaudit.Batch{Events: []serviceaudit.Observation{observation, observation}}, reported)
 	if err != nil || result.Accepted != 1 || result.Duplicates != 1 {
@@ -87,6 +103,7 @@ func TestIntegrationIngressHTTPSelectionDenialUsesSignedRoutingAuthority(t *test
 		})
 	}
 	sibling := registerServiceHTTPAdmissionIngress(t, ctx, f, "http-denial-sibling")
+	sibling = renewReporter(sibling)
 	if _, err := d.IngestIngressServiceObservations(ctx, sibling.IngressLeaseIdentity,
 		serviceaudit.Batch{Events: []serviceaudit.Observation{observation}}, reported); !errors.Is(err, ErrServiceAuditAccess) {
 		t.Fatal("another ingress adopted the signed delegation", err)
@@ -96,6 +113,10 @@ func TestIntegrationIngressHTTPSelectionDenialUsesSignedRoutingAuthority(t *test
 	if _, err := d.IngestIngressServiceObservations(ctx, stale,
 		serviceaudit.Batch{Events: []serviceaudit.Observation{observation}}, reported); !errors.Is(err, ErrIngressLeaseStale) {
 		t.Fatal("a stale ingress reported a selection denial", err)
+	}
+	if _, err := d.IngestIngressServiceObservations(ctx, lease.IngressLeaseIdentity,
+		serviceaudit.Batch{Events: []serviceaudit.Observation{observation}}, lease.LeaseExpiresAt); !errors.Is(err, ErrIngressLeaseStale) {
+		t.Fatal("serving authority bypassed the reporter's expired delivery lease", err)
 	}
 	var after int
 	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.public_service_visitors`).Scan(&after); err != nil || after != before {

@@ -165,14 +165,14 @@ func TestIntegrationServicePoolManagementRestoration(t *testing.T) {
 			preparation_expires_at,assignment_seed_ciphertext,assignment_seed_storage_key_id,
 			state,traffic_limits,preferred_regions,certificate_cache_key,certificate_scope,
 			certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,
-			require_post_quantum,created_at,publisher_expires_at)
+			require_post_quantum,created_at,publisher_expires_at,serving_observed_at,serving_until)
 			SELECT $2,service_id,team_id,guest_id,protocol,
 				(SELECT max(run_number)+1 FROM control.service_runs WHERE service_id=$3),
 				publisher_identity_id,publisher_grant_id,publisher_key_id,'pool-management-duplicate',request_digest,
 				preparation_expires_at,assignment_seed_ciphertext,assignment_seed_storage_key_id,
 				'prepared',traffic_limits,preferred_regions,certificate_cache_key,certificate_scope,
 				certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,
-				require_post_quantum,created_at,publisher_expires_at
+				require_post_quantum,created_at,publisher_expires_at,serving_observed_at,serving_until
 			FROM control.service_runs WHERE id=$1`, runs[0].run.RunID, mustOpaqueID(t, opaqueid.ServiceRunPrefix), service.ID)
 		var violation *pgconn.PgError
 		if !errors.As(err, &violation) || violation.Code != "23505" || violation.ConstraintName != "service_runs_active" ||

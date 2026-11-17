@@ -261,23 +261,55 @@ func TestIntegrationHTTPRecoveryRetainsOriginalEvidenceAfterRoutingRefresh(t *te
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
 	evidence := recoverySourceEvidence(t, route, visitor, at)
-	fresh, err := readIngressServiceRun(ctx, f.database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, at.Add(time.Second))
-	if err != nil || bytes.Equal(route.SourceAuthority, fresh.SourceAuthority) {
-		t.Fatal("routing refresh did not replace its short-lived delegation", err)
+	refreshAt := at.Add(time.Second)
+	unchanged, err := readIngressServiceRun(ctx, f.database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, refreshAt)
+	if err != nil || !bytes.Equal(route.SourceAuthority, unchanged.SourceAuthority) || !unchanged.ValidUntil.Equal(route.ValidUntil) {
+		t.Fatal("a routing read changed unrenewed serving authority", err)
+	}
+	// a background confirmation, not another read, advances the delegation.
+	// retain the exact ingress process and run while renewing their bounds.
+	renewed, err := f.database.RenewIngress(ctx, IngressRenewal{IngressLeaseIdentity: ingress.IngressLeaseIdentity}, refreshAt, time.Minute)
+	if err != nil || renewed.IngressLeaseIdentity != ingress.IngressLeaseIdentity {
+		t.Fatal("routing refresh replaced the ingress process", err)
+	}
+	ingress = renewed
+	confirmed, err := f.heartbeat(refreshAt)
+	if err != nil || confirmed.RunID != f.run.RunID || confirmed.RunNumber != f.run.RunNumber {
+		t.Fatal("routing refresh replaced the original service run", err)
+	}
+	fresh, err := readIngressServiceRun(ctx, f.database, ingress.IngressLeaseIdentity, f.service.ID, f.run.RunID, refreshAt)
+	if err != nil || bytes.Equal(route.SourceAuthority, fresh.SourceAuthority) || !fresh.ValidUntil.After(route.ValidUntil) ||
+		fresh.RecoveryEpisodeID == nil || *fresh.RecoveryEpisodeID != *route.RecoveryEpisodeID {
+		t.Fatal("confirmed routing refresh lost its new delegation or original recovery", err)
 	}
 	observed := route.ValidUntil.Add(time.Second)
+	// reporting still requires current ingress liveness. recover within its
+	// serving allowance without changing the identity bound to the old proof.
+	renewed, err = f.database.RenewIngress(ctx, IngressRenewal{IngressLeaseIdentity: ingress.IngressLeaseIdentity},
+		route.ValidUntil.Add(-time.Second), time.Minute)
+	if err != nil || renewed.IngressLeaseIdentity != ingress.IngressLeaseIdentity || !renewed.LeaseExpiresAt.After(observed) {
+		t.Fatal("recovery reporter lost its current delivery lease", err)
+	}
 	metadata, _, err := proxyproto.Decode(bytes.NewReader(evidence))
 	if err != nil {
 		t.Fatal(err)
 	}
 	proof, err := tunnelv1.ReadVisitorSourceProof([]byte(metadata.VisitorSourceProof))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || proof.ObservedAt != at.UnixMicro() || proof.Authority.ValidUntil != route.ValidUntil.Unix() {
+		t.Fatal("routing refresh replaced the original signed source observation", err)
 	}
 	binding := tunnelv1.VisitorSourceBinding{ServiceID: f.service.ID, ServiceRunID: f.run.RunID, RunNumber: uint64(f.run.RunNumber),
 		VisitorConnectionID: visitor, Source: metadata.Source, Destination: metadata.Destination}
 	if err := visitortoken.VerifyVisitorSource(f.run.VisitorSourceKey, proof, binding, proof.Authority.VisitorPolicyRevision, observed); err == nil {
 		t.Fatal("historical source evidence became current visitor setup authority")
+	}
+	currentAuthority, err := tunnelv1.ReadVisitorSourceAuthority(fresh.SourceAuthority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentProof, err := visitortoken.SignVisitorSource([32]byte(fresh.SourceKey), currentAuthority, 2, binding, observed)
+	if err != nil || visitortoken.VerifyVisitorSource(f.run.VisitorSourceKey, currentProof, binding, currentAuthority.VisitorPolicyRevision, observed) != nil {
+		t.Fatal("new delegation could not authorize a current source proof", err)
 	}
 	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
 	result, err := f.database.ObserveServiceRecovery(ctx, ingress.IngressLeaseIdentity, ref, visitor,

@@ -170,9 +170,30 @@ func TestIntegrationRelayDrainRejectsExpiredRun(t *testing.T) {
 		restarted.RelayLeaseRevision != lease.RelayLeaseRevision+1 {
 		t.Fatalf("restarted relay lease = %#v", restarted)
 	}
-	// ordinary lease expiry still permits recovery by a process run that has not drained.
+	// liveness expiry permits the same undrained process to recover within its
+	// serving authority, without changing its identity or lease revision.
+	if !restarted.ServingUntil.After(restarted.LeaseExpiresAt) {
+		t.Fatal("fixture did not separate relay liveness from serving authority")
+	}
 	recovered, err := database.RegisterRelay(t.Context(), registration, restarted.LeaseExpiresAt, time.Minute)
-	if err != nil || recovered.Draining || recovered.RelayLeaseRevision != restarted.RelayLeaseRevision+1 {
+	if err != nil || recovered.Draining || recovered.RelayLeaseIdentity != restarted.RelayLeaseIdentity ||
+		!recovered.RegisteredAt.Equal(restarted.RegisteredAt) ||
+		!recovered.ServingUntil.Equal(restarted.LeaseExpiresAt.Add(database.servingTolerance())) {
 		t.Fatalf("recovered relay lease = %#v, %v", recovered, err)
+	}
+	// actual serving expiry cannot recover that process. a new process must
+	// acquire the next revision instead of reviving the expired authority.
+	if _, err := database.RenewRelay(t.Context(), RelayRenewal{RelayLeaseIdentity: recovered.RelayLeaseIdentity},
+		recovered.ServingUntil, time.Minute); !errors.Is(err, ErrRelayLeaseStale) {
+		t.Fatal("expired relay serving authority accepted a renewal", err)
+	}
+	if _, err := database.RegisterRelay(t.Context(), registration, recovered.ServingUntil, time.Minute); !errors.Is(err, ErrRelayRegistrationConflict) {
+		t.Fatal("expired relay serving authority accepted the same process", err)
+	}
+	registration.RelayRunID = "run_after_serving_expiry"
+	replacement, err := database.RegisterRelay(t.Context(), registration, recovered.ServingUntil, time.Minute)
+	if err != nil || replacement.Draining || replacement.RelayRunID != registration.RelayRunID ||
+		replacement.RelayLeaseRevision != recovered.RelayLeaseRevision+1 {
+		t.Fatal("replacement did not fence expired relay authority", replacement, err)
 	}
 }
