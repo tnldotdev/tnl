@@ -116,10 +116,12 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
       refreshing ??= (async () => {
         try {
           const { expires_at: next, ...nextIdentity } = await readHandle(filename);
-          if (closed || !isDeepStrictEqual(identity, nextIdentity) || next <= Date.now())
+          if (!isDeepStrictEqual(identity, nextIdentity) || next <= Date.now())
             throw new TnlError("sdk.connection_unavailable");
-          expires = next;
-          scheduleExpiry();
+          if (!closed) {
+            expires = next;
+            scheduleExpiry();
+          }
         } catch {
           close();
           throw new TnlError("sdk.connection_unavailable");
@@ -128,7 +130,8 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
         }
       })();
       await refreshing;
-      if (closed || Date.now() >= expires) throw new TnlError("sdk.connection_unavailable");
+      if (closed) throw closeReason;
+      if (Date.now() >= expires) throw new TnlError("sdk.connection_unavailable");
     };
     scheduleExpiry();
     const send = (

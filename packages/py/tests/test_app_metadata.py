@@ -117,6 +117,160 @@ def private_assignment() -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("gate_at", ["start", "prepare"])
+@pytest.mark.parametrize("independent_failure", ["none", "error", "joined"])
+def test_close_joins_full_rediscovery_and_compensates_late_reservation(
+    gate_at: str, independent_failure: str
+) -> None:
+    async def scenario() -> None:
+        entered = asyncio.Event()
+        canceled = asyncio.Event()
+        release = asyncio.Event()
+        cleanup_entered = asyncio.Event()
+        failure: BaseException = InvalidResponse()
+        if independent_failure == "joined":
+            failure = BaseExceptionGroup(
+                "cancellation and independent failure", [asyncio.CancelledError(), failure]
+            )
+
+        class Runtime(AssignmentRuntime):
+            def __init__(self) -> None:
+                super().__init__(private_assignment())
+                self.starts = 0
+                self.active: set[str] = set()
+                self.registrations: list[dict[str, object]] = []
+                self.cleanups: list[dict[str, object]] = []
+
+            async def wait(self) -> None:
+                entered.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    canceled.set()
+                    await release.wait()
+                if independent_failure != "none":
+                    raise failure
+
+            async def start(
+                self,
+                directory: str,
+                *,
+                service: str | None = None,
+                invocation_id: str | None = None,
+                state_dir: str | None = None,
+                publications: bool = False,
+                environment: Mapping[str, str] | None = None,
+            ) -> Endpoint:
+                self.starts += 1
+                if self.starts == 2 and gate_at == "start":
+                    await self.wait()
+                return self.endpoint
+
+            async def request(
+                self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
+            ) -> object:
+                assert payload is not None
+                if operation == "register":
+                    self.registrations.append(dict(payload))
+                    raise _protocol.NativeUnavailable()
+                if operation == "prepare":
+                    if self.starts == 2 and gate_at == "prepare":
+                        await self.wait()
+                        self.assignment = {
+                            **self.assignment,
+                            "registration_id": "reg_" + "b" * 32,
+                        }
+                    self.active.add(str(self.assignment["registration_id"]))
+                elif operation == "unregister":
+                    cleanup_entered.set()
+                    self.cleanups.append(dict(payload))
+                    self.active.discard(str(payload["registration_id"]))
+                    return None
+                return await super().request(endpoint, operation, payload)
+
+        native = Runtime()
+        prepared = tnl.PreparedService("/project", "web", None, native)
+        await prepared.start()
+        registering = asyncio.create_task(prepared.register("http://127.0.0.1:8000"))
+        await entered.wait()
+        closing = asyncio.create_task(prepared.close())
+        # baseline unregisters before joining rediscovery; fixed code first cancels
+        # and joins it. either observable event releases the same deterministic gate.
+        observers = [
+            asyncio.create_task(canceled.wait()),
+            asyncio.create_task(cleanup_entered.wait()),
+        ]
+        await asyncio.wait(observers, return_when=asyncio.FIRST_COMPLETED)
+        release.set()
+        results = await asyncio.gather(registering, closing, return_exceptions=True)
+        for observer in observers:
+            observer.cancel()
+        await asyncio.gather(*observers, return_exceptions=True)
+        if independent_failure != "none":
+            assert results[0] is failure
+            cleanup_failure = results[1]
+            if gate_at == "prepare":
+                assert isinstance(cleanup_failure, BaseExceptionGroup)
+                assert failure in cleanup_failure.exceptions
+            else:
+                assert cleanup_failure is failure
+        else:
+            assert isinstance(results[0], (asyncio.CancelledError, _protocol.RegistrationLost))
+            assert results[1] is None
+            await prepared.close()
+        assert not native.active
+        assert len(native.registrations) == 1
+        expected_ids = ["reg_" + "a" * 32]
+        if gate_at == "prepare" and independent_failure == "none":
+            expected_ids.append("reg_" + "b" * 32)
+        assert [item["registration_id"] for item in native.cleanups] == expected_ids
+        for cleanup in native.cleanups:
+            assert cleanup["owner"] == native.preparations[0]["owner"]
+            assert cleanup["target"] == "http://127.0.0.1:8000"
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+
+
+def test_close_bounds_initial_discovery_and_fences_late_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        native = AssignmentRuntime(private_assignment())
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        canceled = asyncio.Event()
+
+        async def discover(*args: object, **kwargs: object) -> Endpoint:
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                canceled.set()
+                await release.wait()
+            return native.endpoint
+
+        monkeypatch.setattr(native, "start", discover)
+        prepared = tnl.PreparedService("/project", "web", None, native)
+        starting = asyncio.create_task(prepared.start())
+        await entered.wait()
+        until = asyncio.get_running_loop().time()
+        with pytest.raises(TimeoutError) as failure:
+            await prepared.close(until)
+        await canceled.wait()
+        assert prepared._shutdown_until == until
+        with pytest.raises(TimeoutError) as repeated:
+            await prepared.close()
+        assert repeated.value is failure.value
+        release.set()
+        with pytest.raises(_protocol.RegistrationLost):
+            await starting
+        assert not native.operations
+        assert not prepared._preparations
+        assert prepared._renewal is None
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+
+
 def test_changed_registration_compensation_does_not_start_owner_shutdown_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

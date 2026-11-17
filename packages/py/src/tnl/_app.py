@@ -70,6 +70,8 @@ class PreparedService:
         self._lock = asyncio.Lock()
         self._renewal: asyncio.Task[None] | None = None
         self._requests: set[asyncio.Task[object]] = set()
+        self._preparations: set[asyncio.Task[None]] = set()
+        self._closed_error = RegistrationLost()
         self._cleanup: asyncio.Task[None] | None = None
         self._shutdown_until: float | None = None
         self._preparation_uncertain = False
@@ -90,10 +92,27 @@ class PreparedService:
 
     async def _prepare(self) -> None:
         if isinstance(self._phase, _Closed):
-            raise RegistrationLost()
+            raise self._closed_error
+        task = asyncio.create_task(self._prepare_work())
+        self._preparations.add(task)
+        task.add_done_callback(self._preparation_finished)
+        # track native discovery and reservation together so close joins the
+        # complete acquisition before collecting registrations to unregister.
+        await task
+
+    def _preparation_finished(self, task: asyncio.Task[None]) -> None:
+        self._preparations.discard(task)
+        if not task.cancelled():
+            task.exception()
+
+    async def _prepare_work(self) -> None:
+        if isinstance(self._phase, _Closed):
+            raise self._closed_error
         endpoint = await self._native.start(
             self._directory, service=self._service, state_dir=self._state_dir
         )
+        if isinstance(self._phase, _Closed):
+            raise self._closed_error
         payload: dict[str, object] = {
             "version": 1,
             "directory": self._directory,
@@ -137,7 +156,7 @@ class PreparedService:
             self._prepared_cleanup = None
             raise InvalidResponse()
         if isinstance(self._phase, _Closed):
-            raise RegistrationLost()
+            raise self._closed_error
         self._phase = _Prepared(endpoint, ident)
         self._preparation_uncertain = False
         self.service, self.hostname, self.public_url = name, host, url
@@ -158,6 +177,8 @@ class PreparedService:
 
     async def start(self) -> None:
         await self._prepare()
+        if isinstance(self._phase, _Closed):
+            raise self._closed_error
         self._renewal = asyncio.create_task(self._renew())
 
     async def register(self, target: str) -> None:
@@ -212,17 +233,33 @@ class PreparedService:
         prepared = self._phase if isinstance(self._phase, _Prepared) else self._prepared_cleanup
         self._phase = _Closed(prepared)
         workers: set[asyncio.Task[object] | asyncio.Task[None]] = set(self._requests)
+        workers.update(self._preparations)
         if self._renewal is not None:
             workers.add(self._renewal)
         for worker in workers:
             worker.cancel()
         failures: list[BaseException] = []
         if workers:
-            for result in await asyncio.gather(*workers, return_exceptions=True):
-                if isinstance(result, BaseException) and not isinstance(
-                    result, asyncio.CancelledError
-                ):
-                    failures.append(result)
+            done, pending = await asyncio.wait(
+                workers, timeout=max(0, until - asyncio.get_running_loop().time())
+            )
+            for worker in done:
+                if not worker.cancelled():
+                    cause = worker.exception()
+                    if (
+                        cause is not None
+                        and cause is not self._closed_error
+                        and all(cause is not failure for failure in failures)
+                    ):
+                        failures.append(cause)
+            if pending:
+                failures.append(
+                    TimeoutError("publication shutdown timed out; remote cleanup is unconfirmed")
+                )
+                for worker in pending:
+                    worker.add_done_callback(
+                        lambda task: None if task.cancelled() else task.exception()
+                    )
         if self._preparation_uncertain:
             failures.append(
                 TnlError(
