@@ -21,29 +21,30 @@ import (
 )
 
 type daemon struct {
-	ctx                    context.Context
-	processRunID           string
-	draining               atomic.Bool
-	startedAt              time.Time
-	database               *controlstate.Database
-	dnsBackend             dnsBackend
-	metricsServer          *observability.Server
-	controlServer          *http.Server
-	controlListener        net.Listener
-	privateControlServer   *http.Server
-	privateControlListener net.Listener
-	ingresses              []*ingressRuntime
-	ingressLeases          atomic.Pointer[ingressLeaseSnapshot]
-	relays                 []*relayRuntime
-	controlTLS             *tls.Config
-	route53Credentials     aws.CredentialsProvider
-	serviceHTTP            *http.Client
-	clusterSecret          string
-	clusterSecrets         serverhttp.BearerSecrets
-	relayClientTLS         *tls.Config
-	cancel                 context.CancelFunc
-	componentDone          chan error
-	components             sync.WaitGroup
+	ctx                      context.Context
+	processRunID             string
+	draining                 atomic.Bool
+	startedAt                time.Time
+	database                 *controlstate.Database
+	dnsBackend               dnsBackend
+	metricsServer            *observability.Server
+	controlServer            *http.Server
+	controlListener          net.Listener
+	privateControlServer     *http.Server
+	privateControlListener   net.Listener
+	ingresses                []*ingressRuntime
+	ingressLeases            atomic.Pointer[ingressLeaseSnapshot]
+	relays                   []*relayRuntime
+	controlTLS               *tls.Config
+	route53Credentials       aws.CredentialsProvider
+	serviceHTTP              *http.Client
+	clusterSecret            string
+	clusterSecrets           serverhttp.BearerSecrets
+	relayClientTLS           *tls.Config
+	cancel                   context.CancelFunc
+	componentDone            chan error
+	components               sync.WaitGroup
+	observeOperationalReport func(operationalReport)
 }
 
 // Serve runs one configured tnld process until its context is canceled.
@@ -69,11 +70,12 @@ type runtimeListeners struct {
 }
 
 type runtimeOptions struct {
-	acmeHTTPClient    *http.Client
-	serviceHTTPClient *http.Client
-	relayClientTLS    *tls.Config
-	dns               dnsBackend
-	listeners         runtimeListeners
+	acmeHTTPClient           *http.Client
+	serviceHTTPClient        *http.Client
+	relayClientTLS           *tls.Config
+	dns                      dnsBackend
+	listeners                runtimeListeners
+	observeOperationalReport func(operationalReport)
 }
 
 func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeOptions) (retErr error) {
@@ -100,6 +102,7 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 		dnsBackend:  options.dns,
 		serviceHTTP: options.serviceHTTPClient, clusterSecret: clusterSecret, clusterSecrets: clusterSecrets,
 		relayClientTLS: options.relayClientTLS, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now().UTC(),
+		observeOperationalReport: options.observeOperationalReport,
 	}
 	metrics := observability.FromContext(ctx)
 	if metrics == nil {

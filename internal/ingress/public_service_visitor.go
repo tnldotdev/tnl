@@ -37,7 +37,9 @@ func (p *Server) AcceptPublic(ctx context.Context, connection net.Conn, source, 
 		return errors.Join(ErrServiceAdmission, connection.Close())
 	}
 	defer p.active.Done()
-	defer func() { retErr = errors.Join(retErr, p.release(connection)) }()
+	diagnostic := &visitorDiagnostic{VisitorError: VisitorError{phase: "inspection"}}
+	ctx = context.WithValue(ctx, visitorDiagnosticKey{}, diagnostic)
+	defer func() { retErr = diagnostic.finish(retErr, p.release(connection)) }()
 	finishInspection := sync.OnceFunc(p.finishInspection)
 	defer finishInspection()
 	ctx, cancel := context.WithCancel(ctx)
@@ -102,6 +104,17 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		}
 	}
 	selected, err := p.selectPublicRun(setup, lease, source, destination, hostname, admission)
+	diagnostic := visitorDiagnosticFrom(ctx)
+	if diagnostic != nil {
+		diagnostic.service, diagnostic.visitor = selected.serviceID, selected.visitorID
+		diagnostic.phase, diagnostic.denial = "selection", string(selected.denialReason)
+		if err != nil {
+			diagnostic.candidate, diagnostic.candidateNumber = selected.runID, uint64(selected.number)
+		} else {
+			diagnostic.run, diagnostic.number, diagnostic.phase = selected.runID, uint64(selected.number), "opening"
+			diagnostic.denial = ""
+		}
+	}
 	defer func() {
 		if selected.certificate != nil && selected.certificate.VisitorConnectionId != "" {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -162,6 +175,9 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		serviceaudit.Emit(p.config.AuditSink, audit)
 	}()
 	onCapacityReserved := func() {
+		if diagnostic != nil {
+			diagnostic.admitted.Store(true)
+		}
 		if selected.access == clientCertificateAccess {
 			allowed := audit
 			allowed.Outcome, allowed.Reason = "allowed", ""
@@ -344,6 +360,7 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		}}
 		done := make(chan struct{})
 		var guardErr error
+		var guardCleanup error
 		go func() {
 			defer close(done)
 			defer cancel()
@@ -359,7 +376,8 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 					guardErr = ErrServiceAdmission
 				}
 			}
-			guardErr = errors.Join(guardErr, connection.Close(), backend.Close())
+			guardCleanup = errors.Join(connection.Close(), backend.Close())
+			guardErr = errors.Join(guardErr, guardCleanup)
 		}()
 		_, finishForward := observability.Start(ctx, "ingress.forward_connector_visitor")
 		var observePublisherWrite func(int64)
@@ -380,10 +398,16 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 				})
 			}
 		}
+		if diagnostic != nil {
+			diagnostic.phase = "copy"
+		}
 		copied, err := streamcopy.CopyObserved(public, upstream, nil, observePublisherWrite)
 		finishForward(err)
 		cancel()
 		<-done
+		if diagnostic != nil {
+			diagnostic.copyResult, diagnostic.cleanup = err, guardCleanup
+		}
 		if p.config.Metrics != nil {
 			p.config.Metrics.AddForwardedBytes("visitor_to_publisher", copied.LeftToRight)
 			p.config.Metrics.AddForwardedBytes("publisher_to_visitor", copied.RightToLeft)

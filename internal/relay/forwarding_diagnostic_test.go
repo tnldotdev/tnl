@@ -74,6 +74,14 @@ type forwardingDiagnosticTransfer struct {
 	err              error
 }
 
+type diagnosticForwardingFailure interface {
+	error
+	ForwardingScope() (service, run, visitor string, number uint64)
+	ForwardingPhase() string
+	ForwardingCopyResult() error
+	ForwardingCleanup() error
+}
+
 type forwardingDiagnosticObserver struct {
 	transfers chan forwardingDiagnosticTransfer
 }
@@ -282,6 +290,17 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 				// observe real failures while the accept owner is still live,
 				// before its joined shutdown could fence further reports.
 				reported = relayAwait(t, reports)
+				var scoped diagnosticForwardingFailure
+				if !errors.As(reported, &scoped) {
+					t.Fatal("actual relay report lost its scoped copy and final-cleanup provenance")
+				}
+				service, run, visitor, number := scoped.ForwardingScope()
+				if service != header.ServiceID || run != header.ServiceRunID || visitor != header.VisitorConnectionID ||
+					number != header.RunNumber || scoped.ForwardingPhase() != "copy" ||
+					scoped.ForwardingCopyResult() != transfer.err ||
+					test.independent != errors.Is(scoped.ForwardingCleanup(), cleanup) {
+					t.Fatal("actual relay report changed its exact scope or copy/final-cleanup boundary")
+				}
 			}
 			var stopped *quic.StreamError
 			if !errors.As(origin.sendCause, &stopped) || !stopped.Remote || stopped.ErrorCode != test.code {

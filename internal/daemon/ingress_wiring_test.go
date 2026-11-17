@@ -18,6 +18,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -342,7 +343,9 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			d := &daemon{ctx: ctx, cancel: cancel, relayClientTLS: &tls.Config{RootCAs: ca.roots}, componentDone: make(chan error, 1)}
+			reports := &eventRecorder[operationalReport]{}
+			d := &daemon{ctx: ctx, cancel: cancel, relayClientTLS: &tls.Config{RootCAs: ca.roots}, componentDone: make(chan error, 1),
+				observeOperationalReport: reports.append}
 			metrics := observability.New("ingress")
 			t.Cleanup(func() { _ = metrics.Shutdown(context.Background()) })
 			settings := ingressSettingsFrom(daemonconfig.Config{
@@ -419,6 +422,19 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			}
 			if err := stopDaemon(); err != nil {
 				t.Fatal(err)
+			}
+			if fail {
+				recorded, err := reports.snapshot()
+				if err != nil || len(recorded) != 1 {
+					t.Fatal("actual daemon callback lost or duplicated its committed-failure report", len(recorded), err)
+				}
+				report := recorded[0]
+				if report.operation != "serve ingress connection" || report.reason != failure.ServerIngressFailed ||
+					report.service != header.ServiceID || report.run != header.ServiceRunID ||
+					report.number != header.RunNumber || report.visitor != header.VisitorConnectionID ||
+					(report.phase != "opening" && report.phase != "copy") || len(report.operationResult.nodes) == 0 {
+					t.Fatalf("actual daemon callback lost the exact selected visitor's report scope: %+v", report)
+				}
 			}
 			stopFixture()
 			if count := streams.Load(); count != 1 {

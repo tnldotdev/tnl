@@ -52,6 +52,16 @@ type diagnosticRefreshControl struct {
 	err   error
 }
 
+type diagnosticVisitorFailure interface {
+	error
+	ForwardingScope() (service, run, visitor string, number uint64)
+	ForwardingCandidate() (run string, number uint64)
+	ForwardingAdmitted() bool
+	ForwardingPhase() string
+	ForwardingCopyResult() error
+	ForwardingCleanup() error
+}
+
 func (c *diagnosticRefreshControl) ReadIngressServices(ctx context.Context, id string, lease ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error) {
 	if c.reads.Add(1) == 1 {
 		return c.PublicServiceControl.ReadIngressServices(ctx, id, lease)
@@ -127,6 +137,18 @@ func TestIngressSourceDenialReportsAdmissionAndIndependentCleanupCauses(t *testi
 			}
 			event, reported := ingressAwait(t, audits), ingressAwait(t, reports)
 			server.active.Wait()
+			var scoped diagnosticVisitorFailure
+			if !errors.As(reported, &scoped) {
+				t.Fatal("actual ingress report lost its scoped denial and final-cleanup provenance")
+			}
+			service, run, visitorID, number := scoped.ForwardingScope()
+			candidate, candidateNumber := scoped.ForwardingCandidate()
+			if service != event.ServiceID || run != "" || number != 0 || visitorID != event.VisitorConnectionID ||
+				candidate != control.run || candidateNumber == 0 || scoped.ForwardingAdmitted() ||
+				scoped.ForwardingPhase() != "selection" || scoped.ForwardingCopyResult() != nil ||
+				independent != errors.Is(scoped.ForwardingCleanup(), cleanup) {
+				t.Fatal("ingress denial invented an admitted run or lost its independent physical cleanup")
+			}
 			if event.ServiceID != control.service || event.RunID != "" || event.Outcome != "denied" || event.Reason != "ip_policy" ||
 				event.SourceIP != "198.51.100.7" || !opaqueid.Valid(event.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) {
 				t.Fatal("source denial lost its exact selection evidence")

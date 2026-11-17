@@ -403,7 +403,7 @@ func TestAnonymousMalformedTLSUsesProcessAndSourceAdmissionWithoutPromotion(t *t
 		defer s.release(connection)
 		finish := sync.OnceFunc(s.finishInspection)
 		defer finish()
-		done <- s.handle(connection, finish)
+		done <- s.handle(s.openContext, connection, finish)
 	}()
 	_ = peer.SetWriteDeadline(time.Now().Add(time.Second))
 	_, _ = peer.Write([]byte{0, 0, 0, 0, 0})

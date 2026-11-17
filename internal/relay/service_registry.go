@@ -368,7 +368,12 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 			endSpan(err)
 		}
 	}()
-	defer func() { retErr = errors.Join(retErr, incoming.Stream().Close()) }()
+	diagnostic := ForwardingError{
+		service: incoming.Header.ServiceID, run: incoming.Header.ServiceRunID,
+		visitor: incoming.Header.VisitorConnectionID, number: incoming.Header.RunNumber, phase: "open",
+	}
+	defer func() { retErr = diagnostic.finish(retErr) }()
+	defer func() { diagnostic.cleanup = errors.Join(diagnostic.cleanup, incoming.Stream().Close()) }()
 	if !a.acquireStream() {
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 		return incoming.Reject(tunnelv1.CapacityExceeded)
@@ -392,7 +397,7 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		a.streamRejected("publisher_unavailable")
 		return errors.Join(incoming.Reject(tunnelv1.Unavailable), err)
 	}
-	defer func() { retErr = errors.Join(retErr, publisher.Close()) }()
+	defer func() { diagnostic.cleanup = errors.Join(diagnostic.cleanup, publisher.Close()) }()
 	unregister, err := connection.paths.session.RegisterServiceCapacity(ctx, header, func(call context.Context) error {
 		current, valid := a.registry.candidate(header, a.currentLease(), a.now())
 		if !valid || current != connection {
@@ -442,7 +447,9 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 	// ingress alone creates PROXY v2. relay copies it and every following
 	// visitor byte unchanged, once, through this exact publisher stream.
 	_, finishForward := observability.Start(ctx, "relay.forward_connector_visitor")
+	diagnostic.phase = "copy"
 	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
+	diagnostic.copyResult = err
 	finishForward(err)
 	if a.observer != nil {
 		a.observer.ObserveRelayTransfer(copied.LeftToRight, copied.RightToLeft, err)

@@ -349,7 +349,9 @@ func (d *daemon) startRelayRuntime(
 				runtimeConfig.metrics.ObserveRelayStreamRejection(reason)
 			}
 		},
-		Report: func(err error) { logOperationalError(ctx, "forward through relay", failure.ServerRelayFailed, err) },
+		Report: func(err error) {
+			d.reportOperationalError(ctx, "forward through relay", failure.ServerRelayFailed, err)
+		},
 	})
 	if err != nil {
 		return nil, err

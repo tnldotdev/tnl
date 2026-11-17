@@ -52,7 +52,7 @@ func TestClientHelloCapacityAndTimeoutRelease(t *testing.T) {
 			defer server.active.Done()
 			defer server.release(connection)
 			defer server.finishInspection()
-			done <- server.handle(connection, func() { t.Error("stalled ClientHello finished inspection") })
+			done <- server.handle(server.openContext, connection, func() { t.Error("stalled ClientHello finished inspection") })
 		}()
 		synctest.Wait()
 		time.Sleep(clienthello.ClientHelloReadTimeout)

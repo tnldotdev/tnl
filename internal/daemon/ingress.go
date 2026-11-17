@@ -247,7 +247,7 @@ func (d *daemon) startIngressRuntime(
 		MaxRelayConnections:       settings.standaloneRelayConnectionLimit,
 		Metrics:                   metrics, Observer: metrics,
 		OnError: func(err error) {
-			logOperationalError(ctx, "serve ingress connection", failure.ServerIngressFailed, err)
+			d.reportOperationalError(ctx, "serve ingress connection", failure.ServerIngressFailed, err)
 		},
 	}
 	if recovery != nil {

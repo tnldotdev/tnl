@@ -194,10 +194,12 @@ func (s *Server) Serve() error {
 		go func() {
 			defer s.active.Done()
 			finishInspection := sync.OnceFunc(s.finishInspection)
+			diagnostic := &visitorDiagnostic{VisitorError: VisitorError{phase: "inspection"}}
+			ctx := context.WithValue(s.openContext, visitorDiagnosticKey{}, diagnostic)
 			err := func() (retErr error) {
-				defer func() { retErr = errors.Join(retErr, s.release(connection)) }()
+				defer func() { retErr = diagnostic.finish(retErr, s.release(connection)) }()
 				defer finishInspection()
-				return s.handle(connection, finishInspection)
+				return s.handle(ctx, connection, finishInspection)
 			}()
 			if err != nil && s.config.OnError != nil {
 				s.config.OnError(err)
@@ -265,7 +267,7 @@ func (s *Server) Load() int64 {
 	return visitors
 }
 
-func (s *Server) handle(public net.Conn, finishInspection func()) error {
+func (s *Server) handle(ctx context.Context, public net.Conn, finishInspection func()) error {
 	if err := public.SetReadDeadline(time.Now().Add(clienthello.ClientHelloReadTimeout)); err != nil {
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncInspectionFailure("deadline")
@@ -298,7 +300,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		}
 		finishInspection()
 		s.markVisitor(public)
-		return s.forwardService(s.openContext, &readerConn{Conn: public, reader: reader}, source, destination, "", nil)
+		return s.forwardService(ctx, &readerConn{Conn: public, reader: reader}, source, destination, "", nil)
 	}
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := clienthello.InspectClientHello(inspected)
@@ -339,7 +341,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 		return ErrServiceAdmission
 	}
 	s.markVisitor(public)
-	return s.forwardService(s.openContext, &readerConn{Conn: public, reader: hello.Remainder}, source, destination, hello.ServerName, hello.Prefix)
+	return s.forwardService(ctx, &readerConn{Conn: public, reader: hello.Remainder}, source, destination, hello.ServerName, hello.Prefix)
 }
 
 func (s *Server) forwardService(ctx context.Context, public net.Conn, source, destination netip.AddrPort, hostname string, initial []byte) error {
