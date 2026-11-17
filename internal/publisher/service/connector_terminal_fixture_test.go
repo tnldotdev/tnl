@@ -60,13 +60,14 @@ func (h *terminalFixtureHandlers) Terminal(request tunnelv1.ConnectorVisitorTerm
 }
 
 type modeledConnectorTerminal struct {
-	t          *testing.T
-	peer       *PeerSession
-	writer     *tunnel.ConnectorPermissionWriter
-	ctx        context.Context
-	dispatched <-chan terminalFixtureDispatch
-	last       *terminalFixtureDispatch
-	calls      sync.WaitGroup
+	t               *testing.T
+	peer            *PeerSession
+	writer          *tunnel.ConnectorPermissionWriter
+	ctx             context.Context
+	dispatched      <-chan terminalFixtureDispatch
+	last            *terminalFixtureDispatch
+	calls           sync.WaitGroup
+	expectedFailure error
 }
 
 func newModeledConnectorTerminal(t *testing.T, p *PeerSession, wrap ...func(muxsession.Stream) muxsession.Stream) *modeledConnectorTerminal {
@@ -107,7 +108,8 @@ func newModeledConnectorTerminal(t *testing.T, p *PeerSession, wrap ...func(muxs
 		if !connectorAdmissionRoutineError(closeErr) {
 			t.Error("modeled terminal control close", closeErr)
 		}
-		if err := <-served; !connectorAdmissionRoutineError(err) {
+		if err := <-served; !connectorAdmissionRoutineError(err) &&
+			(fixture.expectedFailure == nil || !failure.Only(err, fixture.expectedFailure)) {
 			t.Error("modeled terminal serve", err)
 		}
 	})

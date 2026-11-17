@@ -144,6 +144,16 @@ func connectivityShutdownRawEnd(t *testing.T, ctx context.Context, client, serve
 }
 
 func TestPeerConnectivityShutdown(t *testing.T) {
+	t.Run("peer closes before permission control setup", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		p, client, server, _, session := connectivityShutdownPair(t, ctx)
+		_ = connectivityShutdownRawEnd(t, ctx, client, server, 0)
+		if err := p.serveSession(session); err != nil {
+			t.Fatal("a normal unused peer close escaped toward the publication fence", err)
+		}
+	})
+
 	t.Run("normal ended session before other observations", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()

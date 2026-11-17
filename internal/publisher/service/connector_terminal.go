@@ -466,7 +466,14 @@ func (a *connectorAdmission) serveTerminal(phase *connectorTerminalPhase) {
 				end = p.terminalEnd
 				b.mu.Unlock()
 				if end.Cause == tunnel.ConnectorTerminalOwnerRetired || end.Cause == tunnel.ConnectorTerminalPeerTerminated {
-					err = serviceWorkerError(err, context.Canceled)
+					if end.Cause == tunnel.ConnectorTerminalPeerTerminated && end.Err == nil {
+						// the peer can close after its own terminal join while
+						// this result write is still returning. preserve that
+						// terminal end, not a false publication-wide failure.
+						err = connectorPeerStopError(err)
+					} else {
+						err = serviceWorkerError(err, context.Canceled)
+					}
 					phase.end = end
 					phase.end.Err = errors.Join(end.Err, err)
 				} else if context.Cause(phase.ctx) == context.DeadlineExceeded {

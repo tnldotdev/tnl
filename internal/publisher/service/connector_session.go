@@ -280,6 +280,10 @@ func (p *PeerSession) serveSession(session muxsession.Session) (result error) {
 	permissions, err := tunnel.AcceptConnectorPermissionControl(setup, session)
 	cancelSetup()
 	if err != nil {
+		if muxsession.NormalSessionCloseOnly(err) {
+			p.observeSessionEnd(session)
+			return nil
+		}
 		if p.ctx.Err() != nil {
 			return connectorPeerStopError(err)
 		}
