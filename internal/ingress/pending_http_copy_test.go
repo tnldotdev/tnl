@@ -635,3 +635,25 @@ func TestPendingHTTPCopyCompletedCapacityOutlivesSetupTimer(t *testing.T) {
 		}
 	})
 }
+
+func TestPendingHTTPCopyCompletedDecisionSurvivesCancellation(t *testing.T) {
+	denied := errors.New("capacity decision refused admission")
+	canceled := errors.New("copy finished independently")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(canceled)
+	for _, decision := range []error{nil, denied} {
+		done := make(chan struct{})
+		close(done)
+		for range 100 {
+			err := waitCopyCapacity(ctx, time.Now().Add(time.Minute), done, &decision)
+			if decision == nil && err != nil ||
+				decision != nil && (!errors.Is(err, ErrServiceAdmission) || !errors.Is(err, denied)) {
+				t.Fatal("completed capacity decision lost to copy cancellation", err)
+			}
+		}
+	}
+	var pending error
+	if err := waitCopyCapacity(ctx, time.Now().Add(time.Minute), make(chan struct{}), &pending); !errors.Is(err, canceled) {
+		t.Fatal("unfinished capacity decision lost its cancellation", err)
+	}
+}
