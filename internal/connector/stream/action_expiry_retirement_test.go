@@ -37,7 +37,8 @@ type actionExpirySession struct {
 	err    error
 }
 
-func (s *actionExpirySession) Close() error { s.closes++; return s.err }
+func (s *actionExpirySession) Close() error          { s.closes++; return s.err }
+func (s *actionExpirySession) Done() <-chan struct{} { return nil }
 
 type actionExpiryConn struct {
 	net.Conn
@@ -315,5 +316,78 @@ func TestActionExpiryRetirementDoesNotStartUnauthorizedTerminalExchange(t *testi
 		if !errors.Is(p.useErr, context.DeadlineExceeded) || !errors.Is(p.useErr, independent) {
 			t.Fatal("expired authority hid entered terminal cleanup", p.useErr)
 		}
+	}
+}
+
+func TestActionExpiryRetirementKeepsWatchStopOutOfIdleCleanup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		life, cancel := context.WithCancelCause(t.Context())
+		cleanup := newConnectorCleanup(t.Context(), nil)
+		defer cleanup.close()
+		until := time.Now().Add(-time.Second)
+		p := &connectorConnection{ctx: life, cleanup: cleanup, until: until, run: Run{ValidUntil: until},
+			permission: controlv1.VisitorTokenResponse{ExpiresAt: until}, session: &actionExpirySession{}}
+		p.cancel = func(cause error) { cleanup.begin(); cancel(cause) }
+		// force the real watch producer to win the idle-timer race. the
+		// prepared worker still joins its actual close below, not a fake ACK.
+		p.watch()
+		conn := &actionExpiryConn{}
+		prepared := &PreparedConnector{ctx: life, conn: conn, stream: streamPrepared{}, permission: permissionUsable{},
+			permissionUntil: until, stop: func() bool { return true }}
+		prepared.mu.Lock()
+		prepared.startPermissionWorkerLocked()
+		prepared.mu.Unlock()
+		synctest.Wait()
+		if err := prepared.Close(); !errors.Is(err, ErrServiceConnection) {
+			t.Fatal("direct caller lost the exact owner authority stop", err)
+		}
+		if err := p.closePreparedForRetirement(prepared); err != nil {
+			t.Fatal("watch authority stop became an independent idle cleanup failure", err)
+		}
+		if conn.closes != 1 {
+			t.Fatal("watch stop did not join exactly one physical close", conn.closes)
+		}
+	})
+}
+
+func TestActionExpiryRetirementKeepsForeignAndJoinedWatchFailures(t *testing.T) {
+	for _, kind := range []string{"foreign watcher", "joined watcher", "entered renewal", "physical close", "foreign prepared stream"} {
+		t.Run(kind, func(t *testing.T) {
+			life, cancel := context.WithCancelCause(t.Context())
+			until := time.Now().Add(-time.Second)
+			p := &connectorConnection{ctx: life, until: until, run: Run{ValidUntil: until},
+				permission: controlv1.VisitorTokenResponse{ExpiresAt: until}}
+			owned := &connectorAuthorityExpiry{owner: p, until: until}
+			cancel(owned)
+			conn := &actionExpiryConn{}
+			prepared := &PreparedConnector{ctx: life, conn: conn, stream: streamPrepared{}, permission: permissionUsable{},
+				permissionUntil: until, stop: func() bool { return true }}
+			idle := &preparedPermissionExpiry{owner: prepared, until: until, cause: owned}
+			independent := errors.New("independent watch-race failure")
+			var retained error
+			switch kind {
+			case "foreign watcher":
+				retained = &connectorAuthorityExpiry{owner: &connectorConnection{}, until: until}
+				idle.cause = retained
+			case "joined watcher":
+				retained = errors.Join(owned, independent)
+				idle.cause = retained
+			case "entered renewal":
+				retained = owned
+			case "physical close":
+				retained = errors.Join(owned, independent)
+				conn.closeErr = retained
+			case "foreign prepared stream":
+				idle.owner = &PreparedConnector{}
+				retained = idle
+			}
+			prepared.permissionErr = idle
+			if kind == "entered renewal" {
+				prepared.permissionErr = retained
+			}
+			if err := p.closePreparedForRetirement(prepared); !errors.Is(err, retained) {
+				t.Fatal("an expiry marker hid unowned or independent cleanup", retained, err)
+			}
+		})
 	}
 }

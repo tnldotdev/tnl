@@ -120,6 +120,18 @@ type connectorRetirement struct {
 	signer Signer
 }
 
+// only the authority watcher produces this stop for its exact connection.
+// consumers can distinguish its idle children from independent operation errors.
+type connectorAuthorityExpiry struct {
+	owner *connectorConnection
+	until time.Time
+}
+
+func (e *connectorAuthorityExpiry) Error() string {
+	return "connector authority expired: " + ErrServiceConnection.Error()
+}
+func (*connectorAuthorityExpiry) Unwrap() error { return ErrServiceConnection }
+
 func (*connectorRetirement) String() string   { return "private connector retirement" }
 func (*connectorRetirement) GoString() string { return "private connector retirement" }
 
@@ -230,7 +242,13 @@ func (p *connectorConnection) closePreparedForRetirement(prepared *PreparedConne
 	// never inspect the physical error tree or an entered renewal's result.
 	if cause, ok := prepared.permissionErr.(*preparedPermissionExpiry); ok &&
 		cause.owner == prepared && cause.until.Equal(prepared.permissionUntil) && !cause.until.After(now) {
-		return prepared.closeErr
+		if cause.cause == nil {
+			return prepared.closeErr
+		}
+		if authority, ok := cause.cause.(*connectorAuthorityExpiry); ok &&
+			authority.owner == p && authority == context.Cause(p.ctx) && !authority.until.After(now) {
+			return prepared.closeErr
+		}
 	}
 	return result
 }

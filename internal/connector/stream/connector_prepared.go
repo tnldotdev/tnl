@@ -110,10 +110,16 @@ func (*preparedPermissionStop) Error() string {
 type preparedPermissionExpiry struct {
 	owner *PreparedConnector
 	until time.Time
+	cause error
 }
 
 func (*preparedPermissionExpiry) Error() string { return "the prepared stream's permission expired" }
-func (*preparedPermissionExpiry) Unwrap() error { return context.DeadlineExceeded }
+func (e *preparedPermissionExpiry) Unwrap() error {
+	if e.cause != nil {
+		return e.cause
+	}
+	return context.DeadlineExceeded
+}
 
 // PrepareConnector consumes a source-prepared opening without RPC or signing.
 // setup retains the caller's original preparation deadline; lifetime owns the
@@ -315,6 +321,11 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 		select {
 		case <-wait.Done():
 			if cause := context.Cause(wait); !failure.Only(cause, p.permissionStop) {
+				if authority, ok := cause.(*connectorAuthorityExpiry); ok {
+					// only an idle wait borrows the owning watcher's stop. an
+					// entered renewal below retains its entire operation result.
+					cause = &preparedPermissionExpiry{owner: p, until: until, cause: authority}
+				}
 				p.mu.Lock()
 				p.permissionErr = cause
 				p.mu.Unlock()

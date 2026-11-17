@@ -674,7 +674,12 @@ func (p *connectorConnection) watch() {
 				}
 			}
 			if cause == nil {
-				cause = fmt.Errorf("connector authority expired (pair=%s run=%s permission=%s): %w", p.until.Format(time.RFC3339Nano), p.run.ValidUntil.Format(time.RFC3339Nano), p.permission.ExpiresAt.Format(time.RFC3339Nano), ErrServiceConnection)
+				authority := earliestConnectorDeadline(p.until, p.run.ValidUntil, p.permission.ExpiresAt)
+				if !authority.After(time.Now()) {
+					cause = &connectorAuthorityExpiry{owner: p, until: authority}
+				} else {
+					cause = ErrServiceConnection
+				}
 			}
 			p.cleanup.begin()
 			stopCause = cause
