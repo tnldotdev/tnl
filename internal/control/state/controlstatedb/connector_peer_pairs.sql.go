@@ -1184,7 +1184,7 @@ func (q *Queries) RetireConnectorPeerPair(ctx context.Context, arg RetireConnect
 
 const saveConnectorPeerAuditBinding = `-- name: SaveConnectorPeerAuditBinding :execrows
 INSERT INTO control.connector_peer_audit_bindings
-    (pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_ip,created_at,expires_at,delivery_generation)
+    (pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_digest,created_at,expires_at,delivery_generation)
 SELECT $1,$2,$3,$4,$5,
     $6,$7,$8,$9,$10,$11
 FROM control.connector_peer_pairs pair WHERE pair.id=$1 AND pair.retired_at IS NULL
@@ -1196,7 +1196,7 @@ WHERE control.connector_peer_audit_bindings.retired_at IS NULL
     AND control.connector_peer_audit_bindings.publisher_identity_id=EXCLUDED.publisher_identity_id
     AND control.connector_peer_audit_bindings.identity_id IS NOT DISTINCT FROM EXCLUDED.identity_id
     AND control.connector_peer_audit_bindings.device_id IS NOT DISTINCT FROM EXCLUDED.device_id
-    AND control.connector_peer_audit_bindings.source_ip=EXCLUDED.source_ip
+    AND control.connector_peer_audit_bindings.source_digest=EXCLUDED.source_digest
     AND control.connector_peer_audit_bindings.created_at=EXCLUDED.created_at
 `
 
@@ -1208,7 +1208,7 @@ type SaveConnectorPeerAuditBindingParams struct {
 	PublisherIdentityID string
 	IdentityID          pgtype.Text
 	DeviceID            pgtype.Text
-	SourceIp            netip.Addr
+	SourceDigest        string
 	CreatedAt           pgtype.Timestamptz
 	ExpiresAt           pgtype.Timestamptz
 	DeliveryGeneration  int64
@@ -1223,7 +1223,7 @@ func (q *Queries) SaveConnectorPeerAuditBinding(ctx context.Context, arg SaveCon
 		arg.PublisherIdentityID,
 		arg.IdentityID,
 		arg.DeviceID,
-		arg.SourceIp,
+		arg.SourceDigest,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 		arg.DeliveryGeneration,

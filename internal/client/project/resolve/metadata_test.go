@@ -114,6 +114,15 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 	project := clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Config: config.TNL{
 		Services: config.Services{"api": {Public: new(true)}, "db": {Protocol: new("postgres"), Public: new(true), Target: &config.ServiceTarget{Type: "address", Address: testTarget("db.internal:5432")}}, "private": {}},
 	}}
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	project, err = project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	source, worktree := project.LocalPublicationIdentity(), project.LocalWorktreeKey()
 	public, port, status := true, 443, http.StatusOK
 	returnedProtocol := "http"
@@ -147,11 +156,6 @@ func TestLocalPublicMetadataUsesExactWorktreeEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
 	resolver := NewMetadataResolver(state, project, nil)
 	resolver.Seed(server.URL, &auth.Client{ServerEndpoint: server.URL, Control: control})
 	current := appliedTestContext()

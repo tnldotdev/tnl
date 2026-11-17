@@ -345,7 +345,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	}
 	recheckVisitor := func(connectionID string, at time.Time) bool {
 		t.Helper()
-		decision, err := d.PublicServiceVisitorStatus(ctx, ingress, connectionID, at)
+		decision, err := d.PublicServiceVisitorStatus(ctx, ingress, connectionID, source, at)
 		if errors.Is(err, controlstate.ErrIngressLeaseStale) {
 			return false
 		}
@@ -360,7 +360,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if !recheckVisitor(live.ConnectionID, now) {
 		t.Fatal("current consumed visitor was denied")
 	}
-	if status, err := d.PublicServiceVisitorStatus(ctx, ingress, newID(opaqueid.VisitorConnectionPrefix), now); err == nil && status.State == controlstate.PublicServiceVisitorAllowed {
+	if status, err := d.PublicServiceVisitorStatus(ctx, ingress, newID(opaqueid.VisitorConnectionPrefix), source, now); err == nil && status.State == controlstate.PublicServiceVisitorAllowed {
 		t.Fatal("another visitor ID passed live recheck")
 	}
 	exec(`UPDATE control.ingress_leases SET registered_at=$2, renewed_at=$2, lease_expires_at=$3 WHERE ingress_id=$1`, ingress.IngressID, now.Add(-10*time.Minute), now.Add(-time.Second))
@@ -381,7 +381,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err := d.PromotePublicServiceVisitor(ctx, ingress, short.ConnectionID, now); err != nil {
 		t.Fatal(err)
 	}
-	shortValidity, err := d.PublicServiceVisitorStatus(ctx, ingress, short.ConnectionID, now)
+	shortValidity, err := d.PublicServiceVisitorStatus(ctx, ingress, short.ConnectionID, source, now)
 	if err != nil || shortValidity.State != controlstate.PublicServiceVisitorAllowed || shortValidity.ValidUntil.After(shortExpiry) {
 		t.Fatalf("active recheck ignored expiring grant: %+v, grant %v: %v", shortValidity, shortExpiry, err)
 	}

@@ -240,13 +240,13 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if err = d.PromotePublicServiceVisitor(ctx, otherIngress, active.ConnectionID, now); err != nil {
 		t.Fatal(err)
 	}
-	if status, err := d.PublicServiceVisitorStatus(ctx, ingress, active.ConnectionID, now); err == nil && status.State == controlstate.PublicServiceVisitorAllowed {
+	if status, err := d.PublicServiceVisitorStatus(ctx, ingress, active.ConnectionID, source, now); err == nil && status.State == controlstate.PublicServiceVisitorAllowed {
 		t.Fatal("direct reservation crossed ingress lease")
 	}
 	if err = d.RevokeVisitorDevice(ctx, person, device, now); err != nil {
 		t.Fatal(err)
 	}
-	validity, err := d.PublicServiceVisitorStatus(ctx, otherIngress, active.ConnectionID, now)
+	validity, err := d.PublicServiceVisitorStatus(ctx, otherIngress, active.ConnectionID, source, now)
 	if err != nil || validity.State == controlstate.PublicServiceVisitorAllowed {
 		t.Fatalf("revoked device kept active stream: %+v %v", validity, err)
 	}

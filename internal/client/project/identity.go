@@ -2,7 +2,6 @@ package project
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -31,16 +30,39 @@ type LocalPublicationIdentity struct {
 }
 
 func (p Project) LocalPublicationIdentity() LocalPublicationIdentity {
-	digest := sha256.Sum256([]byte("tnl-local-publication-v1\x00" + p.Root))
-	fingerprint := hex.EncodeToString(digest[:])
-	return LocalPublicationIdentity{Key: "local-" + fingerprint[:48], Fingerprint: fingerprint}
+	if !validLocalIdentity(p.localSource) {
+		return LocalPublicationIdentity{}
+	}
+	return LocalPublicationIdentity{Key: "local-" + p.localSource[:48], Fingerprint: p.localSource}
 }
 
 // LocalWorktreeKey identifies this project directory without sending local paths
 // to control. server, team and source identity remain separate scope checks.
 func (p Project) LocalWorktreeKey() string {
-	digest := sha256.Sum256([]byte("tnl-local-worktree-v1\x00" + p.Root))
-	return hex.EncodeToString(digest[:])
+	return p.localWorktree
+}
+
+type LocalIdentityStore interface {
+	LocalProjectIdentity(context.Context, string) (string, string, error)
+}
+
+// BindLocalIdentity is composed after static project evaluation, with protected
+// local state. source identity for remote apply and workloads is independent.
+func (p Project) BindLocalIdentity(ctx context.Context, store LocalIdentityStore) (Project, error) {
+	source, worktree, err := store.LocalProjectIdentity(ctx, p.Root)
+	if err != nil {
+		return Project{}, err
+	}
+	if !validLocalIdentity(source) || !validLocalIdentity(worktree) || source == worktree {
+		return Project{}, errors.New("invalid local project identity")
+	}
+	p.localSource, p.localWorktree = source, worktree
+	return p, nil
+}
+
+func validLocalIdentity(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == 32 && hex.EncodeToString(decoded) == value && value != strings.Repeat("0", 64)
 }
 
 func (p Project) SourceIdentity(ctx context.Context) (SourceIdentity, error) {

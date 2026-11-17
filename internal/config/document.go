@@ -119,6 +119,15 @@ type HTTPService struct {
 	Open                   *bool                `json:"open,omitempty" yaml:"open,omitempty"`
 }
 
+// HTTPRequestPolicy excludes publisher-only readiness, mounts, and browser opening.
+// the returned policy shares its nested values; callers must copy before editing.
+func HTTPRequestPolicy(value *HTTPService) *HTTPService {
+	if value == nil || value.Access == nil && value.Limits == nil && value.RequestBodyIdleTimeout == nil {
+		return nil
+	}
+	return &HTTPService{Access: value.Access, Limits: value.Limits, RequestBodyIdleTimeout: value.RequestBodyIdleTimeout}
+}
+
 func ServicePaths(service Service) map[string]PathMount {
 	if service.HTTP == nil {
 		return nil

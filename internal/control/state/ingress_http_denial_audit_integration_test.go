@@ -62,7 +62,7 @@ func TestIntegrationIngressHTTPSelectionDenialUsesSignedRoutingAuthority(t *test
 		if event.ID == observation.EventID {
 			found = true
 			if event.RunID != "" || event.PublisherIdentityID != "" || event.ActorIdentityID != "" || event.DeviceID != "" ||
-				event.SourceIP != observation.SourceIP || event.TeamID != f.project.TeamID || event.Reason != "ip_policy" {
+				event.SourceDigest != auditSourceDigest(t, f.database, f.service.ID, observation.SourceIP) || event.TeamID != f.project.TeamID || event.Reason != "ip_policy" {
 				t.Fatal("a selection denial invented serving or visitor authority", event)
 			}
 		}

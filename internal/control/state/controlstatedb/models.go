@@ -201,7 +201,7 @@ type ControlConnectorPeerAuditBinding struct {
 	PublisherIdentityID string
 	IdentityID          pgtype.Text
 	DeviceID            pgtype.Text
-	SourceIp            netip.Addr
+	SourceDigest        string
 	CreatedAt           pgtype.Timestamptz
 	ExpiresAt           pgtype.Timestamptz
 	DeliveryGeneration  int64
@@ -716,7 +716,7 @@ type ControlPublicServiceVisitor struct {
 	IngressRunID         string
 	IngressLeaseRevision int64
 	DestinationPort      int32
-	SourceIp             netip.Addr
+	SourceDigest         string
 	IdentityID           pgtype.Text
 	DeviceID             pgtype.Text
 	CertificateDigest    []byte
@@ -829,7 +829,6 @@ type ControlPublisherRuntime struct {
 	ScopeID                   string
 	ProcessRunID              string
 	Epoch                     int64
-	Address                   pgtype.Text
 	AddressFamily             string
 	Evidence                  string
 	StartedAt                 pgtype.Timestamptz
@@ -984,7 +983,7 @@ type ControlServiceAuditEvent struct {
 	PublisherIdentityID   pgtype.Text
 	RunID                 pgtype.Text
 	VisitorConnectionID   pgtype.Text
-	SourceIp              *netip.Addr
+	SourceDigest          pgtype.Text
 	Outcome               pgtype.Text
 	Reason                pgtype.Text
 	ConfigurationRevision pgtype.Int8
@@ -1132,6 +1131,13 @@ type ControlServiceInvitation struct {
 	AcceptedAt          pgtype.Timestamptz
 	AcceptedIdentityID  pgtype.Text
 	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlServiceIpKey struct {
+	ServiceID     string
+	Purpose       string
+	KeyCiphertext []byte
+	StorageKeyID  string
 }
 
 type ControlServiceNamespaceClaim struct {

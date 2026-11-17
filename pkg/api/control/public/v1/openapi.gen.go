@@ -1914,7 +1914,7 @@ type AppliedDeployment struct {
 
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
 type AppliedProjectConfiguration struct {
-	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 	Configuration     ProjectConfiguration        `json:"configuration"`
 	ConfigurationHash string                      `json:"configuration_hash"`
 	Deployment        string                      `json:"deployment"`
@@ -1949,7 +1949,7 @@ type AppliedProjectServiceServiceKind string
 
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
 type ApplyProjectConfigurationRequest struct {
-	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 	Configuration    ProjectConfiguration `json:"configuration"`
 	Deployment       string               `json:"deployment"`
 	ExpectedRevision int64                `json:"expected_revision,string"`
@@ -3090,14 +3090,14 @@ type ProjectApplicationRate struct {
 	Per   string `json:"per"`
 }
 
-// ProjectConfiguration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings; local selection omits settings and workloads. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+// ProjectConfiguration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 type ProjectConfiguration struct {
-	// Oauth Desired local app-led OAuth integration URL declaration. Applying it does not provision a handler on a saved deployment.
+	// Oauth Publisher-only OAuth intent is not retained in shared configuration. Native clients send false.
 	Oauth    bool                                   `json:"oauth"`
 	Services map[string]ProjectServiceConfiguration `json:"services"`
 	Settings *DeploymentSettings                    `json:"settings,omitempty"`
 
-	// Webhooks Desired exact endpoints for the existing local webhook integration handler. Each endpoint names a declared local HTTP service with public reachability enabled, including app, address, compose, and docker targets. Control does not fetch provider catalogs or provision remote webhook handlers during apply.
+	// Webhooks Publisher-only webhook handler definitions are not retained in shared configuration. Native clients send an empty object.
 	Webhooks  map[string]ProjectWebhook   `json:"webhooks"`
 	Workloads *map[string]ProjectWorkload `json:"workloads,omitempty"`
 }
@@ -3184,7 +3184,7 @@ type ProjectServiceConfiguration struct {
 	// Hostname Exact authorized service hostname, not an HTTPS origin. Does not enable public endpoint access.
 	Hostname *string `json:"hostname,omitempty"`
 
-	// Http HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
+	// Http HTTP visitor access and request limits, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Project-local readiness, path mounts, and browser opening stay with the publisher and are not saved in control.
 	Http     *ProjectServiceHTTP `json:"http,omitempty"`
 	Name     *string             `json:"name,omitempty"`
 	Protocol *ServiceProtocol    `json:"protocol,omitempty"`
@@ -3195,7 +3195,7 @@ type ProjectServiceConfiguration struct {
 	// RequirePostQuantum Require hybrid post-quantum key agreement for visitor TLS, independently of target TLS.
 	RequirePostQuantum *bool `json:"require_post_quantum,omitempty"`
 
-	// Target Service targets normalize to host:port with separate target_tls trust. The app descriptor defers an HTTP listener to its application owner in any deployment. integration:oauth and integration:webhooks explicitly select a non-ephemeral, in-process HTTP handler and require explicit anonymous HTTP access; they are not app listeners or separate resources. Only local declarations may use integration, compose:SERVICE:PORT or docker:CONTAINER:PORT descriptors; control does not discover targets.
+	// Target Saved service and remote deployment targets normalize to host:port with separate target_tls trust. Local project bindings use app for every protocol and keep listener and container selection local. Remote app descriptors defer HTTP listeners to their application owners. integration:oauth and integration:webhooks explicitly select a non-ephemeral, in-process HTTP handler and require explicit anonymous HTTP access; they are not app listeners or separate resources. Control does not discover local targets.
 	Target string `json:"target"`
 
 	// TargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
@@ -3211,7 +3211,7 @@ type ProjectServiceConfiguration struct {
 // ProjectServiceDeclarations defines model for ProjectServiceDeclarations.
 type ProjectServiceDeclarations map[string]ServiceProtocol
 
-// ProjectServiceHTTP HTTP visitor access and request limits for local and remote services, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Only local bindings support readiness, path mounts, and browser opening.
+// ProjectServiceHTTP HTTP visitor access and request limits, independent of public endpoint access. Visitor access defaults to restricted; anonymous access does not enable a public endpoint or grant connector access. Project-local readiness, path mounts, and browser opening stay with the publisher and are not saved in control.
 type ProjectServiceHTTP struct {
 	Access *ProjectHTTPAccess            `json:"access,omitempty"`
 	Limits *ProjectHTTPApplicationLimits `json:"limits,omitempty"`
@@ -3501,10 +3501,7 @@ type PublisherRuntimeResponse struct {
 
 // PublisherRuntimeStatus Last explicitly started runtime for this publisher identity, retained after stop or lease expiry. Active means its lease is live, not that the target is reachable or its egress IP is fixed. The source address seen by control can differ from the address used to reach targets and grants no access.
 type PublisherRuntimeStatus struct {
-	Active bool `json:"active"`
-
-	// Address Canonical public routable IPv4 or IPv6 host, never a CIDR. Absent for private or non-routable sources.
-	Address       *string                             `json:"address,omitempty"`
+	Active        bool                                `json:"active"`
 	AddressFamily PublisherRuntimeStatusAddressFamily `json:"address_family"`
 
 	// Deployment An accepted publisher deployment report, with control receipt times and a control-derived deployment_id. It does not prove cloud state, image identity, or target health. The deployment/deployment/replica combination belongs to this publisher identity.
@@ -3577,7 +3574,7 @@ type ReadinessResponseChecksRoute53Credentials string
 // ReadinessResponseStatus defines model for ReadinessResponse.Status.
 type ReadinessResponseStatus string
 
-// RealizeLocalProjectServiceRequest defines model for RealizeLocalProjectServiceRequest.
+// RealizeLocalProjectServiceRequest Shared service policy for one local worktree. Native clients send persistent random source/worktree IDs and an app target; directory mappings, listener selection, readiness, and mounts stay local.
 type RealizeLocalProjectServiceRequest struct {
 	Configuration     ProjectServiceConfiguration `json:"configuration"`
 	SourceFingerprint string                      `json:"source_fingerprint"`
@@ -3746,7 +3743,7 @@ type ServiceAuditEvent struct {
 	RunId                 *string                      `json:"run_id,omitempty"`
 	ServiceId             string                       `json:"service_id"`
 	ServiceKind           ServiceAuditEventServiceKind `json:"service_kind"`
-	SourceIp              *string                      `json:"source_ip,omitempty"`
+	SourceDigest          *string                      `json:"source_digest,omitempty"`
 	TeamId                string                       `json:"team_id"`
 	VisitorConnectionId   *string                      `json:"visitor_connection_id,omitempty"`
 }

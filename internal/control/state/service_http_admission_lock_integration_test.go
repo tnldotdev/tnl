@@ -317,7 +317,7 @@ func TestIntegrationPublicServiceVisitorCapacityWritersSerialize(t *testing.T) {
 						}
 						return validity.ValidUntil, err
 					case "status":
-						status, err := d.PublicServiceVisitorStatus(ctx, ingress.IngressLeaseIdentity, visitor, now)
+						status, err := d.PublicServiceVisitorStatus(ctx, ingress.IngressLeaseIdentity, visitor, source, now)
 						if err == nil && status.State != PublicServiceVisitorAuthenticated {
 							err = fmt.Errorf("status lost the authorized, unpromoted visitor: %+v", status)
 						}

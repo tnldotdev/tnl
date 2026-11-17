@@ -66,8 +66,5 @@ func runtimeResponse(s *controlstate.PublisherRuntimeStatus) *controlv1.Publishe
 		return nil
 	}
 	r := &controlv1.PublisherRuntimeStatus{PublisherIdentityId: s.PublisherIdentityID, TeamId: s.TeamID, ProcessRunId: s.ProcessRunID, Epoch: s.Epoch, Evidence: controlv1.PublisherRuntimeStatusEvidence(s.Evidence), AddressFamily: controlv1.PublisherRuntimeStatusAddressFamily(s.AddressFamily), StartedAt: s.StartedAt, ObservedAt: s.ObservedAt, LastSeenAt: s.LastSeenAt, LeaseExpiresAt: s.LeaseExpiresAt, StoppedAt: s.StoppedAt, Active: s.Active, Deployment: s.Deployment}
-	if s.Address != "" {
-		r.Address = &s.Address
-	}
 	return r
 }

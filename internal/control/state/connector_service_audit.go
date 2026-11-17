@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,14 +16,19 @@ import (
 
 // saveConnectorPeerAuditBinding records only checked installation facts. it cannot
 // hold delivery keys, authorize a visitor, or transfer authority to a replacement.
-func saveConnectorPeerAuditBinding(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, binding connectorPeerBinding, until time.Time) error {
+func (d *Database) saveConnectorPeerAuditBinding(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, binding connectorPeerBinding, until time.Time) error {
 	if !connectorPeerPairUnretired(pair) {
 		return ErrServiceAuditAccess
 	}
-	count, err := controlstatedb.New(tx).SaveConnectorPeerAuditBinding(ctx, controlstatedb.SaveConnectorPeerAuditBindingParams{
+	q := controlstatedb.New(tx)
+	source, err := d.serviceIPDigest(ctx, q, pair.ServiceID, "connector-audit-binding", binding.source)
+	if err != nil {
+		return err
+	}
+	count, err := q.SaveConnectorPeerAuditBinding(ctx, controlstatedb.SaveConnectorPeerAuditBindingParams{
 		PairID: pair.ID, ServiceID: pair.ServiceID, ServiceRunID: pair.ServiceRunID, RunNumber: pair.RunNumber,
 		PublisherIdentityID: pair.PublisherIdentityID, IdentityID: nullableText(binding.subject.IdentityID),
-		DeviceID: nullableText(binding.subject.DeviceID), SourceIp: binding.source, CreatedAt: pair.CreatedAt,
+		DeviceID: nullableText(binding.subject.DeviceID), SourceDigest: source, CreatedAt: pair.CreatedAt,
 		ExpiresAt: timestamptz(until), DeliveryGeneration: pair.DeliveryGeneration,
 	})
 	if err != nil {
@@ -115,13 +121,21 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 		}
 		var created, expires time.Time
 		var retired pgtype.Timestamptz
+		source, err := netip.ParseAddr(o.SourceIP)
+		if err != nil {
+			return ServiceObservationResult{}, ErrServiceAuditAccess
+		}
+		sourceDigest, err := d.serviceIPDigest(ctx, q, serviceID, "connector-audit-binding", source)
+		if err != nil {
+			return ServiceObservationResult{}, err
+		}
 		// installation checked both claims and their immutable source agreement.
 		// its credential-free audit scope survives replacing or removing the pair.
 		err = tx.QueryRow(ctx, `SELECT created_at,expires_at,identity_id,device_id,retired_at
 			FROM control.connector_peer_audit_bindings
 			WHERE pair_id=$1 AND service_id=$2 AND service_run_id=$3 AND run_number=$4
-			AND publisher_identity_id=$5 AND host(source_ip)=$6 AND delivery_generation=$7`,
-			o.PairID, serviceID, runID, number, run.PublisherIdentityID, o.SourceIP, o.DeliveryGeneration).
+			AND publisher_identity_id=$5 AND source_digest=$6 AND delivery_generation=$7`,
+			o.PairID, serviceID, runID, number, run.PublisherIdentityID, sourceDigest, o.DeliveryGeneration).
 			Scan(&created, &expires, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &retired)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
@@ -146,7 +160,7 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 		}
 		events = append(events, e)
 	}
-	result, err = insertServiceAuditBatch(ctx, tx, events, now)
+	result, err = d.insertServiceObservationBatch(ctx, tx, events, now)
 	if err != nil {
 		return ServiceObservationResult{}, err
 	}

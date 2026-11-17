@@ -94,13 +94,16 @@ func TestServiceHTTPRequestPolicyDeclarationMatchesLocalAndRemote(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := json.Marshal(local.Services["web"])
+	l, err := json.Marshal(local.Services["web"].Http)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := json.Marshal(remote.Services["web"])
+	r, err := json.Marshal(remote.Services["web"].Http)
 	if err != nil || string(l) != string(r) {
 		t.Fatal("placement changed service request policy or reachability", string(l), string(r), err)
+	}
+	if local.Services["web"].Target != "app" || remote.Services["web"].Target != "http://app.internal:3000" {
+		t.Fatal("local target escaped or remote target was lost")
 	}
 	if value := local.Services["web"]; value.Http == nil || value.Http.Access == nil || value.Http.Limits == nil || *value.Http.Limits.Total != 100 || *value.Http.Limits.Concurrency != 2 {
 		t.Fatal("local declaration lost its request policy", value)
@@ -184,8 +187,11 @@ func TestProjectDeclarationPreservesDirectSettingsPolicyLimitsAndGrantIntent(t *
 	if web.Hostname != nil || web.DomainId != nil || web.Access == nil || !bool(web.Access.Team) {
 		t.Fatalf("local public declaration was allocated or lost team access: %+v", web)
 	}
-	if web.Http == nil || web.Http.Readiness == nil || web.Http.Readiness.Path != "/health" || web.Http.Paths == nil || (*web.Http.Paths)["/api"].Service != "internal" || (*web.Http.Paths)["/api"].StripPrefix == nil || !*(*web.Http.Paths)["/api"].StripPrefix {
-		t.Fatalf("apply dropped local HTTP behavior: %+v", web.Http)
+	if web.Http == nil || web.Http.Readiness != nil || web.Http.Paths != nil || web.Http.Open != nil {
+		t.Fatalf("apply included publisher-only HTTP behavior: %+v", web.Http)
+	}
+	if local := project.Config.Services["web"].HTTP; local.Readiness.Path != "/health" || !local.Paths["/api"].StripPrefix {
+		t.Fatal("declaration mutated the publisher's HTTP settings")
 	}
 	remoteProject := project
 	remoteProject.Config.Deployment = deployment
@@ -226,7 +232,8 @@ func TestProjectDeclarationLocalDiscoveryNeedsNoRunningTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, target := range map[string]string{"web": "app", "db": "compose:db:5432", "cache": "docker:cache:5432"} {
+	for _, name := range []string{"web", "db", "cache"} {
+		target := "app"
 		if got := declaration.Services[name].Target; got != target {
 			t.Fatalf("%s target=%q", name, got)
 		}

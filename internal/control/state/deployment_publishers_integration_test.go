@@ -128,7 +128,7 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 		t.Fatal(err)
 	}
 	status, err := d.GetDeploymentPublisher(ctx, request.DeploymentScope, "production", a.member.PublisherIdentityID)
-	if err != nil || !status.Healthy || status.Runtime == nil || !status.Runtime.Active || status.Runtime.Address != "8.8.8.8" || !reflect.DeepEqual(status.Services, enrollment.Services) {
+	if err != nil || !status.Healthy || status.Runtime == nil || !status.Runtime.Active || status.Runtime.AddressFamily != "ipv4" || !reflect.DeepEqual(status.Services, enrollment.Services) {
 		t.Fatal("scoped read lost the real publisher observation", status, err)
 	}
 	page, err := d.ListDeploymentPublishers(ctx, request.DeploymentScope, "production", "", 1)
@@ -164,7 +164,7 @@ func TestIntegrationDeploymentPublisherScopeRecoveryAndRevocation(t *testing.T) 
 		t.Fatal("revoking one publisher disturbed its sibling", err)
 	}
 	status, err = d.GetDeploymentPublisher(ctx, request.DeploymentScope, "production", a.member.PublisherIdentityID)
-	if err != nil || status.RevokedAt == nil || status.Healthy || status.Runtime == nil || status.Runtime.Active || status.Runtime.Address != "8.8.8.8" {
+	if err != nil || status.RevokedAt == nil || status.Healthy || status.Runtime == nil || status.Runtime.Active || status.Runtime.AddressFamily != "ipv4" {
 		t.Fatal("revocation lost the observation or retained healthy status", status, err)
 	}
 	wire, err := json.Marshal(status)

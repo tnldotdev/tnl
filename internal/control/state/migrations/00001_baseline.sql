@@ -1532,6 +1532,14 @@ ALTER TABLE control.visitor_grants ADD CONSTRAINT visitor_grants_invitation_fkey
     FOREIGN KEY (invitation_id, service_id, team_id)
         REFERENCES control.service_invitations(id, service_id, team_id) ON DELETE RESTRICT;
 
+CREATE TABLE control.service_ip_keys (
+    service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
+    purpose text NOT NULL CHECK (purpose <> ''),
+    key_ciphertext bytea NOT NULL,
+    storage_key_id text NOT NULL CHECK (storage_key_id <> ''),
+    PRIMARY KEY (service_id, purpose)
+);
+
 -- authenticated publishers prepare and start runs against a captured managed
 -- endpoint and certificate plan. visitor TLS keys never enter control storage.
 CREATE TABLE control.service_runs (
@@ -1780,7 +1788,7 @@ CREATE TABLE control.public_service_visitors (
     ingress_run_id text NOT NULL,
     ingress_lease_revision bigint NOT NULL CHECK (ingress_lease_revision>0),
     destination_port integer NOT NULL CHECK (destination_port BETWEEN 1024 AND 65535),
-    source_ip inet NOT NULL,
+    source_digest text NOT NULL CHECK (source_digest ~ '^[A-Za-z0-9_-]{43}$'),
     identity_id text,
     device_id text,
     certificate_digest bytea CHECK (certificate_digest IS NULL OR octet_length(certificate_digest)=32),
@@ -2404,7 +2412,6 @@ CREATE TABLE control.publisher_runtimes (
     scope_id text NOT NULL,
     process_run_id text NOT NULL CHECK (process_run_id ~ '^[a-f0-9]{32}$'),
     epoch bigint NOT NULL CHECK (epoch > 0),
-    address text,
     address_family text NOT NULL CHECK (address_family IN ('ipv4','ipv6','unknown')),
     evidence text NOT NULL DEFAULT 'control_observed' CHECK (evidence = 'control_observed'),
     started_at timestamptz NOT NULL,
@@ -2420,10 +2427,7 @@ CREATE TABLE control.publisher_runtimes (
     CHECK ((deployment_report IS NULL) = (deployment_first_observed_at IS NULL)),
     CHECK (deployment_report IS NULL OR (jsonb_typeof(deployment_report) = 'object' AND octet_length(deployment_report::text) <= 2048 AND deployment_id = scope_id)),
     FOREIGN KEY (publisher_identity_id,team_id) REFERENCES control.publisher_identities(id,team_id) ON DELETE CASCADE,
-    FOREIGN KEY (key_id,publisher_identity_id) REFERENCES control.publisher_identity_keys(id,publisher_identity_id) ON DELETE RESTRICT,
-    CHECK ((address IS NULL) = (address_family = 'unknown')),
-    CHECK (address IS NULL OR (address = host(address::inet) AND masklen(address::inet) = CASE family(address::inet) WHEN 4 THEN 32 ELSE 128 END
-        AND address_family = CASE family(address::inet) WHEN 4 THEN 'ipv4' ELSE 'ipv6' END))
+    FOREIGN KEY (key_id,publisher_identity_id) REFERENCES control.publisher_identity_keys(id,publisher_identity_id) ON DELETE RESTRICT
 );
 
 -- one authenticated publisher owns an observed replica slot, including while
@@ -2507,11 +2511,11 @@ CREATE TABLE control.service_audit_events (
     publisher_identity_id text,
     run_id text,
     visitor_connection_id text,
-    source_ip inet,
+    source_digest text CHECK (source_digest ~ '^[A-Za-z0-9_-]{43}$'),
+    CHECK ((event_type IN ('connection.open','connection.close','http.decision')) = (source_digest IS NOT NULL)),
     outcome text CHECK (outcome IN ('allowed','denied','failed','forwarded','closed')),
     reason text CHECK (reason IN ('ip_policy','capacity','draining','unavailable','authorization','invalid_request','forwarding','closed','revoked','expired','cancelled')),
     configuration_revision bigint CHECK (configuration_revision >= 1),
-    CHECK (source_ip IS NULL OR masklen(source_ip)=CASE family(source_ip) WHEN 4 THEN 32 ELSE 128 END),
     CHECK (num_nonnulls(team_id,guest_id)=1),
     FOREIGN KEY (service_id,team_id) REFERENCES control.services(id,team_id) ON DELETE RESTRICT,
     FOREIGN KEY (service_id,guest_id) REFERENCES control.services(id,guest_id) ON DELETE RESTRICT
@@ -2998,7 +3002,7 @@ CREATE TABLE control.connector_peer_audit_bindings (
     publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE RESTRICT,
     identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
     device_id text REFERENCES control.visitor_devices(id) ON DELETE RESTRICT,
-    source_ip inet NOT NULL,
+    source_digest text NOT NULL CHECK (source_digest ~ '^[A-Za-z0-9_-]{43}$'),
     created_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,
     delivery_generation bigint NOT NULL CHECK (delivery_generation>0),

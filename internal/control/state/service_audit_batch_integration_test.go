@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/testutil/ipdigest"
 )
 
 type auditQueryCountTx struct {
@@ -47,7 +48,7 @@ func TestIntegrationServiceAuditBatchBoundsWritesAndPreservesInputOrder(t *testi
 			ServiceID: f.service.ID, ServiceKind: "service", EventType: "http.decision",
 			RunID: f.run.RunID, PublisherIdentityID: f.publisher.ID,
 			VisitorConnectionID: mustOpaqueID(t, opaqueid.VisitorConnectionPrefix),
-			SourceIP:            "192.0.2.10", Outcome: "allowed",
+			SourceDigest:        ipdigest.Hash("192.0.2.10"), Outcome: "allowed",
 			// report arrival, not event time or random ID order, assigns cursors.
 			OccurredAt: f.now.Add(-time.Duration(index) * time.Microsecond)}
 	}
@@ -109,7 +110,7 @@ func TestIntegrationServiceAuditBatchConflictRollsBackEveryNeighbor(t *testing.T
 	ctx := t.Context()
 	original := serviceaudit.Event{ID: serviceaudit.NewID(), TeamID: f.service.TeamID, ServiceID: f.service.ID,
 		ServiceKind: "service", EventType: "http.decision", RunID: f.run.RunID, PublisherIdentityID: f.publisher.ID,
-		VisitorConnectionID: mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), SourceIP: "192.0.2.10",
+		VisitorConnectionID: mustOpaqueID(t, opaqueid.VisitorConnectionPrefix), SourceDigest: ipdigest.Hash("192.0.2.10"),
 		Outcome: "allowed", OccurredAt: f.now}
 	for _, committed := range []bool{false, true} {
 		if committed {
@@ -131,7 +132,7 @@ func TestIntegrationServiceAuditBatchConflictRollsBackEveryNeighbor(t *testing.T
 				neighbor.ID = serviceaudit.NewID()
 				switch field {
 				case "source":
-					bad.SourceIP = "192.0.2.11"
+					bad.SourceDigest = ipdigest.Hash("192.0.2.11")
 				case "time":
 					bad.OccurredAt = bad.OccurredAt.Add(time.Microsecond)
 				case "outcome":

@@ -171,7 +171,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	if err != nil || !found || recoveredOrder.ID != order.ID || !bytes.Equal(recoveredOrder.PrivateKeyPEM, order.PrivateKeyPEM) {
 		t.Fatalf("recover relay order key: found %t, %v", found, err)
 	}
-	recoveredDeclaration, err := reopened.openServiceConfiguration(service.ID, service.Name, rotatedDeclarationKey, rotatedDeclaration, "")
+	recoveredDeclaration, err := reopened.openServiceConfiguration(service.ID, service.Name, rotatedDeclarationKey, rotatedDeclaration, "", savedServiceConfiguration)
 	if err != nil {
 		t.Fatalf("recover guest service declaration: %v", err)
 	}

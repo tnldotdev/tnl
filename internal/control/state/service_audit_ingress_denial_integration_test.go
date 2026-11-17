@@ -75,7 +75,7 @@ func TestIntegrationIngressSelectionDenialAuditRequiresItsAdmissionReceipt(t *te
 		}
 		found = true
 		if event.RunID != "" || event.PublisherIdentityID != "" || event.ActorIdentityID != "" || event.DeviceID != "" ||
-			event.ServiceID != service.ID || event.Outcome != "denied" || event.SourceIP != observation.SourceIP {
+			event.ServiceID != service.ID || event.Outcome != "denied" || event.SourceDigest != auditSourceDigest(t, d, service.ID, observation.SourceIP) {
 			t.Fatal("selection denial invented a serving run or authenticated visitor", event)
 		}
 	}

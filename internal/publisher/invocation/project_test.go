@@ -71,6 +71,15 @@ func testProjectRuntimePreparation(t *testing.T, public bool, corrupt func(*cont
 					TLS: &config.TargetTLS{CA: new("invalid remote trust")}}},
 			}}}},
 	}
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = state.Close() })
+	project, err = project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	source, worktree := project.LocalPublicationIdentity(), project.LocalWorktreeKey()
 	localPath := "/v1/projects/" + source.Key + "/local-services/"
 	token, _, _, err := credentials.NewAccessToken()
@@ -167,11 +176,6 @@ func testProjectRuntimePreparation(t *testing.T, public bool, corrupt func(*cont
 	original := http.DefaultTransport
 	http.DefaultTransport = server.Client().Transport
 	t.Cleanup(func() { http.DefaultTransport = original })
-	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = state.Close() })
 	operation := NewProjectRuntime(project, state, nil, target.TargetResolverFunc(func(context.Context, clientproject.Project, string) (string, string, error) {
 		t.Error("app preparation evaluated an unrelated target or trust source")
 		return "", "", errors.New("unexpected discovery")

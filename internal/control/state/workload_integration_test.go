@@ -422,7 +422,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if err = d.PromotePublicServiceVisitor(ctx, lease.IngressLeaseIdentity, direct, now); err != nil {
 		t.Fatal(err)
 	}
-	status, err := d.PublicServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, direct, now.Add(time.Second))
+	status, err := d.PublicServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, direct, source, now.Add(time.Second))
 	if err != nil || status.State != PublicServiceVisitorAllowed {
 		t.Fatal("public active recheck", status, err)
 	}

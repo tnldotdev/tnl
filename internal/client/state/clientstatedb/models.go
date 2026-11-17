@@ -126,6 +126,12 @@ type IntegrationUrlLease struct {
 	ExpiresAt           int64
 }
 
+type LocalProjectIdentity struct {
+	ProjectRoot string
+	SourceID    string
+	WorktreeID  string
+}
+
 type LocalTunnel struct {
 	ID                   string
 	Command              string

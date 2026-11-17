@@ -76,9 +76,26 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
+	worktree := ""
+	if options.Workload == "" {
+		state, err := clientstate.Open(ctx, options.StateDir)
+		if err != nil {
+			return projectConfiguration{}, connectorruntime.Context{}, err
+		}
+		project, err = project.BindLocalIdentity(ctx, state)
+		closeErr := state.Close()
+		if err != nil || closeErr != nil {
+			return projectConfiguration{}, connectorruntime.Context{}, errors.Join(err, closeErr)
+		}
+		worktree = project.LocalWorktreeKey()
+	}
 	source, err := project.SourceIdentity(ctx)
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
+	}
+	if options.Workload != "" {
+		// CI needs no local directory identifier or human client database.
+		worktree = source.Fingerprint
 	}
 	server := clientserver.DefaultURL
 	if project.Config.Server != nil {
@@ -161,12 +178,12 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 		Source   clientproject.SourceIdentity
 		Worktree string
 		Binding  *connectorruntime.Binding
-	}{project.Config, server, source, project.LocalWorktreeKey(), appliedBinding})
+	}{project.Config, server, source, worktree, appliedBinding})
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
 	digest := sha256.Sum256(encoded)
-	scope := connectorruntime.Context{Schema: 1, Directory: project.Root, ConfigDigest: hex.EncodeToString(digest[:]), Server: server, Audience: server, TeamID: team, ProjectKey: source.Key, SourceID: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), ProjectLabel: source.Label, Workload: options.Workload, Services: services}
+	scope := connectorruntime.Context{Schema: 1, Directory: project.Root, ConfigDigest: hex.EncodeToString(digest[:]), Server: server, Audience: server, TeamID: team, ProjectKey: source.Key, SourceID: source.Fingerprint, WorktreeKey: worktree, ProjectLabel: source.Label, Workload: options.Workload, Services: services}
 	scope.Deployment = project.Deployment
 	if project.Config.Team != nil {
 		scope.TeamName = *project.Config.Team

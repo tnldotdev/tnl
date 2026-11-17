@@ -48,14 +48,14 @@ func TestAppliedTargetRestorationMatchesConfigAndRuntimeAfterConversion(t *testi
 				}
 				service.Target = origin
 			}
-			applied, _, appliedErr := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": service}})
+			saved := service
+			appliedErr := normalizeAppliedProjectService("web", &saved, savedServiceConfiguration)
 			if (appliedErr != nil) != (runtimeErr != nil) {
 				t.Fatal("applied origin and runtime acceptance disagree after scheme/trust conversion", appliedErr, runtimeErr)
 			}
 			if appliedErr != nil {
 				return
 			}
-			saved := applied.Services["web"]
 			var savedTrust *targettrust.Snapshot
 			if saved.TargetTLS != nil {
 				declaration := targettrust.Declaration{Hostname: saved.TargetTLS.Hostname, CAPEM: []byte(saved.TargetTLS.CAPEM), Digest: saved.TargetTLS.Digest}

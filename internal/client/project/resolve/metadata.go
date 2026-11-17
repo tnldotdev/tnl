@@ -218,6 +218,9 @@ func (r *MetadataResolver) localServiceMetadata(ctx context.Context, name string
 	}
 	source := r.project.LocalPublicationIdentity()
 	worktree := r.project.LocalWorktreeKey()
+	if source.Key == "" || worktree == "" {
+		return meta.Service{}, errors.New("local metadata requires a project bound to client state")
+	}
 	assigned, err := client.Control.GetLocalProjectService(ctx, source.Key, name, controlv1.GetLocalProjectServiceParams{
 		TeamId: current.Team().Id, SourceFingerprint: source.Fingerprint, WorktreeKey: worktree,
 	})

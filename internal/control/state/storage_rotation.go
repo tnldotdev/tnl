@@ -79,6 +79,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.services WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.service_ip_keys WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.deployments WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.deployment_publisher_enrollments WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_logins WHERE storage_key_id=$1) +
@@ -294,6 +295,9 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		query, column, keyIDColumn, table string
 		context                           func(string) string
 	}{
+		{`SELECT ctid::text,service_id || '/' || purpose,key_ciphertext FROM control.service_ip_keys
+		  WHERE storage_key_id=$1 ORDER BY service_id,purpose FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"key_ciphertext", "storage_key_id", "control.service_ip_keys", serviceIPKeyContext},
 		{`SELECT ctid::text, 'device-login:' || encode(credential_digest,'hex'), payload FROM control.device_logins
 		  WHERE storage_key_id=$1 ORDER BY credential_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"payload", "storage_key_id", "control.device_logins", func(scope string) string { return scope }},

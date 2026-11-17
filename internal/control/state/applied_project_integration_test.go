@@ -595,8 +595,8 @@ func TestIntegrationAppliedProjectLocalDeferredTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, service := range r.Configuration.Services {
-		if status.Configuration.Services[name].Target != service.Target {
-			t.Fatal("control resolved a local discovery descriptor")
+		if got := status.Configuration.Services[name]; got.Target != "app" || got.Protocol != service.Protocol && service.Protocol != "" {
+			t.Fatal("control retained a local target or lost its protocol")
 		}
 	}
 	if !status.Configuration.Services["preview"].Ephemeral {

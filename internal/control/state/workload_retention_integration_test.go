@@ -245,7 +245,7 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 		if _, err := d.pool.Exec(ctx, `INSERT INTO control.workload_client_certificates VALUES($1,$2,$3,$1,'certificate',$4)`, cert[:], s.ID, service.ID, s.ExpiresAt); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := d.pool.Exec(ctx, `INSERT INTO control.public_service_visitors(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,'192.0.2.1',$6,$7,$8)`, s.ID, visitor, service.ID, run.RunID, run.RunNumber, cert[:], s.LeaseExpiresAt, at); err != nil {
+		if _, err := d.pool.Exec(ctx, `INSERT INTO control.public_service_visitors(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_digest,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,$9,$6,$7,$8)`, s.ID, visitor, service.ID, run.RunID, run.RunNumber, cert[:], s.LeaseExpiresAt, at, publicVisitorSourceDigest(t, d, service.ID, "192.0.2.1")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -255,7 +255,7 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	direct := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	if _, err := d.pool.Exec(ctx, `INSERT INTO control.public_service_visitors(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,'192.0.2.1',$6,$7,$8)`, sessions[1].ID, direct, service.ID, run.RunID, run.RunNumber, certificates[1], now.Add(time.Minute), now.Add(-49*24*time.Hour)); err != nil {
+	if _, err := d.pool.Exec(ctx, `INSERT INTO control.public_service_visitors(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_digest,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,$9,$6,$7,$8)`, sessions[1].ID, direct, service.ID, run.RunID, run.RunNumber, certificates[1], now.Add(time.Minute), now.Add(-49*24*time.Hour), publicVisitorSourceDigest(t, d, service.ID, "192.0.2.1")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.workload_client_certificates SET expires_at=$2 WHERE workload_session_id=$1`, sessions[2].ID, now.Add(time.Hour)); err != nil {

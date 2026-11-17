@@ -27,6 +27,9 @@ func RealizeLocalService(ctx context.Context, control *clientcontrol.Client, sel
 	project := projectConfiguration{Project: selected.Project, targetResolver: selected.TargetResolver}
 	current, name := selected.Team, selected.Name
 	source := project.LocalPublicationIdentity()
+	if source.Key == "" || project.LocalWorktreeKey() == "" {
+		return controlv1.LocalProjectService{}, failure.Wrap("identify local service", failure.ClientStateUnavailable, errors.New("project is not bound to client state"))
+	}
 	declaration, err := resolve.Declaration(ctx, project.Project, current.Context(), func(ctx context.Context, name string) (string, error) {
 		resolver := project.targetResolver
 		if resolver == nil {

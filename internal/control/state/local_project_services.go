@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
@@ -136,9 +137,10 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 	}
 	// realization validates one binding. only the actual project can validate
 	// cross-service destinations; never invent neighboring declarations here.
-	if err = normalizeAppliedProjectService(r.Service, &s, true); err != nil {
+	if err = normalizeAppliedProjectService(r.Service, &s, localProjectConfiguration); err != nil {
 		return result, err
 	}
+	s = localServiceDeclaration(s)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -275,6 +277,14 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		return result, err
 	}
 	return result, tx.Commit(ctx)
+}
+
+// only local project bindings use this projection. standalone saved services and
+// encrypted remote deployments retain targets that their publishers must resolve.
+func localServiceDeclaration(value ProjectServiceConfiguration) ProjectServiceConfiguration {
+	value.Target, value.TargetDiscovery = "app", nil
+	value.HTTP = config.HTTPRequestPolicy(value.HTTP)
+	return value
 }
 
 func reconcileLocalVisitorGrant(ctx context.Context, tx pgx.Tx, entry controlstatedb.ControlAppliedProjectService, worktree, actor, grant string, enabled bool, now time.Time) error {

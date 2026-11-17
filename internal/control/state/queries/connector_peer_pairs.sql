@@ -235,9 +235,9 @@ WHERE pair_id=sqlc.arg(pair_id)
 
 -- name: SaveConnectorPeerAuditBinding :execrows
 INSERT INTO control.connector_peer_audit_bindings
-    (pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_ip,created_at,expires_at,delivery_generation)
+    (pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_digest,created_at,expires_at,delivery_generation)
 SELECT sqlc.arg(pair_id),sqlc.arg(service_id),sqlc.arg(service_run_id),sqlc.arg(run_number),sqlc.arg(publisher_identity_id),
-    sqlc.narg(identity_id),sqlc.narg(device_id),sqlc.arg(source_ip),sqlc.arg(created_at),sqlc.arg(expires_at),sqlc.arg(delivery_generation)
+    sqlc.narg(identity_id),sqlc.narg(device_id),sqlc.arg(source_digest),sqlc.arg(created_at),sqlc.arg(expires_at),sqlc.arg(delivery_generation)
 FROM control.connector_peer_pairs pair WHERE pair.id=sqlc.arg(pair_id) AND pair.retired_at IS NULL
 ON CONFLICT (pair_id,delivery_generation) DO UPDATE SET expires_at=GREATEST(control.connector_peer_audit_bindings.expires_at,EXCLUDED.expires_at)
 WHERE control.connector_peer_audit_bindings.retired_at IS NULL
@@ -247,5 +247,5 @@ WHERE control.connector_peer_audit_bindings.retired_at IS NULL
     AND control.connector_peer_audit_bindings.publisher_identity_id=EXCLUDED.publisher_identity_id
     AND control.connector_peer_audit_bindings.identity_id IS NOT DISTINCT FROM EXCLUDED.identity_id
     AND control.connector_peer_audit_bindings.device_id IS NOT DISTINCT FROM EXCLUDED.device_id
-    AND control.connector_peer_audit_bindings.source_ip=EXCLUDED.source_ip
+    AND control.connector_peer_audit_bindings.source_digest=EXCLUDED.source_digest
     AND control.connector_peer_audit_bindings.created_at=EXCLUDED.created_at;

@@ -42,7 +42,7 @@ type Options struct {
 	AttachPublication func(context.Context, publisherapp.Service, *publisherservice.RunConfig) error
 }
 
-func ResolveProject(ctx context.Context, options Options) (clientproject.Project, string, error) {
+func ResolveProject(ctx context.Context, options Options) (_ clientproject.Project, _ string, retErr error) {
 	root := options.StateDir
 	var err error
 	if root == "" {
@@ -81,7 +81,13 @@ func ResolveProject(ctx context.Context, options Options) (clientproject.Project
 		if err := clientstate.ValidatePrivateFile(info, true); err != nil {
 			return clientproject.Project{}, "", err
 		}
-		return clientproject.Project{Root: owner}, filepath.Dir(runtime), nil
+		state, err := clientstate.Open(ctx, root)
+		if err != nil {
+			return clientproject.Project{}, "", err
+		}
+		defer func() { retErr = errors.Join(retErr, state.Close()) }()
+		project, err := (clientproject.Project{Root: owner}).BindLocalIdentity(ctx, state)
+		return project, state.Root(), err
 	}
 	if options.Snapshot != nil {
 		project, err := clientproject.ReadSnapshot(options.Snapshot)
@@ -94,13 +100,25 @@ func ResolveProject(ctx context.Context, options Options) (clientproject.Project
 		if err := config.ValidateTNL(project.Config); err != nil {
 			return clientproject.Project{}, "", err
 		}
+		state, err := clientstate.Open(ctx, root)
+		if err != nil {
+			return clientproject.Project{}, "", err
+		}
+		bound, bindErr := project.BindLocalIdentity(ctx, state)
+		closeErr := state.Close()
+		if bindErr != nil || closeErr != nil {
+			return clientproject.Project{}, "", errors.Join(bindErr, closeErr)
+		}
+		if bound.LocalPublicationIdentity() != project.LocalPublicationIdentity() || bound.LocalWorktreeKey() != project.LocalWorktreeKey() {
+			return clientproject.Project{}, "", errors.New("selected project snapshot belongs to another client state")
+		}
 		return project, root, nil
 	}
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
 		return clientproject.Project{}, "", err
 	}
-	defer state.Close()
+	defer func() { retErr = errors.Join(retErr, state.Close()) }()
 	salt, err := state.WorktreeHashSalt(ctx)
 	if err != nil {
 		return clientproject.Project{}, "", err
@@ -110,6 +128,10 @@ func ResolveProject(ctx context.Context, options Options) (clientproject.Project
 		return clientproject.Project{}, "", err
 	}
 	project, err := clientproject.Resolve(ctx, selection, directory, salt)
+	if err != nil {
+		return clientproject.Project{}, "", err
+	}
+	project, err = project.BindLocalIdentity(ctx, state)
 	if err != nil {
 		return clientproject.Project{}, "", err
 	}

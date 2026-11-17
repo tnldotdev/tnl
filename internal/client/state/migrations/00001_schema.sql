@@ -179,6 +179,14 @@ CREATE TABLE project_previews (
     PRIMARY KEY (server_origin, team_id, project_root)
 ) STRICT;
 
+-- local paths never determine identifiers sent to control.
+CREATE TABLE local_project_identities (
+    project_root TEXT PRIMARY KEY CHECK (project_root <> ''),
+    source_id TEXT NOT NULL UNIQUE CHECK (length(source_id)=64 AND source_id NOT GLOB '*[^0-9a-f]*' AND source_id<>printf('%064d',0)),
+    worktree_id TEXT NOT NULL UNIQUE CHECK (length(worktree_id)=64 AND worktree_id NOT GLOB '*[^0-9a-f]*' AND worktree_id<>printf('%064d',0)),
+    CHECK (source_id<>worktree_id)
+) STRICT;
+
 CREATE TABLE telemetry_outbox (
     event_id TEXT PRIMARY KEY CHECK (length(event_id) = 26 AND substr(event_id, 1, 4) = 'tev_'),
     created_at INTEGER NOT NULL,

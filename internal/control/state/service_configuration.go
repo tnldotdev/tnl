@@ -104,7 +104,7 @@ func normalizeServiceConfiguration(name string, value *ProjectServiceConfigurati
 	if err := json.Unmarshal(data, &normalized); err != nil {
 		return nil, ErrProjectConfigurationInvalid
 	}
-	if err := normalizeAppliedProjectService(name, &normalized, true); err != nil {
+	if err := normalizeAppliedProjectService(name, &normalized, savedServiceConfiguration); err != nil {
 		return nil, err
 	}
 	if normalized.Name != name {
@@ -125,10 +125,17 @@ func (d *Database) saveServiceConfiguration(ctx context.Context, tx pgx.Tx, serv
 	if row.DeploymentOwned || row.LocalOwned && row.AllocationOwned {
 		return ErrServiceAccess
 	}
-	if err := normalizeAppliedProjectService(row.Service, &value, true); err != nil {
+	owner := savedServiceConfiguration
+	if row.LocalOwned {
+		owner = localProjectConfiguration
+	}
+	if err := normalizeAppliedProjectService(row.Service, &value, owner); err != nil {
 		return err
 	}
-	previous, err := d.openServiceConfiguration(service, row.Service, row.StorageKeyID.String, row.ConfigurationCiphertext, row.RequiredTemporaryApproval)
+	if row.LocalOwned {
+		value = localServiceDeclaration(value)
+	}
+	previous, err := d.openServiceConfiguration(service, row.Service, row.StorageKeyID.String, row.ConfigurationCiphertext, row.RequiredTemporaryApproval, owner)
 	if err != nil {
 		return err
 	}
@@ -163,16 +170,16 @@ func (d *Database) saveServiceConfiguration(ctx context.Context, tx pgx.Tx, serv
 	}
 	var previousHTTP *config.HTTPService
 	if previous != nil {
-		previousHTTP = serviceHTTPRequestPolicy(previous.HTTP)
+		previousHTTP = config.HTTPRequestPolicy(previous.HTTP)
 	}
-	if reflect.DeepEqual(previousHTTP, serviceHTTPRequestPolicy(value.HTTP)) {
+	if reflect.DeepEqual(previousHTTP, config.HTTPRequestPolicy(value.HTTP)) {
 		return nil
 	}
 	_, err = tx.Exec(ctx, `SELECT control.touch_visitor_policy($1)`, service)
 	return err
 }
 
-func (d *Database) openServiceConfiguration(service, name, key string, sealed []byte, requiredApproval string) (*ProjectServiceConfiguration, error) {
+func (d *Database) openServiceConfiguration(service, name, key string, sealed []byte, requiredApproval string, owner serviceConfigurationOwner) (*ProjectServiceConfiguration, error) {
 	if len(sealed) == 0 {
 		if key != "" || requiredApproval != "" {
 			return nil, ErrServiceAccess
@@ -195,7 +202,7 @@ func (d *Database) openServiceConfiguration(service, name, key string, sealed []
 	if declaration == nil || decoder.Decode(new(any)) != io.EOF {
 		return nil, ErrServiceAccess
 	}
-	if err := normalizeAppliedProjectService(name, declaration, true); err != nil {
+	if err := normalizeAppliedProjectService(name, declaration, owner); err != nil {
 		return nil, errors.Join(ErrServiceAccess, err)
 	}
 	if requiredApproval != "" {
@@ -208,13 +215,6 @@ func (d *Database) openServiceConfiguration(service, name, key string, sealed []
 		}
 	}
 	return declaration, nil
-}
-
-func serviceHTTPRequestPolicy(value *config.HTTPService) *config.HTTPService {
-	if value == nil || value.Access == nil && value.Limits == nil && value.RequestBodyIdleTimeout == nil {
-		return nil
-	}
-	return &config.HTTPService{Access: value.Access, Limits: value.Limits, RequestBodyIdleTimeout: value.RequestBodyIdleTimeout}
 }
 
 func (d *Database) serviceConfiguration(ctx context.Context, q *controlstatedb.Queries, service string) (*ProjectServiceConfiguration, error) {
@@ -248,7 +248,11 @@ func (d *Database) serviceConfigurations(ctx context.Context, q *controlstatedb.
 			deployed = append(deployed, saved.ServiceID)
 			continue
 		}
-		declaration, err := d.openServiceConfiguration(saved.ServiceID, saved.Service, saved.StorageKeyID.String, saved.ConfigurationCiphertext, saved.RequiredTemporaryApproval)
+		owner := savedServiceConfiguration
+		if saved.LocalOwned {
+			owner = localProjectConfiguration
+		}
+		declaration, err := d.openServiceConfiguration(saved.ServiceID, saved.Service, saved.StorageKeyID.String, saved.ConfigurationCiphertext, saved.RequiredTemporaryApproval, owner)
 		if err != nil {
 			return nil, err
 		}
@@ -282,7 +286,7 @@ func (d *Database) serviceConfigurations(ctx context.Context, q *controlstatedb.
 		if !ok {
 			return nil, ErrServiceAccess
 		}
-		if err := normalizeAppliedProjectService(binding.Service, &declaration, false); err != nil {
+		if err := normalizeAppliedProjectService(binding.Service, &declaration, remoteDeploymentConfiguration); err != nil {
 			return nil, errors.Join(ErrServiceAccess, err)
 		}
 		result[binding.ServiceID.String] = &declaration

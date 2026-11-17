@@ -16,7 +16,42 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	"github.com/zalando/go-keyring"
 )
+
+func TestProjectSnapshotMustMatchCurrentLocalIdentity(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("TNL_SERVER", "")
+	t.Setenv("TNL_CONFIG", "")
+	directory := t.TempDir()
+	root := filepath.Join(t.TempDir(), "state")
+	project, state, err := ResolveProject(t.Context(), Options{Directory: directory, StateDir: root})
+	if err != nil || project.LocalPublicationIdentity().Key == "" || len(project.LocalWorktreeKey()) != 64 {
+		t.Fatal("normal publisher load lost its local identity", err)
+	}
+	raw, _, err := project.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, selected := range []string{state, filepath.Join(t.TempDir(), "state")} {
+		bound, _, err := ResolveProject(t.Context(), Options{Directory: directory, StateDir: selected, Snapshot: bytes.NewReader(raw)})
+		if selected == state {
+			if err != nil || bound.LocalPublicationIdentity() != project.LocalPublicationIdentity() || bound.LocalWorktreeKey() != project.LocalWorktreeKey() {
+				t.Fatal("owner did not preserve its selected identity", err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), "another client state") {
+			t.Fatal("owner adopted a snapshot from another client state", err)
+		}
+	}
+	unbound := clientproject.Project{Root: project.Root}
+	raw, _, err = unbound.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveProject(t.Context(), Options{Directory: directory, StateDir: state, Snapshot: bytes.NewReader(raw)}); err == nil {
+		t.Fatal("owner accepted a snapshot without a local identity")
+	}
+}
 
 func TestPublicationOwnerBypassesConfigurationAndIsolatesLocalApps(t *testing.T) {
 	directory, state := t.TempDir(), filepath.Join(t.TempDir(), "state")
@@ -69,6 +104,10 @@ func testAppRuntimeWorkers(t *testing.T, realWorkers bool, defaultProtection ...
 	}
 	t.Cleanup(func() { _ = state.Close() })
 	a := &appRuntime{state: state, project: clientproject.Project{Root: root, Config: config.TNL{Services: config.Services{"web": {}, "api": {}}}}, prepared: map[string]appPreparation{}}
+	a.project, err = a.project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration}
 	run := func(ctx context.Context, service publisherapp.Service, observe func(publisherapp.PublicationUpdate) error) error {
 		if err := observe(publisherapp.PublicationUpdate{RunNumber: 1, Routable: true, Target: service.Target, TunnelID: service.TunnelID, PublicURL: service.PublicURL}); err != nil {

@@ -57,7 +57,7 @@ func normalizeServiceAllocation(r AllocateServiceRequest) (ProjectServiceConfigu
 		return s, "", ErrProjectConfigurationInvalid
 	}
 	s.Ephemeral, s.Public = true, new(true)
-	if err = normalizeAppliedProjectService(s.Name, &s, true); err != nil {
+	if err = normalizeAppliedProjectService(s.Name, &s, savedServiceConfiguration); err != nil {
 		return s, "", err
 	}
 	descriptor, err := appliedLocalTargetDescriptor(s.Target, s.Protocol)

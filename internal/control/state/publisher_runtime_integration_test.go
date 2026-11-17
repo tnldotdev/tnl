@@ -128,7 +128,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 				}
 			}
 			original := status(now)
-			if original == nil || original.Address != "8.8.8.8" || original.AddressFamily != "ipv4" || original.Evidence != "control_observed" || !original.Active || original.TeamID != team {
+			if original == nil || original.AddressFamily != "ipv4" || original.Evidence != "control_observed" || !original.Active || original.TeamID != team {
 				t.Fatalf("startup: %+v", original)
 			}
 			if _, err = d.PublisherRuntime(ctx, start); !errors.Is(err, ErrPublisherIdentity) {
@@ -163,7 +163,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := status(now)
-			if s.AddressFamily != "ipv6" || s.Address != "2606:4700:4700::1111" || !s.LastSeenAt.Equal(now) || !s.StartedAt.Equal(original.StartedAt) {
+			if s.AddressFamily != "ipv6" || !s.LastSeenAt.Equal(now) || !s.StartedAt.Equal(original.StartedAt) {
 				t.Fatalf("NAT/family change: %+v", s)
 			}
 			for range 20 {
@@ -171,7 +171,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if s = status(now); s.Address != "" || s.AddressFamily != "unknown" || !s.Active {
+			if s = status(now); s.AddressFamily != "unknown" || !s.Active {
 				t.Fatalf("private runtime: %+v", s)
 			}
 			var count int
@@ -203,7 +203,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			stopped := status(now)
-			if stopped.Active || stopped.StoppedAt == nil || stopped.Address != "8.8.4.4" || !stopped.ObservedAt.Equal(current.ObservedAt) || !stopped.LastSeenAt.Equal(now) {
+			if stopped.Active || stopped.StoppedAt == nil || !stopped.ObservedAt.Equal(current.ObservedAt) || !stopped.LastSeenAt.Equal(now) {
 				t.Fatalf("stop lost evidence: %+v", stopped)
 			}
 			if _, err = d.PublisherRuntime(ctx, request("renew", newRun, "8.8.8.8", 2)); !errors.Is(err, ErrPublisherRuntimeStale) {

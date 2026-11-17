@@ -163,7 +163,11 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 		}
 	}
 	for key, s := range c.Services {
-		if err := normalizeAppliedProjectService(key, &s, c.Settings == nil); err != nil {
+		owner := remoteDeploymentConfiguration
+		if c.Settings == nil {
+			owner = localProjectConfiguration
+		}
+		if err := normalizeAppliedProjectService(key, &s, owner); err != nil {
 			return c, "", err
 		}
 		c.Services[key] = s
@@ -173,6 +177,12 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 	}
 	if err = normalizeProjectWorkloads(&c); err != nil {
 		return c, "", err
+	}
+	if c.Settings == nil {
+		for name, service := range c.Services {
+			c.Services[name] = localServiceDeclaration(service)
+		}
+		c.OAuth, c.Webhooks = false, map[string]ProjectWebhook{}
 	}
 	data, err = json.Marshal(c)
 	if err != nil {

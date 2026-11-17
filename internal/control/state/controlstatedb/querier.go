@@ -105,6 +105,7 @@ type Querier interface {
 	CreatePersonalTeam(ctx context.Context, arg CreatePersonalTeamParams) error
 	CreatePreview(ctx context.Context, arg CreatePreviewParams) (CreatePreviewRow, error)
 	CreateSeedMember(ctx context.Context, arg CreateSeedMemberParams) error
+	CreateServiceIPKey(ctx context.Context, arg CreateServiceIPKeyParams) error
 	CreateServiceRunPreview(ctx context.Context, arg CreateServiceRunPreviewParams) (ControlPreview, error)
 	CreateShare(ctx context.Context, arg CreateShareParams) (ControlShare, error)
 	CreateTeamInvitation(ctx context.Context, arg CreateTeamInvitationParams) (ControlTeamInvitation, error)
@@ -460,6 +461,7 @@ type Querier interface {
 	ReadConnectorPeerObservationRelayBounds(ctx context.Context, arg ReadConnectorPeerObservationRelayBoundsParams) ([]ReadConnectorPeerObservationRelayBoundsRow, error)
 	ReadPublisherGrant(ctx context.Context, arg ReadPublisherGrantParams) (ControlPublisherGrant, error)
 	ReadPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
+	ReadServiceIPKey(ctx context.Context, arg ReadServiceIPKeyParams) (ReadServiceIPKeyRow, error)
 	ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error)
 	ReadVisitorPolicyRevision(ctx context.Context, resourceID string) (int64, error)
 	ReadVisitorPolicyService(ctx context.Context, id string) (ControlService, error)

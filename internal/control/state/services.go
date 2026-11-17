@@ -370,7 +370,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		if stored.LocalOwned || stored.DeploymentOwned || stored.AllocationOwned {
 			return result, ErrServiceConflict
 		}
-		previous, err := d.openServiceConfiguration(row.ID, row.Name, stored.StorageKeyID.String, stored.ConfigurationCiphertext, "")
+		previous, err := d.openServiceConfiguration(row.ID, row.Name, stored.StorageKeyID.String, stored.ConfigurationCiphertext, "", savedServiceConfiguration)
 		if err != nil {
 			return result, err
 		}

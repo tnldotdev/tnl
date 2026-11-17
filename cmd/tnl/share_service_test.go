@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -127,6 +128,15 @@ func TestServiceShareSelectionUsesSourceBindingAndManagerRead(t *testing.T) {
 	project := projectConfiguration{Project: clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Worktree: clientproject.Worktree{Root: root, IsGit: true}, Config: config.TNL{Services: config.Services{
 		"orders": {Name: &saved}, "remote": {HTTP: &config.HTTPService{}, Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://app.internal:3000"))}}, "web": {Public: new(true)},
 	}}}}
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	project.Project, err = project.Project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	source, err := project.SourceIdentity(t.Context())
 	if err != nil {
 		t.Fatal(err)

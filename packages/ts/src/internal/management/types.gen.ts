@@ -186,10 +186,6 @@ export type PublisherRuntimeStatus = {
   process_run_id: string;
   epoch: string;
   evidence: "control_observed";
-  /**
-   * Canonical public routable IPv4 or IPv6 host, never a CIDR. Absent for private or non-routable sources.
-   */
-  address?: string;
   address_family: "ipv4" | "ipv6" | "unknown";
   started_at: string;
   observed_at: string;

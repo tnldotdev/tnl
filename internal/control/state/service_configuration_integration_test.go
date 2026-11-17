@@ -97,8 +97,8 @@ func TestIntegrationLocalServiceHTTPPolicySurvivesRealizationAndApply(t *testing
 		t.Fatal("local service configuration was not encrypted", err)
 	}
 	declaration, err := d.serviceConfiguration(ctx, q, first.ServiceID)
-	if err != nil || declaration == nil || declaration.Target != "app" || declaration.HTTP == nil || declaration.HTTP.Readiness == nil || declaration.HTTP.Readiness.Path != "/health" || declaration.Traffic == nil || *declaration.Traffic.Connections != 7 {
-		t.Fatal("saved declaration lost target, readiness, or traffic settings", declaration, err)
+	if err != nil || declaration == nil || declaration.Target != "app" || declaration.HTTP == nil || declaration.HTTP.Readiness != nil || declaration.HTTP.Paths != nil || declaration.Traffic == nil || *declaration.Traffic.Connections != 7 {
+		t.Fatal("saved declaration lost shared policy or retained publisher settings", declaration, err)
 	}
 	revision, err := q.ReadVisitorPolicyRevision(ctx, first.ServiceID)
 	if err != nil {
@@ -330,7 +330,7 @@ func TestIntegrationServiceConfigurationWithoutProject(t *testing.T) {
 	if err != nil || !service.Ephemeral || !service.RequirePostQuantum || !service.Endpoint.Public {
 		t.Fatal(err)
 	}
-	if err := normalizeAppliedProjectService(service.Name, &configuration, true); err != nil {
+	if err := normalizeAppliedProjectService(service.Name, &configuration, savedServiceConfiguration); err != nil {
 		t.Fatal(err)
 	}
 	declaration, digest, err := d.GetServiceConfiguration(ctx, service.ID, r.ActingIdentityID)
@@ -848,8 +848,8 @@ func TestIntegrationLocalServiceConfigurationEditsKeepHTTPPolicyRevision(t *test
 				t.Fatal("declaration edit replaced the local service", realized, err)
 			}
 			after, err := q.GetServiceConfiguration(ctx, first.ServiceID)
-			if err != nil || bytes.Equal(before.ConfigurationCiphertext, after.ConfigurationCiphertext) {
-				t.Fatal("changed declaration was not saved", err)
+			if err != nil || bytes.Equal(before.ConfigurationCiphertext, after.ConfigurationCiphertext) != (edit.name != "traffic") {
+				t.Fatal("local-only edit rewrote configuration or shared traffic edit was lost", err)
 			}
 			got, err := q.ReadVisitorPolicyRevision(ctx, policyKey)
 			if err != nil || got != revision {
@@ -859,8 +859,8 @@ func TestIntegrationLocalServiceConfigurationEditsKeepHTTPPolicyRevision(t *test
 		})
 	}
 	declaration, err := d.serviceConfiguration(ctx, q, first.ServiceID)
-	if err != nil || declaration == nil || declaration.Target != "localhost:3001" || declaration.Traffic == nil || declaration.HTTP == nil || declaration.HTTP.Readiness == nil || declaration.HTTP.Readiness.Path != "/ready" || declaration.HTTP.Paths["/api"].Service != "api" {
-		t.Fatal("full declaration edits were not retained", declaration, err)
+	if err != nil || declaration == nil || declaration.Target != "app" || declaration.Traffic == nil || declaration.HTTP == nil || declaration.HTTP.Readiness != nil || declaration.HTTP.Paths != nil {
+		t.Fatal("shared declaration retained publisher-only settings", declaration, err)
 	}
 	for _, change := range []func(*config.HTTPService){
 		func(h *config.HTTPService) { h.Limits.Total = new(101) },

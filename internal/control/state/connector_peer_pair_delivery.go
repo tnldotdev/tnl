@@ -154,7 +154,7 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 			}
 		}
 		if !pending {
-			if err = saveConnectorPeerAuditBinding(ctx, tx, pair, binding, reportUntil); err != nil {
+			if err = d.saveConnectorPeerAuditBinding(ctx, tx, pair, binding, reportUntil); err != nil {
 				return ConnectorPeerPairDelivery{}, err
 			}
 		}

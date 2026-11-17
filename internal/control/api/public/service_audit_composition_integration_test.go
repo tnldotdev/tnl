@@ -406,13 +406,13 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	for _, o := range events {
 		var e serviceaudit.Event
 		var raw []byte
-		if err = inspect.QueryRow(ctx, `SELECT to_jsonb(e) || jsonb_build_object('cursor',e.cursor::text,'source_ip',host(e.source_ip)) FROM control.service_audit_events e WHERE id=$1`, o.EventID).Scan(&raw); err != nil {
+		if err = inspect.QueryRow(ctx, `SELECT to_jsonb(e) || jsonb_build_object('cursor',e.cursor::text) FROM control.service_audit_events e WHERE id=$1`, o.EventID).Scan(&raw); err != nil {
 			t.Fatal("valid event lost beside rejected event", err)
 		}
 		if err = json.Unmarshal(raw, &e); err != nil {
 			t.Fatal(err)
 		}
-		if e.TeamID != service.TeamID || e.SourceIP != "127.0.0.1" {
+		if e.TeamID != service.TeamID || e.SourceIP != "" || len(e.SourceDigest) != 43 || strings.Contains(string(raw), "127.0.0.1") {
 			t.Fatalf("incorrect durable team/source: %+v", e)
 		}
 		serviceEvents++

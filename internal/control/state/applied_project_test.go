@@ -74,9 +74,14 @@ func TestNormalizeAppliedPublicOriginsMatchRuntime(t *testing.T) {
 				if strings.HasPrefix(test.target, "https://") {
 					service.TargetTLS = appliedTargetTrust(t, "upstream.internal")
 				}
+				normalized := service
+				err := normalizeAppliedProjectService("web", &normalized, savedServiceConfiguration)
+				if (test.want == "") != (err != nil) || err == nil && normalized.Target != test.want {
+					t.Fatal("public reachability changed service target validation", normalized, err)
+				}
 				c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": service}})
-				if (test.want == "") != (err != nil) || err == nil && c.Services["web"].Target != test.want {
-					t.Fatal("public reachability changed service target normalization", c, err)
+				if (test.want == "") != (err != nil) || err == nil && c.Services["web"].Target != "app" {
+					t.Fatal("local project retained its publisher target", c, err)
 				}
 			})
 		}
@@ -115,11 +120,11 @@ func TestNormalizeAppliedServicePublicationFields(t *testing.T) {
 	}
 }
 
-func TestNormalizeAppliedHTTPSettingsDoNotDisappear(t *testing.T) {
+func TestNormalizeAppliedHTTPSettingsStayLocal(t *testing.T) {
 	settings := &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}, Paths: map[string]config.PathMount{"/api": {Service: "api", StripPrefix: true}}}
 	c, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": {Target: "app", Public: new(true), HTTP: settings}, "api": {Target: "http://localhost:3001"}}})
-	if err != nil || c.Services["web"].HTTP.Readiness.Path != "/health" || !c.Services["web"].HTTP.Paths["/api"].StripPrefix {
-		t.Fatal("local HTTP settings lost", err)
+	if err != nil || c.Services["web"].HTTP != nil || settings.Readiness.Path != "/health" || !settings.Paths["/api"].StripPrefix {
+		t.Fatal("local HTTP settings escaped or caller state changed", err)
 	}
 	for _, s := range []*config.HTTPService{{Readiness: &config.Readiness{Path: "/health"}}, {Paths: map[string]config.PathMount{"/api": {Service: "api"}}}, {Open: new(bool)}} {
 		_, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{"web": {Target: "http://app.internal:3000", HTTP: s}}})
@@ -136,7 +141,7 @@ func TestLocalServiceNormalizationDoesNotInventProjectDestinations(t *testing.T)
 		}}
 	}
 	single := service("/api", "api")
-	if err := normalizeAppliedProjectService("web", &single, true); err != nil || single.Name != "web" || single.Protocol != "http" {
+	if err := normalizeAppliedProjectService("web", &single, localProjectConfiguration); err != nil || single.Name != "web" || single.Protocol != "http" {
 		t.Fatal("one binding could not normalize without fabricated siblings", single, err)
 	}
 	if _, _, err := NormalizeProjectConfiguration(ProjectConfiguration{Services: map[string]ProjectServiceConfiguration{"web": single}}); !errors.Is(err, ErrProjectConfigurationInvalid) {
@@ -145,7 +150,7 @@ func TestLocalServiceNormalizationDoesNotInventProjectDestinations(t *testing.T)
 	for _, invalid := range []ProjectServiceConfiguration{
 		service("/__tnl/hooks", "api"), service("/api", "web"), service("/api", "invalid name"), service("api", "api"),
 	} {
-		if err := normalizeAppliedProjectService("web", &invalid, true); !errors.Is(err, ErrProjectConfigurationInvalid) {
+		if err := normalizeAppliedProjectService("web", &invalid, localProjectConfiguration); !errors.Is(err, ErrProjectConfigurationInvalid) {
 			t.Fatal("single-binding normalization lost path bounds", err)
 		}
 	}
@@ -191,6 +196,7 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 	keyTrust.Digest = hex.EncodeToString(keyDigest[:])
 	for name, s := range map[string]ProjectServiceConfiguration{
 		"local app":                  {Target: "app"},
+		"local tcp app":              {Target: "app", Protocol: "tcp"},
 		"local compose":              {Target: "compose:postgres:5432", Protocol: "postgres"},
 		"local docker":               {Target: "docker:redis_1:6379", Protocol: "tcp"},
 		"local deferred public":      {Target: "app", Public: new(true), Ephemeral: true},
@@ -209,6 +215,9 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 			if strings.HasPrefix(strings.ToLower(want), "https://") {
 				want = "upstream.internal:8443"
 			}
+			if input.Settings == nil {
+				want = "app"
+			}
 			if err != nil || c.Services["service"].Target != want {
 				t.Fatalf("target changed or rejected: %v", err)
 			}
@@ -218,7 +227,6 @@ func TestNormalizeAppliedProjectTargetsAndTrustBoundaries(t *testing.T) {
 		"remote ephemeral app":      {Target: "app", Ephemeral: true},
 		"remote compose":            {Protocol: "postgres", Target: "compose:db:5432"},
 		"remote docker":             {Protocol: "tcp", Target: "docker:cache:6379"},
-		"tcp app":                   {Protocol: "tcp", Target: "app"},
 		"descriptor path":           {Target: "compose:../project:3000"},
 		"descriptor command":        {Target: "docker:$(id):3000"},
 		"descriptor args":           {Target: "compose:web:3000:extra"},

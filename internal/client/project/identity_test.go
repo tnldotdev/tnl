@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 )
 
 func TestLocalPublicationIdentityIsIndependentOfGitBoundary(t *testing.T) {
@@ -18,8 +20,17 @@ func TestLocalPublicationIdentityIsIndependentOfGitBoundary(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"web":{}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
 	resolve := func() Project {
 		p, err := Resolve(t.Context(), Selection{Path: path}, root, [32]byte{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err = p.BindLocalIdentity(t.Context(), state)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +73,10 @@ func TestLocalPublicationIdentityIsIndependentOfGitBoundary(t *testing.T) {
 			}
 		}
 	}
-	other := Project{Root: parent}
+	other, err := (Project{Root: parent}).BindLocalIdentity(t.Context(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if other.LocalPublicationIdentity() == before.LocalPublicationIdentity() {
 		t.Fatal("different project directories shared local identity")
 	}
