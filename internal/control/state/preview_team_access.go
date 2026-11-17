@@ -46,17 +46,19 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 	if request.Enabled && (len(ids) == 0 || len(ids) > 32) {
 		return result, ErrPreviewAccess
 	}
-	// SQL supplies sorted IDs, so every multi-service mutation takes service
+	// sql supplies sorted IDs, so every multi-service mutation takes service
 	// locks in the same order and consumes its actor assertion only once.
 	for _, id := range ids {
 		service, err := q.LockService(ctx, id)
 		if err != nil {
 			return result, publisherLookupError(err, ErrPreviewStale)
 		}
-		if service.Protocol != "http" || !service.Enabled {
+		if request.Enabled && (service.Protocol != "http" || !service.Enabled || service.DeletedAt.Valid) {
 			return result, ErrPreviewStale
 		}
-		if err = requireServiceManagement(ctx, tx, service, member); err != nil {
+		// disabling access still requires current ownership of every captured
+		// service, including its retained receipt after deletion.
+		if err = requireStoredServiceManagement(ctx, tx, service, member, !request.Enabled); err != nil {
 			return result, err
 		}
 		if request.Enabled {

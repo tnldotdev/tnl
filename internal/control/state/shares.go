@@ -75,7 +75,7 @@ func currentCompanyShareIssuer(ctx context.Context, tx pgx.Tx, share controlstat
 	if !valid {
 		return time.Time{}, ErrShareNotFound
 	}
-	if err := shareServicesForManagement(ctx, tx, ids, member, false); err != nil {
+	if err := shareServicesForManagement(ctx, tx, ids, member, shareServicesRead); err != nil {
 		return time.Time{}, err
 	}
 	eligibility, err := q.GetCompanyEligibility(ctx, controlstatedb.GetCompanyEligibilityParams{
@@ -176,7 +176,7 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 			}
 		}
 	}
-	if err = shareServicesForManagement(ctx, tx, ids, member, true); err != nil {
+	if err = shareServicesForManagement(ctx, tx, ids, member, shareServicesCreate); err != nil {
 		return result, err
 	}
 	existing, err := q.FindShareRequest(ctx, controlstatedb.FindShareRequestParams{CreatedByIdentityID: text(request.ActingIdentityID), IdempotencyKey: request.IdempotencyKey})
@@ -257,14 +257,22 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	return result, tx.Commit(ctx)
 }
 
-// the caller validates the current human membership once. this helper reads
-// service-owned provenance for every captured service; it never consumes proof.
-func shareServicesForManagement(ctx context.Context, tx pgx.Tx, ids []string, member serviceMembership, lock bool) error {
+type shareServiceOperation uint8
+
+const (
+	shareServicesRead shareServiceOperation = iota
+	shareServicesCreate
+	shareServicesRevoke
+)
+
+// the caller validates the current human membership once. revocation checks
+// retained ownership, not availability; it cannot grant access to a tombstone.
+func shareServicesForManagement(ctx context.Context, tx pgx.Tx, ids []string, member serviceMembership, operation shareServiceOperation) error {
 	q := controlstatedb.New(tx)
 	for _, id := range ids {
 		var service controlstatedb.ControlService
 		var err error
-		if lock {
+		if operation != shareServicesRead {
 			service, err = q.LockService(ctx, id)
 		} else {
 			service, err = q.GetService(ctx, id)
@@ -272,10 +280,10 @@ func shareServicesForManagement(ctx context.Context, tx pgx.Tx, ids []string, me
 		if err != nil {
 			return publisherLookupError(err, ErrShareStale)
 		}
-		if service.Protocol != "http" || !service.Enabled || service.DeletedAt.Valid {
+		if operation != shareServicesRevoke && (service.Protocol != "http" || !service.Enabled || service.DeletedAt.Valid) {
 			return ErrShareStale
 		}
-		if err = requireServiceManagement(ctx, tx, service, member); err != nil {
+		if err = requireStoredServiceManagement(ctx, tx, service, member, operation == shareServicesRevoke); err != nil {
 			return err
 		}
 	}
@@ -283,7 +291,8 @@ func shareServicesForManagement(ctx context.Context, tx pgx.Tx, ids []string, me
 }
 
 // renewal reuses the service-management predicate, not a visitor grant or the
-// caller's publisher identity. the saved session supplies company authentication.
+// caller's publisher identity. the saved session retains revocation, refresh
+// validity, and company authentication independently of access-token rotation.
 func (d *Database) currentShareIssuer(ctx context.Context, tx pgx.Tx, share controlstatedb.ControlShare, now time.Time) (time.Time, error) {
 	until := share.ExpiresAt.Time
 	if share.RevokedAt.Valid || !until.After(now) {
@@ -340,18 +349,27 @@ func (d *Database) currentShareIssuer(ctx context.Context, tx pgx.Tx, share cont
 			return time.Time{}, publisherLookupError(err, ErrShareNotFound)
 		}
 		if parent.IdentityID != share.CreatedByIdentityID.String || parent.RevokedAt.Valid ||
-			!parent.AccessExpiresAt.Time.After(now) || !parent.RefreshExpiresAt.Time.After(now) {
+			!parent.RefreshExpiresAt.Time.After(now) {
 			return time.Time{}, ErrShareNotFound
 		}
-		until = minTime(until, minTime(parent.AccessExpiresAt.Time, parent.RefreshExpiresAt.Time))
+		until = minTime(until, parent.RefreshExpiresAt.Time)
 	}
 	ctx = WithControlPrincipal(context.WithValue(ctx, serviceActorKey{}, nil), principal)
 	member, err := serviceMembershipForActor(ctx, tx, share.TeamID.String, share.CreatedByIdentityID.String, now)
 	if err != nil {
 		return time.Time{}, err
 	}
-	if err = shareServicesForManagement(ctx, tx, ids, member, false); err != nil {
+	if err = shareServicesForManagement(ctx, tx, ids, member, shareServicesRead); err != nil {
 		return time.Time{}, err
+	}
+	deadline, err := q.CompanySubjectDeadline(ctx, controlstatedb.CompanySubjectDeadlineParams{
+		TeamID: share.TeamID.String, IdentityID: principal.IdentityID, SessionID: principal.SessionID, Now: timestamptz(now),
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	if deadline.Valid && deadline.InfinityModifier == 0 {
+		until = minTime(until, deadline.Time)
 	}
 	return until, nil
 }
@@ -473,7 +491,7 @@ func (d *Database) GetShareForManagement(ctx context.Context, id, identity strin
 	if err != nil {
 		return result, err
 	}
-	if err = shareServicesForManagement(ctx, tx, ids, member, false); err != nil {
+	if err = shareServicesForManagement(ctx, tx, ids, member, shareServicesRead); err != nil {
 		return result, err
 	}
 	if err = shareActorCurrent(ctx, clock.current()); err != nil {
@@ -520,7 +538,7 @@ func (d *Database) ListTeamShares(ctx context.Context, team, identity, cursor st
 			if err != nil {
 				return SharePage{}, err
 			}
-			err = shareServicesForManagement(ctx, tx, share.ServiceIDs, member, false)
+			err = shareServicesForManagement(ctx, tx, share.ServiceIDs, member, shareServicesRead)
 			if err != nil && !errors.Is(err, ErrServiceAccess) && !errors.Is(err, ErrServiceManagerRequired) && !errors.Is(err, ErrShareStale) {
 				return SharePage{}, err
 			}
@@ -600,7 +618,7 @@ func (d *Database) RevokeShare(ctx context.Context, id, identity string, now tim
 	if err != nil {
 		return result, err
 	}
-	if err = shareServicesForManagement(ctx, tx, ids, member, true); err != nil {
+	if err = shareServicesForManagement(ctx, tx, ids, member, shareServicesRevoke); err != nil {
 		return result, err
 	}
 	row, err = q.RevokeShare(ctx, controlstatedb.RevokeShareParams{ShareID: id, IdentityID: identity, RevokedAt: timestamptz(now)})
