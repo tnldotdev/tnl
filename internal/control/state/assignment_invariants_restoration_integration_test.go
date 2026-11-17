@@ -391,7 +391,7 @@ func TestIntegrationAssignmentRestoredBulkClosureLockOrder(t *testing.T) {
 				}
 			}
 			// membership closure orders by service identity. expiration below
-			// uses explicit distinct publisher deadlines for the same order.
+			// uses matching finite serving and liveness deadlines in that order.
 			slices.SortFunc(fixtures[:2], func(a, b servicePublicationFixture) int {
 				if a.service.ID < b.service.ID {
 					return -1
@@ -417,7 +417,7 @@ func TestIntegrationAssignmentRestoredBulkClosureLockOrder(t *testing.T) {
 					if _, err := d.pool.Exec(ctx, `UPDATE control.services SET ephemeral=true WHERE id=$1`, f.service.ID); err != nil {
 						t.Fatal(err)
 					}
-					if _, err := d.pool.Exec(ctx, `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`,
+					if _, err := d.pool.Exec(ctx, `UPDATE control.service_runs SET publisher_expires_at=$2,serving_until=$2 WHERE id=$1`,
 						f.run.RunID, now.Add(time.Second+time.Duration(index)*500*time.Millisecond)); err != nil {
 						t.Fatal(err)
 					}
@@ -458,7 +458,7 @@ func TestIntegrationAssignmentRestoredBulkClosureLockOrder(t *testing.T) {
 					var closed int
 					closed, err = d.ExpireServiceRuns(ctx, now.Add(2*time.Second))
 					if err == nil && closed != 2 {
-						err = fmt.Errorf("ephemeral publisher expiration closed %d, want 2", closed)
+						err = fmt.Errorf("ephemeral serving expiration closed %d, want 2", closed)
 					}
 				} else {
 					err = d.RemoveMembership(ctx, topology.owner, topology.member.TeamID, topology.member.ID, now)

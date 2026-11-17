@@ -61,6 +61,15 @@ func TestIntegrationPublicAndPrivatePublishersShareRelayPlacementCapacity(t *tes
 	if err != nil || len(serviceRun.Connections) != 2 {
 		t.Fatalf("released HTTP capacity could not serve private run: %+v %v", serviceRun, err)
 	}
+	// keep the original one-minute cleanup boundary, independently of the
+	// shorter publisher liveness deadline returned by start.
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.service_runs SET serving_until=$2 WHERE id=$1`,
+		serviceRun.RunID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if expired, err := d.ExpireServiceRuns(t.Context(), serviceRun.ExpiresAt); err != nil || expired != 0 {
+		t.Fatal("publisher liveness expiry released private serving capacity", expired, err)
+	}
 	var slots int
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_connection_slots WHERE session_open AND state='assigned'`).Scan(&slots); err != nil || slots != 2 {
 		t.Fatalf("shared live slots=%d: %v", slots, err)

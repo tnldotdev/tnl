@@ -18,8 +18,10 @@ func TestIntegrationExpirationProgressRestoredBusyAuthorityWriter(t *testing.T) 
 			busy := newServicePublicationFixture(t)
 			other := newRestorationOtherTeamPublication(t, busy, "expiry-writer", busy.now)
 			other.start(t, "first", busy.now.Add(time.Second))
-			d, at, actor := busy.database, other.run.ExpiresAt, busy.actor(t)
-			if busy.service.TeamID == other.service.TeamID || !busy.run.ExpiresAt.Before(at) {
+			setExpirationProgressServingDeadline(t, &busy, busy.run.ExpiresAt)
+			setExpirationProgressServingDeadline(t, &other, other.run.ExpiresAt)
+			d, at, actor := busy.database, other.run.ServingUntil, busy.actor(t)
+			if busy.service.TeamID == other.service.TeamID || !busy.run.ServingUntil.Before(at) {
 				t.Fatal("authority contrast needs an older run under a different owner")
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -82,6 +84,7 @@ func TestIntegrationExpirationProgressRestoredBusyAuthorityWriter(t *testing.T) 
 func TestIntegrationExpirationProgressRestoredOwnerFilledBatch(t *testing.T) {
 	busy := newServicePublicationFixture(t)
 	d := busy.database
+	setExpirationProgressServingDeadline(t, &busy, busy.run.ExpiresAt)
 	// real preparations need no extra relay capacity. together with the initial
 	// started run, this owner has 101 older candidates, not copied SQL grants.
 	for index := range 100 {
@@ -93,10 +96,12 @@ func TestIntegrationExpirationProgressRestoredOwnerFilledBatch(t *testing.T) {
 	}
 	other := newRestorationOtherTeamPublication(t, busy, "expiry-batch", busy.now)
 	other.start(t, "first", busy.now.Add(3*time.Minute))
-	at := other.run.ExpiresAt
+	setExpirationProgressServingDeadline(t, &other, other.run.ExpiresAt)
+	at := other.run.ServingUntil
 	var earlier int
 	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_runs
-		WHERE team_id=$1 AND closed_at IS NULL AND publisher_expires_at<$2`,
+		WHERE team_id=$1 AND closed_at IS NULL
+			AND (serving_until<$2 OR state='prepared' AND preparation_expires_at<$2)`,
 		busy.service.TeamID, at).Scan(&earlier); err != nil || earlier != 101 {
 		t.Fatal("fixture did not fill the old global candidate limit with one owner", earlier, err)
 	}
@@ -146,7 +151,9 @@ func TestIntegrationExpirationProgressRestoredRenewedCandidate(t *testing.T) {
 	first := newServicePublicationFixture(t)
 	renewed := first.sibling(t, "expiry-renewed", first.now)
 	renewed.start(t, "first", first.now.Add(time.Second))
-	d, at := first.database, renewed.run.ExpiresAt
+	setExpirationProgressServingDeadline(t, &first, first.run.ExpiresAt)
+	setExpirationProgressServingDeadline(t, &renewed, renewed.run.ExpiresAt)
+	d, at := first.database, renewed.run.ServingUntil
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	gate, key := newExpirationProgressCloseGate(t, ctx, d, first.run.RunID)
@@ -169,7 +176,7 @@ func TestIntegrationExpirationProgressRestoredRenewedCandidate(t *testing.T) {
 	current, err := d.HeartbeatServiceRun(ctx, renewed.service.ID, renewed.run.RunID, renewed.run.Token,
 		first.now.Add(30*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
 	if err != nil || current.RunID != renewed.run.RunID || current.RunNumber != renewed.run.RunNumber ||
-		!current.ExpiresAt.After(at) {
+		!current.ExpiresAt.After(at) || !current.ServingUntil.After(at) {
 		t.Fatal("real heartbeat did not renew the exact discovered candidate", err)
 	}
 	before := expirationProgressSnapshot(t, ctx, d, renewed.run.RunID)
@@ -184,11 +191,27 @@ func TestIntegrationExpirationProgressRestoredRenewedCandidate(t *testing.T) {
 	}
 	assertExpirationProgressClosed(t, ctx, d, first.run.RunID)
 	assertAssignmentTotals(t, d.pool, 2)
-	if count, err := d.ExpireServiceRuns(ctx, current.ExpiresAt); err != nil || count != 1 {
+	if count, err := d.ExpireServiceRuns(ctx, current.ServingUntil); err != nil || count != 1 {
 		t.Fatal("renewed run could not later close at its actual current deadline", count, err)
 	}
 	assertExpirationProgressClosed(t, ctx, d, renewed.run.RunID)
 	assertAssignmentTotals(t, d.pool, 0)
+}
+
+// keep the original expiry workload and caller bounds while making its serving
+// authority explicit. publisher liveness remains a separate persisted deadline.
+func setExpirationProgressServingDeadline(t *testing.T, f *servicePublicationFixture, until time.Time) {
+	t.Helper()
+	if !until.After(f.run.ObservedAt) || until.After(f.run.ServingUntil) {
+		t.Fatal("expiration fixture needs a finite shortened serving interval")
+	}
+	updated, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs
+		SET serving_until=$2 WHERE id=$1 AND serving_observed_at=$3 AND serving_until=$4`,
+		f.run.RunID, until, f.run.ObservedAt, f.run.ServingUntil)
+	if err != nil || updated.RowsAffected() != 1 {
+		t.Fatal("did not set the exact run's serving deadline", updated.RowsAffected(), err)
+	}
+	f.run.ServingUntil = until
 }
 
 // the disposable database owns this exact-run pause. the gate holds only a
@@ -264,6 +287,7 @@ func expirationProgressSnapshot(t *testing.T, ctx context.Context, d *Database, 
 	if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_object(
 		'id',run.id,'number',run.run_number,'state',run.state,'closed',run.closed_at,
 		'publisher_expiry',run.publisher_expires_at,'preparation_expiry',run.preparation_expires_at,
+		'serving_observed_at',run.serving_observed_at,'serving_until',run.serving_until,
 		'assignments_open',run.assignments_open,
 		'slots',(SELECT jsonb_agg(jsonb_build_array(connection_slot,publisher_connection_id,
 			connection_assignment_revision,state,session_open) ORDER BY connection_slot)
@@ -280,7 +304,8 @@ func expirationProgressSnapshot(t *testing.T, ctx context.Context, d *Database, 
 func assertExpirationProgressClosed(t *testing.T, ctx context.Context, d *Database, runID string) {
 	t.Helper()
 	var closed bool
-	if err := d.pool.QueryRow(ctx, `SELECT state='closed' AND closed_at>=publisher_expires_at AND NOT assignments_open
+	if err := d.pool.QueryRow(ctx, `SELECT state='closed' AND closed_at>=publisher_expires_at
+		AND closed_at>=serving_until AND NOT assignments_open
 		AND NOT EXISTS(SELECT 1 FROM control.service_connection_slots WHERE service_run_id=run.id AND session_open)
 		AND NOT EXISTS(SELECT 1 FROM control.service_recovery_episodes WHERE service_run_id=run.id AND state='open')
 		AND (SELECT count(*)=1 FROM control.service_audit_events WHERE run_id=run.id AND event_type='run.close')

@@ -24,8 +24,16 @@ func TestIntegrationRoutingRetentionAnchorsAndBoundary(t *testing.T) {
 	f.start(t, "next", f.now.Add(time.Second))
 	current := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
 	boundary := f.now.Add(2 * time.Second)
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`, current.RunID, boundary); err != nil {
+	// serving authority ends at this boundary even though publisher liveness
+	// remains current. neither deadline alone is a committed terminal tuple.
+	if !f.run.ExpiresAt.After(boundary) {
+		t.Fatal("expiry contrast requires live publisher liveness at the serving boundary")
+	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET serving_until=$2 WHERE id=$1`, current.RunID, boundary); err != nil {
 		t.Fatal(err)
+	}
+	if count, err := f.database.ExpireServiceRuns(t.Context(), boundary.Add(-time.Second)); err != nil || count != 0 {
+		t.Fatal("cleanup closed a run before its serving boundary", count, err)
 	}
 	refs := []ServiceRunReference{old, current}
 	before, err := f.database.ClosedServiceRuns(t.Context(), ingress.IngressLeaseIdentity, refs, boundary)

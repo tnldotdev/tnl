@@ -71,7 +71,12 @@ func TestIntegrationTransactionLocalAuthorityLockOrder(t *testing.T) {
 
 func TestIntegrationTransactionExpiredReplacementNoResurrection(t *testing.T) {
 	f := newServicePublicationFixture(t)
-	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`, f.run.RunID, f.now.Add(time.Second)); err != nil {
+	// serving expiry must close the run even while its separate publisher
+	// liveness deadline is current.
+	if !f.run.ExpiresAt.After(f.now.Add(2 * time.Second)) {
+		t.Fatal("no-resurrection contrast requires current publisher liveness")
+	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.service_runs SET serving_until=$2 WHERE id=$1`, f.run.RunID, f.now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if count, err := f.database.ExpireServiceRuns(t.Context(), f.now.Add(2*time.Second)); err != nil || count != 1 {

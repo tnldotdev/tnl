@@ -115,6 +115,40 @@ func TestIntegrationServiceStartReclamationRestoredBusyCandidate(t *testing.T) {
 	assertAssignmentTotals(t, d.pool, 2)
 }
 
+func TestIntegrationServiceStartReclamationRestoredLivenessDoesNotReclaimServingRun(t *testing.T) {
+	old, requested := newStartReclamationFixture(t)
+	d, at := old.database, old.now.Add(2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	// a missed publisher heartbeat does not free reservations while the run's
+	// independently issued serving authority is still current.
+	if _, err := d.pool.Exec(ctx, `UPDATE control.service_runs SET publisher_expires_at=$2 WHERE id=$1`,
+		old.run.RunID, old.now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	beforeOld := expirationProgressSnapshot(t, ctx, d, old.run.RunID)
+	beforeRequested := expirationProgressSnapshot(t, ctx, d, requested.prepared.RunID)
+	_, err := d.StartServiceRun(ctx, requested.service.ID, requested.prepared.RunID,
+		requested.prepared.RunNumber, requested.publisher, at)
+	insufficient, capacity, independent := startReclamationErrorLeaves(err)
+	if insufficient != 1 || capacity != 1 || len(independent) != 0 {
+		t.Fatal("liveness-only expiry did not retain the isolated capacity denial", err)
+	}
+	if expirationProgressSnapshot(t, ctx, d, old.run.RunID) != beforeOld ||
+		expirationProgressSnapshot(t, ctx, d, requested.prepared.RunID) != beforeRequested {
+		t.Fatal("liveness-only reclamation changed existing authority or the requested preparation")
+	}
+	assertAssignmentTotals(t, d.pool, 2)
+	started, err := d.StartServiceRun(ctx, requested.service.ID, requested.prepared.RunID,
+		requested.prepared.RunNumber, requested.publisher, old.run.ServingUntil)
+	if err != nil {
+		t.Fatal("serving expiry did not permit reclamation within the same five-second caller", err)
+	}
+	assertStartReclamationRun(t, ctx, d, requested, started, old.run.ServingUntil)
+	assertExpirationProgressClosed(t, ctx, d, old.run.RunID)
+	assertAssignmentTotals(t, d.pool, 2)
+}
+
 func TestIntegrationServiceStartReclamationRestoredExpiredFirstAttemptDoesNotClean(t *testing.T) {
 	old, requested := newStartReclamationFixture(t)
 	d, at := old.database, old.run.ExpiresAt
@@ -324,6 +358,7 @@ func TestIntegrationServiceStartReclamationRestoredFailures(t *testing.T) {
 func TestIntegrationServiceStartReclamationRestoredEligibleReservationsOnly(t *testing.T) {
 	old := newServicePublicationFixture(t)
 	d := old.database
+	setExpirationProgressServingDeadline(t, &old, old.run.ExpiresAt)
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity=1`); err != nil {
 		t.Fatal(err)
 	}
@@ -336,6 +371,7 @@ func TestIntegrationServiceStartReclamationRestoredEligibleReservationsOnly(t *t
 	}
 	unrelated := newRestorationOtherTeamPublication(t, old, "ineligible", old.now)
 	unrelated.start(t, "first", old.now.Add(time.Second))
+	setExpirationProgressServingDeadline(t, &unrelated, unrelated.run.ExpiresAt)
 	var ineligible []string
 	for _, slot := range unrelated.run.Connections {
 		if _, shared := old.leases[slot.RelayServiceID]; shared {
@@ -357,7 +393,7 @@ func TestIntegrationServiceStartReclamationRestoredEligibleReservationsOnly(t *t
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	before := expirationProgressSnapshot(t, ctx, d, unrelated.run.RunID)
-	at := unrelated.run.ExpiresAt
+	at := unrelated.run.ServingUntil
 	started, err := d.StartServiceRun(ctx, requested.service.ID, requested.prepared.RunID,
 		requested.prepared.RunNumber, requested.publisher, at)
 	if err != nil {
@@ -374,6 +410,7 @@ func TestIntegrationServiceStartReclamationRestoredEligibleReservationsOnly(t *t
 func newStartReclamationFixture(t *testing.T) (servicePublicationFixture, servicePublicationFixture) {
 	t.Helper()
 	old := newServicePublicationFixture(t)
+	setExpirationProgressServingDeadline(t, &old, old.run.ExpiresAt)
 	requested := newRestorationOtherTeamPublication(t, old, "reclamation", old.now)
 	if _, err := old.database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity=1`); err != nil {
 		t.Fatal(err)
