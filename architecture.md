@@ -84,9 +84,12 @@ The capacity reply does not grant visitor access. Ingress signs the original
 socket addresses for the exact run and visitor connection; the publisher checks
 that proof and rejects reuse. Neither operation writes a per-HTTP-visitor record
 to PostgreSQL. Prepared HTTP traffic can continue through a control outage only
-until its existing routing, policy, and process leases expire. Native client
-certificate access still asks control for current permission, then uses the same
-forwarding and capacity exchange.
+until its earliest confirmed serving deadline. Control defaults that allowance
+to five minutes from successful confirmation; earlier service, credential,
+certificate, and parent-session expiry still wins. Failed refreshes do not extend
+it. Short process-availability leases govern placement and replacement separately.
+Native client certificate access still asks control for current permission, then
+uses the same forwarding and capacity exchange.
 
 On a routing cache miss, ingress may keep the first HTTP connection within its
 original setup deadline until the next background snapshot arrives. A fresh miss
