@@ -36,6 +36,7 @@ export function installPublisherFixtureHost(fixture: PublisherFixture): void {
         "actual Go/WASM bridge was not registered",
       );
       starts++;
+      console.info("publisher fixture phase: wasm-started");
       if (!("createDeployment" in bridge) || typeof bridge.createDeployment !== "function")
         return exited;
       const create = bridge.createDeployment.bind(bridge);
