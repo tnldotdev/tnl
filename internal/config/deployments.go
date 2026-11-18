@@ -44,7 +44,7 @@ type DeploymentBinding struct {
 	Public             *bool          `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Add public endpoint access for this service binding. Visitor access remains separate; false keeps connector access only."`
 	Inspection         *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty"`
 	Hostname           *string        `json:"hostname,omitempty" yaml:"hostname,omitempty"`
-	RunAliasParent     *string        `json:"run_alias_parent,omitempty" yaml:"run_alias_parent,omitempty"`
+	RunAliasParent     *string        `json:"publisher_alias_parent,omitempty" yaml:"publisher_alias_parent,omitempty"`
 	Domain             *string        `json:"domain,omitempty" yaml:"domain,omitempty"`
 	Ephemeral          *bool          `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
 	RequirePostQuantum *bool          `json:"require_post_quantum,omitempty" yaml:"require_post_quantum,omitempty"`
