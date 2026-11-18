@@ -15,6 +15,7 @@ export function relayWebSocketProbe(
   const finished = new Set<number>();
   let pending = new Uint8Array(0);
   let authenticated = false;
+  let echoedServerStream = false;
   let serverStream = false;
   const frame = (
     type: number,
@@ -57,11 +58,18 @@ export function relayWebSocketProbe(
       const control = frame(0, 1, 1, hello);
       socket.send(control.slice(0, 7));
       socket.send(control.slice(7));
-      const a = frame(0, 1 | 4, 3, encoder.encode("portable-a"));
-      const b = frame(0, 1 | 4, 5, encoder.encode("portable-b"));
-      const both = new Uint8Array(a.length + b.length);
-      both.set(a);
-      both.set(b, a.length);
+      // match yamux's writer: enqueue bytes before the separate half-close.
+      // a FIN on the data frame can wake the reader before its data is buffered.
+      const a = frame(0, 1, 3, encoder.encode("portable-a"));
+      const aFin = frame(1, 4, 3);
+      const b = frame(0, 1, 5, encoder.encode("portable-b"));
+      const bFin = frame(1, 4, 5);
+      const both = new Uint8Array(a.length + aFin.length + b.length + bFin.length);
+      let offset = 0;
+      for (const part of [a, aFin, b, bFin]) {
+        both.set(part, offset);
+        offset += part.length;
+      }
       socket.send(both);
     };
     socket.onerror = () => settle(new Error("relay probe websocket failed"));
@@ -118,6 +126,13 @@ export function relayWebSocketProbe(
             settle(new Error("relay probe stream bound exceeded"));
             return;
           }
+          if (id === 2 && !echoedServerStream && decoder.decode(next) === "server-open") {
+            // wait for the server's FIN before closing Chrome: it acknowledges
+            // that the echo reached the Go reader, not just the browser socket.
+            socket.send(frame(0, 0, id, next));
+            socket.send(frame(1, 4, id));
+            echoedServerStream = true;
+          }
           received.set(id, next);
           if (id === 1 && next.length >= 4) {
             const size = new DataView(next.buffer).getUint32(0);
@@ -149,11 +164,10 @@ export function relayWebSocketProbe(
         if (flags & 4) {
           const value = decoder.decode(received.get(id));
           if (id === 2) {
-            if (value !== "server-open") {
+            if (!echoedServerStream || value !== "server-open") {
               settle(new Error("server stream mismatch"));
               return;
             }
-            socket.send(frame(0, 4, id, encoder.encode(value)));
             serverStream = true;
           } else if (payloads.has(id)) {
             if (value !== payloads.get(id)) {

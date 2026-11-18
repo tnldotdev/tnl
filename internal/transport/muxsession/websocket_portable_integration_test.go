@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os/exec"
@@ -50,8 +51,9 @@ func TestIntegrationWebSocketPortableClient(t *testing.T) {
 			return
 		}
 		defer transport.Close()
-		if transport.(muxsession.AcceptedPeer).TLSConnectionState().CurveID != tls.X25519MLKEM768 {
-			done <- io.ErrUnexpectedEOF
+		state := transport.(muxsession.AcceptedPeer).TLSConnectionState()
+		if state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768 {
+			done <- fmt.Errorf("Chrome relay TLS: want TLS 1.3 with X25519MLKEM768, got version %#x with %s", state.Version, state.CurveID)
 			return
 		}
 		session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, hello tunnelv1.Message) error {
@@ -93,15 +95,16 @@ func TestIntegrationWebSocketPortableClient(t *testing.T) {
 			}
 			defer stream.Close()
 			_, err = io.WriteString(stream, "server-open")
-			if err == nil {
-				err = stream.CloseWrite()
-			}
 			var response []byte
 			if err == nil {
 				response, err = io.ReadAll(stream)
 			}
 			if err == nil && string(response) != "server-open" {
-				err = io.ErrUnexpectedEOF
+				err = fmt.Errorf("server-open stream did not receive the complete echo")
+			}
+			// the FIN acknowledges that Go consumed the browser's echo.
+			if err == nil {
+				err = stream.CloseWrite()
 			}
 			results <- err
 		})
@@ -111,6 +114,13 @@ func TestIntegrationWebSocketPortableClient(t *testing.T) {
 				done <- err
 				return
 			}
+		}
+		// the browser must observe every response before the server closes.
+		select {
+		case <-transport.Done():
+		case <-ctx.Done():
+			done <- context.Cause(ctx)
+			return
 		}
 		done <- nil
 	}()
@@ -131,8 +141,10 @@ func TestIntegrationWebSocketPortableClient(t *testing.T) {
 	command := exec.CommandContext(ctx, "node", "../../../packages/ts/test/fixtures/relay-websocket-native.ts")
 	command.Stdin = bytes.NewReader(input)
 	output, runErr := command.CombinedOutput()
-	cancel()
-	_ = listener.Close()
+	if runErr != nil {
+		cancel()
+		_ = listener.Close()
+	}
 	serverErr := <-done
 	if runErr != nil || serverErr != nil || string(output) != "ok\n" {
 		t.Fatalf("portable WebSocket conformance: process=%v server=%v output=%s", runErr, serverErr, output)
