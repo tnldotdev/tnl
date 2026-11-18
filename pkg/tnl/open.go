@@ -47,6 +47,8 @@ type Options struct {
 	StateProtection         StateProtection
 	// expiresat is an optional fixed service deadline, not a renewable duration.
 	ExpiresAt *time.Time
+	// Public defaults to true. set it to false for connector-only access.
+	Public *bool
 }
 
 // Tunnel owns its local listener, service run, and exact service allocation.
@@ -70,6 +72,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
+	public := options.Public == nil || *options.Public
 	state, profile, serverURL, native, err := preparePublisher(ctx, options)
 	if err != nil {
 		return nil, err
@@ -102,7 +105,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 			return runSDKPublication(runCtx, state, options, adhoc.Options{
 				RequirePostQuantum: options.RequirePostQuantum,
 				ControlURL:         serverURL, HTTPClient: options.HTTPClient, State: profile,
-				Publisher: native, InvocationID: invocationID, ExpiresAt: options.ExpiresAt,
+				Publisher: native, InvocationID: invocationID, ExpiresAt: options.ExpiresAt, Public: &public,
 				Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
 				OnAllocated: func(service controlv1.Service) error {
 					tunnel.mu.Lock()
@@ -193,10 +196,11 @@ func shutdownHTTP(ctx context.Context, server *http.Server, served <-chan error)
 	return errors.Join(err, <-served)
 }
 
+// URL returns the public address, or an empty string for a connector-only service.
 func (t *Tunnel) URL() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.service.Endpoint == nil {
+	if t.service.Endpoint == nil || !t.service.Endpoint.Public {
 		return ""
 	}
 	return "https://" + t.service.Endpoint.Hostname
@@ -209,7 +213,7 @@ func (t *Tunnel) Service() controlv1.Service {
 	return cloneService(t.service)
 }
 
-// Endpoint returns the allocated shared-443 public service endpoint.
+// Endpoint returns the service hostname, port, and reachability.
 func (t *Tunnel) Endpoint() controlv1.ServiceEndpoint {
 	t.mu.Lock()
 	defer t.mu.Unlock()

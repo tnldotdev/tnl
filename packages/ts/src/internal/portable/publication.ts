@@ -17,6 +17,7 @@ const optionsSchema = z.strictObject({
   telemetry: z.boolean().exactOptional(),
   signal: z.instanceof(AbortSignal).exactOptional(),
   requirePostQuantum: z.boolean().exactOptional(),
+  public: z.boolean().exactOptional(),
   access: z
     .union([
       z.enum(["restricted", "anonymous"]),
@@ -62,6 +63,7 @@ export function portablePublicationOptions(
   return {
     signal,
     temporary: {
+      ...(parsed.data.public === undefined ? {} : { public: parsed.data.public }),
       ...(requirePostQuantum === undefined ? {} : { require_post_quantum: requirePostQuantum }),
       ...(access === undefined
         ? {}
@@ -253,9 +255,13 @@ export async function publishPortable(options: {
     void close().catch(() => {});
   }
   const publicEndpoint = httpsOriginSchema.safeParse(raw.url);
+  const expectedPublic =
+    options.selection.service === undefined
+      ? (options.selection.temporary?.public ?? true)
+      : undefined;
   const validEndpoint =
-    (raw.public === true && publicEndpoint.success) ||
-    (raw.public === false && !("url" in raw) && options.selection.service !== undefined);
+    (expectedPublic === undefined || raw.public === expectedPublic) &&
+    ((raw.public === true && publicEndpoint.success) || (raw.public === false && !("url" in raw)));
   const publication: PortablePublication = Object.freeze({
     ...(raw.public === true && publicEndpoint.success ? { url: publicEndpoint.data } : {}),
     get joined() {

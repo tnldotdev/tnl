@@ -253,7 +253,7 @@ func invocationOptions(request publisherprotocol.Invocation) (publisheradhoc.Opt
 	if err != nil {
 		return publisheradhoc.Options{}, err
 	}
-	options := publisheradhoc.Options{InvocationID: request.InvocationId, Target: request.Target, Limits: limits}
+	options := publisheradhoc.Options{InvocationID: request.InvocationId, Target: request.Target, Limits: limits, Public: request.Public}
 	if request.RequirePostQuantum != nil {
 		options.RequirePostQuantum = *request.RequirePostQuantum
 	}

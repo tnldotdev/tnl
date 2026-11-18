@@ -328,6 +328,7 @@ class Deployment:
         access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
         limits: Limits | None = None,
         require_post_quantum: bool | None = None,
+        public: bool | None = None,
         telemetry: bool = True,
     ) -> Publication:
         if self._closed or self._pid != os.getpid():
@@ -354,6 +355,7 @@ class Deployment:
                 or access is not None
                 or limits is not None
                 or require_post_quantum is not None
+                or public is not None
             ):
                 raise TnlError(
                     "sdk.configuration_invalid",
@@ -375,6 +377,7 @@ class Deployment:
                 access=access,
                 limits=limits,
                 require_post_quantum=require_post_quantum or False,
+                public=public,
                 telemetry=telemetry,
                 deployment=selection,
                 service=service if self._local else None,

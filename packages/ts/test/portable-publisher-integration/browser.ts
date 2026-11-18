@@ -181,6 +181,10 @@ export async function smoke(input: unknown) {
       removed.deleted && removed.active_runs === 0,
       "temporary publication survived joined close",
     );
+    const privateTemporary = await publish(publisher, handler.handle, { public: false });
+    check(!("url" in privateTemporary), "private temporary publication exposed a public URL");
+    await privateTemporary.close();
+    await privateTemporary.wait();
     check(runtimeStarts() >= 2, "connector and publisher did not use separate actual Go runtimes");
     return {
       actualGoWasm: true,
@@ -194,6 +198,7 @@ export async function smoke(input: unknown) {
       restrictedDeniedBeforeHandler: true,
       connectorToWasmPublisher: true,
       connectorOnlyPublication: true,
+      connectorOnlyTemporary: true,
       joined: true,
       runtimes: runtimeStarts(),
     };

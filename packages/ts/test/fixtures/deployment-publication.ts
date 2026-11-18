@@ -19,7 +19,7 @@ if (variant === "lost-reply") {
 } else {
   let node: Server | undefined;
   let bun: Bun.Server<undefined> | undefined;
-  if (variant === "bun") {
+  if (variant === "bun" || variant === "bun-private") {
     bun = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -37,10 +37,15 @@ if (variant === "lost-reply") {
   } as const;
   const publication =
     bun !== undefined
-      ? await publishBun(production, bun, temporary)
-      : variant === "node" || variant === "node-restart" || variant === "node-restricted"
-        ? await publish(production, variant === "node-restricted" ? "restricted" : "web", server)
-        : await publish(production, server, temporary);
+      ? variant === "bun-private"
+        ? await publishBun(production, "private", bun)
+        : await publishBun(production, bun, temporary)
+      : variant === "node-private"
+        ? await publish(production, "private", server)
+        : variant === "node" || variant === "node-restart" || variant === "node-restricted"
+          ? await publish(production, variant === "node-restricted" ? "restricted" : "web", server)
+          : await publish(production, server, temporary);
+  if (variant?.endsWith("-private")) assert.equal("url" in publication, false);
   console.log(JSON.stringify({ url: publication.url }));
   await new Promise((resolve) => process.stdin.once("data", resolve));
   await publication.close();

@@ -81,6 +81,7 @@ export type DurableObjectWasmPublisherOptions = Omit<
 >;
 
 const publicationOptionsSchema = z.strictObject({
+  public: z.boolean().exactOptional(),
   targetHostname: z.string().min(1).max(253).exactOptional(),
   telemetry: z.boolean().exactOptional(),
   requirePostQuantum: z.boolean().exactOptional(),

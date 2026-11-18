@@ -16,7 +16,13 @@ from starlette.types import Receive, Scope, Send
 import tnl
 from tnl import _asgi, _connections
 from tnl._native import NativeRuntime
-from tnl._protocol import Endpoint, NativeUnavailable, PublicationCleanupFailed, RegistrationLost
+from tnl._protocol import (
+    Endpoint,
+    InvalidResponse,
+    NativeUnavailable,
+    PublicationCleanupFailed,
+    RegistrationLost,
+)
 
 
 @dataclass
@@ -354,6 +360,34 @@ def test_connector_only_http_releases_registration_and_asgi(
                 await http.get(str(session.registration["target"]))
         await local.aclose()
         assert native.operations.count("prepare") == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("public_endpoint", [False, True])
+def test_temporary_connector_only_publication_checks_exposure(
+    monkeypatch: pytest.MonkeyPatch, public_endpoint: bool
+) -> None:
+    async def scenario() -> None:
+        native = setup(monkeypatch)
+        native.private_http = not public_endpoint
+        deployment = tnl.create_client(project="acme/shop", token="private").deployment(
+            "production"
+        )
+        try:
+            if public_endpoint:
+                with pytest.raises(InvalidResponse):
+                    await deployment.publish(tnl.handler(endpoint), public=False)
+            else:
+                publication = await deployment.publish(tnl.handler(endpoint), public=False)
+                assert publication.url is None
+                await publication.aclose()
+                await publication.wait()
+        finally:
+            await deployment.aclose()
+        session = next(iter(native.sessions.values()))
+        assert len(session.payloads) == 1 and session.payloads[0]["public"] is False
+        assert session.stopped and native.operations.count("unregister") == 1
 
     asyncio.run(scenario())
 
