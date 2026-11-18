@@ -64,7 +64,7 @@ jobs:
         run: task js:check
 
       - name: Execute Go/WASM bridge tests
-        run: task go:test:wasm:optimized PACKAGES=./packages/ts/wasm RUNTIME=node TAGS=tnlsdk
+        run: task go:test:wasm:optimized PACKAGES='./packages/ts/wasm ./internal/publisher/service/testdata/portable' RUNTIME=node TAGS=tnlsdk
 
       - name: Scan Go/WASM runtime dependencies
         run: task go:vulncheck:wasm

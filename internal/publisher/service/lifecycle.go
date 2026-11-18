@@ -150,7 +150,7 @@ func (c RunConfig) hasFetchTarget() bool {
 // Publish keeps the managed certificate lifecycle, two independently claimed
 // relay slots and current control heartbeat together. live bytes are never replayed.
 func Publish(ctx context.Context, config RunConfig) (result error) {
-	if err := validateFeedbackPlatform(config.Feedback, config.Demo); err != nil {
+	if err := validateFeedbackPlatform(config.Feedback, config.Demo, config.PreviewID); err != nil {
 		return err
 	}
 	if servicestream.HandlerOnly && !config.hasFetchTarget() {

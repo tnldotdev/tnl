@@ -28,13 +28,19 @@ import (
 )
 
 func TestWasmServiceRejectsNativeFeedbackBeforeExternalWork(t *testing.T) {
-	for _, flags := range [][2]bool{{true, false}, {false, true}, {true, true}} {
+	for _, options := range []struct {
+		feedback, demo bool
+		previewID      string
+	}{
+		{feedback: true}, {demo: true}, {feedback: true, demo: true},
+		{previewID: "pv_" + strings.Repeat("P", 22)},
+	} {
 		// nil control and state deliberately cannot perform any external work.
-		err := service.Publish(t.Context(), service.RunConfig{Feedback: flags[0], Demo: flags[1]})
+		err := service.Publish(t.Context(), service.RunConfig{Feedback: options.feedback, Demo: options.demo, PreviewID: options.previewID})
 		if !errors.Is(err, service.ErrFeedbackUnsupported) {
 			t.Fatal("native-only publication was not rejected at entry", err)
 		}
-		prepared, closeHTTP, err := service.PrepareHTTP(t.Context(), service.HTTP{Feedback: flags[0], Demo: flags[1]})
+		prepared, closeHTTP, err := service.PrepareHTTP(t.Context(), service.HTTP{Feedback: options.feedback, Demo: options.demo, PreviewID: options.previewID})
 		if !errors.Is(err, service.ErrFeedbackUnsupported) || closeHTTP != nil || prepared.Policy != nil {
 			t.Fatal("native-only HTTP preparation started work", err)
 		}
@@ -63,7 +69,7 @@ func TestWasmServiceInlineHTTPKeepsAuthorizationAndReservedPaths(t *testing.T) {
 	frontend, closeHTTP, err := service.PrepareHTTP(t.Context(), service.HTTP{
 		Control: portableControl{policy: &visitorfixture.PolicyClient{Key: key}},
 		Subject: scope, RunID: runID, Number: 1, Token: "run-secret",
-		Hostname: "preview.example.test", Port: 443, Public: true, Requests: requests,
+		Hostname: "preview.example.test", Port: 443, PublicEndpoint: true, BrowserLoginAvailable: new(false), Requests: requests,
 		Source: netip.MustParseAddrPort("192.0.2.1:1234"),
 	})
 	if err != nil {
@@ -90,7 +96,7 @@ func TestWasmServiceInlineHTTPKeepsAuthorizationAndReservedPaths(t *testing.T) {
 				IngressRunID: "ir_" + strings.Repeat("I", 22), IngressLeaseRevision: 1, DestinationPort: 443},
 		},
 		RelayID: "relay", RelayServiceID: "relay-service", RelayRunID: "rr_" + strings.Repeat("R", 22),
-		RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute),
+		RelayLeaseRevision: 1, ServingUntil: time.Now().Add(time.Minute),
 	}
 	if err := frontend.Header.Validate(); err != nil {
 		t.Fatal(err)
@@ -142,7 +148,13 @@ func TestWasmServiceInlineHTTPKeepsAuthorizationAndReservedPaths(t *testing.T) {
 		path       string
 		credential bool
 		status     int
-	}{{"/", false, http.StatusForbidden}, {"/__tnl/unknown", true, http.StatusNotFound}, {"/app", true, http.StatusOK}} {
+	}{
+		{"/", false, http.StatusForbidden},
+		{"/__tnl/unknown", true, http.StatusNotFound},
+		{"/__tnl/access", true, http.StatusNotFound},
+		{"/__tnl/feedback", true, http.StatusNotFound},
+		{"/app", true, http.StatusOK},
+	} {
 		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://preview.example.test"+test.path, nil)
 		if err != nil {
 			t.Fatal(err)

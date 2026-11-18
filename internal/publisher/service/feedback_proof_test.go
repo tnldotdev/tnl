@@ -350,7 +350,7 @@ func TestFeedbackGrantProofAndInvalidExplicitCredentialNeverFallsBack(t *testing
 	certificateRequest.URL.Path = "/__tnl/feedback"
 	certificateRequest.TLS.PeerCertificates = []*x509.Certificate{{}}
 	recorder := httptest.NewRecorder()
-	if !frontend.reserved(recorder, certificateRequest, frontend.authorizeFeedback) ||
+	if !frontend.reserved(recorder, certificateRequest, nil) ||
 		recorder.Code != http.StatusForbidden || len(control.pages) != 0 {
 		t.Fatal("public certificate feedback escaped its missing possession-proof boundary")
 	}

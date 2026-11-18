@@ -19,12 +19,12 @@ async function buildModule(file: string, tag: string) {
     cwd: root,
     env: goEnv,
   });
-  // keep native process tools and direct UDP out of the portable runtimes.
+  // keep native tools and reflective page templates out of the portable runtimes.
   const nativeDependencies = deps
     .trim()
     .split("\n")
     .filter((name) =>
-      /^(go\.opentelemetry\.io\/otel\/(?:exporters|sdk)(?:\/|$)|google\.golang\.org\/(?:grpc|protobuf)(?:\/|$)|github\.com\/(?:prometheus|pion)\/|github\.com\/(?:alecthomas\/kong|santhosh-tekuri\/jsonschema)(?:\/|$)|go\.yaml\.in\/yaml\/|net\/http\/pprof$)/.test(
+      /^(go\.opentelemetry\.io\/otel\/(?:exporters|sdk)(?:\/|$)|google\.golang\.org\/(?:grpc|protobuf)(?:\/|$)|github\.com\/(?:prometheus|pion)\/|github\.com\/(?:alecthomas\/kong|santhosh-tekuri\/jsonschema)(?:\/|$)|go\.yaml\.in\/yaml\/|(?:html|text)\/template(?:\/|$)|net\/http\/pprof$)/.test(
         name,
       ),
     );
@@ -60,6 +60,20 @@ async function buildModule(file: string, tag: string) {
     });
   }
   const bytes = await readFile(artifact);
+  // Go's runtime stack tables retain linked function names even with -s -w and
+  // wasm-opt. Checking these catches retention that package lists cannot see.
+  const nativeControl = [
+    "CreateServiceRunPreview",
+    "AuthorizeReviewerFeedback",
+    "AuthorizeImplementerFeedback",
+    "CreateGuestDemo",
+    "AllocateGuestDemoService",
+    "EnrollGuestPublisher",
+  ].filter((operation) =>
+    bytes.includes(`github.com/tnldotdev/tnl/pkg/api/control/public/v1.(*Client).${operation}`),
+  );
+  if (nativeControl.length > 0)
+    throw new Error(`${file} links native-only control calls: ${nativeControl.join(", ")}`);
   return {
     wasmBytes: bytes.byteLength,
     gzipBytes: gzipSync(bytes, { level: 9 }).byteLength,

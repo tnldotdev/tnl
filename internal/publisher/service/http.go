@@ -80,13 +80,13 @@ type HTTP struct {
 	Policy                *visitorlease.Lease
 	ReserveCapacity       func(context.Context) error
 	browser               *httpaccess.Browser
-	feedback              feedbackFrontend
-	probes                *requestlimit.HTTP
-	preparations          chan struct{}
+	nativeHTTP
+	probes       *requestlimit.HTTP
+	preparations chan struct{}
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
-	if err := validateFeedbackPlatform(f.Feedback, f.Demo); err != nil {
+	if err := validateFeedbackPlatform(f.Feedback, f.Demo, f.PreviewID); err != nil {
 		return HTTP{}, nil, err
 	}
 	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || !f.InspectionMode.Valid() ||
@@ -108,10 +108,8 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 			f.BrowserLoginAvailable = new(*f.BrowserLoginAvailable)
 		}
 	}
-	if f.Demo {
-		if err := f.prepareDemoPreview(ctx); err != nil {
-			return HTTP{}, nil, err
-		}
+	if err := f.prepareNativeHTTP(ctx); err != nil {
+		return HTTP{}, nil, err
 	}
 	f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(4)})
 	if err != nil {
@@ -128,23 +126,16 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 		return HTTP{}, nil, err
 	}
 	f.Policy = policy.Lease()
-	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: f.Control, PreviewID: f.PreviewID, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: controlURL, Policy: policy, Tokens: tokens}
-	f.feedback, err = prepareFeedback(f)
-	if err != nil {
+	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: f.Control, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: controlURL, Policy: policy, Tokens: tokens}
+	if err := f.startNativeHTTP(); err != nil {
 		tokens.Close()
 		policy.Close()
 		return HTTP{}, nil, err
 	}
-	if f.feedback != nil {
-		f.ResponseHooks = f.feedback.responseHooks(f.ResponseHooks)
-	}
 	return f, func() error {
 		tokens.Close()
 		policy.Close()
-		if f.feedback != nil {
-			return f.feedback.close(ctx)
-		}
-		return nil
+		return f.closeNativeHTTP(ctx)
 	}, nil
 }
 
@@ -201,14 +192,14 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				return
 			}
 			// only the validated forwarding metadata supplies the visitor source.
-			// reserved feedback requests need these same TLS and source facts.
+			// reserved handlers need these same TLS and source facts.
 			r.RemoteAddr = f.Source.String()
 			r.TLS = &state
 			if code := proxy.ValidateRequest(r, f.Hostname); code != "" {
 				diagnostic.WriteHTTP(w, r, code, "")
 				return
 			}
-			if f.reserved(w, r, f.authorizeFeedback) {
+			if f.reserved(w, r, nil) {
 				// browser preparation does not claim application access.
 				reported = true
 				return
@@ -313,22 +304,9 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 	return target.Serve(ctx, client, f.Hostname, wrap, f.ResponseHooks)
 }
 
-func (f HTTP) authorizeFeedback(w http.ResponseWriter, r *http.Request) (feedbackAuthorization, *httpaccess.Guard, *http.Request, error) {
-	var tokens *httpaccess.Tokens
-	if f.browser != nil {
-		tokens = f.browser.Tokens
-	}
-	authorization, guard, guarded, err := httpaccess.AuthorizeRequest(w, r, f.Policy, tokens)
-	if err != nil {
-		return feedbackAuthorization{permission: authorization.Permission()}, guard, guarded, err
-	}
-	access, err := bearerFeedbackAuthorization(authorization)
-	return access, guard, guarded, err
-}
-
 // reserved composes the same service-owned handlers for public and connector
 // HTTP. each path supplies its own admission; this code assumes no public header.
-func (f HTTP) reserved(w http.ResponseWriter, r *http.Request, authorize func(http.ResponseWriter, *http.Request) (feedbackAuthorization, *httpaccess.Guard, *http.Request, error)) bool {
+func (f HTTP) reserved(w http.ResponseWriter, r *http.Request, connector *servicestream.ConnectorHTTPAuthorization) bool {
 	if !strings.HasPrefix(r.URL.Path, "/__tnl/") {
 		return false
 	}
@@ -338,28 +316,7 @@ func (f HTTP) reserved(w http.ResponseWriter, r *http.Request, authorize func(ht
 		servicestream.DenyHTTP(w, r, http.StatusForbidden)
 		return true
 	}
-	status := r.URL.Path == "/__tnl/access" && r.Method == http.MethodGet && f.PreviewID != ""
-	if status || f.feedback != nil && strings.HasPrefix(r.URL.Path, "/__tnl/feedback") {
-		authorization, guard, guarded, err := authorize(w, r)
-		if guard != nil {
-			defer guard.Finish()
-		}
-		if status {
-			if err != nil && servicestream.HTTPDecisionStatus(err) != http.StatusForbidden {
-				servicestream.DenyHTTP(w, r, servicestream.HTTPDecisionStatus(err))
-				return true
-			}
-			writePreviewAccessStatus(w, previewAccessStatus(f, authorization.permission, err == nil))
-			return true
-		}
-		if err != nil {
-			servicestream.DenyHTTP(w, r, servicestream.HTTPDecisionStatus(err))
-			return true
-		}
-		if guard != nil {
-			w = guard
-		}
-		f.feedback.handle(w, guarded, authorization)
+	if f.handleNativeReserved(w, r, connector) {
 		return true
 	}
 	if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
@@ -421,17 +378,11 @@ func (f HTTP) ConnectorReserved(w http.ResponseWriter, r *http.Request, authoriz
 		return true
 	}
 	r.RemoteAddr = netip.AddrPortFrom(authorization.Source.Unmap(), 1).String()
-	return f.reserved(w, r, func(http.ResponseWriter, *http.Request) (feedbackAuthorization, *httpaccess.Guard, *http.Request, error) {
-		access, err := connectorFeedbackAuthorization(authorization)
-		return access, nil, r, err
-	})
+	return f.reserved(w, r, &authorization)
 }
 
 func (f HTTP) ConnectorApplication(w http.ResponseWriter, r *http.Request) *http.Request {
-	if f.feedback != nil {
-		r = f.feedback.prepareBrowser(w, r)
-	}
-	return serviceApplicationRequest(r)
+	return serviceApplicationRequest(f.prepareNativeApplication(w, r))
 }
 
 func serviceApplicationRequest(r *http.Request) *http.Request {

@@ -176,7 +176,9 @@ process profiling, project-file loading, and daemon flag parsing. Browser and
 Cloudflare builds exclude direct UDP and ICE. The inner QUIC session still runs
 over packets carried by WSS relays. The Fetch publisher omits native target
 dialing and rejects demo and feedback publication; it keeps the same visitor
-checks, browser sign-in, and share handling.
+checks, browser sign-in, and share handling. Its fixed HTML pages render without
+runtime template lookup, so the portable build does not retain unrelated control
+client methods.
 
 Browsers and Durable Objects can own hosted publishers; ordinary Workers own
 request-scoped connectors. A Durable Object persists running or stopped intent
