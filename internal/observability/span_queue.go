@@ -1,13 +1,33 @@
+//go:build !js || !wasm
+
 package observability
 
 import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
+
+type exportState struct {
+	metricsFailures, traceFailures, logFailures, lostSpans, droppedSpans atomic.Int64
+	lifetime                                                             context.Context
+}
+
+func (s *exportState) exportContext(ctx context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	if s.lifetime == nil {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(s.lifetime, cancel)
+	if s.lifetime.Err() != nil {
+		cancel()
+	}
+	return ctx, func() { stop(); cancel() }
+}
 
 // spanQueue owns a bounded export queue without global SDK providers or feature
 // flags. OnEnd never waits for the receiver. flush/drain share the caller bound.

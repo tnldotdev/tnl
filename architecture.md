@@ -169,6 +169,9 @@ bundles the connector for `connect` or the publisher for `durablePublisher`.
 Both artifacts use the same Go runtime shim. `/control` exposes the generated
 Fetch client independently of the runtime or WASM.
 
+Go/WASM keeps shared tracing context but does not start the native process
+metrics, trace, or log exporters.
+
 Browsers and Durable Objects can own hosted publishers; ordinary Workers own
 request-scoped connectors. A Durable Object persists running or stopped intent
 and restarts a publisher with fresh live connections. Certificate transitions

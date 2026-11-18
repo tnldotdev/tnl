@@ -10,16 +10,34 @@ const root = path.resolve(import.meta.dirname, "../..");
 const output = path.join(root, "packages/ts/dist/wasm");
 await mkdir(output, { recursive: true });
 const { stdout: goroot } = await exec("go", ["env", "GOROOT"], { cwd: root });
-async function buildModule(file: string, tags: string[]) {
+const goEnv = { ...process.env, GOOS: "js", GOARCH: "wasm", CGO_ENABLED: "0" };
+const wasmPackage = "./packages/ts/wasm";
+async function buildModule(file: string, tag: string) {
+  const tags = `-tags=${tag}`;
+  const { stdout: deps } = await exec("go", ["list", "-deps", tags, wasmPackage], {
+    cwd: root,
+    env: goEnv,
+  });
+  // portable runtimes don't start native telemetry exporters.
+  const nativeExporters = deps
+    .trim()
+    .split("\n")
+    .filter((name) =>
+      /^(go\.opentelemetry\.io\/otel\/(?:exporters|sdk)(?:\/|$)|google\.golang\.org\/(?:grpc|protobuf)(?:\/|$)|github\.com\/prometheus\/)/.test(
+        name,
+      ),
+    );
+  if (nativeExporters.length > 0)
+    throw new Error(`${file} imports native telemetry dependencies: ${nativeExporters.join(", ")}`);
   const unoptimized = path.join(output, `.${file}.unoptimized`);
   const artifact = path.join(output, file);
   try {
     await exec(
       "go",
-      ["build", ...tags, "-trimpath", "-ldflags=-s -w", "-o", unoptimized, "./packages/ts/wasm"],
+      ["build", tags, "-trimpath", "-ldflags=-s -w", "-o", unoptimized, wasmPackage],
       {
         cwd: root,
-        env: { ...process.env, GOOS: "js", GOARCH: "wasm", CGO_ENABLED: "0" },
+        env: goEnv,
         maxBuffer: 4 * 1024 * 1024,
       },
     );
@@ -48,8 +66,8 @@ async function buildModule(file: string, tags: string[]) {
   };
 }
 // optimize serially to keep peak memory bounded on build runners.
-const connector = await buildModule("tnl.wasm", ["-tags=tnlconnector"]);
-const publisher = await buildModule("publisher.wasm", ["-tags=tnlpublisher"]);
+const connector = await buildModule("tnl.wasm", "tnlconnector");
+const publisher = await buildModule("publisher.wasm", "tnlpublisher");
 
 // ship the runtime from the same toolchain that compiled the module.
 await copyFile(

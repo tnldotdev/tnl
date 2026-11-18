@@ -1,16 +1,21 @@
+//go:build !js || !wasm
+
 package observability
 
 import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"net/http"
 	"os"
+	"slices"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/otlptranslator"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	bridge "go.opentelemetry.io/contrib/bridges/prometheus"
@@ -20,16 +25,41 @@ import (
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
-const scope = "github.com/tnldotdev/tnl/internal/observability"
-const ShutdownTimeout = 5 * time.Second
+type processMetrics struct {
+	meterProvider   *sdkmetric.MeterProvider
+	tracerProvider  *sdktrace.TracerProvider
+	loggerProvider  *sdklog.LoggerProvider
+	spanQueue       *spanQueue
+	logProcessor    *sdklog.BatchProcessor
+	cancelExports   context.CancelFunc
+	resource        *resource.Resource
+	registry        *prometheus.Registry
+	runtimeRegistry *prometheus.Registry
+}
 
-type ownerKey struct{}
+func (p processMetrics) tracer() trace.Tracer {
+	if p.tracerProvider == nil {
+		return nil
+	}
+	return p.tracerProvider.Tracer(scope)
+}
+
+func (m *Metrics) Handler() http.Handler {
+	return promhttp.HandlerFor(prometheus.Gatherers{m.registry, m.runtimeRegistry}, promhttp.HandlerOpts{})
+}
+
+// Gather captures this process's registry using only passive collectors.
+func (m *Metrics) Gather() ([]*dto.MetricFamily, error) {
+	return (prometheus.Gatherers{m.registry, m.runtimeRegistry}).Gather()
+}
 
 // StartProcess is called once by the native process entry point. child workers
 // inherit its context; they do not create providers or read export settings.
@@ -45,10 +75,29 @@ func StartProcess(ctx context.Context, role string) (context.Context, *Metrics, 
 	return WithMetrics(ctx, m), m, nil
 }
 
-func WithMetrics(ctx context.Context, m *Metrics) context.Context {
-	return context.WithValue(ctx, ownerKey{}, m)
+// New constructs an isolated, local-only owner. it never reads export settings.
+func New(role string) *Metrics {
+	m, err := newOwner(role, Config{})
+	if err != nil {
+		panic(err)
+	}
+	return m
 }
-func FromContext(ctx context.Context) *Metrics { m, _ := ctx.Value(ownerKey{}).(*Metrics); return m }
+
+// SharedVocabulary is offline. callbacks expose only local snapshots; no
+// environment, process instance, runtime counts, or I/O is included.
+func SharedVocabulary() Vocabulary {
+	m := New("standalone")
+	defer m.Shutdown(context.Background())
+	m.RegisterDatabase(func(time.Time) DatabaseSnapshot { return DatabaseSnapshot{} })
+	m.RegisterIngressRouting(func() IngressRoutingSnapshot { return IngressRoutingSnapshot{} })
+	m.RegisterIngressServiceRouting(func() time.Time { return time.Time{} })
+	m.RegisterIngressLease(func() time.Time { return time.Time{} })
+	m.RegisterControlCertificate(func() time.Time { return time.Time{} })
+	instruments := append(m.InstrumentDefinitions(), RuntimeInstrumentDefinitions()...)
+	slices.SortFunc(instruments, func(a, b InstrumentDefinition) int { return strings.Compare(a.Name, b.Name) })
+	return Vocabulary{1, "internal/observability: vocabulary.go and instrument declarations", 2000, VocabularyAttributes(), instruments}
+}
 
 func newOwner(role string, config Config) (_ *Metrics, err error) {
 	parsedRole, ok := ParseRole(role)
@@ -58,7 +107,10 @@ func newOwner(role string, config Config) (_ *Metrics, err error) {
 	if config.Disabled {
 		// do not construct SDK providers: even explicit resource/limit options
 		// are applied after their ambient defaults have been parsed and logged.
-		m := &Metrics{meter: &contractMeter{Meter: noop.NewMeterProvider().Meter(scope), specs: make(map[string]InstrumentDefinition)}, registry: prometheus.NewRegistry(), runtimeRegistry: newRuntimeRegistry()}
+		m := &Metrics{
+			meter:          &contractMeter{Meter: noop.NewMeterProvider().Meter(scope), specs: make(map[string]InstrumentDefinition)},
+			processMetrics: processMetrics{registry: prometheus.NewRegistry(), runtimeRegistry: newRuntimeRegistry()},
+		}
 		m.initInstruments(parsedRole)
 		return m, nil
 	}
@@ -148,7 +200,12 @@ func newOwner(role string, config Config) (_ *Metrics, err error) {
 	}
 	mp := sdkmetric.NewMeterProvider(opts...)
 	catalog.Meter = mp.Meter(scope)
-	m := &Metrics{meterProvider: mp, meter: catalog, registry: registry, runtimeRegistry: runtime, resource: res, cancelExports: cancelExports}
+	m := &Metrics{
+		meter: catalog,
+		processMetrics: processMetrics{
+			meterProvider: mp, registry: registry, runtimeRegistry: runtime, resource: res, cancelExports: cancelExports,
+		},
+	}
 	m.initInstruments(parsedRole)
 	describe(m.meter, "tnl_observability_export_failures_total", "Failed export batches after bounded retries; never gates readiness.", KindCounter, nil, signalKey)
 	_, _ = m.meter.Int64ObservableCounter("tnl_observability_export_failures_total", metric.WithDescription("Failed export batches; export never gates readiness."), metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
@@ -308,23 +365,6 @@ func providerWork(ctx context.Context, work ...func(context.Context) error) erro
 type metricExporter struct {
 	sdkmetric.Exporter
 	state *exportState
-}
-
-type exportState struct {
-	metricsFailures, traceFailures, logFailures, lostSpans, droppedSpans atomic.Int64
-	lifetime                                                             context.Context
-}
-
-func (s *exportState) exportContext(ctx context.Context) (context.Context, func()) {
-	ctx, cancel := context.WithCancel(ctx)
-	if s.lifetime == nil {
-		return ctx, cancel
-	}
-	stop := context.AfterFunc(s.lifetime, cancel)
-	if s.lifetime.Err() != nil {
-		cancel()
-	}
-	return ctx, func() { stop(); cancel() }
 }
 
 func (e *metricExporter) Export(ctx context.Context, data *metricdata.ResourceMetrics) error {
