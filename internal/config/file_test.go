@@ -166,42 +166,6 @@ func TestTNLDSectionUsesTNLDFieldMetadata(t *testing.T) {
 	}
 }
 
-func TestTNLDEnrollmentCeilingsFromFiles(t *testing.T) {
-	for extension, contents := range map[string]string{
-		"json": `{"version":1,"tnld":{"publisher_enrollment_max_members":100000,"publisher_enrollment_max_lifetime":"2160h","project_max_publishers":500}}`,
-		"yml":  "version: 1\ntnld:\n  publisher_enrollment_max_members: 100000\n  publisher_enrollment_max_lifetime: 2160h\n  project_max_publishers: 500\n",
-	} {
-		t.Run(extension, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "tnl."+extension)
-			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			document, err := LoadDocument(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var value daemonconfig.Config
-			document.TNLD.Apply(&value)
-			got := value.PublisherEnrollmentLimits()
-			if got.Members != 100000 || got.Lifetime != 2160*time.Hour || got.ProjectPublishers != 500 {
-				t.Fatal("file lost configured ceilings", got)
-			}
-		})
-	}
-	for _, bad := range []string{
-		`{"version":1,"tnld":{"publisher_enrollment_max_lifetime":2160}}`,
-		`{"version":1,"tnld":{"publisher_enrollment_max_members":null}}`,
-	} {
-		path := filepath.Join(t.TempDir(), "tnl.json")
-		if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := LoadDocument(path); err == nil {
-			t.Fatal("invalid file ceiling accepted")
-		}
-	}
-}
-
 func TestValidateTNLRejectsInvalidServiceNames(t *testing.T) {
 	for _, name := range []string{"", "Web", "1web", "web.example", "web-"} {
 		if err := ValidateTNL(TNL{Services: map[string]Service{name: {}}}); err == nil {

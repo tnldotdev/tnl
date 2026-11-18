@@ -41,9 +41,6 @@ func (d *daemon) startControlWorkers(
 		return err
 	}
 	d.database = database
-	if err := database.ConfigurePublisherEnrollmentLimits(cfg.PublisherEnrollmentLimits()); err != nil {
-		return err
-	}
 	if err := database.ConfigureControlOutageTolerance(cfg.ControlOutageTolerance); err != nil {
 		return err
 	}

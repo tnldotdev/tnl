@@ -17,7 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/publisherenrollment"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -51,10 +50,9 @@ func deploymentPublisherSession(ctx context.Context, flags scopedTeamFlags, proj
 
 func deploymentPublisherSetupBody(flags publisherSetupCommand) (controlv1.CreateDeploymentPublisherEnrollmentRequest, error) {
 	invalid := func() (controlv1.CreateDeploymentPublisherEnrollmentRequest, error) {
-		return controlv1.CreateDeploymentPublisherEnrollmentRequest{}, publisherCLIError("select --deployment and unique --service names, positive --members, and whole-second --expires-in from 1m to 8760h; server enrollment ceilings also apply; omit namespace, URL, and domain flags")
+		return controlv1.CreateDeploymentPublisherEnrollmentRequest{}, publisherCLIError("select --deployment and unique --service names, --members 1-256, and whole-second --expires-in from 1m to 24h; omit namespace, URL, and domain flags")
 	}
-	if flags.Namespace || flags.URL != "" || flags.Domain != "" || len(flags.Services) < 1 || len(flags.Services) > 128 ||
-		!publisherenrollment.ValidRequest(flags.Members, flags.ExpiresIn) {
+	if flags.Namespace || flags.URL != "" || flags.Domain != "" || len(flags.Services) < 1 || len(flags.Services) > 128 || flags.Members < 1 || flags.Members > 256 || flags.ExpiresIn < time.Minute || flags.ExpiresIn > 24*time.Hour || flags.ExpiresIn%time.Second != 0 {
 		return invalid()
 	}
 	seen := map[string]bool{}

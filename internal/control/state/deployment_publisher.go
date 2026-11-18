@@ -91,10 +91,6 @@ func (d *Database) RedeemScopedDeploymentPublisherEnrollment(ctx context.Context
 	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
 		return result, publisherLookupError(err, ErrDeploymentPublisher)
 	}
-	projectState, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project})
-	if err != nil {
-		return result, publisherLookupError(err, ErrDeploymentPublisher)
-	}
 	deployment, err := q.LockDeploymentByID(ctx, gid)
 	if err != nil {
 		return result, publisherLookupError(err, ErrDeploymentPublisher)
@@ -134,7 +130,11 @@ func (d *Database) RedeemScopedDeploymentPublisherEnrollment(ctx context.Context
 	if reused {
 		return result, ErrDeploymentPublisher
 	}
-	if int(enrollment.AdmittedMembers) >= maxMembers || int(projectState.PublisherCount) >= d.enrollmentLimits().ProjectPublishers {
+	var count, total int
+	if err = tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.deployment_publisher_members WHERE enrollment_id=$1),count(*) FROM control.deployment_publisher_members member JOIN control.deployments deployment ON deployment.id=member.deployment_id JOIN control.publisher_identities publisher ON publisher.id=member.publisher_identity_id WHERE deployment.team_id=$2 AND deployment.project_key=$3 AND deployment.deleted_at IS NULL AND publisher.revoked_at IS NULL`, parts[0], team, project).Scan(&count, &total); err != nil {
+		return result, err
+	}
+	if count >= maxMembers || total >= 256 {
 		return result, ErrDeploymentPublisher
 	}
 	id, err := opaqueid.New(opaqueid.PublisherIdentityPrefix)

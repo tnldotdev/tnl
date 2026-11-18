@@ -109,7 +109,6 @@ type ControlAppliedProject struct {
 	ConfigurationHash       string
 	ConfigurationCiphertext []byte
 	StorageKeyID            string
-	PublisherCount          int32
 	CreatedByIdentityID     string
 	UpdatedAt               pgtype.Timestamptz
 	RetiredAt               pgtype.Timestamptz
@@ -373,7 +372,6 @@ type ControlDeploymentPublisherEnrollment struct {
 	DeploymentID        string
 	SecretDigest        []byte
 	MaxMembers          int32
-	AdmittedMembers     int32
 	CreatedByIdentityID string
 	ExpiresAt           pgtype.Timestamptz
 	RevokedAt           pgtype.Timestamptz

@@ -15,7 +15,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/publisherenrollment"
 )
 
 var ErrDeploymentPublisherNotFound = errors.New("deployment publisher not found")
@@ -53,8 +52,7 @@ func deploymentPublisherEnrollmentContext(id string) string {
 // still usable. it never creates a replacement installation credential.
 func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r CreateDeploymentPublisherEnrollmentRequest) (result DeploymentPublisherEnrollment, retErr error) {
 	clock := newAuthorizationClock(r.Now)
-	if !validIdempotencyKey(r.IdempotencyKey) || len(r.Services) < 1 || len(r.Services) > 128 ||
-		!publisherenrollment.ValidRequest(r.MaxMembers, r.Lifetime) {
+	if !validIdempotencyKey(r.IdempotencyKey) || len(r.Services) < 1 || len(r.Services) > 128 || r.MaxMembers < 1 || r.MaxMembers > 256 || r.Lifetime < time.Minute || r.Lifetime > 24*time.Hour {
 		return result, ErrProjectConfigurationInvalid
 	}
 	names := slices.Clone(r.Services)
@@ -99,7 +97,11 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 		if !bytes.Equal(row.RequestDigest, digest[:]) {
 			return result, ErrServiceConflict
 		}
-		if row.RevokedAt.Valid || !row.ExpiresAt.Time.After(clock.current()) || row.AdmittedMembers >= row.MaxMembers {
+		var consumed int
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.deployment_publisher_members WHERE enrollment_id=$1`, row.ID).Scan(&consumed); err != nil {
+			return result, err
+		}
+		if row.RevokedAt.Valid || !row.ExpiresAt.Time.After(clock.current()) || consumed >= int(row.MaxMembers) {
 			return result, ErrPublisherEnrollment
 		}
 		services, err := d.currentPublisherEnrollmentServices(ctx, q, row, deployment)
@@ -119,10 +121,6 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 	} else {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return result, err
-		}
-		limits := d.enrollmentLimits()
-		if r.MaxMembers > limits.Members || r.Lifetime > limits.Lifetime {
-			return result, ErrProjectConfigurationInvalid
 		}
 		configuration, err := d.openDeploymentConfiguration(deployment)
 		if err != nil {
