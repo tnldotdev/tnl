@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { createClient, type TnlClientFactory } from "@tnldotdev/tnl";
 import { pg as pgAdapter } from "@tnldotdev/tnl/adapters/node-postgres";
 import { postgres } from "@tnldotdev/tnl/adapters/postgres-js";
-import { mysql2 } from "@tnldotdev/tnl/adapters/mysql2";
 import { createInterface } from "node:readline";
+import { sql as query } from "drizzle-orm";
+import { drizzle as mysqlDrizzle } from "drizzle-orm/mysql2";
+import { drizzle as pgDrizzle } from "drizzle-orm/node-postgres";
+import { drizzle as postgresDrizzle } from "drizzle-orm/postgres-js";
 import mysql from "mysql2/promise";
 import pg from "pg";
 
@@ -72,6 +75,10 @@ try {
         (tx) => tx<{ answer: number }[]>`select ${41}::int + 1 as answer`,
       );
       assert.equal(row?.answer, 42);
+      const [result] = await postgresDrizzle({ client: sql }).execute<{ answer: number }>(
+        query`select ${41}::int + 1 as answer`,
+      );
+      assert.equal(result?.answer, 42);
     } finally {
       await create.close(sql);
     }
@@ -90,6 +97,11 @@ try {
     await exercise(
       get,
       async (pool) => {
+        const db = pgDrizzle({ client: pool });
+        const { rows } = await db.execute<{ answer: number }>(
+          query`select ${41}::int + 1 as answer`,
+        );
+        assert.equal(rows[0]?.answer, 42);
         const result = await pool.query<{ pid: number; secure: boolean }>(
           "SELECT pg_backend_pid() AS pid, ssl AS secure FROM pg_stat_ssl WHERE pid=pg_backend_pid()",
         );
@@ -102,10 +114,14 @@ try {
     );
   } else {
     assert("stream" in options);
-    assert.equal(options.ssl.rejectUnauthorized, true);
+    const { host, port, ssl, stream } = options;
+    assert.equal(ssl.rejectUnauthorized, true);
     const client = await mysql.createConnection({
-      ...options,
       ...credentials,
+      host,
+      port,
+      ssl: { ...ssl },
+      stream,
       connectTimeout: 5_000,
     });
     try {
@@ -119,20 +135,33 @@ try {
       await client.end();
     }
     const closed: mysql.Pool[] = [];
-    const adapter = mysql2({ ...credentials, connectionLimit: 1, connectTimeout: 5_000 });
     const get = deployment.client("database", {
       create(connection) {
         assert("stream" in connection);
-        return adapter.create(connection);
+        const { host, port, ssl, stream } = connection;
+        return mysql.createPool({
+          ...credentials,
+          host,
+          port,
+          ssl: { ...ssl },
+          stream,
+          connectionLimit: 1,
+          connectTimeout: 5_000,
+        });
       },
       async close(pool) {
-        await adapter.close(pool);
+        await pool.end();
         closed.push(pool);
       },
     });
     await exercise(
       get,
       async (pool) => {
+        const [result] = await mysqlDrizzle({ client: pool }).execute(
+          query`select ${41} + 1 as answer`,
+        );
+        assert(Array.isArray(result));
+        assert.equal(result[0]?.answer, 42);
         const [rows] = await pool.query<mysql.RowDataPacket[]>("SELECT CONNECTION_ID() AS pid");
         const pid: unknown = rows[0]?.pid;
         assert(typeof pid === "number");

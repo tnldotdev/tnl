@@ -1,6 +1,9 @@
 import { ioredis } from "@tnldotdev/tnl/adapters/ioredis";
 import { pg } from "@tnldotdev/tnl/adapters/node-postgres";
 import { postgres } from "@tnldotdev/tnl/adapters/postgres-js";
+import { sql as query } from "drizzle-orm";
+import { drizzle as pgDrizzle } from "drizzle-orm/node-postgres";
+import { drizzle as postgresDrizzle } from "drizzle-orm/postgres-js";
 import { PortableSmokeError, deployment, runPortableIsolation, runPortableSmoke } from "./smoke.ts";
 import { check, fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
@@ -107,6 +110,11 @@ export default {
           } finally {
             session.release();
           }
+          const db = pgDrizzle({ client: pool });
+          const { rows } = await db.execute<{ answer: number }>(
+            query`select ${41}::int + 1 as answer`,
+          );
+          check(rows[0]?.answer === 42, "Drizzle with pg returned the wrong result");
           await getPool.close();
           const getSql = app.client(
             "postgres",
@@ -117,6 +125,10 @@ export default {
             (tx) => tx<{ answer: number }[]>`select ${41}::int + 1 as answer`,
           );
           check(row?.answer === 42, "Postgres.js query returned the wrong result");
+          const [result] = await postgresDrizzle({ client: sql }).execute<{ answer: number }>(
+            query`select ${41}::int + 1 as answer`,
+          );
+          check(result?.answer === 42, "Drizzle with Postgres.js returned the wrong result");
           await getSql.close();
           return Response.json({ backendPID });
         } catch (error) {

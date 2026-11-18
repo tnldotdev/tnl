@@ -3,6 +3,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { test, expect } from "vitest";
 import { TnlError } from "../../src/errors.js";
 import { nativeStreams } from "../../src/internal/connector/native_stream.js";
+import { transportIDSchema } from "../../src/internal/values.js";
 
 test("native open joins sockets and allows a reply after write EOF", async () => {
   const listener = createServer({ allowHalfOpen: true }, (socket) => {
@@ -17,7 +18,7 @@ test("native open joins sockets and allows a reply after write EOF", async () =>
     host: "127.0.0.1",
     port: (listener.address() as AddressInfo).port,
     expires: Date.now() + 10_000,
-    transportID: "fixture",
+    transportID: transportIDSchema.parse("ctg_aaaaaaaaaaaaaaaaaaaaaa"),
   }));
   const reason = new TnlError("sdk.client_closed");
   try {

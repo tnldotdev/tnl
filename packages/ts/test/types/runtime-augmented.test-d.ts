@@ -119,12 +119,18 @@ test("deployment connections expose protocol-owned readonly driver settings", as
   // @ts-expect-error SQL account credentials belong to the application.
   void db.password;
   const privateTLS = { servername: "db.example", rejectUnauthorized: true } as const;
-  ({ host: "127.0.0.1", port: 5432, ssl: privateTLS }) satisfies TnlConnectionRegistry["postgres"];
+  ({
+    host: "127.0.0.1",
+    port: 5432,
+    ssl: privateTLS,
+    open: db.open,
+  }) satisfies TnlConnectionRegistry["postgres"];
   ({
     host: "db.example",
     port: 3306,
     ssl: { ...privateTLS, verifyIdentity: true },
     stream: mysql.stream,
+    open: mysql.open,
   }) satisfies TnlConnectionRegistry["mysql"];
 });
 

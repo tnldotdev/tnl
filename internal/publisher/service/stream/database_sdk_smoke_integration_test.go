@@ -107,12 +107,16 @@ func TestIntegrationDatabaseSDKSmoke(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = reader.Close()
-			for _, language := range []string{"javascript", "python"} {
-				if language == "python" && setting.protocol != config.ProtocolPostgres {
+			for _, runtime := range []string{"node", "bun", "python"} {
+				if runtime == "python" && setting.protocol != config.ProtocolPostgres {
 					continue
 				}
-				t.Run(language, func(t *testing.T) {
-					runDatabaseSDKSmoke(t, root, binary, state, backend, string(setting.protocol), language)
+				name := runtime
+				if runtime == "node" {
+					name = "javascript"
+				}
+				t.Run(name, func(t *testing.T) {
+					runDatabaseSDKSmoke(t, root, binary, state, backend, string(setting.protocol), runtime)
 				})
 			}
 		})
@@ -174,7 +178,7 @@ func minTimeForDatabaseSmoke(a, b time.Time) time.Time {
 	return b
 }
 
-func runDatabaseSDKSmoke(t *testing.T, root, binary string, state connectorruntime.Status, backend *databaseSmokeBackend, protocol, language string) {
+func runDatabaseSDKSmoke(t *testing.T, root, binary string, state connectorruntime.Status, backend *databaseSmokeBackend, protocol, runtime string) {
 	t.Helper()
 	backend.mu.Lock()
 	backend.transport = "a"
@@ -185,8 +189,8 @@ func runDatabaseSDKSmoke(t *testing.T, root, binary string, state connectorrunti
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.CommandContext(ctx, "node", fixture, protocol)
-	if language == "python" {
+	command := exec.CommandContext(ctx, runtime, fixture, protocol)
+	if runtime == "python" {
 		python, err := filepath.Abs("../../../../packages/py/.venv/bin/python")
 		if err != nil {
 			t.Fatal(err)
@@ -231,7 +235,7 @@ func runDatabaseSDKSmoke(t *testing.T, root, binary string, state connectorrunti
 			cancel()
 			err := command.Wait()
 			waited = true
-			t.Fatalf("database SDK %s: wanted %s, got %q: %v; %v\n%s", language, step.event, scanner.Text(), scanner.Err(), err, stderr.String())
+			t.Fatalf("database SDK %s: wanted %s, got %q: %v; %v\n%s", runtime, step.event, scanner.Text(), scanner.Err(), err, stderr.String())
 		}
 		if step.transport == "" {
 			break
@@ -246,7 +250,7 @@ func runDatabaseSDKSmoke(t *testing.T, root, binary string, state connectorrunti
 	err = command.Wait()
 	waited = true
 	if err != nil {
-		t.Fatalf("database SDK %s: %v\n%s", language, err, stderr.String())
+		t.Fatalf("database SDK %s: %v\n%s", runtime, err, stderr.String())
 	}
 	handle, err := connectorruntime.ReadHandle(state.ConnectionHandle)
 	if err != nil {

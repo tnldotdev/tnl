@@ -67,10 +67,6 @@
       "types": "./dist/adapters/ioredis.d.ts",
       "default": "./dist/adapters/ioredis.js"
     },
-    "./adapters/mysql2": {
-      "types": "./dist/adapters/mysql2.d.ts",
-      "default": "./dist/adapters/mysql2.js"
-    },
     "./config": {
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js",
@@ -118,7 +114,6 @@
     "@types/pg": "8.23.1",
     "hono": "4.13.16",
     "ioredis": "5.11.1",
-    "mysql2": "3.24.6",
     "next": "16.4.6",
     "pg": "8.23.1",
     "postgres": "3.4.9",
@@ -128,7 +123,6 @@
   },
   "peerDependencies": {
     "ioredis": "^5.11.1",
-    "mysql2": "^3.24.6",
     "next": ">=16.4.5",
     "pg": "^8.23.1",
     "postgres": "^3.4.9",
@@ -136,9 +130,6 @@
   },
   "peerDependenciesMeta": {
     "ioredis": {
-      "optional": true
-    },
-    "mysql2": {
       "optional": true
     },
     "next": {
