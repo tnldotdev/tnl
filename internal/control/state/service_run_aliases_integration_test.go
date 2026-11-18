@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
@@ -403,70 +401,5 @@ func TestIntegrationRunAliasBrowserAndShareCredentialsStayHostBound(t *testing.T
 	}
 	if _, err := f.database.IssueVisitorToken(t.Context(), testVisitorIssuer, auth.Subject, canonicalSource, f.now); err != nil {
 		t.Fatal("alias withdrawal interrupted canonical share permission", err)
-	}
-}
-
-func TestIntegrationRunAliasChallengeCannotMoveToSiblingOrCanonicalHost(t *testing.T) {
-	f, _, declaration := newRunAliasServiceFixture(t)
-	declaration.HTTP = &config.HTTPService{Protection: &httpprotection.Settings{WAF: httpprotection.Off}}
-	var err error
-	f.service, err = f.database.ConfigureService(t.Context(), f.service.ID, f.project.ActorID, f.service.ServiceMetadata,
-		&declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.run = f.publish(t, f.service)
-	sibling := f.publish(t, f.service)
-	setProtectionSettings(t, f, httpprotection.Settings{WAF: httpprotection.Off, Challenge: httpprotection.Turnstile})
-	auth := f.auth()
-	browser, publisher, binding := challengeBindings()
-	attempt, err := f.database.BeginHTTPChallenge(t.Context(), auth.Subject, browser[:], publisher[:], f.now, f.run.RunHostname)
-	if err != nil || attempt.Hostname != f.run.RunHostname {
-		t.Fatal("challenge did not capture its exact run hostname", err)
-	}
-	if err := f.database.ClaimHTTPChallenge(t.Context(), attempt.ID, browser[:], f.now); err != nil {
-		t.Fatal(err)
-	}
-	handoff, err := f.database.CompleteHTTPChallenge(t.Context(), verifiedChallengeAttempt(t, attempt.ID, f.now), f.now)
-	if err != nil || handoff.Origin != "https://"+f.run.RunHostname {
-		t.Fatal("challenge redirected to the pooled endpoint", err)
-	}
-	if _, _, err := f.database.RedeemHTTPChallenge(t.Context(), auth.Subject, sibling.RunID, sibling.RunNumber,
-		sibling.Token, handoff.Secret, binding, testVisitorIssuer, f.now, f.run.RunHostname); !errors.Is(err, ErrHTTPChallenge) {
-		t.Fatal("a sibling publisher redeemed another run's alias challenge", err)
-	}
-	if _, _, err := f.database.RedeemHTTPChallenge(t.Context(), auth.Subject, auth.RunID, auth.Number,
-		auth.Token.String(), handoff.Secret, binding, testVisitorIssuer, f.now); !errors.Is(err, ErrHTTPChallenge) {
-		t.Fatal("canonical host redeemed alias clearance", err)
-	}
-	clearance, _, err := f.database.RedeemHTTPChallenge(t.Context(), auth.Subject, auth.RunID, auth.Number,
-		auth.Token.String(), handoff.Secret, binding, testVisitorIssuer, f.now, f.run.RunHostname)
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := f.database.ReadPublisherVisitorPolicy(t.Context(), auth.Subject, auth.RunID, auth.Number,
-		auth.Token.String(), 0, f.now, f.run.RunHostname)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := visitorlease.Decode(policy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := visitortoken.VerifyClearance(clearance, decoded.View, f.now); err != nil {
-		t.Fatal("alias could not verify its clearance", err)
-	}
-	canonical := decoded.View
-	canonical.Hostname = f.service.Endpoint.Hostname
-	if _, err := visitortoken.VerifyClearance(clearance, canonical, f.now); err == nil {
-		t.Fatal("alias clearance verified for the canonical hostname")
-	}
-	declaration.RunAliasParent = ""
-	if _, err := f.database.ConfigureService(t.Context(), f.service.ID, f.project.ActorID, f.service.ServiceMetadata,
-		&declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.database.BeginHTTPChallenge(t.Context(), auth.Subject, browser[:], publisher[:], f.now, f.run.RunHostname); err == nil {
-		t.Fatal("a withdrawn alias started a new challenge")
 	}
 }

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
-	protectionpolicy "github.com/tnldotdev/tnl/internal/policy/httpprotection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -67,7 +66,7 @@ func aliasHTTPConfiguration(t *testing.T, control *aliasHTTPControl) HTTP {
 	return HTTP{Control: control, PublicEndpoint: true, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: header.ServiceID},
 		RunID: header.ServiceRunID, Number: 1, Token: "run-secret", Hostname: "preview.example.test", RunHostname: httpRunAlias,
 		Port: 443, Header: header, Source: netip.MustParseAddrPort("192.0.2.1:1234"), Requests: requests,
-		Protection: protectionpolicy.Settings{WAF: protectionpolicy.Off}, ReserveCapacity: func(context.Context) error { return nil }}
+		ReserveCapacity: func(context.Context) error { return nil }}
 }
 
 func TestServiceHTTPRunAliasSharesBudgetsAndRejectsCoalescedHosts(t *testing.T) {
@@ -90,8 +89,8 @@ func TestServiceHTTPRunAliasSharesBudgetsAndRejectsCoalescedHosts(t *testing.T) 
 				}
 			})
 			if frontend.alias == nil || frontend.Requests != frontend.alias.Requests ||
-				frontend.protection != frontend.alias.protection || frontend.preparations != frontend.alias.preparations {
-				t.Fatal("an alias created an independent application or protection budget")
+				frontend.probes != frontend.alias.probes || frontend.preparations != frontend.alias.preparations {
+				t.Fatal("an alias created an independent application or readiness budget")
 			}
 			var forwarded atomic.Int32
 			certificate := visitorfixture.Certificate(t, "*.example.test")
