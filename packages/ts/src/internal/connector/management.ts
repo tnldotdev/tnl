@@ -1,6 +1,6 @@
 import { TnlError } from "../../errors.js";
 import {
-  createControlClient,
+  control,
   createDeployment,
   deleteDeployment,
   getDeployment,
@@ -67,7 +67,7 @@ export function boundManagement(project: string | undefined, token: string | und
   };
   const options = async () => {
     const selected = await access();
-    client ??= createControlClient({
+    client ??= control({
       baseUrl: selected.server,
       auth: async () => (await access()).token,
     });

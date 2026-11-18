@@ -89,7 +89,7 @@ export async function generateManagementSDK(): Promise<void> {
         client: false,
         validator: { request: false, response: true },
       },
-      { name: "@hey-api/client-fetch", baseUrl: false },
+      { name: "@hey-api/client-fetch", baseUrl: "https://control.tnl.dev" },
     ],
   });
   if (jobs.length !== 1) throw new Error("expected one management SDK generation result");
