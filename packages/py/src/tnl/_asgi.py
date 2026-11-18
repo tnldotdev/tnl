@@ -324,8 +324,8 @@ class Publication:
         server.tunnel = self
 
     @property
-    def url(self) -> str:
-        if self._url is None or not self._ready.done() or self._ready.exception() is not None:
+    def url(self) -> str | None:
+        if not self._ready.done() or self._ready.exception() is not None:
             raise InvalidResponse()
         return self._url
 
@@ -480,12 +480,15 @@ class Publication:
             if status.publish_run_number < self._run:
                 raise InvalidResponse()
             self._run = status.publish_run_number
-        if status.routable and status.public_url is None:
+        named = self._service is not None or (
+            self._deployment is not None and self._deployment.get("service") is not None
+        )
+        if status.routable and status.public_url is None and (not named or self._url is not None):
             raise InvalidResponse()
         if status.routable and not self._ready.done():
             self._ready.set_result(None)
         elif status.failure:
-            self._fail(TnlError("sdk.publication_failed", "the public URL could not be published"))
+            self._fail(TnlError("sdk.publication_failed", "the service could not be published"))
 
     async def _follow(self) -> None:
         last_renew = asyncio.get_running_loop().time()

@@ -277,16 +277,21 @@ test.each(["url", "run"])("late named endpoint retains its %s fence", async (cha
 });
 
 test.each(["node", "fetch"])(
-  "connector-only HTTP releases its registration and leaves %s listener ownership intact",
+  "connector-only HTTP becomes ready without a public URL and preserves %s listener ownership",
   async (kind) => {
     const { calls, sessions } = fixture({ unrealized: true, publicEndpoint: false });
     const local = createClient({ services: { web: { protocol: "http" } } }).deployment("local");
     const server = kind === "node" ? await listener() : undefined;
-    await expect(
-      local.publish("web", server ?? (() => new Response("owned"))),
-    ).rejects.toMatchObject({ code: "sdk.response_invalid" });
+    const publication = await local.publish("web", server ?? (() => new Response("owned")));
+    expect(publication).not.toHaveProperty("url");
     expect(calls.filter((call) => call.operation === "prepare")).toHaveLength(1);
     expect(calls.filter((call) => call.operation === "register")).toHaveLength(1);
+    const liveTarget = payload.parse(
+      calls.find((call) => call.operation === "register")?.body,
+    ).target;
+    expect(await visit(liveTarget)).toBe(server === undefined ? "owned" : "application owned");
+    await publication.close();
+    await publication.wait();
     const unregistered = calls.filter((call) => call.operation === "unregister");
     expect(unregistered).toHaveLength(1);
     expect([...sessions.values()][0]?.stopped).toBe(true);

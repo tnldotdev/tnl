@@ -489,15 +489,6 @@ async function publishServerUntraced(
     );
     return closePromise;
   };
-  const handle: Publication = Object.freeze({
-    get url(): `https://${string}` {
-      if (currentURL === undefined) throw new TnlError("sdk.response_invalid");
-      return currentURL;
-    },
-    close,
-    wait: () => done,
-    [Symbol.asyncDispose]: close,
-  });
   const fail = (cause: unknown) => {
     if (terminal) return;
     terminal = true;
@@ -527,10 +518,19 @@ async function publishServerUntraced(
       lastRun = status.publishRunNumber;
     }
     if (status.routable) {
-      if (status.publicURL === undefined) throw new TnlError("sdk.response_invalid");
+      const named = localService !== undefined || publication?.service !== undefined;
+      if (status.publicURL === undefined && (!named || currentURL !== undefined))
+        throw new TnlError("sdk.response_invalid");
       if (!readyReached) {
         readyReached = true;
-        resolveReady(handle);
+        resolveReady(
+          Object.freeze({
+            ...(currentURL === undefined ? {} : { url: currentURL }),
+            close,
+            wait: () => done,
+            [Symbol.asyncDispose]: close,
+          }),
+        );
       }
     } else if (status.failure) fail(new TnlError("sdk.publication_failed"));
   };
