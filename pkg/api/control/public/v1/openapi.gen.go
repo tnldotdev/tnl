@@ -1947,7 +1947,7 @@ type AppliedDeployment struct {
 
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
 type AppliedProjectConfiguration struct {
-	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. The server configures the maximum non-revoked deployment publisher identities per project, independently of lifetime enrollment-key admissions and concurrent runs.
+	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 	Configuration     ProjectConfiguration        `json:"configuration"`
 	ConfigurationHash string                      `json:"configuration_hash"`
 	Deployment        string                      `json:"deployment"`
@@ -1982,7 +1982,7 @@ type AppliedProjectServiceServiceKind string
 
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
 type ApplyProjectConfigurationRequest struct {
-	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. The server configures the maximum non-revoked deployment publisher identities per project, independently of lifetime enrollment-key admissions and concurrent runs.
+	// Configuration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 	Configuration    ProjectConfiguration `json:"configuration"`
 	Deployment       string               `json:"deployment"`
 	ExpectedRevision int64                `json:"expected_revision,string"`
@@ -2412,10 +2412,7 @@ type ControlDiscoveryManagedUrlMode string
 
 // CreateDeploymentPublisherEnrollmentRequest defines model for CreateDeploymentPublisherEnrollmentRequest.
 type CreateDeploymentPublisherEnrollmentRequest struct {
-	// ExpiresIn Enrollment-key lifetime in seconds; the configured server ceiling also applies.
-	ExpiresIn *int `json:"expires_in,omitempty"`
-
-	// MaxMembers Lifetime enrollments admitted by this key; the configured server ceiling also applies. Revocation does not refund this allowance.
+	ExpiresIn  *int `json:"expires_in,omitempty"`
 	MaxMembers *int `json:"max_members,omitempty"`
 
 	// Services Exact existing bindings to approve. Control captures their saved IDs and protocols; future names, reused names, and protocol changes never expand approval.
@@ -3163,7 +3160,7 @@ type ProjectApplicationRate struct {
 	Per   string `json:"per"`
 }
 
-// ProjectConfiguration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. The server configures the maximum non-revoked deployment publisher identities per project, independently of lifetime enrollment-key admissions and concurrent runs.
+// ProjectConfiguration Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
 type ProjectConfiguration struct {
 	// Oauth Publisher-only OAuth intent is not retained in shared configuration. Native clients send false.
 	Oauth    bool                                   `json:"oauth"`

@@ -14,7 +14,6 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/policy/publisherenrollment"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
@@ -109,14 +108,11 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 			t.Fatal("invalid setup expanded authority or leaked input", invalid, err)
 		}
 	}
-	if err := d.ConfigurePublisherEnrollmentLimits(publisherenrollment.Limits{Members: 100000, Lifetime: 2160 * time.Hour, ProjectPublishers: 500}); err != nil {
-		t.Fatal(err)
-	}
-	large, err := api.CreateDeploymentPublisherEnrollmentWithResponse(ctx, "example", "production",
-		&controlv1.CreateDeploymentPublisherEnrollmentParams{TeamId: team, IdempotencyKey: "large"},
-		controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"db", "web"}, MaxMembers: new(100000), ExpiresIn: new(7776000)}, auth)
-	if err != nil || large.JSON201 == nil || large.JSON201.MaxMembers != 100000 || large.JSON201.ExpiresAt.Before(now.Add(2160*time.Hour)) {
-		t.Fatal("generated API rejected configured enrollment allowance", err)
+	browserEnrollment, err := api.CreateDeploymentPublisherEnrollmentWithResponse(ctx, "example", "production",
+		&controlv1.CreateDeploymentPublisherEnrollmentParams{TeamId: team, IdempotencyKey: "browser"},
+		controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"db", "web"}}, auth)
+	if err != nil || browserEnrollment.JSON201 == nil || browserEnrollment.JSON201.MaxMembers != 1 {
+		t.Fatal("could not issue one-use browser enrollment", err)
 	}
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -133,8 +129,8 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	bootstrap := controlv1.RedeemDeploymentPublisherEnrollmentRequest{
-		EnrollmentKey: large.JSON201.EnrollmentKey, PublicKey: base64.RawURLEncoding.EncodeToString(browserPublic),
-		DeploymentId: new(large.JSON201.DeploymentId), ProjectKey: new("example"),
+		EnrollmentKey: browserEnrollment.JSON201.EnrollmentKey, PublicKey: base64.RawURLEncoding.EncodeToString(browserPublic),
+		DeploymentId: new(browserEnrollment.JSON201.DeploymentId), ProjectKey: new("example"),
 	}
 	for _, mismatch := range []controlv1.RedeemDeploymentPublisherEnrollmentRequest{
 		{EnrollmentKey: bootstrap.EnrollmentKey, PublicKey: bootstrap.PublicKey, DeploymentId: new("dpl_" + strings.Repeat("x", 22)), ProjectKey: bootstrap.ProjectKey},

@@ -57,7 +57,7 @@ func (q *Queries) DeploymentPublisherServiceAllowed(ctx context.Context, arg Dep
 }
 
 const findDeploymentPublisherEnrollmentRequest = `-- name: FindDeploymentPublisherEnrollmentRequest :one
-SELECT id, deployment_id, secret_digest, max_members, admitted_members, created_by_identity_id, expires_at, revoked_at, create_principal_id, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.deployment_publisher_enrollments
+SELECT id, deployment_id, secret_digest, max_members, created_by_identity_id, expires_at, revoked_at, create_principal_id, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.deployment_publisher_enrollments
 WHERE deployment_id=$1 AND create_principal_id=$2::text
 AND idempotency_key=$3::text FOR UPDATE
 `
@@ -76,7 +76,6 @@ func (q *Queries) FindDeploymentPublisherEnrollmentRequest(ctx context.Context, 
 		&i.DeploymentID,
 		&i.SecretDigest,
 		&i.MaxMembers,
-		&i.AdmittedMembers,
 		&i.CreatedByIdentityID,
 		&i.ExpiresAt,
 		&i.RevokedAt,
@@ -205,7 +204,7 @@ func (q *Queries) ListDeploymentPublisherIDs(ctx context.Context, arg ListDeploy
 }
 
 const lockDeploymentPublisherEnrollment = `-- name: LockDeploymentPublisherEnrollment :one
-SELECT id, deployment_id, secret_digest, max_members, admitted_members, created_by_identity_id, expires_at, revoked_at, create_principal_id, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.deployment_publisher_enrollments WHERE id=$1 FOR UPDATE
+SELECT id, deployment_id, secret_digest, max_members, created_by_identity_id, expires_at, revoked_at, create_principal_id, idempotency_key, request_digest, secret_ciphertext, storage_key_id FROM control.deployment_publisher_enrollments WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockDeploymentPublisherEnrollment(ctx context.Context, id string) (ControlDeploymentPublisherEnrollment, error) {
@@ -216,7 +215,6 @@ func (q *Queries) LockDeploymentPublisherEnrollment(ctx context.Context, id stri
 		&i.DeploymentID,
 		&i.SecretDigest,
 		&i.MaxMembers,
-		&i.AdmittedMembers,
 		&i.CreatedByIdentityID,
 		&i.ExpiresAt,
 		&i.RevokedAt,

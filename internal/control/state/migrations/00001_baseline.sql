@@ -1844,7 +1844,6 @@ CREATE TABLE control.applied_projects (
     configuration_hash text NOT NULL DEFAULT '',
     configuration_ciphertext bytea NOT NULL,
     storage_key_id text NOT NULL,
-    publisher_count integer NOT NULL DEFAULT 0 CHECK (publisher_count >= 0),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     updated_at timestamptz NOT NULL,
     retired_at timestamptz,
@@ -2241,8 +2240,7 @@ CREATE TABLE control.deployment_publisher_enrollments (
     id text PRIMARY KEY,
     deployment_id text NOT NULL REFERENCES control.deployments(id) ON DELETE RESTRICT,
     secret_digest bytea NOT NULL CHECK (octet_length(secret_digest)=32),
-    max_members integer NOT NULL CHECK (max_members >= 1),
-    admitted_members integer NOT NULL DEFAULT 0 CHECK (admitted_members BETWEEN 0 AND max_members),
+    max_members integer NOT NULL CHECK (max_members BETWEEN 1 AND 256),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
@@ -2275,66 +2273,6 @@ CREATE TABLE control.deployment_publisher_members (
     UNIQUE (deployment_id, publisher_identity_id),
     FOREIGN KEY (key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT
 );
--- admission history is immutable. status updates never change its counters;
--- revocation frees project capacity but does not refund lifetime admissions.
--- callers lock team -> project -> deployment -> enrollment before inserting.
--- +goose StatementBegin
-CREATE FUNCTION control.admit_deployment_publisher() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE selected_team text; selected_project text;
-BEGIN
-    SELECT deployment.team_id,deployment.project_key INTO selected_team,selected_project
-    FROM control.deployments deployment
-    JOIN control.deployment_publisher_enrollments enrollment ON enrollment.deployment_id=deployment.id AND enrollment.id=NEW.enrollment_id
-    JOIN control.publisher_identities publisher ON publisher.id=NEW.publisher_identity_id AND publisher.team_id=deployment.team_id AND publisher.revoked_at IS NULL
-    JOIN control.publisher_identity_keys signing ON signing.id=NEW.key_id AND signing.publisher_identity_id=publisher.id AND signing.public_key=NEW.public_key AND signing.retired_at IS NULL
-    WHERE deployment.id=NEW.deployment_id AND deployment.deleted_at IS NULL;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'deployment publisher admission does not match' USING ERRCODE='23514';
-    END IF;
-    UPDATE control.applied_projects SET publisher_count=publisher_count+1
-    WHERE team_id=selected_team AND project_key=selected_project;
-    UPDATE control.deployment_publisher_enrollments SET admitted_members=admitted_members+1
-    WHERE id=NEW.enrollment_id AND admitted_members<max_members;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'deployment publisher enrollment exhausted' USING ERRCODE='23514';
-    END IF;
-    RETURN NEW;
-END;
-$$;
--- +goose StatementEnd
-CREATE TRIGGER admit_deployment_publisher AFTER INSERT ON control.deployment_publisher_members
-FOR EACH ROW EXECUTE FUNCTION control.admit_deployment_publisher();
--- +goose StatementBegin
-CREATE FUNCTION control.protect_deployment_publisher_admission() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF TG_OP='DELETE' OR
-        (NEW.publisher_identity_id,NEW.deployment_id,NEW.enrollment_id,NEW.public_key,NEW.key_id)
-        IS DISTINCT FROM
-        (OLD.publisher_identity_id,OLD.deployment_id,OLD.enrollment_id,OLD.public_key,OLD.key_id) THEN
-        RAISE EXCEPTION 'deployment publisher admission is immutable' USING ERRCODE='23514';
-    END IF;
-    RETURN NEW;
-END;
-$$;
--- +goose StatementEnd
-CREATE TRIGGER protect_deployment_publisher_admission BEFORE UPDATE OR DELETE ON control.deployment_publisher_members
-FOR EACH ROW EXECUTE FUNCTION control.protect_deployment_publisher_admission();
--- +goose StatementBegin
-CREATE FUNCTION control.update_project_publisher_count() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF (OLD.revoked_at IS NULL) IS DISTINCT FROM (NEW.revoked_at IS NULL) THEN
-        UPDATE control.applied_projects project
-        SET publisher_count=publisher_count+CASE WHEN NEW.revoked_at IS NULL THEN 1 ELSE -1 END
-        FROM control.deployment_publisher_members member
-        JOIN control.deployments deployment ON deployment.id=member.deployment_id
-        WHERE member.publisher_identity_id=NEW.id AND project.team_id=deployment.team_id AND project.project_key=deployment.project_key;
-    END IF;
-    RETURN NEW;
-END;
-$$;
--- +goose StatementEnd
-CREATE TRIGGER update_project_publisher_count AFTER UPDATE OF revoked_at ON control.publisher_identities
-FOR EACH ROW EXECUTE FUNCTION control.update_project_publisher_count();
 -- +goose StatementBegin
 CREATE FUNCTION control.deployment_credential_available(approval text) RETURNS boolean LANGUAGE sql STABLE AS $$
     SELECT (EXISTS(SELECT 1 FROM control.deployment_management_services scope WHERE scope.grant_id=approval)

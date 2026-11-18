@@ -9,7 +9,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	ingresspool "github.com/tnldotdev/tnl/internal/naming/ingresspool"
 	"github.com/tnldotdev/tnl/internal/policy/controloutage"
-	"github.com/tnldotdev/tnl/internal/policy/publisherenrollment"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/region"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
@@ -64,18 +63,15 @@ type Config struct {
 	ManagedDomainMaxMemberChildLabels int                   `name:"managed-domain-max-member-child-labels" env:"TNLD_MANAGED_DOMAIN_MAX_MEMBER_CHILD_LABELS" default:"0" help:"Maximum labels beneath a member namespace on the managed domain; 0 uses DNS length limits only."`
 	CustomDomainsEnabled              bool                  `name:"custom-domains-enabled" env:"TNLD_CUSTOM_DOMAINS_ENABLED" help:"Allow teams to add custom domains; requires managed DNS automation."`
 
-	ControlTLSCertificateFile      string         `name:"private-control-tls-certificate-file" env:"TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Certificate chain for authenticated internal control HTTPS."`
-	ControlTLSPrivateKeyFile       string         `name:"private-control-tls-private-key-file" env:"TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Private key for authenticated internal control HTTPS."`
-	RelayTLSCertificateFile        string         `name:"relay-tls-certificate-file" env:"TNLD_RELAY_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static relay transport certificate chain."`
-	RelayTLSPrivateKeyFile         string         `name:"relay-tls-private-key-file" env:"TNLD_RELAY_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static relay transport private key."`
-	ACMEDirectoryURL               string         `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic public certificates."`
-	ACMEEmail                      string         `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
-	ACMEAcceptTerms                bool           `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
-	ACMEProfile                    string         `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile."`
-	ServiceCertificateWorkers      int            `name:"service-certificate-workers" env:"TNLD_SERVICE_CERTIFICATE_WORKERS" default:"8" help:"Concurrent service certificate workers per control process (1-8)."`
-	PublisherEnrollmentMaxMembers  *int           `name:"publisher-enrollment-max-members" env:"TNLD_PUBLISHER_ENROLLMENT_MAX_MEMBERS" default:"256" help:"Maximum lifetime enrollments admitted by one deployment enrollment key."`
-	PublisherEnrollmentMaxLifetime *time.Duration `name:"publisher-enrollment-max-lifetime" env:"TNLD_PUBLISHER_ENROLLMENT_MAX_LIFETIME" default:"24h" help:"Maximum deployment enrollment-key lifetime (1m-8760h)."`
-	ProjectMaxPublishers           *int           `name:"project-max-publishers" env:"TNLD_PROJECT_MAX_PUBLISHERS" default:"256" help:"Maximum non-revoked deployment publisher identities per project; not a concurrent-run limit."`
+	ControlTLSCertificateFile string `name:"private-control-tls-certificate-file" env:"TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE" type:"path" help:"Certificate chain for authenticated internal control HTTPS."`
+	ControlTLSPrivateKeyFile  string `name:"private-control-tls-private-key-file" env:"TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE" type:"path" help:"Private key for authenticated internal control HTTPS."`
+	RelayTLSCertificateFile   string `name:"relay-tls-certificate-file" env:"TNLD_RELAY_TLS_CERTIFICATE_FILE" type:"path" help:"Optional static relay transport certificate chain."`
+	RelayTLSPrivateKeyFile    string `name:"relay-tls-private-key-file" env:"TNLD_RELAY_TLS_PRIVATE_KEY_FILE" type:"path" help:"Optional static relay transport private key."`
+	ACMEDirectoryURL          string `name:"acme-directory-url" env:"TNLD_ACME_DIRECTORY_URL" help:"ACME directory URL for automatic public certificates."`
+	ACMEEmail                 string `name:"acme-email" env:"TNLD_ACME_EMAIL" help:"ACME account contact email."`
+	ACMEAcceptTerms           bool   `name:"acme-accept-terms" env:"TNLD_ACME_ACCEPT_TERMS" help:"Explicitly accept the ACME directory terms."`
+	ACMEProfile               string `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile."`
+	ServiceCertificateWorkers int    `name:"service-certificate-workers" env:"TNLD_SERVICE_CERTIFICATE_WORKERS" default:"8" help:"Concurrent service certificate workers per control process (1-8)."`
 
 	OIDCIssuer             string            `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
 	OIDCClientID           string            `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
@@ -204,9 +200,6 @@ func (c Config) Validate() (retErr error) {
 		return err
 	}
 	if c.Role.RunsControl() {
-		if err := c.PublisherEnrollmentLimits().Validate(); err != nil {
-			return err
-		}
 		if c.ControlOutageTolerance <= 0 {
 			return failure.WrapSetting("validate control outage tolerance", failure.ServerConfigInvalid,
 				failure.SettingControlOutageTolerance, errors.New("control outage tolerance must be positive"))
@@ -215,9 +208,6 @@ func (c Config) Validate() (retErr error) {
 			return err
 		}
 	} else {
-		if c.PublisherEnrollmentLimits() != publisherenrollment.Default() {
-			return errors.New("publisher enrollment ceilings are valid only for control and standalone")
-		}
 		if c.ControlOutageTolerance != 0 && c.ControlOutageTolerance != controloutage.DefaultTolerance {
 			return failure.WrapSetting("validate control outage tolerance", failure.ServerConfigInvalid,
 				failure.SettingControlOutageTolerance, errors.New("control outage tolerance is valid only for control and standalone"))
@@ -308,20 +298,6 @@ func (c Config) Validate() (retErr error) {
 		return errors.New("lease, transport, or drain timing is invalid")
 	}
 	return nil
-}
-
-func (c Config) PublisherEnrollmentLimits() publisherenrollment.Limits {
-	limits := publisherenrollment.Default()
-	if c.PublisherEnrollmentMaxMembers != nil {
-		limits.Members = *c.PublisherEnrollmentMaxMembers
-	}
-	if c.PublisherEnrollmentMaxLifetime != nil {
-		limits.Lifetime = *c.PublisherEnrollmentMaxLifetime
-	}
-	if c.ProjectMaxPublishers != nil {
-		limits.ProjectPublishers = *c.ProjectMaxPublishers
-	}
-	return limits
 }
 
 // ServingRegion supplies the explicit unlocated default for embedded callers.

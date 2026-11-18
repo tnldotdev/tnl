@@ -7,7 +7,6 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/policy/publisherenrollment"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -60,8 +59,8 @@ func (h *handler) CreateDeploymentPublisherEnrollment(w http.ResponseWriter, r *
 		expiresIn = *body.ExpiresIn
 	}
 	// bound seconds before converting to a duration, including overflow inputs.
-	if expiresIn < 60 || int64(expiresIn) > int64(publisherenrollment.MaxLifetime/time.Second) {
-		writeProblem(w, 400, controlv1.InvalidRequest, "publisher enrollment expires_in must be between 60 and 31536000 seconds; server ceilings also apply")
+	if expiresIn < 60 || expiresIn > 86400 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "publisher enrollment expires_in must be between 60 and 86400 seconds")
 		return
 	}
 	result, err := h.dependencies.DeploymentPublishers.CreateDeploymentPublisherEnrollment(r.Context(), controlstate.CreateDeploymentPublisherEnrollmentRequest{

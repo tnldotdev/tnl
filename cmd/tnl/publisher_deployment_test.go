@@ -13,7 +13,6 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/policy/publisherenrollment"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -81,10 +80,8 @@ func TestDeploymentPublisherSetupBounds(t *testing.T) {
 	for _, mutate := range []func(*publisherSetupCommand){
 		func(f *publisherSetupCommand) { f.Services = nil }, func(f *publisherSetupCommand) { f.Services = []string{"db", "db"} },
 		func(f *publisherSetupCommand) { f.Services = []string{"db\nsecret"} }, func(f *publisherSetupCommand) { f.Namespace = true },
-		func(f *publisherSetupCommand) { f.URL = "url_selected" }, func(f *publisherSetupCommand) { f.Members = 0 },
-		func(f *publisherSetupCommand) { f.Members = publisherenrollment.MaxMembers + 1 },
+		func(f *publisherSetupCommand) { f.URL = "url_selected" }, func(f *publisherSetupCommand) { f.Members = 257 },
 		func(f *publisherSetupCommand) { f.ExpiresIn = time.Second }, func(f *publisherSetupCommand) { f.ExpiresIn = time.Minute + time.Nanosecond },
-		func(f *publisherSetupCommand) { f.ExpiresIn = publisherenrollment.MaxLifetime + time.Second },
 		func(f *publisherSetupCommand) { f.IdempotencyKey = "private\nsecret" },
 	} {
 		flags := valid
@@ -94,8 +91,8 @@ func TestDeploymentPublisherSetupBounds(t *testing.T) {
 			t.Fatal("invalid setup lost its classification or exposed input", err)
 		}
 	}
-	for _, duration := range []time.Duration{time.Minute, 24 * time.Hour, 2160 * time.Hour, publisherenrollment.MaxLifetime} {
-		valid.ExpiresIn, valid.Members = duration, publisherenrollment.MaxMembers
+	for _, duration := range []time.Duration{time.Minute, 24 * time.Hour} {
+		valid.ExpiresIn, valid.Members = duration, 256
 		if _, err := deploymentPublisherSetupBody(valid); err != nil {
 			t.Fatal("valid setup bound rejected", err)
 		}

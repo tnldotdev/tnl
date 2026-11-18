@@ -357,9 +357,6 @@ func (s *TNLDSection) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("unknown tnld field %q", name)
 		}
 		value := reflect.ValueOf(&s.value).Elem().Field(field.index)
-		if field.typ.Kind() == reflect.Pointer && string(data) == "null" {
-			return fmt.Errorf("tnld.%s must not be null; omit the field", name)
-		}
 		if field.duration {
 			var text string
 			if err := json.Unmarshal(data, &text); err != nil {
@@ -369,21 +366,13 @@ func (s *TNLDSection) UnmarshalJSON(data []byte) error {
 			if err != nil {
 				return fmt.Errorf("tnld.%s: invalid duration", name)
 			}
-			setTNLDFileDuration(value, parsed)
+			value.SetInt(int64(parsed))
 		} else if err := json.Unmarshal(data, value.Addr().Interface(), json.RejectUnknownMembers(true)); err != nil {
 			return fmt.Errorf("tnld.%s: %w", name, err)
 		}
 		s.markPresent(field.index)
 	}
 	return nil
-}
-
-func setTNLDFileDuration(value reflect.Value, duration time.Duration) {
-	if value.Kind() == reflect.Pointer {
-		value.Set(reflect.ValueOf(&duration))
-		return
-	}
-	value.SetInt(int64(duration))
 }
 
 func (s *TNLDSection) markPresent(index int) {
@@ -415,7 +404,7 @@ func tnldFields() map[string]tnldField {
 			if name == "" || name == "database_direct_url" {
 				continue
 			}
-			tnldFieldMap[name] = tnldField{index: index, typ: field.Type, duration: field.Type == durationType || field.Type.Kind() == reflect.Pointer && field.Type.Elem() == durationType}
+			tnldFieldMap[name] = tnldField{index: index, typ: field.Type, duration: field.Type == durationType}
 		}
 	})
 	return tnldFieldMap
