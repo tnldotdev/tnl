@@ -50,7 +50,7 @@ export type GossipMessage = Readonly<z.infer<typeof messageSchema>>;
 export type PeerTransport = (
   target: Host,
   message: GossipMessage,
-  via?: Host,
+  helper?: Host,
 ) => Promise<GossipMessage | undefined>;
 
 export function hostOrigin(value: unknown, parent = HOST_PARENT): value is string {
@@ -103,11 +103,11 @@ export function sameRun(a: Host, b: Host): boolean {
 
 type Seen = { change: Change; heardAt: number; suspectAt?: number };
 
-function newer(next: Change, current: Change): boolean {
+function isNewerChange(next: Change, current: Change): boolean {
   if (next.runNumber !== current.runNumber) {
     return BigInt(next.runNumber) > BigInt(current.runNumber);
   }
-  // one service run number has only one run and address.
+  // a publisher can restart at the same url, but a departed run can't come back.
   return sameRun(next, current) && !current.left && next.seq > current.seq;
 }
 
@@ -134,16 +134,10 @@ export class Gossip {
     return this.#peers.size;
   }
 
-  #prune(now: number) {
-    for (const [id, peer] of this.#peers) {
-      if (now - peer.heardAt >= KEEP_MS) this.#peers.delete(id);
-    }
-  }
-
   receive(message: GossipMessage, now: number) {
     if (message.releaseID !== this.releaseID) return;
     this.#startedAt = Math.min(this.#startedAt, message.startedAt);
-    this.#prune(now);
+    this.#forgetOldPeers(now);
     if (
       !message.from.left &&
       !this.#peers.has(message.from.publisherID) &&
@@ -151,25 +145,30 @@ export class Gossip {
     ) {
       this.finishStart();
     }
-    // give the sender the first slot; forwarded observations cannot evict live hosts.
+    // consider the sender first in case the peer list is almost full.
     for (const change of [message.from, ...message.changes]) {
-      if (change.publisherID === this.#self.publisherID || change.origin === this.#self.origin) {
-        continue;
-      }
-      const previous = this.#peers.get(change.publisherID);
-      if (previous !== undefined && !newer(change, previous.change)) continue;
-      if (previous === undefined && this.#peers.size >= MAX_PEERS) continue;
-      this.#peers.set(
-        change.publisherID,
-        previous !== undefined && sameRun(previous.change, change) && change !== message.from
-          ? { ...previous, change }
-          : { change, heardAt: now },
-      );
+      this.#rememberChange(change, change === message.from, now);
+    }
+  }
+
+  #rememberChange(change: Change, fromSender: boolean, now: number) {
+    if (change.publisherID === this.#self.publisherID || change.origin === this.#self.origin) {
+      return;
+    }
+    const previous = this.#peers.get(change.publisherID);
+    if (previous !== undefined && !isNewerChange(change, previous.change)) return;
+    if (previous === undefined && this.#peers.size >= MAX_PEERS) return;
+
+    // hearing about a known run can update its report, but not when it last replied.
+    if (!fromSender && previous !== undefined && sameRun(previous.change, change)) {
+      this.#peers.set(change.publisherID, { ...previous, change });
+    } else {
+      this.#peers.set(change.publisherID, { change, heardAt: now });
     }
   }
 
   message(now: number): GossipMessage {
-    this.#prune(now);
+    this.#forgetOldPeers(now);
     if (!this.#self.left) this.#self = { ...this.#self, seq: this.#self.seq + 1 };
     const records = [...this.#peers.values()];
     // rotate through small groups so a peer can repair a missed change over time.
@@ -182,12 +181,23 @@ export class Gossip {
     return { releaseID: this.releaseID, startedAt: this.#startedAt, from: this.#self, changes };
   }
 
-  hosts(now: number): readonly Host[] {
-    return this.#live(now).map(({ change }) => change);
+  leave(now: number): GossipMessage {
+    this.#self = { ...this.#self, seq: this.#self.seq + 1, left: true, startingUntil: 0 };
+    return this.message(now);
   }
 
-  #live(now: number) {
-    this.#prune(now);
+  hosts(now: number): readonly Host[] {
+    return this.#countedPeers(now).map(({ change }) => change);
+  }
+
+  #forgetOldPeers(now: number) {
+    for (const [id, peer] of this.#peers) {
+      if (now - peer.heardAt >= KEEP_MS) this.#peers.delete(id);
+    }
+  }
+
+  #countedPeers(now: number) {
+    this.#forgetOldPeers(now);
     const origins = new Set<string>();
     return [...this.#peers.values()].filter(({ change, heardAt, suspectAt }) => {
       if (
@@ -202,49 +212,24 @@ export class Gossip {
     });
   }
 
-  maybeStart(now: number, target: number, offer: () => boolean): boolean {
-    if (this.#self.left || now < this.#nextStart || now < this.#self.startingUntil) return false;
-    const live = this.#live(now);
-    const starting = live.filter(({ change }) => change.startingUntil > now).length;
-    if (1 + live.length + starting >= target || !offer()) return false;
-    this.#self = { ...this.#self, startingUntil: now + START_MS };
-    this.#nextStart = now + COOLDOWN_MS;
-    return true;
-  }
-
-  finishStart() {
-    this.#self = { ...this.#self, startingUntil: 0 };
-  }
-
-  leave(now: number): GossipMessage {
-    this.#self = { ...this.#self, seq: this.#self.seq + 1, left: true, startingUntil: 0 };
-    return this.message(now);
-  }
-
   async probe(clock: () => number, random: () => number, send: PeerTransport): Promise<void> {
     if (this.#probing || this.#self.left) return;
-    this.#prune(clock());
+    this.#forgetOldPeers(clock());
     // try suspect and quiet hosts too: a suspended tab can return at the same URL.
     const candidates = [...this.#peers.values()].filter(({ change }) => !change.left);
     const selected = candidates[Math.floor(random() * candidates.length)];
     if (selected === undefined) return;
     const target = selected.change;
-    const helper = this.hosts(clock()).filter((host) => host.publisherID !== target.publisherID);
-    const via = helper[Math.floor(random() * helper.length)];
+    const helpers = this.hosts(clock()).filter((host) => host.publisherID !== target.publisherID);
+    const helper = helpers[Math.floor(random() * helpers.length)];
     this.#probing = true;
     try {
       const message = this.message(clock());
-      const ask = async (via?: Host) => {
-        try {
-          const reply = await send(target, message, via);
-          return reply?.releaseID === this.releaseID && sameRun(target, reply.from)
-            ? reply
-            : undefined;
-        } catch {
-          return undefined;
-        }
-      };
-      const reply = (await ask()) ?? (via === undefined ? undefined : await ask(via));
+      let reply = await this.#probeReply(() => send(target, message), target);
+      if (reply === undefined && helper !== undefined) {
+        // ask one other host to check the same run.
+        reply = await this.#probeReply(() => send(target, message, helper), target);
+      }
       const now = clock();
       if (reply !== undefined) {
         this.receive(reply, now);
@@ -258,10 +243,36 @@ export class Gossip {
           this.#peers.set(target.publisherID, { change: current.change, heardAt: now });
         }
       } else if (this.#peers.get(target.publisherID) === selected) {
+        // don't mark an updated peer record based on an earlier failed check.
         selected.suspectAt ??= now;
       }
     } finally {
       this.#probing = false;
     }
+  }
+
+  async #probeReply(send: () => ReturnType<PeerTransport>, target: Host) {
+    try {
+      const reply = await send();
+      if (reply?.releaseID === this.releaseID && sameRun(target, reply.from)) return reply;
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  maybeStart(now: number, target: number, offer: () => boolean): boolean {
+    if (this.#self.left || now < this.#nextStart || now < this.#self.startingUntil) return false;
+    const peers = this.#countedPeers(now);
+    const starting = peers.filter(({ change }) => change.startingUntil > now).length;
+    const hostsIncludingThisTab = 1 + peers.length;
+    if (hostsIncludingThisTab + starting >= target || !offer()) return false;
+    this.#self = { ...this.#self, startingUntil: now + START_MS };
+    this.#nextStart = now + COOLDOWN_MS;
+    return true;
+  }
+
+  finishStart() {
+    this.#self = { ...this.#self, startingUntil: 0 };
   }
 }

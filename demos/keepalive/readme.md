@@ -1,60 +1,117 @@
 # can we keep this alive?
 
-Open `start.keepthisalive.com` to start a browser host. Keep the tab open.
-`keepthisalive.com` gets its files from browser hosts. If the last one stops,
-the site returns `503`; the start page can bring it back.
+Keepalive is a website served by browser tabs. Open `start.keepthisalive.com`,
+click **start hosting**, and leave the tab open. In another browser, open
+`keepthisalive.com` and click **i'll keep it alive**. When more hosts are needed,
+that tab gets a copy of the site and starts serving it too.
 
-The Cloudflare proxy checks every file against a fixed release manifest. It
-doesn't fall back to the start page's copy. Hosts share who they can reach,
-the earliest start time they remember, and when they're starting another host.
-There's no central waiting list. tnl runs the tunnels and checks publication
-permissions.
+Close every hosting tab and `keepthisalive.com` returns `503`. The start page
+still works: anyone can use it to start a host again.
 
-The site includes [Fira Code](https://github.com/tonsky/FiraCode). Hosts pass
-the font along with the other files; the browser doesn't contact a font service.
+## follow a request
 
-## run it
+```text
+visitor            keepthisalive.com         browser host
+  |                       |                       |
+  |--- GET /app.js ------>|                       |
+  |                       |--- GET /app.js ------>|
+  |                       |       through tnl     |
+  |                       |<--- app.js -----------|
+  |                       | checks size and hash  |
+  |<--- checked app.js ---|                       |
+```
 
-From the repository root:
+The Cloudflare proxy checks files against a fixed release manifest. It doesn't
+fall back to the start page's copy. A tab that takes over downloads the whole
+release from another host, including the code it needs to host and the
+[Fira Code](https://github.com/tonsky/FiraCode) font.
+
+## how hosts find each other
+
+Say browser A knows browsers B and C. Every few seconds it picks a host to check.
+If B doesn't answer, A asks C to check B:
+
+```text
+browser A             browser C             browser B
+    |------------------ check B ---------------->|
+    |                   no reply                 |
+    |--- check B -------->|                      |
+    |                     |--- check B --------->|
+    |                     |<--- B's reply -------|
+    |<--- B's reply ------|                      |
+```
+
+If neither check works, A gives B a 15-second grace period before it stops
+counting B. Hosts pass along small batches of reports. Hearing _about_ a known
+host doesn't reset the clock on its last reply. While A remembers B's
+departure, a delayed report can't bring that run back. If B restarts at the
+same address, a report from the old run can't overwrite the new one.
+
+What if A and B know each other but neither knows C or D? About every 30 seconds,
+each host asks for a peer report through the shared tnl URL,
+`prod.hosts.keepthisalive.com`. If A's request reaches C, A learns C's address
+and can check it directly. The two groups can then pass along what they know.
+That lookup can land on a host A already knows; it isn't guaranteed to find a
+new one. The proxy doesn't keep a host list.
+
+When a host sees fewer than three hosts, including tabs it knows are starting,
+it can invite a waiting tab. Each host keeps its own waiting list. Two hosts
+can invite someone at the same time; three is a target, not a limit. Hosts also
+share the earliest start time they remember. That's experiment age, not uptime.
+
+## try it locally
+
+Run these from the repository root:
 
 ```sh
-mise exec -- task js:keepalive:preview  # page only; no tunnels
+mise exec -- task js:keepalive:preview  # Vite page, no tunnels
 mise exec -- task js:keepalive:test    # gossip and file checks
-mise exec -- task js:keepalive:dev FLAGS='--var START_HOST:localhost'
 ```
 
-With the last command, open `http://localhost:8787` for the start page. With no
-tnl credentials configured, it won't publish. `http://127.0.0.1:8787` takes the
-normal proxy path, which returns `503` when there are no hosts.
-
-## browser handoff
-
-Use a disposable tnl deployment named `keepalive` with a public, anonymous HTTP
-service named `site`, multiple publishers enabled, and publisher addresses under
-`hosts.keepthisalive.com`. Set `SITE_ORIGIN`, `START_HOST`, and `SHARED_HOST`
-to the test addresses (`https://prod.hosts.keepthisalive.com` is the production
-shared service). Set `PROJECT_KEY`,
-`TEAM_ID`, `CONTROL_URL`, and a scoped `MANAGEMENT_TOKEN` secret so the proxy can
-request one-use enrollment keys for `site`. Configure the test hostnames and
-enrollment rate limits before giving the start page a public URL.
-
-Use tnl-managed certificates if the test deployment supports them. For the
-shared wildcard, the proxy can supply `CERTIFICATE_PEM` and `PRIVATE_KEY_PEM`
-as secrets. Automatic wildcard renewal is not part of this demo yet. Never
-configure either public page's TLS private key here.
-
-With Chrome installed, run against the two HTTPS pages of the empty deployment:
+To see what happens when no host is running, start the proxy with Wrangler:
 
 ```sh
-mise exec -- task js:keepalive:handoff SITE=https://... START=https://...
+mise exec -- task js:keepalive:dev \
+  FLAGS='--var START_HOST:localhost --var SHARED_HOST:https://127.0.0.1:1'
 ```
 
-The check starts A from the start page, transfers the site A → B → C, then
-checks the `503` and starts the site again. It doesn't deploy anything.
+Open `http://localhost:8787` for the start page. From another terminal, request
+the main site path. With no hosts, this prints `503`:
 
-## where to look
+```sh
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/
+```
 
-- [`src/proxy.ts`](src/proxy.ts): fetch and check site files.
-- [`src/peers.ts`](src/peers.ts): gossip, probes, and when to start another host.
-- [`src/hosting/`](src/hosting/): copy the site, publish from a worker, and talk to peers.
-- [`src/storage.ts`](src/storage.ts): save the complete copy and the earliest start time.
+## test a browser handoff
+
+Use an empty test deployment named `keepalive` with a public, anonymous HTTP
+service named `site`, multiple publishers enabled, and publisher addresses under
+`hosts.keepthisalive.com`.
+
+- Set `SITE_ORIGIN`, `START_HOST`, and `SHARED_HOST` to the test addresses.
+- Set `PROJECT_KEY` and `TEAM_ID` for that deployment, and `CONTROL_URL` for its
+  tnl server. Give the proxy a scoped `MANAGEMENT_TOKEN` secret to create one-use
+  enrollment keys for `site`. Set enrollment rate limits before making the start
+  page public.
+- Use tnl-managed certificates if available. For the shared wildcard, set
+  `CERTIFICATE_PEM` and `PRIVATE_KEY_PEM` as proxy secrets. Don't use either
+  public page's TLS key. Automatic wildcard renewal isn't in the demo yet.
+
+With Chrome installed, run:
+
+```sh
+mise exec -- task js:keepalive:handoff \
+  SITE=https://keepalive-test.example.com START=https://start-test.example.com
+```
+
+The test starts A from the start page, transfers the site from A to B and then
+from B to C, and checks that the last host can serve the site on its own. It
+then stops that host, checks for `503`, and restarts the site. It doesn't deploy
+anything.
+
+## read the code
+
+- [Proxy](src/proxy.ts): fetch and check files.
+- [Peers](src/peers.ts): share reports, check hosts, and decide when to start another.
+- [Hosting](src/hosting/): copy the site, publish it, and talk to other hosts.
+- [Storage](src/storage.ts): save the site and the earliest known start time.
