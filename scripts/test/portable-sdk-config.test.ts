@@ -32,6 +32,7 @@ const fixture = fixtureSchema.parse({
   mysql: credentials,
   redis_password: "private",
   kubernetes_token: "private",
+  source_fingerprint: "a".repeat(64),
 });
 
 test("Chrome maps only the fixture control endpoint and pins disposable leaf keys", () => {
