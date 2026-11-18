@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { Pool, Dispatcher } from "undici/index.js";
 import { TnlCleanupError, TnlError } from "../../errors.js";
-import type { TnlConnectionRegistry, TnlFetch } from "../../project.js";
+import type {
+  TnlConnectionRegistry,
+  TnlFetch,
+  TnlOpenStream,
+  TnlTLSStream,
+} from "../../project.js";
+import { nativeStreams } from "./native_stream.js";
 import { ownerIPC, type OwnerIPC } from "./connection_ipc.js";
 import type { NativeScope } from "./context.js";
 import { cancellable, shutdownBudget } from "./cancellation.js";
@@ -553,15 +559,20 @@ function responseIdentity(response: Response, url: string, type: string): Respon
   return response;
 }
 
-function settings(snapshot: ConnectionSnapshot, boundFetch?: TnlFetch): Settings {
+function settings(
+  snapshot: ConnectionSnapshot,
+  open: TnlOpenStream<TnlTLSStream>,
+  boundFetch?: TnlFetch,
+): Settings {
   switch (snapshot.protocol) {
     case "tcp":
-      return Object.freeze({ host: snapshot.host, port: snapshot.port });
+      return Object.freeze({ host: snapshot.host, port: snapshot.port, open });
     case "http": {
       if (boundFetch === undefined) throw new TnlError("sdk.response_invalid");
       return Object.freeze({
         url: snapshot.url,
         fetch: boundFetch,
+        open,
       });
     }
     case "kubernetes":
@@ -569,6 +580,7 @@ function settings(snapshot: ConnectionSnapshot, boundFetch?: TnlFetch): Settings
         server: `https://${snapshot.host}:${snapshot.port}`,
         kubeconfig: snapshot.kubeconfig,
         context: snapshot.context,
+        open,
       });
     case "mysql":
       // mysql2 verifies config.host, ignoring ssl.servername. its supported stream
@@ -579,12 +591,14 @@ function settings(snapshot: ConnectionSnapshot, boundFetch?: TnlFetch): Settings
         port: snapshot.port,
         ssl: { ...snapshot.ssl, verifyIdentity: true as const },
         stream: () => connectTCP({ host: snapshot.host, port: snapshot.port }),
+        open,
       });
     case "postgres":
       return Object.freeze({
         host: snapshot.host,
         port: snapshot.port,
         ssl: snapshot.ssl,
+        open,
       });
   }
 }
@@ -654,6 +668,8 @@ export function deploymentConnector(
   let shutdownUntil: number | undefined;
   const pending = new Set<Promise<unknown>>();
   const http = new Map<string, ReturnType<typeof managedFetch>>();
+  const openers = new Map<string, TnlOpenStream<TnlTLSStream>>();
+  const streams = nativeStreams();
   const prepareRemoteWork = async (name: string) => {
     if (closed) throw closedError;
     if (selection.token === undefined && selection.handle !== undefined) {
@@ -753,6 +769,7 @@ export function deploymentConnector(
       if (closed) throw closedError;
       if (pending.size >= 64) throw new TnlError("sdk.connection_unavailable");
       const work = prepareRemote(name).then((prepared) => {
+        const protocol = prepared.snapshot.protocol;
         let fetch: TnlFetch | undefined;
         if (prepared.snapshot.protocol === "http") {
           const url = prepared.snapshot.url;
@@ -768,10 +785,20 @@ export function deploymentConnector(
           fetch = transport;
         }
         const { expires: _expires, ...binding } = prepared.snapshot;
+        const openerKey = JSON.stringify([name, protocol]);
+        let open = openers.get(openerKey);
+        if (open === undefined) {
+          open = streams.open(async (signal) => {
+            const selected = await waitForPreparation(prepareRemote(name), signal);
+            if (selected.snapshot.protocol !== protocol) throw new TnlError("sdk.response_invalid");
+            return selected.snapshot;
+          });
+          openers.set(openerKey, open);
+        }
         return {
           key: JSON.stringify([prepared.file, binding]),
-          connection: settings(prepared.snapshot, fetch),
-          protocol: prepared.snapshot.protocol,
+          connection: settings(prepared.snapshot, open, fetch),
+          protocol,
         };
       });
       pending.add(work);
@@ -794,16 +821,21 @@ export function deploymentConnector(
             await scope.close(shutdownUntil, closedError);
           }
         };
-        const results = await Promise.allSettled(
-          [...http.values()].map((value) => value.close()).concat(cleanup()),
+        // capture in-flight operations before shutdown can settle and remove them.
+        const results = await Promise.allSettled([
+          ...pending,
+          ...[...http.values()].map((value) => value.close()),
+          streams.close(closedError),
+          cleanup(),
+        ]);
+        const failures = new Set(
+          results.flatMap((result) =>
+            result.status === "rejected" && result.reason !== closedError
+              ? [result.reason as unknown]
+              : [],
+          ),
         );
-        const operations = await Promise.allSettled(pending);
-        const failures = [...operations, ...results].flatMap((result) =>
-          result.status === "rejected" && result.reason !== closedError
-            ? [result.reason as unknown]
-            : [],
-        );
-        if (failures.length)
+        if (failures.size)
           throw new AggregateError(failures, "deployment connection cleanup failed");
       })().finally(() => {
         closing = undefined;

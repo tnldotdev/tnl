@@ -48,6 +48,7 @@ var (
 	wasmMySQLURL        = flag.String("tnl-wasm-mysql-url", "", "Task-owned disposable MySQL application URL")
 	wasmMySQLCA         = flag.String("tnl-wasm-mysql-ca-file", "", "optional disposable MySQL target CA file")
 	wasmMySQLHostname   = flag.String("tnl-wasm-mysql-tls-hostname", "", "optional disposable MySQL target TLS hostname")
+	wasmRedisAddress    = flag.String("tnl-test-redis-address", "", "Task-owned disposable Redis application address")
 )
 
 type wasmFixtureRelay struct {
@@ -81,6 +82,7 @@ type wasmFixtureDescriptor struct {
 	APIToken           string                               `json:"api_token"`
 	Postgres           wasmFixtureCredentials               `json:"postgres"`
 	MySQL              wasmFixtureCredentials               `json:"mysql"`
+	RedisPassword      string                               `json:"redis_password"`
 	KubernetesToken    string                               `json:"kubernetes_token"`
 	SourceFingerprint  string                               `json:"source_fingerprint"`
 }
@@ -113,6 +115,9 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	mySQLTarget, mySQLCredentials, mySQLTrust := wasmMySQLTarget(t)
+	if host, _, err := net.SplitHostPort(*wasmRedisAddress); err != nil || (host != "localhost" && !net.ParseIP(host).IsLoopback()) {
+		t.Fatal("portable SDK fixture requires a loopback Redis fixture")
+	}
 	f, issuer := newWorkloadTransportFixture(t)
 	proxies, relays, pins := wasmFixtureRelays(t, f)
 	pgConfig, observer := wasmPostgresTarget(t, f)
@@ -144,7 +149,7 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 	cluster.StartTLS()
 	cleanupIntegrationHTTPServer(t, cluster, f.owner)
 	deployment := "portable"
-	declarations := controlv1.ProjectServiceDeclarations{"http": "http", "tcp": "tcp", "postgres": "postgres", "mysql": "mysql", "kubernetes": "kubernetes"}
+	declarations := controlv1.ProjectServiceDeclarations{"http": "http", "tcp": "tcp", "postgres": "postgres", "mysql": "mysql", "kubernetes": "kubernetes", "redis": "tcp"}
 	configuration := controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{}, Webhooks: map[string]controlv1.ProjectWebhook{}}
 	configuration.Workloads = new(map[string]controlv1.ProjectWorkload{
 		"portable-reader": {
@@ -159,7 +164,7 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 	targets := map[string]string{
 		"http": strings.TrimPrefix(httpTarget.URL, "http://"), "tcp": tcpTarget.address,
 		"postgres": net.JoinHostPort(pgConfig.Host, strconv.Itoa(int(pgConfig.Port))),
-		"mysql":    mySQLTarget, "kubernetes": strings.TrimPrefix(cluster.URL, "https://"),
+		"mysql":    mySQLTarget, "kubernetes": strings.TrimPrefix(cluster.URL, "https://"), "redis": *wasmRedisAddress,
 	}
 	for name, protocol := range declarations {
 		service := controlv1.ProjectServiceConfiguration{Protocol: new(protocol), Target: targets[name], Public: new(false)}
@@ -185,7 +190,7 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 		services[service.Service] = *service.ServiceId
 	}
 	if len(services) != len(declarations) {
-		t.Fatal("fixture did not save all five protocols")
+		t.Fatal("fixture did not save all services")
 	}
 	// publisher sockets use real relay addresses. only connectors use the fault
 	// proxies in the descriptor; a fault cannot replace the native publication.
@@ -194,7 +199,7 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selection := controlv1.DeploymentCredentialServiceSelection{"http", "tcp", "postgres", "mysql", "kubernetes"}
+	selection := controlv1.DeploymentCredentialServiceSelection{"http", "tcp", "postgres", "mysql", "kubernetes", "redis"}
 	request := controlv1.RegisterDeploymentCredentialRequest{Name: "portable-sdk", PublicKey: base64.RawURLEncoding.EncodeToString(public), ExpiresIn: 1200, DeploymentIds: new([]string{(*applied.Deployments)[0].Id})}
 	request.Permissions.Connect = &selection
 	approval, err := f.identity.routes.RegisterDeploymentCredential(t.Context(), f.identity.teamID, "workload", "portable-sdk", request)
@@ -229,7 +234,7 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 		ControlRootPEM: string(f.certificateAuthority.certificatePEM), RelayRootPEM: string(f.certificateAuthority.certificatePEM), ServiceRootPEM: string(f.visitorRootPEM),
 		Services: services, Endpoints: endpoints, Relays: relays, SPKIPins: pins, APIURL: api.URL, APIToken: apiToken,
 		Postgres: wasmFixtureCredentials{User: pgConfig.User, Password: pgConfig.Password, Database: pgConfig.Database},
-		MySQL:    mySQLCredentials, KubernetesToken: clusterToken, SourceFingerprint: applied.SourceFingerprint,
+		MySQL:    mySQLCredentials, KubernetesToken: clusterToken, RedisPassword: "testpass", SourceFingerprint: applied.SourceFingerprint,
 	}
 	bytes, err := json.Marshal(descriptor)
 	if err != nil {
