@@ -288,23 +288,21 @@ async function startWorker(configuration: string) {
         }),
       ),
     ]);
-    async function request(route: string): Promise<Response> {
-      const response = await fetch(`http://127.0.0.1:${port}${route}`, {
-        method: "POST",
-        signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(120_000)]),
-      });
-      check(
-        response.ok,
-        `actual Go/WASM durable publisher ${route} failed: HTTP ${response.status} ${redact((await response.clone().text()).slice(0, 500))}; ${redact(diagnostics.slice(-1500))}`,
-      );
-      return response;
-    }
     return {
       close,
-      request,
+      async request(route: string) {
+        const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+          method: "POST",
+          signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(120_000)]),
+        });
+        check(
+          response.ok,
+          `actual Go/WASM durable publisher ${route} failed: HTTP ${response.status} ${redact((await response.clone().text()).slice(0, 500))}; ${redact(diagnostics.slice(-1500))}`,
+        );
+        return response;
+      },
       async call(route: string) {
-        const response = await request(route);
-        return workerStatus.parse(await response.json());
+        return workerStatus.parse(await (await this.request(route)).json());
       },
     };
   } catch (error) {
@@ -344,13 +342,19 @@ async function workerdSmoke(configuration: PublisherFixture) {
   const config = path.join(output, "config.capnp");
   await writeFile(
     config,
-    publisherWorkerdConfiguration(configuration, path.relative(output, wasm), storage),
+    publisherWorkerdConfiguration(
+      configuration,
+      path.relative(output, wasm),
+      path.relative(output, connectorWasm),
+      storage,
+    ),
     {
       mode: 0o600,
     },
   );
   let worker = await startWorker(config);
   try {
+    const privateOrigin = `https://${configuration.private_host}`;
     const first = await worker.call("/start");
     check(
       first.go_runtimes === 1 && first.identity_imports === 1,
@@ -402,6 +406,26 @@ async function workerdSmoke(configuration: PublisherFixture) {
         final.active_runs === 0,
       "restart resurrected persisted stopped intent",
     );
+    const privateRun = z
+      .object({
+        runtime: z.string().min(1),
+        go_runtimes: z.literal(1),
+        identity_imports: z.literal(1),
+      })
+      .parse(await (await worker.request("/private-start")).json());
+    check(
+      privateRun.runtime !== resumedStop.runtime,
+      "private publisher did not own its own runtime",
+    );
+    z.object({ private: z.literal(true) }).parse(
+      await (await worker.request("/private-visit")).json(),
+    );
+    await worker.request("/private-stop");
+    const privateStopped = await fixtureCall(configuration, "/state", privateOrigin, apiFetch);
+    check(
+      privateStopped.active_runs === 0 && !privateStopped.deleted,
+      "private durable stop did not join the saved service run",
+    );
     const managed = z.strictObject({ publisher: z.string(), calls: z.number().int() });
     const managedFirst = managed.parse(await (await worker.request("/managed-start")).json());
     const managedAgain = managed.parse(await (await worker.request("/managed-reopen")).json());
@@ -411,14 +435,15 @@ async function workerdSmoke(configuration: PublisherFixture) {
         managedFirst.publisher === managedAgain.publisher,
       "managed publisher did not lazily reuse its identity",
     );
-    const managedVisit = await fixtureCall(configuration, "/observe", restored.url, apiFetch);
-    check(
-      managedVisit.status === 200 && managedVisit.publisher_runtime === "managed",
-      "managed publication did not reach the default Worker handler",
+    z.object({ private: z.literal(true) }).parse(
+      await (await worker.request("/managed-visit")).json(),
     );
     await worker.request("/managed-stop");
-    const managedStopped = await fixtureCall(configuration, "/state", restored.url, apiFetch);
-    check(managedStopped.active_runs === 0, "managed publisher did not join its service run");
+    const managedStopped = await fixtureCall(configuration, "/state", privateOrigin, apiFetch);
+    check(
+      managedStopped.active_runs === 0,
+      "managed publisher did not join its private service run",
+    );
     return {
       actualGoWasm: true,
       sqliteDurableObject: true,
@@ -427,6 +452,7 @@ async function workerdSmoke(configuration: PublisherFixture) {
       identityReused: true,
       certificateReused: true,
       stopPersisted: true,
+      connectorOnlyPublication: true,
       sdkManagedEnrollmentAndPublication: true,
     };
   } finally {
@@ -497,8 +523,8 @@ async function buildFixtureWasm(output: string, tags: string) {
 
 try {
   await buildFixtureWasm(wasm, "tnlwasmtest,tnlsdk,tnlpublisher");
+  await buildFixtureWasm(connectorWasm, "tnlwasmtest,tnlsdk,tnlconnector");
   if (runtime !== "workerd") {
-    await buildFixtureWasm(connectorWasm, "tnlwasmtest,tnlsdk,tnlconnector");
     console.log(JSON.stringify({ runtime: "chrome", proof: await chromeSmoke(fixture) }));
   }
   if (runtime !== "chrome")
