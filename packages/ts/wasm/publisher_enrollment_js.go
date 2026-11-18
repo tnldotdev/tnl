@@ -153,6 +153,7 @@ func openEnrolledPublisher(encoded string, host js.Value) (_ js.Value, result er
 	handle := js.Global().Get("Object").New()
 	handle.Set("publisherIdentityID", identity.Member.PublisherIdentityId)
 	handle.Set("deploymentID", identity.Member.DeploymentId)
+	handle.Set("controlUrl", identity.Server)
 	bind(handle, "publish", &owner.methods, func(args []js.Value) (any, error) {
 		if len(args) != 2 || args[0].Type() != js.TypeString || args[1].Type() != js.TypeObject || args[1].IsNull() {
 			return nil, errArguments

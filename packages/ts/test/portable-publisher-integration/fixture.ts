@@ -7,6 +7,7 @@ export const fixtureSchema = z.strictObject({
   deployment: z.string().min(1),
   token: z.string().min(1),
   sibling_token: z.string().min(1),
+  enrollment: z.string().min(1),
   control_url: z.url(),
   control_dial_address: z.string().min(1),
   control_root_pem: z.string().min(1),

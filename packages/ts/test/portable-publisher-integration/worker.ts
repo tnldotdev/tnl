@@ -2,9 +2,12 @@ import {
   connect,
   deployment,
   durablePublisher,
+  publish,
+  publisher,
+  TnlPublisher as PublisherObject,
   type DurableObjectPublisherState,
 } from "@tnldotdev/tnl/cloudflare";
-import { check, fixtureSchema } from "./fixture.ts";
+import { check, fixtureSchema, publisherFailures } from "./fixture.ts";
 import { publisherHandler } from "./handler.ts";
 import { installPublisherFixtureHost, runtimeStarts } from "./host.ts";
 
@@ -23,6 +26,15 @@ interface Environment {
   PRIVATE_PUBLISHERS: Environment["PUBLISHERS"];
 }
 const nativeFetch = globalThis.fetch.bind(globalThis);
+
+// the fixture uses private roots and local relay bindings; production directly
+// re-exports the SDK class and uses the platform's normal fetch.
+export class TnlPublisher extends PublisherObject {
+  constructor(state: DurableObjectPublisherState & { exports: unknown }, env: Environment) {
+    prepareFixtureHost(fixtureSchema.parse(JSON.parse(env.FIXTURE)), env);
+    super(state, env);
+  }
+}
 
 // this is an actual SQLite-backed workerd durable object, not the injected
 // deployment/storage doubles used by portable/durable-object.test.ts.
@@ -93,7 +105,15 @@ function prepareFixtureHost(
   Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
-    if (url.origin === fixture.control_url) return environment.CONTROL.fetch(request);
+    if (url.origin === fixture.control_url) {
+      const response = await environment.CONTROL.fetch(request);
+      if (
+        url.pathname === "/v1/publisher/deployments/enroll" ||
+        url.pathname === "/v1/publisher/deployments/verify"
+      )
+        console.error("publisher fixture enrollment response", url.pathname, response.status);
+      return response;
+    }
     const index = fixture.relays.findIndex((relay) => relay.address === url.host);
     if (index !== -1) return (index === 0 ? environment.RELAY0 : environment.RELAY1).fetch(request);
     return nativeFetch(request);
@@ -101,9 +121,44 @@ function prepareFixtureHost(
 }
 
 export default {
-  async fetch(request: Request, environment: Environment): Promise<Response> {
+  async fetch(
+    request: Request,
+    environment: Environment,
+    ctx: { exports: unknown },
+  ): Promise<Response> {
     const route = new URL(request.url);
-    if (route.pathname === "/private-visit") {
+    if (route.pathname === "/managed-target") return new Response("private managed publisher");
+    if (route.pathname.startsWith("/managed-")) {
+      const fixture = fixtureSchema.parse(JSON.parse(environment.FIXTURE));
+      prepareFixtureHost(fixture, environment);
+      let phase = "open";
+      try {
+        if (route.pathname === "/managed-stop") {
+          const owner = await publisher(ctx);
+          await (await publish(owner, "private")).close();
+          return Response.json({ stopped: true });
+        }
+        if (route.pathname === "/managed-start" || route.pathname === "/managed-reopen") {
+          let calls = 0;
+          const enrollment = () => {
+            calls++;
+            if (route.pathname === "/managed-reopen") throw new Error("saved identity was ignored");
+            return fixture.enrollment;
+          };
+          const owner = await publisher(ctx, {
+            ...(route.pathname === "/managed-start" ? { controlUrl: fixture.control_url } : {}),
+            enrollment,
+          });
+          phase = "publish";
+          const managed = await publish(owner, "private");
+          check(!("url" in managed), "managed private publication returned a public URL");
+          return Response.json({ publisher: owner.publisherIdentityID, calls });
+        }
+      } catch (error) {
+        return Response.json(publisherFailures(error, phase), { status: 500 });
+      }
+    }
+    if (route.pathname === "/private-visit" || route.pathname === "/managed-visit") {
       const fixture = fixtureSchema.parse(JSON.parse(environment.FIXTURE));
       prepareFixtureHost(fixture, environment);
       const owner = deployment(fixture.deployment, {
@@ -113,8 +168,13 @@ export default {
       });
       try {
         const connection = await connect(owner, "private");
-        const response = await connection.fetch("/probe");
-        if (response.ok && (await response.text()) === "portable-publisher")
+        const managedVisit = route.pathname === "/managed-visit";
+        const response = await connection.fetch(managedVisit ? "/managed-target" : "/probe");
+        if (
+          response.ok &&
+          (await response.text()) ===
+            (managedVisit ? "private managed publisher" : "portable-publisher")
+        )
           return Response.json({ private: true });
         return Response.json({ error: "private target did not respond" }, { status: 502 });
       } finally {

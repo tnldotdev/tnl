@@ -50,6 +50,7 @@ function fixture() {
   const owner = {
     publisherIdentityID,
     deploymentID,
+    controlUrl,
     publish,
     async close() {
       events.push("owner:close");
@@ -111,6 +112,7 @@ test("enrollment rejects malformed deployment handles and still joins their clea
   bridge.mockImplementation(async () => ({
     publisherIdentityID,
     deploymentID: "malformed",
+    controlUrl,
     publish: f.publish,
     async close() {
       f.events.push("owner:close");

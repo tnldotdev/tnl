@@ -42,6 +42,7 @@ type publisherWASMDescriptor struct {
 	Deployment          string             `json:"deployment"`
 	Token               string             `json:"token"`
 	SiblingToken        string             `json:"sibling_token"`
+	Enrollment          string             `json:"enrollment"`
 	ControlURL          string             `json:"control_url"`
 	ControlDialAddress  string             `json:"control_dial_address"`
 	ControlRootPEM      string             `json:"control_root_pem"`
@@ -168,6 +169,13 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 		return token
 	}
 	token, siblingToken := register("portable-publisher"), register("alias-sibling")
+	enrollment, err := f.identity.routes.CreateDeploymentPublisherEnrollment(
+		t.Context(), f.identity.teamID, project, deployment, "managed-worker-fixture",
+		controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"web", "private"}, MaxMembers: new(1), ExpiresIn: new(600)},
+	)
+	if err != nil {
+		t.Fatal("create disposable publisher enrollment", err)
+	}
 	addresses := make(map[string]string)
 	var privateHost string
 	for _, service := range applied.Services {
@@ -207,6 +215,7 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 	pins = append(pins, base64.StdEncoding.EncodeToString(pin[:]))
 	descriptor := publisherWASMDescriptor{
 		Version: 1, Project: team.DisplayName + "/" + project, Deployment: deployment, Token: token, SiblingToken: siblingToken,
+		Enrollment: enrollment.EnrollmentKey,
 		ControlURL: f.controlConfig.ControlOrigin(), ControlDialAddress: f.publicControlAddress,
 		ControlRootPEM: string(f.certificateAuthority.certificatePEM), RelayRootPEM: string(f.certificateAuthority.certificatePEM),
 		ServiceRootPEM: string(f.visitorRootPEM), NamedURL: addresses["web"], RestrictedURL: addresses["restricted"], PrivateHost: privateHost,

@@ -30,6 +30,7 @@ export interface PublisherOptions {
 export interface EnrolledPublisher {
   readonly publisherIdentityID: string;
   readonly deploymentID: string;
+  readonly controlUrl: string;
   publish(
     name: string,
     handler: FetchHandler,
@@ -41,6 +42,7 @@ export interface EnrolledPublisher {
 interface RawEnrolledPublisher {
   readonly publisherIdentityID: string;
   readonly deploymentID: string;
+  readonly controlUrl: string;
   publish(optionsJSON: string, host: WasmPublisherHost): Promise<unknown>;
   close(): Promise<unknown>;
 }
@@ -55,6 +57,12 @@ function isEnrolledPublisher(value: unknown): value is RawEnrolledPublisher {
     "deploymentID" in value &&
     typeof value.deploymentID === "string" &&
     /^dpl_[A-Za-z0-9]{22}$/.test(value.deploymentID) &&
+    "controlUrl" in value &&
+    typeof value.controlUrl === "string" &&
+    (() => {
+      const url = URL.parse(value.controlUrl);
+      return url?.protocol === "https:" && url.origin === value.controlUrl;
+    })() &&
     "publish" in value &&
     typeof value.publish === "function" &&
     "close" in value &&
@@ -242,6 +250,7 @@ export async function enrollPortablePublisher(
     const handle: EnrolledPublisher = Object.freeze({
       publisherIdentityID: raw.publisherIdentityID,
       deploymentID: raw.deploymentID,
+      controlUrl: raw.controlUrl,
       async publish(
         name: string,
         handler: FetchHandler,

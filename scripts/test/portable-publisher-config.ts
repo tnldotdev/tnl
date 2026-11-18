@@ -31,9 +31,11 @@ const config :Workerd.Config = (
         (name = "connector.wasm", wasm = embed ${JSON.stringify(connector)})
       ],
       compatibilityDate = "2026-10-31",
+      compatibilityFlags = ["enable_ctx_exports"],
       durableObjectNamespaces = [
         (className = "Publisher", uniqueKey = "tnl-portable-publisher-integration-v1", enableSql = true),
-        (className = "PrivatePublisher", uniqueKey = "tnl-private-publisher-integration-v1", enableSql = true)
+        (className = "PrivatePublisher", uniqueKey = "tnl-private-publisher-integration-v1", enableSql = true),
+        (className = "TnlPublisher", uniqueKey = "tnl-managed-publisher-integration-v1", enableSql = true)
       ],
       durableObjectStorage = (localDisk = "storage"),
       bindings = [

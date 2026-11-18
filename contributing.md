@@ -1,5 +1,11 @@
 # contributing
 
+For hosted Cloudflare Worker qualification, install the pinned Wrangler with
+`mise install npm:wrangler`, then run `mise exec -- wrangler login --device
+--browser=false`. Open the verification URL and enter the code printed by
+Wrangler. Run `mise exec -- wrangler whoami` to confirm the account before
+creating a disposable Worker. Local workerd tests do not need this login.
+
 Use [architecture](architecture.md) to find the owner of a change and
 understand its dependencies. Read [AGENTS.md](AGENTS.md) for repository policies.
 
