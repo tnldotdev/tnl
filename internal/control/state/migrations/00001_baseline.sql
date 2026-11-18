@@ -1600,9 +1600,12 @@ BEGIN
         RAISE EXCEPTION 'publication ownership is immutable' USING ERRCODE='23514';
     END IF;
     IF TG_TABLE_NAME='service_runs' THEN
-        IF (OLD.protocol,OLD.run_hostname,OLD.run_alias_parent)
-            IS DISTINCT FROM (NEW.protocol,NEW.run_hostname,NEW.run_alias_parent) THEN
-            RAISE EXCEPTION 'service run protocol and alias are immutable' USING ERRCODE='23514';
+        IF OLD.protocol IS DISTINCT FROM NEW.protocol THEN
+            RAISE EXCEPTION 'service run protocol is immutable' USING ERRCODE='23514';
+        END IF;
+        IF (OLD.run_hostname,OLD.run_alias_parent)
+            IS DISTINCT FROM (NEW.run_hostname,NEW.run_alias_parent) THEN
+            RAISE EXCEPTION 'service run alias is immutable' USING ERRCODE='23514';
         END IF;
     END IF;
     RETURN NEW;
