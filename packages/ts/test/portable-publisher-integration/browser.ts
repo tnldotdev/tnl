@@ -125,6 +125,11 @@ export async function smoke(input: unknown) {
       denied.status === 403 && restrictedHandler.calls() === 0,
       "restricted public request reached the handler",
     );
+    // join the connector's own stream and pair retirement before taking down
+    // its peer. relay loss and retained-session shutdown are tested separately.
+    step("connector-close");
+    await connector.close();
+
     step("named-close");
     await restricted.close();
     await restricted.wait();
@@ -171,8 +176,10 @@ export async function smoke(input: unknown) {
   const cleanup = await Promise.allSettled([connector.close(), publisher.close()]);
   const failures = [
     ...(result?.status === "rejected" ? publisherFailures(result.reason, phase) : []),
-    ...cleanup.flatMap((entry) =>
-      entry.status === "rejected" ? publisherFailures(entry.reason, "cleanup") : [],
+    ...cleanup.flatMap((entry, index) =>
+      entry.status === "rejected"
+        ? publisherFailures(entry.reason, index === 0 ? "connector-close" : "publisher-close")
+        : [],
     ),
   ];
   if (failures.length > 0) throw new Error(JSON.stringify(failures));
