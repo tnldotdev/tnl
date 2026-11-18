@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { createRequire, isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -233,8 +233,22 @@ async function workerdSmoke(configuration: PortableFixture) {
     format: "esm",
     platform: "browser",
     conditions: ["workerd", "worker", "browser"],
+    external: ["cloudflare:*"],
+    banner: {
+      js: 'import { createRequire } from "node:module"; const require = createRequire("file:///worker.mjs");',
+    },
     tsconfigRaw: {},
     plugins: [
+      {
+        name: "worker-node-compat",
+        setup(builder) {
+          builder.onResolve({ filter: /^[a-z]/ }, ({ path }) =>
+            isBuiltin(path)
+              ? { path: path.startsWith("node:") ? path : `node:${path}`, external: true }
+              : undefined,
+          );
+        },
+      },
       {
         name: "static-sdk-wasm",
         setup(builder) {
@@ -337,6 +351,7 @@ async function workerdSmoke(configuration: PortableFixture) {
       return body;
     }
     const smoke = smokeSchema.parse(await call("/smoke"));
+    const pg = z.object({ backendPID: z.number().int().positive() }).parse(await call("/pg"));
     const run = `workerd-${crypto.randomUUID()}`;
     const isolation = isolationProof(
       await Promise.all([
@@ -344,7 +359,7 @@ async function workerdSmoke(configuration: PortableFixture) {
         call(`/isolation?role=second&run=${run}`),
       ]),
     );
-    return { runtime: "workerd", smoke, isolation };
+    return { runtime: "workerd", smoke, isolation, pg };
   } finally {
     lines.close();
     child.kill("SIGTERM");

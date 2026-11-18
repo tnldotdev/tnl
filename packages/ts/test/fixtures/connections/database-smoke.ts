@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createClient, type TnlClientFactory } from "@tnldotdev/tnl";
+import { pg as pgAdapter } from "@tnldotdev/tnl/adapters/node-postgres";
 import { createInterface } from "node:readline";
 import mysql from "mysql2/promise";
 import pg from "pg";
@@ -63,18 +64,14 @@ try {
       await client.end();
     }
     const closed: pg.Pool[] = [];
+    const adapter = pgAdapter({ ...credentials, max: 1, connectionTimeoutMillis: 5_000 });
     const get = deployment.client("database", {
       create(connection) {
         assert(!("stream" in connection));
-        return new pg.Pool({
-          ...connection,
-          ...credentials,
-          max: 1,
-          connectionTimeoutMillis: 5_000,
-        });
+        return adapter.create(connection);
       },
       async close(pool) {
-        await pool.end();
+        await adapter.close(pool);
         closed.push(pool);
       },
     });

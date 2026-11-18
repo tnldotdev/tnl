@@ -69,8 +69,8 @@ export type TnlOpenStream<Stream extends TnlStream = TnlStream> = (
  *
  * these contracts require a portable, stream-aware driver adapter. stock pg,
  * mysql2, and filesystem-based kubernetes clients are not browser drivers.
- * using node drivers in a worker additionally requires the platform's node
- * compatibility mode and a driver-specific socket adapter; tnl supplies neither.
+ * using node drivers in a worker requires the platform's node compatibility
+ * mode and a driver-specific socket adapter.
  * tnl itself needs no node compatibility mode for these stream/fetch contracts.
  *
  * @example

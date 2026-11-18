@@ -55,6 +55,10 @@
       "require": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./adapters/node-postgres": {
+      "types": "./dist/adapters/node-postgres.d.ts",
+      "default": "./dist/adapters/node-postgres.js"
+    },
     "./config": {
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js",
@@ -99,18 +103,24 @@
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
+    "@types/pg": "8.23.1",
     "hono": "4.13.16",
     "next": "16.4.6",
+    "pg": "8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "vite": "8.3.4"
   },
   "peerDependencies": {
     "next": ">=16.4.5",
+    "pg": "^8.23.1",
     "vite": ">=6.0.9"
   },
   "peerDependenciesMeta": {
     "next": {
+      "optional": true
+    },
+    "pg": {
       "optional": true
     },
     "vite": {

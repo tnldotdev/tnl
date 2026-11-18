@@ -27,6 +27,7 @@ type Phase =
   | "mysql"
   | "kubernetes"
   | "postgres"
+  | "pg-adapter"
   | "carrier-loss"
   | "close-open-tcp"
   | "close-deployment"
@@ -76,7 +77,7 @@ async function joinCleanup(
     );
 }
 
-function deployment(fixture: PortableFixture) {
+export function deployment(fixture: PortableFixture) {
   // the runtime's normal package export selects browser/workerd. no private
   // bridge, native CLI, yamux implementation, or fabricated admission is used.
   return createClient({

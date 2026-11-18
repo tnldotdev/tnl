@@ -1,4 +1,5 @@
-import { PortableSmokeError, runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { pg } from "@tnldotdev/tnl/adapters/node-postgres";
+import { PortableSmokeError, deployment, runPortableIsolation, runPortableSmoke } from "./smoke.ts";
 import { fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
 
@@ -57,6 +58,36 @@ export default {
         }
       });
       if (url.pathname === "/smoke") return Response.json(await runPortableSmoke(fixture));
+      if (url.pathname === "/pg") {
+        const app = deployment(fixture);
+        try {
+          const getPool = app.client(
+            "postgres",
+            pg({ ...fixture.postgres, max: 1, connectionTimeoutMillis: 15_000 }),
+          );
+          const pool = await getPool();
+          const session = await pool.connect();
+          let backendPID: number | undefined;
+          try {
+            await session.query("BEGIN");
+            const { rows } = await session.query<{ pid: number }>({
+              name: "portable-adapter-pid",
+              text: "SELECT pg_backend_pid() AS pid WHERE 1 = $1",
+              values: [1],
+            });
+            await session.query("COMMIT");
+            backendPID = rows[0]?.pid;
+          } finally {
+            session.release();
+          }
+          await getPool.close();
+          return Response.json({ backendPID });
+        } catch (error) {
+          throw new PortableSmokeError("pg-adapter", error);
+        } finally {
+          await app.close();
+        }
+      }
       const role = url.searchParams.get("role");
       const run = url.searchParams.get("run");
       if (
