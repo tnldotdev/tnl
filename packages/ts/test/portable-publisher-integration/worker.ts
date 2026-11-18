@@ -1,8 +1,4 @@
-import {
-  publish,
-  publisher,
-  TnlPublisher as PublisherObject,
-} from "@tnldotdev/tnl/cloudflare";
+import { publish, publisher, TnlPublisher as PublisherObject } from "@tnldotdev/tnl/cloudflare";
 import {
   durablePublisher,
   type DurableObjectPublisherState,

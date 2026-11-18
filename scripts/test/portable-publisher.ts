@@ -288,17 +288,22 @@ async function startWorker(configuration: string) {
         }),
       ),
     ]);
+    async function request(route: string): Promise<Response> {
+      const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+        method: "POST",
+        signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(120_000)]),
+      });
+      check(
+        response.ok,
+        `actual Go/WASM durable publisher ${route} failed: HTTP ${response.status} ${redact((await response.clone().text()).slice(0, 500))}; ${redact(diagnostics.slice(-1500))}`,
+      );
+      return response;
+    }
     return {
       close,
+      request,
       async call(route: string) {
-        const response = await fetch(`http://127.0.0.1:${port}${route}`, {
-          method: "POST",
-          signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(120_000)]),
-        });
-        check(
-          response.ok,
-          `actual Go/WASM durable publisher ${route} failed: HTTP ${response.status} ${redact((await response.clone().text()).slice(0, 500))}; ${redact(diagnostics.slice(-1500))}`,
-        );
+        const response = await request(route);
         return workerStatus.parse(await response.json());
       },
     };
@@ -413,10 +418,7 @@ async function workerdSmoke(configuration: PublisherFixture) {
     );
     await worker.request("/managed-stop");
     const managedStopped = await fixtureCall(configuration, "/state", restored.url, apiFetch);
-    check(
-      managedStopped.active_runs === 0,
-      "managed publisher did not join its service run",
-    );
+    check(managedStopped.active_runs === 0, "managed publisher did not join its service run");
     return {
       actualGoWasm: true,
       sqliteDurableObject: true,
