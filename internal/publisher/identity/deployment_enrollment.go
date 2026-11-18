@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	json "encoding/json/v2"
 	"errors"
@@ -42,6 +43,7 @@ type enrollmentRecord struct {
 	Version    int                                    `json:"version"`
 	Selection  EnrollmentSelection                    `json:"selection"`
 	PrivateKey string                                 `json:"private_key"`
+	Bootstrap  string                                 `json:"bootstrap_digest,omitempty"`
 	Member     *controlv1.DeploymentPublisherIdentity `json:"member,omitempty"`
 }
 
@@ -50,6 +52,7 @@ type enrollmentRecord struct {
 type EnrolledIdentity struct {
 	Member  controlv1.DeploymentPublisherIdentity
 	Private ed25519.PrivateKey
+	Server  string
 	lock    io.Closer
 	once    sync.Once
 	err     error
@@ -70,10 +73,23 @@ func (i *EnrolledIdentity) Close() error {
 // key again. an ambiguous redemption keeps its durable pending signing key;
 // neither network failure nor invalid state silently creates another identity.
 func OpenEnrolledIdentity(ctx context.Context, files EnrollmentFiles, control EnrollmentControl, selection EnrollmentSelection, secret string) (_ *EnrolledIdentity, result error) {
-	server, err := naming.CanonicalControlURL(selection.ControlURL)
-	if err != nil || server != selection.ControlURL || !naming.ValidProjectKey(selection.ProjectKey) ||
-		!naming.ValidServiceName(selection.Instance) || !opaqueid.Valid(selection.DeploymentID, "dpl_") ||
-		files == nil || control == nil {
+	return OpenPublisherIdentity(ctx, files, func(string) (EnrollmentControl, error) { return control, nil }, selection, func(context.Context) (string, error) { return secret, nil })
+}
+
+// OpenPublisherIdentity resolves the control origin from the saved slot before
+// asking for bootstrap authority. a pending record binds the exact key digest,
+// but never stores the enrollment secret.
+func OpenPublisherIdentity(ctx context.Context, files EnrollmentFiles, client func(string) (EnrollmentControl, error), selection EnrollmentSelection, bootstrap func(context.Context) (string, error)) (_ *EnrolledIdentity, result error) {
+	validServer := func(server string) bool {
+		canonical, err := naming.CanonicalControlURL(server)
+		return err == nil && canonical == server
+	}
+	validScope := func(project, deployment string) bool {
+		return project == "" && deployment == "" || naming.ValidProjectKey(project) && opaqueid.Valid(deployment, "dpl_")
+	}
+	if selection.ControlURL != "" && !validServer(selection.ControlURL) ||
+		!validScope(selection.ProjectKey, selection.DeploymentID) || !naming.ValidServiceName(selection.Instance) ||
+		files == nil || client == nil {
 		return nil, ErrScope
 	}
 	lock, err := files.Lock(ctx, "enrollment-owner")
@@ -92,25 +108,49 @@ func OpenEnrolledIdentity(ctx context.Context, files EnrollmentFiles, control En
 		return nil, err
 	}
 	var record enrollmentRecord
-	validBootstrap := func() bool {
+	loadBootstrap := func() (string, string, error) {
+		if bootstrap == nil {
+			return "", "", ErrScope
+		}
+		secret, err := bootstrap(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		if err := context.Cause(ctx); err != nil {
+			return "", "", err
+		}
 		id, key, found := strings.Cut(secret, ".")
-		return len(secret) <= 256 && found && opaqueid.Valid(id, opaqueid.PublisherEnrollmentPrefix) && key != "" && !strings.Contains(key, ".")
+		if len(secret) > 256 || !found || !opaqueid.Valid(id, opaqueid.PublisherEnrollmentPrefix) || key == "" || strings.Contains(key, ".") {
+			return "", "", ErrScope
+		}
+		digest := sha256.Sum256([]byte(secret))
+		return secret, base64.RawURLEncoding.EncodeToString(digest[:]), nil
 	}
+	var secret string
 	if found {
 		if json.Unmarshal(data, &record, json.RejectUnknownMembers(true)) != nil ||
-			record.Version != 1 || record.Selection != selection {
+			record.Version != 1 || record.Selection.Instance != selection.Instance ||
+			!validServer(record.Selection.ControlURL) || selection.ControlURL != "" && record.Selection.ControlURL != selection.ControlURL ||
+			!validScope(record.Selection.ProjectKey, record.Selection.DeploymentID) ||
+			selection.ProjectKey != "" && (record.Selection.ProjectKey != selection.ProjectKey || record.Selection.DeploymentID != selection.DeploymentID) ||
+			(record.Member == nil) != (record.Bootstrap != "") {
 			return nil, ErrScope
 		}
 	} else {
-		if !validBootstrap() {
-			return nil, ErrScope
+		var digest string
+		secret, digest, err = loadBootstrap()
+		if err != nil {
+			return nil, err
 		}
 		_, private, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return nil, err
 		}
 		defer clear(private)
-		record = enrollmentRecord{Version: 1, Selection: selection, PrivateKey: base64.RawURLEncoding.EncodeToString(private)}
+		if selection.ControlURL == "" {
+			selection.ControlURL = naming.DefaultControlURL
+		}
+		record = enrollmentRecord{Version: 1, Selection: selection, PrivateKey: base64.RawURLEncoding.EncodeToString(private), Bootstrap: digest}
 		if err := writeEnrollmentRecord(ctx, files, record); err != nil {
 			return nil, err
 		}
@@ -126,14 +166,46 @@ func OpenEnrolledIdentity(ctx context.Context, files EnrollmentFiles, control En
 		}
 	}()
 	if record.Member == nil {
-		if !validBootstrap() {
+		digest, err := base64.RawURLEncoding.Strict().DecodeString(record.Bootstrap)
+		if err != nil || len(digest) != sha256.Size {
 			return nil, ErrScope
 		}
-		member, err := control.RedeemScopedDeploymentPublisherEnrollment(ctx, secret, ed25519.PrivateKey(private).Public().(ed25519.PublicKey), selection.DeploymentID, selection.ProjectKey)
+	}
+	server := record.Selection.ControlURL
+	control, err := client(server)
+	if err != nil {
+		return nil, err
+	}
+	if control == nil {
+		return nil, ErrScope
+	}
+	validMember := func(member controlv1.DeploymentPublisherIdentity) bool {
+		return naming.ValidProjectKey(member.ProjectKey) && opaqueid.Valid(member.DeploymentId, "dpl_") &&
+			(record.Selection.ProjectKey == "" || member.ProjectKey == record.Selection.ProjectKey && member.DeploymentId == record.Selection.DeploymentID) &&
+			member.TeamId != "" && naming.ValidServiceName(member.DeploymentName) && member.DeploymentName != "local" &&
+			opaqueid.Valid(member.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) &&
+			opaqueid.Valid(member.KeyId, opaqueid.PublisherIdentityKeyPrefix)
+	}
+	if record.Member == nil {
+		if secret == "" {
+			var digest string
+			secret, digest, err = loadBootstrap()
+			if err != nil {
+				return nil, err
+			}
+			if digest != record.Bootstrap {
+				return nil, ErrScope
+			}
+		}
+		member, err := control.RedeemScopedDeploymentPublisherEnrollment(ctx, secret, ed25519.PrivateKey(private).Public().(ed25519.PublicKey), record.Selection.DeploymentID, record.Selection.ProjectKey)
 		if err != nil {
 			return nil, err
 		}
-		record.Member = &member
+		if !validMember(member) {
+			return nil, ErrScope
+		}
+		record.Member, record.Bootstrap = &member, ""
+		record.Selection.ProjectKey, record.Selection.DeploymentID = member.ProjectKey, member.DeploymentId
 		// persist a committed result before verifying it. a lost verification
 		// reply can be retried without using bootstrap again.
 		if err := writeEnrollmentRecord(ctx, files, record); err != nil {
@@ -141,10 +213,7 @@ func OpenEnrolledIdentity(ctx context.Context, files EnrollmentFiles, control En
 		}
 	}
 	member := *record.Member
-	if member.ProjectKey != selection.ProjectKey || member.DeploymentId != selection.DeploymentID ||
-		member.TeamId == "" || !naming.ValidServiceName(member.DeploymentName) || member.DeploymentName == "local" ||
-		!opaqueid.Valid(member.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) ||
-		!opaqueid.Valid(member.KeyId, opaqueid.PublisherIdentityKeyPrefix) {
+	if !validMember(member) || record.Selection.ProjectKey == "" {
 		return nil, ErrScope
 	}
 	assertion, err := publisherproof.Sign(member.PublisherIdentityId, member.KeyId, member.DeploymentId, server+"/v1/publisher/deployments/verify", private, time.Now())
@@ -168,7 +237,7 @@ func OpenEnrolledIdentity(ctx context.Context, files EnrollmentFiles, control En
 		}
 	}
 	retained = true
-	return &EnrolledIdentity{Member: current, Private: private, lock: lock}, nil
+	return &EnrolledIdentity{Member: current, Private: private, Server: server, lock: lock}, nil
 }
 
 func writeEnrollmentRecord(ctx context.Context, files EnrollmentFiles, record enrollmentRecord) error {

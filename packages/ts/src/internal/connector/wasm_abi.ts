@@ -83,6 +83,7 @@ export interface WasmBridge {
     optionsJSON: string,
     host: {
       readonly controlFetch: TnlFetch;
+      readonly enrollment?: () => Promise<string>;
       readonly storage: PublisherStorageHost;
       readonly signal: AbortSignal;
     },

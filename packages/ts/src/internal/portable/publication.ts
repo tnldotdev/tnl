@@ -283,7 +283,9 @@ export async function publishPortable(options: {
   const publicEndpoint = httpsOriginSchema.safeParse(raw.url);
   const expectedPublic =
     options.selection.service === undefined
-      ? (options.selection.temporary?.public ?? true)
+      ? "temporary" in options.selection
+        ? (options.selection.temporary?.public ?? true)
+        : true
       : undefined;
   const validEndpoint =
     (expectedPublic === undefined || raw.public === expectedPublic) &&

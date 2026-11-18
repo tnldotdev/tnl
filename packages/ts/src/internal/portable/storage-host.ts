@@ -37,30 +37,21 @@ export function createPublisherStorageHost(storage: PublisherStorage): Publisher
     } catch {
       throw new PublisherStorageError("sdk.publisher_storage_invalid");
     }
-    if (
-      typeof scope !== "object" ||
-      scope === null ||
-      Array.isArray(scope) ||
-      !("control_url" in scope) ||
-      !scopeText(scope.control_url)
-    )
+    if (typeof scope !== "object" || scope === null || Array.isArray(scope))
       throw new PublisherStorageError("sdk.publisher_storage_invalid");
     const count = Object.keys(scope).length;
     let canonical: string;
     if (
-      count === 2 &&
-      "enrollment_selection" in scope &&
-      typeof scope.enrollment_selection === "string" &&
-      /^[0-9a-f]{64}$/.test(scope.enrollment_selection)
+      count === 1 &&
+      "publisher_slot" in scope &&
+      typeof scope.publisher_slot === "string" &&
+      /^[a-z][a-z0-9-]{0,62}$/.test(scope.publisher_slot)
     ) {
-      canonical = JSON.stringify([
-        "enrollment",
-        scope.control_url,
-        scope.enrollment_selection,
-        key,
-      ]);
+      canonical = JSON.stringify(["enrollment", scope.publisher_slot, key]);
     } else if (
       count === 3 &&
+      "control_url" in scope &&
+      scopeText(scope.control_url) &&
       "team_id" in scope &&
       scopeText(scope.team_id, true) &&
       "publisher_identity_id" in scope &&

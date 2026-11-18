@@ -93,6 +93,9 @@ func TestEnrolledIdentityRetainsPendingKeyAndReloadsWithoutBootstrap(t *testing.
 	if bytes.Contains(files.data, []byte(secret)) {
 		t.Fatal("durable record retained bootstrap secret")
 	}
+	if _, err := OpenEnrolledIdentity(t.Context(), files, backend, selection, secret+"-changed"); !errors.Is(err, ErrScope) || backend.enrolls != 1 || files.locked {
+		t.Fatal("pending recovery accepted a different enrollment key", err)
+	}
 	owner, err := OpenEnrolledIdentity(t.Context(), files, backend, selection, secret)
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +139,12 @@ func TestEnrolledIdentityStorageAndDenialNeverReplaceKey(t *testing.T) {
 		t.Fatal("denied identity fell back to bootstrap", err)
 	}
 	files.data = []byte(`{"version":1,"private_key":"malformed"}`)
-	if _, err := OpenEnrolledIdentity(t.Context(), files, backend, selection, secret); !errors.Is(err, ErrScope) || backend.enrolls != 1 {
+	if _, err := OpenPublisherIdentity(t.Context(), files, func(string) (EnrollmentControl, error) {
+		return backend, nil
+	}, selection, func(context.Context) (string, error) {
+		t.Error("corrupt identity called the bootstrap source")
+		return secret, nil
+	}); !errors.Is(err, ErrScope) || backend.enrolls != 1 {
 		t.Fatal("corrupt record replaced its identity", err)
 	}
 }

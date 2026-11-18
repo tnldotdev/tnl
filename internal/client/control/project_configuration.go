@@ -103,6 +103,9 @@ func (c *Client) RedeemDeploymentPublisherEnrollment(ctx context.Context, key st
 }
 
 func (c *Client) RedeemScopedDeploymentPublisherEnrollment(ctx context.Context, key string, public ed25519.PublicKey, deploymentID, projectKey string) (controlv1.DeploymentPublisherIdentity, error) {
+	if deploymentID == "" && projectKey == "" {
+		return c.RedeemDeploymentPublisherEnrollment(ctx, key, public)
+	}
 	return c.redeemDeploymentPublisherEnrollment(ctx, key, public, &deploymentID, &projectKey)
 }
 

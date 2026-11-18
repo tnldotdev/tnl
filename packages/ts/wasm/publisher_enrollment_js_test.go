@@ -41,10 +41,11 @@ func TestEnrolledPublisherRetriesAndPreparesExactAppRun(t *testing.T) {
 	}
 	state := publisherFunction(t, `(member, service, assignment, grant, secret, expires) => {
 		const records = new Map();
-		const state = {enrollments: [], calls: [], held: false};
+		const state = {enrollments: [], calls: [], held: false, bootstrapCalls: 0};
 		state.host = {
 			fetch: () => new Response("application"),
 			signal: new AbortController().signal,
+			enrollment: async () => { state.bootstrapCalls++; return secret },
 			controlFetch: async request => {
 				const url = new URL(request.url);
 				const path = url.pathname;
@@ -52,7 +53,7 @@ func TestEnrolledPublisherRetriesAndPreparesExactAppRun(t *testing.T) {
 				if (request.credentials !== "omit" || request.redirect !== "manual") throw Error("unexpected credential policy");
 				if (path === "/v1/publisher/deployments/enroll") {
 					const body = await request.json();
-					if (body.enrollment_key !== secret || body.deployment_id !== member.deployment_id || body.project_key !== member.project_key ||
+					if (body.enrollment_key !== secret || "deployment_id" in body || "project_key" in body ||
 						"private_key" in body || !state.held || records.size !== 1)
 						throw Error("enrollment escaped private staging");
 					state.enrollments.push(body.public_key);
@@ -92,7 +93,7 @@ func TestEnrolledPublisherRetriesAndPreparesExactAppRun(t *testing.T) {
 	host := state.Get("host")
 	api := js.Global().Get("Object").New()
 	registerPublisher(api)
-	options := map[string]string{"control_url": server, "project_key": member.ProjectKey, "deployment_id": member.DeploymentId, "instance": "browser", "enrollment_key": secret}
+	options := map[string]string{"control_url": server, "instance": "default"}
 	open := func() (js.Value, error) {
 		return publisherAwait(t.Context(), api.Call("enrollPublisher", encode(options), host), nil)
 	}
@@ -124,9 +125,9 @@ func TestEnrolledPublisherRetriesAndPreparesExactAppRun(t *testing.T) {
 	if _, err := publisherAwait(t.Context(), owner.Call("close"), nil); err != nil || state.Get("held").Bool() {
 		t.Fatal("close failed to release joined owner", err)
 	}
-	delete(options, "enrollment_key")
+	delete(options, "control_url")
 	reloaded, err := open()
-	if err != nil || reloaded.Get("publisherIdentityID").String() != member.PublisherIdentityId || keys.Length() != 2 {
+	if err != nil || reloaded.Get("publisherIdentityID").String() != member.PublisherIdentityId || keys.Length() != 2 || state.Get("bootstrapCalls").Int() != 2 {
 		t.Fatal("reload without bootstrap changed identity or readmitted it", err)
 	}
 	if _, err := publisherAwait(t.Context(), reloaded.Call("close"), nil); err != nil {

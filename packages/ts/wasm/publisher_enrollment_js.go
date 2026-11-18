@@ -4,8 +4,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	json "encoding/json/v2"
 	"errors"
 	"net/http"
@@ -19,7 +17,6 @@ import (
 
 type publisherEnrollmentOptions struct {
 	publisheridentity.EnrollmentSelection
-	EnrollmentKey string `json:"enrollment_key"`
 }
 
 type enrolledPublisher struct {
@@ -88,48 +85,64 @@ func openEnrolledPublisher(encoded string, host js.Value) (_ js.Value, result er
 			result = operationError(ctx, result)
 		}
 	}()
-	storage, err := newPublisherHostStore(publisherGet(host, "storage"), options.ControlURL)
-	if err != nil {
-		return js.Undefined(), err
+	storage := publisherGet(host, "storage")
+	if storage.Type() != js.TypeObject || storage.IsNull() {
+		return js.Undefined(), errArguments
 	}
-	selectionJSON, err := json.Marshal(options.EnrollmentSelection)
-	if err != nil {
-		return js.Undefined(), err
-	}
-	selectionDigest := sha256.Sum256(selectionJSON)
 	scope, err := json.Marshal(struct {
-		ControlURL          string `json:"control_url"`
-		EnrollmentSelection string `json:"enrollment_selection"`
-	}{options.ControlURL, hex.EncodeToString(selectionDigest[:])})
+		PublisherSlot string `json:"publisher_slot"`
+	}{options.Instance})
 	if err != nil {
 		return js.Undefined(), err
 	}
-	files := &publisherHostFiles{host: storage.host, scope: string(scope)}
+	files := &publisherHostFiles{host: storage, scope: string(scope)}
 	fetch := publisherGet(host, "controlFetch")
 	if fetch.Type() != js.TypeFunction {
 		return js.Undefined(), errArguments
 	}
 	httpClient := &http.Client{Transport: &fetchTransport{fetch: fetch}}
-	control, err := clientcontrol.New(options.ControlURL, httpClient, "")
+	var control *clientcontrol.Client
+	identity, err = publisheridentity.OpenPublisherIdentity(ctx, files, func(server string) (publisheridentity.EnrollmentControl, error) {
+		var err error
+		control, err = clientcontrol.New(server, httpClient, "")
+		return control, err
+	}, options.EnrollmentSelection, func(ctx context.Context) (string, error) {
+		source, err := publisherJS(func() js.Value { return publisherGet(host, "enrollment") })
+		if err != nil || source.Type() != js.TypeFunction {
+			return "", errArguments
+		}
+		pending, err := publisherJS(func() js.Value { return source.Invoke() })
+		if err != nil {
+			return "", err
+		}
+		value, err := publisherAwait(ctx, pending, nil)
+		if err != nil {
+			return "", err
+		}
+		if value.Type() != js.TypeString {
+			return "", errArguments
+		}
+		secret := value.String()
+		if len(secret) == 0 || len(secret) > 256 {
+			return "", errArguments
+		}
+		return secret, nil
+	})
 	if err != nil {
 		return js.Undefined(), err
 	}
-	authority, err := clientauthority.New(options.ControlURL, httpClient, "")
-	if err != nil {
-		return js.Undefined(), err
-	}
-	identity, err = publisheridentity.OpenEnrolledIdentity(ctx, files, control, options.EnrollmentSelection, options.EnrollmentKey)
+	authority, err := clientauthority.New(identity.Server, httpClient, "")
 	if err != nil {
 		return js.Undefined(), err
 	}
 	if err := context.Cause(ctx); err != nil {
 		return js.Undefined(), err
 	}
-	deployment, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{Services: control}, control, authority, options.ControlURL, identity.Member, identity.Private)
+	deployment, err := publisheridentity.NewDeployment(publisheridentity.NativeControl{Services: control}, control, authority, identity.Server, identity.Member, identity.Private)
 	if err != nil {
 		return js.Undefined(), err
 	}
-	owner := &enrolledPublisher{ctx: ctx, cancel: cancel, unwatch: unwatch, server: options.ControlURL, identity: identity, deployment: deployment, apps: control}
+	owner := &enrolledPublisher{ctx: ctx, cancel: cancel, unwatch: unwatch, server: identity.Server, identity: identity, deployment: deployment, apps: control}
 	runtimeMu.Lock()
 	if runtimeClosed || len(runtimeResources) >= 32 {
 		runtimeMu.Unlock()

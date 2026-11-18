@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { enrollPublisher } from "../../src/browser.js";
-import type { WasmPublisherHost } from "../../src/internal/connector/wasm_abi.js";
+import { publish as publishService, publisher } from "../../src/browser.js";
+import type { WasmBridge, WasmPublisherHost } from "../../src/internal/connector/wasm_abi.js";
 import { createPublisherStorageHost } from "../../src/internal/portable/storage-host.js";
 import type { PublisherStorage } from "../../src/internal/portable/storage.js";
 
@@ -9,7 +9,7 @@ vi.mock("../../src/internal/connector/wasm_loader.js", () => ({ loadWasm: mocks.
 
 const deploymentID = `dpl_${"D".repeat(22)}`;
 const publisherIdentityID = `pub_${"P".repeat(22)}`;
-const options = { server: "https://control.example.test", deploymentID, projectKey: "checkout" };
+const controlUrl = "https://control.example.test";
 
 function fixture() {
   const events: string[] = [];
@@ -32,6 +32,7 @@ function fixture() {
     },
   };
   const publish = vi.fn(async (_selection: string, _host: WasmPublisherHost) => ({
+    public: true,
     url: "https://web.example.test",
     run: {
       serviceID: `svc_${"S".repeat(22)}`,
@@ -55,7 +56,12 @@ function fixture() {
     },
   };
   const bridge = {
-    enrollPublisher: vi.fn(async (_selection: string) => owner),
+    enrollPublisher: vi.fn(
+      async (
+        _selection: string,
+        _host: Parameters<NonNullable<WasmBridge["enrollPublisher"]>>[1],
+      ) => owner,
+    ),
     close: vi.fn(async () => {
       events.push("runtime:close");
       exited.resolve();
@@ -71,15 +77,22 @@ afterEach(() => {
 
 test("enrollment exposes named publication only and joins the run before releasing its identity", async () => {
   const f = fixture();
-  const enrolled = await enrollPublisher({
-    ...options,
+  const enrollment = vi.fn(() => "private-bootstrap");
+  const enrolled = await publisher({
+    controlUrl,
     publisherStorage: f.publisherStorage,
-    enrollmentKey: "private-bootstrap",
+    enrollment,
   });
   expect(enrolled.publisherIdentityID).toBe(publisherIdentityID);
   expect(enrolled).not.toHaveProperty("connect");
-  expect(f.bridge.enrollPublisher.mock.calls[0]?.[0]).toContain("private-bootstrap");
-  await enrolled.publish("web", () => new Response("application"));
+  expect(enrollment).not.toHaveBeenCalled();
+  const call = f.bridge.enrollPublisher.mock.calls[0];
+  if (call === undefined) throw new Error("publisher bridge was not called");
+  const [selection, host] = call;
+  expect(JSON.parse(selection)).toEqual({ control_url: controlUrl, instance: "default" });
+  expect(await host.enrollment?.()).toBe("private-bootstrap");
+  expect(enrollment).toHaveBeenCalledOnce();
+  await publishService(enrolled, "web", () => new Response("application"));
   expect(JSON.parse(f.publish.mock.calls[0]?.[0] ?? "")).toEqual({ service: "web" });
   const closing = enrolled.close();
   expect(enrolled.close()).toBe(closing);
@@ -92,12 +105,19 @@ test("enrollment exposes named publication only and joins the run before releasi
   expect(f.events).toEqual(["run:closing", "run:joined", "owner:close", "runtime:close"]);
 });
 
-test("enrollment rejects wrong deployment handles and still joins their cleanup", async () => {
+test("enrollment rejects malformed deployment handles and still joins their cleanup", async () => {
   const f = fixture();
-  const owner = await f.bridge.enrollPublisher("");
-  f.bridge.enrollPublisher.mockResolvedValue({ ...owner, deploymentID: `dpl_${"X".repeat(22)}` });
+  const bridge = f.bridge.enrollPublisher;
+  bridge.mockImplementation(async () => ({
+    publisherIdentityID,
+    deploymentID: "malformed",
+    publish: f.publish,
+    async close() {
+      f.events.push("owner:close");
+    },
+  }));
   await expect(
-    enrollPublisher({ ...options, publisherStorage: f.publisherStorage }),
+    publisher({ controlUrl, publisherStorage: f.publisherStorage }),
   ).rejects.toMatchObject({
     code: "sdk.wasm_invalid",
   });
@@ -108,12 +128,9 @@ test("enrollment storage scopes cannot collide with certificate scopes", async (
   const f = fixture();
   const host = createPublisherStorageHost(f.publisherStorage);
   const signal = new AbortController().signal;
-  const enrollment = JSON.stringify({
-    control_url: options.server,
-    enrollment_selection: "a".repeat(64),
-  });
+  const enrollment = JSON.stringify({ publisher_slot: "default" });
   const certificate = JSON.stringify({
-    control_url: options.server,
+    control_url: controlUrl,
     team_id: "team",
     publisher_identity_id: publisherIdentityID,
   });
