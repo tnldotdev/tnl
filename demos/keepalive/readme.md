@@ -49,9 +49,10 @@ back to that copy.
 
 ## checking other hosts
 
-[`tnl.config.ts`](tnl.config.ts) gives `site` one shared address and gives each
-host its own address under `hosts.keepthisalive.com`. The proxy can use any host.
-When A checks B, it needs B's address so that B is the one that answers.
+[`tnl.config.ts`](tnl.config.ts) gives the `production` service one shared
+address and each host its own address under `hosts.keepthisalive.com`. The
+proxy can use any host. When A checks B, it needs B's address so that B is
+the one that answers.
 
 [`src/peers.ts`](src/peers.ts) holds each host's view of the others. Every few
 seconds, a host checks one peer and exchanges reports about who it knows.

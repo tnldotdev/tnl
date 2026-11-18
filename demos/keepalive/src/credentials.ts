@@ -41,7 +41,7 @@ export async function credentials(request: Request, releaseID: string, env: Cred
       path: { project_key: env.PROJECT_KEY, deployment: "keepalive" },
       query: { team_id: env.TEAM_ID },
       headers: { "Idempotency-Key": body.data.requestID },
-      body: { services: ["site"], max_members: 1, expires_in: 120 },
+      body: { services: ["production"], max_members: 1, expires_in: 120 },
       cache: "no-store",
       redirect: "error",
       signal,
