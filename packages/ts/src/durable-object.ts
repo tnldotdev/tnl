@@ -222,9 +222,7 @@ export class DurableObjectPublisher {
     const completion = this.#completions.get(publication);
     if (completion === undefined) throw new TnlError("sdk.publication_failed");
     return Object.freeze({
-      get url(): `https://${string}` {
-        return publication.url;
-      },
+      ...(publication.url === undefined ? {} : { url: publication.url }),
       close: () => this.#retain(this.#stop(revision)),
       wait: () => completion,
       [Symbol.asyncDispose]: () => this.#retain(this.#stop(revision)),

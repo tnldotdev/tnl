@@ -534,20 +534,21 @@ export function createClient<const Services extends ServiceFacts = Record<never,
                 closingPublication = undefined;
                 throw cause;
               }));
-            const handle: Publication = Object.freeze({
-              get url() {
-                return base.url;
-              },
-              get publisherURL() {
-                return base.publisherURL;
-              },
+            const handle: Publication = {
+              ...(base.url === undefined ? {} : { url: base.url }),
               get run() {
                 return base.run;
               },
               close,
               wait: () => base.wait(),
               [Symbol.asyncDispose]: close,
-            });
+            };
+            if (handle.url !== undefined)
+              Object.defineProperty(handle, "publisherURL", {
+                get: () => base.publisherURL,
+                enumerable: true,
+              });
+            Object.freeze(handle);
             // retain ownership before checking close: a late acknowledgment must
             // remain retryable if its first cleanup attempt fails.
             publications.add(handle);

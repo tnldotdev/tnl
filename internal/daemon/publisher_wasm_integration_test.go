@@ -50,6 +50,7 @@ type publisherWASMDescriptor struct {
 	ServiceRootPEM      string             `json:"service_root_pem"`
 	NamedURL            string             `json:"named_url"`
 	RestrictedURL       string             `json:"restricted_url"`
+	PrivateHost         string             `json:"private_host"`
 	Relays              []wasmFixtureRelay `json:"relays"`
 	SPKIPins            []string           `json:"spki_pins"`
 	APIURL              string             `json:"api_url"`
@@ -106,13 +107,14 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 	const project, deployment = "portable-publisher", "portable"
 	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{
 		TeamId: f.identity.teamID, Source: &testProjectSource, Deployment: deployment,
-		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol, "restricted": protocol, "exact": protocol},
+		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol, "restricted": protocol, "private": protocol, "exact": protocol},
 		Configuration: controlv1.ProjectConfiguration{
 			Settings: &controlv1.DeploymentSettings{},
 			Services: map[string]controlv1.ProjectServiceConfiguration{
 				"web":        {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}},
 				"exact":      {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}},
 				"restricted": {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &restricted}}},
+				"private":    {Target: "app", Protocol: &protocol, Public: new(false)},
 			},
 		},
 	})
@@ -137,10 +139,10 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 		ExpiresIn: 1200, DeploymentIds: new([]string{(*applied.Deployments)[0].Id}),
 	}
 	request.Permissions.Publish = &controlv1.DeploymentPublishSelection{
-		Services:  new(controlv1.DeploymentCredentialServiceSelection{"web", "restricted", "exact"}),
+		Services:  new(controlv1.DeploymentCredentialServiceSelection{"web", "restricted", "private", "exact"}),
 		Temporary: new(controlv1.TemporaryPublicationAnonymous),
 	}
-	selection := controlv1.DeploymentCredentialServiceSelection{"web"}
+	selection := controlv1.DeploymentCredentialServiceSelection{"web", "private"}
 	request.Permissions.Connect = &selection
 	team, err := f.identity.authority.GetTeam(t.Context(), f.identity.teamID)
 	if err != nil || team.DisplayName == "" {
@@ -169,19 +171,24 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 	token, siblingToken := register("portable-publisher"), register("alias-sibling")
 	enrollment, err := f.identity.routes.CreateDeploymentPublisherEnrollment(
 		t.Context(), f.identity.teamID, project, deployment, "managed-worker-fixture",
-		controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"web"}, MaxMembers: new(1), ExpiresIn: new(600)},
+		controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"web", "private"}, MaxMembers: new(1), ExpiresIn: new(600)},
 	)
 	if err != nil {
 		t.Fatal("create disposable publisher enrollment", err)
 	}
 	addresses := make(map[string]string)
+	var privateHost string
 	for _, service := range applied.Services {
 		if service.ServiceId == nil {
 			t.Fatal("publisher fixture omitted its saved service")
 		}
 		saved, err := f.identity.routes.GetService(t.Context(), *service.ServiceId)
-		if err != nil || saved.Endpoint == nil {
-			t.Fatal("publisher fixture omitted its public endpoint", err)
+		if err != nil || saved.Endpoint == nil || saved.Endpoint.Public != (service.Service != "private") {
+			t.Fatal("publisher fixture saved the wrong endpoint reachability", err)
+		}
+		if !saved.Endpoint.Public {
+			privateHost = saved.Endpoint.Hostname
+			continue
 		}
 		addresses[service.Service] = "https://" + saved.Endpoint.Hostname
 	}
@@ -211,7 +218,7 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 		Enrollment: enrollment.EnrollmentKey,
 		ControlURL: f.controlConfig.ControlOrigin(), ControlDialAddress: f.publicControlAddress,
 		ControlRootPEM: string(f.certificateAuthority.certificatePEM), RelayRootPEM: string(f.certificateAuthority.certificatePEM),
-		ServiceRootPEM: string(f.visitorRootPEM), NamedURL: addresses["web"], RestrictedURL: addresses["restricted"],
+		ServiceRootPEM: string(f.visitorRootPEM), NamedURL: addresses["web"], RestrictedURL: addresses["restricted"], PrivateHost: privateHost,
 		Relays: relays, SPKIPins: pins, APIURL: strings.Replace(api.URL, "127.0.0.1", "localhost", 1), APIToken: apiToken,
 		RunnerCertificate:   string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Certificate[0]})),
 		RunnerPrivateKeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})),

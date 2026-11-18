@@ -20,6 +20,7 @@ const fixture = fixtureSchema.parse({
   service_root_pem: "fixture-service-ca",
   named_url: "https://web.apps.fixture.test",
   restricted_url: "https://restricted.apps.fixture.test",
+  private_host: "private.apps.fixture.test",
   relays: [
     { address: "localhost:1235", dial_address: "127.0.0.1:1235", tls_server_name: "localhost" },
     { address: "localhost:1236", dial_address: "127.0.0.1:1236", tls_server_name: "localhost" },
