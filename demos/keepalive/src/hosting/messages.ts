@@ -1,4 +1,5 @@
 import * as z from "zod";
+import { hostOrigin, hostSchema } from "../peers.ts";
 import { releaseSchema } from "../release.ts";
 import { hostingConfig } from "./config.ts";
 
@@ -6,13 +7,15 @@ export const hostCommand = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("start"),
     release: releaseSchema,
+    files: z.map(z.string(), z.instanceof(ArrayBuffer)),
     config: hostingConfig,
-    first: z.unknown(),
+    initialPeer: hostSchema.refine(({ origin }) => hostOrigin(origin)).optional(),
     pageOrigin: z.url({ protocol: /^https?$/ }).refine((value) => new URL(value).origin === value),
   }),
   z.strictObject({ type: z.literal("stop") }),
   z.strictObject({ type: z.literal("replace") }),
 ]);
+export type HostStart = Extract<z.infer<typeof hostCommand>, { type: "start" }>;
 
 export const hostUpdate = z.discriminatedUnion("type", [
   z.strictObject({

@@ -1,6 +1,6 @@
-import { contentType, type ReadAsset, type Release } from "./release.ts";
+import { contentType, type Release } from "./release.ts";
 
-export function serveRelease(release: Release, read: ReadAsset) {
+export function serveRelease(release: Release, files: ReadonlyMap<string, ArrayBuffer>) {
   const assets = new Map(release.assets.map((asset) => [asset.path, asset]));
   return async (request: Request): Promise<Response> => {
     const { pathname, search } = new URL(request.url);
@@ -8,7 +8,7 @@ export function serveRelease(release: Release, read: ReadAsset) {
     if (request.method !== "GET" || search !== "" || asset === undefined) {
       return new Response(null, { status: 404 });
     }
-    const bytes = await read(asset);
+    const bytes = files.get(asset.path);
     if (bytes === undefined) return new Response(null, { status: 503 });
     return new Response(bytes, {
       headers: {

@@ -67,12 +67,6 @@ export function parseHost(value: unknown, parent = HOST_PARENT): Host | undefine
   return undefined;
 }
 
-export function startTime(value: unknown, now: number): number | undefined {
-  const parsed = startTimeSchema.safeParse(value);
-  if (parsed.success && parsed.data <= now + 30_000) return parsed.data;
-  return undefined;
-}
-
 export function parseMessage(
   value: unknown,
   releaseID: string,
@@ -83,7 +77,7 @@ export function parseMessage(
   if (
     !parsed.success ||
     parsed.data.releaseID !== releaseID ||
-    startTime(parsed.data.startedAt, now) === undefined
+    parsed.data.startedAt > now + 30_000
   )
     return;
   const valid = (change: Change) =>
