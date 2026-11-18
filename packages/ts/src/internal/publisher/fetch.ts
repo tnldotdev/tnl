@@ -40,6 +40,10 @@ export async function createFetchServer(handler: FetchHandler): Promise<Server> 
   return server;
 }
 
+export function isFetchServer(server: LocalHTTPServer): boolean {
+  return server instanceof Server && copies.has(server);
+}
+
 export async function joinFetchServer(server: LocalHTTPServer): Promise<void> {
   if (server instanceof Server) await Promise.all(copies.get(server) ?? []);
 }

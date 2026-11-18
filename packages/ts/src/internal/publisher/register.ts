@@ -1,5 +1,6 @@
 import { Server as HTTPSServer } from "node:https";
 import { TnlError } from "../../errors.js";
+import { isFetchServer } from "./fetch.js";
 import { canonicalListenerTarget } from "./target.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
@@ -153,7 +154,9 @@ export async function listeningTarget(
   return canonicalListenerTarget(
     options.targetHostname ?? address.address,
     address.port,
-    server instanceof HTTPSServer ? "https" : "http",
+    // Bun aliases the node:http and node:https constructors. the SDK's owned
+    // Fetch listener is always plain HTTP, even when instanceof says otherwise.
+    !isFetchServer(server) && server instanceof HTTPSServer ? "https" : "http",
   );
 }
 
