@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { createRequire, isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -63,6 +63,7 @@ const smokeSchema = z.strictObject({
   committedRows: z.literal(1),
   interruptedCarriers: z.number().int().positive(),
   mysqlConnectionID: z.number().int().positive(),
+  workload: z.literal(true),
   closed: z.literal(true),
 });
 const isolationSchema = z.tuple([
@@ -90,6 +91,7 @@ function redact(value: string): string {
     fixture.api_token,
     fixture.postgres.password,
     fixture.mysql.password,
+    fixture.redis_password,
     fixture.kubernetes_token,
   ])
     output = output.replaceAll(secret, "[redacted]");
@@ -235,8 +237,21 @@ async function workerdSmoke(configuration: PortableFixture) {
     platform: "browser",
     conditions: ["workerd", "worker", "browser"],
     external: ["cloudflare:*"],
+    banner: {
+      js: 'import { createRequire } from "node:module"; const require = createRequire("file:///worker.mjs");',
+    },
     tsconfigRaw: {},
     plugins: [
+      {
+        name: "worker-node-compat",
+        setup(builder) {
+          builder.onResolve({ filter: /^[a-z]/ }, ({ path }) =>
+            isBuiltin(path)
+              ? { path: path.startsWith("node:") ? path : `node:${path}`, external: true }
+              : undefined,
+          );
+        },
+      },
       {
         name: "static-sdk-wasm",
         setup(builder) {
@@ -344,6 +359,8 @@ async function workerdSmoke(configuration: PortableFixture) {
       return body;
     }
     const smoke = smokeSchema.parse(await call("/smoke"));
+    const pg = z.object({ backendPID: z.number().int().positive() }).parse(await call("/pg"));
+    const redis = z.object({ redis: z.literal(true) }).parse(await call("/redis"));
     const run = `workerd-${crypto.randomUUID()}`;
     const isolation = isolationProof(
       await Promise.all([
@@ -351,7 +368,7 @@ async function workerdSmoke(configuration: PortableFixture) {
         call(`/isolation?role=second&run=${run}`),
       ]),
     );
-    return { runtime: "workerd", smoke, isolation };
+    return { runtime: "workerd", smoke, isolation, pg, redis };
   } finally {
     lines.close();
     child.kill("SIGTERM");

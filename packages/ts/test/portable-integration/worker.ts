@@ -1,7 +1,19 @@
 import { client, connect, deployment } from "@tnldotdev/tnl/cloudflare";
-import { runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { ioredis } from "@tnldotdev/tnl/adapters/ioredis";
+import { pg } from "@tnldotdev/tnl/adapters/node-postgres";
+import { postgres } from "@tnldotdev/tnl/adapters/postgres-js";
+import { sql as query } from "drizzle-orm";
+import { drizzle as pgDrizzle } from "drizzle-orm/node-postgres";
+import { drizzle as postgresDrizzle } from "drizzle-orm/postgres-js";
+import { checkPostgresORMs } from "../fixtures/connections/postgres-orm.ts";
+import {
+  fixtureDeployment,
+  runPortableIsolation,
+  runPortableSmoke,
+  runPortableWorkload,
+} from "./smoke.ts";
 import { PortableSmokeError, portableDiagnostics } from "./errors.ts";
-import { fixtureSchema } from "./fixture.ts";
+import { check, fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
 
 const runtime = { client, connect, deployment };
@@ -60,7 +72,88 @@ export default {
           throw new Error("fixture host fetch failed");
         }
       });
-      if (url.pathname === "/smoke") return Response.json(await runPortableSmoke(runtime, fixture));
+      if (url.pathname === "/smoke") {
+        const report = await runPortableSmoke(runtime, fixture);
+        return Response.json({ ...report, ...(await runPortableWorkload(runtime, fixture)) });
+      }
+      if (url.pathname === "/redis") {
+        const app = fixtureDeployment(runtime, fixture);
+        try {
+          const getRedis = client(
+            app,
+            "redis",
+            ioredis({ password: fixture.redis_password, connectTimeout: 15_000 }),
+          );
+          const redis = await getRedis();
+          const peer = redis.duplicate();
+          const key = `tnl:${crypto.randomUUID()}`;
+          const result = await redis.pipeline().set(key, "ready", "EX", 30).get(key).exec();
+          check(result?.[0]?.[1] === "OK" && result[1]?.[1] === "ready", "Redis pipeline failed");
+          check((await peer.get(key)) === "ready", "Redis duplicate missed the saved value");
+          await getRedis.close();
+          check(
+            !redis.stream?.writable && !peer.stream?.writable,
+            "Redis adapter retained a socket",
+          );
+          return Response.json({ redis: true });
+        } catch (error) {
+          throw new PortableSmokeError("redis-adapter", error);
+        } finally {
+          await app.close();
+        }
+      }
+      if (url.pathname === "/pg") {
+        const app = fixtureDeployment(runtime, fixture);
+        try {
+          const getPool = client(
+            app,
+            "postgres",
+            pg({ ...fixture.postgres, max: 1, connectionTimeoutMillis: 15_000 }),
+          );
+          const pool = await getPool();
+          const session = await pool.connect();
+          let backendPID: number | undefined;
+          try {
+            await session.query("BEGIN");
+            const { rows } = await session.query<{ pid: number }>({
+              name: "portable-adapter-pid",
+              text: "SELECT pg_backend_pid() AS pid WHERE 1 = $1",
+              values: [1],
+            });
+            await session.query("COMMIT");
+            backendPID = rows[0]?.pid;
+          } finally {
+            session.release();
+          }
+          const db = pgDrizzle({ client: pool });
+          const { rows } = await db.execute<{ answer: number }>(
+            query`select ${41}::int + 1 as answer`,
+          );
+          check(rows[0]?.answer === 42, "Drizzle with pg returned the wrong result");
+          await checkPostgresORMs(pool, check);
+          await getPool.close();
+          const getSql = client(
+            app,
+            "postgres",
+            postgres({ ...fixture.postgres, max: 1, connect_timeout: 15 }),
+          );
+          const sql = await getSql();
+          const [row] = await sql.begin(
+            (tx) => tx<{ answer: number }[]>`select ${41}::int + 1 as answer`,
+          );
+          check(row?.answer === 42, "Postgres.js query returned the wrong result");
+          const [result] = await postgresDrizzle({ client: sql }).execute<{ answer: number }>(
+            query`select ${41}::int + 1 as answer`,
+          );
+          check(result?.answer === 42, "Drizzle with Postgres.js returned the wrong result");
+          await getSql.close();
+          return Response.json({ backendPID });
+        } catch (error) {
+          throw new PortableSmokeError("pg-adapter", error);
+        } finally {
+          await app.close();
+        }
+      }
       const role = url.searchParams.get("role");
       const run = url.searchParams.get("run");
       if (
