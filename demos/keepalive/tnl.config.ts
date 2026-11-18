@@ -1,11 +1,11 @@
 import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
-  services: { site: { protocol: "http" } },
+  services: { production: { protocol: "http" } },
   deployments: {
     keepalive: {
       targets: {
-        site: {
+        production: {
           type: "app",
           public: true,
           http: { access: "anonymous" },

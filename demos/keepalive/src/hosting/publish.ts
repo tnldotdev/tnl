@@ -16,7 +16,7 @@ export async function startPublisher(
     signal,
   });
   try {
-    const publication = await publish(owner, "site", handler, {
+    const publication = await publish(owner, "production", handler, {
       ...(config.certificate === undefined ? {} : { certificate: config.certificate }),
       signal,
     });
