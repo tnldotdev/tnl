@@ -1,4 +1,9 @@
-import { durablePublisher, type DurableObjectPublisherState } from "@tnldotdev/tnl/cloudflare";
+import {
+  connect,
+  deployment,
+  durablePublisher,
+  type DurableObjectPublisherState,
+} from "@tnldotdev/tnl/cloudflare";
 import { check, fixtureSchema } from "./fixture.ts";
 import { publisherHandler } from "./handler.ts";
 import { installPublisherFixtureHost, runtimeStarts } from "./host.ts";
@@ -15,6 +20,7 @@ interface Environment {
     idFromName(name: string): unknown;
     get(id: unknown): Fetcher;
   };
+  PRIVATE_PUBLISHERS: Environment["PUBLISHERS"];
 }
 const nativeFetch = globalThis.fetch.bind(globalThis);
 
@@ -23,24 +29,15 @@ const nativeFetch = globalThis.fetch.bind(globalThis);
 export class Publisher {
   readonly #owner: ReturnType<typeof durablePublisher>;
   readonly #runtime = crypto.randomUUID();
-  readonly #url: string;
+  readonly #url: string | undefined;
   #identityImports = 0;
 
-  constructor(state: DurableObjectPublisherState, environment: Environment) {
+  constructor(state: DurableObjectPublisherState, environment: Environment, service = "web") {
     const fixture = fixtureSchema.parse(JSON.parse(environment.FIXTURE));
-    this.#url = fixture.named_url;
-    installPublisherFixtureHost(fixture);
-    Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const request = new Request(input, init);
-      const url = new URL(request.url);
-      if (url.origin === fixture.control_url) return environment.CONTROL.fetch(request);
-      const index = fixture.relays.findIndex((relay) => relay.address === url.host);
-      if (index !== -1)
-        return (index === 0 ? environment.RELAY0 : environment.RELAY1).fetch(request);
-      return nativeFetch(request);
-    });
+    this.#url = service === "web" ? fixture.named_url : undefined;
+    prepareFixtureHost(fixture, environment);
     this.#owner = durablePublisher(state, {
-      configuration: { project: fixture.project, deployment: fixture.deployment, service: "web" },
+      configuration: { project: fixture.project, deployment: fixture.deployment, service },
       identity: () => {
         this.#identityImports++;
         return new TextEncoder().encode(fixture.token);
@@ -56,6 +53,8 @@ export class Publisher {
       if (operation === "/start") {
         const publication = await this.#owner.start();
         check(publication.url === this.#url, "named durable publication changed URL");
+        if (this.#url === undefined)
+          check(!("url" in publication), "private durable publication exposed a public URL");
       } else if (operation === "/stop") {
         await this.#owner.stop();
       } else if (operation === "/resume" || operation === "/status") {
@@ -80,8 +79,53 @@ export class Publisher {
   }
 }
 
+export class PrivatePublisher extends Publisher {
+  constructor(state: DurableObjectPublisherState, environment: Environment) {
+    super(state, environment, "private");
+  }
+}
+
+function prepareFixtureHost(
+  fixture: ReturnType<typeof fixtureSchema.parse>,
+  environment: Environment,
+): void {
+  installPublisherFixtureHost(fixture);
+  Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (url.origin === fixture.control_url) return environment.CONTROL.fetch(request);
+    const index = fixture.relays.findIndex((relay) => relay.address === url.host);
+    if (index !== -1) return (index === 0 ? environment.RELAY0 : environment.RELAY1).fetch(request);
+    return nativeFetch(request);
+  });
+}
+
 export default {
   async fetch(request: Request, environment: Environment): Promise<Response> {
+    const route = new URL(request.url);
+    if (route.pathname === "/private-visit") {
+      const fixture = fixtureSchema.parse(JSON.parse(environment.FIXTURE));
+      prepareFixtureHost(fixture, environment);
+      const owner = deployment(fixture.deployment, {
+        project: fixture.project,
+        token: fixture.token,
+        services: { private: { protocol: "http" } },
+      });
+      try {
+        const connection = await connect(owner, "private");
+        const response = await connection.fetch("/probe");
+        if (response.ok && (await response.text()) === "portable-publisher")
+          return Response.json({ private: true });
+        return Response.json({ error: "private target did not respond" }, { status: 502 });
+      } finally {
+        await owner.close();
+      }
+    }
+    if (route.pathname === "/private-start" || route.pathname === "/private-stop") {
+      route.pathname = route.pathname === "/private-start" ? "/start" : "/stop";
+      const namespace = environment.PRIVATE_PUBLISHERS;
+      return namespace.get(namespace.idFromName("private")).fetch(new Request(route, request));
+    }
     return environment.PUBLISHERS.get(environment.PUBLISHERS.idFromName("publisher")).fetch(
       request,
     );

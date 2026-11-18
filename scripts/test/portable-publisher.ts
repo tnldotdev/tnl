@@ -279,7 +279,7 @@ async function startWorker(configuration: string) {
     ]);
     return {
       close,
-      async call(route: string) {
+      async request(route: string) {
         const response = await fetch(`http://127.0.0.1:${port}${route}`, {
           method: "POST",
           signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(120_000)]),
@@ -288,7 +288,10 @@ async function startWorker(configuration: string) {
           response.ok,
           `actual Go/WASM durable publisher ${route} failed: HTTP ${response.status}`,
         );
-        return workerStatus.parse(await response.json());
+        return response;
+      },
+      async call(route: string) {
+        return workerStatus.parse(await (await this.request(route)).json());
       },
     };
   } catch (error) {
@@ -327,7 +330,12 @@ async function workerdSmoke(configuration: PublisherFixture) {
   const config = path.join(output, "config.capnp");
   await writeFile(
     config,
-    publisherWorkerdConfiguration(configuration, path.relative(output, wasm), storage),
+    publisherWorkerdConfiguration(
+      configuration,
+      path.relative(output, wasm),
+      path.relative(output, connectorWasm),
+      storage,
+    ),
     {
       mode: 0o600,
     },
@@ -385,6 +393,27 @@ async function workerdSmoke(configuration: PublisherFixture) {
         final.active_runs === 0,
       "restart resurrected persisted stopped intent",
     );
+    const privateOrigin = `https://${configuration.private_host}`;
+    const privateRun = z
+      .object({
+        runtime: z.string().min(1),
+        go_runtimes: z.literal(1),
+        identity_imports: z.literal(1),
+      })
+      .parse(await (await worker.request("/private-start")).json());
+    check(
+      privateRun.runtime !== resumedStop.runtime,
+      "private publisher did not own its own runtime",
+    );
+    z.object({ private: z.literal(true) }).parse(
+      await (await worker.request("/private-visit")).json(),
+    );
+    await worker.request("/private-stop");
+    const privateStopped = await fixtureCall(configuration, "/state", privateOrigin, apiFetch);
+    check(
+      privateStopped.active_runs === 0 && !privateStopped.deleted,
+      "private durable stop did not join the saved service run",
+    );
     return {
       actualGoWasm: true,
       sqliteDurableObject: true,
@@ -393,6 +422,7 @@ async function workerdSmoke(configuration: PublisherFixture) {
       identityReused: true,
       certificateReused: true,
       stopPersisted: true,
+      connectorOnlyPublication: true,
     };
   } finally {
     await worker.close();
@@ -459,8 +489,8 @@ async function buildFixtureWasm(output: string, tags: string) {
 
 try {
   await buildFixtureWasm(wasm, "tnlwasmtest,tnlsdk,tnlpublisher");
+  await buildFixtureWasm(connectorWasm, "tnlwasmtest,tnlsdk,tnlconnector");
   if (runtime !== "workerd") {
-    await buildFixtureWasm(connectorWasm, "tnlwasmtest,tnlsdk,tnlconnector");
     console.log(JSON.stringify({ runtime: "chrome", proof: await chromeSmoke(fixture) }));
   }
   if (runtime !== "chrome")

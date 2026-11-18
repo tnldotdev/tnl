@@ -72,6 +72,7 @@ test("workerd uses persisted SQLite, static Go/WASM, and no node compatibility m
   const config = publisherWorkerdConfiguration(
     fixture,
     "../tnl-publisher-fixture.wasm",
+    "../tnl-connector-fixture.wasm",
     "/private/storage",
   );
   expect(config).toContain(
