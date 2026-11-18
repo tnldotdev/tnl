@@ -68,6 +68,11 @@ function fixture() {
     const raw = {
       public: true,
       url: "https://app.example.test",
+      run: {
+        serviceID: `svc_${"S".repeat(22)}`,
+        serviceRunID: `srun_${"R".repeat(22)}`,
+        runNumber: "1",
+      },
       ready: ready.promise,
       closed: closed.promise,
       close: vi.fn(async () => {
@@ -95,6 +100,12 @@ function fixture() {
   mocks.browserStorage.mockReturnValue(store);
   return { bridge, connector, connection, publications, events, store, publication };
 }
+
+const privateRun = {
+  serviceID: `svc_${"S".repeat(22)}`,
+  serviceRunID: `srun_${"R".repeat(22)}`,
+  runNumber: "1",
+};
 
 function deployment() {
   return createClient({
@@ -128,7 +139,7 @@ test("named private publications wait for readiness and omit the public URL", as
   const close = vi.fn(async () => closed.resolve());
   f.bridge.publish.mockImplementationOnce(async () => {
     entered.resolve();
-    return { public: false, ready: ready.promise, closed: closed.promise, close };
+    return { public: false, run: privateRun, ready: ready.promise, closed: closed.promise, close };
   });
   const remote = deployment();
   const reached = vi.fn();
@@ -178,6 +189,12 @@ test("named publication uses the publisher ABI and browser storage by default", 
   );
   const published = await remote.publish("app", handler, { telemetry: false });
   expect(published.url).toBe("https://app.example.test");
+  expect(published.run).toEqual({
+    serviceID: `svc_${"S".repeat(22)}`,
+    serviceRunID: `srun_${"R".repeat(22)}`,
+    runNumber: "1",
+  });
+  expect(Object.isFrozen(published.run)).toBe(true);
   const started = f.publications[0];
   if (started === undefined) throw new Error("missing publication");
   expect(JSON.parse(started.encoded)).toEqual({
@@ -209,6 +226,31 @@ test("named publication uses the publisher ABI and browser storage by default", 
   expect(f.store.close).toHaveBeenCalledOnce();
 });
 
+test("portable run aliases retain immutable exact metadata without number rounding", async () => {
+  const f = fixture();
+  const remote = deployment();
+  const reference = {
+    serviceID: `svc_${"S".repeat(22)}`,
+    serviceRunID: `srun_${"R".repeat(22)}`,
+    runNumber: "9223372036854775807",
+  };
+  f.bridge.publish.mockImplementation(async (encoded, host) => {
+    const started = f.publication(encoded, host);
+    f.publications.push(started);
+    return {
+      ...started.raw,
+      run: reference,
+      runURL: "https://r-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
+    };
+  });
+  const published = await remote.publish("app", () => new Response("app"));
+  expect(published.runURL).toBe("https://r-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test");
+  expect(published.run).toEqual(reference);
+  reference.serviceRunID = `srun_${"X".repeat(22)}`;
+  expect(published.run?.serviceRunID).toBe(`srun_${"R".repeat(22)}`);
+  await remote.close();
+});
+
 test("temporary publication forwards visitor policy and limits without another authority model", async () => {
   const f = fixture();
   const remote = deployment();
@@ -237,6 +279,7 @@ test("private temporary publication forwards exposure and omits a URL", async ()
   const closed = deferred();
   f.bridge.publish.mockResolvedValueOnce({
     public: false,
+    run: privateRun,
     ready: Promise.resolve(),
     closed: closed.promise,
     close: async () => closed.resolve(),
@@ -397,6 +440,11 @@ test("publication and deployment close wait for Go's joined closed promise", asy
   f.bridge.publish.mockResolvedValueOnce({
     public: true,
     url: "https://app.example.test",
+    run: {
+      serviceID: `svc_${"S".repeat(22)}`,
+      serviceRunID: `srun_${"R".repeat(22)}`,
+      runNumber: "1",
+    },
     ready: Promise.resolve(),
     closed: closed.promise,
     close,

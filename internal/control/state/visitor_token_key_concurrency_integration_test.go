@@ -115,7 +115,7 @@ func TestIntegrationVisitorSigningBootstrapWait(t *testing.T) {
 				if mode == "prepare" {
 					return other.PrepareVisitorSigningKeys(ctx, testVisitorIssuer, now)
 				}
-				_, err := other.issueVisitorTokenTransaction(ctx, testVisitorIssuer, scope, BrowserTokenSource{}, now)
+				_, err := other.issueVisitorTokenTransaction(ctx, testVisitorIssuer, scope, BrowserTokenSource{}, now, "")
 				return err
 			})
 			defer join()

@@ -486,6 +486,11 @@ schemas:
       expires_at: { type: string, format: date-time }
       certificate_plan: { $ref: "../openapi.yaml#/components/schemas/CertificatePlan" }
       hostname: { type: string, minLength: 1, maxLength: 253 }
+      run_hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        description: Reserved exact-run HTTP hostname. It becomes usable only after public endpoint and alias readiness.
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
       traffic: { $ref: "../openapi.yaml#/components/schemas/TrafficLimits" }
       require_post_quantum: { type: boolean }
@@ -555,6 +560,14 @@ schemas:
       public_endpoint_ready:
         type: boolean
         description: The current public endpoint has compatible ingress and published or explicitly unmanaged DNS for this run. This fact does not grant access, extend authority, or affect connector readiness.
+      run_hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        description: The immutable hostname reserved for this run, when aliases were enabled at preparation.
+      run_alias_ready:
+        type: boolean
+        description: Both the canonical endpoint and this run's exact alias have current public DNS and ingress readiness.
       publisher_expires_at: { type: string, format: date-time }
       observed_at:
         type: string

@@ -2015,10 +2015,13 @@ type AuthorizeImplementerFeedbackRequest struct {
 // AuthorizeReviewerFeedbackRequest defines model for AuthorizeReviewerFeedbackRequest.
 type AuthorizeReviewerFeedbackRequest struct {
 	// Access Browser identity and visitor access are independent. Feedback writes require a current browser_cookie_secret for verified authorship, including guest previews. Control also rechecks current preview permission and team feedback restrictions; visit_allowed is an observation, not authority. Share, bearer, and connector proofs supply visit permission only.
-	Access    FeedbackReviewerAccess `json:"access"`
-	Operation FeedbackOperation      `json:"operation"`
-	PreviewId PreviewID              `json:"preview_id"`
-	RunNumber int64                  `json:"run_number,string"`
+	Access FeedbackReviewerAccess `json:"access"`
+
+	// Hostname Exact HTTP hostname at which the publisher admitted the reviewer. Omission selects the canonical identity; connector proofs remain canonical.
+	Hostname  string            `json:"hostname,omitempty"`
+	Operation FeedbackOperation `json:"operation"`
+	PreviewId PreviewID         `json:"preview_id"`
+	RunNumber int64             `json:"run_number,string"`
 }
 
 // AuthorizeServiceClientCertificateRequest defines model for AuthorizeServiceClientCertificateRequest.
@@ -3262,6 +3265,9 @@ type ProjectServiceConfiguration struct {
 	// RequirePostQuantum Require hybrid post-quantum key agreement for visitor TLS, independently of target TLS.
 	RequirePostQuantum *bool `json:"require_post_quantum,omitempty"`
 
+	// RunAliasParent Opt in to exact-run HTTP addresses beneath this authorized DNS parent. Empty disables aliases without changing target trust or stopping connector sessions.
+	RunAliasParent *string `json:"run_alias_parent,omitempty"`
+
 	// Target Saved service and remote deployment targets normalize to host:port with separate target_tls trust. Local project bindings use app for every protocol and keep listener and container selection local. Remote app descriptors defer HTTP listeners to their application owners. integration:oauth and integration:webhooks explicitly select a non-ephemeral, in-process HTTP handler and require explicit anonymous HTTP access; they are not app listeners or separate resources. Control does not discover local targets.
 	Target string `json:"target"`
 
@@ -3598,6 +3604,9 @@ type PublisherServiceProtocols = []ServiceProtocol
 type PublisherVisitorPolicyRequest struct {
 	AfterRevision int64 `json:"after_revision,string"`
 
+	// Hostname Select the run's canonical or currently authorized exact-run HTTP hostname. Omission selects the captured canonical identity.
+	Hostname string `json:"hostname,omitempty"`
+
 	// Resource An exact service authorization scope.
 	Resource  VisitorResourceScope `json:"resource"`
 	RunId     string               `json:"run_id"`
@@ -3658,10 +3667,13 @@ type RedeemDeploymentPublisherEnrollmentRequest struct {
 
 // RedeemServiceShareRequest Supply either a share ID and secret, or a one-use handoff token. The exact publisher service run token authenticates this operation separately.
 type RedeemServiceShareRequest struct {
-	HandoffToken *string  `json:"handoff_token,omitempty"`
-	RunNumber    int64    `json:"run_number,string"`
-	Secret       *string  `json:"secret,omitempty"`
-	ShareId      *ShareID `json:"share_id,omitempty"`
+	HandoffToken *string `json:"handoff_token,omitempty"`
+
+	// Hostname Exact HTTP hostname receiving the share cookie. Omission selects the canonical service hostname.
+	Hostname  string   `json:"hostname,omitempty"`
+	RunNumber int64    `json:"run_number,string"`
+	Secret    *string  `json:"secret,omitempty"`
+	ShareId   *ShareID `json:"share_id,omitempty"`
 }
 
 // RegisterDeploymentCredentialRequest defines model for RegisterDeploymentCredentialRequest.
@@ -3826,6 +3838,8 @@ type ServiceAuditPage struct {
 
 // ServiceBrowserRequest The secret is a handoff ticket or browser session cookie. Optional share_id and share_cookie_secret must be supplied together; they prove visitor permission independently of browser identity.
 type ServiceBrowserRequest struct {
+	// Hostname Exact HTTP hostname receiving this browser credential. Omission selects the canonical service hostname.
+	Hostname          string   `json:"hostname,omitempty"`
 	RunNumber         int64    `json:"run_number,string"`
 	Secret            string   `json:"secret"`
 	ShareCookieSecret *string  `json:"share_cookie_secret,omitempty"`
@@ -4062,7 +4076,10 @@ type ServiceRunPreparation struct {
 	PublisherIdentityId ResourceID       `json:"publisher_identity_id"`
 	PublisherKeyId      ResourceID       `json:"publisher_key_id"`
 	RequirePostQuantum  bool             `json:"require_post_quantum"`
-	RunNumber           int64            `json:"run_number,string"`
+
+	// RunHostname Reserved exact-run HTTP hostname. It becomes usable only after public endpoint and alias readiness.
+	RunHostname *string `json:"run_hostname,omitempty"`
+	RunNumber   int64   `json:"run_number,string"`
 
 	// RunToken Stable exact-run credential. Before Start, this credential permits only closing the preparation; it grants no serving authority.
 	RunToken     string       `json:"run_token"`
@@ -4104,11 +4121,17 @@ type ServiceRunState struct {
 	PublicEndpointReady  bool                   `json:"public_endpoint_ready"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 	PublisherExpiresAt   time.Time              `json:"publisher_expires_at"`
-	RunNumber            int64                  `json:"run_number,string"`
-	ServiceId            ServiceID              `json:"service_id"`
-	ServiceRunId         ServiceRunID           `json:"service_run_id"`
-	State                ServiceRunStateState   `json:"state"`
-	StreamCapacity       *int32                 `json:"stream_capacity,omitempty"`
+
+	// RunAliasReady Both the canonical endpoint and this run's exact alias have current public DNS and ingress readiness.
+	RunAliasReady *bool `json:"run_alias_ready,omitempty"`
+
+	// RunHostname The immutable hostname reserved for this run, when aliases were enabled at preparation.
+	RunHostname    *string              `json:"run_hostname,omitempty"`
+	RunNumber      int64                `json:"run_number,string"`
+	ServiceId      ServiceID            `json:"service_id"`
+	ServiceRunId   ServiceRunID         `json:"service_run_id"`
+	State          ServiceRunStateState `json:"state"`
+	StreamCapacity *int32               `json:"stream_capacity,omitempty"`
 }
 
 // ServiceRunStateState defines model for ServiceRunState.State.
@@ -4502,6 +4525,9 @@ type VisitorTokenRegisteredKeySourceKind string
 
 // VisitorTokenRequest defines model for VisitorTokenRequest.
 type VisitorTokenRequest struct {
+	// Hostname Select the canonical or a current exact-run HTTP hostname. Only browser, share, and HTTP grant sources support this selection; connector sources remain canonical.
+	Hostname string `json:"hostname,omitempty"`
+
 	// Resource An exact service authorization scope.
 	Resource VisitorResourceScope `json:"resource"`
 	Source   VisitorTokenSource   `json:"source"`
@@ -4670,6 +4696,9 @@ type BeginServiceBrowserLoginParams struct {
 	PreviewId     *PreviewID `form:"preview_id,omitempty" json:"preview_id,omitempty"`
 	ReturnPath    string     `form:"return_path" json:"return_path"`
 	SwitchAccount *bool      `form:"switch_account,omitempty" json:"switch_account,omitempty"`
+
+	// Hostname Select the canonical or a current exact-run HTTP hostname for the captured login and handoff.
+	Hostname string `form:"hostname,omitempty" json:"hostname,omitempty"`
 }
 
 // AllocateGuestDemoServiceParams defines parameters for AllocateGuestDemoService.
@@ -10806,6 +10835,14 @@ func NewBeginServiceBrowserLoginRequest(server string, params *BeginServiceBrows
 				}
 			}
 
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "hostname", params.Hostname, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -31965,6 +32002,19 @@ func (siw *ServerInterfaceWrapper) BeginServiceBrowserLogin(w http.ResponseWrite
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "switch_account"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "switch_account", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "hostname" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "hostname", r.URL.Query(), &params.Hostname, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "hostname"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hostname", Err: err})
 		}
 		return
 	}

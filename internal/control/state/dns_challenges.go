@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -130,7 +131,7 @@ func dnsChallengeContext(ctx context.Context, queries *controlstatedb.Queries, s
 	if err != nil || canonical != baseIdentifier || len(row.ChallengeDigest) != 32 || !state.valid() ||
 		!validStateText(row.PresentationReference.String) ||
 		row.CanonicalDomain != "" && !hostnameWithin(baseIdentifier, row.CanonicalDomain) ||
-		row.CanonicalHostname != baseIdentifier && !strings.HasSuffix(row.CanonicalHostname, "."+baseIdentifier) {
+		!slices.Contains(row.CertificateIdentifiers, row.Identifier) {
 		return DNSChallengeContext{}, errors.New("controlstate: invalid DNS challenge context row")
 	}
 	presentations, err := queries.ListDNSChallengePresentations(ctx, baseIdentifier)

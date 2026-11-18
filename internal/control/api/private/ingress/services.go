@@ -26,6 +26,7 @@ func (s *service) ReadIngressServices(ctx context.Context, id string, body ingre
 		result.Runs = append(result.Runs, ingressv1.IngressServiceRun{
 			ServiceId: run.ServiceID, ServiceRunId: run.RunID, RunNumber: run.RunNumber,
 			Protocol: controlv1.ServiceProtocol(run.Protocol), Hostname: run.Hostname, Port: run.Port,
+			RunHostname:      run.RunHostname,
 			EndpointRevision: run.EndpointRevision, ValidUntil: run.ValidUntil, Anonymous: run.Anonymous,
 			Ip: run.IP, Traffic: ingressTraffic(run.Traffic), ConnectedRelays: privateRelayResponses(run.Relays),
 			SourceAuthority: run.SourceAuthority, SourceKey: run.SourceKey,

@@ -7,8 +7,13 @@ WITH candidate AS (
           SELECT 1 FROM control.services service
           JOIN control.service_runs run ON run.service_id=service.id
            WHERE service.id=work.service_id AND service.public AND service.enabled AND service.deleted_at IS NULL
-             AND service.certificate_hostname=work.hostname AND service.domain_id=work.domain_id
-             AND run.certificate_hostname=work.hostname AND run.certificate_domain_id=work.domain_id
+              AND service.domain_id=work.domain_id
+              AND run.certificate_hostname=service.certificate_hostname AND run.certificate_domain_id=work.domain_id
+              AND (work.service_run_id IS NULL AND service.certificate_hostname=work.hostname
+                OR work.service_run_id=run.id AND run.run_hostname=work.hostname AND run.run_alias_parent=service.run_alias_parent)
+              AND EXISTS(SELECT 1 FROM control.service_endpoints canonical
+                WHERE canonical.service_id=service.id AND canonical.hostname=service.certificate_hostname
+                  AND canonical.domain_id=service.domain_id AND canonical.retired_at IS NULL AND canonical.public)
              AND (run.state='ready' OR run.state='starting' AND run.ready_at IS NULL
                AND run.guest_id=service.guest_id
                AND EXISTS(SELECT 1 FROM control.guest_trials guest
@@ -61,8 +66,13 @@ SELECT EXISTS(
           SELECT 1 FROM control.services service
           JOIN control.service_runs run ON run.service_id=service.id
            WHERE service.id=work.service_id AND service.public AND service.enabled AND service.deleted_at IS NULL
-             AND service.certificate_hostname=work.hostname AND service.domain_id=work.domain_id
-             AND run.certificate_hostname=work.hostname AND run.certificate_domain_id=work.domain_id
+              AND service.domain_id=work.domain_id
+              AND run.certificate_hostname=service.certificate_hostname AND run.certificate_domain_id=work.domain_id
+              AND (work.service_run_id IS NULL AND service.certificate_hostname=work.hostname
+                OR work.service_run_id=run.id AND run.run_hostname=work.hostname AND run.run_alias_parent=service.run_alias_parent)
+              AND EXISTS(SELECT 1 FROM control.service_endpoints canonical
+                WHERE canonical.service_id=service.id AND canonical.hostname=service.certificate_hostname
+                  AND canonical.domain_id=service.domain_id AND canonical.retired_at IS NULL AND canonical.public)
              AND (run.state='ready' OR run.state='starting' AND run.ready_at IS NULL
                AND run.guest_id=service.guest_id
                AND EXISTS(SELECT 1 FROM control.guest_trials guest

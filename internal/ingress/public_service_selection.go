@@ -90,6 +90,7 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 				denialReason:      controlv1.ObservationUnavailable,
 			}
 			selected.recoveryEpisodeID = selected.http.run.RecoveryEpisodeId
+			selected.http.selectedHostname = hostname
 			selected.visitorID, result = opaqueid.New(opaqueid.VisitorConnectionPrefix)
 			if result != nil {
 				return selected, result

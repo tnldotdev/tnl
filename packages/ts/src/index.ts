@@ -3,6 +3,7 @@ export type { Deployment, DeploymentOptions } from "./internal/connector/deploym
 export type { FetchHandler } from "./internal/publisher/fetch_types.js";
 export type {
   Publication,
+  PublicationRun,
   NamedPublicationOptions,
   TemporaryPublicationOptions,
 } from "./internal/publisher/publication.js";

@@ -40,6 +40,16 @@ func (d *Database) verifyFeedbackVisitProof(ctx context.Context, tx pgx.Tx, auth
 	if err != nil {
 		return visitortoken.Permission{}, err
 	}
+	if auth.Hostname != "" {
+		hostname, err := selectServiceHTTPHostname(ctx, controlstatedb.New(tx), auth.Subject.ID, update.Policy.Hostname, auth.Hostname, clock.current())
+		if err != nil {
+			return visitortoken.Permission{}, errors.Join(ErrFeedbackAccess, err)
+		}
+		update.Policy.Hostname = hostname
+		if update.Policy.PublicEndpoint != nil {
+			update.Policy.PublicEndpoint.Hostname = hostname
+		}
+	}
 	policy, err := visitorlease.Decode(update)
 	if err != nil {
 		return visitortoken.Permission{}, err
@@ -92,6 +102,14 @@ func (d *Database) verifyFeedbackVisitProof(ctx context.Context, tx pgx.Tx, auth
 			return visitortoken.Permission{}, ErrFeedbackAccess
 		}
 	case FeedbackConnectorVisitProof:
+		// connector authority cannot be rebound to a public exact-run alias.
+		var canonical string
+		if err := tx.QueryRow(ctx, `SELECT certificate_hostname FROM control.services WHERE id=$1`, auth.Subject.ID).Scan(&canonical); err != nil {
+			return visitortoken.Permission{}, err
+		}
+		if auth.Hostname != "" && auth.Hostname != canonical {
+			return visitortoken.Permission{}, ErrFeedbackAccess
+		}
 		if !opaqueid.Valid(supplied.PairID, "cpp_") || supplied.DeliveryGeneration < 1 {
 			return visitortoken.Permission{}, ErrFeedbackAccess
 		}

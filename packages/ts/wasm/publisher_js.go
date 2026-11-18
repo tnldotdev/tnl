@@ -9,6 +9,7 @@ import (
 	json "encoding/json/v2"
 	"errors"
 	"net/http"
+	"strconv"
 	"sync"
 	"syscall/js"
 	"time"
@@ -194,6 +195,17 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 	handle.Set("public", prepared.Service.Endpoint.Public)
 	if prepared.Service.Endpoint.Public {
 		handle.Set("url", "https://"+prepared.Service.Endpoint.Hostname)
+	}
+	prepared.Config.Prepared = func(run controlv1.ServiceRunPreparation) error {
+		reference := js.Global().Get("Object").New()
+		reference.Set("serviceID", run.ServiceId)
+		reference.Set("serviceRunID", run.ServiceRunId)
+		reference.Set("runNumber", strconv.FormatInt(run.RunNumber, 10))
+		handle.Set("run", js.Global().Get("Object").Call("freeze", reference))
+		if run.RunHostname != nil {
+			handle.Set("runURL", "https://"+*run.RunHostname)
+		}
+		return nil
 	}
 	handle.Set("ready", ready.value)
 	handle.Set("closed", closed.value)

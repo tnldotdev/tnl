@@ -33,6 +33,49 @@ const snapshot = {
 };
 
 describe("publisher status replies", () => {
+  test("run aliases require the exact service, tunnel, and run number", () => {
+    const publication = {
+      tunnel_id: "tunnel",
+      command: "publish",
+      state: "ready",
+      process_id: 1,
+      server: "https://control.example",
+      project: "/project",
+      service: "web",
+      service_id: `svc_${"S".repeat(22)}`,
+      service_run_id: `srun_${"R".repeat(22)}`,
+      publish_run_number: 2,
+      run_hostname: "r-aaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+      started_at: snapshot.observed_at,
+      updated_at: snapshot.observed_at,
+      heartbeat_at: snapshot.observed_at,
+      lease_expires_at: snapshot.observed_at,
+    };
+    const value = {
+      ...snapshot,
+      services: [{ ...service, tunnel_id: publication.tunnel_id }],
+      publications: [publication],
+    };
+    const parsed = parseStatus(value, "web", registrationID, target);
+    expect(parsed?.runURL).toBe(`https://${publication.run_hostname}`);
+    expect(parsed?.run).toEqual({
+      serviceID: publication.service_id,
+      serviceRunID: publication.service_run_id,
+      runNumber: "2",
+    });
+    expect(Object.isFrozen(parsed?.run)).toBe(true);
+    for (const changed of [
+      { ...publication, service_id: undefined },
+      { ...publication, service_run_id: undefined },
+      { ...publication, service_run_id: "malformed" },
+      { ...publication, publish_run_number: 3 },
+      { ...publication, run_hostname: "https://other.example/" },
+    ])
+      expect(() =>
+        parseStatus({ ...value, publications: [changed] }, "web", registrationID, target),
+      ).toThrow(expect.objectContaining({ code: "sdk.response_invalid" }));
+  });
+
   test("reports readiness only for the registered target and observed publish run", () => {
     expect(parseStatus(snapshot, "web", registrationID, target)).toEqual({
       registered: true,

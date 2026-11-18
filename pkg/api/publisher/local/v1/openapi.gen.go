@@ -390,11 +390,13 @@ type Publication struct {
 	ProcessId       int                           `json:"process_id"`
 	Project         string                        `json:"project"`
 	PublicUrl       *string                       `json:"public_url,omitempty"`
+	RunHostname     *string                       `json:"run_hostname,omitempty"`
 	RunNumber       *int64                        `json:"run_number,omitempty"`
 	Server          string                        `json:"server"`
 	Service         *string                       `json:"service,omitempty"`
 	ServiceId       *string                       `json:"service_id,omitempty"`
 	ServiceProtocol *externalRef0.ServiceProtocol `json:"service_protocol,omitempty"`
+	ServiceRunId    *string                       `json:"service_run_id,omitempty"`
 	StartedAt       time.Time                     `json:"started_at"`
 	State           PublicationState              `json:"state"`
 	Target          *string                       `json:"target,omitempty"`

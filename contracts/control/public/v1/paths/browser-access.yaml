@@ -26,6 +26,14 @@ paths:
             schema: { type: string, maxLength: 2048 },
           }
         - { name: switch_account, in: query, schema: { type: boolean } }
+        - name: hostname
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 253
+            x-go-type-skip-optional-pointer: true
+          description: Select the canonical or a current exact-run HTTP hostname for the captured login and handoff.
       responses:
         "302": { description: Redirect to the configured identity provider }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

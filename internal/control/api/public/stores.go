@@ -87,7 +87,7 @@ type ServiceClientCertificateStore interface {
 type ServiceHTTPStore interface {
 	serviceHTTPStore
 	ListServiceHTTPGrants(context.Context, string, string, time.Time) ([]controlv1.ServiceHTTPGrantSummary, error)
-	RefreshServiceBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error)
+	RefreshServiceBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error), ...string) (controlstate.BrowserAccessSession, error)
 }
 
 type ServiceAuditStore interface {

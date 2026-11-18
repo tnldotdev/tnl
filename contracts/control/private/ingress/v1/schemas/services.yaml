@@ -35,6 +35,11 @@ schemas:
       protocol:
         $ref: "../../../../public/v1/schemas/services.yaml#/schemas/ServiceProtocol"
       hostname: { type: string, minLength: 1, maxLength: 253 }
+      run_hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        description: An approved HTTP hostname selecting only this exact service run. Unavailable runs never fall back to the canonical pool.
       port: { type: integer, minimum: 1, maximum: 65535 }
       endpoint_revision: { type: integer, format: int64, minimum: 1 }
       valid_until: { type: string, format: date-time }

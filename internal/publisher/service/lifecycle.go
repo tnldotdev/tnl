@@ -662,6 +662,10 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	controlReadiness := func() bool {
 		endpointReady := !approved.Endpoint.Public || state.PublicEndpointReady && state.EndpointRevision == approved.EndpointRevision
+		if approved.Endpoint.Public && prepared.runHostname != "" {
+			endpointReady = endpointReady && state.RunHostname != nil && *state.RunHostname == prepared.runHostname &&
+				state.RunAliasReady != nil && *state.RunAliasReady
+		}
 		return endpointReady && state.State == controlv1.ServiceRunStateState("ready") && (state.Healthy == nil || *state.Healthy)
 	}
 	currentReadiness := func(connected [2]SlotSession, now time.Time) bool {

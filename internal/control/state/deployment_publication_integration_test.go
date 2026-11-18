@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/netip"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -213,8 +214,11 @@ func TestIntegrationDeploymentPublicationTemporaryRecoveryAndCleanup(t *testing.
 		t.Fatal(err)
 	}
 	label, namespace, found := strings.Cut(first.Endpoint.Hostname, ".")
-	if !found || len(label) != 26 || namespace != deployment.Namespace || !first.Ephemeral || !first.Endpoint.Public || first.Endpoint.Port != 443 {
-		t.Fatal("allocation borrowed a saved policy, developer namespace, or wrong lifetime")
+	if !found || !regexp.MustCompile(`^s-[a-z2-7]{26}$`).MatchString(label) || namespace != deployment.Namespace {
+		t.Fatalf("temporary service hostname %q is not a generated service name in %q", first.Endpoint.Hostname, deployment.Namespace)
+	}
+	if !first.Ephemeral || !first.Endpoint.Public || first.Endpoint.Port != 443 {
+		t.Fatal("temporary service lost its ephemeral public HTTPS endpoint")
 	}
 	assertDeploymentServiceHTTPMode(t, f.d, first.ID, VisitorAccessRestricted)
 	var ports, grants int

@@ -39,6 +39,58 @@ func TestFinishedTunnelPersistsReasonInsteadOfCause(t *testing.T) {
 	}
 }
 
+func TestTunnelServiceRunMetadataIsExactAndClearsOnReplacement(t *testing.T) {
+	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
+		Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000",
+		Project: t.TempDir(), Service: "web", ServiceID: testServiceID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tunnel.Finish(context.Background(), nil)
+	run, next := "srun_"+strings.Repeat("R", 22), "srun_"+strings.Repeat("N", 22)
+	hostname := "r-aaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+	if err := tunnel.SetServiceRun(t.Context(), run, 3, hostname); err == nil {
+		t.Fatal("run metadata preceded its provisioning transition")
+	}
+	if err := tunnel.SetProvisioning(t.Context(), 3); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := tunnel.SetServiceRun(t.Context(), run, 3, hostname); err != nil {
+			t.Fatal("metadata retry failed", err)
+		}
+	}
+	if err := tunnel.SetServiceRun(t.Context(), next, 3, hostname); err == nil {
+		t.Fatal("the same run number was rebound to another run")
+	}
+	if err := tunnel.SetProvisioning(t.Context(), 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnel.SetReady(t.Context(), "https://web.example", 3); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := database.Snapshot(t.Context())
+	if err != nil || len(snapshot.Tunnels) != 1 || snapshot.Tunnels[0].ServiceRunID != run || snapshot.Tunnels[0].RunHostname != hostname {
+		t.Fatal("canonical readiness lost its exact run metadata", err)
+	}
+	if err := tunnel.SetProvisioning(t.Context(), 4); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = database.Snapshot(t.Context())
+	if err != nil || snapshot.Tunnels[0].ServiceRunID != "" || snapshot.Tunnels[0].RunHostname != "" {
+		t.Fatal("a replacement run retained the previous alias", err)
+	}
+	if err := tunnel.SetServiceRun(t.Context(), run, 3, hostname); err == nil {
+		t.Fatal("late metadata from the old run overwrote its replacement")
+	}
+}
+
 func TestIntegrationScopeRegistrationHasTypedFailures(t *testing.T) {
 	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {

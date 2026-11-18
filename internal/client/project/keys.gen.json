@@ -10,6 +10,7 @@
   "request_body_idle_timeout": "requestBodyIdleTimeout",
   "require_post_quantum": "requirePostQuantum",
   "reusable_workflow": "reusableWorkflow",
+  "run_alias_parent": "runAliasParent",
   "service_account": "serviceAccount",
   "source_ips": "sourceIPs",
   "strip_prefix": "stripPrefix",

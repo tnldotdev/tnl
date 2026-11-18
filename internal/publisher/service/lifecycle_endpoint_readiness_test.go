@@ -58,6 +58,37 @@ type endpointReadinessObservations struct {
 	slots         [2]*heldSlot
 }
 
+type aliasEndpointReadinessControl struct {
+	*endpointReadinessControl
+	hostname   *string
+	aliasReady *bool
+}
+
+func (c *aliasEndpointReadinessControl) ReadPublisherVisitorPolicy(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	update, err := c.lifecycleControl.ReadPublisherVisitorPolicy(ctx, body, token)
+	if err == nil && body.Hostname != "" {
+		if body.Hostname != c.prep.Hostname && (c.prep.RunHostname == nil || body.Hostname != *c.prep.RunHostname) {
+			return controlv1.VisitorPolicyUpdate{}, ErrPrivateStream
+		}
+		update.Policy.Hostname = body.Hostname
+	}
+	return update, err
+}
+
+func (c *aliasEndpointReadinessControl) HeartbeatServiceRun(ctx context.Context, service, run string, token credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
+	state, err := c.endpointReadinessControl.HeartbeatServiceRun(ctx, service, run, token, health)
+	c.endpointMu.Lock()
+	defer c.endpointMu.Unlock()
+	state.RunHostname, state.RunAliasReady = c.hostname, c.aliasReady
+	return state, err
+}
+
+func (c *aliasEndpointReadinessControl) setAlias(hostname *string, ready *bool) {
+	c.endpointMu.Lock()
+	defer c.endpointMu.Unlock()
+	c.hostname, c.aliasReady = hostname, ready
+}
+
 func endpointReadinessFixture(t *testing.T, protocol controlv1.ServiceProtocol, public, ready bool, revision int64) (RunConfig, *endpointReadinessControl, *endpointReadinessObservations) {
 	t.Helper()
 	cfg, base := lifecycleFixture(t)
@@ -257,6 +288,44 @@ func TestPublicServiceRunReadinessWaitsForEndpointDNS(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestPublicServiceRunReadinessWaitsForItsExactAlias(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg, base, observed := endpointReadinessFixture(t, controlv1.ServiceProtocolHTTP, true, true, 7)
+		base.prep.RunHostname = new(httpRunAlias)
+		plan := *base.prep.CertificatePlan
+		plan.CacheKey, plan.Scope = "run-alias/readiness", base.prep.Hostname
+		plan.Identifiers = []string{base.prep.Hostname, httpRunAlias}
+		base.prep.CertificatePlan = &plan
+		control := &aliasEndpointReadinessControl{endpointReadinessControl: base}
+		cfg.Control = control
+		stop := startEndpointReadinessRun(t, cfg, base, observed)
+		defer stop()
+		assertEndpointReadinessPrerequisites(t, base, observed)
+		for _, observation := range []struct {
+			hostname *string
+			ready    *bool
+		}{
+			{new(httpRunAlias), new(false)},
+			{new(httpRunAlias), nil},
+			{nil, new(true)},
+			{new("r-bbbbbbbbbbbbbbbbbbbbbbbbbb.example.test"), new(true)},
+		} {
+			control.setAlias(observation.hostname, observation.ready)
+			assertEndpointHeartbeatsContinue(t, cfg, base)
+			assertEndpointReadiness(t, observed, false, 0)
+		}
+		control.setAlias(new(httpRunAlias), new(true))
+		assertEndpointHeartbeatsContinue(t, cfg, base)
+		assertEndpointReadiness(t, observed, true, 1)
+		control.setAlias(new(httpRunAlias), new(false))
+		assertEndpointHeartbeatsContinue(t, cfg, base)
+		assertEndpointReadiness(t, observed, false, 1)
+		control.setAlias(new(httpRunAlias), new(true))
+		assertEndpointHeartbeatsContinue(t, cfg, base)
+		assertEndpointReadiness(t, observed, true, 1)
+	})
 }
 
 func TestPublicServiceRunReadinessRejectsDifferentEndpointRevision(t *testing.T) {

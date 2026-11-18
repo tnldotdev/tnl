@@ -6,6 +6,7 @@ export const fixtureSchema = z.strictObject({
   project: z.string().regex(/^[^/]+\/[^/]+$/),
   deployment: z.string().min(1),
   token: z.string().min(1),
+  sibling_token: z.string().min(1),
   control_url: z.url(),
   control_dial_address: z.string().min(1),
   control_root_pem: z.string().min(1),
@@ -61,6 +62,7 @@ export function publisherFailures(error: unknown, phase: string, depth = 0): unk
 
 export const observationSchema = z.strictObject({
   service_id: z.string().min(1),
+  service_run_id: z.string(),
   run_number: z.number().int().nonnegative(),
   active_runs: z.number().int().nonnegative(),
   deleted: z.boolean(),
@@ -74,7 +76,7 @@ export type Observation = z.output<typeof observationSchema>;
 
 export async function fixtureCall(
   fixture: PublisherFixture,
-  route: "/observe" | "/exercise" | "/state" | "/await-restartable",
+  route: "/observe" | "/exercise" | "/unavailable" | "/state" | "/await-restartable",
   url: string,
   fetcher: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = globalThis.fetch,
 ): Promise<Observation> {

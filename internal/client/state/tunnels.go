@@ -98,6 +98,8 @@ type TunnelInfo struct {
 	ServiceProtocol  controlv1.ServiceProtocol `json:"service_protocol,omitempty"`
 	ServiceID        string                    `json:"service_id,omitempty"`
 	PublishRunNumber uint64                    `json:"publish_run_number,omitempty"`
+	ServiceRunID     string                    `json:"service_run_id,omitempty"`
+	RunHostname      string                    `json:"run_hostname,omitempty"`
 	Hostname         string                    `json:"hostname,omitempty"`
 	PublicURL        string                    `json:"public_url,omitempty"`
 	Target           string                    `json:"target,omitempty"`
@@ -218,6 +220,28 @@ func (t *Tunnel) SetProvisioning(ctx context.Context, publishRunNumber uint64) e
 	}
 	rows, err := t.database.queries.SetTunnelProvisioning(ctx, clientstatedb.SetTunnelProvisioningParams{
 		PublishRunNumber: sql.NullInt64{Int64: versionValue, Valid: true}, Now: t.database.now().UTC().UnixNano(), ID: t.id,
+	})
+	return tunnelUpdateResult(rows, err)
+}
+
+// SetServiceRun records public run metadata after its provisioning transition.
+// the same run number cannot be rebound, and a later run clears the old alias.
+func (t *Tunnel) SetServiceRun(ctx context.Context, id string, number uint64, hostname string) error {
+	version, err := databaseVersion(number)
+	if err != nil || number == 0 || !opaqueid.Valid(id, opaqueid.ServiceRunPrefix) {
+		return errors.New("clientstate: invalid service run identity")
+	}
+	if hostname != "" {
+		canonical, err := naming.CanonicalizeHostname(hostname)
+		if err != nil || canonical != hostname {
+			return errors.New("clientstate: invalid service run hostname")
+		}
+	}
+	rows, err := t.database.queries.SetTunnelServiceRun(ctx, clientstatedb.SetTunnelServiceRunParams{
+		ID: t.id, ServiceRunID: sql.NullString{String: id, Valid: true},
+		PublishRunNumber: sql.NullInt64{Int64: version, Valid: true},
+		RunHostname:      sql.NullString{String: hostname, Valid: hostname != ""},
+		Now:              t.database.now().UTC().UnixNano(),
 	})
 	return tunnelUpdateResult(rows, err)
 }
@@ -388,8 +412,8 @@ func tunnelInfo(row clientstatedb.LocalTunnel, observedAt time.Time) TunnelInfo 
 		ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
 		Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service.String,
 		ServiceProtocol: controlv1.ServiceProtocol(row.ServiceProtocol), ServiceID: row.ServiceID.String,
-		PublishRunNumber: uint64(row.PublishRunNumber.Int64),
-		Hostname:         row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String,
+		PublishRunNumber: uint64(row.PublishRunNumber.Int64), ServiceRunID: row.ServiceRunID.String, RunHostname: row.RunHostname.String,
+		Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String,
 		IntegrationScope: IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot.String, Namespace: row.IntegrationNamespace.String},
 		StartedAt:        unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
 		HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),

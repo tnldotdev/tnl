@@ -43,8 +43,8 @@ func (q *Queries) ConsumeServiceHTTPBrowserLogin(ctx context.Context, arg Consum
 }
 
 const insertServiceHTTPBrowserHandoff = `-- name: InsertServiceHTTPBrowserHandoff :exec
-INSERT INTO control.service_http_browser_handoffs(token_digest,session_digest,service_id,run_ids,cookie_ciphertext,storage_key_id,return_path,redirect_url,bridge,expires_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+INSERT INTO control.service_http_browser_handoffs(token_digest,session_digest,service_id,run_ids,cookie_ciphertext,storage_key_id,return_path,redirect_url,bridge,expires_at,hostname)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 `
 
 type InsertServiceHTTPBrowserHandoffParams struct {
@@ -58,6 +58,7 @@ type InsertServiceHTTPBrowserHandoffParams struct {
 	RedirectUrl      string
 	Bridge           bool
 	ExpiresAt        pgtype.Timestamptz
+	Hostname         string
 }
 
 func (q *Queries) InsertServiceHTTPBrowserHandoff(ctx context.Context, arg InsertServiceHTTPBrowserHandoffParams) error {
@@ -72,6 +73,7 @@ func (q *Queries) InsertServiceHTTPBrowserHandoff(ctx context.Context, arg Inser
 		arg.RedirectUrl,
 		arg.Bridge,
 		arg.ExpiresAt,
+		arg.Hostname,
 	)
 	return err
 }
@@ -224,6 +226,7 @@ LEFT JOIN control.control_sessions original ON original.id=session.parent_contro
 WHERE session.token_digest=$1 AND session.revoked_at IS NULL AND session.expires_at>$2
     AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
         WHERE bound.session_digest=session.token_digest AND bound.service_id=$3
+        AND bound.hostname=COALESCE(NULLIF($4::text,''),(SELECT certificate_hostname FROM control.services WHERE id=$3))
         AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
 `
 
@@ -231,6 +234,7 @@ type ReadServiceHTTPBrowserSessionParams struct {
 	CookieDigest []byte
 	ExpiresAt    pgtype.Timestamptz
 	ServiceID    string
+	Hostname     string
 }
 
 type ReadServiceHTTPBrowserSessionRow struct {
@@ -249,7 +253,12 @@ type ReadServiceHTTPBrowserSessionRow struct {
 }
 
 func (q *Queries) ReadServiceHTTPBrowserSession(ctx context.Context, arg ReadServiceHTTPBrowserSessionParams) (ReadServiceHTTPBrowserSessionRow, error) {
-	row := q.db.QueryRow(ctx, readServiceHTTPBrowserSession, arg.CookieDigest, arg.ExpiresAt, arg.ServiceID)
+	row := q.db.QueryRow(ctx, readServiceHTTPBrowserSession,
+		arg.CookieDigest,
+		arg.ExpiresAt,
+		arg.ServiceID,
+		arg.Hostname,
+	)
 	var i ReadServiceHTTPBrowserSessionRow
 	err := row.Scan(
 		&i.TokenDigest,
@@ -323,7 +332,8 @@ const redeemServiceHTTPBrowserHandoff = `-- name: RedeemServiceHTTPBrowserHandof
 UPDATE control.service_http_browser_handoffs handoff SET consumed_at=$1
 FROM control.service_http_browser_sessions session
 WHERE handoff.token_digest=$2 AND handoff.service_id=$3
-AND $4::text=ANY(handoff.run_ids) AND handoff.consumed_at IS NULL AND handoff.revoked_at IS NULL
+AND handoff.hostname=COALESCE(NULLIF($4::text,''),(SELECT certificate_hostname FROM control.services WHERE id=$3))
+AND $5::text=ANY(handoff.run_ids) AND handoff.consumed_at IS NULL AND handoff.revoked_at IS NULL
 AND handoff.expires_at>$1 AND session.token_digest=handoff.session_digest
 AND session.revoked_at IS NULL AND session.expires_at>$1
 RETURNING handoff.session_digest,handoff.cookie_ciphertext,handoff.storage_key_id,
@@ -334,6 +344,7 @@ type RedeemServiceHTTPBrowserHandoffParams struct {
 	Now          pgtype.Timestamptz
 	TokenDigest  []byte
 	ServiceID    string
+	Hostname     string
 	ServiceRunID string
 }
 
@@ -352,6 +363,7 @@ func (q *Queries) RedeemServiceHTTPBrowserHandoff(ctx context.Context, arg Redee
 		arg.Now,
 		arg.TokenDigest,
 		arg.ServiceID,
+		arg.Hostname,
 		arg.ServiceRunID,
 	)
 	var i RedeemServiceHTTPBrowserHandoffRow
@@ -372,6 +384,7 @@ UPDATE control.service_http_browser_sessions browser SET revoked_at=COALESCE(bro
 WHERE browser.token_digest=$2
 AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
     WHERE bound.session_digest=browser.token_digest AND bound.service_id=$3
+    AND bound.hostname=COALESCE(NULLIF($4::text,''),(SELECT certificate_hostname FROM control.services WHERE id=$3))
     AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
 `
 
@@ -379,10 +392,16 @@ type RevokeServiceHTTPBrowserSessionParams struct {
 	Now          pgtype.Timestamptz
 	CookieDigest []byte
 	ServiceID    string
+	Hostname     string
 }
 
 func (q *Queries) RevokeServiceHTTPBrowserSession(ctx context.Context, arg RevokeServiceHTTPBrowserSessionParams) error {
-	_, err := q.db.Exec(ctx, revokeServiceHTTPBrowserSession, arg.Now, arg.CookieDigest, arg.ServiceID)
+	_, err := q.db.Exec(ctx, revokeServiceHTTPBrowserSession,
+		arg.Now,
+		arg.CookieDigest,
+		arg.ServiceID,
+		arg.Hostname,
+	)
 	return err
 }
 
@@ -422,23 +441,27 @@ func (q *Queries) RotateServiceHTTPBrowserSession(ctx context.Context, arg Rotat
 }
 
 const serviceHTTPBrowserEndpoint = `-- name: ServiceHTTPBrowserEndpoint :one
-SELECT s.team_id,s.guest_id,s.certificate_hostname,s.service_port,
+SELECT s.team_id,s.guest_id,
+    COALESCE(NULLIF($1::text,''),s.certificate_hostname)::text AS certificate_hostname,s.service_port,
     ARRAY(SELECT run.id FROM control.service_runs run
          WHERE run.service_id=s.id AND run.state='ready' AND run.healthy
-         AND run.closed_at IS NULL AND run.publisher_expires_at>$1
-         AND run.certificate_expires_at>$1
+         AND run.closed_at IS NULL AND run.publisher_expires_at>$2
+          AND run.certificate_expires_at>$2
+          AND ($1::text IN('',s.certificate_hostname)
+              OR control.service_run_alias_current(run.id,$1::text))
          AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
-             run.publisher_grant_id,s.id,$1) permission
+             run.publisher_grant_id,s.id,$2) permission
              JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
              JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
                  AND signing.publisher_identity_id=run.publisher_identity_id
                  AND (grant_record.kind='service' OR signing.retired_at IS NULL))
          ORDER BY run.run_number LIMIT 256)::text[] AS run_ids
 FROM control.services s
-WHERE s.id=$2 AND s.protocol='http' AND s.enabled AND s.deleted_at IS NULL
+WHERE s.id=$3 AND s.protocol='http' AND s.enabled AND s.deleted_at IS NULL
 `
 
 type ServiceHTTPBrowserEndpointParams struct {
+	Hostname  string
 	Now       pgtype.Timestamptz
 	ServiceID string
 }
@@ -452,7 +475,7 @@ type ServiceHTTPBrowserEndpointRow struct {
 }
 
 func (q *Queries) ServiceHTTPBrowserEndpoint(ctx context.Context, arg ServiceHTTPBrowserEndpointParams) (ServiceHTTPBrowserEndpointRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPBrowserEndpoint, arg.Now, arg.ServiceID)
+	row := q.db.QueryRow(ctx, serviceHTTPBrowserEndpoint, arg.Hostname, arg.Now, arg.ServiceID)
 	var i ServiceHTTPBrowserEndpointRow
 	err := row.Scan(
 		&i.TeamID,
@@ -476,6 +499,7 @@ AND browser.expires_at>$2 AND session.access_expires_at>$2 AND session.refresh_e
 AND (browser.parent_control_session_id IS NULL OR original.revoked_at IS NULL AND original.refresh_expires_at>$2)
 AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
     WHERE bound.session_digest=browser.token_digest AND bound.service_id=$3
+    AND bound.hostname=COALESCE(NULLIF($4::text,''),(SELECT certificate_hostname FROM control.services WHERE id=$3))
     AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
 `
 
@@ -483,6 +507,7 @@ type ServiceHTTPBrowserPermissionParams struct {
 	CookieDigest []byte
 	Now          pgtype.Timestamptz
 	ServiceID    string
+	Hostname     string
 }
 
 type ServiceHTTPBrowserPermissionRow struct {
@@ -493,7 +518,12 @@ type ServiceHTTPBrowserPermissionRow struct {
 }
 
 func (q *Queries) ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceHTTPBrowserPermissionParams) (ServiceHTTPBrowserPermissionRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPBrowserPermission, arg.CookieDigest, arg.Now, arg.ServiceID)
+	row := q.db.QueryRow(ctx, serviceHTTPBrowserPermission,
+		arg.CookieDigest,
+		arg.Now,
+		arg.ServiceID,
+		arg.Hostname,
+	)
 	var i ServiceHTTPBrowserPermissionRow
 	err := row.Scan(
 		&i.IdentityID,

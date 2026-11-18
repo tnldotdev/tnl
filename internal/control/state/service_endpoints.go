@@ -92,7 +92,10 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.services SET
 	    certificate_hostname=$2,certificate_scope=$3,domain_id=$4,ingress_pool_id=$5,name_scope=$6 WHERE id=$1`, service, hostname, namespace, domain, pool, deployment)
-	return projectConstraintError(err)
+	if err != nil {
+		return projectConstraintError(err)
+	}
+	return d.configureServiceRunAliasParent(ctx, tx, service, actor, placement.RunAliasParent, now)
 }
 
 // ingress reservations are not target trust or connector authority. changing

@@ -37,9 +37,9 @@ WHERE included.share_id=sqlc.arg(share_id) AND service.enabled AND service.delet
 GROUP BY service.id,service.certificate_hostname ORDER BY service.id;
 
 -- name: InsertShareCookie :one
-INSERT INTO control.share_cookies(token_digest,share_id,service_id,created_at,expires_at)
+INSERT INTO control.share_cookies(token_digest,share_id,service_id,created_at,expires_at,hostname)
 SELECT sqlc.arg(token_digest),share.id,included.service_id,
-    sqlc.arg(created_at),LEAST(share.expires_at,sqlc.arg(expires_at)::timestamptz)
+    sqlc.arg(created_at),LEAST(share.expires_at,sqlc.arg(expires_at)::timestamptz),sqlc.arg(hostname)
 FROM control.shares share
 JOIN control.share_services included ON included.share_id=share.id AND included.service_id=sqlc.arg(service_id)
 WHERE share.id=sqlc.arg(share_id) AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(created_at)
@@ -47,9 +47,9 @@ WHERE share.id=sqlc.arg(share_id) AND share.revoked_at IS NULL AND share.expires
 RETURNING token_digest;
 
 -- name: InsertShareHandoff :one
-INSERT INTO control.share_handoffs(token_digest,share_id,service_id,run_ids,redirect_url,bridge,created_at,expires_at)
+INSERT INTO control.share_handoffs(token_digest,share_id,service_id,run_ids,redirect_url,bridge,created_at,expires_at,hostname)
 SELECT sqlc.arg(token_digest),share.id,included.service_id,sqlc.arg(run_ids)::text[],
-    sqlc.arg(next_url),sqlc.arg(bridge),sqlc.arg(created_at),sqlc.arg(expires_at)
+    sqlc.arg(next_url),sqlc.arg(bridge),sqlc.arg(created_at),sqlc.arg(expires_at),sqlc.arg(hostname)
 FROM control.shares share
 JOIN control.share_services included ON included.share_id=share.id AND included.service_id=sqlc.arg(service_id)
 WHERE share.id=sqlc.arg(share_id) AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(created_at)
@@ -60,6 +60,7 @@ RETURNING token_digest;
 UPDATE control.share_handoffs handoff SET consumed_at=sqlc.arg(now)
 FROM control.shares share
 WHERE handoff.token_digest=sqlc.arg(token_digest) AND handoff.service_id=sqlc.arg(service_id)
+    AND handoff.hostname=COALESCE(NULLIF(sqlc.arg(hostname)::text,''),(SELECT certificate_hostname FROM control.services WHERE id=sqlc.arg(service_id)))
     AND sqlc.arg(service_run_id)::text=ANY(handoff.run_ids)
     AND handoff.consumed_at IS NULL AND handoff.expires_at>sqlc.arg(now)
     AND share.id=handoff.share_id AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(now)

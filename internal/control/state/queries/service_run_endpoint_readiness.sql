@@ -8,6 +8,7 @@ SELECT EXISTS(
       AND endpoint.hostname=sqlc.arg(hostname)::text AND endpoint.domain_id=sqlc.arg(domain_id)::text
       AND endpoint.ingress_pool_id=sqlc.arg(ingress_pool_id)::text
       AND endpoint.public AND endpoint.retired_at IS NULL
+      AND (endpoint.service_run_id IS NULL OR endpoint.service_run_id=sqlc.arg(service_run_id)::text)
       AND (endpoint.dns_state='published' OR endpoint.dns_state='unmanaged' AND NOT endpoint.dns_automation)
       AND (pool.state IN('enabled','draining') OR pool.id=sqlc.arg(primary_ingress_pool_id)::text AND pool.state='disabled')
       AND EXISTS(SELECT 1 FROM control.service_connection_slots slot

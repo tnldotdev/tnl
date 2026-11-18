@@ -20,8 +20,13 @@ WITH candidate AS (
           SELECT 1 FROM control.services service
           JOIN control.service_runs run ON run.service_id=service.id
            WHERE service.id=work.service_id AND service.public AND service.enabled AND service.deleted_at IS NULL
-             AND service.certificate_hostname=work.hostname AND service.domain_id=work.domain_id
-             AND run.certificate_hostname=work.hostname AND run.certificate_domain_id=work.domain_id
+              AND service.domain_id=work.domain_id
+              AND run.certificate_hostname=service.certificate_hostname AND run.certificate_domain_id=work.domain_id
+              AND (work.service_run_id IS NULL AND service.certificate_hostname=work.hostname
+                OR work.service_run_id=run.id AND run.run_hostname=work.hostname AND run.run_alias_parent=service.run_alias_parent)
+              AND EXISTS(SELECT 1 FROM control.service_endpoints canonical
+                WHERE canonical.service_id=service.id AND canonical.hostname=service.certificate_hostname
+                  AND canonical.domain_id=service.domain_id AND canonical.retired_at IS NULL AND canonical.public)
              AND (run.state='ready' OR run.state='starting' AND run.ready_at IS NULL
                AND run.guest_id=service.guest_id
                AND EXISTS(SELECT 1 FROM control.guest_trials guest
@@ -53,7 +58,7 @@ WITH candidate AS (
 UPDATE control.service_endpoints endpoint
 SET dns_work_owner=$1,dns_work_epoch=endpoint.dns_work_epoch+1,
     dns_work_expires_at=$2,dns_attempts=endpoint.dns_attempts+1
-FROM candidate WHERE endpoint.hostname=candidate.hostname RETURNING endpoint.hostname, endpoint.service_id, endpoint.deployment_id, endpoint.local_source_key, endpoint.domain_id, endpoint.namespace, endpoint.ingress_pool_id, endpoint.public, endpoint.dns_automation, endpoint.dns_authority_reference, endpoint.dns_state, endpoint.dns_revision, endpoint.dns_attempts, endpoint.dns_available_at, endpoint.dns_last_error, endpoint.dns_work_owner, endpoint.dns_work_epoch, endpoint.dns_work_expires_at, endpoint.created_at, endpoint.retired_at, endpoint.reusable_after
+FROM candidate WHERE endpoint.hostname=candidate.hostname RETURNING endpoint.hostname, endpoint.service_id, endpoint.service_run_id, endpoint.deployment_id, endpoint.local_source_key, endpoint.domain_id, endpoint.namespace, endpoint.ingress_pool_id, endpoint.public, endpoint.dns_automation, endpoint.dns_authority_reference, endpoint.dns_state, endpoint.dns_revision, endpoint.dns_attempts, endpoint.dns_available_at, endpoint.dns_last_error, endpoint.dns_work_owner, endpoint.dns_work_epoch, endpoint.dns_work_expires_at, endpoint.created_at, endpoint.retired_at, endpoint.reusable_after
 `
 
 type ClaimServiceEndpointDNSWorkParams struct {
@@ -68,6 +73,7 @@ func (q *Queries) ClaimServiceEndpointDNSWork(ctx context.Context, arg ClaimServ
 	err := row.Scan(
 		&i.Hostname,
 		&i.ServiceID,
+		&i.ServiceRunID,
 		&i.DeploymentID,
 		&i.LocalSourceKey,
 		&i.DomainID,
@@ -97,7 +103,7 @@ SET dns_state=$1,dns_revision=dns_revision+1,dns_available_at=$2,
     dns_last_error=$3,dns_work_owner=NULL,dns_work_expires_at=NULL
 WHERE hostname=$4 AND service_id=$5 AND dns_revision=$6
     AND dns_work_owner=$7 AND dns_work_epoch=$8 AND dns_work_expires_at>$9
-RETURNING hostname, service_id, deployment_id, local_source_key, domain_id, namespace, ingress_pool_id, public, dns_automation, dns_authority_reference, dns_state, dns_revision, dns_attempts, dns_available_at, dns_last_error, dns_work_owner, dns_work_epoch, dns_work_expires_at, created_at, retired_at, reusable_after
+RETURNING hostname, service_id, service_run_id, deployment_id, local_source_key, domain_id, namespace, ingress_pool_id, public, dns_automation, dns_authority_reference, dns_state, dns_revision, dns_attempts, dns_available_at, dns_last_error, dns_work_owner, dns_work_epoch, dns_work_expires_at, created_at, retired_at, reusable_after
 `
 
 type SaveServiceEndpointDNSWorkParams struct {
@@ -128,6 +134,7 @@ func (q *Queries) SaveServiceEndpointDNSWork(ctx context.Context, arg SaveServic
 	err := row.Scan(
 		&i.Hostname,
 		&i.ServiceID,
+		&i.ServiceRunID,
 		&i.DeploymentID,
 		&i.LocalSourceKey,
 		&i.DomainID,
@@ -161,8 +168,13 @@ SELECT EXISTS(
           SELECT 1 FROM control.services service
           JOIN control.service_runs run ON run.service_id=service.id
            WHERE service.id=work.service_id AND service.public AND service.enabled AND service.deleted_at IS NULL
-             AND service.certificate_hostname=work.hostname AND service.domain_id=work.domain_id
-             AND run.certificate_hostname=work.hostname AND run.certificate_domain_id=work.domain_id
+              AND service.domain_id=work.domain_id
+              AND run.certificate_hostname=service.certificate_hostname AND run.certificate_domain_id=work.domain_id
+              AND (work.service_run_id IS NULL AND service.certificate_hostname=work.hostname
+                OR work.service_run_id=run.id AND run.run_hostname=work.hostname AND run.run_alias_parent=service.run_alias_parent)
+              AND EXISTS(SELECT 1 FROM control.service_endpoints canonical
+                WHERE canonical.service_id=service.id AND canonical.hostname=service.certificate_hostname
+                  AND canonical.domain_id=service.domain_id AND canonical.retired_at IS NULL AND canonical.public)
              AND (run.state='ready' OR run.state='starting' AND run.ready_at IS NULL
                AND run.guest_id=service.guest_id
                AND EXISTS(SELECT 1 FROM control.guest_trials guest

@@ -24,7 +24,8 @@ func TestReadIngressServicesHTTPAndDirectReturnTheSameSnapshot(t *testing.T) {
 		Runs: []controlstate.IngressServiceRun{{
 			ServiceID: "svc_" + strings.Repeat("a", 22), RunID: "srun_" + strings.Repeat("a", 22), RunNumber: 4,
 			Protocol: "http", Hostname: "app.example", Port: 443, EndpointRevision: 2, ValidUntil: now.Add(8 * time.Second),
-			Anonymous: true, IP: &controlv1.VisitorPolicyIP{Key: []byte{1, 2}, Prefixes: []controlv1.HashedIPPrefix{}},
+			RunHostname: new("r-one.example"),
+			Anonymous:   true, IP: &controlv1.VisitorPolicyIP{Key: []byte{1, 2}, Prefixes: []controlv1.HashedIPPrefix{}},
 			Traffic: trafficlimits.Limits{Connections: 12, TotalConnections: 23, UploadBytes: 1024, DownloadBytes: 2048, TotalUploadBytes: 4096, TotalDownloadBytes: 8192},
 			Relays: []controlstate.ServiceRelay{{
 				PublisherConnectionID: "pc_" + strings.Repeat("a", 22), ConnectionSlot: 1, ConnectionAssignmentRevision: 5,
@@ -68,6 +69,7 @@ func TestReadIngressServicesHTTPAndDirectReturnTheSameSnapshot(t *testing.T) {
 	}
 	run := want.Runs[0]
 	if run.ServiceId != current.Runs[0].ServiceID || run.ServiceRunId != current.Runs[0].RunID ||
+		run.RunHostname == nil || *run.RunHostname != *current.Runs[0].RunHostname ||
 		run.EndpointRevision != 2 || run.Traffic.Connections != 12 || *run.Traffic.TotalConnections != 23 ||
 		*run.Traffic.TotalUploadBytes != 4096 || *run.Traffic.TotalDownloadBytes != 8192 ||
 		!reflect.DeepEqual(run.ConnectedRelays, privateRelayResponses(current.Runs[0].Relays)) ||

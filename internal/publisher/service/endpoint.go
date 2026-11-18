@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -65,6 +66,16 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	if err != nil || !certificateidentity.Covers(plan.Identifiers, approved.Endpoint.Hostname) || plan.ChallengeMethod != controlv1.Dns01 {
 		return nil, ErrPrivateStream
 	}
+	runHostname := ""
+	if preparation.RunHostname != nil {
+		runHostname = *preparation.RunHostname
+		canonical, err := naming.CanonicalizeHostname(runHostname)
+		if approved.Protocol != controlv1.ServiceProtocolHTTP || !approved.Endpoint.Public || err != nil || canonical != runHostname ||
+			runHostname == approved.Endpoint.Hostname || !certificateidentity.Covers(plan.Identifiers, runHostname) {
+			return nil, ErrPrivateStream
+		}
+		preparation.RunHostname = new(runHostname)
+	}
 	target := ""
 	if servicestream.HandlerOnly && cfg.Handler == nil {
 		return nil, ErrPrivateStream
@@ -81,6 +92,7 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	}
 	preparation.Traffic = cloneTrafficApproval(preparation.Traffic)
 	prepared := &Prepared{Preparation: preparation, traffic: traffic, target: target, handler: cfg.Handler, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
+	prepared.runHostname = runHostname
 	prepared.visitorTLS = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return prepared.currentCertificate() }}
 	if preparation.RequirePostQuantum {
 		prepared.visitorTLS = tlspolicy.RequirePostQuantum(prepared.visitorTLS)
@@ -231,6 +243,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 			Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 			RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
 			Hostname: prepared.managedHostname, Port: prepared.servicePort, Requests: prepared.serviceHTTPRequests,
+			RunHostname: prepared.runHostname,
 		})
 		if err != nil {
 			return nil, nil, err

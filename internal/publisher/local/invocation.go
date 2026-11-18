@@ -296,7 +296,7 @@ func (a *appRuntime) invocationPublication(service publisherapp.Service, base pu
 		}
 		return observation
 	}
-	publication.Run = func(ctx context.Context, _ *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
+	publication.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) error {
 		if !expires.IsZero() {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithDeadline(ctx, expires)
@@ -325,6 +325,13 @@ func (a *appRuntime) invocationPublication(service publisherapp.Service, base pu
 			mu.Unlock()
 			notified = false
 			if err := observe(uint64(preparation.RunNumber), false); err != nil {
+				return err
+			}
+			hostname := ""
+			if preparation.RunHostname != nil {
+				hostname = *preparation.RunHostname
+			}
+			if err := tunnel.SetServiceRun(ctx, preparation.ServiceRunId, uint64(preparation.RunNumber), hostname); err != nil {
 				return err
 			}
 			if prepared != nil {

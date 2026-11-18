@@ -15,13 +15,14 @@ import (
 // ServicePlacement selects a ready team domain and a source-bound local
 // worktree. control captures the resulting identity once; defaults never rename it.
 type ServicePlacement struct {
-	DomainID      string `json:"domain_id,omitempty"`
-	Hostname      string `json:"hostname,omitempty"`
-	WorktreeKey   string `json:"worktree_key,omitempty"`
-	WorktreeLabel string `json:"worktree_label,omitempty"`
-	DNSAutomation bool   `json:"-"`
-	SourceKey     string `json:"-"`
-	Reserve       bool   `json:"-"`
+	DomainID       string `json:"domain_id,omitempty"`
+	Hostname       string `json:"hostname,omitempty"`
+	WorktreeKey    string `json:"worktree_key,omitempty"`
+	WorktreeLabel  string `json:"worktree_label,omitempty"`
+	DNSAutomation  bool   `json:"-"`
+	SourceKey      string `json:"-"`
+	RunAliasParent string `json:"-"`
+	Reserve        bool   `json:"-"`
 }
 
 func (p ServicePlacement) Validate() error {
@@ -112,7 +113,10 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 		if err = claimServiceSourceHostname(ctx, tx, row.CertificateHostname, domainID, sourceOwner, now); err != nil {
 			return err
 		}
-		return d.setLocalServiceExposure(ctx, tx, service, public, now)
+		if err := d.setLocalServiceExposure(ctx, tx, service, public, now); err != nil {
+			return err
+		}
+		return d.configureServiceRunAliasParent(ctx, tx, service, actor, placement.RunAliasParent, now)
 	}
 	sourceOwner, err = d.newServiceSourceOwner(ctx, tx, facts, row.TeamID.String, hostname, intent, standalone, placement.Hostname != "")
 	if err != nil {
@@ -134,7 +138,10 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.services SET certificate_hostname=$2,certificate_scope=$2,domain_id=$3,service_port=$4,ingress_pool_id=$5,placement_worktree_key=$6,placement_worktree_label=$7,public=$8 WHERE id=$1`, service, hostname, domainID, port, facts.IngressPoolID, placement.WorktreeKey, label, public)
-	return projectConstraintError(err)
+	if err != nil {
+		return projectConstraintError(err)
+	}
+	return d.configureServiceRunAliasParent(ctx, tx, service, actor, placement.RunAliasParent, now)
 }
 
 // configure keeps captured placement unless the declaration explicitly selects
@@ -177,7 +184,7 @@ func (d *Database) configureStandaloneServiceEndpoint(ctx context.Context, tx pg
 	}
 	desired.Namespace, desired.PoolID, desired.Public = desired.Hostname, facts.IngressPoolID, projectServicePublic(declaration)
 	if desired == endpoint {
-		return nil
+		return d.configureServiceRunAliasParent(ctx, tx, row.ID, actor, declaration.RunAliasParent, now)
 	}
 	if desired.Hostname != endpoint.Hostname || desired.DomainID != endpoint.DomainID {
 		if err = d.authorizeOwnedServiceHostname(ctx, tx, facts, owner, row.TeamID.String, desired.DomainID, desired.Hostname, now); err != nil {
@@ -197,7 +204,10 @@ func (d *Database) configureStandaloneServiceEndpoint(ctx context.Context, tx pg
 	_, err = tx.Exec(ctx, `UPDATE control.services SET certificate_hostname=$2,certificate_scope=$2,domain_id=$3,service_port=$4,ingress_pool_id=$5,
 	    endpoint_revision=endpoint_revision+CASE WHEN public<>$6 THEN 1 ELSE 0 END,public=$6 WHERE id=$1`,
 		row.ID, desired.Hostname, desired.DomainID, port, desired.PoolID, desired.Public)
-	return projectConstraintError(err)
+	if err != nil {
+		return projectConstraintError(err)
+	}
+	return d.configureServiceRunAliasParent(ctx, tx, row.ID, actor, declaration.RunAliasParent, now)
 }
 
 // exposure updates keep the captured hostname and provenance. applying a project

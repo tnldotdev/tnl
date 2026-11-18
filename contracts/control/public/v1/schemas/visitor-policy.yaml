@@ -6,6 +6,12 @@ schemas:
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       run_id: { type: string, maxLength: 64 }
+      hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        x-go-type-skip-optional-pointer: true
+        description: Select the run's canonical or currently authorized exact-run HTTP hostname. Omission selects the captured canonical identity.
       run_number:
         {
           type: string,

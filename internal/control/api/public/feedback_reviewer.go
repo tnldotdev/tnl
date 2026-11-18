@@ -133,6 +133,7 @@ func (h *handler) AuthorizeReviewerFeedback(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	auth := serviceHTTPRun(service, run, token, body.RunNumber)
+	auth.Hostname = body.Hostname
 	if h.feedback == nil {
 		writeProblem(w, 503, controlv1.Unavailable, "feedback authorization is unavailable")
 		return

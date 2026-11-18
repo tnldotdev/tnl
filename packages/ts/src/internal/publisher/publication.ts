@@ -25,6 +25,8 @@ import { httpsOriginSchema, pathTextSchema, registrationIDSchema } from "../valu
 import { parseStatus } from "./status.js";
 import { parseAssignment } from "./app.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
+import type { PublicationRun } from "../publication_run.js";
+export type { PublicationRun } from "../publication_run.js";
 
 type PublisherCredentialFile = {
   readonly publisherCredentialFile: string;
@@ -94,6 +96,9 @@ export function validatePublicationOptions(
 
 export interface Publication {
   readonly url?: `https://${string}`;
+  /** exact-run address, present only when run aliases are enabled. */
+  readonly runURL?: `https://${string}` | undefined;
+  readonly run?: PublicationRun | undefined;
   close(): Promise<void>;
   wait(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -270,6 +275,8 @@ async function publishServerUntraced(
   let endpoint = await runtime.start(directory, undefined, selection, options.signal);
   if (options.signal?.aborted) throw aborted();
   let currentURL: `https://${string}` | undefined;
+  let currentRun: PublicationRun | undefined;
+  let currentRunURL: `https://${string}` | undefined;
   let registration: z.output<typeof registrationSchema> | undefined;
   let uncertain = false;
   let unregisterReplyLost = false;
@@ -528,6 +535,8 @@ async function publishServerUntraced(
       if (status.publishRunNumber < lastRun) throw new TnlError("sdk.response_invalid");
       lastRun = status.publishRunNumber;
     }
+    currentRun = status.run;
+    currentRunURL = status.runURL;
     if (status.routable) {
       const named = localService !== undefined || publication?.service !== undefined;
       if (
@@ -540,6 +549,12 @@ async function publishServerUntraced(
         resolveReady(
           Object.freeze({
             ...(currentURL === undefined ? {} : { url: currentURL }),
+            get runURL() {
+              return currentRunURL;
+            },
+            get run() {
+              return currentRun;
+            },
             close,
             wait: () => done,
             [Symbol.asyncDispose]: close,
@@ -794,6 +809,12 @@ export async function publishFetch(
   };
   return Object.freeze({
     ...(base.url === undefined ? {} : { url: base.url }),
+    get runURL() {
+      return base.runURL;
+    },
+    get run() {
+      return base.run;
+    },
     close,
     async wait(): Promise<void> {
       let failure: unknown;

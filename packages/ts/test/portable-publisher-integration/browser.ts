@@ -18,16 +18,22 @@ export async function smoke(input: unknown) {
       web: { protocol: "http" },
       restricted: { protocol: "http" },
       private: { protocol: "http" },
+      exact: { protocol: "http" },
     },
   } as const;
   const publisher = deployment(fixture.deployment, options);
+  const siblingPublisher = deployment(fixture.deployment, {
+    ...options,
+    token: fixture.sibling_token,
+  });
   // a distinct deployment owns another actual go runtime for connector traffic.
   const connector = deployment(fixture.deployment, {
     project: fixture.project,
     token: fixture.token,
     services: { web: { protocol: "http" }, private: { protocol: "http" } },
   });
-  const handler = publisherHandler(crypto.randomUUID());
+  const publisherRuntime = crypto.randomUUID();
+  const handler = publisherHandler(publisherRuntime);
   const restrictedHandler = publisherHandler(crypto.randomUUID());
   let phase = "publish";
   const step = (value: string) => {
@@ -38,6 +44,10 @@ export async function smoke(input: unknown) {
     step("publish");
     const publication = await publish(publisher, "web", handler.handle);
     check(publication.url === fixture.named_url, "public publication has the wrong URL");
+    check(
+      publication.run !== undefined && publication.runURL === undefined,
+      "canonical-only publication lost its run metadata or enabled an alias implicitly",
+    );
     step("public-exercise");
     const publicProof = await fixtureCall(fixture, "/exercise", publication.url);
     check(
@@ -45,6 +55,26 @@ export async function smoke(input: unknown) {
         publicProof.body === "portable-publisher" &&
         publicProof.certificate_sha256.length === 64,
       "public visitor did not verify publisher TLS",
+    );
+    step("exact-run-exercise");
+    const exactRuntime = crypto.randomUUID();
+    const exactHandler = publisherHandler(exactRuntime);
+    const exactPublication = await publish(publisher, "exact", exactHandler.handle);
+    const { runURL, run } = exactPublication;
+    check(
+      runURL !== undefined && run !== undefined && runURL !== exactPublication.url,
+      "publication omitted its exact-run address or immutable run metadata",
+    );
+    const exactCanonical = await fixtureCall(fixture, "/observe", exactPublication.url);
+    const aliasProof = await fixtureCall(fixture, "/exercise", runURL);
+    check(
+      aliasProof.status === 200 &&
+        aliasProof.service_id === run.serviceID &&
+        aliasProof.service_run_id === run.serviceRunID &&
+        String(aliasProof.run_number) === run.runNumber &&
+        aliasProof.publisher_runtime === exactRuntime &&
+        aliasProof.certificate_sha256 === exactCanonical.certificate_sha256,
+      "exact-run address lost its assigned run, handler, or verified service certificate",
     );
     step("connector");
     const connection = await connect(connector, "web");
@@ -148,6 +178,23 @@ export async function smoke(input: unknown) {
     step("connector-close");
     await connector.close();
 
+    step("alias-sibling");
+    const siblingRuntime = crypto.randomUUID();
+    const siblingHandler = publisherHandler(siblingRuntime);
+    const sibling = await publish(siblingPublisher, "exact", siblingHandler.handle);
+    check(
+      sibling.runURL !== undefined &&
+        sibling.run !== undefined &&
+        sibling.runURL !== runURL &&
+        sibling.run.serviceID === run.serviceID &&
+        sibling.run.serviceRunID !== run.serviceRunID,
+      "sibling publication reused another exact-run binding",
+    );
+    const siblingProof = await fixtureCall(fixture, "/observe", sibling.runURL);
+    check(
+      siblingProof.status === 200 && siblingProof.publisher_runtime === siblingRuntime,
+      "sibling alias selected another publisher",
+    );
     step("named-close");
     await privatePublication.close();
     await privatePublication.wait();
@@ -160,6 +207,24 @@ export async function smoke(input: unknown) {
     await restricted.wait();
     await publication.close();
     await publication.wait();
+    await exactPublication.close();
+    await exactPublication.wait();
+    step("alias-no-fallback");
+    const callsBefore = siblingHandler.calls();
+    const unavailable = await fixtureCall(fixture, "/unavailable", runURL);
+    check(
+      unavailable.status !== 200 &&
+        unavailable.active_runs === 1 &&
+        siblingHandler.calls() === callsBefore,
+      "closed exact-run address fell back to a live sibling",
+    );
+    const pooled = await fixtureCall(fixture, "/observe", exactPublication.url);
+    check(
+      pooled.status === 200 && pooled.publisher_runtime === siblingRuntime,
+      "closing one alias interrupted the pooled sibling endpoint",
+    );
+    await sibling.close();
+    await sibling.wait();
     const named = await fixtureCall(fixture, "/state", publication.url);
     check(
       named.active_runs === 0 && !named.deleted,
@@ -199,13 +264,19 @@ export async function smoke(input: unknown) {
       connectorToWasmPublisher: true,
       connectorOnlyPublication: true,
       connectorOnlyTemporary: true,
+      exactRunAliases: true,
+      noSiblingFallback: true,
       joined: true,
       runtimes: runtimeStarts(),
     };
   };
   const [result] = await Promise.allSettled([operation()]);
   console.info("publisher fixture phase: cleanup");
-  const cleanup = await Promise.allSettled([connector.close(), publisher.close()]);
+  const cleanup = await Promise.allSettled([
+    connector.close(),
+    siblingPublisher.close(),
+    publisher.close(),
+  ]);
   const failures = [
     ...(result?.status === "rejected" ? publisherFailures(result.reason, phase) : []),
     ...cleanup.flatMap((entry, index) =>

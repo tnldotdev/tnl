@@ -282,6 +282,7 @@ var typeScriptKeyMappings = map[string]string{
 	"token_file":                "tokenFile",
 	"reusable_workflow":         "reusableWorkflow",
 	"require_post_quantum":      "requirePostQuantum",
+	"run_alias_parent":          "runAliasParent",
 }
 
 // TypeScriptKeyMappings returns the static-to-TypeScript property mappings

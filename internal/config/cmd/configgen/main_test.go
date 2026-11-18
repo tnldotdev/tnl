@@ -137,7 +137,7 @@ func TestServiceSchemaKeepsDeclarationsSeparateFromBindings(t *testing.T) {
 		if public, found := binding.Properties.Get("public"); !found || public.Type != "boolean" || len(binding.AllOf) != 0 {
 			t.Fatal("binding lost independent explicit exposure")
 		}
-		for _, field := range []string{"hostname", "domain", "ephemeral", "require_post_quantum", "traffic"} {
+		for _, field := range []string{"hostname", "run_alias_parent", "domain", "ephemeral", "require_post_quantum", "traffic"} {
 			if _, found := binding.Properties.Get(field); !found {
 				t.Fatalf("binding lost direct field %s", field)
 			}

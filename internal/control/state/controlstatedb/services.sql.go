@@ -210,7 +210,7 @@ func (q *Queries) ClosedServiceRuns(ctx context.Context, runIds []string) ([]Clo
 const deleteService = `-- name: DeleteService :one
 UPDATE control.services SET enabled = false, deleted_at = $1, updated_at = $1
 WHERE id = $2 AND team_id IS NOT DISTINCT FROM $3
-    AND guest_id IS NOT DISTINCT FROM $4 AND deleted_at IS NULL RETURNING id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
+    AND guest_id IS NOT DISTINCT FROM $4 AND deleted_at IS NULL RETURNING id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, run_alias_parent, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
 `
 
 type DeleteServiceParams struct {
@@ -253,6 +253,7 @@ func (q *Queries) DeleteService(ctx context.Context, arg DeleteServiceParams) (C
 		&i.DomainID,
 		&i.CertificateHostname,
 		&i.CertificateScope,
+		&i.RunAliasParent,
 		&i.ServicePort,
 		&i.IngressPoolID,
 		&i.Public,
@@ -428,7 +429,7 @@ func (q *Queries) FindServiceInvitationRequest(ctx context.Context, arg FindServ
 }
 
 const getService = `-- name: GetService :one
-SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1 AND deleted_at IS NULL
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, run_alias_parent, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetService(ctx context.Context, id string) (ControlService, error) {
@@ -457,6 +458,7 @@ func (q *Queries) GetService(ctx context.Context, id string) (ControlService, er
 		&i.DomainID,
 		&i.CertificateHostname,
 		&i.CertificateScope,
+		&i.RunAliasParent,
 		&i.ServicePort,
 		&i.IngressPoolID,
 		&i.Public,
@@ -617,7 +619,7 @@ func (q *Queries) GetServiceSource(ctx context.Context, serviceID pgtype.Text) (
 const insertService = `-- name: InsertService :one
 INSERT INTO control.services(id, team_id, name, name_scope, created_by_identity_id, idempotency_key, request_digest, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5,
-    $6, $7, $8, $8) RETURNING id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
+    $6, $7, $8, $8) RETURNING id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, run_alias_parent, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
 `
 
 type InsertServiceParams struct {
@@ -666,6 +668,7 @@ func (q *Queries) InsertService(ctx context.Context, arg InsertServiceParams) (C
 		&i.DomainID,
 		&i.CertificateHostname,
 		&i.CertificateScope,
+		&i.RunAliasParent,
 		&i.ServicePort,
 		&i.IngressPoolID,
 		&i.Public,
@@ -1260,7 +1263,7 @@ func (q *Queries) ListServiceInvitations(ctx context.Context, arg ListServiceInv
 }
 
 const listServiceReservationCandidates = `-- name: ListServiceReservationCandidates :many
-SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, run_alias_parent, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
 WHERE team_id=$1 AND deleted_at IS NULL
     AND (name=$2 AND name_scope=$3 OR certificate_hostname=$4)
 ORDER BY id LIMIT 2
@@ -1312,6 +1315,7 @@ func (q *Queries) ListServiceReservationCandidates(ctx context.Context, arg List
 			&i.DomainID,
 			&i.CertificateHostname,
 			&i.CertificateScope,
+			&i.RunAliasParent,
 			&i.ServicePort,
 			&i.IngressPoolID,
 			&i.Public,
@@ -1335,7 +1339,7 @@ func (q *Queries) ListServiceReservationCandidates(ctx context.Context, arg List
 }
 
 const listServicesForTeam = `-- name: ListServicesForTeam :many
-SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, run_alias_parent, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
 WHERE team_id = $1 AND deleted_at IS NULL AND id > $2
 ORDER BY id LIMIT 101
 `
@@ -1377,6 +1381,7 @@ func (q *Queries) ListServicesForTeam(ctx context.Context, arg ListServicesForTe
 			&i.DomainID,
 			&i.CertificateHostname,
 			&i.CertificateScope,
+			&i.RunAliasParent,
 			&i.ServicePort,
 			&i.IngressPoolID,
 			&i.Public,
@@ -1467,7 +1472,7 @@ func (q *Queries) LockPendingServiceInvitation(ctx context.Context, arg LockPend
 }
 
 const lockService = `-- name: LockService :one
-SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1 FOR UPDATE
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, run_alias_parent, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockService(ctx context.Context, id string) (ControlService, error) {
@@ -1496,6 +1501,7 @@ func (q *Queries) LockService(ctx context.Context, id string) (ControlService, e
 		&i.DomainID,
 		&i.CertificateHostname,
 		&i.CertificateScope,
+		&i.RunAliasParent,
 		&i.ServicePort,
 		&i.IngressPoolID,
 		&i.Public,
@@ -1512,7 +1518,7 @@ func (q *Queries) LockService(ctx context.Context, id string) (ControlService, e
 }
 
 const lockServiceRun = `-- name: LockServiceRun :one
-SELECT preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open FROM control.service_runs
+SELECT preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, run_hostname, run_alias_parent, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open FROM control.service_runs
 WHERE id = $1 AND service_id = $2 FOR UPDATE
 `
 
@@ -1553,6 +1559,8 @@ func (q *Queries) LockServiceRun(ctx context.Context, arg LockServiceRunParams) 
 		&i.CertificateDomainID,
 		&i.CertificateHostname,
 		&i.CertificateNamespace,
+		&i.RunHostname,
+		&i.RunAliasParent,
 		&i.RequirePostQuantum,
 		&i.CertificateIssuanceID,
 		&i.CertificateExpiresAt,
@@ -1568,7 +1576,7 @@ func (q *Queries) LockServiceRun(ctx context.Context, arg LockServiceRunParams) 
 }
 
 const lockServiceRunsForClose = `-- name: LockServiceRunsForClose :many
-SELECT preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open FROM control.service_runs
+SELECT preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, run_hostname, run_alias_parent, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open FROM control.service_runs
 WHERE service_id=$1 AND closed_at IS NULL
 ORDER BY run_number FOR UPDATE
 `
@@ -1611,6 +1619,8 @@ func (q *Queries) LockServiceRunsForClose(ctx context.Context, serviceID string)
 			&i.CertificateDomainID,
 			&i.CertificateHostname,
 			&i.CertificateNamespace,
+			&i.RunHostname,
+			&i.RunAliasParent,
 			&i.RequirePostQuantum,
 			&i.CertificateIssuanceID,
 			&i.CertificateExpiresAt,
@@ -1633,7 +1643,7 @@ func (q *Queries) LockServiceRunsForClose(ctx context.Context, serviceID string)
 }
 
 const observeServiceRun = `-- name: ObserveServiceRun :one
-SELECT preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open FROM control.service_runs
+SELECT preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, run_hostname, run_alias_parent, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open FROM control.service_runs
 WHERE id = $1 AND service_id = $2 FOR SHARE
 `
 
@@ -1674,6 +1684,8 @@ func (q *Queries) ObserveServiceRun(ctx context.Context, arg ObserveServiceRunPa
 		&i.CertificateDomainID,
 		&i.CertificateHostname,
 		&i.CertificateNamespace,
+		&i.RunHostname,
+		&i.RunAliasParent,
 		&i.RequirePostQuantum,
 		&i.CertificateIssuanceID,
 		&i.CertificateExpiresAt,
@@ -1692,7 +1704,7 @@ const prepareServiceRun = `-- name: PrepareServiceRun :one
 INSERT INTO control.service_runs(preferred_regions, traffic_limits, id, service_id, protocol, team_id, guest_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
     request_digest, preparation_expires_at, assignment_seed_ciphertext,
-    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,require_post_quantum,state, created_at, publisher_expires_at,serving_observed_at,serving_until)
+    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,run_hostname,run_alias_parent,require_post_quantum,state, created_at, publisher_expires_at,serving_observed_at,serving_until)
 VALUES ($1, convert_from($2::bytea,'UTF8')::jsonb, $3, $4,
     (SELECT service.protocol FROM control.services service WHERE service.id=$4),$5,
     (SELECT service.guest_id FROM control.services service WHERE service.id=$4),$6,
@@ -1703,7 +1715,8 @@ VALUES ($1, convert_from($2::bytea,'UTF8')::jsonb, $3, $4,
     (SELECT endpoint.namespace FROM control.service_endpoints endpoint
         WHERE endpoint.service_id=$4 AND endpoint.hostname=$19
         AND endpoint.domain_id=$18),
-    $20, 'prepared', $21, $22,$21,$22) RETURNING preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open
+    $20,$21,
+    $22, 'prepared', $23, $24,$23,$24) RETURNING preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, run_hostname, run_alias_parent, require_post_quantum, certificate_issuance_id, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open
 `
 
 type PrepareServiceRunParams struct {
@@ -1726,6 +1739,8 @@ type PrepareServiceRunParams struct {
 	CertificateIdentifiers     []string
 	CertificateDomainID        pgtype.Text
 	CertificateHostname        string
+	RunHostname                string
+	RunAliasParent             string
 	RequirePostQuantum         bool
 	Now                        pgtype.Timestamptz
 	PublisherExpiresAt         pgtype.Timestamptz
@@ -1757,6 +1772,8 @@ func (q *Queries) PrepareServiceRun(ctx context.Context, arg PrepareServiceRunPa
 		arg.CertificateIdentifiers,
 		arg.CertificateDomainID,
 		arg.CertificateHostname,
+		arg.RunHostname,
+		arg.RunAliasParent,
 		arg.RequirePostQuantum,
 		arg.Now,
 		arg.PublisherExpiresAt,
@@ -1791,6 +1808,8 @@ func (q *Queries) PrepareServiceRun(ctx context.Context, arg PrepareServiceRunPa
 		&i.CertificateDomainID,
 		&i.CertificateHostname,
 		&i.CertificateNamespace,
+		&i.RunHostname,
+		&i.RunAliasParent,
 		&i.RequirePostQuantum,
 		&i.CertificateIssuanceID,
 		&i.CertificateExpiresAt,
@@ -1865,7 +1884,7 @@ WHERE run.id = $2 AND run.run_number = $3
         WHERE slot.service_run_id = run.id AND slot.state = 'ready' AND slot.session_open
         GROUP BY slot.service_run_id
         HAVING count(*) >= CASE WHEN run.ready_at IS NULL THEN 2 ELSE 1 END)
-RETURNING run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.guest_id, run.protocol, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_namespace, run.require_post_quantum, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.serving_observed_at, run.serving_until, run.ready_at, run.closed_at, run.assignments_open
+RETURNING run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.guest_id, run.protocol, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_namespace, run.run_hostname, run.run_alias_parent, run.require_post_quantum, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.serving_observed_at, run.serving_until, run.ready_at, run.closed_at, run.assignments_open
 `
 
 type ReadyServiceRunParams struct {
@@ -1912,6 +1931,8 @@ func (q *Queries) ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams
 		&i.CertificateDomainID,
 		&i.CertificateHostname,
 		&i.CertificateNamespace,
+		&i.RunHostname,
+		&i.RunAliasParent,
 		&i.RequirePostQuantum,
 		&i.CertificateIssuanceID,
 		&i.CertificateExpiresAt,
@@ -1952,7 +1973,7 @@ WHERE run.id = $4 AND run.run_number = $5
     AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,$8))
     AND EXISTS(SELECT 1 FROM control.publisher_identity_keys signing WHERE signing.id=run.publisher_key_id
         AND signing.publisher_identity_id=run.publisher_identity_id AND (publisher_grant.kind='service' OR signing.retired_at IS NULL))
-RETURNING run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.guest_id, run.protocol, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_namespace, run.require_post_quantum, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.serving_observed_at, run.serving_until, run.ready_at, run.closed_at, run.assignments_open
+RETURNING run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.guest_id, run.protocol, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_namespace, run.run_hostname, run.run_alias_parent, run.require_post_quantum, run.certificate_issuance_id, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.serving_observed_at, run.serving_until, run.ready_at, run.closed_at, run.assignments_open
 `
 
 type RenewServiceRunParams struct {
@@ -2007,6 +2028,8 @@ func (q *Queries) RenewServiceRun(ctx context.Context, arg RenewServiceRunParams
 		&i.CertificateDomainID,
 		&i.CertificateHostname,
 		&i.CertificateNamespace,
+		&i.RunHostname,
+		&i.RunAliasParent,
 		&i.RequirePostQuantum,
 		&i.CertificateIssuanceID,
 		&i.CertificateExpiresAt,
@@ -2081,7 +2104,7 @@ func (q *Queries) RevokeServiceInvitationGrant(ctx context.Context, arg RevokeSe
 }
 
 const selectServiceForPublisher = `-- name: SelectServiceForPublisher :one
-SELECT s.id, s.team_id, s.guest_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.configuration_ciphertext, s.storage_key_id, s.trust_revision, s.endpoint_revision, s.service_revision, s.visitor_revision, s.publisher_pool, s.ephemeral, s.expires_at, s.require_post_quantum, s.domain_id, s.certificate_hostname, s.certificate_scope, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at FROM control.services s
+SELECT s.id, s.team_id, s.guest_id, s.name, s.name_scope, s.placement_worktree_key, s.placement_worktree_label, s.protocol, s.tls_metadata, s.configuration_ciphertext, s.storage_key_id, s.trust_revision, s.endpoint_revision, s.service_revision, s.visitor_revision, s.publisher_pool, s.ephemeral, s.expires_at, s.require_post_quantum, s.domain_id, s.certificate_hostname, s.certificate_scope, s.run_alias_parent, s.service_port, s.ingress_pool_id, s.public, s.created_by_identity_id, s.idempotency_key, s.request_digest, s.enabled, s.next_run_number, s.created_at, s.updated_at, s.deleted_at FROM control.services s
 WHERE s.id = $1
 AND EXISTS(SELECT 1 FROM control.publisher_service_permission(
     $2::text,$3::text,s.id,$4))
@@ -2126,6 +2149,7 @@ func (q *Queries) SelectServiceForPublisher(ctx context.Context, arg SelectServi
 		&i.DomainID,
 		&i.CertificateHostname,
 		&i.CertificateScope,
+		&i.RunAliasParent,
 		&i.ServicePort,
 		&i.IngressPoolID,
 		&i.Public,
@@ -2163,7 +2187,7 @@ func (q *Queries) SetServiceConfiguration(ctx context.Context, arg SetServiceCon
 
 const setServiceEnabled = `-- name: SetServiceEnabled :one
 UPDATE control.services SET enabled=$1,updated_at=$2
-WHERE id=$3 AND deleted_at IS NULL RETURNING id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
+WHERE id=$3 AND deleted_at IS NULL RETURNING id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, run_alias_parent, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at
 `
 
 type SetServiceEnabledParams struct {
@@ -2198,6 +2222,7 @@ func (q *Queries) SetServiceEnabled(ctx context.Context, arg SetServiceEnabledPa
 		&i.DomainID,
 		&i.CertificateHostname,
 		&i.CertificateScope,
+		&i.RunAliasParent,
 		&i.ServicePort,
 		&i.IngressPoolID,
 		&i.Public,

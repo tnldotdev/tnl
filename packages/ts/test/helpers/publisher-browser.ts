@@ -34,6 +34,11 @@ export async function exerciseBrowserPublication() {
         return {
           public: true,
           url: "https://app.example.test",
+          run: {
+            serviceID: `svc_${"S".repeat(22)}`,
+            serviceRunID: `srun_${"R".repeat(22)}`,
+            runNumber: "1",
+          },
           ready: Promise.resolve(),
           closed: completed.promise,
           async close() {

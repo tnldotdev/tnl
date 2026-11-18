@@ -1127,6 +1127,7 @@ ALTER TABLE control.shares ADD CONSTRAINT shares_entry_service_fkey
 CREATE TABLE control.share_cookies (
     token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest) = 32),
     share_id text NOT NULL, service_id text NOT NULL,
+    hostname text NOT NULL CHECK (hostname<>''),
     created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at > created_at),
     FOREIGN KEY (share_id,service_id) REFERENCES control.share_services(share_id,service_id) ON DELETE CASCADE
 );
@@ -1134,6 +1135,7 @@ CREATE INDEX share_cookies_by_service ON control.share_cookies(service_id, expir
 CREATE TABLE control.share_handoffs (
     token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest) = 32),
     share_id text NOT NULL, service_id text NOT NULL,
+    hostname text NOT NULL CHECK (hostname<>''),
     run_ids text[] NOT NULL CHECK (cardinality(run_ids) BETWEEN 1 AND 256),
     redirect_url text NOT NULL CHECK (redirect_url LIKE 'https://%'), bridge boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at > created_at), consumed_at timestamptz,
@@ -1320,6 +1322,7 @@ CREATE TABLE control.services (
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT,
     certificate_hostname text NOT NULL DEFAULT '',
     certificate_scope text NOT NULL DEFAULT '',
+    run_alias_parent text NOT NULL DEFAULT '' CHECK (length(run_alias_parent)<=224),
     service_port integer CHECK (service_port IS NULL
         OR protocol='http' AND service_port=443
         OR protocol<>'http' AND (service_port=0 OR service_port BETWEEN 1024 AND 65535)),
@@ -1390,8 +1393,8 @@ CREATE TRIGGER retire_service_port AFTER UPDATE ON control.services FOR EACH ROW
 -- +goose StatementBegin
 CREATE FUNCTION control.advance_service_endpoint_revision() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF (OLD.certificate_hostname,OLD.domain_id,OLD.ingress_pool_id,OLD.service_port,OLD.public)
-        IS DISTINCT FROM (NEW.certificate_hostname,NEW.domain_id,NEW.ingress_pool_id,NEW.service_port,NEW.public) THEN
+    IF (OLD.certificate_hostname,OLD.domain_id,OLD.ingress_pool_id,OLD.service_port,OLD.public,OLD.run_alias_parent)
+        IS DISTINCT FROM (NEW.certificate_hostname,NEW.domain_id,NEW.ingress_pool_id,NEW.service_port,NEW.public,NEW.run_alias_parent) THEN
         NEW.endpoint_revision := OLD.endpoint_revision+1;
     END IF;
     RETURN NEW;
@@ -1410,13 +1413,13 @@ BEGIN
         OLD.protocol,OLD.tls_metadata,OLD.configuration_ciphertext,OLD.storage_key_id,
         OLD.trust_revision,OLD.visitor_revision,OLD.publisher_pool,OLD.ephemeral,OLD.expires_at,
         OLD.require_post_quantum,OLD.domain_id,OLD.certificate_hostname,OLD.certificate_scope,
-        OLD.service_port,OLD.ingress_pool_id,OLD.public,OLD.enabled,OLD.deleted_at)
+        OLD.service_port,OLD.ingress_pool_id,OLD.public,OLD.enabled,OLD.deleted_at,OLD.run_alias_parent)
         IS DISTINCT FROM
        (NEW.name,NEW.name_scope,NEW.placement_worktree_key,NEW.placement_worktree_label,
         NEW.protocol,NEW.tls_metadata,NEW.configuration_ciphertext,NEW.storage_key_id,
         NEW.trust_revision,NEW.visitor_revision,NEW.publisher_pool,NEW.ephemeral,NEW.expires_at,
         NEW.require_post_quantum,NEW.domain_id,NEW.certificate_hostname,NEW.certificate_scope,
-        NEW.service_port,NEW.ingress_pool_id,NEW.public,NEW.enabled,NEW.deleted_at) THEN
+        NEW.service_port,NEW.ingress_pool_id,NEW.public,NEW.enabled,NEW.deleted_at,NEW.run_alias_parent) THEN
         NEW.service_revision := OLD.service_revision+1;
     END IF;
     RETURN NEW;
@@ -1520,6 +1523,11 @@ CREATE TABLE control.service_runs (
     certificate_hostname text NOT NULL DEFAULT '',
     -- endpoint namespace at preparation, retained after hostname reassignment.
     certificate_namespace text NOT NULL CHECK (certificate_namespace<>''),
+    run_hostname text NOT NULL DEFAULT '',
+    run_alias_parent text NOT NULL DEFAULT '',
+    CHECK ((run_hostname='')=(run_alias_parent='')),
+    CHECK (run_hostname='' OR protocol='http' AND run_hostname<>certificate_hostname
+        AND run_hostname LIKE 'r-%.'||run_alias_parent),
     require_post_quantum boolean NOT NULL DEFAULT false,
     certificate_issuance_id text REFERENCES control.acme_orders(id) ON DELETE RESTRICT,
     certificate_expires_at timestamptz,
@@ -1540,7 +1548,7 @@ CREATE TABLE control.service_runs (
     FOREIGN KEY (publisher_grant_id, publisher_identity_id) REFERENCES control.publisher_grants(id, publisher_identity_id) ON DELETE RESTRICT,
     FOREIGN KEY (publisher_key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT,
     UNIQUE (service_id, run_number), UNIQUE (service_id,publisher_identity_id,idempotency_key),
-    UNIQUE (id, service_id, run_number), UNIQUE (id, assignments_open), UNIQUE (id,team_id), UNIQUE (id,guest_id),
+    UNIQUE (id, service_id, run_number), UNIQUE (id,service_id,run_hostname), UNIQUE (id, assignments_open), UNIQUE (id,team_id), UNIQUE (id,guest_id),
     CHECK ((state = 'closed') = (closed_at IS NOT NULL)),
     CHECK (state <> 'ready' OR ready_at IS NOT NULL),
     CHECK (certificate_domain_id IS NOT NULL AND certificate_hostname<>''
@@ -1551,6 +1559,7 @@ CREATE TABLE control.service_runs (
     CHECK (state <> 'prepared' OR started_at IS NULL)
 );
 CREATE UNIQUE INDEX service_runs_active ON control.service_runs(service_id, publisher_identity_id) WHERE closed_at IS NULL;
+CREATE UNIQUE INDEX service_runs_alias_hostname ON control.service_runs(run_hostname) WHERE run_hostname<>'';
 CREATE UNIQUE INDEX service_runs_guest_active ON control.service_runs(guest_id) WHERE guest_id IS NOT NULL AND closed_at IS NULL;
 CREATE INDEX service_runs_expiring ON control.service_runs(publisher_expires_at) WHERE closed_at IS NULL;
 CREATE INDEX service_runs_serving_expiring ON control.service_runs(serving_until) WHERE closed_at IS NULL;
@@ -1593,6 +1602,10 @@ BEGIN
     IF TG_TABLE_NAME='service_runs' THEN
         IF OLD.protocol IS DISTINCT FROM NEW.protocol THEN
             RAISE EXCEPTION 'service run protocol is immutable' USING ERRCODE='23514';
+        END IF;
+        IF (OLD.run_hostname,OLD.run_alias_parent)
+            IS DISTINCT FROM (NEW.run_hostname,NEW.run_alias_parent) THEN
+            RAISE EXCEPTION 'service run alias is immutable' USING ERRCODE='23514';
         END IF;
     END IF;
     RETURN NEW;
@@ -1784,6 +1797,7 @@ CREATE TABLE control.service_http_browser_handoffs (
     token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest)=32),
     session_digest bytea NOT NULL REFERENCES control.service_http_browser_sessions(token_digest) ON DELETE CASCADE,
     service_id text NOT NULL REFERENCES control.services(id),
+    hostname text NOT NULL CHECK (hostname<>''),
     run_ids text[] NOT NULL CHECK (cardinality(run_ids) BETWEEN 1 AND 256),
     cookie_ciphertext bytea NOT NULL,
     storage_key_id text NOT NULL,
@@ -1959,6 +1973,7 @@ CREATE TABLE control.service_namespace_claims (
 CREATE TABLE control.service_endpoints (
     hostname text PRIMARY KEY CHECK (hostname<>''),
     service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
+    service_run_id text REFERENCES control.service_runs(id) ON DELETE RESTRICT,
     deployment_id text REFERENCES control.deployments(id) ON DELETE RESTRICT,
     local_source_key text NOT NULL DEFAULT '',
     domain_id text NOT NULL REFERENCES control.domains(id) ON DELETE RESTRICT,
@@ -1980,7 +1995,9 @@ CREATE TABLE control.service_endpoints (
     reusable_after timestamptz,
     CHECK ((retired_at IS NULL)=(reusable_after IS NULL)),
     CHECK ((dns_state IN ('pending','removing'))=(dns_available_at IS NOT NULL)),
-    CHECK ((dns_work_owner IS NULL)=(dns_work_expires_at IS NULL))
+    CHECK ((dns_work_owner IS NULL)=(dns_work_expires_at IS NULL)),
+    FOREIGN KEY(service_run_id,service_id,hostname)
+        REFERENCES control.service_runs(id,service_id,run_hostname) ON DELETE RESTRICT
 );
 CREATE INDEX service_endpoints_dns_work ON control.service_endpoints(dns_available_at,hostname) WHERE dns_available_at IS NOT NULL;
 -- exact service ownership survives endpoint handoff and local binding replacement.
@@ -2007,6 +2024,45 @@ $$;
 -- +goose StatementEnd
 CREATE TRIGGER protect_service_source_owner BEFORE UPDATE OR DELETE ON control.service_source_owners
 FOR EACH ROW EXECUTE FUNCTION control.protect_service_source_owner();
+-- current alias approval is shared by policy preparation, browser handoffs, and
+-- token issuance. callers separately enforce their run state and deadline.
+-- +goose StatementBegin
+CREATE FUNCTION control.service_run_alias_current(run_id text, requested_hostname text)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT EXISTS(
+        SELECT 1 FROM control.service_runs run
+        JOIN control.services service ON service.id=run.service_id
+        JOIN control.service_endpoints alias ON alias.service_id=service.id
+            AND alias.service_run_id=run.id AND alias.hostname=run.run_hostname
+            AND alias.domain_id=service.domain_id AND alias.retired_at IS NULL AND alias.public
+        WHERE run.id=run_id AND run.run_hostname=requested_hostname AND requested_hostname<>''
+            AND service.protocol='http' AND service.public AND service.enabled AND service.deleted_at IS NULL
+            AND run.closed_at IS NULL AND run.run_alias_parent=service.run_alias_parent
+            AND run.certificate_hostname=service.certificate_hostname
+            AND run.certificate_domain_id=service.domain_id);
+$$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE FUNCTION control.retire_service_run_alias() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.closed_at IS NULL AND NEW.closed_at IS NOT NULL THEN
+        UPDATE control.service_endpoints SET retired_at=NEW.closed_at,
+            reusable_after=GREATEST(NEW.closed_at+interval '7 days',COALESCE(NEW.certificate_expires_at,NEW.closed_at)),
+            public=false,
+            dns_state=CASE WHEN dns_state IN('unmanaged','removed') THEN 'removed' ELSE 'removing' END,
+            dns_available_at=CASE WHEN dns_state IN('unmanaged','removed') THEN NULL ELSE NEW.closed_at END,
+            dns_revision=dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL
+        WHERE service_run_id=NEW.id AND retired_at IS NULL;
+        UPDATE control.service_namespace_claims SET retired_at=COALESCE(retired_at,NEW.closed_at),
+            reusable_after=GREATEST(NEW.closed_at+interval '7 days',COALESCE(NEW.certificate_expires_at,NEW.closed_at))
+        WHERE namespace=NEW.run_hostname AND retired_at IS NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER retire_service_run_alias AFTER UPDATE OF closed_at ON control.service_runs
+    FOR EACH ROW EXECUTE FUNCTION control.retire_service_run_alias();
 -- one resource-scoped identity permission rule reads current authentication and
 -- grant facts. allocation ownership comes from its original grant and actual
 -- namespace/deployment endpoint, never a creator or a presented publisher token.
@@ -2072,7 +2128,12 @@ CREATE FUNCTION control.retire_service_endpoints(service text,keep text,retired 
         dns_state=CASE WHEN dns_state IN('unmanaged','removed') THEN 'removed' ELSE 'removing' END,
         dns_available_at=CASE WHEN dns_state IN('unmanaged','removed') THEN NULL ELSE retired END,
         dns_revision=dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL
-        WHERE service_id=service AND hostname<>keep AND retired_at IS NULL;
+        WHERE service_id=service AND hostname<>keep AND retired_at IS NULL
+          AND (service_run_id IS NULL OR keep='' OR NOT EXISTS(
+            SELECT 1 FROM control.service_runs run JOIN control.services current ON current.id=run.service_id
+            WHERE run.id=endpoint.service_run_id AND run.certificate_hostname=keep
+              AND run.certificate_domain_id IS NOT DISTINCT FROM current.domain_id
+              AND run.run_alias_parent=current.run_alias_parent));
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
@@ -2083,7 +2144,7 @@ CREATE FUNCTION control.service_namespace_reusable(scope text,observed timestamp
         WHERE service.deleted_at IS NULL AND EXISTS(SELECT 1 FROM control.service_endpoints endpoint
             WHERE endpoint.service_id=service.id AND endpoint.hostname=service.certificate_hostname AND endpoint.namespace=scope AND endpoint.retired_at IS NULL))
       AND NOT EXISTS(SELECT 1 FROM control.service_runs run
-        WHERE (run.certificate_scope=scope OR run.certificate_namespace=scope OR EXISTS(SELECT 1 FROM control.service_endpoints endpoint
+        WHERE (run.certificate_scope=scope OR run.certificate_namespace=scope OR run.run_hostname=scope OR EXISTS(SELECT 1 FROM control.service_endpoints endpoint
             WHERE endpoint.hostname=run.certificate_hostname AND endpoint.namespace=scope))
         AND(run.certificate_expires_at>observed OR run.closed_at IS NULL AND run.publisher_expires_at>observed))
       AND NOT EXISTS(SELECT 1 FROM control.acme_orders issuance

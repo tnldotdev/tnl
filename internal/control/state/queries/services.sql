@@ -195,7 +195,7 @@ ORDER BY s.id LIMIT 101;
 INSERT INTO control.service_runs(preferred_regions, traffic_limits, id, service_id, protocol, team_id, guest_id, run_number,
     publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key,
     request_digest, preparation_expires_at, assignment_seed_ciphertext,
-    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,require_post_quantum,state, created_at, publisher_expires_at,serving_observed_at,serving_until)
+    assignment_seed_storage_key_id, certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,certificate_hostname,certificate_namespace,run_hostname,run_alias_parent,require_post_quantum,state, created_at, publisher_expires_at,serving_observed_at,serving_until)
 VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::bytea,'UTF8')::jsonb, sqlc.arg(id), sqlc.arg(service_id),
     (SELECT service.protocol FROM control.services service WHERE service.id=sqlc.arg(service_id)),sqlc.narg(team_id),
     (SELECT service.guest_id FROM control.services service WHERE service.id=sqlc.arg(service_id)),sqlc.arg(run_number),
@@ -206,6 +206,7 @@ VALUES (sqlc.arg(preferred_regions), convert_from(sqlc.arg(traffic_limits)::byte
     (SELECT endpoint.namespace FROM control.service_endpoints endpoint
         WHERE endpoint.service_id=sqlc.arg(service_id) AND endpoint.hostname=sqlc.arg(certificate_hostname)
         AND endpoint.domain_id=sqlc.narg(certificate_domain_id)),
+    sqlc.arg(run_hostname),sqlc.arg(run_alias_parent),
     sqlc.arg(require_post_quantum), 'prepared', sqlc.arg(now), sqlc.arg(publisher_expires_at),sqlc.arg(now),sqlc.arg(publisher_expires_at)) RETURNING *;
 
 -- name: LockServiceRun :one

@@ -539,6 +539,12 @@ export function createClient<const Services extends ServiceFacts = Record<never,
               }));
             const handle: Publication = Object.freeze({
               ...(base.url === undefined ? {} : { url: base.url }),
+              get runURL() {
+                return base.runURL;
+              },
+              get run() {
+                return base.run;
+              },
               close,
               wait: () => base.wait(),
               [Symbol.asyncDispose]: close,
