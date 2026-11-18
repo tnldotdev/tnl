@@ -23,6 +23,9 @@ importers:
       '@medv/finder':
         specifier: 4.0.2
         version: 4.0.2
+      '@prisma/adapter-pg':
+        specifier: 7.10.1
+        version: 7.10.1
       '@tanstack/react-query':
         specifier: 5.104.1
         version: 5.104.1(react@19.3.0)
@@ -64,7 +67,7 @@ importers:
         version: 0.31.11
       drizzle-orm:
         specifier: 0.45.4
-        version: 0.45.4(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(bun-types@1.4.2)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.9)
+        version: 0.45.4(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(bun-types@1.4.2)(kysely@0.29.9)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.9)
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -74,6 +77,9 @@ importers:
       json-schema-to-typescript:
         specifier: 16.0.0
         version: 16.0.0
+      kysely:
+        specifier: 0.29.9
+        version: 0.29.9
       mysql2:
         specifier: 3.24.6
         version: 3.24.6(@types/node@22.20.5)
@@ -1186,6 +1192,15 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@prisma/adapter-pg@7.10.1':
+    resolution: {integrity: sha512-EP9ruPYHjKP80WZlb5qVaEXKgZjJieBFjAxcBtQnDAHD6+16UN4keVmBh6L/RUpuDQT2FQRbvKNgq5d4Ix+IkQ==}
+
+  '@prisma/debug@7.10.1':
+    resolution: {integrity: sha512-eFCAkGZ13D/qPg48JBlG5IWi9cSBBOC7oG3abDPcAkYioDWlIjh0YJJLK2J7qo5S+xWWD8I6egAN/8KbCaiMCA==}
+
+  '@prisma/driver-adapter-utils@7.10.1':
+    resolution: {integrity: sha512-DJ4c6xvVnm3s9ZUyql9nCUicADSqyvH+CjXRCM9L6m5zJxCNmebCElG6X4irICq3rosBwlX+S19Dxq/4IrZk3A==}
+
   '@rolldown/binding-android-arm-eabi@1.2.15':
     resolution: {integrity: sha512-aLcgK9gIJ3YRvrrtfSBbRa27F5WrpiTaPulnFpsHPxpUHgFlSgnU4854MHwoRGEBhfRJDWCS2WQ7lIjskE9Olw==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2112,6 +2127,10 @@ packages:
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
 
+  kysely@0.29.9:
+    resolution: {integrity: sha512-K48ErswC3MlIcBqR0pYIIEl+n9rIgwxgzaM1FxKHMXn7egxr1NHj7bCeF98mXl9A3/QoL5I7mo5S/mLXgeDgGA==}
+    engines: {node: '>=22.0.0'}
+
   lightningcss-android-arm64@1.33.0:
     resolution: {integrity: sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==}
     engines: {node: '>= 12.0.0'}
@@ -2421,6 +2440,10 @@ packages:
   postgres-array@2.0.0:
     resolution: {integrity: sha512-VpZrUqU5A69eQyW2c5CA1jtLecCsN2U/bD6VilrFDWq5+5UIEVO7nazS3TEcHf1zuPYO/sqGvUvW62g86RXZuA==}
     engines: {node: '>=4'}
+
+  postgres-array@3.0.4:
+    resolution: {integrity: sha512-nAUSGfSDGOaOAEGwqsRY27GPOea7CNipJPOA7lPbdEpx5Kg3qzdP0AaWC5MlhTWV9s4hFX39nomVZ+C4tnGOJQ==}
+    engines: {node: '>=12'}
 
   postgres-bytea@1.0.1:
     resolution: {integrity: sha512-5+5HqXnsZPE65IJZSMkZtURARZelel2oXUEO8rH83VS/hxH5vv1uHquPg5wZs8yMAfdv971IU+kcPUczi7NVBQ==}
@@ -3502,6 +3525,21 @@ snapshots:
   '@oxlint/binding-win32-x64-msvc@1.87.0':
     optional: true
 
+  '@prisma/adapter-pg@7.10.1':
+    dependencies:
+      '@prisma/driver-adapter-utils': 7.10.1
+      '@types/pg': 8.23.1
+      pg: 8.23.1
+      postgres-array: 3.0.4
+    transitivePeerDependencies:
+      - pg-native
+
+  '@prisma/debug@7.10.1': {}
+
+  '@prisma/driver-adapter-utils@7.10.1':
+    dependencies:
+      '@prisma/debug': 7.10.1
+
   '@rolldown/binding-android-arm-eabi@1.2.15':
     optional: true
 
@@ -3952,11 +3990,12 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.23.1
 
-  drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(bun-types@1.4.2)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.9):
+  drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(bun-types@1.4.2)(kysely@0.29.9)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.9):
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
       '@types/pg': 8.23.1
       bun-types: 1.4.2
+      kysely: 0.29.9
       mysql2: 3.24.6(@types/node@22.20.5)
       pg: 8.23.1
       postgres: 3.4.9
@@ -4319,6 +4358,8 @@ snapshots:
 
   json-schema-traverse@1.0.0: {}
 
+  kysely@0.29.9: {}
+
   lightningcss-android-arm64@1.33.0:
     optional: true
 
@@ -4610,6 +4651,8 @@ snapshots:
       source-map-js: 1.2.2
 
   postgres-array@2.0.0: {}
+
+  postgres-array@3.0.4: {}
 
   postgres-bytea@1.0.1: {}
 
