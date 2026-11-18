@@ -53,3 +53,28 @@ test("portable connections preserve logical names without claiming native driver
   connect(remote, "missing");
   await remote.close();
 });
+
+test("portable workloads use an explicit assertion in place of a token", async () => {
+  const options = {
+    project: "acme/shop",
+    services: { web: { protocol: "http" } } as const,
+  };
+  const remote = deployment("production", {
+    ...options,
+    workload: {
+      name: "reader",
+      sourceFingerprint: "fingerprint",
+      assertion: async (signal) => {
+        assertType<AbortSignal>(signal);
+        return "assertion";
+      },
+    },
+  });
+  assertType<TnlStreamConnectionRegistry["http"]>(await connect(remote, "web"));
+  // @ts-expect-error a portable workload cannot use a deployment token.
+  deployment("production", {
+    ...options,
+    token: "private",
+    workload: { name: "reader", sourceFingerprint: "fingerprint", assertion: () => "assertion" },
+  });
+});

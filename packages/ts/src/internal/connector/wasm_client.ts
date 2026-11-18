@@ -86,11 +86,25 @@ export interface StreamDeployment<Services extends ServiceFacts> {
   close(): Promise<void>;
 }
 
-export interface StreamClientOptions<
-  Services extends ServiceFacts,
-> extends DeploymentOptions<Services> {
+export type StreamClientOptions<Services extends ServiceFacts> = {
+  readonly controlUrl?: string;
   /** application-owned private storage; browsers otherwise use indexeddb. */
   readonly publisherStorage?: PublisherStorage;
+} & (
+  | (DeploymentOptions<Services> & { readonly workload?: never })
+  | {
+      readonly project: string;
+      readonly services: Services;
+      readonly token?: never;
+      readonly workload: PortableWorkloadOptions;
+    }
+);
+
+export interface PortableWorkloadOptions {
+  readonly name: string;
+  readonly sourceFingerprint: string;
+  /** return a fresh assertion when called, and stop pending I/O when aborted. */
+  readonly assertion: (signal: AbortSignal) => string | PromiseLike<string>;
 }
 
 export type RuntimeKind = "connector" | "publisher";
@@ -118,8 +132,25 @@ const optionsSchema = z
       .refine((value) => Object.keys(value).length <= 32)
       .exactOptional(),
     publisherStorage: z.custom<PublisherStorage>(isPublisherStorage).exactOptional(),
+    controlUrl: z.string().min(1).max(1024).exactOptional(),
+    workload: z
+      .strictObject({
+        name: serviceNameSchema,
+        sourceFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+        assertion: z.custom<PortableWorkloadOptions["assertion"]>(
+          (value) => typeof value === "function",
+        ),
+      })
+      .exactOptional(),
   })
-  .refine((value) => value.services !== undefined || value.project !== undefined);
+  .refine((value) =>
+    value.workload === undefined
+      ? value.services !== undefined || value.project !== undefined
+      : value.project !== undefined &&
+        value.token === undefined &&
+        value.services !== undefined &&
+        Object.keys(value.services).length > 0,
+  );
 const metadataSchema = z.strictObject({
   key: z.string().min(1).max(4096),
   protocol: protocolSchema,
@@ -156,6 +187,7 @@ function bridgeError(error: unknown): TnlError {
   if (typeof error === "object" && error !== null && "code" in error) {
     switch (error.code) {
       case "sdk.authentication_required":
+      case "sdk.workload_assertion_unavailable":
       case "sdk.configuration_invalid":
       case "sdk.connection_unavailable":
       case "sdk.client_capacity":
@@ -181,8 +213,8 @@ function throwFailures(results: PromiseSettledResult<unknown>[], ignored?: unkno
 }
 
 /**
- * explicit portable credentials only: no process environment, filesystem,
- * provider token acquisition, installed owner, or local target discovery.
+ * explicit portable credentials or a request-scoped workload assertion.
+ * no process environment, filesystem, installed owner, or local discovery.
  */
 export function createStreamClient<const Services extends ServiceFacts = Record<never, never>>(
   options: StreamClientOptions<Services>,
@@ -191,7 +223,7 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
 ) {
   const parsed = optionsSchema.safeParse(options);
   if (!parsed.success) throw new TnlError("sdk.configuration_invalid");
-  const { project, token, publisherStorage } = parsed.data;
+  const { project, token, publisherStorage, workload, controlUrl } = parsed.data;
   const protocols = new Map(
     Object.entries(parsed.data.services ?? {}).map(([name, service]) => [name, service.protocol]),
   );
@@ -201,7 +233,7 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
       if (
         (!serviceNameSchema.safeParse(name).success && !/^dpl_[A-Za-z0-9]{22}$/.test(name)) ||
         project === undefined ||
-        token === undefined
+        (token === undefined && workload === undefined)
       )
         throw new TnlError("sdk.configuration_invalid");
       const selectedProject = project;
@@ -266,10 +298,32 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
           if (typeof current.bridge.createDeployment !== "function")
             throw new TnlError("sdk.wasm_invalid");
           const value = await current.bridge.createDeployment(
-            // facts include publish-only services. connect authorizes the exact
-            // requested name, not every declaration in the project.
-            { project: selectedProject, name, credential, services: [] },
-            { fetch: globalThis.fetch.bind(globalThis), WebSocket: globalThis.WebSocket },
+            // registered credentials may include publish-only facts; workload
+            // exchange instead requests the exact set of selected names.
+            {
+              project: selectedProject,
+              name,
+              ...(controlUrl === undefined ? {} : { controlUrl }),
+              ...(credential === undefined ? {} : { credential }),
+              ...(workload === undefined
+                ? { services: [] }
+                : {
+                    workload: {
+                      name: workload.name,
+                      sourceFingerprint: workload.sourceFingerprint,
+                    },
+                    services: [...protocols.keys()],
+                  }),
+            },
+            {
+              fetch: globalThis.fetch.bind(globalThis),
+              WebSocket: globalThis.WebSocket,
+              ...(workload === undefined
+                ? {}
+                : {
+                    assertion: async (signal: AbortSignal) => workload.assertion(signal),
+                  }),
+            },
             lifetime.signal,
           );
           if (isClosable(value)) backend = value;
@@ -444,6 +498,7 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
           third?: NamedPublicationOptions,
         ): Promise<Publication> {
           if (closed) throw closedError;
+          if (credential === undefined) throw new TnlError("sdk.authentication_required");
           if (publications.size + pending.size >= 64) throw new TnlError("sdk.client_capacity");
           const service = typeof first === "string" ? first : undefined;
           const handler = typeof first === "string" ? second : first;

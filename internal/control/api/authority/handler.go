@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/oidc"
@@ -134,13 +135,21 @@ func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 	// the existing signed assertion exchange also serves explicit deployment
 	// credentials. no cookie login, session refresh, enrollment, or rotation
 	// operation is exposed to cross-origin Fetch.
-	browserRouter := serverhttp.NewCredentialCORSRouter(mux, map[string]serverhttp.CredentialCORSHeaders{
-		"POST /v1/publisher-token": {Request: []string{"Content-Type"}},
-	})
+	portable := map[string]serverhttp.CredentialCORSHeaders{
+		"POST /v1/publisher-token":                           {Request: []string{"Content-Type"}},
+		"POST /v1/workload-sessions/exchange":                {Request: []string{"Content-Type"}},
+		"POST /v1/workload-sessions/{session_id}/assertions": {Request: []string{"Authorization", "Content-Type"}},
+		"POST /v1/workload-sessions/{session_id}/renew":      {Request: []string{"Authorization", "Content-Type"}},
+		"DELETE /v1/workload-sessions/{session_id}":          {Request: []string{"Authorization"}},
+	}
+	browserRouter := serverhttp.NewCredentialCORSRouter(mux, portable)
 	authorityv1.HandlerWithOptions(h, authorityv1.StdHTTPServerOptions{
 		BaseRouter: routeRegistrar{CredentialCORSRouter: browserRouter, routes: routes}, ErrorHandlerFunc: parameterError,
 	})
-	routes["OPTIONS /v1/publisher-token"] = struct{}{}
+	for pattern := range portable {
+		_, path, _ := strings.Cut(pattern, " ")
+		routes["OPTIONS "+path] = struct{}{}
+	}
 	return routes, nil
 }
 

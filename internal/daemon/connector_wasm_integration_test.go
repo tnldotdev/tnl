@@ -36,6 +36,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
 	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -81,6 +82,7 @@ type wasmFixtureDescriptor struct {
 	Postgres           wasmFixtureCredentials               `json:"postgres"`
 	MySQL              wasmFixtureCredentials               `json:"mysql"`
 	KubernetesToken    string                               `json:"kubernetes_token"`
+	SourceFingerprint  string                               `json:"source_fingerprint"`
 }
 
 // reuse the separated daemon fixture and native publication owner. this test
@@ -111,7 +113,7 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	mySQLTarget, mySQLCredentials, mySQLTrust := wasmMySQLTarget(t)
-	f := newServiceRuntimeFixtureTiming(t, false, nil, false)
+	f, issuer := newWorkloadTransportFixture(t)
 	proxies, relays, pins := wasmFixtureRelays(t, f)
 	pgConfig, observer := wasmPostgresTarget(t, f)
 	tcpTarget := startPrivateEchoTarget(t, f.owner)
@@ -144,6 +146,16 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 	deployment := "portable"
 	declarations := controlv1.ProjectServiceDeclarations{"http": "http", "tcp": "tcp", "postgres": "postgres", "mysql": "mysql", "kubernetes": "kubernetes"}
 	configuration := controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{}, Webhooks: map[string]controlv1.ProjectWebhook{}}
+	configuration.Workloads = new(map[string]controlv1.ProjectWorkload{
+		"portable-reader": {
+			Deployment: deployment, Provider: controlv1.WorkloadGitHub,
+			Github: &controlv1.ProjectWorkloadGitHub{
+				Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789",
+				WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"},
+			},
+			Services: []string{"http"}, MaxDurationSeconds: 90,
+		},
+	})
 	targets := map[string]string{
 		"http": strings.TrimPrefix(httpTarget.URL, "http://"), "tcp": tcpTarget.address,
 		"postgres": net.JoinHostPort(pgConfig.Host, strconv.Itoa(int(pgConfig.Port))),
@@ -210,14 +222,14 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 	}
 	apiToken := wasmFixtureSecret(t)
 	stopped := make(chan struct{})
-	api := wasmFixtureAPI(t, f, apiToken, stopped, proxies, observer, services["postgres"])
+	api := wasmFixtureAPI(t, f, apiToken, stopped, proxies, observer, services["postgres"], issuer)
 	descriptor := wasmFixtureDescriptor{
 		Version: 1, Project: teamName + "/workload", Deployment: deployment, Token: token,
 		ControlURL: f.controlConfig.ControlOrigin(), ControlDialAddress: f.publicControlAddress,
 		ControlRootPEM: string(f.certificateAuthority.certificatePEM), RelayRootPEM: string(f.certificateAuthority.certificatePEM), ServiceRootPEM: string(f.visitorRootPEM),
 		Services: services, Endpoints: endpoints, Relays: relays, SPKIPins: pins, APIURL: api.URL, APIToken: apiToken,
 		Postgres: wasmFixtureCredentials{User: pgConfig.User, Password: pgConfig.Password, Database: pgConfig.Database},
-		MySQL:    mySQLCredentials, KubernetesToken: clusterToken,
+		MySQL:    mySQLCredentials, KubernetesToken: clusterToken, SourceFingerprint: applied.SourceFingerprint,
 	}
 	bytes, err := json.Marshal(descriptor)
 	if err != nil {
@@ -455,13 +467,34 @@ func wasmMySQLTarget(t *testing.T) (string, wasmFixtureCredentials, *controlv1.P
 	return value.Host, credentials, trust
 }
 
-func wasmFixtureAPI(t *testing.T, f *privateSeparatedFixture, token string, stopped chan struct{}, proxies map[string]*wasmCarrierProxy, observer *pgx.Conn, postgresServiceID string) *httptest.Server {
+func wasmFixtureAPI(t *testing.T, f *privateSeparatedFixture, token string, stopped chan struct{}, proxies map[string]*wasmCarrierProxy, observer *pgx.Conn, postgresServiceID string, issuer *githubtest.Issuer) *httptest.Server {
 	t.Helper()
 	var stopOnce sync.Once
 	var observerMu sync.Mutex
 	var isolationMu sync.Mutex
 	isolationStages := make(map[string]chan struct{})
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /workload/assertion", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Execution string `json:"execution"`
+		}
+		if !decodeWASMFixtureRequest(w, r, &body) {
+			return
+		}
+		execution, err := strconv.ParseUint(body.Execution, 10, 32)
+		if err != nil || execution == 0 {
+			http.Error(w, "invalid execution", http.StatusBadRequest)
+			return
+		}
+		audience := f.controlConfig.ControlOrigin()
+		now := time.Now()
+		claims := githubtest.Claims(audience, now)
+		claims["check_run_id"] = body.Execution
+		claims["jti"] = body.Execution + "-" + strconv.FormatInt(now.UnixNano(), 10)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]string{"assertion": issuer.Sign(t, claims)})
+	})
 	mux.HandleFunc("POST /shutdown", func(w http.ResponseWriter, _ *http.Request) {
 		stopOnce.Do(func() { close(stopped) })
 		w.WriteHeader(http.StatusNoContent)

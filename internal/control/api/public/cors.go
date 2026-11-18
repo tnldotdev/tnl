@@ -32,6 +32,7 @@ func portableCORSRouter(mux *http.ServeMux) *serverhttp.CredentialCORSRouter {
 		"DELETE /v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher}":            bearer,
 		"POST /v1/projects/{project_key}/deployments/{deployment}/services/{service}/select":           source,
 		"POST /v1/visitor-tokens":                                                                      source,
+		"POST /v1/workload/services/{service_id}/run":                                                  bearer,
 		"POST /v1/services/{service_id}/connector-peer-pairs":                                          source,
 		"POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew":                          source,
 		"POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind":                         source,

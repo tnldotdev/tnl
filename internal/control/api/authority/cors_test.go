@@ -126,6 +126,8 @@ func TestPortableCORSAuthorityExcludesCookieAndOtherAuthOperations(t *testing.T)
 		{"/v1/publisher-keys/rotate", "POST", "authorization, content-type"},
 		{"/v1/teams", "GET", "authorization"},
 		{"/v1/workload-token", "POST", "content-type"},
+		{"/v1/workload-sessions/identity", "POST", "content-type"},
+		{"/v1/workload-sessions/exchange", "POST", "authorization, content-type"},
 	} {
 		t.Run(test.method+" "+test.path+" "+test.headers, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodOptions, test.path, nil)
@@ -147,6 +149,29 @@ func TestPortableCORSAuthorityExcludesCookieAndOtherAuthOperations(t *testing.T)
 		h.ServeHTTP(w, r)
 		if w.Header().Get("Access-Control-Allow-Origin") != "" || w.Header().Get("Access-Control-Allow-Credentials") != "" {
 			t.Fatal("ordinary authority response acquired CORS", path, w.Header())
+		}
+	}
+}
+
+func TestPortableCORSWorkloadUsesExplicitProofAndBearer(t *testing.T) {
+	h := testHandler(t, Config{}, nil)
+	const session = "/v1/workload-sessions/wls_aaaaaaaaaaaaaaaaaaaaaa"
+	for _, test := range []struct{ path, method, headers string }{
+		{"/v1/workload-sessions/exchange", "POST", "Content-Type"},
+		{session + "/assertions", "POST", "Authorization, Content-Type"},
+		{session + "/renew", "POST", "Authorization, Content-Type"},
+		{session, "DELETE", "Authorization"},
+	} {
+		req := httptest.NewRequest(http.MethodOptions, test.path, nil)
+		req.Header.Set("Origin", "https://app.example")
+		req.Header.Set("Access-Control-Request-Method", test.method)
+		req.Header.Set("Access-Control-Request-Headers", test.headers)
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, req)
+		if response.Code != http.StatusNoContent ||
+			response.Header().Get("Access-Control-Allow-Origin") != "*" ||
+			response.Header().Get("Access-Control-Allow-Credentials") != "" {
+			t.Errorf("%s %s did not return an uncredentialed preflight: %d", test.method, test.path, response.Code)
 		}
 	}
 }

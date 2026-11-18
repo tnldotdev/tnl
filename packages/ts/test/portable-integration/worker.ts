@@ -1,5 +1,5 @@
 import { client, connect, deployment } from "@tnldotdev/tnl/cloudflare";
-import { runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { runPortableIsolation, runPortableSmoke, runPortableWorkload } from "./smoke.ts";
 import { PortableSmokeError, portableDiagnostics } from "./errors.ts";
 import { fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
@@ -60,7 +60,10 @@ export default {
           throw new Error("fixture host fetch failed");
         }
       });
-      if (url.pathname === "/smoke") return Response.json(await runPortableSmoke(runtime, fixture));
+      if (url.pathname === "/smoke") {
+        const report = await runPortableSmoke(runtime, fixture);
+        return Response.json({ ...report, ...(await runPortableWorkload(runtime, fixture)) });
+      }
       const role = url.searchParams.get("role");
       const run = url.searchParams.get("run");
       if (

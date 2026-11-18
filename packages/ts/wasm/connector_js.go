@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"sync"
 	"syscall/js"
+	"time"
 
 	connectorsession "github.com/tnldotdev/tnl/internal/connector/session"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
@@ -21,12 +22,14 @@ import (
 
 type deploymentOptions struct {
 	connectorsession.DeploymentOptions
+	Workload *connectorsession.WorkloadOptions `json:"workload,omitempty"`
 }
 
 type deploymentHandle struct {
 	deployment  *connectorsession.Deployment
 	ctx         context.Context
 	stop        func()
+	maintained  chan struct{}
 	trust       *tls.Config
 	mu          sync.Mutex
 	closed      bool
@@ -64,22 +67,40 @@ func registerConnector(api js.Value) {
 			return nil, err
 		}
 		httpClient := &http.Client{Transport: &fetchTransport{fetch: bridgeGet(host, "fetch")}}
-		deployment, err := connectorsession.NewDeployment(options.DeploymentOptions, httpClient)
-		if err != nil {
-			stop()
-			return nil, err
-		}
 		trust, err := serviceTrust(host)
 		if err != nil {
 			stop()
 			return nil, err
 		}
+		var deployment *connectorsession.Deployment
+		var acquire func(context.Context) (string, error)
+		if options.Workload == nil {
+			deployment, err = connectorsession.NewDeployment(options.DeploymentOptions, httpClient)
+		} else {
+			acquire, err = assertionCallback(bridgeGet(host, "assertion"))
+			if err == nil {
+				setup, cancel := context.WithTimeout(ctx, 30*time.Second)
+				deployment, err = connectorsession.NewWorkloadDeployment(setup, options.DeploymentOptions, *options.Workload, acquire, httpClient)
+				cancel()
+			}
+		}
+		if err != nil {
+			stop()
+			return nil, operationError(ctx, err)
+		}
 		h := &deploymentHandle{deployment: deployment, ctx: ctx, stop: stop, trust: trust, connections: map[*connectionHandle]struct{}{}, bindings: map[string]*connectionHandle{}, gates: map[string]chan struct{}{}}
+		if acquire != nil {
+			h.maintained = make(chan struct{})
+			go func() {
+				defer close(h.maintained)
+				_ = deployment.MaintainWorkload(ctx, acquire)
+				h.stop()
+			}()
+		}
 		runtimeMu.Lock()
 		if runtimeClosed || len(runtimeResources) >= 32 {
 			runtimeMu.Unlock()
-			stop()
-			return nil, errCapacity
+			return nil, errors.Join(errCapacity, h.close())
 		}
 		runtimeResources[h] = struct{}{}
 		runtimeMu.Unlock()
@@ -135,7 +156,7 @@ func (h *deploymentHandle) export() js.Value {
 		}
 		defer stop()
 		name := args[0].String()
-		if _, err := h.deployment.ServiceProtocol(name); err != nil {
+		if err := h.deployment.CheckService(name); err != nil {
 			return nil, err
 		}
 		h.mu.Lock()
@@ -221,6 +242,12 @@ func (h *deploymentHandle) close() error {
 		h.mu.Unlock()
 		for _, child := range children {
 			h.err = errors.Join(h.err, child.close())
+		}
+		if h.maintained != nil {
+			<-h.maintained
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			h.err = errors.Join(h.err, h.deployment.CloseWorkload(ctx))
+			cancel()
 		}
 		h.methods.retire()
 		runtimeMu.Lock()

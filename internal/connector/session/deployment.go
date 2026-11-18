@@ -13,18 +13,20 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// this supplies registered-key authority to the existing connector owner and
+// this supplies registered-key or workload authority to the connector owner and
 // peer-session engine. it owns neither listeners nor a second transport lifecycle.
 type Deployment struct {
-	request DeploymentOptions
-	source  *auth.DeploymentTokenSource
-	api     *clientcontrol.Client
+	request  DeploymentOptions
+	source   *auth.DeploymentTokenSource
+	api      *clientcontrol.Client
+	workload *workload.Client
 }
 
 func (*Deployment) String() string   { return "private deployment connector" }
@@ -96,7 +98,7 @@ func (d *Deployment) visitorSource(ctx context.Context) (controlv1.VisitorTokenS
 	return json.Marshal(controlv1.VisitorTokenRegisteredKeySource{Kind: "registered_key", Credential: token})
 }
 
-func (d *Deployment) ServiceProtocol(name string) (controlv1.ServiceProtocol, error) {
+func (d *Deployment) serviceProtocol(name string) (controlv1.ServiceProtocol, error) {
 	connect := d.source.Credential.Approval.Permissions.Connect
 	if connect == nil {
 		return "", connectorstream.ErrServiceConnection
@@ -108,8 +110,30 @@ func (d *Deployment) ServiceProtocol(name string) (controlv1.ServiceProtocol, er
 	return protocol, nil
 }
 
+// CheckService limits local selection and does not grant access to a service.
+func (d *Deployment) CheckService(name string) error {
+	if d.workload == nil {
+		_, err := d.serviceProtocol(name)
+		return err
+	}
+	if !slices.Contains(d.request.Services, name) {
+		return connectorstream.ErrServiceConnection
+	}
+	return nil
+}
+
 func (d *Deployment) SelectRun(ctx context.Context, name string) (controlv1.ServiceSelection, error) {
-	protocol, err := d.ServiceProtocol(name)
+	if d.workload != nil {
+		if err := d.CheckService(name); err != nil {
+			return controlv1.ServiceSelection{}, err
+		}
+		run, err := d.workload.SelectDeploymentServiceRun(ctx, d.request.Deployment, name)
+		if err == nil && !validRun(run) {
+			err = connectorstream.ErrServiceConnection
+		}
+		return run, err
+	}
+	protocol, err := d.serviceProtocol(name)
 	if err != nil {
 		return controlv1.ServiceSelection{}, err
 	}
@@ -122,7 +146,7 @@ func (d *Deployment) SelectRun(ctx context.Context, name string) (controlv1.Serv
 	if err != nil {
 		return run, err
 	}
-	if !visitorsubject.Equal(run.Subject, d.source.Credential.Subject()) || !opaqueid.Valid(run.ServiceId, opaqueid.ServicePrefix) || !opaqueid.Valid(run.ServiceRunId, opaqueid.ServiceRunPrefix) || run.RunNumber < 1 || run.TrustRevision < 1 || run.Endpoint == nil || !run.ExpiresAt.After(time.Now()) || !run.Protocol.Valid() {
+	if !visitorsubject.Equal(run.Subject, d.source.Credential.Subject()) || !validRun(run) {
 		return controlv1.ServiceSelection{}, connectorstream.ErrServiceConnection
 	}
 	if run.Protocol != protocol {
@@ -131,15 +155,35 @@ func (d *Deployment) SelectRun(ctx context.Context, name string) (controlv1.Serv
 	return run, nil
 }
 
+func validRun(run controlv1.ServiceSelection) bool {
+	return opaqueid.Valid(run.ServiceId, opaqueid.ServicePrefix) &&
+		opaqueid.Valid(run.ServiceRunId, opaqueid.ServiceRunPrefix) &&
+		run.RunNumber > 0 && run.TrustRevision > 0 && run.Endpoint != nil &&
+		run.ExpiresAt.After(time.Now()) && run.Protocol.Valid()
+}
+
 func (d *Deployment) SelectService(ctx context.Context, name string) (controlv1.ServiceSummary, error) {
 	run, err := d.SelectRun(ctx, name)
 	if err != nil {
 		return controlv1.ServiceSummary{}, err
 	}
-	return controlv1.ServiceSummary{Id: run.ServiceId, Name: name, TeamId: d.source.Credential.Approval.TeamId, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Enabled: true, Endpoint: run.Endpoint, KubernetesAuth: run.KubernetesAuth}, nil
+	team := ""
+	if d.workload != nil {
+		session, err := d.workload.Session()
+		if err != nil {
+			return controlv1.ServiceSummary{}, err
+		}
+		team = session.TeamId
+	} else {
+		team = d.source.Credential.Approval.TeamId
+	}
+	return controlv1.ServiceSummary{Id: run.ServiceId, Name: name, TeamId: team, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Enabled: true, Endpoint: run.Endpoint, KubernetesAuth: run.KubernetesAuth}, nil
 }
 
 func (d *Deployment) ControlFor(name, service string) (connectorstream.Control, error) {
+	if d.workload != nil {
+		return connectorstream.NewWorkloadControl(d.workload)
+	}
 	credential := d.source.Credential
 	captured, err := credential.CaptureSigner()
 	if err != nil {
@@ -233,8 +277,18 @@ func (d *Deployment) ControlFor(name, service string) (connectorstream.Control, 
 }
 
 func (d *Deployment) Refresh(ctx context.Context) error {
+	if d.workload != nil {
+		_, err := d.workload.Renew(ctx)
+		return err
+	}
 	_, err := d.source.Token(ctx)
 	return err
 }
 
-func (d *Deployment) ExpiresAt() time.Time { return d.source.Credential.Approval.ExpiresAt }
+func (d *Deployment) ExpiresAt() time.Time {
+	if d.workload != nil {
+		session, _ := d.workload.Session()
+		return workload.SessionDeadline(session)
+	}
+	return d.source.Credential.Approval.ExpiresAt
+}
