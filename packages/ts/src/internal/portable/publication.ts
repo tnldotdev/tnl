@@ -10,12 +10,14 @@ import type {
 } from "../publisher/publication.js";
 import type { PublisherStorageHost } from "./storage-host.js";
 import { preserveRequestHeaders } from "./request.js";
+import { httpsOriginSchema } from "../values.js";
 
 const optionsSchema = z.strictObject({
   targetHostname: z.string().min(1).exactOptional(),
   telemetry: z.boolean().exactOptional(),
   signal: z.instanceof(AbortSignal).exactOptional(),
   requirePostQuantum: z.boolean().exactOptional(),
+  public: z.boolean().exactOptional(),
   access: z
     .union([
       z.enum(["restricted", "anonymous"]),
@@ -61,6 +63,7 @@ export function portablePublicationOptions(
   return {
     signal,
     temporary: {
+      ...(parsed.data.public === undefined ? {} : { public: parsed.data.public }),
       ...(requirePostQuantum === undefined ? {} : { require_post_quantum: requirePostQuantum }),
       ...(access === undefined
         ? {}
@@ -95,7 +98,6 @@ function isPublication(value: unknown): value is WasmPublication {
   return (
     typeof value === "object" &&
     value !== null &&
-    "url" in value &&
     "ready" in value &&
     isPromise(value.ready) &&
     "closed" in value &&
@@ -252,18 +254,16 @@ export async function publishPortable(options: {
   function aborted(): void {
     void close().catch(() => {});
   }
-  const parsedURL = z
-    .templateLiteral(["https://", z.string()])
-    .refine((value) => {
-      const url = URL.parse(value);
-      return url !== null && url.origin === value && url.username === "" && url.password === "";
-    })
-    .safeParse(raw.url);
+  const publicEndpoint = httpsOriginSchema.safeParse(raw.url);
+  const expectedPublic =
+    options.selection.service === undefined
+      ? (options.selection.temporary?.public ?? true)
+      : undefined;
+  const validEndpoint =
+    (expectedPublic === undefined || raw.public === expectedPublic) &&
+    ((raw.public === true && publicEndpoint.success) || (raw.public === false && !("url" in raw)));
   const publication: PortablePublication = Object.freeze({
-    get url(): `https://${string}` {
-      if (!parsedURL.success) throw new TnlError("sdk.wasm_invalid");
-      return parsedURL.data;
-    },
+    ...(raw.public === true && publicEndpoint.success ? { url: publicEndpoint.data } : {}),
     get joined() {
       return joined;
     },
@@ -275,7 +275,7 @@ export async function publishPortable(options: {
   signal.addEventListener("abort", aborted, { once: true });
   if (signal.aborted) aborted();
   try {
-    if (!parsedURL.success) throw new TnlError("sdk.wasm_invalid");
+    if (!validEndpoint) throw new TnlError("sdk.wasm_invalid");
     await raw.ready;
     if (signal.aborted) throw new DOMException("publication canceled", "AbortError");
     return publication;

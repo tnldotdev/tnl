@@ -11,6 +11,7 @@ export function publisherChromeArguments(fixture: PublisherFixture): string[] {
 export function publisherWorkerdConfiguration(
   fixture: PublisherFixture,
   wasm: string,
+  connector: string,
   storage: string,
 ): string {
   const tls = (root: string) =>
@@ -26,14 +27,19 @@ const config :Workerd.Config = (
     (name = "main", worker = (
       modules = [
         (name = "worker.mjs", esModule = embed "worker.mjs"),
-        (name = "publisher.wasm", wasm = embed ${JSON.stringify(wasm)})
+        (name = "publisher.wasm", wasm = embed ${JSON.stringify(wasm)}),
+        (name = "connector.wasm", wasm = embed ${JSON.stringify(connector)})
       ],
       compatibilityDate = "2026-10-31",
-      durableObjectNamespaces = [(className = "Publisher", uniqueKey = "tnl-portable-publisher-integration-v1", enableSql = true)],
+      durableObjectNamespaces = [
+        (className = "Publisher", uniqueKey = "tnl-portable-publisher-integration-v1", enableSql = true),
+        (className = "PrivatePublisher", uniqueKey = "tnl-private-publisher-integration-v1", enableSql = true)
+      ],
       durableObjectStorage = (localDisk = "storage"),
       bindings = [
         (name = "FIXTURE", text = ${JSON.stringify(JSON.stringify(fixture))}),
         (name = "PUBLISHERS", durableObjectNamespace = "Publisher"),
+        (name = "PRIVATE_PUBLISHERS", durableObjectNamespace = "PrivatePublisher"),
         (name = "CONTROL", service = "control"),
         (name = "RELAY0", service = "relay0"),
         (name = "RELAY1", service = "relay1")

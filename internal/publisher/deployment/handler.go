@@ -10,6 +10,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -35,6 +36,7 @@ type HandlerOptions struct {
 }
 
 type TemporaryHandlerOptions struct {
+	Public             *bool
 	RequirePostQuantum bool
 	AccessMode         controlv1.VisitorAccessMode
 	IP                 []string
@@ -93,13 +95,13 @@ func PrepareHandler(ctx context.Context, options HandlerOptions) (*PreparedHandl
 			return prepared, err
 		}
 	}
-	if saved.Endpoint == nil || !saved.Endpoint.Public || saved.Endpoint.Port != 443 {
+	if saved.Endpoint == nil || !serviceendpoint.Valid("http", saved.Endpoint.Hostname, saved.Endpoint.Port, saved.Endpoint.Public) {
 		return prepared, publisheridentity.ErrScope
 	}
 	if err := publisheridentity.MatchServiceDeclaration(saved, "http", nil); err != nil {
 		return prepared, err
 	}
-	// public snapshots and mutable caller options cannot alter the run metadata
+	// snapshots and mutable caller options cannot alter the run metadata
 	// or the captured allocation used later for cleanup.
 	data, err := json.Marshal(saved)
 	if err != nil {
@@ -162,7 +164,7 @@ func handlerAllocation(expires time.Time, options *TemporaryHandlerOptions) (con
 		InvocationId: invocation, ExpiresAt: new(expires.UTC()),
 		Configuration: controlv1.ProjectServiceConfiguration{
 			Protocol: new(controlv1.ServiceProtocolHTTP), Target: "app",
-			Public: new(true), Ephemeral: new(true), RequirePostQuantum: new(options.RequirePostQuantum),
+			Public: new(options.Public == nil || *options.Public), Ephemeral: new(true), RequirePostQuantum: new(options.RequirePostQuantum),
 			Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}, Limits: options.Limits},
 		},
 	}

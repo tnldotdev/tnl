@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +25,8 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	connectorsession "github.com/tnldotdev/tnl/internal/connector/session"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherlocal "github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -48,10 +51,11 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 	mode, restricted, protocol := controlv1.Anonymous, controlv1.Restricted, controlv1.ServiceProtocol("http")
 	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "sdk-publication", controlv1.ApplyProjectConfigurationRequest{
 		TeamId: f.identity.teamID, Source: &testProjectSource, Deployment: "production",
-		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol, "restricted": protocol},
+		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol, "restricted": protocol, "private": protocol},
 		Configuration: controlv1.ProjectConfiguration{Settings: &controlv1.DeploymentSettings{}, Services: map[string]controlv1.ProjectServiceConfiguration{
 			"web":        {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}},
 			"restricted": {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &restricted}}},
+			"private":    {Target: "app", Protocol: &protocol, Public: new(false)},
 		}},
 	})
 	if err != nil || applied.Deployments == nil {
@@ -66,8 +70,9 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 		ExpiresIn: 600, DeploymentIds: new([]string{(*applied.Deployments)[0].Id}),
 	}
 	request.Permissions.Publish = &controlv1.DeploymentPublishSelection{
-		Services: new(controlv1.DeploymentCredentialServiceSelection{"web", "restricted"}), Temporary: new(controlv1.TemporaryPublicationAnonymous),
+		Services: new(controlv1.DeploymentCredentialServiceSelection{"web", "restricted", "private"}), Temporary: new(controlv1.TemporaryPublicationAnonymous),
 	}
+	request.Permissions.Connect = new(controlv1.DeploymentCredentialServiceSelection{"private"})
 	approval, err := f.identity.routes.RegisterDeploymentCredential(t.Context(), f.identity.teamID, "sdk-publication", "sdk-publication", request)
 	if err != nil {
 		t.Fatal(err)
@@ -165,8 +170,9 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 		}
 	}
 	var savedID, savedURL string
-	for _, variant := range []string{"node", "node-restart", "node-restricted", "bun", "fetch", "python", "python-restricted", "lost-reply"} {
+	for _, variant := range []string{"node", "node-restart", "node-restricted", "bun", "fetch", "python", "python-restricted", "lost-reply", "node-private", "bun-private", "python-private"} {
 		t.Run(variant, func(t *testing.T) {
+			isPrivate := strings.HasSuffix(variant, "-private")
 			var evidence func() sdkLostReplyEvidence
 			if variant == "lost-reply" {
 				owner, err := publisherprotocol.ReadEndpoint(path)
@@ -196,7 +202,7 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 				command = exec.CommandContext(ctx, "uv", "run", "--frozen", "--project", filepath.Join(repo, "packages/py"), "python", filepath.Join(directory, "publication.py"), variant)
 			} else {
 				executable := "node"
-				if variant == "bun" {
+				if strings.HasPrefix(variant, "bun") {
 					executable = "bun"
 				}
 				command = exec.CommandContext(ctx, executable, filepath.Join(directory, "publication.ts"), variant)
@@ -246,7 +252,49 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			if err := json.Unmarshal([]byte(line), &result); err != nil {
 				t.Fatal("SDK failed before readiness", stderr.String())
 			}
-			if variant == "lost-reply" {
+			var id string
+			if isPrivate {
+				if result.URL != "" {
+					t.Fatal("private SDK publication returned a public URL")
+				}
+				owner, err := connectorsession.NewDeployment(connectorsession.DeploymentOptions{
+					Project: "acme/sdk-publication", Deployment: "production", Credential: token, Services: []string{"private"},
+				}, f.controlHTTP)
+				if err != nil {
+					t.Fatal(err)
+				}
+				quic, websocket := f.connectors()
+				connection, err := owner.Connect(ctx, ctx, "private", connectorstream.Config{
+					RelayQUIC: quic, RelayWebSocket: websocket, ServiceTLS: f.visitor.transport.TLSClientConfig.Clone(),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				func() {
+					defer func() {
+						if err := connection.Close(); err != nil {
+							t.Error("private connector shutdown", err)
+						}
+					}()
+					service := connection.Metadata()
+					id = service.Id
+					if service.Endpoint == nil || service.Endpoint.Public {
+						t.Fatal("private publication enabled ingress")
+					}
+					request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+service.Endpoint.Hostname+"/", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					response, err := connection.Fetch(request)
+					if err != nil {
+						t.Fatal("private connector request", err)
+					}
+					body, err := io.ReadAll(io.LimitReader(response.Body, 256))
+					if err := errors.Join(err, response.Body.Close()); err != nil || response.StatusCode != http.StatusOK || string(body) != "SDK publication" {
+						t.Fatal("private connector did not reach the SDK listener", response.StatusCode, err)
+					}
+				}()
+			} else if variant == "lost-reply" {
 				proof := evidence()
 				if !result.Recovered || proof.err != nil || proof.status != 200 || proof.body != "SDK publication" ||
 					len(proof.requests) != 2 || !bytes.Equal(proof.requests[0], proof.requests[1]) {
@@ -297,9 +345,10 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 					t.Fatal("SDK visitor traffic failed", err)
 				}
 			}
-			var id string
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT service_id FROM control.service_endpoints WHERE hostname=$1`, strings.TrimPrefix(result.URL, "https://")).Scan(&id); err != nil {
-				t.Fatal(err)
+			if !isPrivate {
+				if err := f.inspect.QueryRowContext(t.Context(), `SELECT service_id FROM control.service_endpoints WHERE hostname=$1`, strings.TrimPrefix(result.URL, "https://")).Scan(&id); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if variant == "bun" || variant == "fetch" || variant == "python" {
 				declaration, _, err := f.identity.routes.GetServiceConfiguration(t.Context(), id)
@@ -338,7 +387,7 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			if err := f.inspect.QueryRowContext(t.Context(), `SELECT enabled, deleted_at IS NOT NULL FROM control.services WHERE id=$1`, id).Scan(&enabled, &deleted); err != nil {
 				t.Fatal(err)
 			}
-			named := variant == "node" || variant == "node-restart" || variant == "node-restricted"
+			named := isPrivate || variant == "node" || variant == "node-restart" || variant == "node-restricted"
 			if named && (!enabled || deleted) || !named && !deleted {
 				t.Fatal("SDK cleanup changed wrong service lifetime", enabled, deleted)
 			}

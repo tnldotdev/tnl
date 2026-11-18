@@ -49,6 +49,8 @@ interface InvocationSettings {
   readonly targetHostname?: string;
   /** require hybrid post-quantum key agreement from HTTPS visitors. */
   readonly requirePostQuantum?: boolean;
+  /** defaults to true for temporary publications. */
+  readonly public?: boolean;
   readonly access?:
     | "restricted"
     | "anonymous"
@@ -66,7 +68,7 @@ export type NamedPublicationOptions = Pick<
   "targetHostname" | "signal" | "telemetry"
 >;
 export type TemporaryPublicationOptions = NamedPublicationOptions &
-  Pick<InvocationSettings, "requirePostQuantum" | "access" | "limits">;
+  Pick<InvocationSettings, "requirePostQuantum" | "access" | "limits" | "public">;
 
 export function validatePublicationOptions(
   options: TemporaryPublicationOptions,
@@ -76,14 +78,22 @@ export function validatePublicationOptions(
   const allowed = new Set(
     named
       ? ["targetHostname", "signal", "telemetry"]
-      : ["targetHostname", "signal", "telemetry", "requirePostQuantum", "access", "limits"],
+      : [
+          "targetHostname",
+          "signal",
+          "telemetry",
+          "requirePostQuantum",
+          "access",
+          "limits",
+          "public",
+        ],
   );
   if (Object.keys(options).some((key) => !allowed.has(key)))
     throw new TnlError("sdk.configuration_invalid");
 }
 
 export interface Publication {
-  readonly url: `https://${string}`;
+  readonly url?: `https://${string}`;
   close(): Promise<void>;
   wait(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -249,6 +259,7 @@ async function publishServerUntraced(
     ...(options.requirePostQuantum === undefined
       ? {}
       : { require_post_quantum: options.requirePostQuantum }),
+    ...(options.public === undefined ? {} : { public: options.public }),
   };
   const selection = {
     ...(localService === undefined ? { invocationID } : { service: localService }),
@@ -489,15 +500,6 @@ async function publishServerUntraced(
     );
     return closePromise;
   };
-  const handle: Publication = Object.freeze({
-    get url(): `https://${string}` {
-      if (currentURL === undefined) throw new TnlError("sdk.response_invalid");
-      return currentURL;
-    },
-    close,
-    wait: () => done,
-    [Symbol.asyncDispose]: close,
-  });
   const fail = (cause: unknown) => {
     if (terminal) return;
     terminal = true;
@@ -518,7 +520,7 @@ async function publishServerUntraced(
   let lastRun = 0;
   const observe = (status: NonNullable<ReturnType<typeof parseStatus>>) => {
     if (status.publicURL !== undefined) {
-      if (currentURL !== undefined && currentURL !== status.publicURL)
+      if (options.public === false || (currentURL !== undefined && currentURL !== status.publicURL))
         throw new TnlError("sdk.response_invalid");
       currentURL = status.publicURL;
     }
@@ -527,10 +529,22 @@ async function publishServerUntraced(
       lastRun = status.publishRunNumber;
     }
     if (status.routable) {
-      if (status.publicURL === undefined) throw new TnlError("sdk.response_invalid");
+      const named = localService !== undefined || publication?.service !== undefined;
+      if (
+        status.publicURL === undefined &&
+        (currentURL !== undefined || (!named && options.public !== false))
+      )
+        throw new TnlError("sdk.response_invalid");
       if (!readyReached) {
         readyReached = true;
-        resolveReady(handle);
+        resolveReady(
+          Object.freeze({
+            ...(currentURL === undefined ? {} : { url: currentURL }),
+            close,
+            wait: () => done,
+            [Symbol.asyncDispose]: close,
+          }),
+        );
       }
     } else if (status.failure) fail(new TnlError("sdk.publication_failed"));
   };
@@ -662,6 +676,7 @@ const invocationOptionsSchema = z
     stateDir: pathTextSchema.optional(),
     targetHostname: z.string().min(1).optional(),
     requirePostQuantum: z.boolean().optional(),
+    public: z.boolean().optional(),
     telemetry: z.boolean().optional(),
     access: z
       .union([
@@ -778,9 +793,7 @@ export async function publishFetch(
     return closing;
   };
   return Object.freeze({
-    get url(): `https://${string}` {
-      return base.url;
-    },
+    ...(base.url === undefined ? {} : { url: base.url }),
     close,
     async wait(): Promise<void> {
       let failure: unknown;

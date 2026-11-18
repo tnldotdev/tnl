@@ -30,6 +30,7 @@ import (
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -178,7 +179,20 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	if err := a.manager.AddService(publisherapp.Service{Name: request.InvocationId, Directory: ".", ServiceProtocol: "http", Readiness: publisherapp.Readiness{Path: "/"}}); err != nil {
 		return publisherprotocol.Registration{}, err
 	}
-	address := "https://" + saved.Endpoint.Hostname
+	address := ""
+	var privateTarget targettransport.Transport
+	if saved.Endpoint.Public {
+		address = "https://" + saved.Endpoint.Hostname
+	} else {
+		trust, err := publisheridentity.ServiceTrust(saved)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		privateTarget, err = targettransport.FromTrust(config.ProtocolHTTP, trust)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+	}
 	id, err = a.manager.Reserve(request.InvocationId, request.Owner, request.Pid, address)
 	if err != nil {
 		return publisherprotocol.Registration{}, err
@@ -208,6 +222,11 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		expires = *saved.ExpiresAt
 	}
 	publication := a.invocationPublication(service, cfg, address, expires)
+	if address == "" {
+		publication.Check = func(ctx context.Context, service publisherapp.Service) publisherapp.Observation {
+			return publisherapp.ProbeServiceTarget(ctx, service, privateTarget)
+		}
+	}
 	publication.Options = clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Project: a.project.Root,
 		Target: request.Target, ServiceID: saved.Id, ServiceProtocol: saved.Protocol}
 	configuration := publisherapp.Configuration{Service: publication, Inspection: policy, Cleanup: cleanup}
@@ -234,7 +253,7 @@ func invocationOptions(request publisherprotocol.Invocation) (publisheradhoc.Opt
 	if err != nil {
 		return publisheradhoc.Options{}, err
 	}
-	options := publisheradhoc.Options{InvocationID: request.InvocationId, Target: request.Target, Limits: limits}
+	options := publisheradhoc.Options{InvocationID: request.InvocationId, Target: request.Target, Limits: limits, Public: request.Public}
 	if request.RequirePostQuantum != nil {
 		options.RequirePostQuantum = *request.RequirePostQuantum
 	}
@@ -314,6 +333,9 @@ func (a *appRuntime) invocationPublication(service publisherapp.Service, base pu
 			return nil
 		}
 		cfg.ReadinessProof = func(run httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
+			if address == "" {
+				return nil
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			if run != current {

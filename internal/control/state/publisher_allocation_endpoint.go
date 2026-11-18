@@ -9,7 +9,7 @@ import (
 
 // allocation provenance is the durable allocation plus its real namespace.
 // HTTP shares 443 and never reserves a service port or invents a worktree.
-func allocateServiceEndpoint(ctx context.Context, tx pgx.Tx, service, deployment, domain, namespace string, now time.Time) error {
+func allocateServiceEndpoint(ctx context.Context, tx pgx.Tx, service, deployment, domain, namespace string, public bool, now time.Time) error {
 	hostname, err := newEphemeralHostname(namespace)
 	if err != nil {
 		return err
@@ -20,8 +20,8 @@ func allocateServiceEndpoint(ctx context.Context, tx pgx.Tx, service, deployment
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE control.services SET domain_id=$2,certificate_hostname=$3,certificate_scope=$3,
-		service_port=443,ingress_pool_id=$4,public=true WHERE id=$1`, service, domain, hostname, pool); err != nil {
+		service_port=443,ingress_pool_id=$4,public=$5 WHERE id=$1`, service, domain, hostname, pool, public); err != nil {
 		return err
 	}
-	return reconcileServiceEndpoint(ctx, tx, serviceEndpoint{ServiceID: service, DeploymentID: deployment, DomainID: domain, Hostname: hostname, Namespace: namespace, PoolID: pool, Public: true, Automation: true}, now)
+	return reconcileServiceEndpoint(ctx, tx, serviceEndpoint{ServiceID: service, DeploymentID: deployment, DomainID: domain, Hostname: hostname, Namespace: namespace, PoolID: pool, Public: public, Automation: public}, now)
 }

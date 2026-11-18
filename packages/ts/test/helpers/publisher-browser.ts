@@ -32,6 +32,7 @@ export async function exerciseBrowserPublication() {
           await host.fetch(new Request("https://app.example.test/"))
         ).text();
         return {
+          public: true,
           url: "https://app.example.test",
           ready: Promise.resolve(),
           closed: completed.promise,

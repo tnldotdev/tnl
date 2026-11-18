@@ -29,6 +29,7 @@ type publisherOptions struct {
 	Deployment string `json:"deployment"`
 	Service    string `json:"service,omitempty"`
 	Temporary  *struct {
+		Public             *bool                                   `json:"public,omitempty"`
 		RequirePostQuantum bool                                    `json:"require_post_quantum,omitempty"`
 		AccessMode         controlv1.VisitorAccessMode             `json:"access_mode,omitempty"`
 		IP                 []string                                `json:"ip,omitempty"`
@@ -161,7 +162,7 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 	}
 	if temporary := options.Temporary; temporary != nil {
 		preparation.Temporary = &publisherdeployment.TemporaryHandlerOptions{
-			RequirePostQuantum: temporary.RequirePostQuantum, AccessMode: temporary.AccessMode, IP: temporary.IP, Limits: temporary.Limits,
+			Public: temporary.Public, RequirePostQuantum: temporary.RequirePostQuantum, AccessMode: temporary.AccessMode, IP: temporary.IP, Limits: temporary.Limits,
 		}
 	}
 	prepared, err := publisherdeployment.PrepareHandler(ctx, preparation)
@@ -190,7 +191,10 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 	prepared.Config.RelayWebSocket = muxsession.WebSocketConnector{}
 	prepared.Config.Ready = func() error { ready.finish(nil); return nil }
 	handle := js.Global().Get("Object").New()
-	handle.Set("url", "https://"+prepared.Service.Endpoint.Hostname)
+	handle.Set("public", prepared.Service.Endpoint.Public)
+	if prepared.Service.Endpoint.Public {
+		handle.Set("url", "https://"+prepared.Service.Endpoint.Hostname)
+	}
 	handle.Set("ready", ready.value)
 	handle.Set("closed", closed.value)
 	bind(handle, "close", &owner.methods, func(args []js.Value) (any, error) {
