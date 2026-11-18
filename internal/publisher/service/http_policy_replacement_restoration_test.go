@@ -129,6 +129,9 @@ func TestServiceHTTPPolicyRestorationStaleClaimCleanupKeepsReplacementLifetime(t
 	if err := f.source.bound.ApplyHeartbeat(state); err != nil {
 		t.Fatal(err)
 	}
+	// the old request already holds capacity. join its relay's reply cleanup
+	// before canceling the publisher, but keep the old visitor cleanup held.
+	old.stopCapacity(t)
 	old.cancel()
 	if path := claimedAwait(t, canceled); path != "/old" {
 		t.Fatal("replacement did not cancel the old visitor lifetime", path)

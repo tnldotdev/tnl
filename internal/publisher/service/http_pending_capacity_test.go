@@ -98,25 +98,35 @@ type pendingHTTPSlot struct {
 	cancelCapacity context.CancelFunc
 	served         <-chan error
 	capacityDone   <-chan error
+	capacityOnce   sync.Once
 	once           sync.Once
+}
+
+func (s *pendingHTTPSlot) stopCapacity(t *testing.T) {
+	t.Helper()
+	s.capacityOnce.Do(func() {
+		// a reply can reach the publisher before the relay worker's physical
+		// close returns. retain both transports until that worker joins.
+		s.cancelCapacity()
+		s.join(t, s.capacityDone)
+	})
+}
+
+func (s *pendingHTTPSlot) join(t *testing.T, result <-chan error) {
+	t.Helper()
+	err := claimedAwait(t, result)
+	if err != nil && !failure.Only(err, context.Canceled) &&
+		!failure.Only(err, net.ErrClosed) && !failure.Only(err, muxsession.ErrClosed) {
+		t.Error("pending HTTP owner lost joined shutdown", err)
+	}
 }
 
 func (s *pendingHTTPSlot) stop(t *testing.T) {
 	t.Helper()
 	s.once.Do(func() {
-		join := func(result <-chan error) {
-			err := claimedAwait(t, result)
-			if err != nil && !failure.Only(err, context.Canceled) &&
-				!failure.Only(err, net.ErrClosed) && !failure.Only(err, muxsession.ErrClosed) {
-				t.Error("pending HTTP owner lost joined shutdown", err)
-			}
-		}
-		// the capacity reply can reach the publisher before its relay worker's
-		// physical close returns. retain both transports until that owner joins.
-		s.cancelCapacity()
-		join(s.capacityDone)
+		s.stopCapacity(t)
 		s.cancel()
-		join(s.served)
+		s.join(t, s.served)
 		if err := s.relay.Close(); err != nil {
 			t.Error("close pending HTTP relay", err)
 		}
