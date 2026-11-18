@@ -94,6 +94,9 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	canonical, nameErr := naming.CanonicalizeHostname(s.Hostname)
 	transport := targettransport.Transport{Protocol: s.Protocol, TLS: s.TargetTLS}
 	inline := s.Protocol == config.ProtocolHTTP && s.Handler != nil && s.Target == "" && s.TargetTLS == nil
+	if HandlerOnly && !inline {
+		return ErrEndpoint
+	}
 	if transport.Validate() != nil || nameErr != nil || canonical != s.Hostname || s.Target == "" && !inline || s.Handler != nil && !inline || s.TLS == nil || s.TLS.GetConfigForClient != nil || !valid ||
 		(len(s.Mounts) != 0 || s.ResolveHTTPTarget != nil) && (s.Protocol != config.ProtocolHTTP || inline) {
 		return ErrEndpoint
@@ -275,27 +278,29 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			_ = backend.Close()
 		}
 	}()
-	switch s.Protocol {
-	case config.ProtocolPostgres:
-		_, negotiationDone := observability.PublisherOperation(setup, "visitor_negotiation")
-		err := acceptPostgresTLS(visitor)
-		negotiationDone(err)
-		if err != nil {
-			return err
-		}
-	case config.ProtocolMySQL:
-		backend, err = dial(setup)
-		if err != nil {
-			return err
-		}
-		if err = backend.SetDeadline(deadline); err != nil {
-			return err
-		}
-		_, negotiationDone := observability.PublisherOperation(setup, "visitor_negotiation")
-		greeting, err = acceptMySQLTLS(visitor, backend, s.TargetTLS != nil)
-		negotiationDone(err)
-		if err != nil {
-			return err
+	if !HandlerOnly {
+		switch s.Protocol {
+		case config.ProtocolPostgres:
+			_, negotiationDone := observability.PublisherOperation(setup, "visitor_negotiation")
+			err := acceptPostgresTLS(visitor)
+			negotiationDone(err)
+			if err != nil {
+				return err
+			}
+		case config.ProtocolMySQL:
+			backend, err = dial(setup)
+			if err != nil {
+				return err
+			}
+			if err = backend.SetDeadline(deadline); err != nil {
+				return err
+			}
+			_, negotiationDone := observability.PublisherOperation(setup, "visitor_negotiation")
+			greeting, err = acceptMySQLTLS(visitor, backend, s.TargetTLS != nil)
+			negotiationDone(err)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	frontTLS := s.TLS.Clone()
@@ -357,7 +362,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	if !decision.Allowed || !decision.ValidUntil.After(time.Now()) {
 		return managedAuthorizationError(decision, nil)
 	}
-	if s.Protocol == config.ProtocolKubernetes {
+	if !HandlerOnly && s.Protocol == config.ProtocolKubernetes {
 		if err := promote(); err != nil {
 			return err
 		}
@@ -462,6 +467,9 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		// every handler also rechecks admission before application work.
 		target.Handler, target.Drain = s.Handler, s.HTTPDrain
 		return errors.Join(target.Serve(live, secured, s.Hostname, wrap, s.HTTPResponseHooks), context.Cause(ctx))
+	}
+	if HandlerOnly {
+		return ErrEndpoint
 	}
 	if backend == nil {
 		backend, err = dial(setup)

@@ -41,7 +41,7 @@ describe("packed export targets", () => {
 
 describe("packed WASM assets", () => {
   const assets = [
-    "dist/wasm/tnl.wasm",
+    "dist/wasm/connector.wasm",
     "dist/wasm/publisher.wasm",
     "dist/wasm/wasm_exec.js",
     "dist/wasm/go-license.txt",

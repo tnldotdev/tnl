@@ -19,7 +19,7 @@ export {
   type PublisherStorage,
   type PublisherStorageErrorCode,
 } from "./internal/portable/storage.js";
-const loadConnector = () => loadWasm(new URL("./wasm/tnl.wasm", import.meta.url));
+const loadConnector = () => loadWasm(new URL("./wasm/connector.wasm", import.meta.url));
 const loadPublisher = () => loadWasm(new URL("./wasm/publisher.wasm", import.meta.url));
 
 export const connect = ((owner: object, name: string) =>

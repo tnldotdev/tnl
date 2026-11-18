@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -39,9 +38,8 @@ type HTTPControl interface {
 	httpaccess.TokenClient
 	httpaccess.BrowserClient
 	httpaccess.ShareClient
-	FeedbackClient
+	nativeHTTPControl
 	ControlURL() string
-	CreateServiceRunPreview(context.Context, string, string, int64, credentials.ServiceRunToken) (controlv1.Preview, error)
 }
 
 // HTTPRun contains the validated publication facts used by HTTP feature hooks.
@@ -111,18 +109,9 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 		}
 	}
 	if f.Demo {
-		// control creates or recovers this exact run's preview. never substitute
-		// caller metadata or start browser/feedback work before validating it.
-		preview, err := f.Control.CreateServiceRunPreview(ctx, f.Subject.ID, f.RunID, f.Number, f.Token)
-		if err != nil {
-			return HTTP{}, nil, fmt.Errorf("service: create demo feedback preview: %w", err)
+		if err := f.prepareDemoPreview(ctx); err != nil {
+			return HTTP{}, nil, err
 		}
-		if !opaqueid.Valid(preview.Id, opaqueid.PreviewPrefix) || preview.SchemaVersion != 1 ||
-			len(preview.ServiceIds) != 1 || preview.ServiceIds[0] != f.Subject.ID {
-			return HTTP{}, nil, failure.Wrap("create demo feedback preview", failure.ServerResponseInvalid,
-				errors.New("preview has an invalid ID, schema, or service membership"))
-		}
-		f.PreviewID = preview.Id
 	}
 	f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(4)})
 	if err != nil {

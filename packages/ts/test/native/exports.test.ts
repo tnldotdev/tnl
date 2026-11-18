@@ -219,9 +219,9 @@ test("packed consumers only bundle their selected runtime and WASM capability", 
     ]);
     for (const [path, operation, modules] of [
       ["control", "listDeployments", []],
-      ["browser", "connect", ["tnl.wasm"]],
+      ["browser", "connect", ["connector.wasm"]],
       ["browser", "publish", ["publisher.wasm"]],
-      ["cloudflare", "connect", ["tnl.wasm"]],
+      ["cloudflare", "connect", ["connector.wasm"]],
       ["cloudflare", "durablePublisher", ["publisher.wasm"]],
     ] as const) {
       const result = await build({
@@ -246,7 +246,7 @@ test("packed consumers only bundle their selected runtime and WASM capability", 
         .filter((file) => !file.path.endsWith(".wasm"))
         .map((file) => file.text)
         .join("");
-      const found = ["tnl.wasm", "publisher.wasm"].filter(
+      const found = ["connector.wasm", "publisher.wasm"].filter(
         (file) =>
           outputs.some((output) => output.path.endsWith(`/${file}`)) || text.includes(`/${file}`),
       );
@@ -267,9 +267,9 @@ test("the Vite integration emits only the browser WASM used by live chunks", asy
     const browser = JSON.stringify(join(directory, "dist/browser.js"));
     for (const [names, modules] of [
       ["tnl", []],
-      ["connect", ["tnl"]],
+      ["connect", ["connector"]],
       ["publish", ["publisher"]],
-      ["connect, publish", ["publisher", "tnl"]],
+      ["connect, publish", ["connector", "publisher"]],
     ] as const) {
       await writeFile(
         join(root, "entry.js"),

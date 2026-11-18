@@ -142,13 +142,22 @@ type RunStatus struct {
 func (RunConfig) String() string   { return "service publisher configuration" }
 func (RunConfig) GoString() string { return "service publisher configuration" }
 
+func (c RunConfig) hasFetchTarget() bool {
+	return c.Handler != nil && c.Metadata.Protocol == controlv1.ServiceProtocolHTTP && c.Target == "" &&
+		c.TargetResolver == nil && c.Metadata.TargetTls == nil && len(c.Mounts) == 0 && c.ResolveHTTPTarget == nil
+}
+
 // Publish keeps the managed certificate lifecycle, two independently claimed
 // relay slots and current control heartbeat together. live bytes are never replayed.
 func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err := validateFeedbackPlatform(config.Feedback, config.Demo); err != nil {
 		return err
 	}
-	if config.WebSocketOnly {
+	if servicestream.HandlerOnly && !config.hasFetchTarget() {
+		return ErrPrivateStream
+	}
+	if !peer.HostUDP || config.WebSocketOnly {
+		config.WebSocketOnly = true
 		config.RelayQUIC = muxsession.DisabledConnector{}
 		config.Connectivity.DisableDirect = true
 	}
@@ -206,7 +215,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}()
 	var dialer muxsession.QUICDialer
 	var udpErr error
-	if config.RelayQUIC == nil {
+	if peer.HostUDP && config.RelayQUIC == nil {
 		var transport *muxsession.QUICTransport
 		transport, udpErr = muxsession.ListenQUICTransport("udp", ":0")
 		if udpErr == nil {
@@ -219,7 +228,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		return err
 	}
 	var discoveredTLS *tls.Config
-	if config.TargetResolver != nil {
+	if !servicestream.HandlerOnly && config.TargetResolver != nil {
 		var err error
 		config.Target, discoveredTLS, err = config.TargetResolver.ResolveTarget(ctx)
 		if err != nil {
@@ -231,10 +240,10 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		config.resolvedTargetTLS = discoveredTLS
 	}
 	if config.Handler != nil {
-		if config.Metadata.Protocol != controlv1.ServiceProtocolHTTP || config.Target != "" || config.TargetResolver != nil || config.Metadata.TargetTls != nil || len(config.Mounts) != 0 || config.ResolveHTTPTarget != nil {
+		if !config.hasFetchTarget() {
 			return ErrPrivateStream
 		}
-	} else {
+	} else if !servicestream.HandlerOnly {
 		if _, err := tcptarget.Normalize(config.Target); err != nil {
 			return err
 		}
@@ -276,22 +285,24 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	ctx = observability.WithPublisherRecovery(ctx)
 	_, startup := observability.PublisherOperation(ctx, "private_startup")
 	defer func() { startup(result) }()
-	trust, err := targetTrust(approved)
-	if err != nil {
-		return err
-	}
 	transport := targettransport.Transport{Protocol: serviceconfig.ProtocolName(approved.Protocol)}
-	if config.TargetResolver != nil {
-		// cloud trust comes from the exact assigned selector's publisher-side
-		// discovery, never from a local apply or a saved static CA override.
-		if trust != nil {
-			return ErrPrivateStream
-		}
-		transport.TLS = discoveredTLS
-	} else {
-		transport, err = targettransport.FromTrust(serviceconfig.ProtocolName(approved.Protocol), trust)
+	if !servicestream.HandlerOnly {
+		trust, err := targetTrust(approved)
 		if err != nil {
 			return err
+		}
+		if config.TargetResolver != nil {
+			// cloud trust comes from the exact assigned selector's publisher-side
+			// discovery, never from a local apply or a saved static CA override.
+			if trust != nil {
+				return ErrPrivateStream
+			}
+			transport.TLS = discoveredTLS
+		} else {
+			transport, err = targettransport.FromTrust(serviceconfig.ProtocolName(approved.Protocol), trust)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if err := transport.Validate(); err != nil {
@@ -309,7 +320,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	if config.Healthy == nil {
 		config.Healthy = func(ctx context.Context) bool {
-			if config.Handler != nil {
+			if servicestream.HandlerOnly || config.Handler != nil {
 				return true
 			}
 			probe, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -374,7 +385,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	defer stopRun()
 	bound.telemetry = telemetry
 	bound.connectivityOptions = telemetry.Connectivity(config.Connectivity)
-	if !config.Connectivity.DisableDirect {
+	if peer.HostUDP && !config.Connectivity.DisableDirect {
 		bound.peerSocket = config.PeerSocket
 		if bound.peerSocket == nil {
 			// UDP is an optimization; a blocked socket leaves relay WSS usable.
@@ -792,7 +803,7 @@ func (config RunConfig) connectionOptions(dialer muxsession.QUICDialer, udpErr e
 		roots.MinVersion = max(roots.MinVersion, tls.VersionTLS13)
 	}
 	options := ConnectOptions{QUIC: config.RelayQUIC, WebSocket: config.RelayWebSocket, PreferWebSocket: config.WebSocketOnly}
-	if options.QUIC == nil {
+	if peer.HostUDP && options.QUIC == nil {
 		if udpErr != nil {
 			options.QUIC = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return nil, udpErr })
 		} else {

@@ -13,22 +13,23 @@ const { stdout: goroot } = await exec("go", ["env", "GOROOT"], { cwd: root });
 const goEnv = { ...process.env, GOOS: "js", GOARCH: "wasm", CGO_ENABLED: "0" };
 const wasmPackage = "./packages/ts/wasm";
 async function buildModule(file: string, tag: string) {
-  const tags = `-tags=${tag}`;
+  // the sdk has no telemetry collector; retain the transport model, not schema validation.
+  const tags = `-tags=tnlsdk,${tag}`;
   const { stdout: deps } = await exec("go", ["list", "-deps", tags, wasmPackage], {
     cwd: root,
     env: goEnv,
   });
-  // portable runtimes don't start native telemetry exporters.
-  const nativeExporters = deps
+  // keep native process tools and direct UDP out of the portable runtimes.
+  const nativeDependencies = deps
     .trim()
     .split("\n")
     .filter((name) =>
-      /^(go\.opentelemetry\.io\/otel\/(?:exporters|sdk)(?:\/|$)|google\.golang\.org\/(?:grpc|protobuf)(?:\/|$)|github\.com\/prometheus\/)/.test(
+      /^(go\.opentelemetry\.io\/otel\/(?:exporters|sdk)(?:\/|$)|google\.golang\.org\/(?:grpc|protobuf)(?:\/|$)|github\.com\/(?:prometheus|pion)\/|github\.com\/(?:alecthomas\/kong|santhosh-tekuri\/jsonschema)(?:\/|$)|go\.yaml\.in\/yaml\/|net\/http\/pprof$)/.test(
         name,
       ),
     );
-  if (nativeExporters.length > 0)
-    throw new Error(`${file} imports native telemetry dependencies: ${nativeExporters.join(", ")}`);
+  if (nativeDependencies.length > 0)
+    throw new Error(`${file} imports native-only dependencies: ${nativeDependencies.join(", ")}`);
   const unoptimized = path.join(output, `.${file}.unoptimized`);
   const artifact = path.join(output, file);
   try {
@@ -66,7 +67,7 @@ async function buildModule(file: string, tag: string) {
   };
 }
 // optimize serially to keep peak memory bounded on build runners.
-const connector = await buildModule("tnl.wasm", "tnlconnector");
+const connector = await buildModule("connector.wasm", "tnlconnector");
 const publisher = await buildModule("publisher.wasm", "tnlpublisher");
 
 // ship the runtime from the same toolchain that compiled the module.
@@ -85,7 +86,7 @@ const { stdout: optimizer } = await exec("wasm-opt", ["--version"], { cwd: root 
 const manifest = {
   go: version.trim(),
   optimizer: optimizer.trim(),
-  modules: { "tnl.wasm": connector, "publisher.wasm": publisher },
+  modules: { "connector.wasm": connector, "publisher.wasm": publisher },
 };
 await writeFile(path.join(output, "build.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 console.log(JSON.stringify(manifest));

@@ -20,7 +20,7 @@ import { parseValue } from "./internal/validation.js";
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
 const allowedHostsSchema = z.union([z.literal(true), z.array(z.string())]).optional();
 const sdkWasmFiles = new Set(
-  ["tnl.wasm", "publisher.wasm"].map((name) =>
+  ["connector.wasm", "publisher.wasm"].map((name) =>
     fileURLToPath(new URL(`./wasm/${name}`, import.meta.url)),
   ),
 );

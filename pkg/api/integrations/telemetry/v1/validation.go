@@ -1,3 +1,5 @@
+//go:build !js || !wasm || !tnlsdk
+
 package telemetryv1
 
 import (

@@ -66,11 +66,14 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 		return nil, ErrPrivateStream
 	}
 	target := ""
+	if servicestream.HandlerOnly && cfg.Handler == nil {
+		return nil, ErrPrivateStream
+	}
 	if cfg.Handler != nil {
 		if approved.Protocol != controlv1.ServiceProtocolHTTP || cfg.Target != "" || cfg.TargetResolver != nil || approved.TargetTls != nil {
 			return nil, ErrPrivateStream
 		}
-	} else {
+	} else if !servicestream.HandlerOnly {
 		target, err = tcptarget.Normalize(cfg.Target)
 		if err != nil {
 			return nil, err
@@ -131,24 +134,26 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 			return nil, err
 		}
 	}
-	trust, err := targetTrust(approved)
-	if err != nil {
-		return nil, err
-	}
-	if cfg.TargetResolver != nil {
-		if trust != nil {
-			return nil, ErrPrivateStream
-		}
-		if cfg.resolvedTargetTLS == nil {
-			return nil, ErrPrivateStream
-		}
-		prepared.managedTargetTLS = cfg.resolvedTargetTLS.Clone()
-	} else {
-		transport, err := targettransport.FromTrust(prepared.managedProtocol, trust)
+	if !servicestream.HandlerOnly {
+		trust, err := targetTrust(approved)
 		if err != nil {
 			return nil, err
 		}
-		prepared.managedTargetTLS = transport.TLS
+		if cfg.TargetResolver != nil {
+			if trust != nil {
+				return nil, ErrPrivateStream
+			}
+			if cfg.resolvedTargetTLS == nil {
+				return nil, ErrPrivateStream
+			}
+			prepared.managedTargetTLS = cfg.resolvedTargetTLS.Clone()
+		} else {
+			transport, err := targettransport.FromTrust(prepared.managedProtocol, trust)
+			if err != nil {
+				return nil, err
+			}
+			prepared.managedTargetTLS = transport.TLS
+		}
 	}
 	if cfg.HTTPResponseHooks != nil {
 		prepared.httpResponseHooks = cfg.HTTPResponseHooks(HTTPRun{
@@ -233,7 +238,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		prepared.connectorHTTP = httpFrontend
 		prepared.policy = httpFrontend.Policy
 		prepared.httpResponseHooks = httpFrontend.ResponseHooks
-		if prepared.handler == nil && prepared.targetResolver == nil {
+		if !servicestream.HandlerOnly && prepared.handler == nil && prepared.targetResolver == nil {
 			target := servicestream.HTTPTarget{Address: prepared.target, Mounts: prepared.mounts, ResolveTarget: prepared.resolveHTTPTarget,
 				Transport:   targettransport.Transport{Protocol: prepared.managedProtocol, TLS: prepared.managedTargetTLS},
 				Connections: prepared.serviceHTTPRequests.Limits().Concurrency}

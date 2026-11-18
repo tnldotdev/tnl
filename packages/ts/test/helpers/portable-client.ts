@@ -14,7 +14,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
       new URL(
         kind === "publisher"
           ? "https://fixture.test/publisher.wasm"
-          : "https://fixture.test/tnl.wasm",
+          : "https://fixture.test/connector.wasm",
       ),
     ),
   );

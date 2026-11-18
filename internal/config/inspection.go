@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
-	"go.yaml.in/yaml/v3"
 )
 
 // InspectionMode selects whether local observations are recorded.
@@ -125,8 +124,6 @@ func (size ByteSize) MarshalJSON() ([]byte, error) {
 	return json.Marshal(text)
 }
 
-func (size ByteSize) MarshalYAML() (any, error) { return size.text() }
-
 var byteSizeSyntax = regexp.MustCompile(`^[1-9][0-9]*(KiB|MiB|GiB)$`)
 
 func ParseByteSize(value string) (ByteSize, error) {
@@ -153,17 +150,6 @@ func (size *ByteSize) UnmarshalJSON(data []byte) error {
 		return errors.New("max_bytes must be a string")
 	}
 	value, err := ParseByteSize(text)
-	if err == nil {
-		*size = value
-	}
-	return err
-}
-
-func (size *ByteSize) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
-		return errors.New("max_bytes must be a string")
-	}
-	value, err := ParseByteSize(node.Value)
 	if err == nil {
 		*size = value
 	}

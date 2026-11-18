@@ -1,4 +1,4 @@
-import connector from "./wasm/tnl.wasm";
+import connector from "./wasm/connector.wasm";
 import type { TnlStreamConnectionRegistry } from "./project.js";
 import type { Connect, DriverClient } from "./internal/connector/deployment_types.js";
 import { portableOperation } from "./internal/connector/portable_operations.js";

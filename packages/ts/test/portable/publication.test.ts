@@ -129,7 +129,7 @@ test("browser loads publisher WASM only when publish is called", async () => {
   expect(mocks.load).not.toHaveBeenCalled();
   await connect(remote, "db");
   expect(mocks.load).toHaveBeenCalledExactlyOnceWith(
-    new URL("../../src/wasm/tnl.wasm", import.meta.url),
+    new URL("../../src/wasm/connector.wasm", import.meta.url),
   );
   await publish(remote, "app", () => new Response());
   expect(mocks.load).toHaveBeenNthCalledWith(
@@ -212,7 +212,7 @@ test("publishing and connecting load separate modules without requesting publish
   await Promise.all([remote.publish("app", () => new Response("app")), remote.connect("db")]);
   expect(mocks.load.mock.calls).toEqual(
     expect.arrayContaining([
-      [new URL("https://fixture.test/tnl.wasm")],
+      [new URL("https://fixture.test/connector.wasm")],
       [new URL("https://fixture.test/publisher.wasm")],
     ]),
   );

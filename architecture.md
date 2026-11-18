@@ -164,13 +164,19 @@ requests use explicit credentials with uncredentialed CORS, not ambient cookies.
 The TypeScript SDK exposes named operations through `/node`, `/bun`, `/browser`,
 and `/cloudflare`. A deployment handle owns cleanup; importing it does not
 select a live transport. The browser loads connector WASM on the first
-connection and publisher WASM only when `publish()` is called. Cloudflare
-bundles the connector for `connect` or the publisher for `durablePublisher`.
+connection and publisher WASM only when `publish()` is called. On Cloudflare
+both operations use one entry point and Wrangler's default build can include
+both modules.
 Both artifacts use the same Go runtime shim. `/control` exposes the generated
 Fetch client independently of the runtime or WASM.
 
-Go/WASM keeps shared tracing context but does not start the native process
-metrics, trace, or log exporters.
+Go/WASM keeps shared tracing context but does not start native exporters or
+collect product telemetry. The SDK builds omit the telemetry schema compiler,
+process profiling, project-file loading, and daemon flag parsing. Browser and
+Cloudflare builds exclude direct UDP and ICE. The inner QUIC session still runs
+over packets carried by WSS relays. The Fetch publisher omits native target
+dialing and rejects demo and feedback publication; it keeps the same visitor
+checks, browser sign-in, and share handling.
 
 Browsers and Durable Objects can own hosted publishers; ordinary Workers own
 request-scoped connectors. A Durable Object persists running or stopped intent

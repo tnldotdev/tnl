@@ -15,7 +15,6 @@ import (
 	json "encoding/json/v2"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
-	"go.yaml.in/yaml/v3"
 )
 
 const DocumentVersion = 1
@@ -194,30 +193,6 @@ func (m *PathMount) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (m *PathMount) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
-		*m = PathMount{Service: node.Value}
-		return nil
-	}
-	if node.Kind != yaml.MappingNode {
-		return errors.New("path mount must be a service name or an object")
-	}
-	for index := 0; index < len(node.Content); index += 2 {
-		switch node.Content[index].Value {
-		case "service", "strip_prefix":
-		default:
-			return fmt.Errorf("unknown path mount field %q", node.Content[index].Value)
-		}
-	}
-	type object PathMount
-	var value object
-	if err := node.Decode(&value); err != nil {
-		return err
-	}
-	*m = PathMount(value)
-	return nil
-}
-
 type WorkLimits struct {
 	Total       *int  `json:"total,omitempty" yaml:"total,omitempty"`
 	Rate        *Rate `json:"rate,omitempty" yaml:"rate,omitempty"`
@@ -281,25 +256,6 @@ func (t *Target) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (t *Target) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.ScalarNode {
-		return errors.New("target must be a string or integer port")
-	}
-	if node.Tag == "!!int" {
-		var port int
-		if err := node.Decode(&port); err != nil {
-			return errors.New("target must be a string or integer port")
-		}
-		*t = Target(strconv.Itoa(port))
-		return nil
-	}
-	if node.Tag != "!!str" {
-		return errors.New("target must be a string or integer port")
-	}
-	*t = Target(node.Value)
-	return nil
-}
-
 // DurationPattern describes the positive Go duration syntax accepted by
 // project configuration. semantic bounds are checked after decoding.
 const DurationPattern = `^([0-9]+(\.[0-9]+)?|\.[0-9]+)(ns|us|\u00b5s|ms|s|m|h)(([0-9]+(\.[0-9]+)?|\.[0-9]+)(ns|us|\u00b5s|ms|s|m|h))*$`
@@ -319,18 +275,6 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 		return errors.New("duration must be a string")
 	}
 	parsed, err := parseDuration(value)
-	if err != nil {
-		return err
-	}
-	*d = parsed
-	return nil
-}
-
-func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
-		return errors.New("duration must be a string")
-	}
-	parsed, err := parseDuration(node.Value)
 	if err != nil {
 		return err
 	}
@@ -423,46 +367,6 @@ func (s *TNLDSection) UnmarshalJSON(data []byte) error {
 			}
 			value.SetInt(int64(parsed))
 		} else if err := json.Unmarshal(data, value.Addr().Interface(), json.RejectUnknownMembers(true)); err != nil {
-			return fmt.Errorf("tnld.%s: %w", name, err)
-		}
-		s.markPresent(field.index)
-	}
-	return nil
-}
-
-func (s *TNLDSection) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode {
-		return errors.New("tnld must be an object")
-	}
-	seen := make(map[string]struct{}, len(node.Content)/2)
-	for index := 0; index < len(node.Content); index += 2 {
-		key, valueNode := node.Content[index], node.Content[index+1]
-		if key.Kind != yaml.ScalarNode || key.Tag != "!!str" {
-			return errors.New("tnld field names must be strings")
-		}
-		name := key.Value
-		if _, ok := seen[name]; ok {
-			return fmt.Errorf("tnld field %q is duplicated", name)
-		}
-		seen[name] = struct{}{}
-		field, ok := tnldFields()[name]
-		if !ok {
-			return fmt.Errorf("unknown tnld field %q", name)
-		}
-		if err := validateYAMLValueTypes(valueNode, field.typ, make(map[*yaml.Node]bool)); err != nil {
-			return fmt.Errorf("tnld.%s: %w", name, err)
-		}
-		value := reflect.ValueOf(&s.value).Elem().Field(field.index)
-		if field.duration {
-			if valueNode.Kind != yaml.ScalarNode || valueNode.Tag != "!!str" {
-				return fmt.Errorf("tnld.%s must be a duration string", name)
-			}
-			parsed, err := time.ParseDuration(valueNode.Value)
-			if err != nil {
-				return fmt.Errorf("tnld.%s: invalid duration", name)
-			}
-			value.SetInt(int64(parsed))
-		} else if err := valueNode.Decode(value.Addr().Interface()); err != nil {
 			return fmt.Errorf("tnld.%s: %w", name, err)
 		}
 		s.markPresent(field.index)

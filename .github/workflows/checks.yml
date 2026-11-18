@@ -64,7 +64,7 @@ jobs:
         run: task js:check
 
       - name: Execute Go/WASM bridge tests
-        run: task go:test:wasm:optimized PACKAGES=./packages/ts/wasm RUNTIME=node
+        run: task go:test:wasm:optimized PACKAGES=./packages/ts/wasm RUNTIME=node TAGS=tnlsdk
 
       - name: Scan Go/WASM runtime dependencies
         run: task go:vulncheck:wasm
@@ -73,7 +73,7 @@ jobs:
         run: google-chrome --version
 
       - name: Execute browser Go/WASM bridge tests
-        run: task go:test:wasm:optimized PACKAGES=./packages/ts/wasm RUNTIME=chrome
+        run: task go:test:wasm:optimized PACKAGES=./packages/ts/wasm RUNTIME=chrome TAGS=tnlsdk
 
       - name: Test embedded toolbar
         run: task js:test:browser

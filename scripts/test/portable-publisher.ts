@@ -118,7 +118,7 @@ async function chromeSmoke(configuration: PublisherFixture) {
           );
       } else if (
         request.url?.endsWith("/wasm/publisher.wasm") ||
-        request.url?.endsWith("/wasm/tnl.wasm")
+        request.url?.endsWith("/wasm/connector.wasm")
       ) {
         response.writeHead(200, { "Content-Type": "application/wasm" });
         const stream = createReadStream(
@@ -458,9 +458,9 @@ async function buildFixtureWasm(output: string, tags: string) {
 }
 
 try {
-  await buildFixtureWasm(wasm, "tnlwasmtest,tnlpublisher");
+  await buildFixtureWasm(wasm, "tnlwasmtest,tnlsdk,tnlpublisher");
   if (runtime !== "workerd") {
-    await buildFixtureWasm(connectorWasm, "tnlwasmtest,tnlconnector");
+    await buildFixtureWasm(connectorWasm, "tnlwasmtest,tnlsdk,tnlconnector");
     console.log(JSON.stringify({ runtime: "chrome", proof: await chromeSmoke(fixture) }));
   }
   if (runtime !== "chrome")
