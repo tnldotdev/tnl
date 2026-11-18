@@ -11,7 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
@@ -270,7 +269,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		if service.Protocol != "http" || service.GuestID.Valid {
 			return result, ErrServiceAccess
 		}
-		runHostname, err = naming.RandomHostname(naming.ServiceRunHostnameKind, service.RunAliasParent)
+		runHostname, err = servicePublisherHostname(ctx, tx, service, p.ID)
 		if err != nil {
 			return result, err
 		}
@@ -298,7 +297,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if err != nil {
 		return result, err
 	}
-	if err := reserveServiceRunAlias(ctx, tx, service, run.ID, runHostname, clock.current()); err != nil {
+	if err := bindServicePublisherAlias(ctx, tx, service, p.ID, run.ID, runHostname, clock.current()); err != nil {
 		return result, err
 	}
 	if run.GuestID.Valid {

@@ -43,6 +43,18 @@ func TestIntegrationRunAliasPreparationRetriesKeepSavedRandomHostname(t *testing
 		if first.RunID == previous.RunID || first.RunHostname == previous.RunHostname {
 			t.Fatal("independent publisher runs reused an alias")
 		}
+		if err := f.database.CloseServiceRun(t.Context(), f.service.ID, first.RunID, first.Token, f.now); err != nil {
+			t.Fatal("retire the first publisher run", err)
+		}
+		replacement, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, publisher, "replacement-random-alias", f.now, request)
+		if err != nil || replacement.RunHostname != first.RunHostname || replacement.RunID == first.RunID || replacement.RunNumber <= first.RunNumber {
+			t.Fatal("publisher restart changed its saved address or reused its old run", err)
+		}
+		var owner string
+		if err := f.database.pool.QueryRow(t.Context(), `SELECT service_run_id FROM control.service_endpoints WHERE hostname=$1 AND retired_at IS NULL`,
+			first.RunHostname).Scan(&owner); err != nil || owner != replacement.RunID {
+			t.Fatal("saved address did not advance to the current run", err)
+		}
 		previous = first
 	}
 	var aliases, claims int
@@ -89,7 +101,7 @@ func TestIntegrationRunAliasPreparationAndManagedCertificate(t *testing.T) {
 	    FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&hostname, &identifiers, &certificate); err != nil {
 		t.Fatal(err)
 	}
-	if !regexp.MustCompile(`^r-[a-z2-7]{26}\.`+regexp.QuoteMeta(parent)+`$`).MatchString(hostname) || !certificate.After(f.now) {
+	if !regexp.MustCompile(`^p-[a-z2-7]{26}\.`+regexp.QuoteMeta(parent)+`$`).MatchString(hostname) || !certificate.After(f.now) {
 		t.Fatal("run did not retain its exact alias and managed certificate")
 	}
 	current, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now,
