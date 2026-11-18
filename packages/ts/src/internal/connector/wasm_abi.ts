@@ -13,13 +13,16 @@ export const WASM_CHUNK_BYTES = 64 * 1024;
 export interface WasmDeploymentOptions {
   readonly project: string;
   readonly name: string;
-  readonly credential: string;
+  readonly credential?: string;
+  readonly controlUrl?: string;
+  readonly workload?: Readonly<{ name: string; sourceFingerprint: string }>;
   readonly services: readonly string[];
 }
 
 export interface WasmHost {
   readonly fetch: TnlFetch;
   readonly WebSocket: typeof globalThis.WebSocket;
+  readonly assertion?: (signal: AbortSignal) => Promise<string>;
 }
 
 // one read and one write may run concurrently. close interrupts and joins them.

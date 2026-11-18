@@ -1,3 +1,5 @@
+//go:build !js
+
 package workload
 
 import (
@@ -10,9 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
@@ -20,7 +20,6 @@ import (
 )
 
 var ErrAssertionSource = errors.New("select exactly one workload assertion, token file, or callback")
-var ErrAssertionUnavailable = errors.New("workload assertion is unavailable")
 
 // assertion source is a one-of. files are reread for each new session and
 // callbacks acquire request-scoped provider tokens without storing them.
@@ -50,11 +49,7 @@ func (s AssertionSource) Acquire(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if s.Callback != nil {
-		raw, err := s.Callback(ctx)
-		if err != nil {
-			return "", err
-		}
-		return boundedAssertion(raw)
+		return AcquireAssertion(ctx, s.Callback)
 	}
 	if s.TokenFile != "" {
 		f, err := os.OpenFile(s.TokenFile, os.O_RDONLY|unix.O_NONBLOCK, 0)
@@ -73,14 +68,6 @@ func (s AssertionSource) Acquire(ctx context.Context) (string, error) {
 		return boundedAssertion(string(b))
 	}
 	return boundedAssertion(s.Assertion)
-}
-func boundedAssertion(raw string) (string, error) {
-	space := func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' }
-	raw = strings.TrimFunc(raw, space)
-	if raw == "" || len(raw) > 32<<10 || !utf8.ValidString(raw) || strings.ContainsRune(raw, 0) || strings.ContainsFunc(raw, space) {
-		return "", ErrAssertionUnavailable
-	}
-	return raw, nil
 }
 
 // acquire uses nonsecret build hints. control independently selects saved trust.

@@ -44,6 +44,7 @@ export const fixtureSchema = z.strictObject({
   mysql: credentials,
   redis_password: z.string().min(1),
   kubernetes_token: z.string().min(1),
+  source_fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
 });
 
 export type PortableFixture = z.output<typeof fixtureSchema>;
@@ -55,7 +56,9 @@ export async function fixtureCall(
   fixture: PortableFixture,
   path: string,
   body: unknown,
+  signal?: AbortSignal,
 ): Promise<unknown> {
+  const timeout = AbortSignal.timeout(30_000);
   const response = await fetch(fixture.api_url + path, {
     method: "POST",
     headers: {
@@ -63,7 +66,7 @@ export async function fixtureCall(
       "X-Tnl-Fixture-Token": fixture.api_token,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    signal: signal === undefined ? timeout : AbortSignal.any([timeout, signal]),
   });
   if (!response.ok) throw new Error(`fixture operation ${path} failed: HTTP ${response.status}`);
   if (response.status === 204) return undefined;

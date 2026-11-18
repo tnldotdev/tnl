@@ -169,6 +169,9 @@ binds JavaScript calls to existing operations and joins its resources before
 exiting. A deployment handle owns a fresh Go instance. Workers share compiled
 code, never a live scheduler or a connection across requests. Browser control
 requests use explicit credentials with uncredentialed CORS, not ambient cookies.
+For workload access, the host supplies fresh provider assertions through a
+request-scoped callback. Go owns the signing key, exchanges and attaches proofs,
+and closes the connector by the last accepted lease deadline.
 The TypeScript SDK exposes named operations through `/node`, `/bun`, `/browser`,
 and `/cloudflare`. A deployment handle owns cleanup; importing it does not
 select a live transport. The browser loads connector WASM on the first
