@@ -1,5 +1,5 @@
 import { MAX_MESSAGE_BYTES, PEERS_PATH, SHARED_HOST, parseMessage } from "./peers.ts";
-import { RELEASE_PATH, contentType, readAssetResponse, readJSON, type Release } from "./release.ts";
+import { contentType, readAssetResponse, readJSON, type Release } from "./release.ts";
 
 export function siteHeaders(type = "application/octet-stream") {
   return {
@@ -24,44 +24,63 @@ function unavailable() {
   );
 }
 
-export function createProxy(release: Release, fetchHost = fetch, sharedHost = SHARED_HOST) {
+export function createProxy(release: Release, fetchHost = fetch) {
   const assets = new Map(release.assets.map((asset) => [asset.path, asset]));
-  return async (request: Request): Promise<Response> => {
-    const { pathname, search } = new URL(request.url);
-    if (request.method !== "GET" || search !== "") return new Response(null, { status: 404 });
-    if (pathname === RELEASE_PATH) {
-      return Response.json(release, { headers: siteHeaders("application/json") });
-    }
-    const asset = assets.get(pathname === "/" ? "/index.html" : pathname);
-    if (pathname !== PEERS_PATH && (asset === undefined || pathname.startsWith("/hosting/"))) {
-      return new Response(null, { status: 404 });
-    }
+
+  async function fromHost(
+    request: Request,
+    upstream: URL,
+    check: (response: Response, signal: AbortSignal) => Promise<Response | undefined>,
+  ): Promise<Response> {
     const deadline = AbortSignal.any([request.signal, AbortSignal.timeout(20_000)]);
     for (let i = 0; i < 3 && !deadline.aborted; i++) {
       const signal = AbortSignal.any([deadline, AbortSignal.timeout(6_000)]);
       try {
-        const response = await fetchHost(new URL(asset?.path ?? PEERS_PATH, sharedHost), {
+        const response = await fetchHost(upstream, {
           cache: "no-store",
           credentials: "omit",
           redirect: "error",
           signal,
         });
-        if (asset !== undefined) {
-          const bytes = await readAssetResponse(asset, response, signal);
-          return new Response(bytes, { headers: siteHeaders(contentType(asset.path)) });
-        }
-        const message = parseMessage(
-          await readJSON(response, MAX_MESSAGE_BYTES, signal),
-          release.id,
-          Date.now(),
-        );
-        if (message !== undefined) {
-          return Response.json(message, { headers: siteHeaders("application/json") });
-        }
+        const checked = await check(response, signal);
+        if (checked !== undefined) return checked;
       } catch {
         // tnl may pick another host for a new connection.
       }
     }
     return unavailable();
+  }
+
+  return {
+    file(request: Request, sharedHost = SHARED_HOST) {
+      const { pathname, search } = new URL(request.url);
+      const asset = assets.get(pathname === "/" ? "/index.html" : pathname);
+      if (
+        request.method !== "GET" ||
+        search !== "" ||
+        asset === undefined ||
+        pathname.startsWith("/hosting/")
+      ) {
+        return new Response(null, { status: 404 });
+      }
+      return fromHost(request, new URL(asset.path, sharedHost), async (response, signal) => {
+        const bytes = await readAssetResponse(asset, response, signal);
+        return new Response(bytes, { headers: siteHeaders(contentType(asset.path)) });
+      });
+    },
+    peers(request: Request, sharedHost = SHARED_HOST) {
+      if (request.method !== "GET" || new URL(request.url).search !== "") {
+        return new Response(null, { status: 404 });
+      }
+      return fromHost(request, new URL(PEERS_PATH, sharedHost), async (response, signal) => {
+        const message = parseMessage(
+          await readJSON(response, MAX_MESSAGE_BYTES, signal),
+          release.id,
+          Date.now(),
+        );
+        if (message === undefined) return undefined;
+        return Response.json(message, { headers: siteHeaders("application/json") });
+      });
+    },
   };
 }

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { credentials, type CredentialBindings } from "./credentials.ts";
 import { CONFIG_PATH, CREDENTIALS_PATH, hostingConfig } from "./hosting/config.ts";
-import { PEERS_PATH, SHARED_HOST } from "./peers.ts";
+import { PEERS_PATH } from "./peers.ts";
 import { createProxy, siteHeaders } from "./proxy.ts";
 import { ARTIFACT_PREFIX, RELEASE_PATH, contentType, releaseSchema } from "./release.ts";
 
@@ -16,6 +16,13 @@ type Bindings = CredentialBindings & {
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
+const proxy = createProxy(release);
+
+app.get(RELEASE_PATH, (c) => {
+  if (c.req.method !== "GET" || new URL(c.req.url).search !== "") return c.body(null, 404);
+  return c.json(release, 200, siteHeaders("application/json"));
+});
+app.get(PEERS_PATH, (c) => proxy.peers(c.req.raw, c.env.SHARED_HOST));
 app.post(CREDENTIALS_PATH, (c) => credentials(c.req.raw, release.id, c.env));
 app.post(CONFIG_PATH, (c) => {
   const origin = new URL(c.req.url).origin;
@@ -36,8 +43,8 @@ app.post(CONFIG_PATH, (c) => {
 app.get("*", async (c) => {
   const request = c.req.raw;
   const url = new URL(request.url);
-  if (url.hostname !== c.env.START_HOST || [RELEASE_PATH, PEERS_PATH].includes(url.pathname)) {
-    return createProxy(release, fetch, c.env.SHARED_HOST ?? SHARED_HOST)(request);
+  if (url.hostname !== c.env.START_HOST) {
+    return proxy.file(request, c.env.SHARED_HOST);
   }
 
   if (url.search !== "") return c.notFound();
