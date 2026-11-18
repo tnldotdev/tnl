@@ -340,13 +340,14 @@ def test_connector_only_http_releases_registration_and_asgi(
         local = tnl.create_client(
             project="acme/shop", services={"web": {"protocol": "http"}}
         ).deployment("local")
-        with pytest.raises(tnl.TnlError) as failure:
-            await local.publish("web", tnl.handler(endpoint))
-        assert failure.value.code == "sdk.response_invalid"
+        publication = await local.publish("web", tnl.handler(endpoint))
+        assert publication.url is None
+        session = next(iter(native.sessions.values()))
+        assert not session.stopped
+        await publication.aclose()
         assert native.operations.count("prepare") == 1
         assert native.operations.count("register") == 1
         assert native.operations.count("unregister") == 1
-        session = next(iter(native.sessions.values()))
         assert session.stopped and not local._publications
         async with httpx.AsyncClient(trust_env=False) as http:
             with pytest.raises(httpx.ConnectError):

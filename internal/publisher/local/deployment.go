@@ -10,6 +10,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	publisheradhoc "github.com/tnldotdev/tnl/internal/publisher/adhoc"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -70,7 +71,8 @@ func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publishe
 			return result, err
 		}
 		result.native, result.service = native, *service
-		if service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port != 443 {
+		if service.Protocol != controlv1.ServiceProtocolHTTP || service.Endpoint == nil ||
+			!serviceendpoint.Valid("http", service.Endpoint.Hostname, service.Endpoint.Port, service.Endpoint.Public) {
 			return result, publisheridentity.ErrScope
 		}
 		target, err := targetsyntax.ParseCanonicalTarget(r.Target)
