@@ -4,6 +4,11 @@ import type { loadWasm } from "../connector/wasm_loader.js";
 import type { WasmPublisherHost } from "../connector/wasm_abi.js";
 import type { FetchHandler } from "../publisher/fetch_types.js";
 import type { NamedPublicationOptions, Publication } from "../publisher/publication.js";
+import {
+  bindEnrollment,
+  enrollmentSourceSchema,
+  type PublisherEnrollment,
+} from "../enrollment_source.js";
 import { serviceNameSchema } from "../values.js";
 import { createBrowserPublisherStorage } from "./storage-browser.js";
 import { createPublisherStorageHost } from "./storage-host.js";
@@ -15,7 +20,7 @@ import {
   type PortablePublication,
 } from "./publication.js";
 
-export type PublisherEnrollment = string | ((signal: AbortSignal) => string | Promise<string>);
+export type { PublisherEnrollment } from "../enrollment_source.js";
 
 export interface PublisherOptions {
   readonly controlUrl?: string;
@@ -73,12 +78,7 @@ function isEnrolledPublisher(value: unknown): value is RawEnrolledPublisher {
 const enrollmentSchema = z.strictObject({
   controlUrl: z.url().max(2048).exactOptional(),
   instance: serviceNameSchema.exactOptional(),
-  enrollment: z
-    .union([
-      z.string().min(1).max(256),
-      z.custom<Exclude<PublisherEnrollment, string>>((value) => typeof value === "function"),
-    ])
-    .exactOptional(),
+  enrollment: enrollmentSourceSchema.exactOptional(),
   publisherStorage: z
     .custom<PublisherStorage>(
       (v) =>
@@ -101,36 +101,6 @@ const owners = new WeakSet<object>();
 
 export function isEnrolledOwner(owner: object): owner is EnrolledPublisher {
   return owners.has(owner);
-}
-
-export function bindEnrollment(
-  source: PublisherEnrollment,
-  lifetime: AbortSignal,
-): () => Promise<string> {
-  return async () => {
-    const signal = AbortSignal.any([lifetime, AbortSignal.timeout(15_000)]);
-    signal.throwIfAborted();
-    if (typeof source === "string") return source;
-    let listener!: () => void;
-    try {
-      const aborted = new Promise<never>((_, reject) => {
-        listener = () => reject(signal.reason);
-        signal.addEventListener("abort", listener, { once: true });
-      });
-      const value = await Promise.race([
-        aborted,
-        Promise.resolve().then(() => {
-          signal.throwIfAborted();
-          return source(signal);
-        }),
-      ]);
-      if (typeof value !== "string" || value.length === 0 || value.length > 256)
-        throw new TnlError("sdk.configuration_invalid");
-      return value;
-    } finally {
-      signal.removeEventListener("abort", listener);
-    }
-  };
 }
 
 // the go identity owner keeps signing material in opaque durable records.

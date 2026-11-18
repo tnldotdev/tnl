@@ -573,6 +573,8 @@ func installPublicationSDKs(t *testing.T, repo, directory, binary string) {
 	for source, name := range map[string]string{
 		"packages/ts/test/fixtures/deployment-publication.ts": "publication.ts",
 		"packages/py/tests/deployment_publication_fixture.py": "publication.py",
+		"packages/ts/test/fixtures/enrolled-publisher.ts":     "enrolled-publisher.ts",
+		"packages/py/tests/enrolled_publisher_fixture.py":     "enrolled-publisher.py",
 	} {
 		data, err := os.ReadFile(filepath.Join(repo, source))
 		if err != nil {

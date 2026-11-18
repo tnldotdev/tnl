@@ -109,6 +109,7 @@ export interface Publication {
 
 export type PublicationSelection = (
   | { readonly kind: "local"; readonly service?: string }
+  | { readonly kind: "enrolled"; readonly service: string }
   | {
       readonly kind: "deployment";
       readonly project: string;
@@ -122,11 +123,11 @@ export type PublicationSelection = (
   readonly shutdownDeadline?: () => string | undefined;
 };
 
-interface Dependencies extends RegistrationRuntime {
+export interface Dependencies extends RegistrationRuntime {
   pause(milliseconds: number, signal?: AbortSignal): Promise<void>;
 }
 
-const dependencies: Dependencies = {
+export const nativePublicationRuntime: Dependencies = {
   start: startRuntime,
   request: runtimeRequest,
   pause: async (milliseconds, signal) => {
@@ -163,7 +164,7 @@ function publicationShutdown(original?: string): PublicationShutdown {
 export function publishServer(
   server: LocalHTTPServer,
   options: InvocationOptions = {},
-  runtime: Dependencies = dependencies,
+  runtime: Dependencies = nativePublicationRuntime,
   publication?: PublicationSelection,
   shutdown?: () => PublicationShutdown,
 ): Promise<Publication> {
@@ -204,6 +205,7 @@ async function publishServerUntraced(
   const publisherCredentialFile =
     localService === undefined &&
     publication?.kind !== "deployment" &&
+    publication?.kind !== "enrolled" &&
     options.publisherIdentityID === undefined
       ? (options.publisherCredentialFile ?? environment.TNL_PUBLISHER_CREDENTIAL_FILE)
       : undefined;
@@ -236,6 +238,7 @@ async function publishServerUntraced(
             ...(publication.service === undefined ? {} : { service: publication.service }),
           },
         }),
+    ...(publication?.kind === "enrolled" ? { enrolled_service: publication.service } : {}),
     telemetry_disabled:
       options.telemetry === false || /^(1|true)$/i.test(environment.TNL_NO_TELEMETRY ?? ""),
     ...(options.server === undefined ? {} : { server_url: options.server }),
@@ -645,7 +648,7 @@ async function closeOwnedPublication(
 export async function publishFetch(
   handler: FetchHandler,
   options: InvocationOptions = {},
-  runtime: Dependencies = dependencies,
+  runtime: Dependencies = nativePublicationRuntime,
   publication?: PublicationSelection,
 ): Promise<Publication> {
   validateOptions(options);

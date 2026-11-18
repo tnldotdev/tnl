@@ -60,6 +60,12 @@ schemas:
             { type: string, minLength: 1, maxLength: 32, x-go-type-skip-optional-pointer: true }
           credential: { type: string, minLength: 1, maxLength: 32768 }
         description: Private captured selection. Omit service for a temporary service; named publication retains saved visitor policy and limits.
+      enrolled_service:
+        type: string
+        minLength: 1
+        maxLength: 32
+        x-go-type-skip-optional-pointer: true
+        description: Named app assignment on an SDK-enrolled publisher owner. Cannot be combined with any credential or authority selection.
       publisher_identity_id: { type: string, maxLength: 128, x-go-type-skip-optional-pointer: true }
       publisher_credential_file:
         { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }

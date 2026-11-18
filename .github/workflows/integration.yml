@@ -106,6 +106,8 @@ jobs:
             shard: 1/1
           - suite: publisher-wasm
             shard: 1/1
+          - suite: publisher-native
+            shard: 1/1
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -115,7 +117,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go node pnpm task aqua:WebAssembly/binaryen ${{ (matrix.suite == 'connections' || matrix.suite == 'tcp-clients') && 'python uv' || '' }} ${{ (matrix.suite == 'connector-wasm' || matrix.suite == 'publisher-wasm') && 'go:github.com/letsencrypt/pebble/v2/cmd/pebble' || '' }}
+          tools: go node pnpm task aqua:WebAssembly/binaryen ${{ (matrix.suite == 'connections' || matrix.suite == 'tcp-clients' || matrix.suite == 'publisher-native') && 'python uv' || '' }} ${{ matrix.suite == 'publisher-native' && 'bun' || '' }} ${{ (matrix.suite == 'connector-wasm' || matrix.suite == 'publisher-wasm') && 'go:github.com/letsencrypt/pebble/v2/cmd/pebble' || '' }}
           go-cache: race
           pnpm: true
 

@@ -313,6 +313,9 @@ type Invocation struct {
 		Project    string `json:"project"`
 		Service    string `json:"service,omitempty"`
 	} `json:"deployment,omitempty"`
+
+	// EnrolledService Named app assignment on an SDK-enrolled publisher owner. Cannot be combined with any credential or authority selection.
+	EnrolledService         string                                     `json:"enrolled_service,omitempty"`
 	InvocationId            string                                     `json:"invocation_id"`
 	Ip                      *[]string                                  `json:"ip,omitempty"`
 	Limits                  *externalRef0.ProjectHTTPApplicationLimits `json:"limits,omitempty"`

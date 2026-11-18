@@ -2,7 +2,11 @@ import * as z from "zod";
 import { TnlError } from "../../errors.js";
 import { serviceNameSchema, httpsOriginSchema } from "../values.js";
 import { publicationRunSchema, publisherURLSchema } from "../publication_run.js";
-import { bindEnrollment, type PublisherEnrollment } from "./enrollment.js";
+import {
+  bindEnrollment,
+  enrollmentSourceSchema,
+  type PublisherEnrollment,
+} from "../enrollment_source.js";
 
 const targetName = z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]{0,127}$/);
 export const workerTarget = z.union([
@@ -47,12 +51,7 @@ export interface WorkerPublisherOptions {
 const optionsSchema = z.strictObject({
   controlUrl: httpsOriginSchema.exactOptional(),
   instance: serviceNameSchema.exactOptional(),
-  enrollment: z
-    .union([
-      z.string().min(1).max(256),
-      z.custom<Exclude<PublisherEnrollment, string>>((value) => typeof value === "function"),
-    ])
-    .exactOptional(),
+  enrollment: enrollmentSourceSchema.exactOptional(),
 });
 const ownerSchema = z.strictObject({
   publisherIdentityID: z.string().regex(/^pub_[A-Za-z0-9]{22}$/),

@@ -44,6 +44,29 @@ const endpointSchema = z
   .readonly();
 const problemSchema = z.strictObject({ code: z.string(), message: z.string() });
 export type RuntimeEndpoint = z.output<typeof endpointSchema>;
+const ownerEndpointSchema = z.strictObject({ ...endpointFields, scope: z.literal("owner") });
+export type OwnerEndpoint = z.output<typeof ownerEndpointSchema>;
+
+export function parseOwnerEndpoint(value: unknown): OwnerEndpoint {
+  return parseValue(ownerEndpointSchema, value, "sdk.response_invalid");
+}
+
+export async function publisherInvocationEndpoint(
+  owner: OwnerEndpoint,
+  invocationID: string,
+  signal?: AbortSignal,
+): Promise<RuntimeEndpoint> {
+  const value = await runtimeRequestUntraced(
+    owner,
+    "capabilities",
+    { scope: "invocation", invocation_id: invocationID },
+    signal,
+  );
+  const endpoint = parseEndpoint(value, { invocationID });
+  if (endpoint.url !== owner.url || endpoint.owner_id !== owner.owner_id)
+    throw new TnlError("sdk.response_invalid");
+  return endpoint;
+}
 
 export interface EndpointSelection {
   readonly service?: string | undefined;
@@ -185,18 +208,20 @@ export function runtimeRequest(
 }
 
 function runtimeRequestUntraced(
-  endpoint: RuntimeEndpoint,
+  endpoint: RuntimeEndpoint | OwnerEndpoint,
   operation: string,
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<unknown> {
   signal?.throwIfAborted();
-  parseEndpoint(
-    endpoint,
-    endpoint.scope === "app"
-      ? { service: endpoint.service }
-      : { invocationID: endpoint.invocation_id },
-  );
+  if (endpoint.scope === "owner") parseOwnerEndpoint(endpoint);
+  else
+    parseEndpoint(
+      endpoint,
+      endpoint.scope === "app"
+        ? { service: endpoint.service }
+        : { invocationID: endpoint.invocation_id },
+    );
   if (
     ![
       "health",
@@ -206,8 +231,11 @@ function runtimeRequestUntraced(
       "renew",
       "unregister",
       "publications/register",
+      "capabilities",
     ].includes(operation)
   )
+    throw new TnlError("sdk.configuration_invalid");
+  if ((operation === "capabilities") !== (endpoint.scope === "owner"))
     throw new TnlError("sdk.configuration_invalid");
   const get = operation === "health" || operation === "status";
   const payload = get ? undefined : JSON.stringify(body);
@@ -255,7 +283,7 @@ function runtimeRequestUntraced(
             if (response.statusCode === 204) {
               if (
                 length !== 0 ||
-                ["prepare", "status", "publications/register"].includes(operation)
+                ["prepare", "status", "publications/register", "capabilities"].includes(operation)
               )
                 throw new TnlError("sdk.response_invalid");
               resolve(undefined);
@@ -291,7 +319,7 @@ function runtimeRequestUntraced(
                             : "sdk.request_rejected",
               );
             }
-            if (!["prepare", "status", "publications/register"].includes(operation))
+            if (!["prepare", "status", "publications/register", "capabilities"].includes(operation))
               throw new TnlError("sdk.response_invalid");
             resolve(value);
           } catch (cause) {

@@ -30,6 +30,7 @@ from ._protocol import (
     RegistrationLost,
     TnlError,
 )
+from ._publisher import Publisher, PublisherEnrollment, publisher
 from ._workload import configure_workload
 
 __all__ = [
@@ -60,9 +61,12 @@ __all__ = [
     "RegistrationLost",
     "TnlError",
     "Publication",
+    "Publisher",
+    "PublisherEnrollment",
     "Server",
     "handler",
     "configure_workload",
     "prepare",
+    "publisher",
     "run",
 ]

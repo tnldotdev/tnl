@@ -78,6 +78,39 @@ func (g *Deployment) PollApps(ctx context.Context, apps DeploymentAppControl) (c
 	return g.poll(ctx, apps.GetDeploymentPublisherAppAssignments)
 }
 
+// HTTPApp selects only a current app-owned HTTP assignment and confirms the
+// captured target trust revision before passing it to a run owner.
+func (g *Deployment) HTTPApp(ctx context.Context, apps DeploymentAppControl, name string) (*Native, controlv1.Service, error) {
+	if g == nil || apps == nil || !naming.ValidServiceName(name) {
+		return nil, controlv1.Service{}, ErrScope
+	}
+	assignments, err := g.PollApps(ctx, apps)
+	if err != nil {
+		return nil, controlv1.Service{}, err
+	}
+	for _, assignment := range assignments.Services {
+		if assignment.Service != name {
+			continue
+		}
+		if assignment.Configuration.Target != "app" || assignment.Configuration.Protocol == nil || *assignment.Configuration.Protocol != controlv1.ServiceProtocolHTTP {
+			return nil, controlv1.Service{}, ErrScope
+		}
+		native, err := g.Service(assignment)
+		if err != nil {
+			return nil, controlv1.Service{}, err
+		}
+		saved, err := native.SavedService(ctx)
+		if err != nil {
+			return nil, controlv1.Service{}, err
+		}
+		if saved.Id != assignment.ServiceId || saved.TrustRevision != assignment.TrustRevision {
+			return nil, controlv1.Service{}, ErrScope
+		}
+		return native, saved, nil
+	}
+	return nil, controlv1.Service{}, ErrScope
+}
+
 func (g *Deployment) poll(ctx context.Context, read func(context.Context, string) (controlv1.DeploymentPublisherAssignments, error)) (controlv1.DeploymentPublisherAssignments, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

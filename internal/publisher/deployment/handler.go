@@ -99,34 +99,14 @@ func PrepareHandler(ctx context.Context, options HandlerOptions) (*PreparedHandl
 // PrepareEnrolledHandler selects only a current assignment from an enrolled
 // publisher. it does not manufacture registered deployment-credential approval.
 func PrepareEnrolledHandler(ctx context.Context, identity *publisheridentity.Deployment, apps publisheridentity.DeploymentAppControl, name string, handler http.Handler) (*PreparedHandler, error) {
-	if identity == nil || apps == nil || handler == nil || name == "" {
+	if handler == nil {
 		return nil, publisheridentity.ErrScope
 	}
-	assignments, err := identity.PollApps(ctx, apps)
+	native, saved, err := identity.HTTPApp(ctx, apps, name)
 	if err != nil {
 		return nil, err
 	}
-	for _, assignment := range assignments.Services {
-		if assignment.Service != name {
-			continue
-		}
-		if assignment.Configuration.Target != "app" || assignment.Configuration.Protocol == nil || *assignment.Configuration.Protocol != controlv1.ServiceProtocolHTTP {
-			return nil, publisheridentity.ErrScope
-		}
-		native, err := identity.Service(assignment)
-		if err != nil {
-			return nil, err
-		}
-		saved, err := native.SavedService(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if saved.Id != assignment.ServiceId || saved.TrustRevision != assignment.TrustRevision {
-			return nil, publisheridentity.ErrScope
-		}
-		return prepareHandler(native, saved, &PreparedHandler{native: native}, handler)
-	}
-	return nil, publisheridentity.ErrScope
+	return prepareHandler(native, saved, &PreparedHandler{native: native}, handler)
 }
 
 func prepareHandler(native *publisheridentity.Native, saved controlv1.Service, prepared *PreparedHandler, handler http.Handler) (*PreparedHandler, error) {

@@ -12,10 +12,11 @@ import (
 )
 
 type runtimeCommand struct {
-	Connections   connectionsCommand     `cmd:"" hidden:""`
-	Endpoint      runtimeEndpointOptions `cmd:"" hidden:""`
-	OwnerEndpoint runtimeOptions         `cmd:"" hidden:""`
-	Serve         runtimeOptions         `cmd:"" hidden:""`
+	Connections   connectionsCommand      `cmd:"" hidden:""`
+	Endpoint      runtimeEndpointOptions  `cmd:"" hidden:""`
+	OwnerEndpoint runtimeOptions          `cmd:"" hidden:""`
+	Serve         runtimeOptions          `cmd:"" hidden:""`
+	Publisher     runtimePublisherOptions `cmd:"" hidden:""`
 }
 
 type runtimeOptions struct {
@@ -30,6 +31,17 @@ type runtimeEndpointOptions struct {
 	runtimeOptions `embed:""`
 	Service        string `name:"service"`
 	InvocationID   string `name:"invocation-id"`
+}
+
+type runtimePublisherOptions struct {
+	StateDir   string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	Instance   string `name:"instance"`
+	ControlURL string `name:"control-url"`
+}
+
+func runRuntimePublisher(ctx context.Context, options runtimePublisherOptions, output io.Writer) error {
+	return local.ServeSDKPublisher(ctx, local.Options{Directory: ".", StateDir: options.StateDir},
+		options.Instance, options.ControlURL, os.Stdin, output)
 }
 
 func (o runtimeOptions) settings() local.Options {
