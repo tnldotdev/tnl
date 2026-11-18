@@ -286,7 +286,7 @@ func (c *Capabilities) Handler(next http.Handler) http.Handler {
 			Write(w, 401, Problem{Code: "runtime.unauthorized", Message: "use the current private endpoint descriptor"})
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, MaxBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, requestMaxBytes(r.URL.Path))
 		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, grantKey{}, grant)))
@@ -311,7 +311,7 @@ func callEndpoint(ctx context.Context, e Endpoint, method, path string, input, o
 			return err
 		}
 	}
-	if body.Len() > MaxBytes {
+	if int64(body.Len()) > requestMaxBytes(path) {
 		return errors.New("local publisher request exceeds size limit")
 	}
 	request, err := http.NewRequestWithContext(ctx, method, e.Url+path, &body)

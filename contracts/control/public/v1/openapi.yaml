@@ -121,6 +121,8 @@ paths:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-issuances~1{issuance_id}"
   /v1/services/{service_id}/runs/{service_run_id}/certificate-installed:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1certificate-installed"
+  /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1supplied-certificate-installed"
   /v1/projects/{project_key}/deployments/{deployment}/namespace/rename:
     $ref: "./paths/deployment-runtime.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1namespace~1rename"
   /v1/projects/{project_key}/deployments/{deployment}/rename:
@@ -635,6 +637,10 @@ components:
       $ref: "./schemas/services.yaml#/schemas/ServiceRunPreparation"
     CreateServiceCertificateIssuanceRequest:
       $ref: "./schemas/service-runs.yaml#/schemas/CreateServiceCertificateIssuanceRequest"
+    SuppliedServiceCertificateInstalledRequest:
+      $ref: "./schemas/service-runs.yaml#/schemas/SuppliedServiceCertificateInstalledRequest"
+    SuppliedServiceCertificateInstallation:
+      $ref: "./schemas/service-runs.yaml#/schemas/SuppliedServiceCertificateInstallation"
     ServiceCertificateInstalledRequest:
       $ref: "./schemas/service-runs.yaml#/schemas/ServiceCertificateInstalledRequest"
     ServiceCertificateIssuance:

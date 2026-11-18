@@ -9,6 +9,7 @@ import {
   serviceNameSchema,
 } from "../values.js";
 import type { EndpointSelection, RuntimeEndpoint } from "./local.js";
+import type { ServiceCertificate } from "../publication_certificate.js";
 
 export interface RegistrationRuntime {
   start(
@@ -200,8 +201,20 @@ export class NativeRegistration {
     await this.runtime.request(this.endpoint, "register", this.current, signal);
   }
 
-  async renew(signal?: AbortSignal): Promise<void> {
-    await this.runtime.request(this.endpoint, "renew", this.current, signal);
+  async renew(signal?: AbortSignal, certificate?: ServiceCertificate): Promise<void> {
+    if (certificate !== undefined && this.acquisition.kind !== "invocation")
+      throw new TnlError("sdk.capability_unsupported");
+    const request =
+      certificate === undefined
+        ? this.current
+        : {
+            ...this.current,
+            certificate: {
+              certificate_pem: certificate.certificatePEM,
+              private_key_pem: certificate.privateKeyPEM,
+            },
+          };
+    await this.runtime.request(this.endpoint, "renew", request, signal);
   }
 
   async status(signal?: AbortSignal): Promise<unknown> {

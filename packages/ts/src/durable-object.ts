@@ -6,6 +6,7 @@ import type {
   NamedPublicationOptions,
   Publication,
   TemporaryPublicationOptions,
+  ServiceCertificateSource,
 } from "./internal/publisher/publication.js";
 import {
   createDurableObjectPublisherStorage,
@@ -41,7 +42,7 @@ export interface DurablePublicationConfiguration {
   readonly deployment: string;
   readonly service?: string;
   // request signals and credentials are deliberately absent from durable intent.
-  readonly options?: Omit<TemporaryPublicationOptions, "signal">;
+  readonly options?: Omit<TemporaryPublicationOptions, "signal" | "certificate">;
 }
 
 // an existing deployment satisfies this interface. the adapter does not create a
@@ -58,6 +59,8 @@ export interface DurablePublisherDeployment {
 
 export interface DurableObjectPublisherOptions {
   readonly configuration: DurablePublicationConfiguration;
+  // certificate sources are live secrets, not serializable durable intent.
+  readonly certificate?: ServiceCertificateSource;
   // load an imported publisher identity from deployed secrets only when this
   // owner's protected identity record is absent. go validates its authority.
   readonly identity: () => Uint8Array | Promise<Uint8Array>;
@@ -384,6 +387,9 @@ export class DurableObjectPublisher {
         }
         const options = {
           ...structuredClone(configuration.options),
+          ...(this.#options.certificate === undefined
+            ? {}
+            : { certificate: this.#options.certificate }),
           signal: running.controller.signal,
         };
         running.publication =

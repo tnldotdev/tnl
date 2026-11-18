@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/adhoc"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -31,6 +32,9 @@ type Limits struct {
 }
 
 type Options struct {
+	// Certificate supplies visitor TLS material; nil selects managed issuance.
+	// the callback is polled for replacement and must honor cancellation.
+	Certificate func(context.Context) (ServiceCertificate, error)
 	// NoTelemetry opts this publication out without changing saved preferences.
 	NoTelemetry             bool
 	RequirePostQuantum      bool
@@ -103,8 +107,9 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	go func() {
 		result := runHTTPPublication(runCtx, local, serveDone, func(deadline func() time.Time) error {
 			return runSDKPublication(runCtx, state, options, adhoc.Options{
-				RequirePostQuantum: options.RequirePostQuantum,
-				ControlURL:         serverURL, HTTPClient: options.HTTPClient, State: profile,
+				RequirePostQuantum:  options.RequirePostQuantum,
+				SuppliedCertificate: suppliedCertificateSource(options.Certificate),
+				ControlURL:          serverURL, HTTPClient: options.HTTPClient, State: profile,
 				Publisher: native, InvocationID: invocationID, ExpiresAt: options.ExpiresAt, Public: &public,
 				Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
 				OnAllocated: func(service controlv1.Service) error {
@@ -142,6 +147,26 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 		return nil, errors.New("ad-hoc publication stopped before it was ready")
 	case <-ctx.Done():
 		return nil, errors.Join(context.Cause(ctx), tunnel.Close())
+	}
+}
+
+// ServiceCertificate contains publisher-held PEM, never target TLS settings.
+// returned buffers transfer to the publication owner and are cleared after use.
+type ServiceCertificate struct {
+	CertificatePEM []byte
+	PrivateKeyPEM  []byte
+}
+
+func (ServiceCertificate) String() string   { return "private supplied service certificate" }
+func (ServiceCertificate) GoString() string { return "private supplied service certificate" }
+
+func suppliedCertificateSource(source func(context.Context) (ServiceCertificate, error)) func(context.Context) (publisherservice.CertificateMaterial, error) {
+	if source == nil {
+		return nil
+	}
+	return func(ctx context.Context) (publisherservice.CertificateMaterial, error) {
+		material, err := source(ctx)
+		return publisherservice.CertificateMaterial{CertificatePEM: material.CertificatePEM, PrivateKeyPEM: material.PrivateKeyPEM}, err
 	}
 }
 

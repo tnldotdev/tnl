@@ -301,7 +301,13 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	prepared.certificateInstalled = installed
 	certificates := Certificates{Control: control, Cache: cache, ServiceID: setup.ServiceId, RunID: setup.ServiceRunId, PublisherIdentityID: config.PublisherIdentityID, RunNumber: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken), Hostname: prepared.managedHostname, Plan: *prepared.Preparation.CertificatePlan, Install: prepared.installManagedCertificate, installed: installed}
 	certificateCtx, cancel := context.WithCancel(ctx)
-	return func() error { return certificates.Maintain(certificateCtx) }, func() error {
+	maintain := func() error { return certificates.Maintain(certificateCtx) }
+	if config.SuppliedCertificate != nil {
+		worker := suppliedCertificateWorker{control: control, cache: cache, source: config.SuppliedCertificate,
+			prepared: prepared, setup: setup, installed: installed}
+		maintain = func() error { return worker.maintain(certificateCtx) }
+	}
+	return maintain, func() error {
 		cancel()
 		err := closeHTTP()
 		if prepared.httpProxy != nil {

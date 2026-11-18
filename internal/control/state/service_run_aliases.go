@@ -61,7 +61,7 @@ func (d *Database) configureServiceRunAliasParent(ctx context.Context, tx pgx.Tx
 	// old aliases retain their run binding and DNS quarantine. a later endpoint
 	// edit cannot turn one into an address of another run.
 	_, err = tx.Exec(ctx, `UPDATE control.service_endpoints endpoint SET retired_at=$2,
-	    reusable_after=GREATEST($2::timestamptz+interval '7 days',COALESCE(run.certificate_expires_at,$2::timestamptz)),
+	    reusable_after=GREATEST($2::timestamptz+interval '7 days',COALESCE(control.service_run_certificate_retention(run.id),$2::timestamptz)),
 	    dns_state=CASE WHEN endpoint.dns_state IN('unmanaged','removed') THEN 'removed' ELSE 'removing' END,
 	    dns_available_at=CASE WHEN endpoint.dns_state IN('unmanaged','removed') THEN NULL ELSE $2 END,
 	    dns_revision=endpoint.dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL

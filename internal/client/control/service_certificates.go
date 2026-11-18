@@ -33,3 +33,11 @@ func (c *Client) MarkServiceCertificateInstalled(ctx context.Context, service, r
 	})
 	return err
 }
+
+func (c *Client) MarkSuppliedServiceCertificateInstalled(ctx context.Context, service, run string, number int64, chain, previous string, token credentials.ServiceRunToken) (controlv1.SuppliedServiceCertificateInstallation, error) {
+	return request[controlv1.SuppliedServiceCertificateInstallation](ctx, c, string(token), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.MarkSuppliedServiceCertificateInstalled(ctx, service, run, controlv1.SuppliedServiceCertificateInstalledRequest{
+			RunNumber: number, CertificatePem: chain, PreviousCertificateSha256: previous,
+		}, editors...)
+	})
+}

@@ -109,7 +109,7 @@ func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service
 	if err != nil {
 		return result, err
 	}
-	if run.RunNumber != number || len(run.CertificateIdentifiers) == 0 {
+	if run.RunNumber != number || len(run.CertificateIdentifiers) == 0 || run.SuppliedCertificateSha256.Valid {
 		return result, ErrServiceAccess
 	}
 	if _, err = serviceRunCertificatePlan(ctx, tx, run); err != nil {
@@ -249,7 +249,7 @@ func (d *Database) MarkServiceCertificateInstalled(ctx context.Context, service,
 	if err != nil {
 		return err
 	}
-	if run.RunNumber != number {
+	if run.RunNumber != number || run.SuppliedCertificateSha256.Valid {
 		return ErrServiceAccess
 	}
 	if _, err = serviceRunCertificatePlan(ctx, tx, run); err != nil {

@@ -198,6 +198,30 @@ schemas:
           x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       csr: { type: string, format: byte, maxLength: 87384 }
+  SuppliedServiceCertificateInstalledRequest:
+    type: object
+    additionalProperties: false
+    required: [run_number, certificate_pem, previous_certificate_sha256]
+    properties:
+      run_number:
+        {
+          type: string,
+          pattern: "^[0-9]+$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
+      certificate_pem: { type: string, minLength: 1, maxLength: 131072 }
+      previous_certificate_sha256:
+        type: string
+        pattern: "^([a-f0-9]{64})?$"
+        description: Empty for the first install; otherwise the fingerprint of the previous acknowledged leaf. A retry of the currently installed leaf is idempotent.
+  SuppliedServiceCertificateInstallation:
+    type: object
+    additionalProperties: false
+    required: [certificate_sha256, expires_at]
+    properties:
+      certificate_sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+      expires_at: { type: string, format: date-time }
   ServiceCertificateInstalledRequest:
     type: object
     additionalProperties: false

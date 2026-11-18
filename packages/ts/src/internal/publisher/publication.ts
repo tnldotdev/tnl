@@ -24,6 +24,12 @@ import {
 } from "./registration.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
 import type { PublicationRun } from "../publication_run.js";
+import {
+  resolveServiceCertificate,
+  serviceCertificateSourceSchema,
+  type ServiceCertificateSource,
+} from "../publication_certificate.js";
+export type { ServiceCertificate, ServiceCertificateSource } from "../publication_certificate.js";
 export type { PublicationRun } from "../publication_run.js";
 
 type PublisherCredentialFile = {
@@ -41,6 +47,7 @@ type InvocationOptions = InvocationSettings &
     | { readonly publisherCredentialFile?: never; readonly publisherIdentityID?: never }
   );
 interface InvocationSettings {
+  readonly certificate?: ServiceCertificateSource;
   readonly telemetry?: boolean;
   readonly server?: string;
   readonly directory?: string;
@@ -65,7 +72,7 @@ interface InvocationSettings {
 
 export type NamedPublicationOptions = Pick<
   InvocationSettings,
-  "targetHostname" | "signal" | "telemetry"
+  "targetHostname" | "signal" | "telemetry" | "certificate"
 >;
 export type TemporaryPublicationOptions = NamedPublicationOptions &
   Pick<InvocationSettings, "requirePostQuantum" | "access" | "limits" | "public">;
@@ -77,11 +84,12 @@ export function validatePublicationOptions(
   validateOptions(options);
   const allowed = new Set(
     named
-      ? ["targetHostname", "signal", "telemetry"]
+      ? ["targetHostname", "signal", "telemetry", "certificate"]
       : [
           "targetHostname",
           "signal",
           "telemetry",
+          "certificate",
           "requirePostQuantum",
           "access",
           "limits",
@@ -180,6 +188,15 @@ async function publishServerUntraced(
   const directory = path.resolve(options.directory ?? process.cwd());
   const environment = publication?.environment ?? process.env;
   const localService = publication?.kind === "local" ? publication.service : undefined;
+  if (localService !== undefined && options.certificate !== undefined)
+    throw new TnlError("sdk.capability_unsupported");
+  const certificate =
+    options.certificate === undefined
+      ? undefined
+      : await resolveServiceCertificate(
+          options.certificate,
+          options.signal ?? new AbortController().signal,
+        );
   const owner = randomBytes(16).toString("hex");
   const invocationID = `ivk_${Array.from(
     { length: 22 },
@@ -204,6 +221,14 @@ async function publishServerUntraced(
     owner,
     pid: process.pid,
     target,
+    ...(certificate === undefined
+      ? {}
+      : {
+          certificate: {
+            certificate_pem: certificate.certificatePEM,
+            private_key_pem: certificate.privateKeyPEM,
+          },
+        }),
     ...(publication?.kind !== "deployment"
       ? {}
       : {
@@ -464,7 +489,13 @@ async function publishServerUntraced(
   };
   // registering acknowledges the listener, not routability.
   const statusRequest = independent("sdk.publish.status", () => native.status(lifetime.signal));
-  const renew = independent("sdk.publish.renew", () => native.renew(lifetime.signal));
+  const renew = independent("sdk.publish.renew", async () => {
+    const certificate =
+      options.certificate === undefined
+        ? undefined
+        : await resolveServiceCertificate(options.certificate, lifetime.signal);
+    return native.renew(lifetime.signal, certificate);
+  });
   const recover = independent("sdk.publish.recover", async () => {
     await native.discover(lifetime.signal);
     await register();
@@ -567,6 +598,7 @@ const invocationOptionsSchema = z
     directory: pathTextSchema.optional(),
     stateDir: pathTextSchema.optional(),
     targetHostname: z.string().min(1).optional(),
+    certificate: serviceCertificateSourceSchema.optional(),
     requirePostQuantum: z.boolean().optional(),
     public: z.boolean().optional(),
     telemetry: z.boolean().optional(),

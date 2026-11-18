@@ -88,6 +88,11 @@ SELECT
           AND (issuance.not_after>$2 OR issuance.state NOT IN('waiting_for_install','installed','failed','canceled') OR issuance.finalization_possible AND issuance.not_after IS NULL
             OR EXISTS(SELECT 1 FROM control.acme_authorizations auth WHERE auth.order_id=issuance.id
               AND (auth.state IN('presenting','presented','validating','valid','cleaning') OR auth.presented_at IS NOT NULL AND auth.cleanup_completed_at IS NULL)))
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM control.service_supplied_certificates supplied
+        WHERE supplied.certificate_domain_id=$1
+          AND supplied.not_after>$2
     ) AS ready
 `
 

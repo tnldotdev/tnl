@@ -30,6 +30,7 @@ type CertificateControl interface {
 	CreateServiceCertificateIssuance(context.Context, string, string, int64, credentials.ServiceRunToken, []byte, string) (controlv1.ServiceCertificateIssuance, error)
 	GetServiceCertificateIssuance(context.Context, string, string, string, credentials.ServiceRunToken) (controlv1.ServiceCertificateIssuance, error)
 	MarkServiceCertificateInstalled(context.Context, string, string, int64, string, time.Time, credentials.ServiceRunToken) error
+	MarkSuppliedServiceCertificateInstalled(context.Context, string, string, int64, string, string, credentials.ServiceRunToken) (controlv1.SuppliedServiceCertificateInstallation, error)
 }
 
 // CertificateStore selects the shared engine's protected scope. host providers

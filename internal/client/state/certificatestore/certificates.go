@@ -49,6 +49,7 @@ type Material struct {
 	Certificate tls.Certificate
 	RenewAt     time.Time
 	IssuanceID  string
+	Fingerprint string
 }
 
 type storedCertificate struct {
@@ -57,6 +58,7 @@ type storedCertificate struct {
 	CertificatePEM []byte    `json:"certificate_pem,omitempty"`
 	RenewAt        time.Time `json:"renew_at,omitempty"`
 	IssuanceID     string    `json:"issuance_id,omitempty"`
+	SuppliedSHA256 string    `json:"supplied_sha256,omitempty"`
 }
 
 type certificateFile struct {
@@ -168,7 +170,7 @@ func (r *CertificateCache) write(ctx context.Context, value certificateFile) err
 	return r.files.Write(ctx, certificateFilename(r.planJSON), data)
 }
 
-func (r *CertificateCache) material(ctx context.Context, hostname string, staged bool) (result Material, found bool, resultErr error) {
+func (r *CertificateCache) material(ctx context.Context, hostname string, staged, supplied bool) (result Material, found bool, resultErr error) {
 	// the first write and its plan checkpoint are separate atomic records.
 	// join the short mutation, not the issuance lock held during control calls.
 	lock, err := r.files.Lock(ctx, certificateFilename(r.planJSON)+".lock")
@@ -193,21 +195,29 @@ func (r *CertificateCache) material(ctx context.Context, hostname string, staged
 	if stored == nil || len(stored.CertificatePEM) == 0 {
 		return Material{}, false, nil
 	}
-	loaded, err := certificate(stored.PrivateKeyDER, stored.CertificatePEM, hostname, r.plan.Identifiers)
+	if (stored.SuppliedSHA256 != "") != supplied {
+		return Material{}, true, identityFileError(ErrPublisherStateConflict)
+	}
+	var loaded tls.Certificate
+	if supplied {
+		loaded, err = suppliedCertificate(stored, hostname, time.Now())
+	} else {
+		loaded, err = certificate(stored.PrivateKeyDER, stored.CertificatePEM, hostname, r.plan.Identifiers)
+	}
 	if err == nil && staged {
 		err = r.files.Sync(ctx, certificateFilename(r.planJSON))
 	}
 	if err != nil {
 		return Material{}, true, err
 	}
-	return Material{Certificate: loaded, RenewAt: stored.RenewAt, IssuanceID: stored.IssuanceID}, true, err
+	return Material{Certificate: loaded, RenewAt: stored.RenewAt, IssuanceID: stored.IssuanceID, Fingerprint: stored.SuppliedSHA256}, true, err
 }
 
 func (r *CertificateCache) Current(ctx context.Context, hostname string) (Material, bool, error) {
-	return r.material(ctx, hostname, false)
+	return r.material(ctx, hostname, false, false)
 }
 func (r *CertificateCache) Staged(ctx context.Context, hostname string) (Material, bool, error) {
-	return r.material(ctx, hostname, true)
+	return r.material(ctx, hostname, true, false)
 }
 
 func (r *CertificateCache) pending(ctx context.Context, hostname string, replace bool) (result Pending, resultErr error) {
@@ -367,6 +377,24 @@ func (r *CertificateCache) pendingScope() string {
 }
 
 func validateStoredCertificate(material *storedCertificate, plan controlv1.CertificatePlan, issued bool) error {
+	if material.SuppliedSHA256 != "" {
+		if len(material.PrivateKeyDER) == 0 || len(material.PrivateKeyDER) > 16<<10 || len(material.CSRDER) != 0 ||
+			material.IssuanceID != "" || len(material.CertificatePEM) > 128<<10 || !material.RenewAt.IsZero() {
+			return ErrPublisherStateConflict
+		}
+		block, _ := pem.Decode(material.CertificatePEM)
+		if block == nil {
+			return ErrPublisherStateConflict
+		}
+		leaf, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return ErrPublisherStateConflict
+		}
+		// records outlive their serving validity. trust is checked by control
+		// again for each run; restore only validates their immutable material.
+		_, err = suppliedCertificate(material, "", leaf.NotBefore)
+		return err
+	}
 	if len(material.PrivateKeyDER) == 0 || len(material.PrivateKeyDER) > 1024 || len(material.CSRDER) == 0 || len(material.CSRDER) > 8192 || len(material.CertificatePEM) > 128<<10 {
 		return ErrPublisherStateConflict
 	}

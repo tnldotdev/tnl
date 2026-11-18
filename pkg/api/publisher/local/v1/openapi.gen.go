@@ -303,7 +303,8 @@ type Event struct {
 
 // Invocation defines model for Invocation.
 type Invocation struct {
-	AccessMode *InvocationAccessMode `json:"access_mode,omitempty"`
+	AccessMode  *InvocationAccessMode               `json:"access_mode,omitempty"`
+	Certificate *SuppliedServiceCertificateMaterial `json:"certificate,omitempty"`
 
 	// Deployment Private captured selection. Omit service for a temporary service; named publication retains saved visitor policy and limits.
 	Deployment *struct {
@@ -417,8 +418,9 @@ type Readiness struct {
 
 // Registration defines model for Registration.
 type Registration struct {
-	Owner          string `json:"owner"`
-	RegistrationID string `json:"registration_id"`
+	Certificate    *SuppliedServiceCertificateMaterial `json:"certificate,omitempty"`
+	Owner          string                              `json:"owner"`
+	RegistrationID string                              `json:"registration_id"`
 
 	// ShutdownDeadline Original caller shutdown deadline. Valid only for unregister; the native owner may shorten it but never grants more than ten seconds.
 	ShutdownDeadline *time.Time          `json:"shutdown_deadline,omitempty"`
@@ -462,6 +464,12 @@ type Snapshot struct {
 
 // SnapshotSchemaVersion defines model for Snapshot.SchemaVersion.
 type SnapshotSchemaVersion int
+
+// SuppliedServiceCertificateMaterial defines model for SuppliedServiceCertificateMaterial.
+type SuppliedServiceCertificateMaterial struct {
+	CertificatePem string `json:"certificate_pem"`
+	PrivateKeyPem  string `json:"private_key_pem"`
+}
 
 // EventsParams defines parameters for Events.
 type EventsParams struct {

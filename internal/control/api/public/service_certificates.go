@@ -15,6 +15,7 @@ type managedCertificateStore interface {
 	CreateServiceCertificateIssuance(context.Context, string, string, string, string, string, int64, []byte, time.Time) (controlstate.CertificateIssuance, error)
 	GetServiceCertificateIssuance(context.Context, string, string, string, string, time.Time) (controlstate.CertificateIssuance, error)
 	MarkServiceCertificateInstalled(context.Context, string, string, string, string, int64, time.Time, time.Time) error
+	MarkSuppliedServiceCertificateInstalled(context.Context, string, string, string, int64, string, string, time.Time) (controlv1.SuppliedServiceCertificateInstallation, error)
 }
 
 func writeManagedCertificateProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
@@ -122,4 +123,22 @@ func (h *handler) MarkServiceCertificateInstalled(w http.ResponseWriter, r *http
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handler) MarkSuppliedServiceCertificateInstalled(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
+	store, token, ok := h.serviceCertificates(w, r)
+	if !ok {
+		return
+	}
+	var body controlv1.SuppliedServiceCertificateInstalledRequest
+	if decodeJSONLimited(w, r, &body, 160<<10) != nil || body.RunNumber < 1 {
+		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid supplied certificate acknowledgement")
+		return
+	}
+	result, err := store.MarkSuppliedServiceCertificateInstalled(r.Context(), service, run, token, body.RunNumber, body.CertificatePem, body.PreviousCertificateSha256, time.Now())
+	if err != nil {
+		writeManagedCertificateProblem(r.Context(), w, "install supplied certificate", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
