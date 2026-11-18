@@ -239,7 +239,7 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		}
 		conn, err := observability.DialTarget(call, "tcp", s.Target)
 		if err != nil {
-			return nil, err
+			return nil, targetDialResult(call, err)
 		}
 		conn = trackTarget(conn)
 		if connector != nil {
