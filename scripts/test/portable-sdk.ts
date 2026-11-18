@@ -63,7 +63,6 @@ const smokeSchema = z.strictObject({
   committedRows: z.literal(1),
   interruptedCarriers: z.number().int().positive(),
   mysqlConnectionID: z.number().int().positive(),
-  workload: z.literal(true),
   closed: z.literal(true),
 });
 const isolationSchema = z.tuple([

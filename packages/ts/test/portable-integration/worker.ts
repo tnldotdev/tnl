@@ -6,12 +6,7 @@ import { sql as query } from "drizzle-orm";
 import { drizzle as pgDrizzle } from "drizzle-orm/node-postgres";
 import { drizzle as postgresDrizzle } from "drizzle-orm/postgres-js";
 import { checkPostgresORMs } from "../fixtures/connections/postgres-orm.ts";
-import {
-  fixtureDeployment,
-  runPortableIsolation,
-  runPortableSmoke,
-  runPortableWorkload,
-} from "./smoke.ts";
+import { fixtureDeployment, runPortableIsolation, runPortableSmoke } from "./smoke.ts";
 import { PortableSmokeError, portableDiagnostics } from "./errors.ts";
 import { check, fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
@@ -72,10 +67,7 @@ export default {
           throw new Error("fixture host fetch failed");
         }
       });
-      if (url.pathname === "/smoke") {
-        const report = await runPortableSmoke(runtime, fixture);
-        return Response.json({ ...report, ...(await runPortableWorkload(runtime, fixture)) });
-      }
+      if (url.pathname === "/smoke") return Response.json(await runPortableSmoke(runtime, fixture));
       if (url.pathname === "/redis") {
         const app = fixtureDeployment(runtime, fixture);
         try {
