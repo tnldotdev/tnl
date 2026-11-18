@@ -22,13 +22,25 @@ import (
 )
 
 func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
-	for _, transient := range []bool{false, true} {
-		t.Run(fmt.Sprintf("transient_second_fetch_%v", transient), func(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		transient bool
+		staging   bool
+	}{
+		{name: "transient_second_fetch_false"},
+		{name: "transient_second_fetch_true", transient: true},
+		{name: "route53_staging_namespace", staging: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "certificates_service_acme_authorization")
 			if err := controlstate.Migrate(t.Context(), databaseURL); err != nil {
 				t.Fatal(err)
 			}
-			database, err := controlstate.Open(t.Context(), databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
+			mode, domain := naming.ManagedURLModeGenerated, "routes.example.test"
+			if test.staging {
+				mode, domain = naming.ManagedURLModeSimple, route53StagingManagedDomain
+			}
+			database, err := controlstate.Open(t.Context(), databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", mode)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +74,13 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			prepared, run := serviceCertificateRun(t, database, "routes.example.test", now)
+			var prepared controlstate.ServiceRunPreparation
+			var run controlstate.ServiceRunState
+			if test.staging {
+				prepared, run = route53StagingServiceRun(t, database, now)
+			} else {
+				prepared, run = serviceCertificateRun(t, database, domain, now)
+			}
 			identifiers := prepared.CertificatePlan.Identifiers
 			if len(identifiers) != 1 || identifiers[0] != prepared.Hostname {
 				t.Fatalf("service plan must capture the exact hostname: %#v", prepared.CertificatePlan)
@@ -101,7 +119,7 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				switch requestURL {
 				case wildAuthorization:
 					wildcardFetches++
-					if transient && wildcardFetches == 1 {
+					if test.transient && wildcardFetches == 1 {
 						return acme.Authorization{}, &acme.Error{
 							Status: http.StatusServiceUnavailable, Type: "urn:ietf:params:acme:error:serverInternal", Detail: transientFetchError,
 						}
@@ -148,6 +166,16 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 				dns.cleaned != "" || dns.presentCalls != 1 || dns.verifyCalls != 1 || dns.cleanupCalls != 0 {
 				t.Fatalf("service authorization = %#v; DNS calls %#v", last.Authorizations, dns)
 			}
+			challenge, err := database.GetDNSChallengeContextForSubject(t.Context(), last.Subject, wildcard.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if challenge.CanonicalDomain != domain || challenge.Identifier != prepared.Hostname || challenge.DNSAuthorityReference != "" {
+				t.Fatalf("managed DNS challenge: domain=%q identifier=%q authority=%q", challenge.CanonicalDomain, challenge.Identifier, challenge.DNSAuthorityReference)
+			}
+			if test.staging && !strings.HasSuffix(challenge.Identifier, "."+route53StagingTeam+"."+domain) {
+				t.Fatalf("challenge %q escaped the staging namespace", challenge.Identifier)
+			}
 			discovered, failures := false, 0
 			for _, saved := range store.saved {
 				if len(saved.Authorizations) == 1 && saved.State == "authorizing" &&
@@ -158,14 +186,14 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 					continue
 				}
 				failures++
-				if !transient || saved.LastError != "server.certificate_failed" || strings.Contains(saved.LastError, transientFetchError) || saved.State != "authorizing" ||
+				if !test.transient || saved.LastError != "server.certificate_failed" || strings.Contains(saved.LastError, transientFetchError) || saved.State != "authorizing" ||
 					len(saved.Authorizations) != 0 || saved.OrderURL != orderURL {
 					t.Fatalf("partial or terminal discovery persisted: state=%s error=%q authorizations=%d order=%q",
 						saved.State, saved.LastError, len(saved.Authorizations), saved.OrderURL)
 				}
 			}
-			if !discovered || failures != map[bool]int{false: 0, true: 1}[transient] ||
-				wildcardFetches != map[bool]int{false: 1, true: 2}[transient] {
+			if !discovered || failures != map[bool]int{false: 0, true: 1}[test.transient] ||
+				wildcardFetches != map[bool]int{false: 1, true: 2}[test.transient] {
 				t.Fatalf("discovery: found %v, failures %d, wildcard fetches %d", discovered, failures, wildcardFetches)
 			}
 

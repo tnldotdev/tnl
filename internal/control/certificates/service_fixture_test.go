@@ -19,15 +19,20 @@ func serviceCertificateRun(t *testing.T, database *controlstate.Database, domain
 	if err != nil {
 		t.Fatal(err)
 	}
-	member := session.Identity.Memberships[0]
-	service, err := database.CreateServiceAt(ctx, member.TeamID, session.Identity.Identity.ID, "api", "certificates-api",
-		controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "http"}, nil)
+	return startServiceCertificateRun(t, database, session.Identity.Identity.ID, session.Identity.Memberships[0], controlstate.ServicePlacement{}, now)
+}
+
+func startServiceCertificateRun(t *testing.T, database *controlstate.Database, actor string, member controlstate.Membership, placement controlstate.ServicePlacement, now time.Time) (controlstate.ServiceRunPreparation, controlstate.ServiceRunState) {
+	t.Helper()
+	ctx := t.Context()
+	service, err := database.CreateServiceAt(ctx, member.TeamID, actor, "api", "certificates-api",
+		placement, now, controlstate.ServiceMetadata{Protocol: "http"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	enrollment, err := database.IssuePublisherEnrollment(ctx, controlstate.CreatePublisherEnrollmentRequest{
 		Scope: controlstate.PublisherScope{TeamID: member.TeamID, Kind: "service", ServiceID: service.ID},
-		Name:  "certificates-api", Kind: "installed", EditorID: session.Identity.Identity.ID,
+		Name:  "certificates-api", Kind: "installed", EditorID: actor,
 		EditorMembershipID: member.ID, PolicyRevision: uint64(member.PolicyRevision), Now: now,
 	})
 	if err != nil {

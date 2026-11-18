@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"flag"
 	"fmt"
@@ -24,9 +25,14 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 )
 
-const route53ACMEStagingDirectory = "https://acme-staging-v02.api.letsencrypt.org/directory"
+const (
+	route53ACMEStagingDirectory = "https://acme-staging-v02.api.letsencrypt.org/directory"
+	route53StagingManagedDomain = "tnl.wtf"
+	route53StagingTeam          = "test"
+)
 
 var route53TestZoneID = flag.String("tnl-route53-zone-id", "", "staging Route 53 hosted zone ID for the opt-in DNS-01 test")
 
@@ -58,7 +64,7 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 	if err := controlstate.Migrate(ctx, databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	database, err := controlstate.Open(ctx, databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
+	database, err := controlstate.Open(ctx, databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeSimple)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +79,10 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	prepared, run := serviceCertificateRun(t, database, "test.tnl.wtf", now)
+	prepared, run := route53StagingServiceRun(t, database, now)
 	identifiers := prepared.CertificatePlan.Identifiers
-	if len(identifiers) != 1 || identifiers[0] != prepared.Hostname {
+	if len(identifiers) != 1 || identifiers[0] != prepared.Hostname ||
+		!strings.HasSuffix(prepared.Hostname, "."+route53StagingTeam+"."+route53StagingManagedDomain) {
 		t.Fatalf("expected exact-host service certificate plan: %#v", prepared.CertificatePlan)
 	}
 	hostname := identifiers[0]
@@ -108,7 +115,7 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 		t.Fatal(err)
 	}
 	dnsChallenges, err := dns.NewChallengeManager(database, provider, verifier, dns.Config{
-		ManagedDomain: "tnl.wtf", ManagedZoneID: *route53TestZoneID,
+		ManagedDomain: route53StagingManagedDomain, ManagedZoneID: *route53TestZoneID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -206,6 +213,34 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 		}
 	}
 	t.Fatalf("ACME staging issuance for %s did not finish: %v", hostname, ctx.Err())
+}
+
+func route53StagingServiceRun(t *testing.T, database *controlstate.Database, now time.Time) (controlstate.ServiceRunPreparation, controlstate.ServiceRunState) {
+	t.Helper()
+	ctx := t.Context()
+	// the hosted zone is tnl.wtf. use a team namespace, not a separate managed
+	// domain, to keep the challenge under the staging role's test.tnl.wtf suffix.
+	session, err := controltest.Session(ctx, database, route53StagingManagedDomain, time.Hour, 24*time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := session.Identity.Identity.ID
+	team, err := database.CreateTeam(ctx, controlstate.CreateTeamRequest{
+		IdentityID: actor, DisplayName: route53StagingTeam, MemberSlug: "owner", IdempotencyKey: "route53-staging",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := database.ListTeamMemberships(ctx, actor, team.ID)
+	if err != nil || len(members) != 1 {
+		t.Fatalf("read staging team owner: members=%d error=%v", len(members), err)
+	}
+	var nonce [12]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		t.Fatal(err)
+	}
+	hostname := "api." + hex.EncodeToString(nonce[:]) + "." + route53StagingTeam + "." + route53StagingManagedDomain
+	return startServiceCertificateRun(t, database, actor, members[0], controlstate.ServicePlacement{Hostname: hostname}, now)
 }
 
 type singleStagingOrderTransport struct {
