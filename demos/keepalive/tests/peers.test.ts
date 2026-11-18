@@ -20,7 +20,7 @@ const release = "a".repeat(64);
 function host(n: number, run = n): Host {
   const label = run.toString(2).replaceAll("0", "a").replaceAll("1", "b").padStart(26, "a");
   return {
-    origin: `https://r-${label}.${HOST_PARENT}`,
+    origin: `https://p-${label}.${HOST_PARENT}`,
     publisherID: "pub_" + String(n).padStart(22, "0"),
     runID: "srun_" + String(run).padStart(22, "0"),
     runNumber: String(run),
@@ -124,10 +124,11 @@ describe("gossip", () => {
     a.receive(b.leave(net.clock()), net.clock());
     a.receive(old, net.clock());
     expect(a.hosts(net.clock())).toEqual([]);
-    const restarted = net.create(2, 12);
+    const restartedHost = { ...host(2, 12), origin: host(2).origin };
+    const restarted = new Gossip(release, restartedHost, net.clock());
     a.receive(restarted.message(net.clock()), net.clock());
     a.receive(old, net.clock());
-    expect(a.hosts(net.clock()).map((peer) => peer.runID)).toEqual([host(2, 12).runID]);
+    expect(a.hosts(net.clock()).map((peer) => peer.runID)).toEqual([restartedHost.runID]);
   });
 
   it("holds one local start, honors a peer's start, and retries after an abandoned start", () => {

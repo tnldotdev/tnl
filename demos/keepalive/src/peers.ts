@@ -58,7 +58,7 @@ export function hostOrigin(value: unknown, parent = HOST_PARENT): value is strin
   const url = URL.parse(value);
   if (url?.protocol !== "https:" || url.origin !== value || url.port !== "") return false;
   if (!url.hostname.endsWith(`.${parent}`)) return false;
-  return /^(r|p)-[a-z2-7]{26}$/.test(url.hostname.slice(0, -(parent.length + 1)));
+  return /^p-[a-z2-7]{26}$/.test(url.hostname.slice(0, -(parent.length + 1)));
 }
 
 export function parseHost(value: unknown, parent = HOST_PARENT): Host | undefined {

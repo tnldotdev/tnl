@@ -30,7 +30,7 @@ normal proxy path, which returns `503` when there are no hosts.
 ## browser handoff
 
 Use a disposable tnl deployment named `keepalive` with a public, anonymous HTTP
-service named `site`, multiple publishers enabled, and exact-run addresses under
+service named `site`, multiple publishers enabled, and publisher addresses under
 `hosts.keepthisalive.com`. Set `SITE_ORIGIN`, `START_HOST`, and `SHARED_HOST`
 to the test addresses (`https://prod.hosts.keepthisalive.com` is the production
 shared service). Set `PROJECT_KEY`,
