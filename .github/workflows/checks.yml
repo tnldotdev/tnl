@@ -188,6 +188,10 @@ jobs:
       - name: Build commands
         run: task go:build
 
+      - name: Prune Go build cache before saving
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/prune-go-cache # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
+
   go-linux-tests:
     name: Go tests (Linux)
     runs-on: ubuntu-latest
@@ -223,10 +227,6 @@ jobs:
           jq -r 'to_entries[] | "- \(.key): \(.value.result)"' <<< "$RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
           jq --exit-status 'all(.[]; .result == "success")' <<< "$RESULTS" > /dev/null
 
-      - name: Prune Go build cache before saving
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: ./.github/actions/prune-go-cache # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
-
   go-macos:
     name: Go (macOS)
     runs-on: macos-latest
@@ -255,7 +255,7 @@ jobs:
   go-race-tests:
     name: Go race (${{ matrix.partition }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: ${{ matrix.partition == 'rest' && 15 || 10 }}
     strategy:
       fail-fast: false
       matrix:
