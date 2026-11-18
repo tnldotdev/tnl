@@ -235,7 +235,9 @@ func (r *CertificateCache) pending(ctx context.Context, hostname string, replace
 		return Pending{}, err
 	}
 	defer value.destroy()
+	persist := ctx
 	if value.Pending == nil || replace {
+		first := value.Pending == nil && value.Current == nil
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			return Pending{}, err
@@ -256,16 +258,23 @@ func (r *CertificateCache) pending(ctx context.Context, hostname string, replace
 		if err := r.write(ctx, value); err != nil {
 			return Pending{}, err
 		}
+		if first {
+			// a confirmed first write must finish its checkpoint under the
+			// same locks. cancellation still withholds the key from the caller.
+			var stop context.CancelFunc
+			persist, stop = context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer stop()
+		}
 	}
 	key, err := parseKey(value.Pending.PrivateKeyDER)
 	if err != nil {
 		return Pending{}, err
 	}
-	if err := r.files.Sync(ctx, certificateFilename(r.planJSON)); err != nil {
+	if err := r.files.Sync(persist, certificateFilename(r.planJSON)); err != nil {
 		return Pending{}, err
 	}
 	// the complete plan checkpoint is durable before a CSR can leave this process.
-	if err := r.checkpoint(ctx); err != nil {
+	if err := r.checkpoint(persist); err != nil {
 		return Pending{}, err
 	}
 	return Pending{Key: key, CSRDER: bytes.Clone(value.Pending.CSRDER), keyDER: bytes.Clone(value.Pending.PrivateKeyDER), scope: r.pendingScope()}, nil

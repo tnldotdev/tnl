@@ -360,3 +360,35 @@ func TestHostCertificatePartialFirstCheckpointFailsClosed(t *testing.T) {
 		t.Fatal("partial checkpoint authorized a replacement key", err)
 	}
 }
+
+type cancelAfterCertificateWrite struct {
+	*hostStorage
+	cancel context.CancelFunc
+}
+
+func (s *cancelAfterCertificateWrite) Write(ctx context.Context, name string, data []byte) error {
+	err := s.hostStorage.Write(ctx, name, data)
+	if err == nil && name != "certificate-plans-v1.json" {
+		s.cancel()
+	}
+	return err
+}
+
+func TestCertificateFirstCheckpointFinishesAfterCommittedWrite(t *testing.T) {
+	storage := newHostStorage()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	cache := hostCache(t, &cancelAfterCertificateWrite{hostStorage: storage, cancel: cancel})
+	if pending, err := cache.Pending(ctx, "route.example"); !errors.Is(err, context.Canceled) || pending.Key != nil || len(pending.CSRDER) != 0 {
+		t.Fatal("canceled issuance released pending material", err)
+	}
+	reopened := hostCache(t, storage)
+	snapshot, err := reopened.read(t.Context())
+	if err != nil || snapshot.Pending == nil {
+		t.Fatal("cancellation stranded the committed key without its plan checkpoint", err)
+	}
+	defer snapshot.destroy()
+	if pending, err := reopened.Pending(t.Context(), "route.example"); err != nil || !bytes.Equal(pending.CSRDER, snapshot.Pending.CSRDER) {
+		t.Fatal("replacement run could not reuse the original pending CSR", err)
+	}
+}
