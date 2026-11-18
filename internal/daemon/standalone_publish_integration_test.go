@@ -95,6 +95,9 @@ func TestIntegrationURLPublisherTerminatesVisitorTLSLocally(t *testing.T) {
 	observed := make(chan string, 1)
 	quic, tcp := fixture.connectors()
 	_, config := fixture.identity.prepareService(t, "", quic, tcp, controlv1.ProjectServiceConfiguration{})
+	// certificate installation and public endpoint readiness can settle on
+	// different heartbeats. this test checks visitor TLS, not heartbeat timing.
+	config.HeartbeatInterval = time.Second
 	config.Handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		observed <- request.RemoteAddr + " " + request.URL.RequestURI()
 		response.WriteHeader(http.StatusNoContent)
