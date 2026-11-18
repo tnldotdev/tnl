@@ -146,7 +146,9 @@ func TestConfiguredServiceRunRetryLeavesLiveRegistrationShutdownUnstarted(t *tes
 	registration := restoredRegisterApp(t, a, "web", target.URL, false)
 	first := restoredWorkerReceive(t, entered, 3*time.Second)
 	second := restoredWorkerReceive(t, entered, 3*time.Second)
-	restoredWorkerReceive(t, ready, 3*time.Second)
+	// readiness joins real TLS and both relay slots, not just entry into
+	// the worker. keep the wait below the registration's initial lease.
+	restoredWorkerReceive(t, ready, 10*time.Second)
 	if first.number != 1 || second.number != 2 || first.shutdown != second.shutdown || f.Runs.Load() != 2 {
 		t.Fatal("fixture did not retire one failed run and serve its replacement", first.number, second.number, f.Runs.Load())
 	}
