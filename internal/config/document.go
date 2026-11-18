@@ -64,7 +64,7 @@ type Service struct {
 	Public             *bool          `json:"public,omitempty" yaml:"public,omitempty"`
 	Inspection         *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Override local inspection capture and retention for this service."`
 	Hostname           *string        `json:"hostname,omitempty" yaml:"hostname,omitempty" jsonschema_description:"Exact canonical DNS hostname for the service endpoint, independent of public reachability."`
-	RunAliasParent     *string        `json:"run_alias_parent,omitempty" yaml:"run_alias_parent,omitempty" jsonschema_description:"Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."`
+	RunAliasParent     *string        `json:"publisher_alias_parent,omitempty" yaml:"publisher_alias_parent,omitempty" jsonschema_description:"Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."`
 	Domain             *string        `json:"domain,omitempty" yaml:"domain,omitempty" jsonschema_description:"Ready team domain used for the service endpoint."`
 	Ephemeral          *bool          `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty" jsonschema_description:"Remove the service after its publication stops."`
 	RequirePostQuantum *bool          `json:"require_post_quantum,omitempty" yaml:"require_post_quantum,omitempty" jsonschema_description:"Require hybrid post-quantum key agreement for visitor TLS."`

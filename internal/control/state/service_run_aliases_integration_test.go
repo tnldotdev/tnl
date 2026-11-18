@@ -43,6 +43,32 @@ func TestIntegrationRunAliasPreparationRetriesKeepSavedRandomHostname(t *testing
 		if first.RunID == previous.RunID || first.RunHostname == previous.RunHostname {
 			t.Fatal("independent publisher runs reused an alias")
 		}
+		if err := f.database.CloseServiceRun(t.Context(), f.service.ID, first.RunID, first.Token, f.now); err != nil {
+			t.Fatal("retire the first publisher run", err)
+		}
+		replacement, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, publisher, "replacement-random-alias", f.now, request)
+		if err != nil || replacement.RunHostname != first.RunHostname || replacement.RunID == first.RunID || replacement.RunNumber <= first.RunNumber {
+			t.Fatal("publisher restart changed its saved address or reused its old run", err)
+		}
+		var owner string
+		if err := f.database.pool.QueryRow(t.Context(), `SELECT service_run_id FROM control.service_endpoints WHERE hostname=$1 AND retired_at IS NULL`,
+			first.RunHostname).Scan(&owner); err != nil || owner != replacement.RunID {
+			t.Fatal("saved address did not advance to the current run", err)
+		}
+		if _, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, publisher, "stable-random-alias", f.now, request); !errors.Is(err, ErrServiceConflict) {
+			t.Fatal("a retry of a closed run regained authority", err)
+		}
+		if _, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, first.RunID, first.Token, f.now,
+			ServiceRunHealth{Healthy: true, StreamCapacity: 20}); err == nil {
+			t.Fatal("a heartbeat from the old run regained authority")
+		}
+		if err := f.database.CloseServiceRun(t.Context(), f.service.ID, first.RunID, first.Token, f.now); err != nil {
+			t.Fatal("retrying the old close failed", err)
+		}
+		if err := f.database.pool.QueryRow(t.Context(), `SELECT service_run_id FROM control.service_endpoints WHERE hostname=$1 AND retired_at IS NULL`,
+			first.RunHostname).Scan(&owner); err != nil || owner != replacement.RunID {
+			t.Fatal("stale run updates changed the replacement's address", err)
+		}
 		previous = first
 	}
 	var aliases, claims int
@@ -57,6 +83,95 @@ func TestIntegrationRunAliasPreparationRetriesKeepSavedRandomHostname(t *testing
 	}
 	if aliases != 2 || claims != 2 {
 		t.Fatal("retries duplicated or omitted exact alias reservations", aliases, claims)
+	}
+}
+
+func TestIntegrationRunAliasParentAndExposurePreservePublisherBinding(t *testing.T) {
+	f, parent, declaration := newRunAliasServiceFixture(t)
+	ctx := t.Context()
+	enrollment := publisherEnrollment(t, f.database, serviceTestAuthority{TeamID: f.project.TeamID, ActingIdentityID: f.project.ActorID},
+		PublisherScope{TeamID: f.project.TeamID, Kind: "service", ServiceID: f.service.ID}, f.now)
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := f.database.RedeemPublisherEnrollment(ctx, enrollment.Key, public, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := func(key string) ServiceRunPreparation {
+		t.Helper()
+		f.now = f.now.Add(time.Second)
+		run, err := f.database.PrepareServiceRun(ctx, f.service.ID, publisher, key, f.now,
+			ServiceRunRequest{Metadata: f.service.ServiceMetadata})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	closeRun := func(run ServiceRunPreparation) {
+		t.Helper()
+		if err := f.database.CloseServiceRun(ctx, f.service.ID, run.RunID, run.Token, f.now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configure := func(parent string, public bool) {
+		t.Helper()
+		f.now = f.now.Add(time.Second)
+		declaration.Public, declaration.RunAliasParent = new(public), parent
+		configured, err := f.database.ConfigureService(ctx, f.service.ID, f.project.ActorID, f.service.ServiceMetadata,
+			&declaration, ServiceUpdateConditions{UnconditionalConfiguration: true}, f.now)
+		if err != nil || configured.TrustRevision != f.service.TrustRevision {
+			t.Fatal("endpoint configuration changed target trust", err)
+		}
+		f.service = configured
+	}
+	assertCurrent := func(run ServiceRunPreparation, want bool) {
+		t.Helper()
+		var current bool
+		if err := f.database.pool.QueryRow(ctx, `SELECT control.service_run_alias_current($1,$2)`,
+			run.RunID, run.RunHostname).Scan(&current); err != nil || current != want {
+			t.Fatalf("publisher address current = %t, want %t: %v", current, want, err)
+		}
+	}
+	original := start("original-parent")
+	if !strings.HasSuffix(original.RunHostname, "."+parent) {
+		t.Fatal("initial run has no publisher address under its configured parent")
+	}
+	assertCurrent(original, true)
+	configure(parent, false)
+	assertCurrent(original, false)
+	configure(parent, true)
+	assertCurrent(original, true)
+	closeRun(original)
+	configure(parent, false)
+	private := start("private")
+	if private.RunHostname != "" || slices.Contains(private.CertificatePlan.Identifiers, original.RunHostname) {
+		t.Fatal("connector-only run obtained an alias or an alias certificate plan")
+	}
+	closeRun(private)
+	nextParent := "replicas." + parent
+	configure(nextParent, true)
+	moved := start("moved-parent")
+	if moved.RunHostname == original.RunHostname || !strings.HasSuffix(moved.RunHostname, "."+nextParent) {
+		t.Fatal("changing the authorized parent did not allocate a distinct address")
+	}
+	assertCurrent(original, false)
+	assertCurrent(moved, true)
+	closeRun(moved)
+	configure(parent, true)
+	restored := start("restored-parent")
+	if restored.RunHostname != original.RunHostname {
+		t.Fatal("restoring the parent changed the publisher's reserved address")
+	}
+	if err := f.database.RevokePublisherIdentity(ctx, f.project.TeamID, publisher.ID, f.project.ActorID, f.now); err != nil {
+		t.Fatal(err)
+	}
+	assertCurrent(restored, false)
+	var retired bool
+	if err := f.database.pool.QueryRow(ctx, `SELECT retired_at IS NOT NULL AND NOT public AND dns_state='removed' AND reusable_after>$2
+	    FROM control.service_endpoints WHERE hostname=$1`, original.RunHostname, f.now).Scan(&retired); err != nil || !retired {
+		t.Fatal("publisher retirement did not remove the endpoint and retain its quarantine", err)
 	}
 }
 
@@ -89,7 +204,7 @@ func TestIntegrationRunAliasPreparationAndManagedCertificate(t *testing.T) {
 	    FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&hostname, &identifiers, &certificate); err != nil {
 		t.Fatal(err)
 	}
-	if !regexp.MustCompile(`^r-[a-z2-7]{26}\.`+regexp.QuoteMeta(parent)+`$`).MatchString(hostname) || !certificate.After(f.now) {
+	if !regexp.MustCompile(`^p-[a-z2-7]{26}\.`+regexp.QuoteMeta(parent)+`$`).MatchString(hostname) || !certificate.After(f.now) {
 		t.Fatal("run did not retain its exact alias and managed certificate")
 	}
 	current, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now,

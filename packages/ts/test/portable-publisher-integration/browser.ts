@@ -43,7 +43,7 @@ export async function smoke(input: unknown) {
     step("publish");
     const publication = await publish(publisher, "web", handler.handle);
     check(
-      publication.run !== undefined && publication.runURL === undefined,
+      publication.run !== undefined && publication.publisherURL === undefined,
       "canonical-only publication lost its run metadata or enabled an alias implicitly",
     );
     step("public-exercise");
@@ -58,13 +58,13 @@ export async function smoke(input: unknown) {
     const exactRuntime = crypto.randomUUID();
     const exactHandler = publisherHandler(exactRuntime);
     const exactPublication = await publish(publisher, "exact", exactHandler.handle);
-    const { runURL, run } = exactPublication;
+    const { publisherURL, run } = exactPublication;
     check(
-      runURL !== undefined && run !== undefined && runURL !== exactPublication.url,
+      publisherURL !== undefined && run !== undefined && publisherURL !== exactPublication.url,
       "publication omitted its exact-run address or immutable run metadata",
     );
     const exactCanonical = await fixtureCall(fixture, "/observe", exactPublication.url);
-    const aliasProof = await fixtureCall(fixture, "/exercise", runURL);
+    const aliasProof = await fixtureCall(fixture, "/exercise", publisherURL);
     check(
       aliasProof.status === 200 &&
         aliasProof.service_id === run.serviceID &&
@@ -168,14 +168,14 @@ export async function smoke(input: unknown) {
     const siblingHandler = publisherHandler(siblingRuntime);
     const sibling = await publish(siblingPublisher, "exact", siblingHandler.handle);
     check(
-      sibling.runURL !== undefined &&
+      sibling.publisherURL !== undefined &&
         sibling.run !== undefined &&
-        sibling.runURL !== runURL &&
+        sibling.publisherURL !== publisherURL &&
         sibling.run.serviceID === run.serviceID &&
         sibling.run.serviceRunID !== run.serviceRunID,
       "sibling publication reused another exact-run binding",
     );
-    const siblingProof = await fixtureCall(fixture, "/observe", sibling.runURL);
+    const siblingProof = await fixtureCall(fixture, "/observe", sibling.publisherURL);
     check(
       siblingProof.status === 200 && siblingProof.publisher_runtime === siblingRuntime,
       "sibling alias selected another publisher",
@@ -189,7 +189,7 @@ export async function smoke(input: unknown) {
     await exactPublication.wait();
     step("alias-no-fallback");
     const callsBefore = siblingHandler.calls();
-    const unavailable = await fixtureCall(fixture, "/unavailable", runURL);
+    const unavailable = await fixtureCall(fixture, "/unavailable", publisherURL);
     check(
       unavailable.status !== 200 &&
         unavailable.active_runs === 1 &&

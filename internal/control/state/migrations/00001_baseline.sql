@@ -1527,7 +1527,7 @@ CREATE TABLE control.service_runs (
     run_alias_parent text NOT NULL DEFAULT '',
     CHECK ((run_hostname='')=(run_alias_parent='')),
     CHECK (run_hostname='' OR protocol='http' AND run_hostname<>certificate_hostname
-        AND run_hostname LIKE 'r-%.'||run_alias_parent),
+        AND run_hostname LIKE 'p-%.'||run_alias_parent),
     require_post_quantum boolean NOT NULL DEFAULT false,
     certificate_issuance_id text REFERENCES control.acme_orders(id) ON DELETE RESTRICT,
     supplied_certificate_sha256 text CHECK (supplied_certificate_sha256 ~ '^[a-f0-9]{64}$'),
@@ -1549,7 +1549,7 @@ CREATE TABLE control.service_runs (
     FOREIGN KEY (publisher_grant_id, publisher_identity_id) REFERENCES control.publisher_grants(id, publisher_identity_id) ON DELETE RESTRICT,
     FOREIGN KEY (publisher_key_id, publisher_identity_id) REFERENCES control.publisher_identity_keys(id, publisher_identity_id) ON DELETE RESTRICT,
     UNIQUE (service_id, run_number), UNIQUE (service_id,publisher_identity_id,idempotency_key),
-    UNIQUE (id, service_id, run_number), UNIQUE (id,service_id,run_hostname), UNIQUE (id, assignments_open), UNIQUE (id,team_id), UNIQUE (id,guest_id),
+    UNIQUE (id, service_id, run_number), UNIQUE (id,service_id,publisher_identity_id,run_alias_parent,run_hostname), UNIQUE (id, assignments_open), UNIQUE (id,team_id), UNIQUE (id,guest_id),
     CHECK ((state = 'closed') = (closed_at IS NOT NULL)),
     CHECK (state <> 'ready' OR ready_at IS NOT NULL),
     CHECK (certificate_domain_id IS NOT NULL AND certificate_hostname<>''
@@ -1560,7 +1560,6 @@ CREATE TABLE control.service_runs (
     CHECK (state <> 'prepared' OR started_at IS NULL)
 );
 CREATE UNIQUE INDEX service_runs_active ON control.service_runs(service_id, publisher_identity_id) WHERE closed_at IS NULL;
-CREATE UNIQUE INDEX service_runs_alias_hostname ON control.service_runs(run_hostname) WHERE run_hostname<>'';
 CREATE UNIQUE INDEX service_runs_guest_active ON control.service_runs(guest_id) WHERE guest_id IS NOT NULL AND closed_at IS NULL;
 CREATE INDEX service_runs_expiring ON control.service_runs(publisher_expires_at) WHERE closed_at IS NULL;
 CREATE INDEX service_runs_serving_expiring ON control.service_runs(serving_until) WHERE closed_at IS NULL;
@@ -1975,6 +1974,8 @@ CREATE TABLE control.service_endpoints (
     hostname text PRIMARY KEY CHECK (hostname<>''),
     service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
     service_run_id text REFERENCES control.service_runs(id) ON DELETE RESTRICT,
+    publisher_identity_id text REFERENCES control.publisher_identities(id) ON DELETE RESTRICT,
+    publisher_alias_parent text,
     deployment_id text REFERENCES control.deployments(id) ON DELETE RESTRICT,
     local_source_key text NOT NULL DEFAULT '',
     domain_id text NOT NULL REFERENCES control.domains(id) ON DELETE RESTRICT,
@@ -1997,8 +1998,10 @@ CREATE TABLE control.service_endpoints (
     CHECK ((retired_at IS NULL)=(reusable_after IS NULL)),
     CHECK ((dns_state IN ('pending','removing'))=(dns_available_at IS NOT NULL)),
     CHECK ((dns_work_owner IS NULL)=(dns_work_expires_at IS NULL)),
-    FOREIGN KEY(service_run_id,service_id,hostname)
-        REFERENCES control.service_runs(id,service_id,run_hostname) ON DELETE RESTRICT
+    CHECK (num_nonnulls(service_run_id,publisher_identity_id,publisher_alias_parent) IN (0,3)),
+    FOREIGN KEY(service_run_id,service_id,publisher_identity_id,publisher_alias_parent,hostname)
+        REFERENCES control.service_runs(id,service_id,publisher_identity_id,run_alias_parent,run_hostname) ON DELETE RESTRICT,
+    UNIQUE(service_id,publisher_identity_id,publisher_alias_parent)
 );
 CREATE INDEX service_endpoints_dns_work ON control.service_endpoints(dns_available_at,hostname) WHERE dns_available_at IS NOT NULL;
 -- exact service ownership survives endpoint handoff and local binding replacement.
@@ -2077,9 +2080,8 @@ BEGIN
             dns_available_at=CASE WHEN dns_state IN('unmanaged','removed') THEN NULL ELSE NEW.closed_at END,
             dns_revision=dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL
         WHERE service_run_id=NEW.id AND retired_at IS NULL;
-        UPDATE control.service_namespace_claims SET retired_at=COALESCE(retired_at,NEW.closed_at),
-            reusable_after=GREATEST(NEW.closed_at+interval '7 days',COALESCE(control.service_run_certificate_retention(NEW.id),NEW.closed_at))
-        WHERE namespace=NEW.run_hostname AND retired_at IS NULL;
+        -- the current run and DNS can retire, but an address remains reserved
+        -- for the same publisher until its authority is permanently retired.
     END IF;
     RETURN NEW;
 END;

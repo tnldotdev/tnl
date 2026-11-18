@@ -30,7 +30,7 @@ func TestRandomHostnameLabelsEncode128BitsWithoutLifetimePrefix(t *testing.T) {
 
 func TestRandomHostnamesUseResourceKindsAndSharedLabelFormat(t *testing.T) {
 	seen := map[string]bool{}
-	for _, kind := range []HostnameKind{ServiceHostnameKind, ServiceRunHostnameKind} {
+	for _, kind := range []HostnameKind{ServiceHostnameKind, PublisherHostnameKind} {
 		pattern := regexp.MustCompile(`^` + string(kind) + `-([a-z2-7]{26})\.example\.test$`)
 		for range 128 {
 			hostname, err := RandomHostname(kind, "example.test")
