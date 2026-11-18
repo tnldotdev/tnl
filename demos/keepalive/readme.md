@@ -43,6 +43,11 @@ Hosts aim for three running copies. Each has its own waiting list and allows
 one pending start at a time. They tell each other when they're starting a tab,
 but simultaneous invitations can still take them above three.
 
+A turn lasts up to 30 minutes. The host starts looking for a replacement with
+two minutes left and stops at zero even if nobody takes over. To hand off
+early, it checks that the replacement answers at its own address. The proxy
+won't approve a volunteer with the same public IP as the host inviting it.
+
 For the first host, `start.keepthisalive.com` supplies a permanent copy.
 That page stays available when no hosts remain. The main site never falls
 back to that copy.

@@ -66,6 +66,7 @@ export async function readBytes(
   limit: number,
   signal?: AbortSignal,
   exact?: number,
+  onProgress?: (bytes: number) => void,
 ): Promise<Uint8Array<ArrayBuffer>> {
   const reader = response.body?.getReader();
   if (reader === undefined) throw new Error("Response has no body.");
@@ -84,6 +85,7 @@ export async function readBytes(
       if (value.byteLength > bytes.byteLength - offset) throw new Error("Response exceeds limit.");
       bytes.set(value, offset);
       offset += value.byteLength;
+      onProgress?.(offset);
     }
     complete = true;
     if (exact !== undefined && offset !== exact) throw new Error("Response size does not match.");
@@ -105,8 +107,13 @@ export async function verifyAsset(
   return bytes;
 }
 
-export async function readAssetResponse(asset: Asset, response: Response, signal: AbortSignal) {
-  return verifyAsset(asset, await readBytes(response, asset.size, signal, asset.size));
+export async function readAssetResponse(
+  asset: Asset,
+  response: Response,
+  signal: AbortSignal,
+  onProgress?: (bytes: number) => void,
+) {
+  return verifyAsset(asset, await readBytes(response, asset.size, signal, asset.size, onProgress));
 }
 
 export async function readJSON(

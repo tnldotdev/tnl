@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamText } from "hono/streaming";
 import * as z from "zod";
+import { NETWORK_CHECK_PATH, networkProof } from "../network.ts";
 import {
   Gossip,
   HOST_PARENT,
@@ -16,24 +17,40 @@ import {
   type Host,
 } from "../peers.ts";
 import { readJSON } from "../release.ts";
+import { invitationSchema } from "./config.ts";
 
 const CHECK_PATH = "/__keepalive/check";
 const WAIT_PATH = "/__keepalive/wait";
 const TARGET = 3;
 const MAX_WAITING = 16;
 const WAIT_MS = 20_000;
+const INVITATION_MS = 90_000;
+const READY_HEADER = "X-Keepalive-Ready";
 const checkSchema = z.strictObject({ target: hostSchema, message: z.unknown() });
 
-export async function readPeers(origin: string, releaseID: string, signal?: AbortSignal) {
-  const response = await fetch(new URL(PEERS_PATH, origin), options(signal, 5_000));
+export async function readPeers(
+  origin: string,
+  releaseID: string,
+  signal?: AbortSignal,
+  invitation?: string,
+) {
+  const response = await fetch(new URL(PEERS_PATH, origin), {
+    ...options(signal, 5_000),
+    ...(invitation === undefined ? {} : { headers: { [READY_HEADER]: invitation } }),
+  });
   return parseMessage(await readJSON(response, MAX_MESSAGE_BYTES), releaseID, Date.now());
 }
 
-/** waits for the host to pick this tab, returning false if the wait ends first. */
-export async function waitForWork(host: Host, signal: AbortSignal) {
-  const response = await fetch(new URL(WAIT_PATH, host.origin), options(signal, WAIT_MS + 5_000));
+/** waits for the host to pick this tab and returns its private invitation. */
+export async function waitForWork(host: Host, proof: string, signal: AbortSignal) {
+  const response = await fetch(new URL(WAIT_PATH, host.origin), {
+    ...options(signal, WAIT_MS + 5_000),
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(proof),
+  });
   if (!response.ok) throw new Error("Could not wait on this host.");
-  return z.literal("start").safeParse(await readJSON(response, 64)).success;
+  return invitationSchema.nullable().parse(await readJSON(response, 64));
 }
 
 function options(signal: AbortSignal | undefined, timeout: number): RequestInit {
@@ -51,20 +68,34 @@ export function peerServer(
   allowedOrigins: readonly string[],
   serve: (request: Request) => Promise<Response>,
   signal: AbortSignal,
+  network: { proxyOrigin: string; proof: string },
 ) {
   const app = new Hono();
   const allowed = (origin: string) => (allowedOrigins.includes(origin) ? origin : undefined);
-  const waiting = new Set<() => void>();
+  const waiting = new Set<(invitation: string) => void>();
   let gossip: Gossip | undefined;
+  let promotion: { invitation: string; endsAt: number; replacing: boolean } | undefined;
+  let acceptedInvitation: string | undefined;
+  let replacementReady = false;
   let checking = false;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let networkChecks = 0;
 
-  async function send(target: Host, message: GossipMessage, via?: Host, lifetime = signal) {
+  async function send(
+    target: Host,
+    message: GossipMessage,
+    via?: Host,
+    lifetime = signal,
+    invitation?: string,
+  ) {
     const path = via === undefined ? PEERS_PATH : CHECK_PATH;
     const response = await fetch(new URL(path, (via ?? target).origin), {
-      ...options(lifetime, via === undefined ? 1800 : 2400),
+      ...options(lifetime, invitation !== undefined ? 8_000 : via === undefined ? 1800 : 2400),
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(invitation === undefined ? {} : { [READY_HEADER]: invitation }),
+      },
       body: JSON.stringify(via === undefined ? message : { target, message }),
     });
     const reply = parseMessage(await readJSON(response, MAX_MESSAGE_BYTES), releaseID, Date.now());
@@ -79,7 +110,9 @@ export function peerServer(
   });
 
   app.get(PEERS_PATH, (c) => {
-    if (gossip === undefined) return c.body(null, 503);
+    if (gossip === undefined || signal.aborted) return c.body(null, 503);
+    const invitation = c.req.header(READY_HEADER);
+    if (invitation !== undefined && invitation !== acceptedInvitation) return c.body(null, 403);
     return c.json(gossip.message(Date.now()));
   });
   app.post(PEERS_PATH, async (c) => {
@@ -92,6 +125,33 @@ export function peerServer(
     const message = parseMessage(body, releaseID, Date.now());
     if (message === undefined) return c.body(null, 400);
     gossip.receive(message, Date.now());
+    const pending = promotion;
+    if (
+      pending !== undefined &&
+      pending.endsAt > Date.now() &&
+      pending.invitation === c.req.header(READY_HEADER) &&
+      !message.from.left
+    ) {
+      promotion = undefined;
+      gossip.finishStart();
+      if (pending.replacing) {
+        const reply = await readPeers(
+          message.from.origin,
+          releaseID,
+          signal,
+          pending.invitation,
+        ).catch(() => undefined);
+        if (
+          reply !== undefined &&
+          !reply.from.left &&
+          sameRun(reply.from, message.from) &&
+          !signal.aborted
+        ) {
+          gossip.receive(reply, Date.now());
+          replacementReady = true;
+        }
+      }
+    }
     return c.json(gossip.message(Date.now()));
   });
   app.post(CHECK_PATH, async (c) => {
@@ -116,14 +176,35 @@ export function peerServer(
       checking = false;
     }
   });
-  app.get(WAIT_PATH, (c) => {
-    if (gossip === undefined || waiting.size >= MAX_WAITING) return c.body(null, 503);
+  app.post(WAIT_PATH, async (c) => {
+    if (gossip === undefined || waiting.size + networkChecks >= MAX_WAITING) {
+      return c.body(null, 503);
+    }
+    networkChecks++;
+    const parsed = networkProof.safeParse(
+      await readJSON(new Response(c.req.raw.body), 192, c.req.raw.signal).catch(() => undefined),
+    );
+    if (!parsed.success) {
+      networkChecks--;
+      return c.body(null, 400);
+    }
+    const allowed = await fetch(new URL(NETWORK_CHECK_PATH, network.proxyOrigin), {
+      ...options(AbortSignal.any([signal, c.req.raw.signal]), 5_000),
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ host: network.proof, volunteer: parsed.data }),
+    })
+      .then((reply) => reply.status === 204)
+      .catch(() => false);
+    networkChecks--;
+    if (!allowed) return c.body(null, 403);
+    if (waiting.size >= MAX_WAITING) return c.body(null, 503);
     return streamText(c, async (stream) => {
-      const selected = await new Promise<boolean>((resolve) => {
-        const start = () => finish(true);
-        const stop = () => finish(false);
+      const selected = await new Promise<string | null>((resolve) => {
+        const start = (invitation: string) => finish(invitation);
+        const stop = () => finish(null);
         const timeout = setTimeout(stop, WAIT_MS);
-        function finish(value: boolean) {
+        function finish(value: string | null) {
           clearTimeout(timeout);
           waiting.delete(start);
           signal.removeEventListener("abort", stop);
@@ -134,34 +215,51 @@ export function peerServer(
         waiting.add(start);
         if (signal.aborted || stream.aborted) stop();
       });
-      await stream.write(JSON.stringify(selected ? "start" : "wait"));
+      await stream.write(JSON.stringify(selected));
     });
   });
   app.get("*", (c) => serve(c.req.raw));
 
   return {
     fetch: async (request: Request) => app.fetch(request),
+    get replacementReady() {
+      return replacementReady;
+    },
     async start(
       host: Host,
       startedAt: number,
-      initialPeer: Host | undefined,
+      firstHostToContact: Host | undefined,
+      invitation: string | undefined,
       report: (gossip: Gossip) => void,
       replacing: () => boolean,
     ) {
       const peers = new Gossip(releaseID, host, startedAt);
       gossip = peers;
-      if (initialPeer !== undefined) {
+      acceptedInvitation = invitation;
+      if (firstHostToContact !== undefined) {
         // a report from before startup doesn't tell us whether a host stayed up.
-        const reply = await send(initialPeer, peers.message(Date.now())).catch(() => undefined);
+        const reply = await send(
+          firstHostToContact,
+          peers.message(Date.now()),
+          undefined,
+          signal,
+          invitation,
+        ).catch(() => undefined);
         if (reply !== undefined && !reply.from.left) peers.receive(reply, Date.now());
       }
       signal.throwIfAborted();
       const tick = () => {
-        peers.maybeStart(Date.now(), replacing() ? TARGET + 1 : TARGET, () => {
-          const next = waiting.values().next().value;
-          next?.();
-          return next !== undefined;
-        });
+        const now = Date.now();
+        if (promotion !== undefined && promotion.endsAt <= now) promotion = undefined;
+        if (promotion === undefined)
+          peers.maybeStart(now, replacing() ? TARGET + 1 : TARGET, () => {
+            const next = waiting.values().next().value;
+            if (next === undefined) return false;
+            const invitation = crypto.randomUUID();
+            promotion = { invitation, endsAt: now + INVITATION_MS, replacing: replacing() };
+            next(invitation);
+            return true;
+          });
         void peers.probe(Date.now, Math.random, send);
         report(peers);
       };

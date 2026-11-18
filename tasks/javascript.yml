@@ -72,9 +72,9 @@ tasks:
   keepalive:handoff:
     desc: Check a real browser handoff against an empty Keepalive test deployment
     requires:
-      vars: [SITE, START]
+      vars: [SITE, START, PEER_PROXY]
     cmds:
-      - node demos/keepalive/tests/handoff.ts --site "{{.SITE}}" --start "{{.START}}"
+      - node demos/keepalive/tests/handoff.ts --site "{{.SITE}}" --start "{{.START}}" --peer-proxy "{{.PEER_PROXY}}"
 
   wasm:build:
     desc: Build the SDK's Go/WASM module and matching Go runtime

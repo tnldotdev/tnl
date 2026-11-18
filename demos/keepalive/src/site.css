@@ -46,6 +46,10 @@ button:disabled {
   cursor: default;
 }
 
+.copy-progress {
+  color: #86ead4;
+}
+
 footer {
   margin-top: 3rem;
   color: #9aa4af;
