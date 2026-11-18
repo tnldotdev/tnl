@@ -62,7 +62,7 @@ func (c *terminalRelayConnector) Connect(ctx context.Context, target relayTarget
 
 func TestForwarderRetiresRemoteSessionFailureWithoutLosingCleanup(t *testing.T) {
 	for _, canceled := range []bool{false, true} {
-		for _, kind := range []string{"session", "independent_read", "stream_cleanup", "transport_cleanup"} {
+		for _, kind := range []string{"session", "session_joins_on_close", "independent_read", "stream_cleanup", "transport_cleanup"} {
 			t.Run(kind+map[bool]string{false: "", true: "/canceled"}[canceled], func(t *testing.T) {
 				material := newForwardingTestMaterial(t)
 				server := startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
@@ -111,7 +111,11 @@ func TestForwarderRetiresRemoteSessionFailureWithoutLosingCleanup(t *testing.T) 
 					t.Fatal(err)
 				}
 				ingressAwait(t, transport.entered)
-				transport.end()
+				// quic-go can wake AcceptStream before publishing the same
+				// terminal error on the connection context. Close joins it.
+				if kind != "session_joins_on_close" {
+					transport.end()
+				}
 				if canceled {
 					cancel()
 				}
@@ -127,7 +131,7 @@ func TestForwarderRetiresRemoteSessionFailureWithoutLosingCleanup(t *testing.T) 
 				}
 				err = forwarder.Close()
 				switch kind {
-				case "session":
+				case "session", "session_joins_on_close":
 					if err != nil {
 						t.Fatal("recovered session failure poisoned joined close", err)
 					}

@@ -237,9 +237,11 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 		return
 	}
 	capacityErr := session.ServeServiceCapacity(f.context)
+	cleanupErr := session.Close()
 	// the pool reports and replaces a lost relay session. its observed terminal
-	// read is not a failure of closing the recovered pool later. retain every
-	// independent read error and owned stream cleanup, even with the same cause.
+	// read is not a failure of closing the recovered pool later. check after
+	// joining the transport: quic can return that read error before publishing
+	// its terminal cause. retain independent reads and owned stream cleanup.
 	var streamCleanup *tunnel.SessionCleanupError
 	if terminal := session.Err(); terminal != nil && !errors.As(capacityErr, &streamCleanup) && failure.Only(capacityErr, terminal) {
 		select {
@@ -248,7 +250,6 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 		default:
 		}
 	}
-	cleanupErr := session.Close()
 	f.mu.Lock()
 	f.closeErr = errors.Join(f.closeErr, capacityErr, cleanupErr)
 	f.mu.Unlock()
