@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { fixtureSchema } from "../../packages/ts/test/portable-integration/fixture.ts";
 import { chromeArguments, workerdConfiguration } from "./portable-sdk-config.ts";
 
-const protocols = ["http", "tcp", "postgres", "mysql", "kubernetes"];
+const services = ["http", "tcp", "postgres", "mysql", "kubernetes", "redis"];
 const credentials = { user: "fixture", password: "private", database: "fixture" };
 const fixture = fixtureSchema.parse({
   version: 1,
@@ -14,9 +14,9 @@ const fixture = fixtureSchema.parse({
   control_root_pem: "control root",
   relay_root_pem: "relay root",
   service_root_pem: "service root",
-  services: Object.fromEntries(protocols.map((name) => [name, `service-${name}`])),
+  services: Object.fromEntries(services.map((name) => [name, `service-${name}`])),
   endpoints: Object.fromEntries(
-    protocols.map((name) => [
+    services.map((name) => [
       name,
       { hostname: `${name}.fixture.test`, port: name === "http" ? 443 : 0, public: false },
     ]),
@@ -30,6 +30,7 @@ const fixture = fixtureSchema.parse({
   api_token: "private",
   postgres: credentials,
   mysql: credentials,
+  redis_password: "private",
   kubernetes_token: "private",
 });
 

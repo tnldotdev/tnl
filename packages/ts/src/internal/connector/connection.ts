@@ -668,6 +668,7 @@ export function deploymentConnector(
   let shutdownUntil: number | undefined;
   const pending = new Set<Promise<unknown>>();
   const http = new Map<string, ReturnType<typeof managedFetch>>();
+  const openers = new Map<string, TnlOpenStream<TnlTLSStream>>();
   const streams = nativeStreams();
   const prepareRemoteWork = async (name: string) => {
     if (closed) throw closedError;
@@ -768,6 +769,7 @@ export function deploymentConnector(
       if (closed) throw closedError;
       if (pending.size >= 64) throw new TnlError("sdk.connection_unavailable");
       const work = prepareRemote(name).then((prepared) => {
+        const protocol = prepared.snapshot.protocol;
         let fetch: TnlFetch | undefined;
         if (prepared.snapshot.protocol === "http") {
           const url = prepared.snapshot.url;
@@ -783,16 +785,20 @@ export function deploymentConnector(
           fetch = transport;
         }
         const { expires: _expires, ...binding } = prepared.snapshot;
-        const open = streams.open(async (signal) => {
-          const selected = await waitForPreparation(prepareRemote(name), signal);
-          if (selected.snapshot.protocol !== prepared.snapshot.protocol)
-            throw new TnlError("sdk.response_invalid");
-          return selected.snapshot;
-        });
+        const openerKey = JSON.stringify([name, protocol]);
+        let open = openers.get(openerKey);
+        if (open === undefined) {
+          open = streams.open(async (signal) => {
+            const selected = await waitForPreparation(prepareRemote(name), signal);
+            if (selected.snapshot.protocol !== protocol) throw new TnlError("sdk.response_invalid");
+            return selected.snapshot;
+          });
+          openers.set(openerKey, open);
+        }
         return {
           key: JSON.stringify([prepared.file, binding]),
           connection: settings(prepared.snapshot, open, fetch),
-          protocol: prepared.snapshot.protocol,
+          protocol,
         };
       });
       pending.add(work);
@@ -815,18 +821,21 @@ export function deploymentConnector(
             await scope.close(shutdownUntil, closedError);
           }
         };
-        const results = await Promise.allSettled(
-          [...http.values()]
-            .map((value) => value.close())
-            .concat(streams.close(closedError), cleanup()),
+        // capture in-flight operations before shutdown can settle and remove them.
+        const results = await Promise.allSettled([
+          ...pending,
+          ...[...http.values()].map((value) => value.close()),
+          streams.close(closedError),
+          cleanup(),
+        ]);
+        const failures = new Set(
+          results.flatMap((result) =>
+            result.status === "rejected" && result.reason !== closedError
+              ? [result.reason as unknown]
+              : [],
+          ),
         );
-        const operations = await Promise.allSettled(pending);
-        const failures = [...operations, ...results].flatMap((result) =>
-          result.status === "rejected" && result.reason !== closedError
-            ? [result.reason as unknown]
-            : [],
-        );
-        if (failures.length)
+        if (failures.size)
           throw new AggregateError(failures, "deployment connection cleanup failed");
       })().finally(() => {
         closing = undefined;
