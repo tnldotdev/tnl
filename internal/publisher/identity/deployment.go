@@ -23,6 +23,10 @@ type DeploymentControl interface {
 	AcknowledgeDeploymentPublisherConfiguration(context.Context, string, controlv1.DeploymentPublisherAcknowledgement) error
 }
 
+type DeploymentAppControl interface {
+	GetDeploymentPublisherAppAssignments(context.Context, string) (controlv1.DeploymentPublisherAssignments, error)
+}
+
 // Deployment owns one replica's signed identity. persist the fresh private key before
 // enrollment, and retry redemption with that same key after response loss. each
 // replica must have its own key and independently scoped certificate cache.
@@ -66,13 +70,22 @@ func (g *Deployment) leaseToken(ctx context.Context) (string, error) {
 }
 
 func (g *Deployment) Poll(ctx context.Context) (controlv1.DeploymentPublisherAssignments, error) {
+	return g.poll(ctx, g.deployments.GetDeploymentPublisherAssignments)
+}
+
+// PollApps selects the app-owned projection without reading socket targets.
+func (g *Deployment) PollApps(ctx context.Context, apps DeploymentAppControl) (controlv1.DeploymentPublisherAssignments, error) {
+	return g.poll(ctx, apps.GetDeploymentPublisherAppAssignments)
+}
+
+func (g *Deployment) poll(ctx context.Context, read func(context.Context, string) (controlv1.DeploymentPublisherAssignments, error)) (controlv1.DeploymentPublisherAssignments, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	token, err := g.leaseToken(ctx)
 	if err != nil {
 		return controlv1.DeploymentPublisherAssignments{}, err
 	}
-	assignments, err := g.deployments.GetDeploymentPublisherAssignments(ctx, token)
+	assignments, err := read(ctx, token)
 	if err != nil {
 		return assignments, err
 	}

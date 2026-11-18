@@ -18,6 +18,9 @@ export async function exerciseBrowserPublication() {
       async createDeployment() {
         throw new Error("publishing must not require connector authority");
       },
+      async enrollPublisher() {
+        throw new Error("registered credentials must not require enrollment");
+      },
       async publish(_encoded: string, host: WasmPublisherHost) {
         const release = await host.storage.lock(scope, "certificate", host.signal);
         try {

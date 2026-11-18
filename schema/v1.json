@@ -3055,6 +3055,21 @@
           "description": "Concurrent service certificate workers per control process (1-8).",
           "default": 8
         },
+        "publisher_enrollment_max_members": {
+          "type": "integer",
+          "description": "Maximum lifetime enrollments admitted by one deployment enrollment key.",
+          "default": 256
+        },
+        "publisher_enrollment_max_lifetime": {
+          "type": "string",
+          "description": "Maximum deployment enrollment-key lifetime (1m-8760h).",
+          "default": "24h"
+        },
+        "project_max_publishers": {
+          "type": "integer",
+          "description": "Maximum non-revoked deployment publisher identities per project; not a concurrent-run limit.",
+          "default": 256
+        },
         "oidc_issuer": {
           "type": "string",
           "description": "OIDC issuer used by the authority."

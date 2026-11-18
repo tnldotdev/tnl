@@ -95,6 +95,43 @@ func PrepareHandler(ctx context.Context, options HandlerOptions) (*PreparedHandl
 			return prepared, err
 		}
 	}
+	return prepareHandler(native, saved, prepared, options.Handler)
+}
+
+// PrepareEnrolledHandler selects only a current assignment from an enrolled
+// publisher. it does not manufacture registered deployment-credential approval.
+func PrepareEnrolledHandler(ctx context.Context, identity *publisheridentity.Deployment, apps publisheridentity.DeploymentAppControl, name string, handler http.Handler) (*PreparedHandler, error) {
+	if identity == nil || apps == nil || handler == nil || name == "" {
+		return nil, publisheridentity.ErrScope
+	}
+	assignments, err := identity.PollApps(ctx, apps)
+	if err != nil {
+		return nil, err
+	}
+	for _, assignment := range assignments.Services {
+		if assignment.Service != name {
+			continue
+		}
+		if assignment.Configuration.Target != "app" || assignment.Configuration.Protocol == nil || *assignment.Configuration.Protocol != controlv1.ServiceProtocolHTTP {
+			return nil, publisheridentity.ErrScope
+		}
+		native, err := identity.Service(assignment)
+		if err != nil {
+			return nil, err
+		}
+		saved, err := native.SavedService(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if saved.Id != assignment.ServiceId || saved.TrustRevision != assignment.TrustRevision {
+			return nil, publisheridentity.ErrScope
+		}
+		return prepareHandler(native, saved, &PreparedHandler{native: native}, handler)
+	}
+	return nil, publisheridentity.ErrScope
+}
+
+func prepareHandler(native *publisheridentity.Native, saved controlv1.Service, prepared *PreparedHandler, handler http.Handler) (*PreparedHandler, error) {
 	if saved.Endpoint == nil || !serviceendpoint.Valid("http", saved.Endpoint.Hostname, saved.Endpoint.Port, saved.Endpoint.Public) {
 		return prepared, publisheridentity.ErrScope
 	}
@@ -115,7 +152,7 @@ func PrepareHandler(ctx context.Context, options HandlerOptions) (*PreparedHandl
 		return prepared, err
 	}
 	prepared.Config = publisherservice.RunConfig{
-		Control: native, Access: native.Access, Handler: options.Handler,
+		Control: native, Access: native.Access, Handler: handler,
 		PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
 		ServiceID: publication.Id, Metadata: publisheridentity.ServiceMetadata(publication),
 	}

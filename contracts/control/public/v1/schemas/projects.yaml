@@ -147,7 +147,7 @@ schemas:
     additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
   ProjectConfiguration:
     type: object
-    description: Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+    description: Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. The server configures the maximum non-revoked deployment publisher identities per project, independently of lifetime enrollment-key admissions and concurrent runs.
     additionalProperties: false
     required: [services, oauth, webhooks]
     properties:

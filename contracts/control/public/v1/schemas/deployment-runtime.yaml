@@ -35,6 +35,14 @@ schemas:
     properties:
       enrollment_key: { type: string, maxLength: 256 }
       public_key: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+      deployment_id:
+        type: string
+        pattern: "^dpl_[A-Za-z0-9]{22}$"
+        description: If supplied, redeem only for this immutable deployment ID.
+      project_key:
+        type: string
+        pattern: "^[a-z][a-z0-9-]{0,62}$"
+        description: If supplied, redeem only for this project key.
   DeploymentPublisherIdentity:
     type: object
     required: [team_id, project_key, deployment_id, deployment_name, publisher_identity_id, key_id]

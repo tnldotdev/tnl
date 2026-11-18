@@ -49,6 +49,12 @@ func registerPublisher(api js.Value) {
 		}
 		return startPublisher(args[0].String(), args[1])
 	})
+	bind(api, "enrollPublisher", &functions, func(args []js.Value) (any, error) {
+		if len(args) != 2 || args[0].Type() != js.TypeString || args[1].Type() != js.TypeObject || args[1].IsNull() {
+			return nil, errArguments
+		}
+		return openEnrolledPublisher(args[0].String(), args[1])
+	})
 }
 
 type publisherDeferred struct {
@@ -95,33 +101,61 @@ func (p *publisherOwner) close() error {
 	return p.err
 }
 
-func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
+func startPublisher(encoded string, host js.Value) (js.Value, error) {
+	return startPublisherUsing(encoded, host, nil)
+}
+
+func startPublisherUsing(encoded string, host js.Value, enrolled *enrolledPublisher) (_ js.Value, result error) {
+	transferred := false
+	if enrolled != nil {
+		if !enrolled.begin() {
+			return js.Undefined(), errArguments
+		}
+		defer func() {
+			if !transferred {
+				enrolled.work.Done()
+			}
+		}()
+	}
 	var options publisherOptions
 	if len(encoded) > 64<<10 || json.Unmarshal([]byte(encoded), &options, json.RejectUnknownMembers(true)) != nil {
 		return js.Undefined(), errArguments
 	}
-	if options.Deployment == "" || options.Service != "" && options.Temporary != nil {
+	if enrolled == nil && options.Deployment == "" || options.Service != "" && options.Temporary != nil ||
+		enrolled != nil && (options.Service == "" || options.Temporary != nil || options.Credential != "" || options.Project != "" || options.Deployment != "") {
 		return js.Undefined(), errArguments
 	}
 	certificateSource, err := publisherCertificateSource(host)
 	if err != nil {
 		return js.Undefined(), err
 	}
-	credential, err := auth.ParseDeploymentCredential(options.Credential)
-	if err != nil {
-		return js.Undefined(), err
-	}
-	if err := credential.SelectProject(options.Project); err != nil {
-		return js.Undefined(), err
+	var credential auth.DeploymentCredential
+	server := ""
+	if enrolled == nil {
+		credential, err = auth.ParseDeploymentCredential(options.Credential)
+		if err != nil {
+			return js.Undefined(), err
+		}
+		if err := credential.SelectProject(options.Project); err != nil {
+			return js.Undefined(), err
+		}
+		server = credential.ControlURL
+	} else {
+		server = enrolled.server
 	}
 	handler, err := newPublisherFetchHandler(publisherGet(host, "fetch"))
 	if err != nil {
 		return js.Undefined(), err
 	}
-	ctx, cancel := context.WithDeadline(runtimeContext, credential.Approval.ExpiresAt)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if enrolled == nil {
+		ctx, cancel = context.WithDeadline(runtimeContext, credential.Approval.ExpiresAt)
+	} else {
+		ctx, cancel = context.WithCancel(enrolled.ctx)
+	}
 	stopHandler := context.AfterFunc(ctx, handler.stop)
 	unwatch := func() {}
-	transferred := false
 	defer func() {
 		if !transferred {
 			cancel()
@@ -131,7 +165,7 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 			result = operationError(ctx, result)
 		}
 	}()
-	storage, err := newPublisherHostStore(publisherGet(host, "storage"), credential.ControlURL)
+	storage, err := newPublisherHostStore(publisherGet(host, "storage"), server)
 	if err != nil {
 		return js.Undefined(), err
 	}
@@ -140,37 +174,42 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 		return js.Undefined(), err
 	}
 	unwatch = watch
-	controlFetch := publisherGet(host, "controlFetch")
-	if controlFetch.IsUndefined() {
-		controlFetch = js.Global().Get("fetch")
-	}
-	if controlFetch.Type() != js.TypeFunction {
-		return js.Undefined(), errArguments
-	}
-	httpClient := &http.Client{Transport: &fetchTransport{fetch: controlFetch}}
-	control, err := clientcontrol.New(credential.ControlURL, httpClient, "")
-	if err != nil {
-		return js.Undefined(), err
-	}
-	authority, err := clientauthority.New(credential.ControlURL, httpClient, "")
-	if err != nil {
-		return js.Undefined(), err
-	}
-	private, err := base64.RawURLEncoding.DecodeString(credential.PrivateKey)
-	if err != nil {
-		return js.Undefined(), auth.ErrDeploymentCredential
-	}
-	defer clear(private)
-	preparation := publisherdeployment.HandlerOptions{
-		Control: control, Authority: authority, Approval: credential.Approval, Private: ed25519.PrivateKey(private),
-		Deployment: options.Deployment, Service: options.Service, Handler: handler,
-	}
-	if temporary := options.Temporary; temporary != nil {
-		preparation.Temporary = &publisherdeployment.TemporaryHandlerOptions{
-			Public: temporary.Public, RequirePostQuantum: temporary.RequirePostQuantum, AccessMode: temporary.AccessMode, IP: temporary.IP, Limits: temporary.Limits,
+	var prepared *publisherdeployment.PreparedHandler
+	if enrolled == nil {
+		controlFetch := publisherGet(host, "controlFetch")
+		if controlFetch.IsUndefined() {
+			controlFetch = js.Global().Get("fetch")
 		}
+		if controlFetch.Type() != js.TypeFunction {
+			return js.Undefined(), errArguments
+		}
+		httpClient := &http.Client{Transport: &fetchTransport{fetch: controlFetch}}
+		control, err := clientcontrol.New(server, httpClient, "")
+		if err != nil {
+			return js.Undefined(), err
+		}
+		authority, err := clientauthority.New(server, httpClient, "")
+		if err != nil {
+			return js.Undefined(), err
+		}
+		private, decodeErr := base64.RawURLEncoding.DecodeString(credential.PrivateKey)
+		if decodeErr != nil {
+			return js.Undefined(), auth.ErrDeploymentCredential
+		}
+		defer clear(private)
+		preparation := publisherdeployment.HandlerOptions{
+			Control: control, Authority: authority, Approval: credential.Approval, Private: ed25519.PrivateKey(private),
+			Deployment: options.Deployment, Service: options.Service, Handler: handler,
+		}
+		if temporary := options.Temporary; temporary != nil {
+			preparation.Temporary = &publisherdeployment.TemporaryHandlerOptions{
+				Public: temporary.Public, RequirePostQuantum: temporary.RequirePostQuantum, AccessMode: temporary.AccessMode, IP: temporary.IP, Limits: temporary.Limits,
+			}
+		}
+		prepared, err = publisherdeployment.PrepareHandler(ctx, preparation)
+	} else {
+		prepared, err = publisherdeployment.PrepareEnrolledHandler(ctx, enrolled.deployment, enrolled.apps, options.Service, handler)
 	}
-	prepared, err := publisherdeployment.PrepareHandler(ctx, preparation)
 	if err != nil {
 		if prepared != nil {
 			err = errors.Join(err, publisherCleanup(ctx, prepared))
@@ -223,6 +262,9 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 	transferred = true
 	go func() {
 		defer runtimeWork.Done()
+		if enrolled != nil {
+			defer enrolled.work.Done()
+		}
 		_, err := publisherWork(func() (js.Value, error) {
 			return js.Undefined(), publisherservice.Publish(ctx, prepared.Config)
 		})

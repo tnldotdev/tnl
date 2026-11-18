@@ -21,8 +21,14 @@ class CreateDeploymentPublisherEnrollmentRequest(BaseModel):
         ...,
         description="Exact existing bindings to approve. Control captures their saved IDs and protocols; future names, reused names, and protocol changes never expand approval.",
     )
-    max_members: Annotated[int, Field(ge=1, le=256)] | None = 1
-    expires_in: Annotated[int, Field(ge=60, le=86400)] | None = 600
+    max_members: Annotated[int, Field(ge=1, le=2147483647)] | None = Field(
+        default=1,
+        description="Lifetime enrollments admitted by this key; the configured server ceiling also applies. Revocation does not refund this allowance.",
+    )
+    expires_in: Annotated[int, Field(ge=60, le=31536000)] | None = Field(
+        default=600,
+        description="Enrollment-key lifetime in seconds; the configured server ceiling also applies.",
+    )
 
 
 class DeploymentTarget(BaseModel):
@@ -183,7 +189,7 @@ class DeploymentPublisherEnrollment(BaseModel):
     enrollment_key: str
     deployment_id: str
     expires_at: datetime
-    max_members: Annotated[int, Field(ge=1, le=256)]
+    max_members: Annotated[int, Field(ge=1, le=2147483647)]
     services: dict[str, ServiceProtocol]
 
 

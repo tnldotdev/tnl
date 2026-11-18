@@ -11,8 +11,22 @@ schemas:
         uniqueItems: true
         items: { type: string, pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" }
         description: Exact existing bindings to approve. Control captures their saved IDs and protocols; future names, reused names, and protocol changes never expand approval.
-      max_members: { type: integer, minimum: 1, maximum: 256, default: 1 }
-      expires_in: { type: integer, minimum: 60, maximum: 86400, default: 600 }
+      max_members:
+        {
+          type: integer,
+          minimum: 1,
+          maximum: 2147483647,
+          default: 1,
+          description: Lifetime enrollments admitted by this key; the configured server ceiling also applies. Revocation does not refund this allowance.,
+        }
+      expires_in:
+        {
+          type: integer,
+          minimum: 60,
+          maximum: 31536000,
+          default: 600,
+          description: Enrollment-key lifetime in seconds; the configured server ceiling also applies.,
+        }
   DeploymentPublisherEnrollment:
     type: object
     additionalProperties: false
@@ -22,7 +36,7 @@ schemas:
       enrollment_key: { type: string }
       deployment_id: { type: string }
       expires_at: { type: string, format: date-time }
-      max_members: { type: integer, minimum: 1, maximum: 256 }
+      max_members: { type: integer, minimum: 1, maximum: 2147483647 }
       services:
         type: object
         minProperties: 1

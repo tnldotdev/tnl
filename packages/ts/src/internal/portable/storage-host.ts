@@ -41,21 +41,40 @@ export function createPublisherStorageHost(storage: PublisherStorage): Publisher
       typeof scope !== "object" ||
       scope === null ||
       Array.isArray(scope) ||
-      Object.keys(scope).length !== 3 ||
       !("control_url" in scope) ||
-      !("team_id" in scope) ||
-      !("publisher_identity_id" in scope) ||
-      !scopeText(scope.control_url) ||
-      !scopeText(scope.team_id, true) ||
-      !scopeText(scope.publisher_identity_id)
+      !scopeText(scope.control_url)
     )
       throw new PublisherStorageError("sdk.publisher_storage_invalid");
-    const canonical = JSON.stringify([
-      scope.control_url,
-      scope.team_id,
-      scope.publisher_identity_id,
-      key,
-    ]);
+    const count = Object.keys(scope).length;
+    let canonical: string;
+    if (
+      count === 2 &&
+      "enrollment_selection" in scope &&
+      typeof scope.enrollment_selection === "string" &&
+      /^[0-9a-f]{64}$/.test(scope.enrollment_selection)
+    ) {
+      canonical = JSON.stringify([
+        "enrollment",
+        scope.control_url,
+        scope.enrollment_selection,
+        key,
+      ]);
+    } else if (
+      count === 3 &&
+      "team_id" in scope &&
+      scopeText(scope.team_id, true) &&
+      "publisher_identity_id" in scope &&
+      scopeText(scope.publisher_identity_id)
+    ) {
+      canonical = JSON.stringify([
+        scope.control_url,
+        scope.team_id,
+        scope.publisher_identity_id,
+        key,
+      ]);
+    } else {
+      throw new PublisherStorageError("sdk.publisher_storage_invalid");
+    }
     try {
       const digest = new Uint8Array(
         await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical)),

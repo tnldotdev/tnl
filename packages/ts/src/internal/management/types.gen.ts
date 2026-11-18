@@ -17,7 +17,13 @@ export type CreateDeploymentPublisherEnrollmentRequest = {
    * Exact existing bindings to approve. Control captures their saved IDs and protocols; future names, reused names, and protocol changes never expand approval.
    */
   services: Array<string>;
+  /**
+   * Lifetime enrollments admitted by this key; the configured server ceiling also applies. Revocation does not refund this allowance.
+   */
   max_members?: number;
+  /**
+   * Enrollment-key lifetime in seconds; the configured server ceiling also applies.
+   */
   expires_in?: number;
 };
 

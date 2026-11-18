@@ -39,8 +39,8 @@ type publisherSetupCommand struct {
 	Deployment      string           `name:"deployment" help:"Saved deployment name or ID for bounded publisher enrollment."`
 	ProjectKey      string           `name:"project-key" help:"Applied project key; defaults to this Git configuration source."`
 	Services        []string         `name:"service" help:"Service name to approve with --deployment; repeat for several. Without --deployment, selects one exact saved service ID."`
-	Members         int              `name:"members" default:"1" help:"Maximum distinct publishers redeeming deployment enrollment, from 1 to 256."`
-	ExpiresIn       time.Duration    `name:"expires-in" default:"10m" help:"Deployment enrollment lifetime, from 1m to 24h."`
+	Members         int              `name:"members" default:"1" help:"Lifetime enrollments admitted by this deployment key; bounded by the server ceiling."`
+	ExpiresIn       time.Duration    `name:"expires-in" default:"10m" help:"Deployment enrollment-key lifetime (1m-8760h), bounded by the server ceiling."`
 	IdempotencyKey  string           `name:"idempotency-key" help:"Original deployment setup request key for lost-response recovery."`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"With --deployment, print a raw enrollment key with human diagnostics, or JSON containing the key."`
 	Namespace       bool             `help:"Set up this team's HTTP namespace for local application publication."`
