@@ -25,6 +25,10 @@ func (m *Metrics) tracer() trace.Tracer {
 // hostnames, errors or other external input as the name. errors become a fixed
 // outcome; raw causes are never recorded as span status or exception events.
 func Start(ctx context.Context, name operationName, options ...trace.SpanStartOption) (context.Context, func(error)) {
+	if !processTelemetry {
+		// keep any incoming non-recording trace parent and the caller's lifetime.
+		return ctx, func(error) {}
+	}
 	if link, ok := ctx.Value(schedulingLinkKey{}).(trace.Link); ok && !trace.SpanContextFromContext(ctx).IsValid() {
 		options = append(options, trace.WithLinks(link))
 	}
@@ -72,7 +76,7 @@ func finishSpan(span trace.Span, result semanticResult) {
 // Visitor correlates independent tunnel-hop spans without adding fields to the
 // tunnel protocol or treating an external ID as an OTel parent span.
 func Visitor(ctx context.Context, id string) {
-	if len(id) <= 128 {
+	if processTelemetry && len(id) <= 128 {
 		trace.SpanFromContext(ctx).SetAttributes(VisitorConnectionID.String(id))
 	}
 }
@@ -89,6 +93,9 @@ func WithVisitor(ctx context.Context, id string) context.Context {
 // PublisherOperation includes the scoped, authenticated identities in metrics.
 // these spans end at the operation boundary, not when the publisher exits.
 func PublisherOperation(ctx context.Context, operation operationName) (context.Context, func(error)) {
+	if !processTelemetry {
+		return ctx, func(error) {}
+	}
 	switch operation {
 	case "startup", "heartbeat", "connect", "private_startup", "private_heartbeat", "private_connect", "target_connect", "target_tls", "target_preflight", "readiness_probe", "visitor_admission", "visitor_tls", "visitor_negotiation", "target_negotiation", "native_auth", "visitor_authorization", "certificate", "deployment_lease", "deployment_startup", "deployment_shutdown", "deployment_assignments", "deployment_acknowledge":
 	default:
@@ -152,7 +159,7 @@ func OwnedHTTPClient(client *http.Client, surface string) *http.Client {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	if apiOperation(surface) == "" {
+	if !processTelemetry || apiOperation(surface) == "" {
 		return client
 	}
 	copy := *client

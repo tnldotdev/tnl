@@ -18,6 +18,9 @@ func WithMetrics(ctx context.Context, m *Metrics) context.Context {
 }
 
 func FromContext(ctx context.Context) *Metrics {
+	if !processTelemetry {
+		return nil
+	}
 	m, _ := ctx.Value(ownerKey{}).(*Metrics)
 	return m
 }

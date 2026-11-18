@@ -19,6 +19,12 @@ import (
 // net/http's Node detection and never opens a host TCP listener or dialer.
 type fetchTransport struct{ fetch js.Value }
 
+// Do lets control clients use host Fetch directly. RoundTrip already fences
+// redirects and owns the request and response bodies.
+func (t *fetchTransport) Do(request *http.Request) (*http.Response, error) {
+	return t.RoundTrip(request)
+}
+
 func (t *fetchTransport) RoundTrip(request *http.Request) (_ *http.Response, result error) {
 	defer func() {
 		if recover() != nil {

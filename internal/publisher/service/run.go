@@ -68,7 +68,7 @@ type Prepared struct {
 	managedPublic          bool
 	serviceHTTPRequests    *requestlimit.HTTP
 	requestBodyIdleTimeout time.Duration
-	httpProxy              *proxy.Proxy
+	httpProxy              servicestream.RunHTTPProxy
 	httpResponseHooks      httpstream.ResponseHooks
 	connectorHTTP          servicestream.ConnectorHTTPFrontend
 	policy                 *visitorlease.Lease

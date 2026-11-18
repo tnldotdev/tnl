@@ -370,7 +370,7 @@ try {
     "go",
     [
       "build",
-      "-tags=tnlwasmtest,tnlsdk,tnlconnector",
+      "-tags=tnlwasmtest,tnlsdk,tnlconnector,nethttpomithttp2",
       "-trimpath",
       "-ldflags=-s -w",
       "-o",

@@ -37,7 +37,7 @@ type HTTPTarget struct {
 	ResolveTarget          func(*http.Request) (address, identity string, err error)
 	Transport              targettransport.Transport
 	Connections            int
-	proxy                  *proxy.Proxy
+	proxy                  RunHTTPProxy
 	connector              ConnectorAdmission
 	lifetime               context.Context
 	track                  func(net.Conn) net.Conn

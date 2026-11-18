@@ -170,15 +170,19 @@ both modules.
 Both artifacts use the same Go runtime shim. `/control` exposes the generated
 Fetch client independently of the runtime or WASM.
 
-Go/WASM keeps shared tracing context but does not start native exporters or
-collect product telemetry. The SDK builds omit the telemetry schema compiler,
-process profiling, project-file loading, and daemon flag parsing. Browser and
-Cloudflare builds exclude direct UDP and ICE. The inner QUIC session still runs
-over packets carried by WSS relays. The Fetch publisher omits native target
-dialing and rejects demo and feedback publication; it keeps the same visitor
-checks, browser sign-in, and share handling. Its fixed HTML pages render without
+Go/WASM keeps wire trace context and service audit reporting without recording
+local process measurements or collecting product telemetry. The SDK builds omit
+the telemetry schema compiler, process profiling, project-file loading, and
+daemon flag parsing. Browser and Cloudflare builds exclude direct UDP and ICE.
+The inner QUIC session still runs over packets carried by WSS relays. The Fetch
+publisher omits native target dialing, reverse proxying, and native owner
+readiness probes. It uses host Fetch for control requests and does not bundle
+the connector's WebPKI root catalog.
+It rejects demo and feedback publication but keeps visitor checks, browser
+sign-in, and share handling. Its fixed HTML pages render without
 runtime template lookup, so the portable build does not retain unrelated control
-client methods.
+client methods. Connector Fetch already negotiates HTTP/1.1 inside the tunnel,
+so only the publisher links Go's HTTP/2 stack for visitor requests.
 
 Browsers and Durable Objects can own hosted publishers; ordinary Workers own
 request-scoped connectors. A Durable Object persists running or stopped intent

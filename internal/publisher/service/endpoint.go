@@ -211,7 +211,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	var httpFrontend HTTP
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 		var proof *httpaccess.ReadinessProof
-		if config.ReadinessProof != nil {
+		if !servicestream.HandlerOnly && config.ReadinessProof != nil {
 			proof = config.ReadinessProof(httpaccess.ReadinessRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 				ID: setup.ServiceRunId, Number: uint64(setup.RunNumber), Hostname: prepared.managedHostname})
 			if proof == nil {
@@ -242,10 +242,11 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 			target := servicestream.HTTPTarget{Address: prepared.target, Mounts: prepared.mounts, ResolveTarget: prepared.resolveHTTPTarget,
 				Transport:   targettransport.Transport{Protocol: prepared.managedProtocol, TLS: prepared.managedTargetTLS},
 				Connections: prepared.serviceHTTPRequests.Limits().Concurrency}
-			prepared.httpProxy, err = target.NewHTTPProxy(ctx, prepared.managedHostname, prepared.httpResponseHooks)
+			forwarder, err := target.NewHTTPProxy(ctx, prepared.managedHostname, prepared.httpResponseHooks)
 			if err != nil {
 				return nil, nil, errors.Join(err, closeHTTP())
 			}
+			prepared.httpProxy = forwarder
 		}
 	}
 	decision := func(result controlv1.ServiceClientCertificateDecision, err error) (servicestream.Decision, error) {

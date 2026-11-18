@@ -264,6 +264,9 @@ func PublisherHTTPError(ctx context.Context, err error) {
 // PublisherHTTP observes the whole handler independently of inspection settings.
 // no propagation headers are injected into customer requests.
 func PublisherHTTP(next http.Handler) http.Handler {
+	if !processTelemetry {
+		return next
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fields, _ := r.Context().Value(fieldsKey{}).(Fields)
 		if fields.ServiceProtocol != ProtocolKubernetes {

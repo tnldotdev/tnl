@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	json "encoding/json/v2"
 	"errors"
-	"net/http"
 	"sync"
 	"syscall/js"
 	"time"
@@ -141,12 +140,12 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 	if controlFetch.Type() != js.TypeFunction {
 		return js.Undefined(), errArguments
 	}
-	httpClient := &http.Client{Transport: &fetchTransport{fetch: controlFetch}}
-	control, err := clientcontrol.New(credential.ControlURL, httpClient, "")
+	doer := &fetchTransport{fetch: controlFetch}
+	control, err := clientcontrol.NewWithDoer(credential.ControlURL, doer, "")
 	if err != nil {
 		return js.Undefined(), err
 	}
-	authority, err := clientauthority.New(credential.ControlURL, httpClient, "")
+	authority, err := clientauthority.NewWithDoer(credential.ControlURL, doer, "")
 	if err != nil {
 		return js.Undefined(), err
 	}

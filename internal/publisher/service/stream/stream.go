@@ -45,7 +45,7 @@ type Stream struct {
 	Public                 bool
 	Hostname               string
 	HTTPRequests           RequestLimits
-	HTTPProxy              *proxy.Proxy
+	HTTPProxy              RunHTTPProxy
 	HTTPDrain              httpstream.Drain
 	RequestBodyIdleTimeout time.Duration
 	Kubernetes             KubernetesLimits
