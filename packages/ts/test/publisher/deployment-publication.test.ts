@@ -323,6 +323,7 @@ test.each(["node", "fetch"])(
     const server = kind === "node" ? await listener() : undefined;
     const publication = await local.publish("web", server ?? (() => new Response("owned")));
     expect(publication).not.toHaveProperty("url");
+    expect(publication).not.toHaveProperty("publisherURL");
     expect(calls.filter((call) => call.operation === "prepare")).toHaveLength(1);
     expect(calls.filter((call) => call.operation === "register")).toHaveLength(1);
     const liveTarget = payload.parse(
@@ -356,6 +357,7 @@ test.each([false, true])(
       } else {
         const publication = await started;
         expect(publication).not.toHaveProperty("url");
+        expect(publication).not.toHaveProperty("publisherURL");
         await publication.close();
         await publication.wait();
       }

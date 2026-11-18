@@ -101,6 +101,12 @@ function fixture() {
   return { bridge, connector, connection, publications, events, store, publication };
 }
 
+const privateRun = {
+  serviceID: `svc_${"S".repeat(22)}`,
+  serviceRunID: `srun_${"R".repeat(22)}`,
+  runNumber: "1",
+};
+
 function deployment() {
   return createClient({
     project: "acme/shop",
@@ -133,7 +139,7 @@ test("named private publications wait for readiness and omit the public URL", as
   const close = vi.fn(async () => closed.resolve());
   f.bridge.publish.mockImplementationOnce(async () => {
     entered.resolve();
-    return { public: false, ready: ready.promise, closed: closed.promise, close };
+    return { public: false, run: privateRun, ready: ready.promise, closed: closed.promise, close };
   });
   const remote = deployment();
   const reached = vi.fn();
@@ -144,6 +150,7 @@ test("named private publications wait for readiness and omit the public URL", as
   ready.resolve();
   const publication = await pending;
   expect(publication).not.toHaveProperty("url");
+  expect(publication).not.toHaveProperty("publisherURL");
   await publication.close();
   await publication.wait();
   await remote.close();
@@ -298,6 +305,7 @@ test("private temporary publication forwards exposure and omits a URL", async ()
   const closed = deferred();
   f.bridge.publish.mockResolvedValueOnce({
     public: false,
+    run: privateRun,
     ready: Promise.resolve(),
     closed: closed.promise,
     close: async () => closed.resolve(),
@@ -314,6 +322,7 @@ test("private temporary publication forwards exposure and omits a URL", async ()
     expect.anything(),
   );
   expect(publication).not.toHaveProperty("url");
+  expect(publication).not.toHaveProperty("publisherURL");
   await remote.close();
 });
 

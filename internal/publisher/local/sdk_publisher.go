@@ -13,6 +13,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -138,7 +139,7 @@ func ServeSDKPublisher(ctx context.Context, options Options, instance, controlUR
 
 func (a *appRuntime) prepareEnrolledInvocation(ctx context.Context, r publisherprotocol.Invocation) (result deploymentInvocation, err error) {
 	owner := a.sdkPublisher
-	if owner == nil || r.Deployment != nil || r.ServerUrl != nil || r.PublisherCredentialFile != "" ||
+	if owner == nil || r.Deployment != nil || r.ServerUrl != nil || r.PublisherCredentialFile != "" || r.Public != nil ||
 		r.PublisherIdentityId != "" || r.AccessMode != nil || r.Ip != nil || r.Limits != nil || r.RequirePostQuantum != nil {
 		return result, publisheridentity.ErrScope
 	}
@@ -146,7 +147,8 @@ func (a *appRuntime) prepareEnrolledInvocation(ctx context.Context, r publisherp
 	if err != nil {
 		return result, err
 	}
-	if service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port != 443 {
+	if service.Protocol != controlv1.ServiceProtocolHTTP || service.Endpoint == nil ||
+		!serviceendpoint.Valid("http", service.Endpoint.Hostname, service.Endpoint.Port, service.Endpoint.Public) {
 		return result, publisheridentity.ErrScope
 	}
 	target, err := targetsyntax.ParseCanonicalTarget(r.Target)
@@ -157,7 +159,7 @@ func (a *appRuntime) prepareEnrolledInvocation(ctx context.Context, r publisherp
 	if err != nil {
 		return result, err
 	}
-	if (target.Scheme == "https") != (trust != nil) || service.Protocol != controlv1.ServiceProtocolHTTP {
+	if (target.Scheme == "https") != (trust != nil) {
 		return result, publisheridentity.ErrScope
 	}
 	profile, err := a.state.Server(ctx, owner.server)
