@@ -279,6 +279,19 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 					t.Fatal("browser sign-in did not set its secure attempt cookie", cookies)
 				}
 			} else {
+				if variant == "node-restart" {
+					// sdk readiness confirms the new run at control, not that
+					// ingress has replaced its cached snapshot of the old run.
+					var runID string
+					if err := f.inspect.QueryRowContext(ctx, `
+						SELECT id FROM control.service_runs
+						WHERE service_id=$1 AND state='ready' AND closed_at IS NULL
+						ORDER BY run_number DESC LIMIT 1
+					`, savedID).Scan(&runID); err != nil {
+						t.Fatal("could not identify the ready replacement run", err)
+					}
+					waitForAppliedServiceRouting(t, f.inspect, runID, f.ingress.metricsAddress)
+				}
 				response, body, err := f.visitor.requestURL(http.MethodGet, result.URL, nil)
 				if err != nil || response.StatusCode != 200 || string(body) != "SDK publication" {
 					t.Fatal("SDK visitor traffic failed", err)
