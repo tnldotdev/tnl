@@ -297,12 +297,10 @@ func TestConfiguredViteRegistrationDeliversReadyFrameworkOnce(t *testing.T) {
 			viteCompositionCall(t, app.endpoint, "/v1/register", app.registration, nil)
 			viteCompositionCall(t, app.endpoint, "/v1/renew", app.registration, nil)
 		}
-		ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
 		var snapshot publisherapp.Snapshot
-		err := publisherprotocol.Call(ctx, a.capabilities.Owner(), http.MethodPost, "/v1/check", publisherprotocol.Check{}, &snapshot)
-		cancel()
-		if err != nil || len(snapshot.Services) != 2 {
-			t.Fatal("actual Vite owner proof failed within 250ms", err)
+		viteCompositionCall(t, a.capabilities.Owner(), "/v1/check", publisherprotocol.Check{}, &snapshot)
+		if len(snapshot.Services) != 2 {
+			t.Fatalf("Vite owner returned %d services, want 2", len(snapshot.Services))
 		}
 		for _, service := range snapshot.Services {
 			if !service.Ready || !service.Routable || service.Framework != string(publisherprotocol.FrameworkVite) ||

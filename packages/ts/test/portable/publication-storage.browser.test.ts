@@ -14,8 +14,16 @@ declare global {
 let browser: Browser;
 let origin: string;
 let source: string;
-const server = createServer((_request, reply) => {
-  reply.writeHead(200, { "Content-Type": "text/html" }).end("<!doctype html>");
+const server = createServer((request, reply) => {
+  if (request.url === "/fixture.js") {
+    reply.writeHead(200, { "Content-Type": "text/javascript" }).end(source);
+    return;
+  }
+  reply.writeHead(200, { "Content-Type": "text/html" }).end(`<!doctype html>
+<script type="module">
+  import * as fixture from "/fixture.js";
+  window.portablePublicationTest = fixture;
+</script>`);
 });
 
 beforeAll(async () => {
@@ -23,8 +31,8 @@ beforeAll(async () => {
     entryPoints: [fileURLToPath(new URL("../helpers/publisher-browser.ts", import.meta.url))],
     bundle: true,
     write: false,
-    format: "iife",
-    globalName: "portablePublicationTest",
+    // serve a real module so the sdk can resolve assets against import.meta.url.
+    format: "esm",
     platform: "browser",
     plugins: [
       {
@@ -58,13 +66,13 @@ test("automatic browser publishing uses real default IndexedDB storage across fr
   try {
     const first = await context.newPage();
     await first.goto(origin);
-    await first.addScriptTag({ content: source });
+    await first.waitForFunction(() => Boolean(window.portablePublicationTest));
     expect(
       await first.evaluate(() => window.portablePublicationTest.exerciseBrowserPublication()),
     ).toEqual({ restored: [], applicationResponse: "browser handler" });
     const second = await context.newPage();
     await second.goto(origin);
-    await second.addScriptTag({ content: source });
+    await second.waitForFunction(() => Boolean(window.portablePublicationTest));
     expect(
       await second.evaluate(() => window.portablePublicationTest.exerciseBrowserPublication()),
     ).toEqual({ restored: [1, 2, 3], applicationResponse: "browser handler" });
