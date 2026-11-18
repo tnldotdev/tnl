@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createClient, type TnlClientFactory } from "@tnldotdev/tnl";
 import { pg as pgAdapter } from "@tnldotdev/tnl/adapters/node-postgres";
+import { postgres } from "@tnldotdev/tnl/adapters/postgres-js";
+import { mysql2 } from "@tnldotdev/tnl/adapters/mysql2";
 import { createInterface } from "node:readline";
 import mysql from "mysql2/promise";
 import pg from "pg";
@@ -63,6 +65,16 @@ try {
     } finally {
       await client.end();
     }
+    const create = postgres({ ...credentials, max: 1, connect_timeout: 5 });
+    const sql = await create.create(options);
+    try {
+      const [row] = await sql.begin(
+        (tx) => tx<{ answer: number }[]>`select ${41}::int + 1 as answer`,
+      );
+      assert.equal(row?.answer, 42);
+    } finally {
+      await create.close(sql);
+    }
     const closed: pg.Pool[] = [];
     const adapter = pgAdapter({ ...credentials, max: 1, connectionTimeoutMillis: 5_000 });
     const get = deployment.client("database", {
@@ -107,18 +119,14 @@ try {
       await client.end();
     }
     const closed: mysql.Pool[] = [];
+    const adapter = mysql2({ ...credentials, connectionLimit: 1, connectTimeout: 5_000 });
     const get = deployment.client("database", {
       create(connection) {
         assert("stream" in connection);
-        return mysql.createPool({
-          ...connection,
-          ...credentials,
-          connectionLimit: 1,
-          connectTimeout: 5_000,
-        });
+        return adapter.create(connection);
       },
       async close(pool) {
-        await pool.end();
+        await adapter.close(pool);
         closed.push(pool);
       },
     });

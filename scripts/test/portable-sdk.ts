@@ -89,6 +89,7 @@ function redact(value: string): string {
     fixture.api_token,
     fixture.postgres.password,
     fixture.mysql.password,
+    fixture.redis_password,
     fixture.kubernetes_token,
   ])
     output = output.replaceAll(secret, "[redacted]");
@@ -352,6 +353,7 @@ async function workerdSmoke(configuration: PortableFixture) {
     }
     const smoke = smokeSchema.parse(await call("/smoke"));
     const pg = z.object({ backendPID: z.number().int().positive() }).parse(await call("/pg"));
+    const redis = z.object({ redis: z.literal(true) }).parse(await call("/redis"));
     const run = `workerd-${crypto.randomUUID()}`;
     const isolation = isolationProof(
       await Promise.all([
@@ -359,7 +361,7 @@ async function workerdSmoke(configuration: PortableFixture) {
         call(`/isolation?role=second&run=${run}`),
       ]),
     );
-    return { runtime: "workerd", smoke, isolation, pg };
+    return { runtime: "workerd", smoke, isolation, pg, redis };
   } finally {
     lines.close();
     child.kill("SIGTERM");

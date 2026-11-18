@@ -18,6 +18,7 @@ const services = {
   postgres: { protocol: "postgres" },
   mysql: { protocol: "mysql" },
   kubernetes: { protocol: "kubernetes" },
+  redis: { protocol: "tcp" },
 } as const;
 
 type Phase =
@@ -28,6 +29,7 @@ type Phase =
   | "kubernetes"
   | "postgres"
   | "pg-adapter"
+  | "redis-adapter"
   | "carrier-loss"
   | "close-open-tcp"
   | "close-deployment"

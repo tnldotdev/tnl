@@ -1,6 +1,8 @@
+import { ioredis } from "@tnldotdev/tnl/adapters/ioredis";
 import { pg } from "@tnldotdev/tnl/adapters/node-postgres";
+import { postgres } from "@tnldotdev/tnl/adapters/postgres-js";
 import { PortableSmokeError, deployment, runPortableIsolation, runPortableSmoke } from "./smoke.ts";
-import { fixtureSchema } from "./fixture.ts";
+import { check, fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
 
 interface Fetcher {
@@ -58,6 +60,31 @@ export default {
         }
       });
       if (url.pathname === "/smoke") return Response.json(await runPortableSmoke(fixture));
+      if (url.pathname === "/redis") {
+        const app = deployment(fixture);
+        try {
+          const getRedis = app.client(
+            "redis",
+            ioredis({ password: fixture.redis_password, connectTimeout: 15_000 }),
+          );
+          const redis = await getRedis();
+          const peer = redis.duplicate();
+          const key = `tnl:${crypto.randomUUID()}`;
+          const result = await redis.pipeline().set(key, "ready", "EX", 30).get(key).exec();
+          check(result?.[0]?.[1] === "OK" && result[1]?.[1] === "ready", "Redis pipeline failed");
+          check((await peer.get(key)) === "ready", "Redis duplicate missed the saved value");
+          await getRedis.close();
+          check(
+            !redis.stream?.writable && !peer.stream?.writable,
+            "Redis adapter retained a socket",
+          );
+          return Response.json({ redis: true });
+        } catch (error) {
+          throw new PortableSmokeError("redis-adapter", error);
+        } finally {
+          await app.close();
+        }
+      }
       if (url.pathname === "/pg") {
         const app = deployment(fixture);
         try {
@@ -81,6 +108,16 @@ export default {
             session.release();
           }
           await getPool.close();
+          const getSql = app.client(
+            "postgres",
+            postgres({ ...fixture.postgres, max: 1, connect_timeout: 15 }),
+          );
+          const sql = await getSql();
+          const [row] = await sql.begin(
+            (tx) => tx<{ answer: number }[]>`select ${41}::int + 1 as answer`,
+          );
+          check(row?.answer === 42, "Postgres.js query returned the wrong result");
+          await getSql.close();
           return Response.json({ backendPID });
         } catch (error) {
           throw new PortableSmokeError("pg-adapter", error);

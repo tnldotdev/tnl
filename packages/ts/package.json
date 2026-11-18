@@ -59,6 +59,18 @@
       "types": "./dist/adapters/node-postgres.d.ts",
       "default": "./dist/adapters/node-postgres.js"
     },
+    "./adapters/postgres-js": {
+      "types": "./dist/adapters/postgres-js.d.ts",
+      "default": "./dist/adapters/postgres-js.js"
+    },
+    "./adapters/ioredis": {
+      "types": "./dist/adapters/ioredis.d.ts",
+      "default": "./dist/adapters/ioredis.js"
+    },
+    "./adapters/mysql2": {
+      "types": "./dist/adapters/mysql2.d.ts",
+      "default": "./dist/adapters/mysql2.js"
+    },
     "./config": {
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js",
@@ -105,22 +117,37 @@
     "@types/bun": "1.4.2",
     "@types/pg": "8.23.1",
     "hono": "4.13.16",
+    "ioredis": "5.11.1",
+    "mysql2": "3.24.6",
     "next": "16.4.6",
     "pg": "8.23.1",
+    "postgres": "3.4.9",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "vite": "8.3.4"
   },
   "peerDependencies": {
+    "ioredis": "^5.11.1",
+    "mysql2": "^3.24.6",
     "next": ">=16.4.5",
     "pg": "^8.23.1",
+    "postgres": "^3.4.9",
     "vite": ">=6.0.9"
   },
   "peerDependenciesMeta": {
+    "ioredis": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
     "next": {
       "optional": true
     },
     "pg": {
+      "optional": true
+    },
+    "postgres": {
       "optional": true
     },
     "vite": {
