@@ -34,7 +34,7 @@ it("checks the script before serving it and does not pass through credentials", 
   fetchHost.mockResolvedValueOnce(new Response("export const version = 2;"));
   fetchHost.mockResolvedValueOnce(new Response(script, { headers: { "Set-Cookie": "unsafe=1" } }));
 
-  const response = await proxy(request("/app.js", { headers: { Cookie: "private=1" } }));
+  const response = await proxy.file(request("/app.js", { headers: { Cookie: "private=1" } }));
   expect(await response.text()).toBe(script);
   expect(response.headers.get("Set-Cookie")).toBeNull();
   expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -52,7 +52,7 @@ it("checks the script before serving it and does not pass through credentials", 
 it("has no fallback when hosts stop", async () => {
   const { proxy, fetchHost } = await setup();
   fetchHost.mockRejectedValue(new Error("No connection"));
-  expect((await proxy(request("/"))).status).toBe(503);
-  expect((await proxy(request(WORKER_PATH))).status).toBe(404);
+  expect((await proxy.file(request("/"))).status).toBe(503);
+  expect((await proxy.file(request(WORKER_PATH))).status).toBe(404);
   expect(fetchHost).toHaveBeenCalledTimes(3);
 });
