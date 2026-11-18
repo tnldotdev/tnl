@@ -11,10 +11,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/storagekey"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 )
 
 func (c Config) validateControl() error {
+	for scope, limit := range c.ProjectPublisherLimits {
+		team, project, ok := strings.Cut(scope, "/")
+		if !ok || !opaqueid.Valid(team, opaqueid.TeamPrefix) || !naming.ValidProjectKey(project) || limit < 1 || limit > 65536 {
+			return errors.New("project-publisher-limit requires TEAM_ID/PROJECT_KEY and a limit from 1 to 65536")
+		}
+	}
 	if (c.EmailURL == "") != (c.WebhookSecret == "") {
 		setting := failure.SettingWebhookSecret
 		if c.EmailURL == "" {

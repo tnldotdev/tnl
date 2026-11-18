@@ -38,6 +38,7 @@ var migrationFiles embed.FS
 type Database struct {
 	controlOutageTolerance atomic.Int64
 	oidcAdmissions         map[string]configuredAdmission
+	projectPublisherLimits map[string]int
 	pool                   *pgxpool.Pool
 	storageKey             *storagekey.Keyring
 	managedURLMode         naming.ManagedURLMode

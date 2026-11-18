@@ -103,6 +103,25 @@ func TestParseServiceCertificateWorkers(t *testing.T) {
 	}
 }
 
+func TestParseProjectPublisherLimits(t *testing.T) {
+	const project = "tm_0123456789abcdefghijkl/keepalive"
+	t.Setenv("TNLD_PROJECT_PUBLISHER_LIMITS", project+"=1024")
+	cfg, err := Parse([]string{
+		"--role", "standalone", "--route53-server-zone-id", "ZSERVER",
+		"--database-url", "postgres://tnl:secret@database.example/tnl",
+		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--acme-email", "operator@example.com", "--acme-accept-terms",
+		"--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey,
+	})
+	if err != nil || cfg.ProjectPublisherLimits[project] != 1024 {
+		t.Fatalf("publisher limit = %v, %v", cfg.ProjectPublisherLimits, err)
+	}
+	cfg.ProjectPublisherLimits[project] = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("accepted a zero publisher limit")
+	}
+}
+
 func TestParseDomainPolicy(t *testing.T) {
 	t.Setenv("TNLD_ROUTE53_SERVER_ZONE_ID", "ZSERVER")
 	base := []string{"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl",

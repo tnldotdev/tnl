@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 	"time"
 
@@ -21,6 +22,20 @@ import (
 var ErrDeploymentPublisher = errors.New("deployment lease or enrollment is unavailable")
 
 const DeploymentPublisherLeaseLifetime = 2 * time.Minute
+const defaultProjectPublisherLimit = 256
+
+// ConfigureProjectPublisherLimits is called before control starts serving.
+// all control processes must use the same overrides.
+func (d *Database) ConfigureProjectPublisherLimits(limits map[string]int) {
+	d.projectPublisherLimits = maps.Clone(limits)
+}
+
+func (d *Database) projectPublisherLimit(team, project string) int {
+	if limit := d.projectPublisherLimits[team+"/"+project]; limit > 0 {
+		return limit
+	}
+	return defaultProjectPublisherLimit
+}
 
 type DeploymentPublisherIdentity struct {
 	TeamID              string `json:"team_id"`
@@ -134,7 +149,7 @@ func (d *Database) RedeemScopedDeploymentPublisherEnrollment(ctx context.Context
 	if err = tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.deployment_publisher_members WHERE enrollment_id=$1),count(*) FROM control.deployment_publisher_members member JOIN control.deployments deployment ON deployment.id=member.deployment_id JOIN control.publisher_identities publisher ON publisher.id=member.publisher_identity_id WHERE deployment.team_id=$2 AND deployment.project_key=$3 AND deployment.deleted_at IS NULL AND publisher.revoked_at IS NULL`, parts[0], team, project).Scan(&count, &total); err != nil {
 		return result, err
 	}
-	if count >= maxMembers || total >= 256 {
+	if count >= maxMembers || total >= d.projectPublisherLimit(team, project) {
 		return result, ErrDeploymentPublisher
 	}
 	id, err := opaqueid.New(opaqueid.PublisherIdentityPrefix)
