@@ -1,7 +1,7 @@
 import * as z from "zod";
 import { TnlError } from "../../errors.js";
 import { serviceNameSchema, httpsOriginSchema } from "../values.js";
-import { publicationRunSchema, publicationRunURLSchema } from "../publication_run.js";
+import { publicationRunSchema, publisherURLSchema } from "../publication_run.js";
 import { bindEnrollment, type PublisherEnrollment } from "./enrollment.js";
 
 const targetName = z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]{0,127}$/);
@@ -19,7 +19,7 @@ const resultSchema = z.strictObject({
   id: z.uuid(),
   url: httpsOriginSchema.exactOptional(),
   run: publicationRunSchema.exactOptional(),
-  runURL: publicationRunURLSchema.exactOptional(),
+  publisherURL: publisherURLSchema.exactOptional(),
 });
 export type WorkerPublicationData = z.input<typeof resultSchema>;
 export type WorkerPublication = Readonly<z.output<typeof resultSchema>> & {

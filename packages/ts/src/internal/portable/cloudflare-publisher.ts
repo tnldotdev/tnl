@@ -234,7 +234,7 @@ export class TnlPublisher extends DurableObject {
       id: intent.id,
       ...(publication.url === undefined ? {} : { url: publication.url }),
       ...(publication.run === undefined ? {} : { run: publication.run }),
-      ...(publication.runURL === undefined ? {} : { runURL: publication.runURL }),
+      ...(publication.publisherURL === undefined ? {} : { publisherURL: publication.publisherURL }),
     };
   }
 }
