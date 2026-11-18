@@ -119,66 +119,77 @@ func TestRunAliasRejectsAmbiguousAndInvalidSnapshotsAtomically(t *testing.T) {
 func TestRunAliasSelectionNeverFallsBackAndSharesCanonicalBudget(t *testing.T) {
 	for _, mode := range []string{"healthy", "unknown alias", "expired", "relays expired", "IP denial", "capacity", "canonical spent total"} {
 		t.Run(mode, func(t *testing.T) {
-			config, lease, snapshot := runAliasSnapshot(t, 2)
-			target := &snapshot.Runs[0]
-			target.Traffic.TotalConnections = new(int64(1))
-			server := serviceSelectionServer(t, config)
-			server.config.Control = preparedSelectionControl{}
-			if err := server.services.apply(time.Now(), lease, snapshot); err != nil {
-				t.Fatal(err)
-			}
-			key := trafficKey{service: target.ServiceId, id: target.ServiceRunId, run: uint64(target.RunNumber)}
-			route := server.services.runs[target.ServiceRunId]
-			switch mode {
-			case "expired":
-				route.until = time.Now()
-			case "relays expired":
-				for i := range route.run.ConnectedRelays {
-					route.run.ConnectedRelays[i].ServingUntil = time.Now()
-				}
-			case "IP denial":
-				deny, err := ippolicy.New([32]byte{1}, nil)
-				if err != nil {
+			synctest.Test(t, func(t *testing.T) {
+				config, lease, snapshot := runAliasSnapshot(t, 2)
+				target := &snapshot.Runs[0]
+				target.Traffic.TotalConnections = new(int64(1))
+				server := serviceSelectionServer(t, config)
+				server.config.Control = preparedSelectionControl{}
+				if err := server.services.apply(time.Now(), lease, snapshot); err != nil {
 					t.Fatal(err)
 				}
-				route.ip = &deny
-			case "capacity":
-				server.traffic.runs[key] = &runTraffic{limits: route.traffic, active: route.traffic.Connections}
-			case "canonical spent total":
-				server.nextServiceRun.Store(0)
+				key := trafficKey{service: target.ServiceId, id: target.ServiceRunId, run: uint64(target.RunNumber)}
+				route := server.services.runs[target.ServiceRunId]
+				switch mode {
+				case "expired":
+					route.until = time.Now()
+				case "relays expired":
+					for i := range route.run.ConnectedRelays {
+						route.run.ConnectedRelays[i].ServingUntil = time.Now()
+					}
+				case "IP denial":
+					deny, err := ippolicy.New([32]byte{1}, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					route.ip = &deny
+				case "capacity":
+					server.traffic.runs[key] = &runTraffic{limits: route.traffic, active: route.traffic.Connections}
+				case "canonical spent total":
+					server.nextServiceRun.Store(0)
+					capacity, reason := server.admitPendingService()
+					if capacity == nil {
+						t.Fatal(reason)
+					}
+					selected, err := selectCachedService(t.Context(), server, lease, capacity)
+					capacity.close()
+					if err != nil || selected.runID != target.ServiceRunId {
+						t.Fatal("canonical fixture did not spend the exact run's budget", err)
+					}
+				}
 				capacity, reason := server.admitPendingService()
 				if capacity == nil {
 					t.Fatal(reason)
 				}
-				selected, err := selectCachedService(t.Context(), server, lease, capacity)
-				capacity.close()
-				if err != nil || selected.runID != target.ServiceRunId {
-					t.Fatal("canonical fixture did not spend the exact run's budget", err)
+				defer capacity.close()
+				hostname := *target.RunHostname
+				if mode == "unknown alias" {
+					hostname = "r-unknown.example"
 				}
-			}
-			capacity, reason := server.admitPendingService()
-			if capacity == nil {
-				t.Fatal(reason)
-			}
-			defer capacity.close()
-			hostname := *target.RunHostname
-			if mode == "unknown alias" {
-				hostname = "r-unknown.example"
-			}
-			selected, err := server.selectPublicRun(t.Context(), lease, netip.MustParseAddrPort("192.0.2.4:42000"),
-				netip.MustParseAddrPort("203.0.113.10:443"), hostname, capacity)
-			if mode == "healthy" {
-				if err != nil || selected.runID != target.ServiceRunId || selected.number != target.RunNumber ||
-					capacity.key != key || selected.http.selectedHostname != *target.RunHostname {
-					t.Fatal("alias selected a different run or accounting key", err)
+				wantErr := ErrServiceAdmission
+				if mode == "unknown alias" || mode == "expired" {
+					// a cache miss waits for a fresh snapshot under the original
+					// admission deadline. this fixture does not publish another one.
+					wantErr = context.DeadlineExceeded
+					// distinguish a genuinely older snapshot from one that started
+					// at the same fake clock tick as selection.
+					time.Sleep(time.Millisecond)
 				}
-			} else if !errors.Is(err, ErrServiceAdmission) || capacity.key != (trafficKey{}) {
-				t.Fatal("unavailable alias fell back or retained capacity", err)
-			}
-			sibling := snapshot.Runs[1]
-			if server.traffic.runs[trafficKey{service: sibling.ServiceId, id: sibling.ServiceRunId, run: uint64(sibling.RunNumber)}] != nil {
-				t.Fatal("alias spent a sibling's budget")
-			}
+				selected, err := server.selectPublicRun(t.Context(), lease, netip.MustParseAddrPort("192.0.2.4:42000"),
+					netip.MustParseAddrPort("203.0.113.10:443"), hostname, capacity)
+				if mode == "healthy" {
+					if err != nil || selected.runID != target.ServiceRunId || selected.number != target.RunNumber ||
+						capacity.key != key || selected.http.selectedHostname != *target.RunHostname {
+						t.Fatal("alias selected a different run or accounting key", err)
+					}
+				} else if !errors.Is(err, wantErr) || capacity.key != (trafficKey{}) {
+					t.Fatal("unavailable alias fell back or retained capacity", err)
+				}
+				sibling := snapshot.Runs[1]
+				if server.traffic.runs[trafficKey{service: sibling.ServiceId, id: sibling.ServiceRunId, run: uint64(sibling.RunNumber)}] != nil {
+					t.Fatal("alias spent a sibling's budget")
+				}
+			})
 		})
 	}
 }
