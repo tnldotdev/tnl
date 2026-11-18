@@ -40,7 +40,8 @@ await createClient({
 });
 const routes = operations
   .map(({ operationId, method, path }) => {
-    const responses = record(record(document.paths[path][method]).responses);
+    const item = record(document.paths[path]);
+    const responses = record(record(item[method]).responses);
     const successes = Object.keys(responses).filter((status) => /^2[0-9]{2}$/.test(status));
     if (successes.length !== 1) throw new Error(`expected one success status for ${operationId}`);
     return `    ${JSON.stringify(operationId)}: (${JSON.stringify(method.toUpperCase())}, ${JSON.stringify(path)}, ${successes[0]}),`;
