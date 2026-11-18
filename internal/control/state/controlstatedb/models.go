@@ -998,6 +998,8 @@ type ControlServiceEndpoint struct {
 	Hostname              string
 	ServiceID             string
 	ServiceRunID          pgtype.Text
+	PublisherIdentityID   pgtype.Text
+	PublisherAliasParent  pgtype.Text
 	DeploymentID          pgtype.Text
 	LocalSourceKey        string
 	DomainID              string

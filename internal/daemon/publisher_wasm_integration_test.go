@@ -121,7 +121,7 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 	configuration := applied.Configuration
 	for name, binding := range configuration.Services {
 		if name == "exact" {
-			binding.RunAliasParent = new((*applied.Deployments)[0].Namespace)
+			binding.PublisherAliasParent = new((*applied.Deployments)[0].Namespace)
 			configuration.Services[name] = binding
 		}
 	}

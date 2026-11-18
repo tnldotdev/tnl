@@ -84,8 +84,8 @@ export function validatePublicationOptions(
 
 export interface Publication {
   readonly url: `https://${string}`;
-  /** exact-run address, present only when run aliases are enabled. */
-  readonly runURL?: `https://${string}` | undefined;
+  /** persistent publisher address, present only when publisher aliases are enabled. */
+  readonly publisherURL?: `https://${string}` | undefined;
   readonly run?: PublicationRun | undefined;
   close(): Promise<void>;
   wait(): Promise<void>;
@@ -271,7 +271,7 @@ async function publishServerUntraced(
   if (options.signal?.aborted) throw aborted();
   let currentURL: `https://${string}` | undefined;
   let currentRun: PublicationRun | undefined;
-  let currentRunURL: `https://${string}` | undefined;
+  let currentPublisherURL: `https://${string}` | undefined;
   let shutdownBudget: PublicationShutdown | undefined;
   let shutdownUntil: string | undefined;
   const beginShutdown = () => {
@@ -403,8 +403,8 @@ async function publishServerUntraced(
     get run() {
       return currentRun;
     },
-    get runURL() {
-      return currentRunURL;
+    get publisherURL() {
+      return currentPublisherURL;
     },
     close,
     wait: () => done,
@@ -439,7 +439,7 @@ async function publishServerUntraced(
       lastRun = status.publishRunNumber;
     }
     currentRun = status.run;
-    currentRunURL = status.runURL;
+    currentPublisherURL = status.publisherURL;
     if (status.routable) {
       if (status.publicURL === undefined) throw new TnlError("sdk.response_invalid");
       if (!readyReached) {
@@ -669,8 +669,8 @@ export async function publishFetch(
     get url(): `https://${string}` {
       return base.url;
     },
-    get runURL() {
-      return base.runURL;
+    get publisherURL() {
+      return base.publisherURL;
     },
     get run() {
       return base.run;

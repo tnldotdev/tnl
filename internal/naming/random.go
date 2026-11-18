@@ -11,7 +11,7 @@ type HostnameKind string
 
 const (
 	ServiceHostnameKind    HostnameKind = "s"
-	ServiceRunHostnameKind HostnameKind = "r"
+	PublisherHostnameKind  HostnameKind = "p"
 	// two bytes for the kind prefix, 26 for the label, and one separator.
 	MaxGeneratedHostnameParentBytes = MaxHostnameBytes - 29
 )
@@ -33,11 +33,11 @@ func ValidGeneratedHostnameParent(parent string) bool {
 	return err == nil && canonical == parent && len(parent) <= MaxGeneratedHostnameParentBytes
 }
 
-// RandomHostname gives generated service and exact-run addresses the same
+// RandomHostname gives generated service and publisher addresses the same
 // 128-bit label format. kind identifies what the address selects, not its
 // lifetime or visitor policy. callers reserve and persist the resulting name.
 func RandomHostname(kind HostnameKind, parent string) (string, error) {
-	if !ValidGeneratedHostnameParent(parent) || kind != ServiceHostnameKind && kind != ServiceRunHostnameKind {
+	if !ValidGeneratedHostnameParent(parent) || kind != ServiceHostnameKind && kind != PublisherHostnameKind {
 		return "", ErrGeneratedHostname
 	}
 	label, err := RandomHostnameLabel()

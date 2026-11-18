@@ -14,7 +14,12 @@ export const publicationRunSchema = z.strictObject({
 
 export type PublicationRun = Readonly<z.output<typeof publicationRunSchema>>;
 
-export const publicationRunURLSchema = httpsOriginSchema.refine((url) => {
+export const publisherURLSchema = httpsOriginSchema.refine((url) => {
   const hostname = URL.parse(url)?.hostname;
-  return hostnameSchema.safeParse(hostname).success && url === `https://${hostname}`;
+  return (
+    typeof hostname === "string" &&
+    /^p-[a-z2-7]{26}\./.test(hostname) &&
+    hostnameSchema.safeParse(hostname).success &&
+    url === `https://${hostname}`
+  );
 });

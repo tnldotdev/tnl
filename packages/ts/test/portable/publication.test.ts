@@ -208,11 +208,11 @@ test("portable run aliases retain immutable exact metadata without number roundi
     return {
       ...started.raw,
       run: reference,
-      runURL: "https://r-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
+      publisherURL: "https://p-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
     };
   });
   const published = await remote.publish("app", () => new Response("app"));
-  expect(published.runURL).toBe("https://r-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test");
+  expect(published.publisherURL).toBe("https://p-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test");
   expect(published.run).toEqual(reference);
   reference.serviceRunID = `srun_${"X".repeat(22)}`;
   expect(published.run?.serviceRunID).toBe(`srun_${"R".repeat(22)}`);
