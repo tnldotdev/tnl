@@ -21,8 +21,7 @@ export async function startPublisher(
       signal,
     });
     const host = parseHost({
-      // #783 exposes an exact-run address rather than a persistent publisher address.
-      origin: publication.runURL,
+      origin: publication.publisherURL,
       publisherID: owner.publisherIdentityID,
       runID: publication.run?.serviceRunID,
       runNumber: publication.run?.runNumber,
