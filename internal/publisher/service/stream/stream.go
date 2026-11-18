@@ -347,6 +347,11 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	observability.PublisherAuthorization(authCtx, decision.Allowed && decision.ValidUntil.After(time.Now()), decision.Allowed && decision.ValidUntil.After(time.Now()), err)
 	authDone(managedAuthorizationError(decision, err))
 	if err != nil {
+		// the connector admission owns this result, including its exact stop
+		// cause. adding a separate endpoint failure would misreport an abort.
+		if connector != nil {
+			return err
+		}
 		return errors.Join(ErrEndpoint, err)
 	}
 	if !decision.Allowed || !decision.ValidUntil.After(time.Now()) {

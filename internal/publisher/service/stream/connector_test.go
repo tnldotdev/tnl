@@ -3,13 +3,55 @@ package stream
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
 )
+
+type postHandshakeAdmission struct {
+	connectorAdapterAdmission
+	err error
+}
+
+func (a *postHandshakeAdmission) CheckUse(ctx context.Context) (time.Time, error) {
+	// connector TLS I/O uses the original visitor context; authorization
+	// below TLS uses the separately bounded setup context.
+	if _, bounded := ctx.Deadline(); bounded {
+		return time.Time{}, a.err
+	}
+	return a.connectorAdapterAdmission.CheckUse(ctx)
+}
+
+func TestConnectorAuthorizationPreservesAdmissionFailure(t *testing.T) {
+	certificate := visitorfixture.Certificate(t, "service.example")
+	failure := errors.New("connector admission stopped during TLS setup")
+	local, remote := net.Pipe()
+	defer remote.Close()
+	client := tls.Client(remote, &tls.Config{
+		ServerName: "service.example",
+		RootCAs:    visitorfixture.Roots(t, certificate),
+	})
+	publisher := Stream{
+		Hostname: "service.example", Protocol: config.ProtocolTCP, Target: "127.0.0.1:1",
+		TLS:     &tls.Config{Certificates: []tls.Certificate{certificate}},
+		Visitor: ConnectorVisitor{Admission: &postHandshakeAdmission{err: failure}},
+	}
+	result := make(chan error, 1)
+	go func() { result <- publisher.Forward(t.Context(), local) }()
+	if err := client.HandshakeContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, failure) || errors.Is(err, ErrEndpoint) {
+		t.Fatal("connector authorization added a second, unowned failure", err)
+	}
+}
 
 type connectorAdapterAdmission struct {
 	mu  sync.Mutex
