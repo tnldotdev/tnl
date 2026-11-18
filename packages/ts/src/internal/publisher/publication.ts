@@ -83,7 +83,7 @@ export function validatePublicationOptions(
 }
 
 export interface Publication {
-  readonly url: `https://${string}`;
+  readonly url?: `https://${string}`;
   close(): Promise<void>;
   wait(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -778,9 +778,7 @@ export async function publishFetch(
     return closing;
   };
   return Object.freeze({
-    get url(): `https://${string}` {
-      return base.url;
-    },
+    ...(base.url === undefined ? {} : { url: base.url }),
     close,
     async wait(): Promise<void> {
       let failure: unknown;

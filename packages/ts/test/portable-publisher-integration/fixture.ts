@@ -13,6 +13,7 @@ export const fixtureSchema = z.strictObject({
   service_root_pem: z.string().min(1),
   named_url: z.url(),
   restricted_url: z.url(),
+  private_host: z.hostname(),
   relays: z
     .array(
       z.strictObject({

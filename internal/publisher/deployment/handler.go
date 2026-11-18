@@ -10,6 +10,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -93,13 +94,16 @@ func PrepareHandler(ctx context.Context, options HandlerOptions) (*PreparedHandl
 			return prepared, err
 		}
 	}
-	if saved.Endpoint == nil || !saved.Endpoint.Public || saved.Endpoint.Port != 443 {
+	if saved.Endpoint == nil || !serviceendpoint.Valid("http", saved.Endpoint.Hostname, saved.Endpoint.Port, saved.Endpoint.Public) {
+		return prepared, publisheridentity.ErrScope
+	}
+	if options.Service == "" && !saved.Endpoint.Public {
 		return prepared, publisheridentity.ErrScope
 	}
 	if err := publisheridentity.MatchServiceDeclaration(saved, "http", nil); err != nil {
 		return prepared, err
 	}
-	// public snapshots and mutable caller options cannot alter the run metadata
+	// snapshots and mutable caller options cannot alter the run metadata
 	// or the captured allocation used later for cleanup.
 	data, err := json.Marshal(saved)
 	if err != nil {
