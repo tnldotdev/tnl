@@ -111,7 +111,11 @@ test.each(["valid", "malformed", "io", "identity"] as const)(
     let connecting: Promise<unknown> | undefined;
     let closing: Promise<unknown> | undefined;
     try {
-      expect(await deployment.connect("db")).toEqual({ host: "127.0.0.1", port: 15432 });
+      expect(await deployment.connect("db")).toEqual({
+        host: "127.0.0.1",
+        port: 15432,
+        open: expect.any(Function),
+      });
       // only Date advances; the real expiry timer cannot race the explicit read gate.
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(expires + 1);

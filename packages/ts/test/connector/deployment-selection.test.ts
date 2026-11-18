@@ -173,6 +173,7 @@ test("resolved settings are frozen plain driver options and never select again o
     host: "127.0.0.1",
     port: 24567,
     ssl: { servername: service.hostname, rejectUnauthorized: true },
+    open: expect.any(Function),
   });
   expect(first).not.toHaveProperty("then");
   expect(first).not.toHaveProperty("expires_at");
