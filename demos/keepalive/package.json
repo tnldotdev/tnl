@@ -1,5 +1,5 @@
 {
-  "name": "@tnldotdev/keepalive-demo",
+  "name": "@tnldotdev/keepalive",
   "private": true,
   "type": "module",
   "dependencies": {

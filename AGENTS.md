@@ -8,7 +8,7 @@ Use everyday words unless a technical term makes an important distinction;
 explain the term when the reader needs it. Name the component doing the work and
 qualify claims:
 
-- Write “Start your app normally to give it an HTTPS URL,” not “Leverage tnl’s
+- Write “Start your app normally to give it an HTTPS URL,” not “Leverage tnl's
   seamless workflow to expose your application.”
 - Write “Ingress may try another connected relay before sending the first visitor
   byte,” not “Traffic is intelligently rerouted.”
