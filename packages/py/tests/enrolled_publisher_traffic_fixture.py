@@ -11,7 +11,7 @@ import tnl
 
 
 async def main() -> None:
-    origin, _sdk, instance = sys.argv[1:4]
+    origin, _sdk, instance, service = sys.argv[1:5]
     key = sys.stdin.readline().rstrip("\n")
 
     def enrollment() -> str:
@@ -25,9 +25,17 @@ async def main() -> None:
     async with await tnl.publisher(
         control_url=origin if key else None, instance=instance, enrollment=enrollment
     ) as owner:
-        pub = await owner.publish("web", tnl.handler(handler))
+        pub = await tnl.publish(owner, service, tnl.handler(handler))
+        if service == "internal":
+            assert pub.url is None and pub.publisher_url is None
         print(
-            json.dumps({"identity": owner.publisher_identity_id, "url": pub.publisher_url}),
+            json.dumps(
+                {
+                    "identity": owner.publisher_identity_id,
+                    "url": pub.url,
+                    "publisher_url": pub.publisher_url,
+                }
+            ),
             flush=True,
         )
         await asyncio.to_thread(sys.stdin.readline)
