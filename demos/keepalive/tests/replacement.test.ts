@@ -1,0 +1,70 @@
+import { expect, it, vi } from "vitest";
+import { peerServer, waitForWork } from "../src/hosting/peer-http.ts";
+import { compareNetworks, proveNetwork } from "../src/network.ts";
+import { HOST_PARENT, type Host } from "../src/peers.ts";
+
+it("refuses the same IP and requires a direct reply from the invited host", async () => {
+  const release = "a".repeat(64);
+  const secret = "fixture-network-secret-not-used-outside-this-test";
+  const lifetime = new AbortController();
+  const proxyOrigin = "https://keepthisalive.com";
+  const host = (name: "a" | "b", id: string): Host => ({
+    origin: `https://p-${name.repeat(26)}.${HOST_PARENT}`,
+    publisherID: `pub_${id.repeat(22)}`,
+    runID: `srun_${id.repeat(22)}`,
+    runNumber: id,
+  });
+  const a = host("a", "1");
+  const b = host("b", "2");
+  const aProof = await proveNetwork("192.0.2.1", secret);
+  const bProof = await proveNetwork("192.0.2.2", secret);
+  const serve = async () => new Response("keepalive");
+  const server = (proof: string) =>
+    peerServer(release, [proxyOrigin], serve, lifetime.signal, { proxyOrigin, proof });
+  const first = server(aProof);
+  const second = server(bProof);
+  const hosts = new Map([
+    [a.origin, first],
+    [b.origin, second],
+  ]);
+  const directCheck = vi.fn();
+  vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
+    const request = new Request(url, init);
+    const target = hosts.get(url.origin);
+    if (target !== undefined) {
+      if (url.origin === b.origin && request.method === "GET") directCheck();
+      return target.fetch(request);
+    }
+    const accepted = await compareNetworks(request, secret).catch(() => false);
+    return new Response(null, { status: accepted ? 204 : 403 });
+  });
+  try {
+    await first.start(
+      a,
+      Date.now(),
+      undefined,
+      undefined,
+      () => {},
+      () => true,
+    );
+    await expect(waitForWork(a, aProof, lifetime.signal)).rejects.toThrow();
+    await expect(waitForWork(a, `${bProof.slice(0, -1)}x`, lifetime.signal)).rejects.toThrow();
+    const invitation = await waitForWork(a, bProof, lifetime.signal);
+    expect(invitation).not.toBeNull();
+    expect(first.replacementReady).toBe(false);
+    await second.start(
+      b,
+      Date.now(),
+      a,
+      invitation ?? undefined,
+      () => {},
+      () => false,
+    );
+    expect(directCheck).toHaveBeenCalledOnce();
+    expect(first.replacementReady).toBe(true);
+  } finally {
+    lifetime.abort();
+    await Promise.all([first.stop(), second.stop()]);
+    vi.unstubAllGlobals();
+  }
+}, 8_000);

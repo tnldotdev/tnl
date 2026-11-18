@@ -1,6 +1,12 @@
 import { Hono } from "hono";
 import { credentials, type CredentialBindings } from "./credentials.ts";
 import { CONFIG_PATH, CREDENTIALS_PATH, hostingConfig } from "./hosting/config.ts";
+import {
+  NETWORK_CHECK_PATH,
+  NETWORK_PROOF_PATH,
+  compareNetworks,
+  proveNetwork,
+} from "./network.ts";
 import { PEERS_PATH } from "./peers.ts";
 import { createProxy, siteHeaders } from "./proxy.ts";
 import { ARTIFACT_PREFIX, RELEASE_PATH, contentType, releaseSchema } from "./release.ts";
@@ -13,7 +19,14 @@ type Bindings = CredentialBindings & {
   SITE_ORIGIN: string;
   START_HOST: string;
   SHARED_HOST?: string;
+  NETWORK_SECRET?: string;
 };
+
+async function requestNetworkProof(request: Request, secret?: string) {
+  const ip = request.headers.get("CF-Connecting-IP");
+  if (!ip || !secret || secret.length < 32) return undefined;
+  return proveNetwork(ip, secret).catch(() => undefined);
+}
 
 const app = new Hono<{ Bindings: Bindings }>();
 const proxy = createProxy(release);
@@ -24,10 +37,18 @@ app.get(RELEASE_PATH, (c) => {
 });
 app.get(PEERS_PATH, (c) => proxy.peers(c.req.raw, c.env.SHARED_HOST));
 app.post(CREDENTIALS_PATH, (c) => credentials(c.req.raw, release.id, c.env));
-app.post(CONFIG_PATH, (c) => {
+app.post(NETWORK_PROOF_PATH, async (c) => {
+  if (c.req.header("Origin") !== new URL(c.req.url).origin) return c.body(null, 403);
+  const proof = await requestNetworkProof(c.req.raw, c.env.NETWORK_SECRET);
+  if (proof === undefined) return c.body(null, 503);
+  return c.json(proof, 200, siteHeaders("application/json"));
+});
+app.post(CONFIG_PATH, async (c) => {
   const origin = new URL(c.req.url).origin;
   if (c.req.header("Origin") !== origin) return c.body(null, 403);
-  const { CONTROL_URL, CERTIFICATE_PEM, PRIVATE_KEY_PEM } = c.env;
+  const { CONTROL_URL, CERTIFICATE_PEM, PRIVATE_KEY_PEM, NETWORK_SECRET } = c.env;
+  const proof = await requestNetworkProof(c.req.raw, NETWORK_SECRET);
+  if (proof === undefined) return c.body(null, 503);
   const certificate =
     CERTIFICATE_PEM && PRIVATE_KEY_PEM
       ? { certificatePEM: CERTIFICATE_PEM, privateKeyPEM: PRIVATE_KEY_PEM }
@@ -37,8 +58,14 @@ app.post(CONFIG_PATH, (c) => {
     siteOrigin: c.env.SITE_ORIGIN,
     startHost: c.env.START_HOST,
     certificate,
+    networkProof: proof,
   });
   return c.json(config, 200, siteHeaders("application/json"));
+});
+app.post(NETWORK_CHECK_PATH, async (c) => {
+  if (!c.env.NETWORK_SECRET || c.env.NETWORK_SECRET.length < 32) return c.body(null, 503);
+  const different = await compareNetworks(c.req.raw, c.env.NETWORK_SECRET).catch(() => false);
+  return c.body(null, different ? 204 : 403, siteHeaders());
 });
 app.get("*", async (c) => {
   const request = c.req.raw;

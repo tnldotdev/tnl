@@ -1,6 +1,6 @@
 import { WASM_PATH, parseRelease, readJSON } from "../release.ts";
 import { serveRelease } from "../serving.ts";
-import { CREDENTIALS_PATH, enrollmentKey } from "./config.ts";
+import { CREDENTIALS_PATH, HOST_TURN_MS, REPLACE_BEFORE_MS, enrollmentKey } from "./config.ts";
 import { hostCommand, type HostStart, type HostUpdate } from "./messages.ts";
 import { peerServer, readPeers } from "./peer-http.ts";
 import { startPublisher } from "./publish.ts";
@@ -29,6 +29,13 @@ async function host(command: HostStart) {
   let running: Awaited<ReturnType<typeof startPublisher>> | undefined;
   let peers: ReturnType<typeof peerServer> | undefined;
   let failed = false;
+  let expired = false;
+  let endsAt = Infinity;
+  let stopTimer: ReturnType<typeof setTimeout> | undefined;
+  function endTurn() {
+    expired = true;
+    lifetime.abort();
+  }
   try {
     const release = await parseRelease(command.release);
     const wasm = command.files.get(WASM_PATH);
@@ -46,11 +53,16 @@ async function host(command: HostStart) {
       release.id,
       allowedOrigins,
       async (request) => {
+        if (Date.now() >= endsAt) {
+          endTurn();
+          return new Response(null, { status: 503 });
+        }
         const response = await serve(request);
         if (response.ok) filesServed++;
         return response;
       },
       signal,
+      { proxyOrigin: command.pageOrigin, proof: command.config.networkProof },
     );
     const requestID = crypto.randomUUID();
     running = await startPublisher(
@@ -71,13 +83,18 @@ async function host(command: HostStart) {
     );
     const { host } = running;
     const since = Date.now();
+    endsAt = since + HOST_TURN_MS;
+    stopTimer = setTimeout(endTurn, HOST_TURN_MS);
     let nextDiscovery = since + 30_000;
     await peers.start(
       host,
       since,
-      command.initialPeer,
+      command.firstHostToContact,
+      command.invitation,
       (gossip) => {
         const now = Date.now();
+        if (now >= endsAt) return endTurn();
+        if (now >= endsAt - REPLACE_BEFORE_MS) replacing = true;
         const hosts = gossip.hosts(now);
         if (now >= nextDiscovery) {
           nextDiscovery = now + 30_000;
@@ -87,10 +104,12 @@ async function host(command: HostStart) {
             })
             .catch(() => {});
         }
-        if (replacing && hosts.length >= 3) lifetime.abort();
+        if (replacing && peers?.replacementReady) lifetime.abort();
         emit({
           type: "hosting",
           since,
+          endsAt,
+          replacing,
           filesServed,
           hosts: hosts.length + 1,
           startedAt: gossip.startedAt,
@@ -104,6 +123,7 @@ async function host(command: HostStart) {
   } catch {
     failed = !signal.aborted;
   } finally {
+    clearTimeout(stopTimer);
     try {
       // closing the publisher ends HTTP streams even after abrupt tab closure.
       await peers?.stop();
@@ -111,7 +131,7 @@ async function host(command: HostStart) {
     } catch {
       failed = true;
     }
-    emit({ type: failed ? "failed" : "stopped" });
+    emit(failed ? { type: "failed" } : { type: "stopped", expired });
   }
 }
 
