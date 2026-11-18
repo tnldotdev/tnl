@@ -806,6 +806,11 @@ func assertServicePublicationTerminal(t *testing.T, w *Workers, cursor, tunnelID
 }
 
 func TestPrivateReadinessKeepsHTTPAuthorityIndependentOfTLSTrust(t *testing.T) {
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	http.DefaultTransport = trip(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("private target must not use the default transport")
+	})
 	var authority atomic.Value
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { authority.Store(r.Host); w.WriteHeader(http.StatusOK) }))
 	defer target.Close()

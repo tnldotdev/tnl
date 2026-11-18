@@ -87,9 +87,9 @@ func ProbeServiceTarget(ctx context.Context, service Service, target targettrans
 		return observation
 	}
 	if service.ServiceProtocol == "http" || service.ServiceProtocol == "" {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.TLSClientConfig = target.TLS
-		defer transport.CloseIdleConnections()
+		// a private target probe uses only the publisher's target trust. it
+		// must not use an ambient HTTP proxy or the control-plane transport.
+		transport := &http.Transport{TLSClientConfig: target.TLS, DisableKeepAlives: true}
 		local := service
 		{
 			origin, err := url.Parse(local.Target)
