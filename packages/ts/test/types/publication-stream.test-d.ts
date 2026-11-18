@@ -1,5 +1,9 @@
 import { deployment, publish, response, type Publication } from "@tnldotdev/tnl/browser";
-import { durablePublisher } from "@tnldotdev/tnl/cloudflare";
+import {
+  publisher,
+  publish as publishWorker,
+  type WorkerPublication,
+} from "@tnldotdev/tnl/cloudflare";
 import { expectTypeOf, test } from "vitest";
 
 test("browser publications retain the existing handle and exact HTTP service names", async () => {
@@ -25,8 +29,15 @@ test("browser publications retain the existing handle and exact HTTP service nam
   await selectedDeployment.close();
 });
 
-test("durable convenience construction requires no fake deployment factory", () => {
-  expectTypeOf<Parameters<typeof durablePublisher>[1]>().not.toHaveProperty("createDeployment");
-  expectTypeOf<Parameters<typeof durablePublisher>[1]>().toHaveProperty("identity");
+test("worker publication selects a named target without a custom runtime factory", async () => {
+  const owner = await publisher({ exports: {} }, { enrollment: () => "enrollment" });
+  expectTypeOf(await publishWorker(owner, "web")).toEqualTypeOf<WorkerPublication>();
+  expectTypeOf(
+    await publishWorker(owner, "admin", { entrypoint: "Admin" }),
+  ).toEqualTypeOf<WorkerPublication>();
+  // @ts-expect-error a worker publication selects a durable target, not a callback.
+  publishWorker(owner, "web", () => new Response());
+  // @ts-expect-error select exactly one target.
+  publishWorker(owner, "web", { entrypoint: "Admin", binding: "API" });
   expectTypeOf(response("body")).toEqualTypeOf<Response>();
 });

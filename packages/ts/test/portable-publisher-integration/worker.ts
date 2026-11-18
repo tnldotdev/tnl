@@ -1,12 +1,14 @@
 import {
   connect,
   deployment,
-  durablePublisher,
   publish,
   publisher,
   TnlPublisher as PublisherObject,
-  type DurableObjectPublisherState,
 } from "@tnldotdev/tnl/cloudflare";
+import {
+  durablePublisher,
+  type DurableObjectPublisherState,
+} from "../../dist/durable-object.worker.js";
 import { check, fixtureSchema, publisherFailures } from "./fixture.ts";
 import { publisherHandler } from "./handler.ts";
 import { installPublisherFixtureHost, runtimeStarts } from "./host.ts";

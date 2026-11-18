@@ -10,7 +10,10 @@ export const workerTarget = z.union([
   z.strictObject({ binding: targetName }),
   z.strictObject({}),
 ]);
-export type WorkerPublicationTarget = z.input<typeof workerTarget>;
+export type WorkerPublicationTarget =
+  | { readonly entrypoint: string; readonly binding?: never }
+  | { readonly binding: string; readonly entrypoint?: never }
+  | { readonly entrypoint?: never; readonly binding?: never };
 
 const resultSchema = z.strictObject({
   id: z.uuid(),
