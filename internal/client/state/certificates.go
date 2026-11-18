@@ -188,7 +188,19 @@ func (r *CertificateCache) write(value certificateFile) error {
 	return r.files.Write(certificateFilename(r.planJSON), data)
 }
 
-func (r *CertificateCache) material(hostname string, staged bool) (Material, bool, error) {
+func (r *CertificateCache) material(ctx context.Context, hostname string, staged bool) (result Material, found bool, resultErr error) {
+	// the first write and its plan checkpoint are separate atomic records.
+	// join the short mutation, not the issuance lock held during control calls.
+	lock, err := r.files.Lock(ctx, certificateFilename(r.planJSON)+".lock")
+	if err != nil {
+		return Material{}, false, err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, lock.Close(), context.Cause(ctx))
+		if resultErr != nil {
+			result = Material{}
+		}
+	}()
 	value, err := r.read()
 	if err != nil {
 		return Material{}, false, err
@@ -211,11 +223,11 @@ func (r *CertificateCache) material(hostname string, staged bool) (Material, boo
 	return Material{Certificate: loaded, RenewAt: stored.RenewAt, IssuanceID: stored.IssuanceID}, true, err
 }
 
-func (r *CertificateCache) Current(_ context.Context, hostname string) (Material, bool, error) {
-	return r.material(hostname, false)
+func (r *CertificateCache) Current(ctx context.Context, hostname string) (Material, bool, error) {
+	return r.material(ctx, hostname, false)
 }
-func (r *CertificateCache) Staged(_ context.Context, hostname string) (Material, bool, error) {
-	return r.material(hostname, true)
+func (r *CertificateCache) Staged(ctx context.Context, hostname string) (Material, bool, error) {
+	return r.material(ctx, hostname, true)
 }
 
 func (r *CertificateCache) pending(ctx context.Context, hostname string, replace bool) (Pending, error) {

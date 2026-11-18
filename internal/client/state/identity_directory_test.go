@@ -162,6 +162,64 @@ func TestCertificateFilesDoNotReleaseUndurableKeysOrStagedMaterial(t *testing.T)
 	}
 }
 
+func TestCertificateReadersJoinInitialPlanCheckpoint(t *testing.T) {
+	profile := durableTestProfile(t, filepath.Join(t.TempDir(), "runtime"), filepath.Join(t.TempDir(), "identity"))
+	plan := exactCertificateTestPlan()
+	writer, err := profile.CertificatesForPublisher("team", durableTestPublisher, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := profile.CertificatesForPublisher("team", durableTestPublisher, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	resume := sync.OnceFunc(func() { close(release) })
+	var beforeCheckpoint sync.Once
+	writer.files.syncFile = func(file *os.File) error {
+		info, err := file.Stat()
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			// the certificate file has been renamed, but its plan is not
+			// checkpointed yet. the writer still holds the mutation lock.
+			beforeCheckpoint.Do(func() { close(renamed); <-release })
+		}
+		return file.Sync()
+	}
+	var pending Pending
+	var writeErr error
+	go func() {
+		defer close(done)
+		pending, writeErr = writer.Pending(t.Context(), "route.example")
+	}()
+	defer func() { resume(); <-done }()
+	select {
+	case <-renamed:
+	case <-done:
+		t.Fatal("first write stopped before its checkpoint", writeErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("first write did not reach its checkpoint")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	if current, found, err := reader.Current(ctx, "route.example"); !errors.Is(err, context.DeadlineExceeded) || found || current.Certificate.PrivateKey != nil {
+		t.Fatal("reader treated an in-flight checkpoint as corrupt state", found, err)
+	}
+	resume()
+	<-done
+	if writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if current, found, err := reader.Current(t.Context(), "route.example"); err != nil || found || current.Certificate.PrivateKey != nil {
+		t.Fatal("pending material became current", found, err)
+	}
+	if recovered, err := reader.Pending(t.Context(), "route.example"); err != nil || !bytes.Equal(recovered.CSRDER, pending.CSRDER) {
+		t.Fatal("reader did not recover the exact pending CSR", err)
+	}
+}
+
 func TestCertificateFilesRejectMissingScopeAndUnsafePaths(t *testing.T) {
 	profile := durableTestProfile(t, filepath.Join(t.TempDir(), "runtime"), filepath.Join(t.TempDir(), "identity"))
 	cache, err := profile.CertificatesForPublisher("team", durableTestPublisher, exactCertificateTestPlan())
