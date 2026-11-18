@@ -191,8 +191,8 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				servicestream.DenyHTTP(w, r, http.StatusMisdirectedRequest)
 				return
 			}
-			// only the validated forwarding metadata supplies the visitor source.
-			// reserved handlers need these same TLS and source facts.
+			// set the verified source and TLS state before dispatching reserved
+			// paths or applying visitor policy to application requests.
 			r.RemoteAddr = f.Source.String()
 			r.TLS = &state
 			if code := proxy.ValidateRequest(r, f.Hostname); code != "" {
@@ -304,8 +304,9 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 	return target.Serve(ctx, client, f.Hostname, wrap, f.ResponseHooks)
 }
 
-// reserved composes the same service-owned handlers for public and connector
-// HTTP. each path supplies its own admission; this code assumes no public header.
+// reserved handles /__tnl/ paths without forwarding them to the application.
+// connector is nil on the public path; otherwise it carries the verified
+// admission from the connector stream, not from an HTTP header.
 func (f HTTP) reserved(w http.ResponseWriter, r *http.Request, connector *servicestream.ConnectorHTTPAuthorization) bool {
 	if !strings.HasPrefix(r.URL.Path, "/__tnl/") {
 		return false

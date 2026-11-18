@@ -15,8 +15,9 @@ type Page struct {
 	Content any
 }
 
-// New composes an authored native page with the shared shell. dynamic values
-// belong in Page.Content and remain subject to contextual html escaping.
+// New composes an authored control or development page with the shared shell.
+// pass data through Page.Content so html/template escapes it in context. the
+// portable pages do not use this renderer.
 func New(body string) *Template {
 	const shell = shellHead + `
 <title>{{.Title}} - tnl</title>

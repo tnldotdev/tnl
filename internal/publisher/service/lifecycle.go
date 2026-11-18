@@ -156,6 +156,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if servicestream.HandlerOnly && !config.hasFetchTarget() {
 		return ErrPrivateStream
 	}
+	// disable relay UDP and direct peers without changing the inner QUIC session.
 	if !peer.HostUDP || config.WebSocketOnly {
 		config.WebSocketOnly = true
 		config.RelayQUIC = muxsession.DisabledConnector{}

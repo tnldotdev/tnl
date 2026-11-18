@@ -24,7 +24,7 @@ const FormSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; font-
 //go:embed page.css
 var stylesheet string
 
-// only authored css and the bundled font enter the style element.
+// the style element contains only the embedded stylesheet and font, never request data.
 var styles = `@font-face{font-family:"Fira Code";font-style:normal;font-weight:300 700;font-display:swap;src:url("data:font/woff2;base64,` + base64.StdEncoding.EncodeToString(browserfonts.Latin) + `") format("woff2")}` + stylesheet
 
 func Headers(w http.ResponseWriter) {
@@ -60,6 +60,9 @@ type Message struct {
 	Paragraphs                               []string
 }
 
+// keep the portable message and handoff pages on fixed markup. html/template
+// looks up methods by name at runtime, which made the linker keep unused
+// control client methods in the wasm build.
 func MessageHTML(message Message) string {
 	var page strings.Builder
 	writeShell(&page, message.Title, "")
@@ -121,6 +124,7 @@ func Redirect(w http.ResponseWriter, location string) {
 	location = urlAttribute(location, true)
 	refresh := location
 	if refresh == "#ZgotmplZ" {
+		// keep the inert fallback link, but do not navigate automatically.
 		refresh = ""
 	}
 	var page strings.Builder
@@ -129,8 +133,7 @@ func Redirect(w http.ResponseWriter, location string) {
 	_, _ = io.WriteString(w, page.String())
 }
 
-// these pages have fixed markup. using typed fields instead of template method
-// lookup lets the Go linker drop unrelated methods from the portable builds.
+// escapedRefresh must come from urlAttribute; an empty value omits the refresh.
 func writeShell(page *strings.Builder, title, escapedRefresh string) {
 	page.WriteString(shellHead)
 	if escapedRefresh != "" {
@@ -139,9 +142,10 @@ func writeShell(page *strings.Builder, title, escapedRefresh string) {
 	page.WriteString("\n<title>" + html.EscapeString(title) + " - tnl</title>\n<style>" + styles + "</style>" + shellBody)
 }
 
+// urlAttribute validates the destination before escaping it for a quoted HTML
+// attribute. handoffs allow same-origin paths or absolute HTTPS; help links
+// also allow HTTP. check the decoded path to reject encoded separators.
 func urlAttribute(value string, redirect bool) string {
-	// allow same-origin paths and absolute web URLs. reject ambiguous paths
-	// that a browser could reinterpret as a protocol-relative URL.
 	if value == "" || strings.ContainsAny(value, "\\\t\r\n") || strings.TrimSpace(value) != value {
 		return "#ZgotmplZ"
 	}

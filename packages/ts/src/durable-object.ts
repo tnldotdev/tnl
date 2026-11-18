@@ -139,11 +139,11 @@ interface RunningPublication {
   publication?: Publication;
 }
 
-// this owner keeps outbound wss alive independently of the initiating request.
-// outbound websockets do not use durable object hibernation. alarms reconstruct
-// handlers from deployed code and reconnect after eviction; tls/quic/go memory
-// is never serialized. forward the durable object's alarm() to owner.alarm().
-// create one owner per durable object instance, not per incoming request.
+// create one owner per Durable Object instance, not per request, and forward
+// its alarm() to this owner. the attached SQLite database retains intent,
+// identity, and certificate records across restarts. a wake rebuilds the
+// handler and connections; outbound WebSockets are not hibernated, and
+// in-flight requests are not resumed.
 export class DurableObjectPublisher {
   readonly ready: Promise<void>;
   readonly #state: DurableObjectPublisherState;
@@ -185,8 +185,8 @@ export class DurableObjectPublisher {
     this.#storage = createDurableObjectPublisherStorage(state.storage, options.storageNamespace);
     this.#storageHost = createPublisherStorageHost(this.#storage);
     this.#intentQueue = this.#load();
-    // retain finite startup across request completion, never publication.wait().
-    // waitUntil does not make an outbound socket hibernatable.
+    // waitUntil keeps the finite startup work alive past the request, not the
+    // lifetime of the publication. the object instance owns the live runtime.
     this.ready = this.resume();
     void this.ready.catch(() => {});
   }
@@ -197,8 +197,8 @@ export class DurableObjectPublisher {
 
   async #start(): Promise<Publication> {
     await this.#serializeIntent(async () => {
-      // arm first: a crash may leave an unnecessary wake, but never running
-      // intent with no restart wake. an unnecessary wake reads stopped intent.
+      // set the alarm before saving running intent. if the object restarts
+      // between these writes, the alarm can still wake it to read the prior intent.
       await this.#arm();
       const next: Intent = {
         version: 1,

@@ -13,13 +13,15 @@ const { stdout: goroot } = await exec("go", ["env", "GOROOT"], { cwd: root });
 const goEnv = { ...process.env, GOOS: "js", GOARCH: "wasm", CGO_ENABLED: "0" };
 const wasmPackage = "./packages/ts/wasm";
 async function buildModule(file: string, tag: string) {
-  // the sdk has no telemetry collector; retain the transport model, not schema validation.
+  // tnlsdk excludes telemetry schema validation. the second tag selects the
+  // connector or publisher bridge so browser consumers can load them separately.
   const tags = `-tags=tnlsdk,${tag}`;
   const { stdout: deps } = await exec("go", ["list", "-deps", tags, wasmPackage], {
     cwd: root,
     env: goEnv,
   });
-  // keep native tools and reflective page templates out of the portable runtimes.
+  // check dependencies before linking. runtime template lookup can keep unused
+  // methods on unrelated types, so the SDK uses fixed markup instead.
   const nativeDependencies = deps
     .trim()
     .split("\n")
@@ -60,8 +62,9 @@ async function buildModule(file: string, tag: string) {
     });
   }
   const bytes = await readFile(artifact);
-  // Go's runtime stack tables retain linked function names even with -s -w and
-  // wasm-opt. Checking these catches retention that package lists cannot see.
+  // the portable publisher needs the shared control client, not its demo and
+  // feedback methods. go list cannot distinguish them; check function names in
+  // the runtime stack tables, which survive -s -w and wasm-opt.
   const nativeControl = [
     "CreateServiceRunPreview",
     "AuthorizeReviewerFeedback",

@@ -20,16 +20,15 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+// nativeHTTP holds the optional feedback runtime on the shared service frontend.
 type nativeHTTP struct{ feedback feedbackFrontend }
 
 type FeedbackClient interface {
 	AuthorizeReviewerFeedback(context.Context, string, string, controlv1.AuthorizeReviewerFeedbackRequest, credentials.ServiceRunToken) (controlv1.FeedbackAuthorization, error)
 }
 
-// feedbackFrontend is optional composition, not another HTTP authorization
-// engine. native feedback retains its existing persistence and joined cleanup.
-// hosts that cannot provide it reject the requested configuration, never install
-// a substitute handler that accepts feedback or bypasses its access checks.
+// feedbackFrontend adds the toolbar and feedback routes to a native service run.
+// the service checks visitor access before handing a request to it.
 type feedbackFrontend interface {
 	handle(http.ResponseWriter, *http.Request, feedbackAuthorization) bool
 	prepareBrowser(http.ResponseWriter, *http.Request) *http.Request
@@ -41,8 +40,8 @@ func (f *HTTP) prepareNativeHTTP(ctx context.Context) error {
 	if !f.Demo {
 		return nil
 	}
-	// control creates or recovers this exact run's preview. never substitute
-	// caller metadata or start browser/feedback work before validating it.
+	// use the preview control assigned to this run, not a caller-supplied id.
+	// validate it before setting up the browser and feedback handlers.
 	preview, err := f.Control.CreateServiceRunPreview(ctx, f.Subject.ID, f.RunID, f.Number, f.Token)
 	if err != nil {
 		return fmt.Errorf("service: create demo feedback preview: %w", err)
@@ -111,6 +110,7 @@ func (f HTTP) handleNativeReserved(w http.ResponseWriter, r *http.Request, conne
 
 func (f HTTP) authorizeFeedback(w http.ResponseWriter, r *http.Request, connector *servicestream.ConnectorHTTPAuthorization) (feedbackAuthorization, *httpaccess.Guard, *http.Request, error) {
 	if connector != nil {
+		// use the admitted connector identity, not credentials in the HTTP request.
 		access, err := connectorFeedbackAuthorization(*connector)
 		return access, nil, r, err
 	}

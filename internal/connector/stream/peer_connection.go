@@ -339,6 +339,7 @@ func (p *connectorConnection) recordLegRecoveryFailure(err, canceled error) {
 }
 
 func prepareConnectorConnection(ctx, setup context.Context, config Config, signer Signer) (_ *connectorConnection, result error) {
+	// select the outer relay transport here. WSS-only still carries inner QUIC.
 	if !peer.HostUDP || config.WebSocketOnly {
 		config.WebSocketOnly = true
 		config.RelayQUIC = muxsession.DisabledConnector{}

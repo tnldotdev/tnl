@@ -19,6 +19,9 @@ export {
   type PublisherStorage,
   type PublisherStorageErrorCode,
 } from "./internal/portable/storage.js";
+
+// resolve each asset in its operation's loader so connecting does not fetch
+// or instantiate the publisher.
 const loadConnector = () => loadWasm(new URL("./wasm/connector.wasm", import.meta.url));
 const loadPublisher = () => loadWasm(new URL("./wasm/publisher.wasm", import.meta.url));
 

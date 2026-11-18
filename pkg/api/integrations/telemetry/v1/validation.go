@@ -20,6 +20,8 @@ var ErrInvalid = errors.New("telemetry does not match the v1 contract")
 //go:embed validation.gen.json
 var document []byte
 
+// transport scopes only need the generated types. keep schema initialization
+// out of the wasm SDK, where there is no telemetry collector.
 var schemas = func() map[string]*jsonschema.Schema {
 	var source any
 	if err := json.Unmarshal(document, &source); err != nil {

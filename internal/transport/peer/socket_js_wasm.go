@@ -10,8 +10,8 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// browser and worker hosts supply no UDP socket. the relay endpoint still
-// implements net.PacketConn for the encrypted inner QUIC connection.
+// HostUDP is false because the browser and Worker adapters do not open UDP
+// sockets. inner QUIC still uses a net.PacketConn backed by WSS relay paths.
 const HostUDP = false
 
 var errHostUDP = errors.New("the WebAssembly host does not provide UDP sockets")

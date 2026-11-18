@@ -43,6 +43,10 @@ func newPublisherHostStore(host js.Value, controlURL string) (*publisherHostStor
 	return &publisherHostStore{host: validated, controlURL: controlURL}, nil
 }
 
+// CertificatesForPublisher opens the shared cache on host storage, scoped to
+// the control URL, team, publisher identity, and approved certificate plan.
+// the cache persists the private key and issued chain; control receives the
+// signing request, not the key.
 func (s *publisherHostStore) CertificatesForPublisher(team, publisher string, plan controlv1.CertificatePlan) (*certificatestore.CertificateCache, error) {
 	scope := certificatestore.Scope{ControlURL: s.controlURL, TeamID: team, PublisherIdentityID: publisher}
 	encoded, err := json.Marshal(scope)

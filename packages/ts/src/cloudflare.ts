@@ -8,8 +8,9 @@ export * from "./index.js";
 export { portableDeployment as deployment } from "./internal/connector/portable_operations.js";
 export * from "./durable-object.worker.js";
 
-// workerd imports a precompiled module. compilation/fetch is never attempted in
-// a request; each deployment still starts and owns its own go instance.
+// workerd supplies the compiled module through the static import. the default
+// bundle can include both capabilities, but the connector starts only its
+// own instance and joins it at deployment.close().
 const loadConnector = () => loadWasm(connector);
 
 export const connect = ((owner: object, name: string) =>
