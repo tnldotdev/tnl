@@ -24,6 +24,16 @@ async def main() -> None:
                 print(json.dumps({}), flush=True)
                 await asyncio.to_thread(sys.stdin.readline)
             return
+        if sys.argv[1] == "python-lost-reply":
+            try:
+                await deployment.publish(tnl.handler(endpoint), access="anonymous")
+            except tnl.TnlError as cause:
+                assert cause.code == "sdk.dev_unavailable"
+            else:
+                raise AssertionError("lost registration reply was accepted")
+            await deployment.aclose()
+            print(json.dumps({"recovered": True}), flush=True)
+            return
         async with await deployment.publish(
             tnl.handler(endpoint),
             access="restricted" if sys.argv[1] == "python-restricted" else "anonymous",

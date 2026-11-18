@@ -38,3 +38,26 @@ func TestKeychainMissingKeyNeverRegeneratedForExistingDatabase(t *testing.T) {
 		t.Fatalf("missing key was regenerated: %v", err)
 	}
 }
+
+func TestSelectedKeychainRejectsUnsafeOrMissingPathsWithoutDefaultFallback(t *testing.T) {
+	for name, selected := range map[string]string{
+		"empty":     "",
+		"relative":  "relative.keychain",
+		"newline":   "/private/test\nkeychain",
+		"carriage":  "/private/test\rkeychain",
+		"missing":   filepath.Join(t.TempDir(), "missing.keychain"),
+		"directory": t.TempDir(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("TNL_STATE_KEYCHAIN", selected)
+			root := filepath.Join(t.TempDir(), "state")
+			if database, err := Open(t.Context(), root); err == nil {
+				database.Close()
+				t.Fatal("invalid selected Keychain fell back to default protection")
+			}
+			if _, err := os.Stat(DatabasePath(root)); !os.IsNotExist(err) {
+				t.Fatal("failed Keychain selection initialized client state", err)
+			}
+		})
+	}
+}

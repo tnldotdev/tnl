@@ -25,7 +25,7 @@ if (variant === "lost-reply") {
       hostname: "127.0.0.1",
       fetch: () => new Response("SDK publication"),
     });
-  } else if (variant !== "fetch") {
+  } else if (variant !== "fetch" && variant !== "fetch-lost-unregister") {
     const server = createServer((_request, response) => response.end("SDK publication"));
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     node = server;

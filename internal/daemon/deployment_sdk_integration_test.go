@@ -33,13 +33,13 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 // only socket addressing and fixture trust are attached in process. all SDK
 // calls cross real private IPC; control authorizes the registered signing key.
 func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	testutil.UseClientKeychain(t)
 	f := newSplitPublishFixture(t, "sdk-publication")
 	repo, directory := integrationRepositoryRoot(t), t.TempDir()
 	binary := filepath.Join(directory, "tnl")
@@ -82,9 +82,6 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateDir := filepath.Join(directory, "state")
-	if runtime.GOOS == "darwin" {
-		keyring.MockInit()
-	}
 	state, err := clientstate.Open(t.Context(), stateDir)
 	if err != nil {
 		t.Fatal(err)
@@ -169,18 +166,40 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 		case <-tick.C:
 		}
 	}
+	// check discovery separately so an SDK's intentionally bounded public error
+	// cannot hide a fixture startup or credential-protection failure.
+	discovery := exec.CommandContext(t.Context(), binary, "--no-telemetry", "runtime", "endpoint",
+		"--directory", directory, "--state-dir", stateDir, "--publications",
+		"--invocation-id", "ivk_0123456789ABCDEFGHIJKL")
+	discovery.Dir = directory
+	discovery.Env = append(os.Environ(), "TNL_STATE_DIR="+stateDir, "TNL_NO_TELEMETRY=1")
+	var discoveryError bytes.Buffer
+	discovery.Stderr = &discoveryError
+	if _, err := discovery.Output(); err != nil {
+		t.Fatal("native SDK fixture discovery failed", err, discoveryError.String())
+	}
 	var savedID, savedURL string
-	for _, variant := range []string{"node", "node-restart", "node-restricted", "bun", "fetch", "python", "python-restricted", "lost-reply", "node-private", "bun-private", "python-private"} {
+	for _, variant := range []string{
+		"node", "node-restart", "node-restricted", "bun", "fetch", "python", "python-restricted",
+		"lost-reply", "python-lost-reply", "node-lost-unregister", "fetch-lost-unregister", "python-lost-unregister",
+		"node-private", "bun-private", "python-private",
+	} {
 		t.Run(variant, func(t *testing.T) {
 			isPrivate := strings.HasSuffix(variant, "-private")
 			var evidence func() sdkLostReplyEvidence
-			if variant == "lost-reply" {
+			lostRegistration := strings.HasSuffix(variant, "lost-reply")
+			lostUnregister := strings.HasSuffix(variant, "lost-unregister")
+			if lostRegistration || lostUnregister {
 				owner, err := publisherprotocol.ReadEndpoint(path)
 				if err != nil {
 					t.Fatal(err)
 				}
 				recovering.Store(true)
-				proxy, inspect := newSDKLostReplyProxy(t, owner, ready, f.visitor)
+				operation := "/v1/publications/register"
+				if lostUnregister {
+					operation = "/v1/unregister"
+				}
+				proxy, inspect := newSDKLostReplyProxy(t, owner, ready, f.visitor, operation)
 				evidence = inspect
 				forwarded := owner
 				forwarded.Url = proxy.URL
@@ -294,7 +313,7 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 						t.Fatal("private connector did not reach the SDK listener", response.StatusCode, err)
 					}
 				}()
-			} else if variant == "lost-reply" {
+			} else if lostRegistration {
 				proof := evidence()
 				if !result.Recovered || proof.err != nil || proof.status != 200 || proof.body != "SDK publication" ||
 					len(proof.requests) != 2 || !bytes.Equal(proof.requests[0], proof.requests[1]) {
@@ -371,7 +390,7 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 			if variant == "node-restart" && (id != savedID || result.URL != savedURL) {
 				t.Fatal("named restart changed saved URL")
 			}
-			if variant != "lost-reply" {
+			if !lostRegistration {
 				_, _ = stdin.Write([]byte("close\n"))
 			}
 			_ = stdin.Close()
@@ -382,6 +401,16 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 				}
 			case <-ctx.Done():
 				t.Fatal("SDK cleanup did not join", stderr.String())
+			}
+			if lostUnregister {
+				proof := evidence()
+				if len(proof.cleanupRequests) != 2 ||
+					!bytes.Equal(proof.cleanupRequests[0], proof.cleanupRequests[1]) ||
+					len(proof.cleanupStatuses) != 2 ||
+					proof.cleanupStatuses[0] != http.StatusNoContent ||
+					proof.cleanupStatuses[1] != http.StatusNoContent {
+					t.Fatal("lost unregister reply did not recover the exact native outcome", proof.cleanupStatuses)
+				}
 			}
 			var enabled, deleted bool
 			if err := f.inspect.QueryRowContext(t.Context(), `SELECT enabled, deleted_at IS NOT NULL FROM control.services WHERE id=$1`, id).Scan(&enabled, &deleted); err != nil {
@@ -396,15 +425,17 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 }
 
 type sdkLostReplyEvidence struct {
-	url, body string
-	status    int
-	err       error
-	requests  [][]byte
+	url, body       string
+	status          int
+	err             error
+	requests        [][]byte
+	cleanupRequests [][]byte
+	cleanupStatuses []int
 }
 
 // drop one successful native acknowledgment only after a real visitor has used
 // its allocation. the SDK must recover the same invocation before deleting it.
-func newSDKLostReplyProxy(t *testing.T, owner publisherprotocol.Endpoint, ready <-chan string, visitor *integrationVisitor) (*httptest.Server, func() sdkLostReplyEvidence) {
+func newSDKLostReplyProxy(t *testing.T, owner publisherprotocol.Endpoint, ready <-chan string, visitor *integrationVisitor, operation string) (*httptest.Server, func() sdkLostReplyEvidence) {
 	t.Helper()
 	var mu sync.Mutex
 	var evidence sdkLostReplyEvidence
@@ -451,7 +482,7 @@ func newSDKLostReplyProxy(t *testing.T, owner publisherprotocol.Endpoint, ready 
 			mu.Lock()
 			evidence.requests = append(evidence.requests, body)
 			mu.Unlock()
-			if response.StatusCode == 200 && !dropped.Swap(true) {
+			if operation == r.URL.Path && response.StatusCode == 200 && !dropped.Swap(true) {
 				var proof sdkLostReplyEvidence
 				var registration publisherprotocol.Registration
 				proof.err = json.Unmarshal(data, &registration)
@@ -485,6 +516,19 @@ func newSDKLostReplyProxy(t *testing.T, owner publisherprotocol.Endpoint, ready 
 				mu.Lock()
 				evidence.url, evidence.body, evidence.status, evidence.err = proof.url, proof.body, proof.status, proof.err
 				mu.Unlock()
+				connection, _, err := w.(http.Hijacker).Hijack()
+				if err == nil {
+					_ = connection.Close()
+				}
+				return
+			}
+		}
+		if r.URL.Path == "/v1/unregister" {
+			mu.Lock()
+			evidence.cleanupRequests = append(evidence.cleanupRequests, body)
+			evidence.cleanupStatuses = append(evidence.cleanupStatuses, response.StatusCode)
+			mu.Unlock()
+			if operation == r.URL.Path && response.StatusCode == http.StatusNoContent && !dropped.Swap(true) {
 				connection, _, err := w.(http.Hijacker).Hijack()
 				if err == nil {
 					_ = connection.Close()

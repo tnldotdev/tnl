@@ -696,7 +696,7 @@ def test_lost_unregister_result_is_not_acknowledged_by_a_replacement_owner(
             await publication.aclose()
         with pytest.raises(NativeUnavailable):
             await publication.aclose()
-        assert publication._registration is not None and not publication._close_complete
+        assert publication._registration.current is not None and not publication._close_complete
         waiting = asyncio.create_task(publication.wait())
         with pytest.raises(NativeUnavailable):
             await waiting

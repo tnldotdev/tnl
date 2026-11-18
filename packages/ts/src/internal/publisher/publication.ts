@@ -5,13 +5,7 @@ import { setTimeout as pause } from "node:timers/promises";
 import type { FetchHandler } from "./fetch_types.js";
 import { TnlCleanupError, TnlError } from "../../errors.js";
 import { operation, independent, scheduled, background, bound } from "../tracing.js";
-import {
-  startRuntime,
-  runtimeRequest,
-  canceledRuntimeRequest,
-  type RuntimeEndpoint,
-  type EndpointSelection,
-} from "./local.js";
+import { startRuntime, runtimeRequest, canceledRuntimeRequest } from "./local.js";
 import {
   closeServer,
   listeningTarget,
@@ -21,9 +15,13 @@ import {
 } from "./register.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
-import { httpsOriginSchema, pathTextSchema, registrationIDSchema } from "../values.js";
+import { httpsOriginSchema, pathTextSchema } from "../values.js";
 import { parseStatus } from "./status.js";
-import { parseAssignment } from "./app.js";
+import {
+  NativeRegistration,
+  publicationCleanupFailed,
+  type RegistrationRuntime,
+} from "./registration.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
 import type { PublicationRun } from "../publication_run.js";
 export type { PublicationRun } from "../publication_run.js";
@@ -119,19 +117,7 @@ export type PublicationSelection = (
   readonly shutdownDeadline?: () => string | undefined;
 };
 
-interface Dependencies {
-  start(
-    directory: string,
-    binary?: string,
-    selection?: EndpointSelection,
-    signal?: AbortSignal,
-  ): Promise<RuntimeEndpoint>;
-  request(
-    endpoint: RuntimeEndpoint,
-    operation: string,
-    body?: unknown,
-    signal?: AbortSignal,
-  ): Promise<unknown>;
+interface Dependencies extends RegistrationRuntime {
   pause(milliseconds: number, signal?: AbortSignal): Promise<void>;
 }
 
@@ -272,14 +258,31 @@ async function publishServerUntraced(
     ...(publication?.kind === "deployment" ? { publications: true } : {}),
     ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
   };
-  let endpoint = await runtime.start(directory, undefined, selection, options.signal);
+  const native = new NativeRegistration(
+    runtime,
+    directory,
+    selection,
+    localService === undefined
+      ? { kind: "invocation", request }
+      : {
+          kind: "configured",
+          target,
+          request: {
+            version: 1,
+            directory,
+            service: localService,
+            framework: isBunServer(server) ? "bun" : "node",
+            owner,
+            pid: process.pid,
+            telemetry_disabled: request.telemetry_disabled,
+          },
+        },
+  );
+  await native.discover(options.signal);
   if (options.signal?.aborted) throw aborted();
   let currentURL: `https://${string}` | undefined;
   let currentRun: PublicationRun | undefined;
   let currentRunURL: `https://${string}` | undefined;
-  let registration: z.output<typeof registrationSchema> | undefined;
-  let uncertain = false;
-  let unregisterReplyLost = false;
   let shutdownBudget: PublicationShutdown | undefined;
   let shutdownUntil: string | undefined;
   const beginShutdown = () => {
@@ -299,127 +302,23 @@ async function publishServerUntraced(
   const abortLifetime = () => lifetime.abort(options.signal?.reason);
   options.signal?.addEventListener("abort", abortLifetime, { once: true });
   const register = async (signal: AbortSignal = lifetime.signal) => {
-    uncertain = true;
-    try {
-      if (localService === undefined) {
-        registration = parseRegistration(
-          await runtime.request(endpoint, "publications/register", request, signal),
-          owner,
-          target,
-        );
-        uncertain = false;
-        return;
-      }
-      const assignment = parseAssignment(
-        await runtime.request(
-          endpoint,
-          "prepare",
-          {
-            version: 1,
-            directory,
-            service: localService,
-            framework: isBunServer(server) ? "bun" : "node",
-            owner,
-            pid: process.pid,
-            telemetry_disabled: request.telemetry_disabled,
-          },
-          signal,
-        ),
-      );
-      registration = {
-        version: 1 as const,
-        registration_id: assignment.registrationID,
-        owner,
-        target,
-      };
-      // prepare already reserved the registration, even without a public url.
-      // cleanup must release that acknowledgment, not repeat validation.
-      uncertain = false;
-      if (
-        endpoint.scope !== "app" ||
-        assignment.service !== localService ||
-        endpoint.service !== localService ||
-        (assignment.publicURL !== undefined &&
-          currentURL !== undefined &&
-          currentURL !== assignment.publicURL)
-      )
-        throw new TnlError("sdk.response_invalid");
-      if (assignment.publicURL !== undefined) currentURL = assignment.publicURL;
-      uncertain = true;
-      await runtime.request(endpoint, "register", registration, signal);
-      uncertain = false;
-    } catch (cause) {
-      if (
-        cause instanceof TnlError &&
-        !["sdk.dev_unavailable", "sdk.registration_stale", "sdk.response_invalid"].includes(
-          cause.code,
-        )
-      )
-        uncertain = false;
-      throw cause;
-    }
+    const assignment = await native.acquire(signal);
+    if (assignment === undefined) return;
+    if (
+      native.endpoint.scope !== "app" ||
+      assignment.service !== localService ||
+      native.endpoint.service !== localService ||
+      (assignment.publicURL !== undefined &&
+        currentURL !== undefined &&
+        currentURL !== assignment.publicURL)
+    )
+      throw new TnlError("sdk.response_invalid");
+    if (assignment.publicURL !== undefined) currentURL = assignment.publicURL;
+    await native.bind(target, signal);
   };
   const unregister = async (budget: PublicationShutdown = beginShutdown()) => {
-    budget.signal.throwIfAborted();
     try {
-      // recover the original invocation before cleanup when its reply was lost.
-      for (
-        let attempt = 0;
-        uncertain && !(localService !== undefined && registration !== undefined);
-        attempt++
-      ) {
-        try {
-          await register(budget.signal);
-        } catch (cause) {
-          if (attempt >= 2 || !(cause instanceof TnlError) || cause.code !== "sdk.dev_unavailable")
-            throw cause;
-          endpoint = await runtime.start(directory, undefined, selection, budget.signal);
-        }
-      }
-      if (registration !== undefined) {
-        for (let attempt = 0; ; attempt++) {
-          try {
-            await runtime.request(
-              endpoint,
-              "unregister",
-              { ...registration, shutdown_deadline: budget.deadline },
-              budget.signal,
-            );
-            break;
-          } catch (cause) {
-            if (publicationCleanupFailed(cause)) {
-              registration = undefined;
-              uncertain = false;
-              unregisterReplyLost = false;
-            }
-            // an expired outcome or a replacement owner's capability rejection
-            // cannot turn a previously lost cleanup result into successful cleanup.
-            if (
-              unregisterReplyLost &&
-              cause instanceof TnlError &&
-              cause.code === "sdk.registration_stale"
-            )
-              throw new TnlError("sdk.dev_unavailable");
-            if (
-              cause instanceof TnlError &&
-              (cause.code === "sdk.dev_unavailable" || cause.code === "sdk.response_invalid")
-            )
-              unregisterReplyLost = true;
-            if (
-              attempt >= 2 ||
-              !(cause instanceof TnlError) ||
-              cause.code !== "sdk.dev_unavailable"
-            )
-              throw cause;
-            // retry the same endpoint and exact registration. native retains the
-            // stopped error when a terminal unregister acknowledgment is lost.
-            await runtime.pause(100, budget.signal);
-          }
-        }
-        registration = undefined;
-        uncertain = false;
-        unregisterReplyLost = false;
-      }
+      await native.unregister(budget, runtime);
     } finally {
       if (shutdown === undefined) finishShutdown();
     }
@@ -564,20 +463,17 @@ async function publishServerUntraced(
     } else if (status.failure) fail(new TnlError("sdk.publication_failed"));
   };
   // registering acknowledges the listener, not routability.
-  const statusRequest = independent("sdk.publish.status", () =>
-    runtime.request(endpoint, "status", undefined, lifetime.signal),
-  );
-  const renew = independent("sdk.publish.renew", () =>
-    runtime.request(endpoint, "renew", registration, lifetime.signal),
-  );
+  const statusRequest = independent("sdk.publish.status", () => native.status(lifetime.signal));
+  const renew = independent("sdk.publish.renew", () => native.renew(lifetime.signal));
   const recover = independent("sdk.publish.recover", async () => {
-    endpoint = await runtime.start(directory, undefined, selection, lifetime.signal);
+    await native.discover(lifetime.signal);
     await register();
   });
   const monitoring = background(async () => {
     while (!closed && !terminal) {
       try {
         if (!isBunServer(server) && !server.listening) throw new TnlError("sdk.listener_failed");
+        const registration = native.registration;
         if (registration === undefined) throw new TnlError("sdk.response_invalid");
         const status = parseStatus(
           await statusRequest(),
@@ -645,25 +541,6 @@ async function publishServerUntraced(
   }
 }
 
-function parseRegistration(
-  value: unknown,
-  owner: string,
-  target: string,
-): z.output<typeof registrationSchema> {
-  const registration = parseValue(registrationSchema, value, "sdk.response_invalid");
-  if (registration.owner !== owner || registration.target !== target)
-    throw new TnlError("sdk.response_invalid");
-  return registration;
-}
-
-const registrationSchema = z
-  .strictObject({
-    version: z.literal(1),
-    registration_id: registrationIDSchema,
-    owner: z.string(),
-    target: z.string(),
-  })
-  .readonly();
 const credentialFileSchema = pathTextSchema.refine(path.isAbsolute);
 const networkSchema = z
   .string()
@@ -720,10 +597,6 @@ function validPublisherCredentialFile(value: unknown): value is string {
 
 function aborted(): DOMException {
   return new DOMException("publication was aborted", "AbortError");
-}
-
-export function publicationCleanupFailed(cause: unknown): boolean {
-  return cause instanceof TnlError && cause.code === "sdk.publication_cleanup_failed";
 }
 
 async function closeOwnedPublication(

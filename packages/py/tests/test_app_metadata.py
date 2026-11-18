@@ -347,7 +347,7 @@ def test_close_after_preparation_completes_before_register_resumes(outcome: str)
         assert native.cleanups[0]["registration_id"] == native.assignment["registration_id"]
         assert native.cleanups[0]["owner"] == native.preparations[0]["owner"]
         assert native.cleanups[0]["target"] == "http://127.0.0.1:8000"
-        assert isinstance(prepared._phase, _app._Closed)
+        assert prepared._registration.closed
 
     asyncio.run(asyncio.wait_for(scenario(), 5))
 
@@ -388,8 +388,8 @@ def test_changed_registration_compensation_does_not_start_owner_shutdown_clock(
         try:
             with pytest.raises(InvalidResponse):
                 await prepared._prepare()
-            assert isinstance(prepared._phase, _app._Prepared)
-            assert prepared._phase.registration_id == original["registration_id"]
+            assert prepared._registration.current is not None
+            assert prepared._registration.current.registration_id == original["registration_id"]
             assert prepared.public_url == ""
             expired = asyncio.Event()
             asyncio.get_running_loop().call_at(deadlines[0] + 0.001, expired.set)
@@ -488,15 +488,16 @@ def test_native_assignment_is_http_only_for_selected_app(
     async def scenario() -> None:
         native = AssignmentRuntime(native_app_assignment)
         publication = tnl.PreparedService("/project", "web", None, native)
-        assert isinstance(publication._phase, _app._Preparing)
+        assert publication._registration.current is None
+        assert not publication._registration.closed
         await publication.start()
         try:
-            assert isinstance(publication._phase, _app._Prepared)
+            assert publication._registration.current is not None
             assert publication.public_url == "https://web.member.example"
             await publication.register("http://127.0.0.1:8000")
         finally:
             await publication.close()
-        assert isinstance(publication._phase, _app._Closed)
+        assert publication._registration.closed and publication._registration.complete
         with pytest.raises(_app.RegistrationLost):
             await publication.register("http://127.0.0.1:8000")
         assert native.operations == ["prepare", "register", "unregister"]
@@ -678,7 +679,7 @@ def test_native_metadata_registration_and_cleanup(
                     assert isinstance(status, dict)
                     assert status["services"][0]["registered"] is True
                     assert status["services"][0]["target"] == "http://127.0.0.1:8000"
-                    await native.request(endpoint, "renew", publication._registration())
+                    await native.request(endpoint, "renew", publication._registration.payload())
                 finally:
                     await publication.close()
                 await publication.close()
