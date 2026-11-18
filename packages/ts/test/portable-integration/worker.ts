@@ -4,6 +4,7 @@ import { postgres } from "@tnldotdev/tnl/adapters/postgres-js";
 import { sql as query } from "drizzle-orm";
 import { drizzle as pgDrizzle } from "drizzle-orm/node-postgres";
 import { drizzle as postgresDrizzle } from "drizzle-orm/postgres-js";
+import { checkPostgresORMs } from "../fixtures/connections/postgres-orm.ts";
 import { PortableSmokeError, deployment, runPortableIsolation, runPortableSmoke } from "./smoke.ts";
 import { check, fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
@@ -115,6 +116,7 @@ export default {
             query`select ${41}::int + 1 as answer`,
           );
           check(rows[0]?.answer === 42, "Drizzle with pg returned the wrong result");
+          await checkPostgresORMs(pool, check);
           await getPool.close();
           const getSql = app.client(
             "postgres",

@@ -9,6 +9,7 @@ import { drizzle as pgDrizzle } from "drizzle-orm/node-postgres";
 import { drizzle as postgresDrizzle } from "drizzle-orm/postgres-js";
 import mysql from "mysql2/promise";
 import pg from "pg";
+import { checkPostgresORMs } from "./postgres-orm.ts";
 
 const protocol = process.argv[2];
 assert(protocol === "postgres" || protocol === "mysql");
@@ -94,6 +95,7 @@ try {
         closed.push(pool);
       },
     });
+    await checkPostgresORMs(await get(), assert);
     await exercise(
       get,
       async (pool) => {
