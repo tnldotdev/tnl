@@ -28,7 +28,11 @@ type Phase =
   | "kubernetes"
   | "postgres"
   | "carrier-loss"
-  | "close"
+  | "close-open-tcp"
+  | "close-deployment"
+  | "close-pending-read"
+  | "close-new-work"
+  | "close-tcp-stream"
   | "isolation"
   | "cleanup";
 
@@ -58,9 +62,13 @@ async function joinCleanup(
   failed: PortableSmokeError | undefined,
 ): Promise<void> {
   const results = await Promise.allSettled(cleanups);
-  const errors = results.flatMap((result) =>
-    result.status === "rejected" ? [new PortableSmokeError("cleanup", result.reason)] : [],
-  );
+  const errors = results.flatMap((result) => {
+    if (result.status !== "rejected") return [];
+    const reason: unknown = result.reason;
+    return [
+      reason instanceof PortableSmokeError ? reason : new PortableSmokeError("cleanup", reason),
+    ];
+  });
   if (errors.length > 0)
     throw new AggregateError(
       failed === undefined ? errors : [failed, ...errors],
@@ -91,7 +99,7 @@ async function closed(operation: Promise<unknown>): Promise<void> {
     );
     return;
   }
-  throw new Error("closed deployment accepted new work");
+  throw new FixtureAssertionError("closed deployment accepted new work");
 }
 
 export interface SmokeReport {
@@ -107,6 +115,7 @@ export interface SmokeReport {
 export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
   const fixture = fixtureSchema.parse(input);
   const selected = deployment(fixture);
+  let closeWaiting: (() => Promise<void>) | undefined;
   const postgres = selected.client("postgres", {
     create: async (connection) =>
       PostgresFixtureClient.connect(
@@ -237,23 +246,27 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
 
     // close must settle a pending application read, then reject new work. its
     // peer-close behavior is separately exercised by concurrent Worker requests.
-    phase = "close";
+    phase = "close-open-tcp";
     const waiting = await tcp.open({ signal: AbortSignal.timeout(30_000) });
     const reader = waiting.readable.getReader();
-    const read = reader.read().then(
-      (value) => {
-        check(value.done, "blocked TCP read returned unexpected target bytes");
-      },
-      () => {},
-    );
-    try {
-      await Promise.all([selected.close(), selected.close()]);
-      await read;
-      await closed(selected.connect("tcp"));
-    } finally {
+    closeWaiting = async () => {
       reader.releaseLock();
-      await waiting.close();
-    }
+      try {
+        await waiting.close();
+      } catch (error) {
+        throw new PortableSmokeError("close-tcp-stream", error);
+      }
+    };
+    const read = reader.read().then(
+      (value) => value.done,
+      () => true,
+    );
+    phase = "close-deployment";
+    await Promise.all([selected.close(), selected.close()]);
+    phase = "close-pending-read";
+    check(await read, "blocked TCP read returned unexpected target bytes");
+    phase = "close-new-work";
+    await closed(selected.connect("tcp"));
     return {
       protocols: ["http", "tcp", "postgres", "mysql", "kubernetes"],
       postgresBackendPID: pid,
@@ -273,6 +286,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
           ? Promise.resolve()
           : fixtureCall(fixture, "/fault/relay", { address: blocked, blocked: false }),
         selected.close(),
+        closeWaiting?.() ?? Promise.resolve(),
       ],
       failed,
     );
