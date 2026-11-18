@@ -117,7 +117,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go node pnpm task aqua:WebAssembly/binaryen ${{ (matrix.suite == 'connections' || matrix.suite == 'tcp-clients' || matrix.suite == 'publisher-native') && 'python uv' || '' }} ${{ matrix.suite == 'publisher-native' && 'bun' || '' }} ${{ (matrix.suite == 'connector-wasm' || matrix.suite == 'publisher-wasm' || matrix.suite == 'publisher-native') && 'go:github.com/letsencrypt/pebble/v2/cmd/pebble' || '' }}
+          tools: go node pnpm task aqua:WebAssembly/binaryen ${{ (matrix.suite == 'connections' || matrix.suite == 'tcp-clients' || matrix.suite == 'publisher-native') && 'python uv' || '' }} ${{ (matrix.suite == 'tcp-clients' || matrix.suite == 'publisher-native') && 'bun' || '' }} ${{ (matrix.suite == 'connector-wasm' || matrix.suite == 'publisher-wasm') && 'go:github.com/letsencrypt/pebble/v2/cmd/pebble' || '' }}
           go-cache: race
           pnpm: true
 
@@ -130,7 +130,14 @@ jobs:
             -e 's|https?://(azure\.)?archive\.ubuntu\.com/ubuntu/?|https://archive.ubuntu.com/ubuntu/|g' \
             -e 's|http://security\.ubuntu\.com/ubuntu/?|https://security.ubuntu.com/ubuntu/|g' \
             /etc/apt/sources.list.d/ubuntu.sources
-          apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          # OpenSSH only needs Ubuntu's repositories, not the runner's third-party sources.
+          apt_options=(
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
+            -o Dir::Etc::sourceparts=-
+            -o Acquire::Retries=2
+            -o Acquire::http::Timeout=15
+            -o Acquire::https::Timeout=15
+          )
           sudo apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
           sudo apt-get "${apt_options[@]}" install --yes --no-install-recommends openssh-server
           sudo install -d -m 0755 /run/sshd
