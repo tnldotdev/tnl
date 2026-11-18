@@ -15,15 +15,14 @@ import {
   type PortablePublication,
 } from "./publication.js";
 
-export interface PublisherEnrollmentOptions {
-  readonly server: string;
-  readonly projectKey: string;
-  /** immutable deployment ID from publisher setup, not a friendly selector. */
-  readonly deploymentID: string;
-  /** stable origin-local identity slot; defaults to "browser". */
+export type PublisherEnrollment = string | ((signal: AbortSignal) => string | Promise<string>);
+
+export interface PublisherOptions {
+  readonly controlUrl?: string;
+  /** stable origin-local identity slot; defaults to "default". */
   readonly instance?: string;
   /** needed only on first enrollment or while recovering a lost redemption. */
-  readonly enrollmentKey?: string;
+  readonly enrollment?: PublisherEnrollment;
   readonly publisherStorage?: PublisherStorage;
   readonly signal?: AbortSignal;
 }
@@ -64,11 +63,14 @@ function isEnrolledPublisher(value: unknown): value is RawEnrolledPublisher {
 }
 
 const enrollmentSchema = z.strictObject({
-  server: z.url().max(2048),
-  projectKey: z.string().regex(/^[a-z][a-z0-9-]{0,62}$/),
-  deploymentID: z.string().regex(/^dpl_[A-Za-z0-9]{22}$/),
+  controlUrl: z.url().max(2048).exactOptional(),
   instance: serviceNameSchema.exactOptional(),
-  enrollmentKey: z.string().min(1).max(256).exactOptional(),
+  enrollment: z
+    .union([
+      z.string().min(1).max(256),
+      z.custom<Exclude<PublisherEnrollment, string>>((value) => typeof value === "function"),
+    ])
+    .exactOptional(),
   publisherStorage: z
     .custom<PublisherStorage>(
       (v) =>
@@ -87,24 +89,57 @@ const enrollmentSchema = z.strictObject({
   signal: z.instanceof(AbortSignal).exactOptional(),
 });
 
+const owners = new WeakSet<object>();
+
+export function isEnrolledOwner(owner: object): owner is EnrolledPublisher {
+  return owners.has(owner);
+}
+
+export function bindEnrollment(
+  source: PublisherEnrollment,
+  lifetime: AbortSignal,
+): () => Promise<string> {
+  return async () => {
+    const signal = AbortSignal.any([lifetime, AbortSignal.timeout(15_000)]);
+    signal.throwIfAborted();
+    if (typeof source === "string") return source;
+    let listener!: () => void;
+    try {
+      const aborted = new Promise<never>((_, reject) => {
+        listener = () => reject(signal.reason);
+        signal.addEventListener("abort", listener, { once: true });
+      });
+      const value = await Promise.race([
+        aborted,
+        Promise.resolve().then(() => {
+          signal.throwIfAborted();
+          return source(signal);
+        }),
+      ]);
+      if (typeof value !== "string" || value.length === 0 || value.length > 256)
+        throw new TnlError("sdk.configuration_invalid");
+      return value;
+    } finally {
+      signal.removeEventListener("abort", listener);
+    }
+  };
+}
+
 // the go identity owner keeps signing material in opaque durable records.
 // this wrapper owns the runtime and joins publications before releasing its
 // cross-tab identity lock. it grants neither management nor connector access.
 export async function enrollPortablePublisher(
-  options: PublisherEnrollmentOptions,
+  options: PublisherOptions,
   loadPublisher: () => ReturnType<typeof loadWasm>,
 ): Promise<EnrolledPublisher> {
   const parsed = enrollmentSchema.safeParse(options);
   if (!parsed.success) throw new TnlError("sdk.configuration_invalid");
   const selected = parsed.data;
-  const server = new URL(selected.server);
-  if (
-    server.protocol !== "https:" ||
-    server.origin !== selected.server ||
-    server.username !== "" ||
-    server.password !== ""
-  )
-    throw new TnlError("sdk.configuration_invalid");
+  if (selected.controlUrl !== undefined) {
+    const server = new URL(selected.controlUrl);
+    if (server.protocol !== "https:" || server.origin !== selected.controlUrl)
+      throw new TnlError("sdk.configuration_invalid");
+  }
   const lifetime = new AbortController();
   const signal =
     selected.signal === undefined
@@ -176,15 +211,19 @@ export async function enrollPortablePublisher(
       throw new TnlError("sdk.wasm_invalid");
     const value = await runtime.bridge.enrollPublisher(
       JSON.stringify({
-        control_url: selected.server,
-        project_key: selected.projectKey,
-        deployment_id: selected.deploymentID,
-        instance: selected.instance ?? "browser",
-        enrollment_key: selected.enrollmentKey ?? "",
+        ...(selected.controlUrl === undefined ? {} : { control_url: selected.controlUrl }),
+        instance: selected.instance ?? "default",
       }),
-      { storage, controlFetch: globalThis.fetch.bind(globalThis), signal },
+      {
+        storage,
+        controlFetch: globalThis.fetch.bind(globalThis),
+        signal,
+        ...(selected.enrollment === undefined
+          ? {}
+          : { enrollment: bindEnrollment(selected.enrollment, signal) }),
+      },
     );
-    if (!isEnrolledPublisher(value) || value.deploymentID !== selected.deploymentID) {
+    if (!isEnrolledPublisher(value)) {
       if (
         typeof value === "object" &&
         value !== null &&
@@ -200,7 +239,7 @@ export async function enrollPortablePublisher(
     const owner = value;
     signal.throwIfAborted();
     signal.addEventListener("abort", aborted, { once: true });
-    return Object.freeze({
+    const handle: EnrolledPublisher = Object.freeze({
       publisherIdentityID: raw.publisherIdentityID,
       deploymentID: raw.deploymentID,
       async publish(
@@ -232,6 +271,8 @@ export async function enrollPortablePublisher(
       },
       close,
     });
+    owners.add(handle);
+    return handle;
   } catch (error) {
     const failure = publicationError(error);
     try {

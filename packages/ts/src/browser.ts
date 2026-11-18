@@ -1,4 +1,5 @@
 import { parseRuntimePayload } from "./internal/project/runtime.js";
+import { TnlError } from "./errors.js";
 import { serviceMetadata } from "./internal/project/service_metadata.js";
 import type { TnlRuntime } from "./internal/project/native_runtime.js";
 import type { TnlStreamConnectionRegistry } from "./project.js";
@@ -12,7 +13,9 @@ import { portableOperation } from "./internal/connector/portable_operations.js";
 import { loadWasm } from "./internal/connector/wasm_loader.js";
 import {
   enrollPortablePublisher,
-  type PublisherEnrollmentOptions,
+  isEnrolledOwner,
+  type EnrolledPublisher,
+  type PublisherOptions,
 } from "./internal/portable/enrollment.js";
 
 export * from "./index.js";
@@ -20,7 +23,8 @@ export { portableDeployment as deployment } from "./internal/connector/portable_
 export { createBrowserPublisherStorage } from "./internal/portable/storage-browser.js";
 export type {
   EnrolledPublisher,
-  PublisherEnrollmentOptions,
+  PublisherOptions,
+  PublisherEnrollment,
 } from "./internal/portable/enrollment.js";
 export {
   PublisherStorageError,
@@ -33,7 +37,7 @@ export {
 const loadConnector = () => loadWasm(new URL("./wasm/connector.wasm", import.meta.url));
 const loadPublisher = () => loadWasm(new URL("./wasm/publisher.wasm", import.meta.url));
 
-export function enrollPublisher(options: PublisherEnrollmentOptions) {
+export function publisher(options: PublisherOptions = {}) {
   return enrollPortablePublisher(options, loadPublisher);
 }
 
@@ -48,17 +52,29 @@ export const client: DriverClient<TnlStreamConnectionRegistry> = (owner, name, d
     close: driver.close,
   });
 
-export const publish: Publish<TnlStreamConnectionRegistry> = async (
+export const publish: Publish<TnlStreamConnectionRegistry> & EnrolledPublisherPublish = async (
   owner: object,
   first: string | FetchHandler,
   second?: FetchHandler | TemporaryPublicationOptions,
   third?: NamedPublicationOptions,
 ) => {
+  if (isEnrolledOwner(owner)) {
+    if (typeof first !== "string" || typeof second !== "function")
+      throw new TnlError("sdk.configuration_invalid");
+    return owner.publish(first, second, third);
+  }
   const operations = portableOperation(owner, "publisher", loadPublisher);
   return typeof first === "string"
     ? operations.publish(first, second as FetchHandler, third)
     : operations.publish(first, second as TemporaryPublicationOptions | undefined);
 };
+
+type EnrolledPublisherPublish = (
+  owner: EnrolledPublisher,
+  name: string,
+  handler: FetchHandler,
+  options?: NamedPublicationOptions,
+) => ReturnType<EnrolledPublisher["publish"]>;
 
 declare const process: { readonly env?: { readonly TNL_PROJECT_RUNTIME?: string } } | undefined;
 
