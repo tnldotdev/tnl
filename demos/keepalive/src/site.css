@@ -1,0 +1,60 @@
+:root {
+  color-scheme: dark;
+  background: #0d1117;
+  color: #c9d1d9;
+  font:
+    1rem/1.6 "Fira Code",
+    ui-monospace,
+    "SFMono-Regular",
+    Consolas,
+    monospace;
+}
+
+main {
+  max-width: 36rem;
+  margin: min(16vh, 7rem) auto 2rem;
+  padding: 0 1.25rem;
+}
+
+h1,
+a {
+  color: #86ead4;
+}
+
+h1 {
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+section {
+  border: 1px solid #57606a;
+  margin-block: 2rem 1.25rem;
+  padding: 0.35rem 1.25rem;
+}
+
+button {
+  border: 3px double #86ead4;
+  color: #86ead4;
+  background: transparent;
+  font: inherit;
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+footer {
+  margin-top: 3rem;
+  color: #9aa4af;
+  font-size: 0.875rem;
+}
+@font-face {
+  font-family: "Fira Code";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("@fontsource-variable/fira-code/files/fira-code-latin-wght-normal.woff2") format("woff2");
+}
