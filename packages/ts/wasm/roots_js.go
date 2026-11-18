@@ -7,6 +7,10 @@ import (
 	"crypto/x509"
 	"errors"
 	"syscall/js"
+
+	// wasm has no OS root store. only this binary registers the maintained
+	// WebPKI fallback; shared connector libraries retain native trust policy.
+	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
 func serviceTrust(host js.Value) (*tls.Config, error) {

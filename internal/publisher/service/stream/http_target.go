@@ -16,14 +16,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 )
 
-// RunHTTPProxy is the pool owned by a native service run and borrowed by its
-// public visitors. exposing only its operations keeps proxy internals out of
-// the state shared with a Fetch publisher.
-type RunHTTPProxy interface {
-	ServeAdmittedHTTP(http.ResponseWriter, *http.Request)
-	Close() error
-}
-
 // Serve borrows the run's public HTTP proxy or owns one admitted connector's
 // target transports. connector sockets never carry another visitor's admission.
 // the caller's wrapper runs before target resolution or forwarding.

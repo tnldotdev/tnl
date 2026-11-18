@@ -33,7 +33,7 @@ func TestFetchTransportUsesExplicitUncredentialedHostPolicy(t *testing.T) {
 		return js.Global().Get("Promise").Call("resolve", response)
 	})
 	defer fetch.Release()
-	client := &fetchTransport{fetch: fetch.Value}
+	client := &http.Client{Transport: &fetchTransport{fetch: fetch.Value}}
 	request, err := http.NewRequestWithContext(t.Context(), "POST", "https://control.example.test/v1/example", bytes.NewReader([]byte("request")))
 	if err != nil {
 		t.Fatal(err)

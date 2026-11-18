@@ -70,25 +70,21 @@ func NewExternallyAuthenticated(server string, httpClient *http.Client) (*Client
 }
 
 func New(server string, httpClient *http.Client, access credentials.AccessToken) (*Client, error) {
-	return NewWithDoer(server, observability.OwnedHTTPClient(httpclient.NoRedirects(httpClient), "control"), access)
-}
-
-// NewWithDoer requires a transport that does not follow redirects.
-func NewWithDoer(server string, doer controlv1.HttpRequestDoer, access credentials.AccessToken) (*Client, error) {
 	server, err := naming.CanonicalControlURL(server)
 	if err != nil {
 		return nil, failure.Wrap("select control server", failure.InvalidControlURL, err)
 	}
-	if doer == nil {
-		return nil, failure.Wrap("configure control client", failure.ServerRequestInvalid, errors.New("control transport is required"))
-	}
-	apiClient := &controlv1.Client{
-		Server: server + "/",
-		Client: doer,
-		RequestEditors: []controlv1.RequestEditorFn{func(_ context.Context, request *http.Request) error {
+	httpClient = observability.OwnedHTTPClient(httpclient.NoRedirects(httpClient), "control")
+	apiClient, err := controlv1.NewClient(
+		server,
+		controlv1.WithHTTPClient(httpClient),
+		controlv1.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
 			request.Header.Set("Accept", "application/json, application/problem+json")
 			return nil
-		}},
+		}),
+	)
+	if err != nil {
+		return nil, failure.Wrap("configure control client", failure.ServerRequestInvalid, err)
 	}
 	return &Client{api: apiClient, access: access, timeout: defaultRequestTimeout}, nil
 }

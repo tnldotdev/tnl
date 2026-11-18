@@ -89,9 +89,6 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 	if err := validateFeedbackPlatform(f.Feedback, f.Demo, f.PreviewID); err != nil {
 		return HTTP{}, nil, err
 	}
-	if servicestream.HandlerOnly && f.ReadinessProof != nil {
-		return HTTP{}, nil, servicestream.ErrEndpoint
-	}
 	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || !f.InspectionMode.Valid() ||
 		!opaqueid.Valid(f.RunID, opaqueid.ServiceRunPrefix) || f.Number < 1 || f.Token == "" {
 		return HTTP{}, nil, servicestream.ErrEndpoint
@@ -114,11 +111,9 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 	if err := f.prepareNativeHTTP(ctx); err != nil {
 		return HTTP{}, nil, err
 	}
-	if !servicestream.HandlerOnly {
-		f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(4)})
-		if err != nil {
-			return HTTP{}, nil, err
-		}
+	f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(4)})
+	if err != nil {
+		return HTTP{}, nil, err
 	}
 	f.preparations = make(chan struct{}, 16)
 	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil)
@@ -209,9 +204,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				reported = true
 				return
 			}
-			// only native owners configure readiness credentials. never pass
-			// the reserved header through to an application, on either runtime.
-			proof := !servicestream.HandlerOnly && len(state.PeerCertificates) == 0 && f.ReadinessProof.Consume(r, httpaccess.ReadinessRun{Subject: f.Subject, ID: f.RunID, Number: uint64(f.Number), Hostname: f.Hostname})
+			proof := len(state.PeerCertificates) == 0 && f.ReadinessProof.Consume(r, httpaccess.ReadinessRun{Subject: f.Subject, ID: f.RunID, Number: uint64(f.Number), Hostname: f.Hostname})
 			r.Header.Del(httpstream.ReadinessProbeHeader)
 			if f.AdmitRequest != nil {
 				if err := f.AdmitRequest(r); err != nil {

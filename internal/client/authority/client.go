@@ -47,11 +47,6 @@ type Client struct {
 }
 
 func New(endpoint string, httpClient *http.Client, access credentials.AccessToken) (*Client, error) {
-	return NewWithDoer(endpoint, observability.OwnedHTTPClient(httpclient.NoRedirects(httpClient), "authority"), access)
-}
-
-// NewWithDoer requires a transport that does not follow redirects.
-func NewWithDoer(endpoint string, doer authorityv1.HttpRequestDoer, access credentials.AccessToken) (*Client, error) {
 	canonical, err := naming.CanonicalControlURL(endpoint)
 	if err != nil || canonical != endpoint {
 		if err == nil {
@@ -59,16 +54,17 @@ func NewWithDoer(endpoint string, doer authorityv1.HttpRequestDoer, access crede
 		}
 		return nil, failure.Wrap("validate authority endpoint", failure.InvalidAuthorityURL, err)
 	}
-	if doer == nil {
-		return nil, failure.Wrap("configure authority client", failure.InvalidAuthorityURL, errors.New("authority transport is required"))
-	}
-	apiClient := &authorityv1.Client{
-		Server: canonical + "/",
-		Client: doer,
-		RequestEditors: []authorityv1.RequestEditorFn{func(_ context.Context, request *http.Request) error {
+	httpClient = observability.OwnedHTTPClient(httpclient.NoRedirects(httpClient), "authority")
+	apiClient, err := authorityv1.NewClient(
+		canonical,
+		authorityv1.WithHTTPClient(httpClient),
+		authorityv1.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
 			request.Header.Set("Accept", "application/json, application/problem+json")
 			return nil
-		}},
+		}),
+	)
+	if err != nil {
+		return nil, failure.Wrap("configure authority client", failure.InvalidAuthorityURL, err)
 	}
 	return &Client{api: apiClient, access: access, timeout: defaultRequestTimeout}, nil
 }

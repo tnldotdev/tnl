@@ -7,10 +7,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// there is no process telemetry owner in the portable SDK. the build constant
-// lets callers omit local measurements without removing wire trace context.
-const processTelemetry = false
-
+// there is no process telemetry owner in the portable SDK.
 type processMetrics struct{}
 
 func (processMetrics) tracer() trace.Tracer { return nil }

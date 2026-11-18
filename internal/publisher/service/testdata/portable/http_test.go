@@ -23,7 +23,6 @@ import (
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/testutil/visitorfixture"
-	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -45,15 +44,6 @@ func TestWasmServiceRejectsNativeFeedbackBeforeExternalWork(t *testing.T) {
 		if !errors.Is(err, service.ErrFeedbackUnsupported) || closeHTTP != nil || prepared.Policy != nil {
 			t.Fatal("native-only HTTP preparation started work", err)
 		}
-	}
-}
-
-func TestWasmServiceRejectsOwnerReadinessProof(t *testing.T) {
-	prepared, closeHTTP, err := service.PrepareHTTP(t.Context(), service.HTTP{
-		ReadinessProof: new(httpaccess.ReadinessProof),
-	})
-	if !errors.Is(err, servicestream.ErrEndpoint) || closeHTTP != nil || prepared.Policy != nil {
-		t.Fatal("native readiness proof reached HTTP preparation", err)
 	}
 }
 
@@ -115,7 +105,7 @@ func TestWasmServiceInlineHTTPKeepsAuthorizationAndReservedPaths(t *testing.T) {
 		apps.Add(1)
 		if r.Host != "preview.example.test" || r.TLS == nil || r.TLS.ServerName != r.Host ||
 			r.RemoteAddr != "192.0.2.1:1234" || r.Header.Get(httpaccess.VisitorTokenHeader) != "" ||
-			r.Header.Get("Authorization") != "application-private" || r.Header.Get(httpstream.ReadinessProbeHeader) != "" {
+			r.Header.Get("Authorization") != "application-private" {
 			t.Error("inline application lost admitted facts or received visitor credentials")
 		}
 		_, _ = io.WriteString(w, "portable inline")
@@ -171,7 +161,6 @@ func TestWasmServiceInlineHTTPKeepsAuthorizationAndReservedPaths(t *testing.T) {
 		}
 		request.Close = true
 		request.Header.Set("Authorization", "application-private")
-		request.Header.Set(httpstream.ReadinessProbeHeader, "not-an-owner-proof")
 		if test.credential {
 			request.Header.Set(httpaccess.VisitorTokenHeader, token.Reveal())
 		}

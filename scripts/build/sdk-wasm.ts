@@ -15,9 +15,7 @@ const wasmPackage = "./packages/ts/wasm";
 async function buildModule(file: string, tag: string) {
   // tnlsdk excludes telemetry schema validation. the second tag selects the
   // connector or publisher bridge so browser consumers can load them separately.
-  // connector Fetch negotiates HTTP/1.1 inside the tunnel. the publisher
-  // still needs HTTP/2 for incoming visitors, so omit it only here.
-  const tags = `-tags=tnlsdk,${tag}${tag === "tnlconnector" ? ",nethttpomithttp2" : ""}`;
+  const tags = `-tags=tnlsdk,${tag}`;
   const { stdout: deps } = await exec("go", ["list", "-deps", tags, wasmPackage], {
     cwd: root,
     env: goEnv,
@@ -79,21 +77,6 @@ async function buildModule(file: string, tag: string) {
   );
   if (nativeControl.length > 0)
     throw new Error(`${file} links native-only control calls: ${nativeControl.join(", ")}`);
-  if (tag === "tnlconnector" && bytes.includes("net/http/internal/http2."))
-    throw new Error(`${file} links the unused Go HTTP/2 stack`);
-  // the publisher uses host Fetch directly for control and serves visitors in
-  // Go. only the connector needs a Go HTTP client and service trust roots.
-  if (tag === "tnlpublisher") {
-    const unused = [
-      "golang.org/x/crypto/x509roots/fallback.init",
-      "net/http.(*Client).Do",
-      "net/http.(*Transport).roundTrip",
-      "net/http/httputil.(*ReverseProxy).ServeHTTP",
-      "/httpaccess.(*ReadinessProof).Consume",
-    ].filter((symbol) => bytes.includes(symbol));
-    if (unused.length > 0)
-      throw new Error(`${file} links unused publisher features: ${unused.join(", ")}`);
-  }
   return {
     wasmBytes: bytes.byteLength,
     gzipBytes: gzipSync(bytes, { level: 9 }).byteLength,

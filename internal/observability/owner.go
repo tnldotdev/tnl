@@ -33,8 +33,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const processTelemetry = true
-
 type processMetrics struct {
 	meterProvider   *sdkmetric.MeterProvider
 	tracerProvider  *sdktrace.TracerProvider

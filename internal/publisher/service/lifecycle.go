@@ -153,7 +153,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err := validateFeedbackPlatform(config.Feedback, config.Demo, config.PreviewID); err != nil {
 		return err
 	}
-	if servicestream.HandlerOnly && (!config.hasFetchTarget() || config.ReadinessProof != nil) {
+	if servicestream.HandlerOnly && !config.hasFetchTarget() {
 		return ErrPrivateStream
 	}
 	// disable relay UDP and direct peers without changing the inner QUIC session.

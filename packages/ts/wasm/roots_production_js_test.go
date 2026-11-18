@@ -1,4 +1,4 @@
-//go:build js && wasm && !tnlwasmtest && !tnlpublisher
+//go:build js && wasm && !tnlwasmtest
 
 package main
 

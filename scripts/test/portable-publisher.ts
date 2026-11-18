@@ -460,7 +460,7 @@ async function buildFixtureWasm(output: string, tags: string) {
 try {
   await buildFixtureWasm(wasm, "tnlwasmtest,tnlsdk,tnlpublisher");
   if (runtime !== "workerd") {
-    await buildFixtureWasm(connectorWasm, "tnlwasmtest,tnlsdk,tnlconnector,nethttpomithttp2");
+    await buildFixtureWasm(connectorWasm, "tnlwasmtest,tnlsdk,tnlconnector");
     console.log(JSON.stringify({ runtime: "chrome", proof: await chromeSmoke(fixture) }));
   }
   if (runtime !== "chrome")
