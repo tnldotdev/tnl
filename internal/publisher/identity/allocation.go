@@ -101,12 +101,16 @@ func (n *Native) AllocateService(ctx context.Context, body controlv1.AllocateSer
 	if err != nil {
 		return controlv1.Service{}, allocationRecoveryError(body.InvocationId, err)
 	}
-	if err := n.observeServiceAllocation(service); err != nil {
+	public := body.Configuration.Public == nil || *body.Configuration.Public
+	if err := n.observeServiceAllocation(service, public); err != nil {
 		return controlv1.Service{}, allocationRecoveryError(body.InvocationId, err)
 	}
 	_, selected, err := n.ForService(ctx, service.Id)
 	if err == nil {
 		err = n.validateAllocatedService(selected)
+	}
+	if err == nil && selected.Endpoint.Public != public {
+		err = ErrScope
 	}
 	if err != nil {
 		return n.cleanupFailedAllocation(ctx, token, service, err)
@@ -167,7 +171,7 @@ func (n *Native) CleanupServiceAllocation(ctx context.Context, body controlv1.Al
 		if err != nil {
 			return allocationRecoveryError(body.InvocationId, err)
 		}
-		if err := n.observeServiceAllocation(service); err != nil {
+		if err := n.observeServiceAllocation(service, body.Configuration.Public == nil || *body.Configuration.Public); err != nil {
 			return allocationRecoveryError(body.InvocationId, err)
 		}
 	}
@@ -218,7 +222,7 @@ func (n *Native) validateAllocatedService(service controlv1.Service) error {
 	if !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) || service.TeamId != n.identity.teamID ||
 		!service.Ephemeral || !service.Enabled || service.Protocol != controlv1.ServiceProtocolHTTP ||
 		service.DomainId == nil || !opaqueid.Valid(*service.DomainId, opaqueid.DomainPrefix) ||
-		service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port != 443 ||
+		service.Endpoint == nil || service.Endpoint.Port != 443 ||
 		n.allocatedServiceID != "" && n.allocatedServiceID != service.Id ||
 		n.selectedServiceID != "" && n.selectedServiceID != service.Id {
 		return ErrScope
@@ -242,9 +246,12 @@ func (n *Native) validateAllocatedService(service controlv1.Service) error {
 	return nil
 }
 
-func (n *Native) observeServiceAllocation(service controlv1.Service) error {
+func (n *Native) observeServiceAllocation(service controlv1.Service, public bool) error {
 	if err := n.validateAllocatedService(service); err != nil {
 		return err
+	}
+	if service.Endpoint.Public != public {
+		return ErrScope
 	}
 	n.allocatedServiceID = service.Id
 	return nil

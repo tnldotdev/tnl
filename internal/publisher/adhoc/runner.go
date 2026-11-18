@@ -36,6 +36,7 @@ type Options struct {
 	Publisher           *publisheridentity.Native
 	InvocationID        string
 	ExpiresAt           *time.Time
+	Public              *bool
 	Target              string
 	TargetTLS           *controlv1.ProjectTargetTLS
 	AccessMode          controlv1.VisitorAccessMode
@@ -96,9 +97,10 @@ func allocationRequest(options Options) (controlv1.AllocateServiceRequest, strin
 		return body, "", nil, err
 	}
 	body.InvocationId = options.InvocationID
+	public := options.Public == nil || *options.Public
 	body.Configuration = controlv1.ProjectServiceConfiguration{
 		Protocol: new(controlv1.ServiceProtocolHTTP), Target: target.Host,
-		Public: new(true), Ephemeral: new(true), RequirePostQuantum: new(options.RequirePostQuantum),
+		Public: new(public), Ephemeral: new(true), RequirePostQuantum: new(options.RequirePostQuantum),
 		Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}},
 	}
 	if options.IP != nil {

@@ -1900,7 +1900,7 @@ type AllocateGuestDemoServiceRequest struct {
 	Target string `json:"target"`
 }
 
-// AllocateServiceRequest Immutable HTTP declaration for one temporary service. Exact retries recover only the original live allocation. Automated DNS and shared ingress 443 are required. Callers cannot select a hostname, domain, worktree, or saved deployment service.
+// AllocateServiceRequest Immutable HTTP declaration for one temporary service. Exact retries recover only the original live allocation. Public services use automated DNS and shared ingress 443. Set configuration.public to false for connector-only access. Callers cannot select a hostname, domain, worktree, or saved deployment service.
 type AllocateServiceRequest struct {
 	Configuration ProjectServiceConfiguration `json:"configuration"`
 

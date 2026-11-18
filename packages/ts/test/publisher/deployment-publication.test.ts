@@ -342,6 +342,34 @@ test.each(["node", "fetch"])(
   },
 );
 
+test.each([false, true])(
+  "temporary connector-only publication checks exposure (public endpoint: %s)",
+  async (publicEndpoint) => {
+    const { calls, sessions } = fixture({ publicEndpoint });
+    const deployment = createClient({ project: "acme/shop", token: "private" }).deployment(
+      "production",
+    );
+    try {
+      const started = deployment.publish(() => new Response("owned"), { public: false });
+      if (publicEndpoint) {
+        await expect(started).rejects.toMatchObject({ code: "sdk.response_invalid" });
+      } else {
+        const publication = await started;
+        expect(publication).not.toHaveProperty("url");
+        await publication.close();
+        await publication.wait();
+      }
+    } finally {
+      await deployment.close();
+    }
+    const registered = calls.filter((call) => call.operation === "publications/register");
+    expect(registered).toHaveLength(1);
+    expect(registered[0]?.body).toMatchObject({ public: false });
+    expect(calls.filter((call) => call.operation === "unregister")).toHaveLength(1);
+    expect([...sessions.values()][0]?.stopped).toBe(true);
+  },
+);
+
 test("permanent cleanup during startup closes Fetch without replaying the allocation", async () => {
   const { request, calls, sessions } = fixture();
   const cleanup = new TnlError("sdk.publication_cleanup_failed");

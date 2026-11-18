@@ -32,7 +32,7 @@ type deploymentInvocation struct {
 // the existing invocation manager owns the worker and its exact allocation.
 func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publisherprotocol.Invocation, options publisheradhoc.Options) (result deploymentInvocation, err error) {
 	selection := r.Deployment
-	if selection == nil || r.ServerUrl != nil || r.PublisherCredentialFile != "" || r.PublisherIdentityId != "" || selection.Service != "" && (r.AccessMode != nil || r.Ip != nil || r.Limits != nil || r.RequirePostQuantum != nil) {
+	if selection == nil || r.ServerUrl != nil || r.PublisherCredentialFile != "" || r.PublisherIdentityId != "" || selection.Service != "" && (r.AccessMode != nil || r.Ip != nil || r.Limits != nil || r.RequirePostQuantum != nil || r.Public != nil) {
 		return result, publisheridentity.ErrScope
 	}
 	credential, err := auth.ParseDeploymentCredential(selection.Credential)

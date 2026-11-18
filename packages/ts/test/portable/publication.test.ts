@@ -293,6 +293,30 @@ test("temporary publication forwards visitor policy and limits without another a
   await remote.close();
 });
 
+test("private temporary publication forwards exposure and omits a URL", async () => {
+  const f = fixture();
+  const closed = deferred();
+  f.bridge.publish.mockResolvedValueOnce({
+    public: false,
+    ready: Promise.resolve(),
+    closed: closed.promise,
+    close: async () => closed.resolve(),
+  });
+  const remote = deployment();
+  const publication = await remote.publish(() => new Response(), { public: false });
+  expect(f.bridge.publish).toHaveBeenCalledWith(
+    JSON.stringify({
+      project: "acme/shop",
+      deployment: "production",
+      credential: "private-credential",
+      temporary: { public: false },
+    }),
+    expect.anything(),
+  );
+  expect(publication).not.toHaveProperty("url");
+  await remote.close();
+});
+
 test("publishing and connecting load separate modules without requesting publish-only connect grants", async () => {
   const f = fixture();
   const remote = deployment();

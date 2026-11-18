@@ -53,6 +53,7 @@ func TestIntegrationPublisherAllocationIntentAndLease(t *testing.T) {
 		func(s *ProjectServiceConfiguration) { s.Target = "other.internal:3000" },
 		func(s *ProjectServiceConfiguration) { s.TargetTLS = &ProjectTargetTLS{Hostname: "other.internal"} },
 		func(s *ProjectServiceConfiguration) { s.RequirePostQuantum = new(false) },
+		func(s *ProjectServiceConfiguration) { s.Public = new(false) },
 		func(s *ProjectServiceConfiguration) {
 			s.HTTP = &config.HTTPService{Access: &config.Access{Mode: "anonymous"}}
 		},
@@ -90,6 +91,35 @@ func TestIntegrationPublisherAllocationIntentAndLease(t *testing.T) {
 	}
 	if _, err := d.AllocatePublisherService(t.Context(), p, request, now.Add(3*time.Minute)); err != nil {
 		t.Fatal("active allocation recovery expired without a fixed deadline", err)
+	}
+}
+
+func TestIntegrationConnectorOnlyPublisherAllocationDoesNotQueueEndpointDNS(t *testing.T) {
+	f := newDeploymentPublicationFixture(t)
+	_, _, access, _ := f.approve(t, map[string][]string{"publish": {"web"}}, "restricted")
+	request := f.allocation(t, access)
+	request.Configuration.Public = new(false)
+	saved, err := f.d.AllocateDeploymentPublication(t.Context(), request)
+	if err != nil || saved.Endpoint == nil || saved.Endpoint.Public || saved.Endpoint.Port != 443 {
+		t.Fatal("private allocation did not preserve its logical HTTP endpoint", err)
+	}
+	var state string
+	var public, automation bool
+	err = f.d.pool.QueryRow(t.Context(), `SELECT public, dns_automation, dns_state FROM control.service_endpoints
+		WHERE service_id=$1 AND retired_at IS NULL`, saved.ID).Scan(&public, &automation, &state)
+	if err != nil || public || automation || state != "unmanaged" {
+		t.Fatal("private allocation enabled public endpoint DNS", err)
+	}
+	retry, err := f.d.AllocateDeploymentPublication(t.Context(), request)
+	if err != nil || !reflect.DeepEqual(saved, retry) {
+		t.Fatal("private allocation retry changed the service or exposure", err)
+	}
+	request.Configuration.Public = nil
+	if _, err := f.d.AllocateDeploymentPublication(t.Context(), request); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("retry could change private allocation to public", err)
+	}
+	if err := f.d.DeletePublisherService(t.Context(), access.PublisherIdentity, saved.ID, f.now); err != nil {
+		t.Fatal("cleanup did not own the exact private allocation", err)
 	}
 }
 

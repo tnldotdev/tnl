@@ -31,6 +31,13 @@ func TestServiceAllocationInlineHandler(t *testing.T) {
 		configuration.Ephemeral {
 		t.Fatal("normalization mutated the caller's declaration")
 	}
+	configuration.Public = new(false)
+	private, mode, err := normalizeServiceAllocation(AllocateServiceRequest{
+		Invocation: invocation, Configuration: configuration,
+	})
+	if err != nil || private.Public == nil || *private.Public || !private.Ephemeral || mode != "anonymous" {
+		t.Fatal("explicit connector-only exposure must survive normalization without changing access policy", err)
+	}
 }
 
 func TestServiceAllocationInlineHandlerBoundaries(t *testing.T) {
@@ -47,7 +54,6 @@ func TestServiceAllocationInlineHandlerBoundaries(t *testing.T) {
 		{"docker", ProjectServiceConfiguration{Target: "docker:web:3000"}, invocation},
 		{"non-http", ProjectServiceConfiguration{Target: "app", Protocol: "tcp"}, invocation},
 		{"target-tls", ProjectServiceConfiguration{Target: "app", TargetTLS: &ProjectTargetTLS{Hostname: "target.test"}}, invocation},
-		{"private", ProjectServiceConfiguration{Target: "app", Public: new(false)}, invocation},
 		{"hostname", ProjectServiceConfiguration{Target: "app", Hostname: "other.test"}, invocation},
 		{"readiness", ProjectServiceConfiguration{Target: "app", HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/"}}}, invocation},
 		{"invalid-invocation", ProjectServiceConfiguration{Target: "app"}, "invalid"},
