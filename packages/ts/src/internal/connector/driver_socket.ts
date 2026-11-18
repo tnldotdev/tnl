@@ -17,10 +17,43 @@ export class DriverSocket extends Duplex {
     this.#open = open;
   }
 
+  get readyState(): "opening" | "open" | "readOnly" | "writeOnly" | "closed" {
+    if (this.closed) return "closed";
+    if (this.#reader === undefined) return "opening";
+    if (this.readable && this.writable) return "open";
+    if (this.readable) return "readOnly";
+    if (this.writable) return "writeOnly";
+    return "closed";
+  }
+
   // the driver passes an address here; only tnl can select the destination.
   connect(): this {
     this.#opening ??= Promise.resolve().then(() => this.#open({ signal: this.#abort.signal }));
     return this;
+  }
+
+  async ready(milliseconds: number): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off("connect", connected).off("close", closed).off("error", failed);
+      };
+      const connected = () => {
+        cleanup();
+        resolve();
+      };
+      const failed = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      const closed = () => failed(new TnlError("sdk.connection_unavailable"));
+      const timer =
+        milliseconds > 0
+          ? setTimeout(() => this.destroy(new TnlError("sdk.connection_unavailable")), milliseconds)
+          : undefined;
+      this.once("connect", connected).once("close", closed).once("error", failed);
+      this.connect();
+    });
   }
 
   override _construct(callback: (error?: Error | null) => void): void {

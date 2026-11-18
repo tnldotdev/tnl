@@ -23,7 +23,17 @@ func startPortableSDKDatabases(ctx context.Context) ([]string, func() error, err
 	if err != nil {
 		return nil, closeAll, err
 	}
-	return append(control, flags...), closeAll, nil
+	redis, closeRedis, err := startTestService(ctx, "redis")
+	cleanup := func() error {
+		if closeRedis != nil {
+			return errors.Join(closeRedis(), closeAll())
+		}
+		return closeAll()
+	}
+	if err != nil {
+		return nil, cleanup, err
+	}
+	return append(append(control, flags...), redis...), cleanup, nil
 }
 
 func portableMySQLFlags(input []string) ([]string, error) {

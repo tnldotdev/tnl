@@ -23,6 +23,7 @@ export interface TnlConnectionRegistry {
     readonly host: "127.0.0.1";
     readonly port: number;
     readonly ssl: TnlNativeTLSOptions;
+    readonly open: TnlOpenStream;
   };
   mysql: {
     /** mysql2 verifies this hostname; stream dials the native loopback listener. */
@@ -31,13 +32,19 @@ export interface TnlConnectionRegistry {
     readonly ssl: TnlNativeTLSOptions & { readonly verifyIdentity: true };
     /** a fresh socket for each ordinary mysql2 connection, including pools. */
     readonly stream: () => import("node:net").Socket;
+    readonly open: TnlOpenStream<TnlTLSStream>;
   };
-  tcp: { readonly host: "127.0.0.1"; readonly port: number };
-  http: { readonly url: `https://${string}`; readonly fetch: TnlFetch };
+  tcp: { readonly host: "127.0.0.1"; readonly port: number; readonly open: TnlOpenStream };
+  http: {
+    readonly url: `https://${string}`;
+    readonly fetch: TnlFetch;
+    readonly open: TnlOpenStream;
+  };
   kubernetes: {
     readonly server: `https://${string}`;
     readonly kubeconfig: string;
     readonly context: string;
+    readonly open: TnlOpenStream;
   };
 }
 
