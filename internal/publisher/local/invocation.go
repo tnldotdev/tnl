@@ -332,21 +332,21 @@ func (a *appRuntime) invocationPublication(service publisherapp.Service, base pu
 			}
 			return nil
 		}
-		cfg.ReadinessProof = func(run httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
-			if address == "" {
-				return nil
+		cfg.ReadinessProof = nil
+		if address != "" {
+			cfg.ReadinessProof = func(run httpaccess.ReadinessRun) *httpaccess.ReadinessProof {
+				mu.Lock()
+				defer mu.Unlock()
+				if run != current {
+					return nil
+				}
+				if base.ReadinessProof != nil {
+					proof = base.ReadinessProof(run)
+				} else {
+					proof, _ = httpaccess.NewReadinessProof(run, "/")
+				}
+				return proof
 			}
-			mu.Lock()
-			defer mu.Unlock()
-			if run != current {
-				return nil
-			}
-			if base.ReadinessProof != nil {
-				proof = base.ReadinessProof(run)
-			} else {
-				proof, _ = httpaccess.NewReadinessProof(run, "/")
-			}
-			return proof
 		}
 		cfg.AdmitRequest = func(r *http.Request) error {
 			mu.Lock()
