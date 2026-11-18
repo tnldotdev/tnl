@@ -3262,11 +3262,11 @@ type ProjectServiceConfiguration struct {
 	// Public Public endpoint access for this service binding, independent of visitor authorization. Local bindings allocate only when realized by an authorized worktree. Omission or false keeps connector access only.
 	Public *bool `json:"public,omitempty"`
 
+	// PublisherAliasParent Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases without changing target trust or stopping connector sessions.
+	PublisherAliasParent *string `json:"publisher_alias_parent,omitempty"`
+
 	// RequirePostQuantum Require hybrid post-quantum key agreement for visitor TLS, independently of target TLS.
 	RequirePostQuantum *bool `json:"require_post_quantum,omitempty"`
-
-	// RunAliasParent Opt in to exact-run HTTP addresses beneath this authorized DNS parent. Empty disables aliases without changing target trust or stopping connector sessions.
-	RunAliasParent *string `json:"run_alias_parent,omitempty"`
 
 	// Target Saved service and remote deployment targets normalize to host:port with separate target_tls trust. Local project bindings use app for every protocol and keep listener and container selection local. Remote app descriptors defer HTTP listeners to their application owners. integration:oauth and integration:webhooks explicitly select a non-ephemeral, in-process HTTP handler and require explicit anonymous HTTP access; they are not app listeners or separate resources. Control does not discover local targets.
 	Target string `json:"target"`

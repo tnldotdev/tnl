@@ -264,11 +264,12 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if err != nil {
 		return result, err
 	}
-	runHostname := ""
-	if service.RunAliasParent != "" {
+	runHostname, aliasParent := "", ""
+	if service.Public && service.RunAliasParent != "" {
 		if service.Protocol != "http" || service.GuestID.Valid {
 			return result, ErrServiceAccess
 		}
+		aliasParent = service.RunAliasParent
 		runHostname, err = servicePublisherHostname(ctx, tx, service, p.ID)
 		if err != nil {
 			return result, err
@@ -291,7 +292,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		AssignmentSeedCiphertext: ciphertext, AssignmentSeedStorageKeyID: d.storageKey.CurrentID(),
 		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateDomainID: service.DomainID, CertificateHostname: service.CertificateHostname,
 		RequirePostQuantum: service.RequirePostQuantum,
-		RunHostname:        runHostname, RunAliasParent: service.RunAliasParent,
+		RunHostname:        runHostname, RunAliasParent: aliasParent,
 		Now: timestamptz(now), PublisherExpiresAt: timestamptz(until),
 	})
 	if err != nil {

@@ -139,10 +139,10 @@
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
                         },
-                        "run_alias_parent": {
+                        "publisher_alias_parent": {
                           "type": "string",
                           "maxLength": 224,
-                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
+                          "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -405,10 +405,10 @@
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
                         },
-                        "run_alias_parent": {
+                        "publisher_alias_parent": {
                           "type": "string",
                           "maxLength": 224,
-                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
+                          "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -674,10 +674,10 @@
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
                         },
-                        "run_alias_parent": {
+                        "publisher_alias_parent": {
                           "type": "string",
                           "maxLength": 224,
-                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
+                          "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -936,10 +936,10 @@
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
                         },
-                        "run_alias_parent": {
+                        "publisher_alias_parent": {
                           "type": "string",
                           "maxLength": 224,
-                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
+                          "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -1180,10 +1180,10 @@
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
                         },
-                        "run_alias_parent": {
+                        "publisher_alias_parent": {
                           "type": "string",
                           "maxLength": 224,
-                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
+                          "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -1430,10 +1430,10 @@
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
                         },
-                        "run_alias_parent": {
+                        "publisher_alias_parent": {
                           "type": "string",
                           "maxLength": 224,
-                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
+                          "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",
@@ -1681,10 +1681,10 @@
                           "minLength": 1,
                           "description": "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."
                         },
-                        "run_alias_parent": {
+                        "publisher_alias_parent": {
                           "type": "string",
                           "maxLength": 224,
-                          "description": "Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
+                          "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
                         "domain": {
                           "type": "string",

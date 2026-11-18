@@ -11,7 +11,7 @@ import type {
 } from "../publisher/publication.js";
 import type { PublisherStorageHost } from "./storage-host.js";
 import { preserveRequestHeaders } from "./request.js";
-import { publicationRunSchema, publicationRunURLSchema } from "../publication_run.js";
+import { publicationRunSchema, publisherURLSchema } from "../publication_run.js";
 
 const optionsSchema = z.strictObject({
   targetHostname: z.string().min(1).exactOptional(),
@@ -228,7 +228,7 @@ export async function publishPortable(options: {
   void completion.catch(() => {});
   const base = raw;
   let run: PublicationRun | undefined;
-  let runURL: `https://${string}` | undefined;
+  let publisherURL: `https://${string}` | undefined;
   function close(): Promise<void> {
     signal.removeEventListener("abort", aborted);
     // fence the application callback before asking go to stop. a saved host
@@ -274,8 +274,8 @@ export async function publishPortable(options: {
     get run() {
       return run;
     },
-    get runURL() {
-      return runURL;
+    get publisherURL() {
+      return publisherURL;
     },
     close,
     wait: () => completion,
@@ -291,11 +291,11 @@ export async function publishPortable(options: {
     const reference = publicationRunSchema.safeParse(raw.run);
     if (!reference.success) throw new TnlError("sdk.wasm_invalid");
     run = Object.freeze(reference.data);
-    if (raw.runURL !== undefined) {
-      const parsed = publicationRunURLSchema.safeParse(raw.runURL);
+    if (raw.publisherURL !== undefined) {
+      const parsed = publisherURLSchema.safeParse(raw.publisherURL);
       if (!parsed.success || run === undefined || parsed.data === publication.url)
         throw new TnlError("sdk.wasm_invalid");
-      runURL = parsed.data;
+      publisherURL = parsed.data;
     }
     return publication;
   } catch (error) {

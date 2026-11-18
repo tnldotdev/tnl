@@ -199,7 +199,7 @@ func startPublisher(encoded string, host js.Value) (_ js.Value, result error) {
 		reference.Set("runNumber", strconv.FormatInt(run.RunNumber, 10))
 		handle.Set("run", js.Global().Get("Object").Call("freeze", reference))
 		if run.RunHostname != nil {
-			handle.Set("runURL", "https://"+*run.RunHostname)
+			handle.Set("publisherURL", "https://"+*run.RunHostname)
 		}
 		return nil
 	}

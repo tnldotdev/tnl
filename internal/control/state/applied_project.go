@@ -59,7 +59,7 @@ type ProjectServiceConfiguration struct {
 	Protocol           string                   `json:"protocol,omitempty"`
 	Target             string                   `json:"target"`
 	Hostname           string                   `json:"hostname,omitempty"`
-	RunAliasParent     string                   `json:"run_alias_parent,omitempty"`
+	RunAliasParent     string                   `json:"publisher_alias_parent,omitempty"`
 	DomainID           string                   `json:"domain_id,omitempty"`
 	Ephemeral          bool                     `json:"ephemeral,omitempty"`
 	RequirePostQuantum *bool                    `json:"require_post_quantum,omitempty"`

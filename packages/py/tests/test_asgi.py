@@ -117,6 +117,7 @@ def test_status_is_filtered_and_fenced_by_registration_and_bound_target() -> Non
         ready, native.invocation_id, str(native.registration["registration_id"]), native.target
     )
     assert status is not None and status.public_url == _public_url
+    assert status.publisher_url is None
     assert parse_status(ready, native.invocation_id, "reg_" + "b" * 32, native.target) is None
     assert (
         parse_status(
@@ -171,6 +172,8 @@ def test_invocation_status_matches_the_exact_native_tunnel() -> None:
         "server": "https://control.example",
         "project": "/project",
         "service_id": "svc_" + "A" * 22,
+        "service_run_id": "srun_" + "A" * 22,
+        "run_hostname": "p-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
         "publish_run_number": 1,
         "started_at": value["observed_at"],
         "updated_at": value["observed_at"],
@@ -178,16 +181,18 @@ def test_invocation_status_matches_the_exact_native_tunnel() -> None:
         "lease_expires_at": value["observed_at"],
     }
     value["publications"] = [publication]
-    assert (
-        parse_status(
-            value, native.invocation_id, str(native.registration["registration_id"]), native.target
-        )
-        is not None
-    )
+    registration = str(native.registration["registration_id"])
+    status = parse_status(value, native.invocation_id, registration, native.target)
+    assert status is not None and status.publisher_url == f"https://{publication['run_hostname']}"
+    assert parse_status(value, native.invocation_id, "reg_" + "b" * 32, native.target) is None
+    assert parse_status(value, native.invocation_id, registration, "http://127.0.0.1:4321") is None
     for changed in (
         {**publication, "tunnel_id": "another-tunnel"},
         {**publication, "service": "another-service"},
         {**publication, "service_id": "url_" + "A" * 22},
+        {**publication, "service_run_id": "wrong-run"},
+        {**publication, "publish_run_number": 2},
+        {**publication, "run_hostname": "r-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test"},
         {**publication, "public_url_id": "url_" + "A" * 22},
     ):
         with pytest.raises(InvalidResponse):
@@ -197,6 +202,13 @@ def test_invocation_status_matches_the_exact_native_tunnel() -> None:
                 str(native.registration["registration_id"]),
                 native.target,
             )
+    with pytest.raises(InvalidResponse):
+        parse_status(
+            {**value, "publications": [publication, publication]},
+            native.invocation_id,
+            registration,
+            native.target,
+        )
     services[0]["publish_run_number"] = services[0].pop("run_number")
     with pytest.raises(InvalidResponse):
         parse_status(
@@ -216,6 +228,7 @@ def test_default_selection_omits_credentials_and_explicit_file_is_sent_only_to_n
 
         async with await start_publication(tnl.handler(endpoint)) as tunnel:
             assert tunnel.url == _public_url
+            assert tunnel.publisher_url is None
             assert "require_post_quantum" not in tunnel._payload
             assert "publisher_credential_file" not in tunnel._payload
             assert "publisher_identity_id" not in tunnel._payload

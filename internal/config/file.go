@@ -134,7 +134,7 @@ func ValidateTNL(config TNL) error {
 		if service.RunAliasParent != nil && *service.RunAliasParent != "" {
 			parent := *service.RunAliasParent
 			if Protocol(service) != "http" || !naming.ValidGeneratedHostnameParent(parent) {
-				return fmt.Errorf("services.%s: run_alias_parent must be a canonical HTTP DNS parent of at most %d bytes", name, naming.MaxGeneratedHostnameParentBytes)
+				return fmt.Errorf("services.%s: publisher_alias_parent must be a canonical HTTP DNS parent of at most %d bytes", name, naming.MaxGeneratedHostnameParentBytes)
 			}
 		}
 		if service.Hostname != nil {

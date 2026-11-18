@@ -541,8 +541,8 @@ export function createClient<const Services extends ServiceFacts = Record<never,
               get url() {
                 return base.url;
               },
-              get runURL() {
-                return base.runURL;
+              get publisherURL() {
+                return base.publisherURL;
               },
               get run() {
                 return base.run;

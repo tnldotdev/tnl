@@ -138,13 +138,13 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
-                  /**
-                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
-                   */
-                  runAliasParent?: string;
                 }
               | {
                   type?: "address";
@@ -250,13 +250,13 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
-                  /**
-                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
-                   */
-                  runAliasParent?: string;
                 }
               | {
                   type: "compose";
@@ -362,13 +362,13 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
-                  /**
-                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
-                   */
-                  runAliasParent?: string;
                 }
               | {
                   type: "docker";
@@ -474,13 +474,13 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
-                  /**
-                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
-                   */
-                  runAliasParent?: string;
                 }
               | {
                   type: "eks";
@@ -574,13 +574,13 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
-                  /**
-                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
-                   */
-                  runAliasParent?: string;
                 }
               | {
                   type: "rds";
@@ -674,13 +674,13 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
-                  /**
-                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
-                   */
-                  runAliasParent?: string;
                 }
               | {
                   type: "rds";
@@ -774,13 +774,13 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
-                  /**
-                   * Opt in to exact-run HTTP hostnames beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
-                   */
-                  runAliasParent?: string;
                 }
               | undefined;
           };
