@@ -160,16 +160,20 @@ func TestWebSocketYamuxFramesIgnoreMessageBoundaries(t *testing.T) {
 		_ = client.CloseNow()
 		<-drained
 	}()
-	dataFrame := func(stream uint32, payload string) []byte {
-		// yamux v0 DATA with SYN|FIN: one complete stream in one frame.
+	dataFrame := func(stream uint32, flags uint16, payload string) []byte {
 		frame := make([]byte, 12, 12+len(payload))
-		binary.BigEndian.PutUint16(frame[2:4], 1|4)
+		binary.BigEndian.PutUint16(frame[2:4], flags)
 		binary.BigEndian.PutUint32(frame[4:8], stream)
 		binary.BigEndian.PutUint32(frame[8:12], uint32(len(payload)))
 		return append(frame, payload...)
 	}
-	split := dataFrame(1, payloads[0])
-	combined := append(dataFrame(3, payloads[1]), dataFrame(5, payloads[2])...)
+	// keep DATA and FIN in separate yamux frames, as the real writer does.
+	// message boundaries still split the first frame and join the later ones.
+	streamFrames := func(id uint32, payload string) []byte {
+		return append(dataFrame(id, 1, payload), dataFrame(id, 4, "")...)
+	}
+	split := streamFrames(1, payloads[0])
+	combined := append(streamFrames(3, payloads[1]), streamFrames(5, payloads[2])...)
 	for _, message := range [][]byte{split[:7], split[7:], combined} {
 		if err := client.Write(ctx, websocket.MessageBinary, message); err != nil {
 			t.Fatal(err)
