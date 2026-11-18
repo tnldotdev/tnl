@@ -6,7 +6,6 @@ import { loadWasm } from "./internal/connector/wasm_loader.js";
 
 export * from "./index.js";
 export { portableDeployment as deployment } from "./internal/connector/portable_operations.js";
-export * from "./durable-object.worker.js";
 export { TnlPublisher } from "./internal/portable/cloudflare-publisher.js";
 export { publisher, publish } from "./internal/portable/cloudflare-publisher-client.js";
 export type {
