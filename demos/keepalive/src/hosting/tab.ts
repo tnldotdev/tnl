@@ -1,5 +1,4 @@
-import type * as z from "zod";
-import { type GossipMessage } from "../peers.ts";
+import type { Host } from "../peers.ts";
 import {
   ARTIFACT_PREFIX,
   MAX_MANIFEST_BYTES,
@@ -10,9 +9,8 @@ import {
   readJSON,
   type Release,
 } from "../release.ts";
-import { saveRelease } from "../storage.ts";
 import { CONFIG_PATH, hostingConfig } from "./config.ts";
-import { hostUpdate, type hostCommand, type HostUpdate } from "./messages.ts";
+import { hostUpdate, type HostStart, type HostUpdate } from "./messages.ts";
 import { readPeers, waitForWork } from "./peer-http.ts";
 
 export type HostState =
@@ -30,10 +28,7 @@ async function waitForHost(releaseID: string, signal: AbortSignal) {
         signal.throwIfAborted();
         try {
           if (!(await waitForWork(host, signal))) break;
-          return {
-            origin: host.origin,
-            first: (await readPeers(host.origin, releaseID, signal)) ?? peers,
-          };
+          return host;
         } catch {
           // this tab can wait with a different host.
         }
@@ -55,10 +50,7 @@ async function copySite(release: Release, source: string, signal: AbortSignal) {
     });
     files.set(asset.path, (await readAssetResponse(asset, response, deadline)).buffer);
   }
-  await saveRelease(release, files);
-  const worker = files.get(WORKER_PATH);
-  if (worker === undefined) throw new Error("The copy is missing the hosting code.");
-  return worker;
+  return files;
 }
 
 async function getJSON(path: string, limit: number, signal: AbortSignal, method = "GET") {
@@ -80,17 +72,19 @@ export async function hostTab(
 ) {
   const release = await parseRelease(await getJSON(RELEASE_PATH, MAX_MANIFEST_BYTES, signal));
   let source = ARTIFACT_PREFIX;
-  let first: GossipMessage | undefined;
+  let initialPeer: Host | undefined;
   if (bootstrap) {
-    first = await readPeers(location.origin, release.id, signal).catch(() => undefined);
+    const report = await readPeers(location.origin, release.id, signal).catch(() => undefined);
+    if (report !== undefined && !report.from.left) initialPeer = report.from;
   } else {
     update({ type: "waiting" });
-    const selected = await waitForHost(release.id, signal);
-    source = selected.origin;
-    first = selected.first;
+    initialPeer = await waitForHost(release.id, signal);
+    source = initialPeer.origin;
   }
   update({ type: "copying" });
-  const code = await copySite(release, source, signal);
+  const files = await copySite(release, source, signal);
+  const code = files.get(WORKER_PATH);
+  if (code === undefined) throw new Error("The copy is missing the hosting code.");
   const config = hostingConfig.parse(await getJSON(CONFIG_PATH, 160 * 1024, signal, "POST"));
   signal.throwIfAborted();
   update({ type: "starting" });
@@ -99,7 +93,7 @@ export async function hostTab(
   try {
     await runWorker(
       worker,
-      { type: "start", release, config, first, pageOrigin: location.origin },
+      { type: "start", release, files, config, initialPeer, pageOrigin: location.origin },
       signal,
       replace,
       update,
@@ -112,7 +106,7 @@ export async function hostTab(
 
 function runWorker(
   worker: Worker,
-  start: z.infer<typeof hostCommand>,
+  start: HostStart,
   signal: AbortSignal,
   replace: AbortSignal,
   update: (state: HostState) => void,
@@ -152,7 +146,7 @@ function runWorker(
         update(message.data);
       }
     };
-    worker.postMessage(start);
+    worker.postMessage(start, [...start.files.values()]);
     if (signal.aborted) stop();
   });
 }

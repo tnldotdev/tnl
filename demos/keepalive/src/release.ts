@@ -34,7 +34,6 @@ export const releaseSchema = z.strictObject({
 
 export type Asset = z.infer<typeof assetSchema>;
 export type Release = z.infer<typeof releaseSchema>;
-export type ReadAsset = (asset: Asset) => Uint8Array<ArrayBuffer> | undefined;
 
 export function contentType(path: string): string | undefined {
   return media.get(path.slice(path.lastIndexOf(".") + 1));

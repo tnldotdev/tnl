@@ -1,10 +1,7 @@
-import * as z from "zod";
-import { parseMessage } from "../peers.ts";
 import { WASM_PATH, parseRelease, readJSON } from "../release.ts";
 import { serveRelease } from "../serving.ts";
-import { openRelease, rememberStart } from "../storage.ts";
 import { CREDENTIALS_PATH, enrollmentKey } from "./config.ts";
-import { hostCommand, type HostUpdate } from "./messages.ts";
+import { hostCommand, type HostStart, type HostUpdate } from "./messages.ts";
 import { peerServer, readPeers } from "./peer-http.ts";
 import { startPublisher } from "./publish.ts";
 
@@ -28,21 +25,18 @@ globalThis.addEventListener("message", ({ data }: MessageEvent<unknown>) => {
   }
 });
 
-async function host(command: Extract<z.infer<typeof hostCommand>, { type: "start" }>) {
+async function host(command: HostStart) {
   let running: Awaited<ReturnType<typeof startPublisher>> | undefined;
   let peers: ReturnType<typeof peerServer> | undefined;
   let failed = false;
   try {
     const release = await parseRelease(command.release);
-    const first = parseMessage(command.first, release.id, Date.now());
-    const read = await openRelease(release);
-    const module = release.assets.find((asset) => asset.path === WASM_PATH);
-    const wasm = module === undefined ? undefined : read(module);
+    const wasm = command.files.get(WASM_PATH);
     if (wasm === undefined) throw new Error("The copy is missing the hosting code.");
     useLocalWasm(wasm, command.pageOrigin);
 
     let filesServed = 0;
-    const serve = serveRelease(release, read);
+    const serve = serveRelease(release, command.files);
     const allowedOrigins = [
       command.pageOrigin,
       command.config.siteOrigin,
@@ -77,12 +71,11 @@ async function host(command: Extract<z.infer<typeof hostCommand>, { type: "start
     );
     const { host } = running;
     const since = Date.now();
-    let savedStart = await rememberStart(release.id, first?.startedAt ?? since);
     let nextDiscovery = since + 30_000;
-    peers.start(
+    await peers.start(
       host,
-      savedStart,
-      first,
+      since,
+      command.initialPeer,
       (gossip) => {
         const now = Date.now();
         const hosts = gossip.hosts(now);
@@ -94,17 +87,13 @@ async function host(command: Extract<z.infer<typeof hostCommand>, { type: "start
             })
             .catch(() => {});
         }
-        if (gossip.startedAt < savedStart) {
-          savedStart = gossip.startedAt;
-          void rememberStart(release.id, savedStart).catch(() => {});
-        }
         if (replacing && hosts.length >= 3) lifetime.abort();
         emit({
           type: "hosting",
           since,
           filesServed,
           hosts: hosts.length + 1,
-          startedAt: savedStart,
+          startedAt: gossip.startedAt,
           origin: host.origin,
         });
       },
@@ -126,7 +115,7 @@ async function host(command: Extract<z.infer<typeof hostCommand>, { type: "start
   }
 }
 
-function useLocalWasm(wasm: Uint8Array<ArrayBuffer>, pageOrigin: string) {
+function useLocalWasm(wasm: ArrayBuffer, pageOrigin: string) {
   const originalFetch = globalThis.fetch.bind(globalThis);
   const wasmURL = new URL(WASM_PATH, pageOrigin).href;
   // serve the SDK's lazy WASM fetch from the verified copy, not the network.

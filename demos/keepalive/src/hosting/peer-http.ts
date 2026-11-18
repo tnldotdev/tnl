@@ -141,24 +141,21 @@ export function peerServer(
 
   return {
     fetch: async (request: Request) => app.fetch(request),
-    start(
+    async start(
       host: Host,
       startedAt: number,
-      first: GossipMessage | undefined,
+      initialPeer: Host | undefined,
       report: (gossip: Gossip) => void,
       replacing: () => boolean,
     ) {
       const peers = new Gossip(releaseID, host, startedAt);
       gossip = peers;
-      if (first !== undefined) {
-        peers.receive(first, Date.now());
-        // let the host that sent the copy learn about this one immediately.
-        void send(first.from, peers.message(Date.now()))
-          .then((reply) => {
-            if (reply !== undefined) peers.receive(reply, Date.now());
-          })
-          .catch(() => {});
+      if (initialPeer !== undefined) {
+        // a report from before startup doesn't tell us whether a host stayed up.
+        const reply = await send(initialPeer, peers.message(Date.now())).catch(() => undefined);
+        if (reply !== undefined && !reply.from.left) peers.receive(reply, Date.now());
       }
+      signal.throwIfAborted();
       const tick = () => {
         peers.maybeStart(Date.now(), replacing() ? TARGET + 1 : TARGET, () => {
           const next = waiting.values().next().value;
