@@ -62,7 +62,7 @@ tasks:
   keepalive:preview:
     desc: Preview the Keepalive page with Vite (no host connections)
     cmds:
-      - pnpm --filter @tnldotdev/keepalive-demo exec vite
+      - pnpm --filter @tnldotdev/keepalive exec vite
 
   keepalive:test:
     desc: Check the Keepalive proxy and host commands

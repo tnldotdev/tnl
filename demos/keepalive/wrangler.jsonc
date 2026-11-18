@@ -1,5 +1,5 @@
 {
-  "name": "tnl-keepalive-demo",
+  "name": "tnl-keepalive",
   "main": "dist/worker.mjs",
   "compatibility_date": "2026-11-18",
   "workers_dev": false,
