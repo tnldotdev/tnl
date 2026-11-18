@@ -15,8 +15,6 @@ from tnl._client import _Factory
 
 
 def test_root_exposes_only_project_bound_connections() -> None:
-    assert not hasattr(tnl, "connect")
-    assert not hasattr(tnl, "client")
     assert not hasattr(tnl, "Project")
     assert not hasattr(tnl, "ConnectionHandle")
 
@@ -44,24 +42,26 @@ def test_local_deployment_requires_no_credential_and_reuses_driver_bindings(
     monkeypatch.setattr(_deployments, "_command", command)
 
     async def run() -> None:
-        local = tnl.create_client(
-            project="acme/shop", services={"db": {"protocol": "postgres"}}
-        ).deployment("local")
-        connection = await local.connect("db")
-        assert isinstance(connection, tnl.LocalPostgresConnection)
-        assert connection.ssl is False
         created: list[object] = []
         closed: list[object] = []
 
         def create(value: _deployments.DeploymentConnection) -> object:
+            assert isinstance(value, tnl.LocalPostgresConnection)
+            assert value.port == 15432
             client = object()
             created.append(client)
             return client
 
-        database = local.client("db", create=create, close=closed.append)
-        assert await database() is await database()
-        assert len(created) == 1
-        await local.aclose()
+        async with tnl.deployment(
+            "local", project="acme/shop", services={"db": {"protocol": "postgres"}}
+        ) as local:
+            connection = await tnl.connect(local, "db")
+            assert isinstance(connection, tnl.LocalPostgresConnection)
+            assert connection.ssl is False
+            database = tnl.client(local, "db", create=create, close=closed.append)
+            assert await database() is await database()
+            assert len(created) == 1
+            assert not closed
         assert closed == created
         assert all(args[0] == "local" for args in calls)
 

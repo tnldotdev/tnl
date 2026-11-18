@@ -6,11 +6,125 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
 import tnl
-from tnl import _management_client, models
+from tnl import _control, _management_client, models
+
+
+def http_control(
+    monkeypatch: pytest.MonkeyPatch, reply: Callable[[httpx.Request], httpx.Response]
+) -> None:
+    real_client = httpx.AsyncClient
+
+    def client(*, timeout: int, trust_env: bool, follow_redirects: bool) -> httpx.AsyncClient:
+        assert timeout == 30 and not trust_env and not follow_redirects
+        return real_client(transport=httpx.MockTransport(reply))
+
+    monkeypatch.setattr(_control.httpx, "AsyncClient", client)
+
+
+def test_explicit_control_wire_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str]] = []
+    base = "/v1/projects/shop/deployments"
+    selected = base + "/production"
+    assert tnl.control().base_url == "https://control.tnl.dev"
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        path, method = request.url.path, request.method
+        calls.append((method, path))
+        assert request.url.host == "control.example"
+        assert request.headers["authorization"] == "Bearer explicit"
+        assert request.url.params["team_id"] == "tm_selected"
+        if path == base and method == "GET":
+            assert dict(request.url.params) == {
+                "team_id": "tm_selected",
+                "after": "cursor",
+                "limit": "1",
+            }
+            return httpx.Response(200, json={"deployments": [deployment()]})
+        if path == base and method == "POST":
+            assert request.headers["idempotency-key"] == "create-1"
+            assert request.headers["content-type"] == "application/json"
+            return httpx.Response(201, headers={"ETag": '"3"'}, json=deployment())
+        if path == selected and method == "PATCH":
+            assert request.headers["if-match"] == '"3"'
+            conflict = problem(412)["problem"]
+            return httpx.Response(
+                412, headers={"Content-Type": "application/problem+json"}, json=conflict
+            )
+        if path == selected and method == "GET":
+            return httpx.Response(200, headers={"ETag": '"3"'}, json=deployment())
+        if path == selected + "/publishers" and method == "GET":
+            return httpx.Response(200, json={"publishers": [publisher()]})
+        if path == selected + "/publishers/pub_selected" and method == "DELETE":
+            return httpx.Response(204)
+        assert path == selected and method == "DELETE"
+        assert request.headers["if-match"] == '"3"'
+        return httpx.Response(204)
+
+    http_control(monkeypatch, reply)
+    monkeypatch.setenv("TNL_TOKEN", "not-used")
+    control = tnl.control(auth="explicit", base_url="https://control.example")
+    assert "explicit" not in repr(control)
+    project = control.project("shop", team_id="tm_selected")
+
+    async def run() -> None:
+        result = await project.deployments.create(
+            {"name": "production", "targets": {"db": {"address": "db.internal:5432"}}},
+            idempotency_key="create-1",
+        )
+        assert result.etag == '"3"'
+        assert await project.deployments.get("production") == result
+        page = await project.deployments.list(after="cursor", limit=1)
+        assert page.deployments == [result.data]
+        with pytest.raises(tnl.ManagementError) as stale:
+            await project.deployments.update(
+                "production",
+                {"targets": {"db": {"address": "db.internal:5432"}}},
+                if_match=result.etag,
+            )
+        assert stale.value.status == 412
+        publishers = await project.publishers.list("production")
+        assert publishers.publishers[0].publisher_identity_id == "pub_selected"
+        await project.publishers.revoke("production", "pub_selected")
+        await project.deployments.delete("production", if_match=result.etag)
+
+    asyncio.run(run())
+    assert len(calls) == 7
+
+
+@pytest.mark.parametrize("case", ["redirect", "wrong status", "wrong ETag", "gzip", "large"])
+def test_explicit_control_rejects_unexpected_responses(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    calls: list[httpx.Request] = []
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if case == "redirect":
+            return httpx.Response(302, headers={"Location": "https://different.example/"})
+        if case == "wrong status":
+            return httpx.Response(201, headers={"ETag": '"3"'}, json=deployment())
+        if case == "wrong ETag":
+            return httpx.Response(200, headers={"ETag": '"4"'}, json=deployment())
+        if case == "gzip":
+            return httpx.Response(
+                200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(b"data")
+            )
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            stream=httpx.ByteStream(b" " * ((2 << 20) + 1)),
+        )
+
+    http_control(monkeypatch, reply)
+    project = tnl.control(auth="explicit").project("shop", team_id="tm_selected")
+    with pytest.raises(tnl.InvalidResponse):
+        asyncio.run(project.deployments.get("production"))
+    assert len(calls) == 1
 
 
 def deployment() -> dict[str, object]:

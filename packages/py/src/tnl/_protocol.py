@@ -27,8 +27,8 @@ class NativeUnavailable(TnlError):
 
 
 class InvalidResponse(TnlError):
-    def __init__(self) -> None:
-        super().__init__("sdk.response_invalid", "the local publisher returned an invalid response")
+    def __init__(self, message: str = "the local publisher returned an invalid response") -> None:
+        super().__init__("sdk.response_invalid", message)
 
 
 class PublicationCleanupFailed(TnlError):

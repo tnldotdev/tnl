@@ -30,7 +30,7 @@ from ._connections import (
     _text,
     _TLSConnection,
 )
-from ._management_client import Deployments, Management, Publishers
+from ._management_client import Deployments, NativeManagement, Publishers
 from ._protocol import TnlError, hostname, service_name
 from ._workload import capture_workload, uses_workload
 
@@ -543,7 +543,7 @@ class Client:
             raise TnlError("sdk.configuration_invalid", "select TEAM/PROJECT")
         self._project = project
         self._token = token if token is not None else os.environ.get("TNL_TOKEN")
-        management = Management(project, self._token)
+        management = NativeManagement(project, self._token)
         self.deployments = Deployments(management)
         self.publishers = Publishers(management)
         self._services: dict[str, Protocol] = {}
@@ -568,6 +568,33 @@ class Client:
 
     def deployment(self, name: str) -> Deployment:
         return Deployment(self._project, name, self._token, self._services)
+
+
+def deployment(
+    name: str,
+    *,
+    project: str,
+    services: Mapping[str, Mapping[str, Protocol]] | None = None,
+    token: str | None = None,
+) -> Deployment:
+    """select one deployment without opening a connector or starting a publication."""
+    return Client(project=project, services=services, token=token).deployment(name)
+
+
+async def connect(owner: Deployment, name: str) -> DeploymentConnection:
+    """connect to one service under the deployment's captured authority."""
+    return await owner.connect(name)
+
+
+def client[T](
+    owner: Deployment,
+    name: str,
+    *,
+    create: Callable[[DeploymentConnection], T | Awaitable[T]],
+    close: Callable[[T], None | Awaitable[None]],
+) -> ClientFactory[T]:
+    """scope a driver's creation and cleanup to one deployment service."""
+    return owner.client(name, create=create, close=close)
 
 
 def create_client(
