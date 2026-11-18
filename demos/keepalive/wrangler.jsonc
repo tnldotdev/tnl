@@ -1,0 +1,18 @@
+{
+  "name": "tnl-keepalive-demo",
+  "main": "dist/worker.mjs",
+  "compatibility_date": "2026-11-18",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "dist/site",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+  },
+  "vars": {
+    "SITE_ORIGIN": "https://keepthisalive.com",
+    "START_HOST": "start.keepthisalive.com",
+    "CONTROL_URL": "https://control.tnl.dev",
+  },
+}

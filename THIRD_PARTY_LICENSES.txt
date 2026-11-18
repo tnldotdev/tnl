@@ -2,7 +2,8 @@ tnl third-party software licenses
 
 This file contains license terms and notices for third-party code and assets
 distributed in the tnl and tnld release binaries and the TypeScript and Python
-SDKs. Native binaries target macOS and Linux, on amd64 and arm64. Dependencies
+SDKs, as well as the Keepalive demo. Native binaries target macOS and Linux,
+on amd64 and arm64. Dependencies
 are listed by module or package, with their versions and upstream sources.
 Platform-specific dependencies may appear in only some
 binaries. The Go runtime and standard library are included below.
@@ -23,6 +24,19 @@ https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
 The embedded catalog records the retrieved source SHA-256 and each regional
 bundle's SHA-256; preview and beta certificates are excluded. No private keys
 are included. The tnl-authored root selection library uses the project license.
+
+keepalive demo assets
+
+--------------------------------------------------------------------------------
+Package: @fontsource-variable/fira-code
+Version: 5.3.0
+License: OFL-1.1
+Source: https://www.npmjs.com/package/@fontsource-variable/fira-code/v/5.3.0
+
+Copyright 2014-2020 The Fira Code Project Authors (https://github.com/tonsky/FiraCode)
+
+The demo includes the full license from the package in its stylesheet.
+License text: https://openfontlicense.org/open-font-license-official-text/
 
 generated http client support
 

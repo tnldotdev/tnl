@@ -138,6 +138,28 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
 
+  demos/keepalive:
+    dependencies:
+      '@fontsource-variable/fira-code':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@tnldotdev/tnl':
+        specifier: workspace:*
+        version: link:../../packages/ts
+      hono:
+        specifier: 4.13.16
+        version: 4.13.16
+      preact:
+        specifier: 11.0.1
+        version: 11.0.1
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      vite:
+        specifier: 8.3.4
+        version: 8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.1)
+
   packages/ts:
     dependencies:
       '@opentelemetry/api':
@@ -670,6 +692,9 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
+
+  '@fontsource-variable/fira-code@5.3.0':
+    resolution: {integrity: sha512-ZhvHeknlicraKVSJBa1NrJnXDVByUkC407zwgELYfmnx3p9g8vwIPfQCxx8YD3K7dAeCdLuHJOHlpMfRsIcApQ==}
 
   '@hey-api/codegen-core@0.9.1':
     resolution: {integrity: sha512-s97jL1dgTMuiMHv2BZ1X4Tgd99Mf9GOvGdNqNcGwIMmnR+PgYNoraj4Zvp134MKsNCap/m7k0r0vKKnl56pj4w==}
@@ -3192,6 +3217,8 @@ snapshots:
       '@floating-ui/utils': 0.2.12
 
   '@floating-ui/utils@0.2.12': {}
+
+  '@fontsource-variable/fira-code@5.3.0': {}
 
   '@hey-api/codegen-core@0.9.1(magicast@0.5.5)':
     dependencies:

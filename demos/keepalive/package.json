@@ -1,0 +1,15 @@
+{
+  "name": "@tnldotdev/keepalive-demo",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@fontsource-variable/fira-code": "5.3.0",
+    "@tnldotdev/tnl": "workspace:*",
+    "hono": "4.13.16",
+    "preact": "11.0.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "vite": "8.3.4"
+  }
+}
