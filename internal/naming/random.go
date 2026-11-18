@@ -10,8 +10,8 @@ import (
 type HostnameKind string
 
 const (
-	ServiceHostnameKind    HostnameKind = "s"
-	PublisherHostnameKind  HostnameKind = "p"
+	ServiceHostnameKind   HostnameKind = "s"
+	PublisherHostnameKind HostnameKind = "p"
 	// two bytes for the kind prefix, 26 for the label, and one separator.
 	MaxGeneratedHostnameParentBytes = MaxHostnameBytes - 29
 )
