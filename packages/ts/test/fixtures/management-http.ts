@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { stdin, stdout } from "node:process";
 import * as z from "zod";
 import {
-  createControlClient,
+  control,
   createDeployment,
   deleteDeployment,
   getDeployment,
@@ -27,13 +27,13 @@ const input = z
     publisher_id: z.string().optional(),
   })
   .parse(JSON.parse(Buffer.concat(parts).toString("utf8")));
-const client = createControlClient({ baseUrl: input.server, auth: input.token });
+const client = control({ baseUrl: input.server, auth: input.token });
 const query = { team_id: input.team_id };
 const project = { project_key: input.project_key };
 const options = { client, query, throwOnError: true as const };
 const requestOptions = {
   ...options,
-  client: createControlClient({ baseUrl: input.server }),
+  client: control({ baseUrl: input.server }),
   headers: [["Authorization", `Bearer ${input.token}`]] satisfies [string, string][],
 };
 const originalRequestHeaders = structuredClone(requestOptions.headers);

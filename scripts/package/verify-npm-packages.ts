@@ -78,7 +78,7 @@ for (const manager of ["npm", "pnpm"]) {
         for (const value of [tnl.prepare, deployment, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
         assert.equal('open' in tnl, false);
        assert.equal('connect' in tnl || 'client' in tnl, false);
-       for (const name of ['createControlClient','createDeployment','listDeployments','getDeployment','updateDeployment','deleteDeployment','createPublisherEnrollment','listPublishers','getPublisher','revokePublisher']) assert.equal(typeof control[name], 'function');
+       for (const name of ['control','createDeployment','listDeployments','getDeployment','updateDeployment','deleteDeployment','createPublisherEnrollment','listPublishers','getPublisher','revokePublisher']) assert.equal(typeof control[name], 'function');
        for (const root of [{tnl, TnlError, deployment, client, publish}, cjs]) {
           const deployment = root.deployment('local', {project:'team/project', services:{database:{protocol:'postgres'}}});
           assert.equal(typeof root.publish, 'function');

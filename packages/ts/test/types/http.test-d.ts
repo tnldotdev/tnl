@@ -1,6 +1,6 @@
 import { assertType, test } from "vitest";
 import {
-  createControlClient,
+  control,
   createDeployment,
   deleteDeployment,
   getDeployment,
@@ -16,7 +16,7 @@ import {
 } from "@tnldotdev/tnl/control";
 
 test("HTTP operations retain canonical inputs and typed results", async () => {
-  const client = createControlClient({
+  const client = control({
     baseUrl: "https://control.example.test",
     auth: "scoped-token",
   });

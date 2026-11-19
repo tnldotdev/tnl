@@ -3,8 +3,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import * as http from "@tnldotdev/tnl/control";
+import { client as generatedClient } from "../../src/internal/management/client.gen.js";
 import {
-  createControlClient,
+  control,
   createDeployment,
   deleteDeployment,
   getDeployment,
@@ -61,8 +62,8 @@ function mockTransport(implementation: FetchCall) {
 describe("HTTP management entry point", () => {
   it("exports only transport configuration and the nine approved operations", () => {
     expect(Object.keys(http).sort()).toEqual([
+      "control",
       "createConfig",
-      "createControlClient",
       "createDeployment",
       "createPublisherEnrollment",
       "deleteDeployment",
@@ -73,6 +74,17 @@ describe("HTTP management entry point", () => {
       "revokePublisher",
       "updateDeployment",
     ]);
+  });
+
+  it("uses the hosted origin for new clients and the generated client", async () => {
+    const transport = mockTransport(async (input) => {
+      expect(new URL(fetchRequest(input).url).origin).toBe("https://control.tnl.dev");
+      return json({ deployments: [] });
+    });
+    const options = { path: project, query, throwOnError: true as const, fetch: transport };
+    await listDeployments({ ...options, client: generatedClient });
+    await listDeployments({ ...options, client: control() });
+    expect(transport).toHaveBeenCalledTimes(2);
   });
 
   it("imports without any Node built-ins or native process dependencies", async () => {
@@ -98,8 +110,8 @@ describe("HTTP management entry point", () => {
     const clientFetch = mockTransport(async () => json({ deployments: [], next_cursor: "client" }));
     const globalFetch = mockTransport(async () => json({ deployments: [], next_cursor: "global" }));
     const baseUrl = "https://control.example.test";
-    const client = createControlClient({ baseUrl, fetch: clientFetch });
-    const fallback = createControlClient({ baseUrl });
+    const client = control({ baseUrl, fetch: clientFetch });
+    const fallback = control({ baseUrl });
     const options = { path: project, query, throwOnError: true as const };
 
     vi.stubGlobal("fetch", globalFetch);
@@ -148,7 +160,7 @@ describe("HTTP management entry point", () => {
         return json({ deployments: [deployment], next_cursor: "deployment-next" });
       return json(deployment, request.method === "POST" ? 201 : 200);
     });
-    const client = createControlClient({
+    const client = control({
       baseUrl: "https://control.example.test",
       auth: "scoped-token",
       fetch: transport,
@@ -243,7 +255,7 @@ describe("HTTP management entry point", () => {
         request_id: "request-test",
       };
       const transport = mockTransport(async () => json(problem, status));
-      const client = createControlClient({
+      const client = control({
         baseUrl: "https://control.example.test",
         fetch: transport,
       });
@@ -295,7 +307,7 @@ describe("HTTP management entry point", () => {
         }
         return json(deployment, request.method === "POST" ? 201 : 200);
       });
-      const client = createControlClient({
+      const client = control({
         baseUrl: "https://control.example.test",
         fetch: transport,
       });
@@ -365,7 +377,7 @@ describe("HTTP management entry point", () => {
     { ...deployment, revision: "1" },
     { ...deployment, services: { db: { id: serviceId, protocol: "ssh", trust_revision: 1 } } },
   ])("rejects malformed successful responses", async (invalid) => {
-    const client = createControlClient({
+    const client = control({
       baseUrl: "https://control.example.test",
       fetch: mockTransport(async () => json(invalid)),
     });
@@ -381,12 +393,12 @@ describe("HTTP management entry point", () => {
       seen.push(`${new URL(request.url).host}:${request.headers.get("authorization")}`);
       return json(deployment);
     });
-    const first = createControlClient({
+    const first = control({
       baseUrl: "https://first.example.test",
       auth: "first",
       fetch: transport,
     });
-    const second = createControlClient({
+    const second = control({
       baseUrl: "https://second.example.test",
       auth: "second",
       fetch: transport,
@@ -412,7 +424,7 @@ describe("HTTP management entry point", () => {
       expect(request.signal.aborted).toBe(true);
       throw reason;
     });
-    const client = createControlClient({
+    const client = control({
       baseUrl: "https://control.example.test",
       fetch: transport,
     });

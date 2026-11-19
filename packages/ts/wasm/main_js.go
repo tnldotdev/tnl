@@ -12,6 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -120,6 +121,8 @@ func safeError(err error) js.Value {
 		code = "sdk.client_capacity"
 	case errors.Is(err, auth.ErrDeploymentCredential):
 		code = "sdk.authentication_required"
+	case errors.Is(err, workload.ErrAssertionUnavailable):
+		code = "sdk.workload_assertion_unavailable"
 	default:
 		if reason, _, ok := failure.Describe(err); ok && reason == failure.Authentication {
 			code = "sdk.authentication_required"

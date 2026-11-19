@@ -1,7 +1,7 @@
 import { client, connect, deployment } from "@tnldotdev/tnl/browser";
 import { fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
-import { runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { runPortableIsolation, runPortableSmoke, runPortableWorkload } from "./smoke.ts";
 import { PortableSmokeError } from "./errors.ts";
 
 const runtime = { client, connect, deployment };
@@ -21,7 +21,8 @@ export async function smoke(input: unknown) {
   const fixture = fixtureSchema.parse(input);
   installFixtureHost(fixture);
   try {
-    return await runPortableSmoke(runtime, fixture);
+    const report = await runPortableSmoke(runtime, fixture);
+    return { ...report, ...(await runPortableWorkload(runtime, fixture)) };
   } catch (error) {
     throw new Error(JSON.stringify(failure(error)));
   }

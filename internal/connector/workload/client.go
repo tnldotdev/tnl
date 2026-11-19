@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -329,6 +330,27 @@ func (c *Client) SelectServiceRun(ctx context.Context, service string) (controlv
 		return controlv1.ServiceSelection{}, err
 	}
 	return c.control.SelectWorkloadServiceRun(ctx, r.Credential, service)
+}
+
+// SelectDeploymentServiceRun checks the requested deployment binding as well
+// as workload authority over that binding. a matching short name is not enough.
+func (c *Client) SelectDeploymentServiceRun(ctx context.Context, deployment, name string) (controlv1.ServiceSelection, error) {
+	r, err := c.Session()
+	if err != nil {
+		return controlv1.ServiceSelection{}, err
+	}
+	source, err := json.Marshal(controlv1.VisitorTokenWorkloadSource{Kind: controlv1.VisitorTokenWorkload, Credential: r.Credential})
+	if err != nil {
+		return controlv1.ServiceSelection{}, err
+	}
+	selected, err := c.control.SelectDeploymentServiceRun(ctx, r.TeamId, r.ProjectKey, deployment, name, source)
+	if err != nil {
+		return controlv1.ServiceSelection{}, err
+	}
+	if !slices.Contains(r.ServiceIds, selected.ServiceId) || !visitorsubject.Same(r.Subject, selected.Subject) {
+		return controlv1.ServiceSelection{}, invalidSession()
+	}
+	return selected, nil
 }
 func (c *Client) ServiceClientCertificate(ctx context.Context, service string) (controlv1.ServiceClientCertificate, error) {
 	r, err := c.Session()
