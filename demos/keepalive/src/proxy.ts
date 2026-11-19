@@ -39,7 +39,7 @@ export function createProxy(release: Release, fetchHost = fetch) {
         const response = await fetchHost(upstream, {
           cache: "no-store",
           credentials: "omit",
-          redirect: "error",
+          redirect: "manual",
           signal,
         });
         const checked = await check(response, signal);
