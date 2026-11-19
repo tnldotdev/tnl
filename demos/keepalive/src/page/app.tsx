@@ -278,8 +278,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         {finished !== undefined && <p>{pluralRequests(finished)} handled</p>}
         {!hosting && hosts > 0 && (
           <p>
-            about {visitors} {visitors === 1 ? "tab" : "tabs"} · {hosts}{" "}
-            {hosts === 1 ? "host" : "hosts"}
+            ~{visitors} {visitors === 1 ? "tab" : "tabs"} · {hosts} {hosts === 1 ? "host" : "hosts"}
           </p>
         )}
         <Hosts
@@ -304,7 +303,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             stop
           </button>
         )}
-        {!bootstrap && (lifetime === undefined || host?.type === "waiting") && (
+        {host?.type === "waiting" && (
           <button
             class="text-action"
             type="button"

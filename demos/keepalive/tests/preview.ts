@@ -274,17 +274,24 @@ try {
     const stats = () => page.evaluate(() => (window as FixtureWindow).stats);
     const hidden = (value: boolean) =>
       page.evaluate((value) => (window as FixtureWindow).previewHide(value), value);
-    if (attention === "muted") {
-      await page.getByRole("button", { name: "sound: on" }).click();
-      await page.reload();
-      await page.getByRole("button", { name: "sound: off" }).waitFor();
-    }
-    if (mode !== "visitor")
-      await page
-        .getByRole("button", { name: bootstrap ? "start hosting" : "i'll keep it alive" })
-        .click();
+    const startHosting = page.getByRole("button", {
+      name: bootstrap ? "start hosting" : "i'll keep it alive",
+    });
+    const soundToggle = page.getByRole("button", { name: /^sound:/ });
+    await startHosting.waitFor();
+    assert.equal(await soundToggle.count(), 0);
+    if (mode !== "visitor") await startHosting.click();
     if (attention !== undefined) {
       await status.getByText("Waiting to host…").waitFor();
+      if (attention === "muted") {
+        await page.getByRole("button", { name: "sound: on" }).click();
+        await page.getByRole("button", { name: "sound: off" }).waitFor();
+        await page.reload();
+        await startHosting.waitFor();
+        assert.equal(await soundToggle.count(), 0);
+        await startHosting.click();
+        await page.getByRole("button", { name: "sound: off" }).waitFor();
+      }
       assert.equal(await warns(), false);
       assert.equal((await stats()).locks, 0);
       if (attention === "background")
@@ -303,6 +310,7 @@ try {
       unavailable: "Hosting isn't available right now. Try again later.",
     };
     await status.getByText(messages[mode], { exact: true }).waitFor();
+    assert.equal(await soundToggle.count(), mode === "waiting" ? 1 : 0);
     if (mode === "download")
       await page
         .getByRole("progressbar")
