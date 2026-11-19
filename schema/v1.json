@@ -3210,12 +3210,12 @@
         "traffic_default_connections": {
           "type": "integer",
           "description": "Default concurrent visitor connections per service run on each ingress process.",
-          "default": 32
+          "default": 1024
         },
         "traffic_default_rate": {
           "type": "integer",
           "description": "Default new visitor connections per traffic rate period.",
-          "default": 20
+          "default": 1000
         },
         "traffic_default_rate_per": {
           "type": "string",
@@ -3225,17 +3225,17 @@
         "traffic_default_burst": {
           "type": "integer",
           "description": "Default new visitor connection burst.",
-          "default": 40
+          "default": 2000
         },
         "traffic_default_upload_bytes": {
           "type": "integer",
           "description": "Default encrypted visitor upload bytes per second.",
-          "default": 8388608
+          "default": 134217728
         },
         "traffic_default_download_bytes": {
           "type": "integer",
           "description": "Default encrypted visitor download bytes per second.",
-          "default": 16777216
+          "default": 268435456
         },
         "traffic_default_total_connections": {
           "type": "integer",
@@ -3255,12 +3255,12 @@
         "traffic_max_connections": {
           "type": "integer",
           "description": "Maximum selected concurrent visitor connections per service run.",
-          "default": 128
+          "default": 4096
         },
         "traffic_max_rate": {
           "type": "integer",
           "description": "Maximum selected new visitor connections per maximum traffic rate period.",
-          "default": 100
+          "default": 10000
         },
         "traffic_max_rate_per": {
           "type": "string",
@@ -3270,17 +3270,17 @@
         "traffic_max_burst": {
           "type": "integer",
           "description": "Maximum selected visitor connection burst.",
-          "default": 200
+          "default": 20000
         },
         "traffic_max_upload_bytes": {
           "type": "integer",
           "description": "Maximum selected encrypted visitor upload bytes per second.",
-          "default": 67108864
+          "default": 1073741824
         },
         "traffic_max_download_bytes": {
           "type": "integer",
           "description": "Maximum selected encrypted visitor download bytes per second.",
-          "default": 134217728
+          "default": 2147483648
         },
         "traffic_max_total_connections": {
           "type": "integer",
@@ -3300,52 +3300,52 @@
         "traffic_source_connections": {
           "type": "integer",
           "description": "Concurrent visitor connections per IPv4 address or IPv6 /64 on each ingress process.",
-          "default": 64
+          "default": 4096
         },
         "traffic_source_rate": {
           "type": "integer",
           "description": "Visitor connection attempts per source per second.",
-          "default": 30
+          "default": 2000
         },
         "traffic_source_burst": {
           "type": "integer",
           "description": "Visitor connection attempt burst per source.",
-          "default": 60
+          "default": 4000
         },
         "traffic_process_rate": {
           "type": "integer",
           "description": "Visitor connection attempts per ingress process per second.",
-          "default": 200
+          "default": 10000
         },
         "traffic_process_burst": {
           "type": "integer",
           "description": "Visitor connection attempt burst per ingress process.",
-          "default": 400
+          "default": 20000
         },
         "traffic_process_upload_bytes": {
           "type": "integer",
           "description": "Encrypted visitor upload bytes per second per ingress process.",
-          "default": 268435456
+          "default": 2147483648
         },
         "traffic_process_download_bytes": {
           "type": "integer",
           "description": "Encrypted visitor download bytes per second per ingress process.",
-          "default": 268435456
+          "default": 2147483648
         },
         "pending_connection_limit": {
           "type": "integer",
           "description": "Concurrent visitors awaiting authorization per ingress process.",
-          "default": 64
+          "default": 4096
         },
         "pending_service_connection_limit": {
           "type": "integer",
           "description": "Concurrent visitors awaiting authorization per service run.",
-          "default": 8
+          "default": 256
         },
         "pending_source_connection_limit": {
           "type": "integer",
           "description": "Concurrent visitors awaiting authorization per source.",
-          "default": 4
+          "default": 128
         },
         "pending_timeout": {
           "type": "string",
@@ -3365,22 +3365,22 @@
         "pending_service_rate": {
           "type": "integer",
           "description": "Pending visitor attempts per service run per second.",
-          "default": 5
+          "default": 1000
         },
         "pending_service_burst": {
           "type": "integer",
           "description": "Pending visitor attempt burst per service run.",
-          "default": 10
+          "default": 2000
         },
         "pending_source_rate": {
           "type": "integer",
           "description": "Pending visitor attempts per source per second.",
-          "default": 3
+          "default": 2000
         },
         "pending_source_burst": {
           "type": "integer",
           "description": "Pending visitor attempt burst per source.",
-          "default": 6
+          "default": 4000
         },
         "ingress_id": {
           "type": "string",
