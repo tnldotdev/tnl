@@ -2935,6 +2935,13 @@
           "description": "Private Prometheus listen address; empty disables metrics.",
           "default": "127.0.0.1:9090"
         },
+        "project_publisher_limit": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object",
+          "description": "Override the publisher identity limit for a project (TEAM_ID/PROJECT_KEY=LIMIT). Defaults to 256 per project."
+        },
         "control_listen": {
           "type": "string",
           "description": "Private HTTP backend for the deployment's control HTTPS proxy."

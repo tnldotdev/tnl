@@ -41,6 +41,7 @@ func (d *daemon) startControlWorkers(
 		return err
 	}
 	d.database = database
+	database.ConfigureProjectPublisherLimits(cfg.ProjectPublisherLimits)
 	if err := database.ConfigureControlOutageTolerance(cfg.ControlOutageTolerance); err != nil {
 		return err
 	}

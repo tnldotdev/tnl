@@ -90,4 +90,13 @@ func TestIntegrationPublisherEnrollmentFixedBounds(t *testing.T) {
 	if _, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), sibling.Key, next.public, request.Now); err != nil {
 		t.Fatal("revocation did not free project capacity for another enrollment key", err)
 	}
+	d.ConfigureProjectPublisherLimits(map[string]int{request.TeamID + "/" + request.ProjectKey: 257})
+	extra := makeAttempt()
+	if _, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), sibling.Key, extra.public, request.Now); err != nil {
+		t.Fatal("the project override did not allow a 257th publisher", err)
+	}
+	overLimit := makeAttempt()
+	if _, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), sibling.Key, overLimit.public, request.Now); !errors.Is(err, ErrDeploymentPublisher) {
+		t.Fatalf("accepted a publisher beyond the project override: %v", err)
+	}
 }
