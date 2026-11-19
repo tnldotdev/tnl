@@ -1530,8 +1530,9 @@ CREATE TABLE control.service_runs (
         AND run_hostname LIKE 'p-%.'||run_alias_parent),
     require_post_quantum boolean NOT NULL DEFAULT false,
     certificate_issuance_id text REFERENCES control.acme_orders(id) ON DELETE RESTRICT,
+    supplied_certificate_sha256 text CHECK (supplied_certificate_sha256 ~ '^[a-f0-9]{64}$'),
     certificate_expires_at timestamptz,
-    CHECK ((certificate_issuance_id IS NULL)=(certificate_expires_at IS NULL)),
+    CHECK ((certificate_issuance_id IS NOT NULL)::integer + (supplied_certificate_sha256 IS NOT NULL)::integer = (certificate_expires_at IS NOT NULL)::integer),
     created_at timestamptz NOT NULL, publisher_expires_at timestamptz NOT NULL CHECK (publisher_expires_at > created_at),
     serving_observed_at timestamptz NOT NULL,
     serving_until timestamptz NOT NULL CHECK (serving_until > serving_observed_at),
@@ -2027,6 +2028,29 @@ $$;
 -- +goose StatementEnd
 CREATE TRIGGER protect_service_source_owner BEFORE UPDATE OR DELETE ON control.service_source_owners
 FOR EACH ROW EXECUTE FUNCTION control.protect_service_source_owner();
+-- retained installation facts fence stale replacement and name reuse. no private
+-- key or certificate PEM is stored by control for supplied visitor certificates.
+CREATE TABLE control.service_supplied_certificates (
+    service_run_id text NOT NULL REFERENCES control.service_runs(id) ON DELETE RESTRICT,
+    certificate_sha256 text NOT NULL CHECK (certificate_sha256 ~ '^[a-f0-9]{64}$'),
+    certificate_domain_id text NOT NULL REFERENCES control.domains(id) ON DELETE RESTRICT,
+    not_after timestamptz NOT NULL,
+    installed_at timestamptz NOT NULL,
+    PRIMARY KEY(service_run_id,certificate_sha256),
+    CHECK (not_after>installed_at)
+);
+CREATE INDEX service_supplied_certificates_domain ON control.service_supplied_certificates(certificate_domain_id,not_after);
+ALTER TABLE control.service_runs ADD CONSTRAINT service_run_supplied_certificate
+    FOREIGN KEY(id,supplied_certificate_sha256)
+    REFERENCES control.service_supplied_certificates(service_run_id,certificate_sha256) ON DELETE RESTRICT;
+-- +goose StatementBegin
+CREATE FUNCTION control.service_run_certificate_retention(run_id text)
+RETURNS timestamptz LANGUAGE sql STABLE AS $$
+    SELECT GREATEST(run.certificate_expires_at,
+        (SELECT max(not_after) FROM control.service_supplied_certificates WHERE service_run_id=run.id))
+    FROM control.service_runs run WHERE run.id=run_id;
+$$;
+-- +goose StatementEnd
 -- current alias approval is shared by policy preparation, browser handoffs, and
 -- token issuance. callers separately enforce their run state and deadline.
 -- +goose StatementBegin
@@ -2050,7 +2074,7 @@ CREATE FUNCTION control.retire_service_run_alias() RETURNS trigger LANGUAGE plpg
 BEGIN
     IF OLD.closed_at IS NULL AND NEW.closed_at IS NOT NULL THEN
         UPDATE control.service_endpoints SET retired_at=NEW.closed_at,
-            reusable_after=GREATEST(NEW.closed_at+interval '7 days',COALESCE(NEW.certificate_expires_at,NEW.closed_at)),
+            reusable_after=GREATEST(NEW.closed_at+interval '7 days',COALESCE(control.service_run_certificate_retention(NEW.id),NEW.closed_at)),
             public=false,
             dns_state=CASE WHEN dns_state IN('unmanaged','removed') THEN 'removed' ELSE 'removing' END,
             dns_available_at=CASE WHEN dns_state IN('unmanaged','removed') THEN NULL ELSE NEW.closed_at END,
@@ -2126,7 +2150,11 @@ $$;
 -- +goose StatementBegin
 CREATE FUNCTION control.retire_service_endpoints(service text,keep text,retired timestamptz) RETURNS void LANGUAGE sql AS $$
     UPDATE control.service_endpoints endpoint SET retired_at=COALESCE(retired_at,retired),
-        reusable_after=GREATEST(retired+interval '7 days',COALESCE((SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=endpoint.namespace),retired)),
+        reusable_after=GREATEST(retired+interval '7 days',COALESCE((SELECT max(not_after) FROM control.acme_orders WHERE certificate_scope=endpoint.namespace),retired),
+            COALESCE((SELECT max(supplied.not_after) FROM control.service_supplied_certificates supplied
+                JOIN control.service_runs run ON run.id=supplied.service_run_id
+                WHERE run.service_id=endpoint.service_id AND
+                    (endpoint.service_run_id IS NULL AND run.certificate_hostname=endpoint.hostname OR endpoint.service_run_id=run.id)),retired)),
         dns_state=CASE WHEN dns_state IN('unmanaged','removed') THEN 'removed' ELSE 'removing' END,
         dns_available_at=CASE WHEN dns_state IN('unmanaged','removed') THEN NULL ELSE retired END,
         dns_revision=dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL
@@ -2158,7 +2186,11 @@ CREATE FUNCTION control.service_namespace_reusable(scope text,observed timestamp
           OR EXISTS(SELECT 1 FROM control.service_endpoints endpoint
               WHERE endpoint.hostname=ANY(issuance.certificate_identifiers) AND endpoint.namespace=scope))
         AND(issuance.not_after>observed OR issuance.state NOT IN('failed','canceled','installed','waiting_for_install') OR issuance.finalization_possible AND issuance.not_after IS NULL
-          OR EXISTS(SELECT 1 FROM control.acme_authorizations auth WHERE auth.order_id=issuance.id AND(auth.state IN('presenting','presented','validating','valid','cleaning') OR auth.presented_at IS NOT NULL AND auth.cleanup_completed_at IS NULL))));
+          OR EXISTS(SELECT 1 FROM control.acme_authorizations auth WHERE auth.order_id=issuance.id AND(auth.state IN('presenting','presented','validating','valid','cleaning') OR auth.presented_at IS NOT NULL AND auth.cleanup_completed_at IS NULL))))
+      AND NOT EXISTS(SELECT 1 FROM control.service_supplied_certificates supplied
+        JOIN control.service_runs run ON run.id=supplied.service_run_id
+        WHERE supplied.not_after>observed AND (run.certificate_scope=scope OR run.certificate_namespace=scope OR run.run_hostname=scope
+          OR EXISTS(SELECT 1 FROM control.service_endpoints endpoint WHERE endpoint.hostname=run.certificate_hostname AND endpoint.namespace=scope)));
 $$;
 -- +goose StatementEnd
 CREATE TABLE control.deployment_names (
@@ -2485,8 +2517,14 @@ BEGIN
     IF publisher IS NOT NULL THEN
         -- serialize the per-identity checkpoint capacity check with its owner.
         PERFORM id FROM control.publisher_identities WHERE id=publisher FOR UPDATE;
-        plan := jsonb_build_object('cache_key',NEW.certificate_cache_key,'scope',NEW.certificate_scope,
-            'identifiers',NEW.certificate_identifiers,'challenge_method',NEW.challenge_method);
+        IF TG_TABLE_NAME='service_supplied_certificates' THEN
+            SELECT jsonb_build_object('cache_key',certificate_cache_key,'scope',certificate_scope,
+                'identifiers',certificate_identifiers,'challenge_method','dns-01') INTO plan
+                FROM control.service_runs WHERE id=NEW.service_run_id;
+        ELSE
+            plan := jsonb_build_object('cache_key',NEW.certificate_cache_key,'scope',NEW.certificate_scope,
+                'identifiers',NEW.certificate_identifiers,'challenge_method',NEW.challenge_method);
+        END IF;
         digest := encode(sha256(convert_to(plan::text,'UTF8')),'hex');
         IF NOT EXISTS (SELECT 1 FROM control.publisher_certificate_checkpoints WHERE publisher_identity_id=publisher AND plan_digest=digest) THEN
             IF (SELECT count(*) FROM control.publisher_certificate_checkpoints WHERE publisher_identity_id=publisher)>=1024 THEN
@@ -2500,6 +2538,7 @@ END;
 $$;
 -- +goose StatementEnd
 CREATE TRIGGER require_publisher_certificate_state AFTER INSERT ON control.acme_orders FOR EACH ROW EXECUTE FUNCTION control.require_publisher_certificate_state();
+CREATE TRIGGER require_supplied_publisher_certificate_state AFTER INSERT ON control.service_supplied_certificates FOR EACH ROW EXECUTE FUNCTION control.require_publisher_certificate_state();
 
 -- service audit: immutable allowlisted facts, independent of live service rows.
 -- no credentials, row snapshots or arbitrary event metadata enter this table.

@@ -30,6 +30,7 @@ type Server struct {
 	RegisterContext     func(context.Context, publisherprotocol.Registration) error
 	Acquire             func(context.Context, publisherprotocol.Lease) (publisherprotocol.Registration, error)
 	Invocation          func(context.Context, publisherprotocol.Invocation) (publisherprotocol.Registration, error)
+	RenewCertificate    func(publisherprotocol.Registration) error
 	Check               func(context.Context, []string) (publisherapp.Snapshot, error)
 	AppService          func(string) bool
 	ConfigurationDigest func() (string, error)
@@ -171,6 +172,10 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			var err error
+			if request.Certificate != nil && (operation != "renew" || grant.Scope != "invocation" || s.RenewCertificate == nil) {
+				Problem(w, publisherprotocol.ErrForbidden)
+				return
+			}
 			if request.ShutdownDeadline != nil {
 				if operation != "unregister" || request.ShutdownDeadline.IsZero() {
 					Problem(w, errors.New("shutdown deadline requires unregister"))
@@ -196,6 +201,9 @@ func (s *Server) Handler() http.Handler {
 				}
 			case "renew":
 				err = s.Manager.RenewTarget(request.RegistrationID, request.Owner, request.Target)
+				if err == nil && request.Certificate != nil {
+					err = s.RenewCertificate(request)
+				}
 			case "unregister":
 				err = s.Manager.UnregisterTarget(request.RegistrationID, request.Owner, request.Target)
 			}

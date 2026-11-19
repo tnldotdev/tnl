@@ -47,6 +47,7 @@ func portableCORSRouter(mux *http.ServeMux) *serverhttp.CredentialCORSRouter {
 		"POST /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances":                   idempotent,
 		"GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}":      bearer,
 		"POST /v1/services/{service_id}/runs/{service_run_id}/certificate-installed":                   source,
+		"POST /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed":          source,
 		"POST /v1/visitor-policy":                                                                      source,
 		"GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs":                     bearer,
 		"POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery": source,

@@ -1,4 +1,11 @@
 schemas:
+  SuppliedServiceCertificateMaterial:
+    type: object
+    additionalProperties: false
+    required: [certificate_pem, private_key_pem]
+    properties:
+      certificate_pem: { type: string, minLength: 1, maxLength: 131072 }
+      private_key_pem: { type: string, minLength: 1, maxLength: 16384 }
   Registration:
     type: object
     additionalProperties: false
@@ -8,6 +15,9 @@ schemas:
       registration_id: { type: string, maxLength: 128, x-go-name: RegistrationID }
       owner: { type: string, pattern: "^[a-f0-9]{32}$" }
       target: { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
+      certificate:
+        $ref: "../openapi.yaml#/components/schemas/SuppliedServiceCertificateMaterial"
+        description: Private replacement material; accepted only on renewal of an invocation that selected supplied certificates at registration.
       shutdown_deadline:
         type: string
         format: date-time
@@ -36,6 +46,8 @@ schemas:
       owner: { type: string, pattern: "^[a-f0-9]{32}$" }
       pid: { type: integer, minimum: 1 }
       target: { type: string, maxLength: 4096 }
+      certificate:
+        $ref: "../openapi.yaml#/components/schemas/SuppliedServiceCertificateMaterial"
       server_url: { type: string, maxLength: 4096 }
       deployment:
         type: object

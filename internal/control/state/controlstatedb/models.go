@@ -1182,6 +1182,7 @@ type ControlServiceRun struct {
 	RunAliasParent             string
 	RequirePostQuantum         bool
 	CertificateIssuanceID      pgtype.Text
+	SuppliedCertificateSha256  pgtype.Text
 	CertificateExpiresAt       pgtype.Timestamptz
 	CreatedAt                  pgtype.Timestamptz
 	PublisherExpiresAt         pgtype.Timestamptz
@@ -1199,6 +1200,14 @@ type ControlServiceSourceOwner struct {
 	MembershipID   pgtype.Text
 	OwnerTeamID    pgtype.Text
 	Local          bool
+}
+
+type ControlServiceSuppliedCertificate struct {
+	ServiceRunID        string
+	CertificateSha256   string
+	CertificateDomainID string
+	NotAfter            pgtype.Timestamptz
+	InstalledAt         pgtype.Timestamptz
 }
 
 type ControlServiceVisitorCapacity struct {

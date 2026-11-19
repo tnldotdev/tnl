@@ -2,6 +2,7 @@ import type { ServiceProtocol } from "../project/runtime.js";
 import type { TnlFetch } from "../../project.js";
 import type { PublisherStorageHost } from "../portable/storage-host.js";
 import type { FetchHandler } from "../publisher/fetch_types.js";
+import type { ServiceCertificate } from "../publication_certificate.js";
 
 // this is a binding boundary, not a second tunnel or credential protocol. go
 // validates credentials and owns service selection, admission, tls, and renewal.
@@ -51,6 +52,7 @@ export interface WasmDeployment {
 }
 
 export interface WasmPublisherHost {
+  readonly certificate?: (signal: AbortSignal) => Promise<ServiceCertificate>;
   readonly fetch: FetchHandler;
   readonly controlFetch: TnlFetch;
   readonly storage: PublisherStorageHost;

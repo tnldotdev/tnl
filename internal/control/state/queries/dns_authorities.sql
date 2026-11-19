@@ -90,6 +90,11 @@ SELECT
           AND (issuance.not_after>sqlc.arg(observed_at) OR issuance.state NOT IN('waiting_for_install','installed','failed','canceled') OR issuance.finalization_possible AND issuance.not_after IS NULL
             OR EXISTS(SELECT 1 FROM control.acme_authorizations auth WHERE auth.order_id=issuance.id
               AND (auth.state IN('presenting','presented','validating','valid','cleaning') OR auth.presented_at IS NOT NULL AND auth.cleanup_completed_at IS NULL)))
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM control.service_supplied_certificates supplied
+        WHERE supplied.certificate_domain_id=sqlc.arg(authority_domain_id)
+          AND supplied.not_after>sqlc.arg(observed_at)
     ) AS ready;
 
 -- name: UpdateLocalDomainForDNSAuthority :one

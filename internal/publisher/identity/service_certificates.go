@@ -12,6 +12,7 @@ type ServiceCertificateControl interface {
 	CreateServiceCertificateIssuance(context.Context, string, string, int64, credentials.ServiceRunToken, []byte, string) (controlv1.ServiceCertificateIssuance, error)
 	GetServiceCertificateIssuance(context.Context, string, string, string, credentials.ServiceRunToken) (controlv1.ServiceCertificateIssuance, error)
 	MarkServiceCertificateInstalled(context.Context, string, string, int64, string, time.Time, credentials.ServiceRunToken) error
+	MarkSuppliedServiceCertificateInstalled(context.Context, string, string, int64, string, string, credentials.ServiceRunToken) (controlv1.SuppliedServiceCertificateInstallation, error)
 }
 
 func (n *Native) serviceCertificates(service string) (ServiceCertificateControl, error) {
@@ -46,6 +47,14 @@ func (n *Native) MarkServiceCertificateInstalled(ctx context.Context, service, r
 		return err
 	}
 	return control.MarkServiceCertificateInstalled(ctx, service, run, number, issuance, expires, token)
+}
+
+func (n *Native) MarkSuppliedServiceCertificateInstalled(ctx context.Context, service, run string, number int64, chain, previous string, token credentials.ServiceRunToken) (controlv1.SuppliedServiceCertificateInstallation, error) {
+	control, err := n.serviceCertificates(service)
+	if err != nil {
+		return controlv1.SuppliedServiceCertificateInstallation{}, err
+	}
+	return control.MarkSuppliedServiceCertificateInstalled(ctx, service, run, number, chain, previous, token)
 }
 
 func (n *Native) StartServiceRun(ctx context.Context, service, run, access string, number int64) (controlv1.ServiceRunSetup, error) {

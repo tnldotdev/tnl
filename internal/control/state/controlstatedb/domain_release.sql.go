@@ -50,11 +50,16 @@ SELECT domain.id, domain.kind, domain.team_id, domain.canonical_domain,
         CASE WHEN EXISTS (
             SELECT 1 FROM control.acme_orders issuance
             WHERE issuance.certificate_domain_id=domain.id AND issuance.not_after>$1
+        ) OR EXISTS (
+            SELECT 1 FROM control.service_supplied_certificates supplied
+            WHERE supplied.certificate_domain_id=domain.id AND supplied.not_after>$1
         ) THEN 'certificate' END,
         CASE WHEN authority.state IS DISTINCT FROM 'released' THEN 'dns_authority' END
     ]::text[], NULL)::text[] AS release_blockers,
-    (SELECT max(issuance.not_after)::timestamptz FROM control.acme_orders issuance
-        WHERE issuance.certificate_domain_id=domain.id) AS certificate_expires_at
+    GREATEST((SELECT max(issuance.not_after)::timestamptz FROM control.acme_orders issuance
+        WHERE issuance.certificate_domain_id=domain.id),
+        (SELECT max(supplied.not_after)::timestamptz FROM control.service_supplied_certificates supplied
+        WHERE supplied.certificate_domain_id=domain.id))::timestamptz AS certificate_expires_at
 FROM control.domains domain
 LEFT JOIN control.dns_authorities authority ON authority.authority_reference=domain.dns_authority_reference
 WHERE domain.id=$2

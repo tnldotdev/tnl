@@ -63,6 +63,8 @@ components:
       $ref: "./schemas/registration.yaml#/schemas/Assignment"
     Registration:
       $ref: "./schemas/invocations.yaml#/schemas/Registration"
+    SuppliedServiceCertificateMaterial:
+      $ref: "./schemas/invocations.yaml#/schemas/SuppliedServiceCertificateMaterial"
     Lease:
       $ref: "./schemas/invocations.yaml#/schemas/Lease"
     Invocation:

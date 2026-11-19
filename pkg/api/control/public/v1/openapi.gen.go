@@ -4309,6 +4309,21 @@ type SourceState struct {
 	SchemaVersion ReviewSchemaVersion `json:"schema_version"`
 }
 
+// SuppliedServiceCertificateInstallation defines model for SuppliedServiceCertificateInstallation.
+type SuppliedServiceCertificateInstallation struct {
+	CertificateSha256 string    `json:"certificate_sha256"`
+	ExpiresAt         time.Time `json:"expires_at"`
+}
+
+// SuppliedServiceCertificateInstalledRequest defines model for SuppliedServiceCertificateInstalledRequest.
+type SuppliedServiceCertificateInstalledRequest struct {
+	CertificatePem string `json:"certificate_pem"`
+
+	// PreviousCertificateSha256 Empty for the first install; otherwise the fingerprint of the previous acknowledged leaf. A retry of the currently installed leaf is idempotent.
+	PreviousCertificateSha256 string `json:"previous_certificate_sha256"`
+	RunNumber                 int64  `json:"run_number,string"`
+}
+
 // TeamID defines model for TeamID.
 type TeamID = ResourceID
 
@@ -5158,6 +5173,9 @@ type RedeemServiceShareJSONRequestBody = RedeemServiceShareRequest
 
 // StartServiceRunJSONRequestBody defines body for StartServiceRun for application/json ContentType.
 type StartServiceRunJSONRequestBody StartServiceRunJSONBody
+
+// MarkSuppliedServiceCertificateInstalledJSONRequestBody defines body for MarkSuppliedServiceCertificateInstalled for application/json ContentType.
+type MarkSuppliedServiceCertificateInstalledJSONRequestBody = SuppliedServiceCertificateInstalledRequest
 
 // SelectServiceRunJSONRequestBody defines body for SelectServiceRun for application/json ContentType.
 type SelectServiceRunJSONRequestBody SelectServiceRunJSONBody
@@ -6866,6 +6884,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
 	StartServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body StartServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkSuppliedServiceCertificateInstalledWithBody Acknowledge a supplied visitor certificate for one exact run
+	//
+	// Validate the trusted server chain against the run's captured canonical and alias hostnames. Private keys stay with the publisher. This creates no ACME order and does not broaden publication authority or prove relay readiness. Replacement compares the previously acknowledged fingerprint.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed (the `MarkSuppliedServiceCertificateInstalled` operationId).
+	MarkSuppliedServiceCertificateInstalledWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkSuppliedServiceCertificateInstalled Acknowledge a supplied visitor certificate for one exact run
+	//
+	// Validate the trusted server chain against the run's captured canonical and alias hostnames. Private keys stay with the publisher. This creates no ACME order and does not broaden publication authority or prove relay readiness. Replacement compares the previously acknowledged fingerprint.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed (the `MarkSuppliedServiceCertificateInstalled` operationId).
+	MarkSuppliedServiceCertificateInstalled(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body MarkSuppliedServiceCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SelectServiceRunWithBody Select a ready service run for an enrolled visitor device
 	//
@@ -10091,6 +10127,44 @@ func (c *Client) StartServiceRunWithBody(ctx context.Context, serviceId ServiceI
 // Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
 func (c *Client) StartServiceRun(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body StartServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStartServiceRunRequest(c.Server, serviceId, serviceRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkSuppliedServiceCertificateInstalledWithBody Acknowledge a supplied visitor certificate for one exact run
+//
+// Validate the trusted server chain against the run's captured canonical and alias hostnames. Private keys stay with the publisher. This creates no ACME order and does not broaden publication authority or prove relay readiness. Replacement compares the previously acknowledged fingerprint.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed (the `MarkSuppliedServiceCertificateInstalled` operationId).
+func (c *Client) MarkSuppliedServiceCertificateInstalledWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkSuppliedServiceCertificateInstalledRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MarkSuppliedServiceCertificateInstalled Acknowledge a supplied visitor certificate for one exact run
+//
+// Validate the trusted server chain against the run's captured canonical and alias hostnames. Private keys stay with the publisher. This creates no ACME order and does not broaden publication authority or prove relay readiness. Replacement compares the previously acknowledged fingerprint.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed (the `MarkSuppliedServiceCertificateInstalled` operationId).
+func (c *Client) MarkSuppliedServiceCertificateInstalled(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body MarkSuppliedServiceCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkSuppliedServiceCertificateInstalledRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -16126,6 +16200,60 @@ func NewStartServiceRunRequestWithBody(server string, serviceId ServiceID, servi
 	return req, nil
 }
 
+// NewMarkSuppliedServiceCertificateInstalledRequest calls the generic MarkSuppliedServiceCertificateInstalled builder with application/json body
+func NewMarkSuppliedServiceCertificateInstalledRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body MarkSuppliedServiceCertificateInstalledJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMarkSuppliedServiceCertificateInstalledRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
+}
+
+// NewMarkSuppliedServiceCertificateInstalledRequestWithBody constructs an http.Request for the MarkSuppliedServiceCertificateInstalled method, with any body, and a specified content type
+func NewMarkSuppliedServiceCertificateInstalledRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/supplied-certificate-installed", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewSelectServiceRunRequest calls the generic SelectServiceRun builder with application/json body
 func NewSelectServiceRunRequest(server string, serviceId ServiceID, body SelectServiceRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -18389,6 +18517,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId).
 	StartServiceRunWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body StartServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*StartServiceRunResponse, error)
+
+	// MarkSuppliedServiceCertificateInstalledWithBodyWithResponse Acknowledge a supplied visitor certificate for one exact run
+	//
+	// Validate the trusted server chain against the run's captured canonical and alias hostnames. Private keys stay with the publisher. This creates no ACME order and does not broaden publication authority or prove relay readiness. Replacement compares the previously acknowledged fingerprint.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed (the `MarkSuppliedServiceCertificateInstalled` operationId).
+	MarkSuppliedServiceCertificateInstalledWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkSuppliedServiceCertificateInstalledResponse, error)
+
+	// MarkSuppliedServiceCertificateInstalledWithResponse Acknowledge a supplied visitor certificate for one exact run
+	//
+	// Validate the trusted server chain against the run's captured canonical and alias hostnames. Private keys stay with the publisher. This creates no ACME order and does not broaden publication authority or prove relay readiness. Replacement compares the previously acknowledged fingerprint.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed (the `MarkSuppliedServiceCertificateInstalled` operationId).
+	MarkSuppliedServiceCertificateInstalledWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body MarkSuppliedServiceCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkSuppliedServiceCertificateInstalledResponse, error)
 
 	// SelectServiceRunWithBodyWithResponse Select a ready service run for an enrolled visitor device
 	//
@@ -23627,6 +23773,54 @@ func (r StartServiceRunResponse) ContentType() string {
 	return ""
 }
 
+type MarkSuppliedServiceCertificateInstalledResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SuppliedServiceCertificateInstallation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r MarkSuppliedServiceCertificateInstalledResponse) GetJSON200() *SuppliedServiceCertificateInstallation {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r MarkSuppliedServiceCertificateInstalledResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r MarkSuppliedServiceCertificateInstalledResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MarkSuppliedServiceCertificateInstalledResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MarkSuppliedServiceCertificateInstalledResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MarkSuppliedServiceCertificateInstalledResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type SelectServiceRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -26892,6 +27086,36 @@ func (c *ClientWithResponses) StartServiceRunWithResponse(ctx context.Context, s
 		return nil, err
 	}
 	return ParseStartServiceRunResponse(rsp)
+}
+
+// MarkSuppliedServiceCertificateInstalledWithBodyWithResponse Acknowledge a supplied visitor certificate for one exact run
+//
+// Validate the trusted server chain against the run's captured canonical and alias hostnames. Private keys stay with the publisher. This creates no ACME order and does not broaden publication authority or prove relay readiness. Replacement compares the previously acknowledged fingerprint.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed (the `MarkSuppliedServiceCertificateInstalled` operationId).
+func (c *ClientWithResponses) MarkSuppliedServiceCertificateInstalledWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MarkSuppliedServiceCertificateInstalledResponse, error) {
+	rsp, err := c.MarkSuppliedServiceCertificateInstalledWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkSuppliedServiceCertificateInstalledResponse(rsp)
+}
+
+// MarkSuppliedServiceCertificateInstalledWithResponse Acknowledge a supplied visitor certificate for one exact run
+//
+// Validate the trusted server chain against the run's captured canonical and alias hostnames. Private keys stay with the publisher. This creates no ACME order and does not broaden publication authority or prove relay readiness. Replacement compares the previously acknowledged fingerprint.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed (the `MarkSuppliedServiceCertificateInstalled` operationId).
+func (c *ClientWithResponses) MarkSuppliedServiceCertificateInstalledWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body MarkSuppliedServiceCertificateInstalledJSONRequestBody, reqEditors ...RequestEditorFn) (*MarkSuppliedServiceCertificateInstalledResponse, error) {
+	rsp, err := c.MarkSuppliedServiceCertificateInstalled(ctx, serviceId, serviceRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkSuppliedServiceCertificateInstalledResponse(rsp)
 }
 
 // SelectServiceRunWithBodyWithResponse Select a ready service run for an enrolled visitor device
@@ -30783,6 +31007,39 @@ func ParseStartServiceRunResponse(rsp *http.Response) (*StartServiceRunResponse,
 	return response, nil
 }
 
+// ParseMarkSuppliedServiceCertificateInstalledResponse parses an HTTP response from a MarkSuppliedServiceCertificateInstalledWithResponse call
+func ParseMarkSuppliedServiceCertificateInstalledResponse(rsp *http.Response) (*MarkSuppliedServiceCertificateInstalledResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MarkSuppliedServiceCertificateInstalledResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SuppliedServiceCertificateInstallation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseSelectServiceRunResponse parses an HTTP response from a SelectServiceRunWithResponse call
 func ParseSelectServiceRunResponse(rsp *http.Response) (*SelectServiceRunResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -31727,6 +31984,9 @@ type ServerInterface interface {
 	// StartServiceRun Start one prepared service run with its publisher grant
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/start)
 	StartServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
+	// MarkSuppliedServiceCertificateInstalled Acknowledge a supplied visitor certificate for one exact run
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed)
+	MarkSuppliedServiceCertificateInstalled(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 	// SelectServiceRun Select a ready service run for an enrolled visitor device
 	// (POST /v1/services/{service_id}/select-run)
 	SelectServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
@@ -35737,6 +35997,41 @@ func (siw *ServerInterfaceWrapper) StartServiceRun(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// MarkSuppliedServiceCertificateInstalled operation middleware
+func (siw *ServerInterfaceWrapper) MarkSuppliedServiceCertificateInstalled(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MarkSuppliedServiceCertificateInstalled(w, r, serviceId, serviceRunId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SelectServiceRun operation middleware
 func (siw *ServerInterfaceWrapper) SelectServiceRun(w http.ResponseWriter, r *http.Request) {
 
@@ -36392,6 +36687,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances", wrapper.CreateServiceCertificateIssuance)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}", wrapper.GetServiceCertificateIssuance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-installed", wrapper.MarkServiceCertificateInstalled)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed", wrapper.MarkSuppliedServiceCertificateInstalled)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/namespace/rename", wrapper.RenameDeploymentNamespace)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/rename", wrapper.RenameDeployment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/public-metadata", wrapper.GetProjectPublicMetadata)

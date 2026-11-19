@@ -39,6 +39,7 @@ func TestPublisherCORSExactOperationAllowlist(t *testing.T) {
 		{"POST", publisherCORSRunPath + "/certificate-issuances", "authorization, content-type, idempotency-key"},
 		{"GET", publisherCORSRunPath + "/certificate-issuances/issuance", "authorization"},
 		{"POST", publisherCORSRunPath + "/certificate-installed", "authorization, content-type"},
+		{"POST", publisherCORSRunPath + "/supplied-certificate-installed", "authorization, content-type"},
 		{"POST", "/v1/visitor-policy", "authorization, content-type"},
 		{"GET", publisherCORSRunPath + "/connector-peer-pairs", "authorization"},
 		{"POST", publisherCORSRunPath + "/connector-peer-pairs/" + publisherCORSPair + "/delivery", "authorization, content-type"},

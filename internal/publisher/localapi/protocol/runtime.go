@@ -15,6 +15,15 @@ import (
 const Version = 1
 const MaxBytes = 64 << 10
 
+// certificate-carrying private operations have a separate bounded body budget.
+// descriptors, responses and ordinary app operations retain the smaller limit.
+func requestMaxBytes(path string) int64 {
+	if path == "/v1/publications/register" || path == "/v1/renew" {
+		return 256 << 10
+	}
+	return MaxBytes
+}
+
 var ownerPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 func ValidOwner(owner string) bool { return ownerPattern.MatchString(owner) }
@@ -40,7 +49,10 @@ type Assignment struct {
 	Project        meta.PublicMetadata `json:"project"`
 }
 
-type Registration = api.Registration
+type Registration api.Registration
+
+func (Registration) String() string   { return "private application registration" }
+func (Registration) GoString() string { return "private application registration" }
 
 type Problem = api.Problem
 
@@ -48,7 +60,7 @@ func Decode(w http.ResponseWriter, r *http.Request, value any) error {
 	if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" || len(r.Header.Values("Origin")) != 0 {
 		return errors.New("invalid private request")
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, MaxBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, requestMaxBytes(r.URL.Path))
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {

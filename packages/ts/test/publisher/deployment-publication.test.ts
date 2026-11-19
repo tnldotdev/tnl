@@ -213,6 +213,45 @@ test("local named publication uses framework registration and rejects policy ove
   expect(server.listening).toBe(true);
 });
 
+test("native publication passes supplied material only through private registration and renewal", async () => {
+  const { calls, request } = fixture();
+  const server = await listener();
+  const remote = createClient({ project: "acme/shop", token: "private-authority" }).deployment(
+    "production",
+  );
+  let material = { certificatePEM: "public-chain-one", privateKeyPEM: "PRIVATE KEY ONE" };
+  const renewed = Promise.withResolvers<void>();
+  native.request.mockImplementation(async (...args: Parameters<typeof request>) => {
+    const result = await request(...args);
+    if (args[1] === "renew") renewed.resolve();
+    return result;
+  });
+  let clock: ReturnType<typeof vi.spyOn> | undefined;
+  try {
+    const publication = await remote.publish("web", server, { certificate: () => material });
+    expect(calls.find((call) => call.operation === "publications/register")?.body).toMatchObject({
+      certificate: { certificate_pem: "public-chain-one", private_key_pem: "PRIVATE KEY ONE" },
+    });
+    expect(JSON.stringify(publication)).not.toContain("PRIVATE KEY");
+    material = { certificatePEM: "public-chain-two", privateKeyPEM: "PRIVATE KEY TWO" };
+    const now = Date.now();
+    clock = vi.spyOn(Date, "now").mockReturnValue(now + 6_000);
+    await renewed.promise;
+    expect(calls.filter((call) => call.operation === "renew").at(-1)?.body).toMatchObject({
+      certificate: { certificate_pem: "public-chain-two", private_key_pem: "PRIVATE KEY TWO" },
+    });
+    await publication.close();
+    await remote.close();
+    for (const call of calls.filter(
+      (call) => !["publications/register", "renew"].includes(call.operation),
+    ))
+      expect(JSON.stringify(call.body) ?? "").not.toContain("PRIVATE KEY");
+  } finally {
+    clock?.mockRestore();
+    await remote.close();
+  }
+});
+
 test.each(["node", "fetch"])(
   "named publication waits for its first endpoint and preserves %s listener ownership",
   async (kind) => {

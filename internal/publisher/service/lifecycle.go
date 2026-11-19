@@ -67,7 +67,11 @@ type RunConfig struct {
 	State            LocalState
 	// certificate storage is explicit for host publishers. when supplied, no
 	// certificate operation consults State or opens a native private directory.
-	CertificateStore                                      CertificateStore
+	CertificateStore CertificateStore
+	// supplied certificate sources return fresh PEM buffers owned by this run.
+	// the worker clears them, persists them in publisher-scoped storage, and
+	// polls for replacement. nil retains managed certificate issuance.
+	SuppliedCertificate                                   func(context.Context) (CertificateMaterial, error)
 	Access                                                func(context.Context) (string, error)
 	PublisherIdentityID, PublisherGrantID, PublisherKeyID string
 	ServiceID                                             string

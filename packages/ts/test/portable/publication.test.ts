@@ -144,6 +144,31 @@ test("browser loads publisher WASM only when publish is called", async () => {
   await remote.close();
 });
 
+test("supplied certificate sources stay outside public selection JSON and can replace material", async () => {
+  const f = fixture();
+  const remote = deployment();
+  let current = { certificatePEM: "public-chain-one", privateKeyPEM: "PRIVATE KEY ONE" };
+  const published = await remote.publish("app", () => new Response("app"), {
+    certificate: (signal) => {
+      signal.throwIfAborted();
+      return current;
+    },
+  });
+  const started = f.publications[0];
+  if (started?.host.certificate === undefined)
+    throw new Error("missing private certificate source");
+  expect(started.encoded).not.toContain("PRIVATE KEY");
+  const signal = new AbortController().signal;
+  expect(await started.host.certificate(signal)).toEqual(current);
+  current = { certificatePEM: "public-chain-two", privateKeyPEM: "PRIVATE KEY TWO" };
+  expect(await started.host.certificate(signal)).toEqual(current);
+  expect(inspect(published)).not.toContain("PRIVATE KEY");
+  expect(JSON.stringify(published)).not.toContain("PRIVATE KEY");
+  await published.close();
+  await expect(started.host.certificate(signal)).rejects.toMatchObject({ name: "AbortError" });
+  await remote.close();
+});
+
 test("named publication uses the publisher ABI and browser storage by default", async () => {
   const f = fixture();
   const remote = deployment();

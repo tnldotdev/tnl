@@ -115,7 +115,8 @@ func Prepare(ctx context.Context, options Options) (*Prepared, error) {
 		Telemetry: options.Telemetry, Control: native, State: options.State, Access: native.Access,
 		PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
 		ServiceID: publication.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(publication), Ready: options.Ready,
-		ShutdownDeadline: options.ShutdownDeadline,
+		ShutdownDeadline:    options.ShutdownDeadline,
+		SuppliedCertificate: options.SuppliedCertificate,
 	}
 	return prepared, nil
 }

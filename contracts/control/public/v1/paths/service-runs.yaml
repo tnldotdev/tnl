@@ -215,6 +215,39 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ServiceCertificateIssuance" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/runs/{service_run_id}/supplied-certificate-installed:
+    post:
+      operationId: markSuppliedServiceCertificateInstalled
+      tags: [certificates]
+      summary: Acknowledge a supplied visitor certificate for one exact run
+      description: Validate the trusted server chain against the run's captured canonical and alias hostnames. Private keys stay with the publisher. This creates no ACME order and does not broaden publication authority or prove relay readiness. Replacement compares the previously acknowledged fingerprint.
+      security: [{ serviceRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - {
+            name: service_run_id,
+            in: path,
+            required: true,
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                $ref: "../openapi.yaml#/components/schemas/SuppliedServiceCertificateInstalledRequest",
+              }
+      responses:
+        "200":
+          description: Exact leaf acknowledged; serving cannot outlive the verified chain
+          content:
+            application/json:
+              schema:
+                {
+                  $ref: "../openapi.yaml#/components/schemas/SuppliedServiceCertificateInstallation",
+                }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/runs/{service_run_id}/certificate-installed:
     post:
       operationId: markServiceCertificateInstalled

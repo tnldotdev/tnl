@@ -6,6 +6,8 @@ export type {
   PublicationRun,
   NamedPublicationOptions,
   TemporaryPublicationOptions,
+  ServiceCertificate,
+  ServiceCertificateSource,
 } from "./internal/publisher/publication.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 export { response } from "./response.js";
