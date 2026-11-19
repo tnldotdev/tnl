@@ -1,21 +1,3 @@
-const SOUND_KEY = "keepalive-sound";
-
-export function soundEnabled() {
-  try {
-    return localStorage.getItem(SOUND_KEY) !== "off";
-  } catch {
-    return true;
-  }
-}
-
-export function saveSound(enabled: boolean) {
-  try {
-    localStorage.setItem(SOUND_KEY, enabled ? "on" : "off");
-  } catch {
-    // storage may be disabled; the choice still applies to this page.
-  }
-}
-
 export function invitationChirp() {
   let audio: AudioContext;
   try {

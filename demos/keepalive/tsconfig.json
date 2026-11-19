@@ -6,6 +6,7 @@
     "jsxImportSource": "preact",
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "noEmit": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "types": ["node", "vitest"]
   },

@@ -3,7 +3,7 @@ import { render } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { hostBranches, type TreeHost } from "./host-tree.ts";
 import { PULSE_SECONDS, requestPulse } from "../hosting/activity.ts";
-import { invitationChirp, protectHostingTab, saveSound, soundEnabled } from "./attention.ts";
+import { invitationChirp, protectHostingTab } from "./attention.ts";
 import type { HostUpdate } from "../hosting/messages.ts";
 import { turnLabel } from "../policy.ts";
 import {
@@ -164,7 +164,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
   const [now, setNow] = useState(Date.now);
   const [observed, setObserved] = useState<Observation>();
   const [lastStart, setLastStart] = useState<number>();
-  const [sound, setSound] = useState(soundEnabled);
+  const [sound, setSound] = useState(true);
   const chirp = useRef<ReturnType<typeof invitationChirp>>(undefined);
   const label = turnLabel(bootstrap);
   const hosting = host?.type === "hosting" ? host : undefined;
@@ -200,7 +200,6 @@ function App({ bootstrap }: { bootstrap: boolean }) {
   function toggleSound() {
     const enabled = !sound;
     setSound(enabled);
-    saveSound(enabled);
     if (!enabled) closeChirp();
     else if (host?.type === "waiting") chirp.current = invitationChirp();
   }
