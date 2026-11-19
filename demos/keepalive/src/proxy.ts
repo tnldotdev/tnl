@@ -16,7 +16,8 @@ export function siteHeaders(type = "application/octet-stream") {
 }
 
 function unavailable() {
-  return new Response(null, { status: 503, headers: siteHeaders() });
+  // keep empty navigations from becoming downloads in Safari.
+  return new Response(null, { status: 503, headers: siteHeaders("text/html; charset=utf-8") });
 }
 
 export function createProxy(release: Release, fetchHost = fetch) {

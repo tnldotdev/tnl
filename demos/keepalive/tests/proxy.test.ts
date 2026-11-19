@@ -62,6 +62,7 @@ it("has no fallback when hosts stop", async () => {
   const response = await proxy.file(request("/"));
   expect(response.status).toBe(503);
   expect(response.body).toBeNull();
+  expect(response.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
   expect(response.headers.get("Cache-Control")).toBe("no-store, no-transform");
   expect(response.headers.get("Location")).toBeNull();
   expect((await proxy.file(request(WORKER_PATH))).status).toBe(404);
