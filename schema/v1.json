@@ -3421,9 +3421,7 @@
             "minLength": 1
           },
           "type": "array",
-          "maxItems": 128,
-          "minItems": 1,
-          "description": "Managed TCP ports exposed by this ingress pool: 1-128 non-overlapping declarations, at most 256 ports from 1024 to 65535. Direct ingress binds every port; proxied ingress requires destination metadata.",
+          "description": "Non-overlapping managed TCP ports or ranges from 1024 to 65535. Direct ingress binds every port; proxied ingress requires destination metadata.",
           "default": ["20000-20015"]
         },
         "relay_service_id": {

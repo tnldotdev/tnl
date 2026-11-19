@@ -19,34 +19,33 @@ func TestPortInventory(t *testing.T) {
 	}
 }
 
-func TestInventoryLimitsAndCopyIsolation(t *testing.T) {
-	ranges := make([]Range, 256)
-	declarations := make([]string, len(ranges))
+func TestFullInventory(t *testing.T) {
+	inventory, err := ParseInventory([]string{"1024-65535"})
+	ports := inventory.Ports()
+	if err != nil || len(ports) != 64512 || ports[0] != 1024 || ports[len(ports)-1] != 65535 {
+		t.Fatalf("full range: %d ports, %v", len(ports), err)
+	}
+	declarations := make([]string, len(ports))
+	for i, port := range ports {
+		declarations[len(ports)-1-i] = strconv.Itoa(port)
+	}
+	inventory, err = ParseInventory(declarations)
+	if err != nil || !slices.Equal(inventory.Ports(), ports) || !inventory.Contains(65535) || inventory.Contains(1023) {
+		t.Fatalf("full singleton inventory: %v", err)
+	}
+}
+
+func TestInventoryCopyIsolation(t *testing.T) {
+	ranges := make([]Range, 257)
 	for i := range ranges {
 		port := 20000 + i
 		ranges[i] = Range{port, port}
-		declarations[i] = strconv.Itoa(port)
-	}
-	if _, err := ParseInventory(declarations[:128]); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ParseInventory(declarations[:129]); !errors.Is(err, ErrInventory) {
-		t.Fatal("textual limit", err)
 	}
 	inventory, err := NewInventory(ranges)
-	if err != nil || len(inventory.Ports()) != 256 {
+	if err != nil || len(inventory.Ports()) != 257 {
 		t.Fatal("in-memory singletons", inventory, err)
 	}
-	if _, err := NewInventory(append(ranges, Range{30000, 30000})); !errors.Is(err, ErrInventory) {
-		t.Fatal("257 singletons", err)
-	}
-	if _, err := ParseInventory([]string{"20000-20255"}); err != nil {
-		t.Fatal("256 ports", err)
-	}
-	if _, err := ParseInventory([]string{"20000-20256"}); !errors.Is(err, ErrInventory) {
-		t.Fatal("257 ports", err)
-	}
-	for _, invalid := range [][]Range{{{1023, 1024}}, {{65535, 65536}}, {{20001, 20000}}, {{20000, 20001}, {20001, 20002}}, {{20000, 20256}}} {
+	for _, invalid := range [][]Range{{{1023, 1024}}, {{65535, 65536}}, {{20001, 20000}}, {{20000, 20001}, {20001, 20002}}} {
 		if _, err := NewInventory(invalid); !errors.Is(err, ErrInventory) {
 			t.Errorf("accepted %v: %v", invalid, err)
 		}
@@ -55,7 +54,7 @@ func TestInventoryLimitsAndCopyIsolation(t *testing.T) {
 	copy := inventory
 	copy.Ranges()[0] = Range{30000, 30000}
 	copy.Ports()[0] = 30000
-	if !inventory.Contains(20000) || inventory.Contains(30000) || inventory.Contains(19999) || !copy.Contains(20255) || copy.Contains(20256) {
+	if !inventory.Contains(20000) || inventory.Contains(30000) || inventory.Contains(19999) || !copy.Contains(20256) || copy.Contains(20257) {
 		t.Fatal("inventory changed through input or copy-outs")
 	}
 	var empty Inventory

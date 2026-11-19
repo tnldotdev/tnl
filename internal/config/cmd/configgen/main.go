@@ -17,7 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 )
 
@@ -445,8 +444,6 @@ func tnldSchema() *jsonschema.Schema {
 			fieldSchema.Default = defaultValue(value, field.Type, field.Type == durationType)
 		}
 		if name == "service_port_ranges" {
-			fieldSchema.MinItems = integerPointer(1)
-			fieldSchema.MaxItems = integerPointer(tcpport.MaxInventoryDeclarations)
 			fieldSchema.Items.MinLength = integerPointer(1)
 			fieldSchema.Default = strings.Split(field.Tag.Get("default"), ",")
 		}

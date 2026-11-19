@@ -78,9 +78,12 @@ func (h *handler) MatchedPattern(request *http.Request) string {
 	return pattern
 }
 
+// the full sorted port inventory takes about 370 KiB in compact JSON.
+const registrationRequestBytes = 512 << 10
+
 func (h *handler) registerIngress(response http.ResponseWriter, request *http.Request) {
 	var body ingressv1.IngressRegistration
-	if !serverhttp.DecodeJSON(response, request, &body) {
+	if !serverhttp.DecodeJSONLimited(response, request, &body, registrationRequestBytes) {
 		return
 	}
 	lease, err := h.service.RegisterIngress(request.Context(), body)

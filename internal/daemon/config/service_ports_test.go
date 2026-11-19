@@ -18,7 +18,7 @@ func TestServicePortInventoryDefaultsAndEmpty(t *testing.T) {
 	if err != nil || len(empty.Ports()) != 0 {
 		t.Fatal("explicit empty inventory restored default non-HTTP ports", empty, err)
 	}
-	for _, values := range [][]string{{""}, {"20000-20256"}, {"20000", "20000"}} {
+	for _, values := range [][]string{{""}, {"20000-65536"}, {"20000", "20000"}} {
 		if _, err := (Config{ServicePortRanges: values}).ServicePortInventory(); !errors.Is(err, tcpport.ErrInventory) {
 			t.Fatalf("accepted %v: %v", values, err)
 		}

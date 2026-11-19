@@ -42,12 +42,16 @@ func NewProblemError(status int, problemType, detail string) *ProblemError {
 }
 
 func DecodeJSON(response http.ResponseWriter, request *http.Request, destination any) bool {
+	return DecodeJSONLimited(response, request, destination, MaximumRequestBytes)
+}
+
+func DecodeJSONLimited(response http.ResponseWriter, request *http.Request, destination any, limit int64) bool {
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		WriteProblem(response, http.StatusUnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json", "")
 		return false
 	}
-	request.Body = http.MaxBytesReader(response, request.Body, MaximumRequestBytes)
+	request.Body = http.MaxBytesReader(response, request.Body, limit)
 	reader := bufio.NewReader(request.Body)
 	if !startsWithJSONObject(reader) {
 		WriteProblem(response, http.StatusBadRequest, "invalid_json", "Request body must be one JSON object matching the service schema", "")

@@ -9,12 +9,11 @@ import (
 
 	"github.com/invopop/jsonschema"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
 func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {
 	ports, ok := tnldSchema().Properties.Get("service_port_ranges")
-	if !ok || ports.MinItems == nil || *ports.MinItems != 1 || ports.MaxItems == nil || *ports.MaxItems != tcpport.MaxInventoryDeclarations || !reflect.DeepEqual(ports.Default, []string{"20000-20015"}) {
+	if !ok || ports.MinItems != nil || ports.MaxItems != nil || !reflect.DeepEqual(ports.Default, []string{"20000-20015"}) {
 		t.Fatal("inventory metadata", ports)
 	}
 	for _, protocol := range []string{"postgres", "mysql", "kubernetes"} {
