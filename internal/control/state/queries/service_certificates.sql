@@ -13,7 +13,7 @@ RETURNING *;
 -- name: ListPublisherCertificateCheckpoints :many
 SELECT certificate_plan FROM control.publisher_certificate_checkpoints
 WHERE publisher_identity_id=sqlc.arg(publisher_identity_id)
-ORDER BY plan_digest LIMIT 1025;
+ORDER BY plan_digest;
 
 -- name: GetServiceCertificateRequest :one
 SELECT * FROM control.service_certificate_requests
