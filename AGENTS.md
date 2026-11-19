@@ -1,46 +1,60 @@
 # writing and documentation
 
-Write for a developer trying to do something or understand a specific boundary.
-Lead with the result, show a command or example when useful, then link to more
-detail. The [readme](readme.md) is the model for public introductions.
+Write all things with these rules: plainly written, spare, simple, clear,
+show me dont tell me; take inspiration from the README.
+Use ASCII diagrams when they make an explanation clearer.
 
-Use everyday words unless a technical term makes an important distinction;
-explain the term when the reader needs it. Name the component doing the work and
-qualify claims:
-
-- Write “Start your app normally to give it an HTTPS URL,” not “Leverage tnl's
-  seamless workflow to expose your application.”
-- Write “Ingress may try another connected relay before sending the first visitor
-  byte,” not “Traffic is intelligently rerouted.”
-- Write “By default, visitors need a current sign-in, share link, or token,”
-  not “Your app is completely private.”
-
-Keep the voice spare, concrete, practical, and understated. Avoid
-hype and unnecessary jargon. Start public guides with what the reader can do.
-In diagnostics, say what failed and what to do next. Follow the CLI output rules
-below for presentation.
-
-Use lowercase documentation filenames and Markdown headings. Use normal sentence
-capitalization in body text, bullets, and tables, with standard casing for proper
-names and acronyms. Write `url` in lowercase in branded headings and page titles.
-Use **service**, **service run**, and **service endpoint** for publication records;
-an HTTP URL is an address, not a separate resource family.
-Write code-comment prose in lowercase, preserving the exact case of
-identifiers and literal values. Keep `AGENTS.md` and `SKILL.md` uppercase for
-agent discovery.
+Keep `AGENTS.md` and `SKILL.md` uppercase for agent discovery. Write code-comment
+prose in lowercase, preserving identifiers, literal values, and tool-recognized
+markers such as `Deprecated:`.
 
 Public product, client, and operator docs live in the sibling `../tnl.dev`
 repository, under `apps/accounts/src/content/docs/`. The repository README and
 npm package README link there. Update the relevant docs alongside behavior changes.
 
-Keep contributor setup in [contributing.md](contributing.md). Read
-[architecture.md](architecture.md) before changing package ownership or
-dependencies. Keep that root guide as the repository map; explain detailed
-implementation boundaries in source and tests rather than a separate
-documentation tree. Put work logs and check results in the PR.
+Update [contributing.md](contributing.md) when setup, common check commands,
+generation, or the local development workflow changes. It is a quick start for
+working on the repo, not a home for feature details, CI internals, or past fixes.
+
+Read [architecture.md](architecture.md) before changing package ownership or
+dependencies. Update it when system roles, traffic paths, ownership, or dependency
+direction changes. Keep it a map, not a catalog of every package, implementation
+rule, or feature. Put detailed behavior beside its code and tests.
+
+A feature PR does not automatically need to edit either guide. Put work logs and
+check results in the PR. Keep release procedure in the
+[release skill](.opencode/skills/release/SKILL.md).
 
 Never add to NOTICE. If you have a software license to add, ONLY add it to
 THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
+
+# stability
+
+- Preserve released public APIs and documented behavior, including SDKs, CLI
+  commands, configuration, wire formats, and saved state. Internal refactoring
+  can change implementation details while preserving those contracts.
+- Add replacements alongside existing APIs. Mark deprecations with the first
+  released version and the replacement using the language or contract's normal
+  marker. Before release, use `unreleased`; the release skill replaces it with
+  the actual release version. Keep deprecated behavior working and tested.
+  Deprecation does not schedule removal.
+- Mark experimental features as opt-in before releasing them. Do not relabel a
+  released stable feature as experimental to bypass compatibility.
+- A breaking change, including removal of a deprecated API or upgrade path,
+  requires explicit user approval for that specific break. Explain the impact
+  and migration path first, then record the approval and reason in the PR and
+  release notes. A version bump or a general request to release is not approval.
+- Published migrations are immutable. Both migration-1 files are pinned by
+  `TestMigrationOneIsImmutable` in their state packages. Add numbered migrations;
+  do not rewrite old SQL or update the pinned hashes to make a change pass.
+  Numbered migrations are the schema authority; do not add separate baseline
+  identities or rename client state files to ship a feature.
+- Test schema changes against populated older databases, including skipped
+  releases within the supported upgrade path. Preserve data and credentials;
+  migrate data before retiring storage. Document required upgrade order and
+  recovery steps. Never use a fresh database or state reset as a routine upgrade.
+- Load the [release skill](.opencode/skills/release/SKILL.md) when preparing,
+  reviewing, tagging, or publishing a release.
 
 # canonical terms
 
@@ -109,6 +123,7 @@ and reachability; **service target TLS** describes publisher-to-target trust.
 Reachability (public or connector-only), protocol, deployment placement, and
 visitor access rules are independent. Every protocol uses the same service and
 service-run lifecycle; do not introduce a second HTTP resource or publisher engine.
+An HTTP URL is an address, not a separate resource family.
 
 Each binding's `public: true` enables ingress. HTTP shares ingress 443 by exact
 TLS hostname; other protocols use allocated ingress ports. Connector-only services
@@ -118,7 +133,8 @@ persistent assignments, not public endpoint ports.
 Public endpoint allocation, disablement, release, and replacement preserve
 authorized connector sessions and service runs. Endpoint changes advance
 `endpoint_revision`; actual target-trust changes advance `trust_revision`.
-Do not retain old publication APIs, IDs, credentials, or compatibility adapters.
+Deprecated public APIs adapt to the same service-run owner under the stability
+rules above; they do not need a second publication engine.
 
 ## addresses and dns
 
@@ -346,7 +362,7 @@ operational procedures and current capability limits in
 - The six HTTP OpenAPI contracts under `contracts/{control,publisher}` generate one Go package per contract under the matching `pkg/api` serving-owner path. Edit their `paths/` and `schemas/` fragments and generator configuration, then regenerate. The local publisher contract is native app/CLI registration; the browser contract also generates validators in `internal/publisher/browserapi`. Reference control schemas for identical wire shapes. Shared components, if needed, contain only byte-identical referenced schemas and generate no Go package.
 - `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
 - PostgreSQL sources are `internal/control/state/{migrations,queries,sqlc.yaml}`; their committed output is `internal/control/state/controlstatedb`. SQLite sources are `internal/client/state/{migrations,queries,sqlc.yaml}`; their output is `internal/client/state/clientstatedb`. Edit sources and generator configuration, not generated Go files. `task generate` is the single ordered entrypoint for committed generation, starting with Go APIs and browser validators; `task format` formats the resulting tree.
-- `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and require the exact schema version and baseline identity. The new baseline requires a fresh PostgreSQL database and a coordinated stop/start of all server roles. Client state starts fresh in `v1.db`; do not import older SQLite or publisher credentials.
+- `tnld migrate` is the server migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and check their supported schema version. Client state lives in `v1.db`; writable opens apply pending migrations and read-only opens require the supported version. Add upgrade paths in the owning state package; never bypass schema checks.
 
 ## place implementation with its owner
 

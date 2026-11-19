@@ -1,14 +1,6 @@
 -- +goose Up
 CREATE SCHEMA IF NOT EXISTS control;
 
--- the baseline identity prevents a different version-1 schema from being
--- mistaken for this coordinated fresh-database cutover.
-CREATE TABLE control.schema_identity (
-    id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'v1')
-);
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'v1');
-
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
     kind text NOT NULL CHECK (kind IN ('oidc', 'authority')),

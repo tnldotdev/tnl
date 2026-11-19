@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-func TestIntegrationServicePortHistoryBaselinePreservesAuthority(t *testing.T) {
-	d, directURL, now := newControlStateIntegrationDatabaseWithURL(t, "service_port_history_baseline")
+func TestIntegrationServicePortHistoryMigrationPreservesAuthority(t *testing.T) {
+	d, directURL, now := newControlStateIntegrationDatabaseWithURL(t, "service_port_history_migration")
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
@@ -39,15 +39,14 @@ func TestIntegrationServicePortHistoryBaselinePreservesAuthority(t *testing.T) {
 		var value string
 		if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_array(
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM control.services s),
-		    (SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM control.service_port_claims c),
-		    (SELECT to_jsonb(i) FROM control.schema_identity i WHERE id=1))::text`).Scan(&value); err != nil {
+		    (SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM control.service_port_claims c))::text`).Scan(&value); err != nil {
 			t.Fatal(err)
 		}
 		return value
 	}
 	before := snapshot()
-	if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != 1 {
-		t.Fatal("port history must use schema 1", version, err)
+	if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != schemaVersion {
+		t.Fatal("fixture did not initialize the current schema", version, err)
 	}
 	for range 2 {
 		if err := Migrate(ctx, directURL); err != nil {
@@ -64,6 +63,6 @@ func TestIntegrationServicePortHistoryBaselinePreservesAuthority(t *testing.T) {
 	if err := d.pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE state='held' AND retired_issuance_revision IS NULL),
 	    count(*) FILTER(WHERE state='quarantined' AND retired_issuance_revision=0 AND dns_cleared_at IS NULL)
 	    FROM control.service_port_claims`).Scan(&held, &quarantined); err != nil || held != 1 || quarantined != 1 {
-		t.Fatal("baseline lost the deletion fence", held, quarantined, err)
+		t.Fatal("migration lost the deletion fence", held, quarantined, err)
 	}
 }

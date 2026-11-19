@@ -1,19 +1,9 @@
 package state
 
-import (
-	"io/fs"
-	"testing"
-)
+import "testing"
 
-func TestIntegrationPrivateServiceBaselinePreservesReservations(t *testing.T) {
-	entries, err := fs.ReadDir(migrationFiles, "migrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 || entries[0].Name() != "00001_baseline.sql" || schemaVersion != 1 || baselineID != "v1" {
-		t.Fatal("private services must use the single v1 baseline")
-	}
-	d, directURL, now := newControlStateIntegrationDatabaseWithURL(t, "private_port_baseline")
+func TestIntegrationPrivateServiceMigrationPreservesReservations(t *testing.T) {
+	d, directURL, now := newControlStateIntegrationDatabaseWithURL(t, "private_port_migration")
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
@@ -30,15 +20,14 @@ func TestIntegrationPrivateServiceBaselinePreservesReservations(t *testing.T) {
 		var value string
 		if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_array(
 			(SELECT to_jsonb(s) FROM control.services s WHERE id=$1),
-			(SELECT to_jsonb(p) FROM control.service_port_claims p WHERE service_id=$1),
-			(SELECT to_jsonb(i) FROM control.schema_identity i WHERE id=1))::text`, service.ServiceID).Scan(&value); err != nil {
+			(SELECT to_jsonb(p) FROM control.service_port_claims p WHERE service_id=$1))::text`, service.ServiceID).Scan(&value); err != nil {
 			t.Fatal(err)
 		}
 		return value
 	}
 	before := snapshot()
-	if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != 1 {
-		t.Fatal("fixture did not initialize schema 1", version, err)
+	if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != schemaVersion {
+		t.Fatal("fixture did not initialize the current schema", version, err)
 	}
 	for range 2 {
 		if err := Migrate(ctx, directURL); err != nil {

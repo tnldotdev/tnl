@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestIntegrationBaselineACMEAuthorizationConstraints(t *testing.T) {
+func TestIntegrationSchemaACMEAuthorizationConstraints(t *testing.T) {
 	f := newServicePublicationFixture(t)
 	database, now := f.database, f.now
 	pool := database.pool
