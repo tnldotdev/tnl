@@ -26,7 +26,6 @@ import (
 )
 
 const maxConnectorPeerOwners = 64
-const maxConnectorPeerHistory = 4096
 const maxConnectorPeerStreams = tunnel.MaxConnectorApplicationStreams
 
 // PeerSession retains one exact control-delivered pair and its inner session.
@@ -49,7 +48,9 @@ type PeerSession struct {
 	deliverySlots     [2]*Claimed
 	ctx               context.Context
 	cancel            context.CancelFunc
-	seen              map[string]struct{}
+	seen              map[string]time.Time
+	seenExpirations   connectorOpeningExpirations
+	seenAt            time.Time
 	streams           map[*connectorAdmission]struct{}
 	serveOnce         sync.Once
 	workers           sync.WaitGroup
@@ -98,7 +99,7 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 	}
 	p.identity, p.network, p.lease, p.owner = binding.peerIdentity, binding.peerNetworkBinding, binding.peerLease, binding.peerLease
 	p.highwater, p.deliveryState, p.unbound = binding.generation, peerDeliveryActive, false
-	p.seen, p.streams = make(map[string]struct{}), make(map[*connectorAdmission]struct{})
+	p.seen, p.streams = make(map[string]time.Time), make(map[*connectorAdmission]struct{})
 	return p, nil
 }
 
@@ -757,11 +758,10 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		return err
 	}
 	b.mu.Lock()
-	_, replay := p.seen[entry.VisitorConnectionID]
-	valid := !a.retiringLocked() && a.ctx.Err() == nil && a.caller.Err() == nil && p.deliveryCurrentLocked() && p.network == binding.peerNetworkBinding && !replay && len(p.seen) < maxConnectorPeerHistory
+	valid := !a.retiringLocked() && a.ctx.Err() == nil && a.caller.Err() == nil && p.deliveryCurrentLocked() && p.network == binding.peerNetworkBinding &&
+		p.rememberOpeningLocked(entry.VisitorConnectionID, view.AuthorityTime(time.Now()), permission.Facts().ExpiresAt)
 	if valid {
 		// valid acceptance spends history even when C or final handoff fails.
-		p.seen[entry.VisitorConnectionID] = struct{}{}
 		limit := b.streamCapacity
 		if limit == 0 {
 			limit = 64
@@ -953,10 +953,13 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 		if !next.SameIdentity(original) {
 			return ErrPrivateStream
 		}
+		b.mu.Lock()
+		a.peer.pruneOpeningHistoryLocked(view.AuthorityTime(time.Now()))
+		a.peer.extendOpeningLocked(entry.VisitorConnectionID, next.Facts().ExpiresAt)
 		if !until.After(time.Now()) {
+			b.mu.Unlock()
 			return ErrPrivateStream
 		}
-		b.mu.Lock()
 		current := a.peer.deliveryCurrentLocked() && a.peer.network.generation == entry.DeliveryGeneration && a.peer.network.source.String() == entry.SourceIP && !a.retiringLocked() && a.ctx.Err() == nil
 		pending := a.peer.currentLocked() && a.peer.pending != nil && a.peer.deliveryState != peerDeliveryRetired && a.peer.pending.until.After(time.Now()) &&
 			a.peer.pending.generation == entry.DeliveryGeneration && a.peer.pending.source.String() == entry.SourceIP && !a.retiringLocked() && a.ctx.Err() == nil
