@@ -32,6 +32,12 @@ async function setup() {
 it("checks the script before serving it and does not pass through credentials", async () => {
   const { proxy, fetchHost } = await setup();
   fetchHost.mockResolvedValueOnce(new Response("export const version = 2;"));
+  fetchHost.mockResolvedValueOnce(
+    new Response(script, {
+      status: 302,
+      headers: { Location: "https://other.example/app.js" },
+    }),
+  );
   fetchHost.mockResolvedValueOnce(new Response(script, { headers: { "Set-Cookie": "unsafe=1" } }));
 
   const response = await proxy.file(request("/app.js", { headers: { Cookie: "private=1" } }));
@@ -41,10 +47,11 @@ it("checks the script before serving it and does not pass through credentials", 
   expect(fetchHost.mock.calls.map(([url]) => String(url))).toEqual([
     `${SHARED_HOST}/app.js`,
     `${SHARED_HOST}/app.js`,
+    `${SHARED_HOST}/app.js`,
   ]);
   for (const [, init] of fetchHost.mock.calls) {
     expect(init?.credentials).toBe("omit");
-    expect(init?.redirect).toBe("error");
+    expect(init?.redirect).toBe("manual");
     expect(new Headers(init?.headers).has("Cookie")).toBe(false);
   }
 });

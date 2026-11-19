@@ -43,9 +43,10 @@ export async function credentials(request: Request, releaseID: string, env: Cred
       headers: { "Idempotency-Key": body.data.requestID },
       body: { services: ["production"], max_members: 1, expires_in: 120 },
       cache: "no-store",
-      redirect: "error",
+      redirect: "manual",
       signal,
     });
+    if (result.response?.status !== 201) return new Response(null, { status: 503, headers });
     return Response.json(enrollmentKey.parse(result.data?.enrollment_key), { headers });
   } catch {
     return new Response(null, { status: 503, headers });
