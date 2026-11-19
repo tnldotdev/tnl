@@ -180,6 +180,10 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 			return ErrProjectConfigurationInvalid
 		}
 	}
+	if s.CertificateScope != "" && (local || s.Protocol != "http" || !projectServicePublic(*s) ||
+		!config.ValidPublisherCertificateScope(s.Hostname, s.RunAliasParent, s.CertificateScope)) {
+		return ErrProjectConfigurationInvalid
+	}
 	if s.DomainID != "" && !opaqueid.Valid(s.DomainID, opaqueid.DomainPrefix) {
 		return ErrProjectConfigurationInvalid
 	}

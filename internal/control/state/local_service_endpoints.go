@@ -15,14 +15,15 @@ import (
 // ServicePlacement selects a ready team domain and a source-bound local
 // worktree. control captures the resulting identity once; defaults never rename it.
 type ServicePlacement struct {
-	DomainID       string `json:"domain_id,omitempty"`
-	Hostname       string `json:"hostname,omitempty"`
-	WorktreeKey    string `json:"worktree_key,omitempty"`
-	WorktreeLabel  string `json:"worktree_label,omitempty"`
-	DNSAutomation  bool   `json:"-"`
-	SourceKey      string `json:"-"`
-	RunAliasParent string `json:"-"`
-	Reserve        bool   `json:"-"`
+	DomainID         string `json:"domain_id,omitempty"`
+	Hostname         string `json:"hostname,omitempty"`
+	WorktreeKey      string `json:"worktree_key,omitempty"`
+	WorktreeLabel    string `json:"worktree_label,omitempty"`
+	DNSAutomation    bool   `json:"-"`
+	SourceKey        string `json:"-"`
+	RunAliasParent   string `json:"-"`
+	CertificateScope string `json:"-"`
+	Reserve          bool   `json:"-"`
 }
 
 func (p ServicePlacement) Validate() error {

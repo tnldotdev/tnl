@@ -137,6 +137,12 @@ func ValidateTNL(config TNL) error {
 				return fmt.Errorf("services.%s: publisher_alias_parent must be a canonical HTTP DNS parent of at most %d bytes", name, naming.MaxGeneratedHostnameParentBytes)
 			}
 		}
+		if service.CertificateScope != nil &&
+			(deployment == "local" || Protocol(service) != "http" || service.Public == nil || !*service.Public ||
+				service.Hostname == nil || service.RunAliasParent == nil ||
+				!ValidPublisherCertificateScope(*service.Hostname, *service.RunAliasParent, *service.CertificateScope)) {
+			return fmt.Errorf("services.%s: certificate_scope must match publisher_alias_parent and directly contain the public HTTP deployment hostname", name)
+		}
 		if service.Hostname != nil {
 			if existing := hostnames[*service.Hostname]; existing != "" {
 				return fmt.Errorf("services.%s: hostname is already used by services.%s", name, existing)

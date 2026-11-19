@@ -72,6 +72,7 @@ type RunConfig struct {
 	// the worker clears them, persists them in publisher-scoped storage, and
 	// polls for replacement. nil retains managed certificate issuance.
 	SuppliedCertificate                                   func(context.Context) (CertificateMaterial, error)
+	CertificateExport                                     *CertificateExport
 	Access                                                func(context.Context) (string, error)
 	PublisherIdentityID, PublisherGrantID, PublisherKeyID string
 	ServiceID                                             string
@@ -352,6 +353,13 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	prepared, err = newManagedPrepared(preparation, approved, config)
 	if err != nil {
 		return err
+	}
+	if config.CertificateExport != nil {
+		unbind, err := config.CertificateExport.bind(ctx, prepared)
+		if err != nil {
+			return err
+		}
+		defer unbind()
 	}
 	if config.Prepared != nil {
 		if err := config.Prepared(preparation); err != nil {

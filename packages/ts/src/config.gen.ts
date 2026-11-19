@@ -74,6 +74,10 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificate_scope?: string;
+                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -185,6 +189,10 @@ export interface TnlConfig {
                    * Exact canonical DNS hostname for the service endpoint; never an HTTPS origin.
                    */
                   hostname?: string;
+                  /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificate_scope?: string;
                   /**
                    * Ready team domain used for the service endpoint.
                    */
@@ -298,6 +306,10 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificate_scope?: string;
+                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -410,6 +422,10 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificate_scope?: string;
+                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -509,6 +525,10 @@ export interface TnlConfig {
                    * Exact canonical DNS hostname for the service endpoint; never an HTTPS origin.
                    */
                   hostname?: string;
+                  /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificate_scope?: string;
                   /**
                    * Ready team domain used for the service endpoint.
                    */
@@ -610,6 +630,10 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificate_scope?: string;
+                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -709,6 +733,10 @@ export interface TnlConfig {
                    * Exact canonical DNS hostname for the service endpoint; never an HTTPS origin.
                    */
                   hostname?: string;
+                  /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificate_scope?: string;
                   /**
                    * Ready team domain used for the service endpoint.
                    */

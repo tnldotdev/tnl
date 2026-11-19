@@ -338,6 +338,14 @@ func (m *Manager) RenewTarget(id, owner, target string) error {
 	return m.renew(id, owner, target, true)
 }
 
+// OwnsTarget checks registration ownership without extending its lease.
+func (m *Manager) OwnsTarget(id, owner, target string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	service, reg := m.findLocked(id, owner)
+	return reg != nil && service.Registered && service.Target == target
+}
+
 func (m *Manager) renew(id, owner, target string, fenced bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

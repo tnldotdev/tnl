@@ -45,6 +45,7 @@ type DeploymentBinding struct {
 	Inspection         *Inspection    `json:"inspection,omitempty" yaml:"inspection,omitempty"`
 	Hostname           *string        `json:"hostname,omitempty" yaml:"hostname,omitempty"`
 	RunAliasParent     *string        `json:"publisher_alias_parent,omitempty" yaml:"publisher_alias_parent,omitempty"`
+	CertificateScope   *string        `json:"certificate_scope,omitempty" yaml:"certificate_scope,omitempty"`
 	Domain             *string        `json:"domain,omitempty" yaml:"domain,omitempty"`
 	Ephemeral          *bool          `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
 	RequirePostQuantum *bool          `json:"require_post_quantum,omitempty" yaml:"require_post_quantum,omitempty"`
@@ -55,6 +56,13 @@ type DeploymentBinding struct {
 type DeploymentWorkload struct {
 	Deployment string `json:"deployment" yaml:"deployment" jsonschema:"required" jsonschema_description:"Exact configured deployment whose services this provider identity may access."`
 	Workload   `yaml:",inline"`
+}
+
+// ValidPublisherCertificateScope checks the shape, not ownership, of the
+// dedicated DNS subtree requested for one public HTTP deployment binding.
+func ValidPublisherCertificateScope(hostname, aliasParent, scope string) bool {
+	depth, within := naming.ChildDepth(hostname, scope)
+	return scope == aliasParent && naming.ValidGeneratedHostnameParent(scope) && within && depth == 1
 }
 
 func DeclaredProtocol(service ServiceDeclaration) string {
@@ -141,7 +149,7 @@ func resolveProjectDeployment(project Project, name string) (TNL, error) {
 		}
 		protocol := DeclaredProtocol(declaration)
 		resolved.Services[service] = Service{Name: binding.Name, Protocol: &protocol, Target: &target, Access: binding.Access, Public: binding.Public, Inspection: binding.Inspection, HTTP: binding.HTTP,
-			Hostname: binding.Hostname, RunAliasParent: binding.RunAliasParent, Domain: binding.Domain, Ephemeral: binding.Ephemeral, RequirePostQuantum: binding.RequirePostQuantum, Traffic: binding.Traffic}
+			Hostname: binding.Hostname, RunAliasParent: binding.RunAliasParent, CertificateScope: binding.CertificateScope, Domain: binding.Domain, Ephemeral: binding.Ephemeral, RequirePostQuantum: binding.RequirePostQuantum, Traffic: binding.Traffic}
 	}
 	for policy, entry := range project.Workloads {
 		if entry.Deployment == name {

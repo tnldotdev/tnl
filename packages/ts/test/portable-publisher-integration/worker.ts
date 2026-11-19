@@ -154,6 +154,13 @@ export default {
           phase = "publish";
           const managed = await publish(owner, "private");
           check(!("url" in managed), "managed private publication returned a public URL");
+          const exported = await managed.exportCertificate();
+          check(
+            exported.expiresAt > Date.now() &&
+              exported.certificate.certificatePEM.startsWith("-----BEGIN CERTIFICATE-----") &&
+              exported.certificate.privateKeyPEM.startsWith("-----BEGIN PRIVATE KEY-----"),
+            "managed private publication did not export its installed certificate and key",
+          );
           return Response.json({ publisher: owner.publisherIdentityID, calls });
         }
       } catch (error) {

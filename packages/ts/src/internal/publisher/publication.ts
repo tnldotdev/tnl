@@ -27,9 +27,14 @@ import type { PublicationRun } from "../publication_run.js";
 import {
   resolveServiceCertificate,
   serviceCertificateSourceSchema,
+  type ExportedCertificate,
   type ServiceCertificateSource,
 } from "../publication_certificate.js";
-export type { ServiceCertificate, ServiceCertificateSource } from "../publication_certificate.js";
+export type {
+  ExportedCertificate,
+  ServiceCertificate,
+  ServiceCertificateSource,
+} from "../publication_certificate.js";
 export type { PublicationRun } from "../publication_run.js";
 
 type PublisherCredentialFile = {
@@ -105,6 +110,8 @@ export interface Publication {
   /** persistent publisher address, present only when publisher aliases are enabled. */
   readonly publisherURL?: `https://${string}` | undefined;
   readonly run?: PublicationRun | undefined;
+  /** read the installed TLS certificate and private key; does not fetch or renew. */
+  exportCertificate(): Promise<ExportedCertificate>;
   close(): Promise<void>;
   wait(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -486,6 +493,11 @@ async function publishServerUntraced(
             get run() {
               return currentRun;
             },
+            async exportCertificate() {
+              if (closed || terminal || lifetime.signal.aborted)
+                throw new TnlError("sdk.certificate_unavailable");
+              return native.exportCertificate(lifetime.signal);
+            },
             close,
             wait: () => done,
             [Symbol.asyncDispose]: close,
@@ -497,11 +509,26 @@ async function publishServerUntraced(
   // registering acknowledges the listener, not routability.
   const statusRequest = independent("sdk.publish.status", () => native.status(lifetime.signal));
   const renew = independent("sdk.publish.renew", async () => {
-    const certificate =
-      options.certificate === undefined
-        ? undefined
-        : await resolveServiceCertificate(options.certificate, lifetime.signal);
-    return native.renew(lifetime.signal, certificate);
+    if (typeof options.certificate === "function") {
+      let certificate;
+      try {
+        certificate = await resolveServiceCertificate(
+          options.certificate,
+          AbortSignal.any([lifetime.signal, AbortSignal.timeout(2_000)]),
+        );
+      } catch (cause) {
+        if (lifetime.signal.aborted) throw cause;
+      }
+      if (certificate !== undefined) {
+        try {
+          await native.renew(lifetime.signal, certificate);
+          return;
+        } catch (cause) {
+          if (!(cause instanceof TnlError) || cause.code !== "sdk.certificate_invalid") throw cause;
+        }
+      }
+    }
+    return native.renew(lifetime.signal);
   });
   const recover = independent("sdk.publish.recover", async () => {
     await native.discover(lifetime.signal);
@@ -731,6 +758,7 @@ export async function publishFetch(
     get run() {
       return base.run;
     },
+    exportCertificate: () => base.exportCertificate(),
     close,
     async wait(): Promise<void> {
       let failure: unknown;

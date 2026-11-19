@@ -36,7 +36,7 @@ interface Running {
   readonly publication: Publication;
 }
 
-// the worker's loopback RPC sends only target names. the durable object owns
+// publication intent contains only the target name. the durable object owns
 // the identity, intent and wasm lifetime; go owns each authorized service run.
 export class TnlPublisher extends DurableObject {
   readonly #state: PublisherState;
@@ -88,6 +88,16 @@ export class TnlPublisher extends DurableObject {
       await this.#arm();
       if (intent !== current) await this.#save(new Map(intents).set(service, intent));
       return this.#result(await this.#start(identity, intent));
+    });
+  }
+
+  exportCertificate(service: string, id: string) {
+    return this.#serialize(async () => {
+      if (!serviceNameSchema.safeParse(service).success || !z.uuid().safeParse(id).success)
+        throw new TnlError("sdk.configuration_invalid");
+      const running = this.#running.get(service);
+      if (running?.intent.id !== id) throw new TnlError("sdk.certificate_unavailable");
+      return running.publication.exportCertificate();
     });
   }
 

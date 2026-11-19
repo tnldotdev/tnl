@@ -231,6 +231,8 @@ func startPublisherUsing(encoded string, host js.Value, enrolled *enrolledPublis
 	ready, closed := newPublisherDeferred(), newPublisherDeferred()
 	prepared.Config.CertificateStore = storage
 	prepared.Config.SuppliedCertificate = certificateSource
+	certificateExport := new(publisherservice.CertificateExport)
+	prepared.Config.CertificateExport = certificateExport
 	prepared.Config.WebSocketOnly = true
 	// the host owns relay TLS; native TLS options cannot cross this boundary.
 	prepared.Config.RelayWebSocket = muxsession.WebSocketConnector{}
@@ -253,6 +255,23 @@ func startPublisherUsing(encoded string, host js.Value, enrolled *enrolledPublis
 	}
 	handle.Set("ready", ready.value)
 	handle.Set("closed", closed.value)
+	bind(handle, "exportCertificate", &owner.methods, func(args []js.Value) (any, error) {
+		if len(args) != 0 {
+			return nil, errArguments
+		}
+		snapshot, err := certificateExport.Snapshot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer clear(snapshot.PrivateKeyPEM)
+		return map[string]any{
+			"certificate": map[string]any{
+				"certificatePEM": string(snapshot.CertificatePEM),
+				"privateKeyPEM":  string(snapshot.PrivateKeyPEM),
+			},
+			"expiresAt": float64(snapshot.ExpiresAt.UnixMilli()),
+		}, nil
+	})
 	bind(handle, "close", &owner.methods, func(args []js.Value) (any, error) {
 		if len(args) != 0 {
 			return nil, errArguments

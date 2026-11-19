@@ -57,12 +57,13 @@ type Options struct {
 
 // Tunnel owns its local listener, service run, and exact service allocation.
 type Tunnel struct {
-	cancel  context.CancelFunc
-	done    chan struct{}
-	mu      sync.Mutex
-	service controlv1.Service
-	err     error
-	close   sync.Once
+	cancel      context.CancelFunc
+	done        chan struct{}
+	mu          sync.Mutex
+	service     controlv1.Service
+	err         error
+	close       sync.Once
+	certificate *publisherservice.CertificateExport
 }
 
 // Open binds an HTTP handler and returns after its service is routable.
@@ -91,7 +92,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	}
 	local := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
 	runCtx, cancel := context.WithCancel(ctx)
-	tunnel := &Tunnel{cancel: cancel, done: make(chan struct{})}
+	tunnel := &Tunnel{cancel: cancel, done: make(chan struct{}), certificate: new(publisherservice.CertificateExport)}
 	serveDone := make(chan error, 1)
 	go func() {
 		err := local.Serve(listener)
@@ -109,6 +110,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 			return runSDKPublication(runCtx, state, options, adhoc.Options{
 				RequirePostQuantum:  options.RequirePostQuantum,
 				SuppliedCertificate: suppliedCertificateSource(options.Certificate),
+				CertificateExport:   tunnel.certificate,
 				ControlURL:          serverURL, HTTPClient: options.HTTPClient, State: profile,
 				Publisher: native, InvocationID: invocationID, ExpiresAt: options.ExpiresAt, Public: &public,
 				Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
@@ -157,8 +159,34 @@ type ServiceCertificate struct {
 	PrivateKeyPEM  []byte
 }
 
-func (ServiceCertificate) String() string   { return "private supplied service certificate" }
-func (ServiceCertificate) GoString() string { return "private supplied service certificate" }
+func (ServiceCertificate) String() string   { return "private service certificate" }
+func (ServiceCertificate) GoString() string { return "private service certificate" }
+
+type ExportedCertificate struct {
+	Certificate ServiceCertificate
+	ExpiresAt   time.Time
+}
+
+func (ExportedCertificate) String() string   { return "private installed service certificate" }
+func (ExportedCertificate) GoString() string { return "private installed service certificate" }
+
+var ErrCertificateUnavailable = publisherservice.ErrCertificateUnavailable
+
+// ExportCertificate copies the current installed certificate and matching key.
+// it does not fetch or renew material. the caller owns the returned buffers.
+func (t *Tunnel) ExportCertificate(ctx context.Context) (ExportedCertificate, error) {
+	if t == nil || t.certificate == nil {
+		return ExportedCertificate{}, ErrCertificateUnavailable
+	}
+	snapshot, err := t.certificate.Snapshot(ctx)
+	if err != nil {
+		return ExportedCertificate{}, err
+	}
+	return ExportedCertificate{
+		Certificate: ServiceCertificate{CertificatePEM: snapshot.CertificatePEM, PrivateKeyPEM: snapshot.PrivateKeyPEM},
+		ExpiresAt:   snapshot.ExpiresAt,
+	}, nil
+}
 
 func suppliedCertificateSource(source func(context.Context) (ServiceCertificate, error)) func(context.Context) (publisherservice.CertificateMaterial, error) {
 	if source == nil {

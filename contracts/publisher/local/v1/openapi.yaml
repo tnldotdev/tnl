@@ -28,6 +28,8 @@ paths:
     $ref: "./paths/invocations.yaml#/paths/~1v1~1leases"
   /v1/publications/register:
     $ref: "./paths/invocations.yaml#/paths/~1v1~1publications~1register"
+  /v1/publications/certificate:
+    $ref: "./paths/invocations.yaml#/paths/~1v1~1publications~1certificate"
 components:
   responses:
     Problem:
@@ -65,6 +67,8 @@ components:
       $ref: "./schemas/invocations.yaml#/schemas/Registration"
     SuppliedServiceCertificateMaterial:
       $ref: "./schemas/invocations.yaml#/schemas/SuppliedServiceCertificateMaterial"
+    InstalledServiceCertificate:
+      $ref: "./schemas/invocations.yaml#/schemas/InstalledServiceCertificate"
     Lease:
       $ref: "./schemas/invocations.yaml#/schemas/Lease"
     Invocation:

@@ -69,6 +69,7 @@ export interface WasmPublication {
   readonly run: unknown;
   readonly ready: PromiseLike<unknown>;
   readonly closed: PromiseLike<unknown>;
+  exportCertificate?(): Promise<unknown>;
   close(): Promise<unknown>;
 }
 

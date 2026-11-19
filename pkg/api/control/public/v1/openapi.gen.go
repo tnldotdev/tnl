@@ -3245,8 +3245,11 @@ type ProjectServiceAccessTeam bool
 
 // ProjectServiceConfiguration defines model for ProjectServiceConfiguration.
 type ProjectServiceConfiguration struct {
-	Access   *ProjectServiceAccess `json:"access,omitempty"`
-	DomainId *DomainID             `json:"domain_id,omitempty"`
+	Access *ProjectServiceAccess `json:"access,omitempty"`
+
+	// CertificateScope Authorize a managed wildcard for a public HTTP deployment binding. Must be a dedicated subtree of the selected custom domain, match publisher_alias_parent, and directly contain hostname. The deployment retains the scope until it is retired.
+	CertificateScope *string   `json:"certificate_scope,omitempty"`
+	DomainId         *DomainID `json:"domain_id,omitempty"`
 
 	// Ephemeral Remove this service after its publication stops rather than retaining it for a later run.
 	Ephemeral *bool `json:"ephemeral,omitempty"`

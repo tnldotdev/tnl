@@ -117,6 +117,7 @@ func Prepare(ctx context.Context, options Options) (*Prepared, error) {
 		ServiceID: publication.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(publication), Ready: options.Ready,
 		ShutdownDeadline:    options.ShutdownDeadline,
 		SuppliedCertificate: options.SuppliedCertificate,
+		CertificateExport:   options.CertificateExport,
 	}
 	return prepared, nil
 }

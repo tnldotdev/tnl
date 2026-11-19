@@ -7,8 +7,10 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
+	"net/http"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/state/certificatestore"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -34,6 +36,8 @@ type suppliedCertificateWorker struct {
 
 type suppliedCertificateSourceError struct{ cause error }
 
+var errSuppliedCandidate = errors.New("supplied service certificate candidate was rejected")
+
 func (suppliedCertificateSourceError) Error() string {
 	return "supplied service certificate source failed"
 }
@@ -55,7 +59,9 @@ func (r suppliedCertificateWorker) maintain(ctx context.Context) error {
 			return errors.Join(stopped, serviceWorkerError(err, attempt.Err()))
 		}
 		if err != nil {
-			if !managedCertificateRetryable(err) {
+			var sourceErr suppliedCertificateSourceError
+			rejectedReplacement := fingerprint != "" && (errors.Is(err, errSuppliedCandidate) || errors.As(err, &sourceErr))
+			if !rejectedReplacement && !managedCertificateRetryable(err) {
 				return err
 			}
 		} else {
@@ -94,7 +100,7 @@ func (r suppliedCertificateWorker) advance(ctx context.Context, previous string)
 	}
 	certificate, err := certificateidentity.LoadSupplied(material.CertificatePEM, material.PrivateKeyPEM, names, time.Now())
 	if err != nil {
-		return result, err
+		return result, errors.Join(errSuppliedCandidate, err)
 	}
 	digest := sha256.Sum256(certificate.Certificate[0])
 	if previous != "" && previous == hex.EncodeToString(digest[:]) {
@@ -118,6 +124,10 @@ func (r suppliedCertificateWorker) advance(ctx context.Context, previous string)
 	receipt, err := r.control.MarkSuppliedServiceCertificateInstalled(ctx, r.setup.ServiceId, r.setup.ServiceRunId,
 		r.setup.RunNumber, string(material.CertificatePEM), previous, credentials.ServiceRunToken(r.setup.RunToken))
 	if err != nil {
+		var problem *clientcontrol.ProblemError
+		if errors.As(err, &problem) && problem.Status == http.StatusBadRequest && problem.Problem.Code == controlv1.InvalidRequest {
+			return result, errors.Join(errSuppliedCandidate, err)
+		}
 		return result, err
 	}
 	if receipt.CertificateSha256 != staged.Fingerprint || !receipt.ExpiresAt.After(time.Now()) ||

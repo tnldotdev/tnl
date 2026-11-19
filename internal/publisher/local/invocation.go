@@ -221,6 +221,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	}
 	service := publisherapp.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}
 	cfg.ShutdownDeadline = deadline
+	cfg.CertificateExport = new(publisherservice.CertificateExport)
 	if supplied != nil {
 		cfg.SuppliedCertificate = supplied.current
 	}
@@ -249,7 +250,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		Target: request.Target, ServiceID: saved.Id, ServiceProtocol: saved.Protocol}
 	configuration := publisherapp.Configuration{Service: publication, Inspection: policy, Cleanup: cleanup}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request, telemetryDisabled: request.TelemetryDisabled, certificate: supplied}
+	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request, telemetryDisabled: request.TelemetryDisabled, certificate: supplied, certificateExport: cfg.CertificateExport}
 	a.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return publisherprotocol.Registration{}, err
