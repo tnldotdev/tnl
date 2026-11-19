@@ -61,7 +61,7 @@ func TestServiceRunTrafficResolutionAndStoredBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	l, err := decodeRunTraffic(payload)
-	if err != nil || l.Rate != 40 || l.RatePer != 2*time.Second || l.Connections != 32 || l.UploadBytes != 8<<20 || l.TotalConnections != total {
+	if err != nil || l.Rate != 40 || l.RatePer != 2*time.Second || l.Connections != 1024 || l.UploadBytes != 128<<20 || l.TotalConnections != total {
 		t.Fatalf("resolved limits: %+v %v", l, err)
 	}
 	tooFast := "1ms"
@@ -70,7 +70,7 @@ func TestServiceRunTrafficResolutionAndStoredBounds(t *testing.T) {
 		t.Fatalf("ceiling: %v", err)
 	}
 	defaults := trafficlimits.Default()
-	defaults.Burst = 201
+	defaults.Burst = trafficlimits.Ceiling().Burst + 1
 	if _, err := resolveRunTraffic(nil, defaults, trafficlimits.Limits{}); !errors.Is(err, ErrTrafficSelection) {
 		t.Fatalf("unsafe defaults: %v", err)
 	}

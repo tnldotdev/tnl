@@ -11,8 +11,6 @@ from typing import Protocol, cast
 
 from ._protocol import TnlError
 
-_MAX_BINDINGS = 64
-
 
 class ClientFactory[T](Protocol):
     async def __call__(self) -> T: ...
@@ -160,12 +158,6 @@ class _Factory[C, T]:
             raise self._closed_error
         entry = self._entries.get(key)
         if entry is None:
-            if len(self._entries) >= _MAX_BINDINGS:
-                raise TnlError(
-                    "sdk.client_capacity",
-                    "the client factory has too many retained bindings; "
-                    "close it before creating another",
-                )
             created = asyncio.create_task(self._make(connection))
             entry = _Entry(created)
             self._entries[key] = entry

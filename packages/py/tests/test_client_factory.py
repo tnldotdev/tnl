@@ -536,7 +536,7 @@ def test_multiple_cleanup_failures_keep_all_original_exceptions() -> None:
     asyncio.run(scenario())
 
 
-def test_binding_limit_does_not_evict_a_client_still_in_use() -> None:
+def test_retains_more_than_64_bindings_without_evicting_clients_still_in_use() -> None:
     async def scenario() -> None:
         key = "0"
         closed: list[Client] = []
@@ -546,17 +546,14 @@ def test_binding_limit_does_not_evict_a_client_still_in_use() -> None:
 
         get = _Factory(acquire, create=Client, close=closed.append)
         first = await get()
-        for index in range(1, 64):
+        for index in range(1, 257):
             key = str(index)
             await get()
-        key = "overflow"
-        with pytest.raises(tnl.TnlError) as caught:
-            await get()
-        assert caught.value.code == "sdk.client_capacity"
         key = "0"
         assert await get() is first and closed == []
         await get.aclose()
-        assert len(closed) == 64
+        assert len(closed) == 257
+        assert len({id(client) for client in closed}) == 257
 
     asyncio.run(scenario())
 

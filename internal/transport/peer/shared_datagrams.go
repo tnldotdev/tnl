@@ -15,8 +15,6 @@ const (
 	sharedMaxPeers     = 64
 	sharedQueuePerPeer = 16
 	sharedGlobalQueue  = 256
-	// keep bounded tombstones so an old generation cannot be reopened on this session.
-	sharedMaxAdmissions = 4096
 )
 
 // PairBinding is supplied by the role owner after authenticating an exact pair,
@@ -135,6 +133,7 @@ func NewSharedDatagrams(parent context.Context, conn muxsession.DatagramSession)
 			close(p.done)
 		}
 		s.peers = nil
+		s.lastGeneration = nil
 		s.order = nil
 		s.mu.Unlock()
 	})
@@ -142,8 +141,8 @@ func NewSharedDatagrams(parent context.Context, conn muxsession.DatagramSession)
 }
 
 // Register transfers one live carrier to the endpoint. a pair may be replaced
-// only with a strictly newer generation; tombstones prevent stale reuse. a full
-// owner must be replaced with a fresh outer session, not grow without bound.
+// only with a strictly newer generation. retain tombstones for this borrowed
+// session's lifetime so retiring a carrier never permits stale reuse.
 func (s *SharedDatagrams) Register(b PairBinding) (Carrier, error) {
 	return s.register(b, nil)
 }
@@ -158,8 +157,7 @@ func (s *SharedDatagrams) register(b PairBinding, destination *CarrierSlot) (for
 		return nil, net.ErrClosed
 	}
 	id := b.Delivery.Pair
-	if (len(s.order) >= sharedMaxPeers && s.peers[id] == nil) || b.Delivery.Generation <= s.lastGeneration[id] ||
-		(s.lastGeneration[id] == 0 && len(s.lastGeneration) >= sharedMaxAdmissions) {
+	if (len(s.order) >= sharedMaxPeers && s.peers[id] == nil) || b.Delivery.Generation <= s.lastGeneration[id] {
 		return nil, ErrConfiguration
 	}
 	if old := s.peers[id]; old != nil {

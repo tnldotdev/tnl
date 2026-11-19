@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	pendingHTTPRelayAllowance  = 16
-	pendingHTTPSourceAllowance = 8
+	pendingHTTPRelayAllowance  = 256
+	pendingHTTPSourceAllowance = 128
 )
 
 // the observer changes no bytes or admission decisions. a held close first
@@ -585,14 +585,14 @@ func TestServiceHTTPPendingSourceAllowanceSpansRelaysAndReleasesOnAuthorization(
 		{"2001:db8::1", "2001:db8::ffff"},
 	} {
 		t.Run(addresses[0], func(t *testing.T) {
-			f := newPendingHTTPFixture(t, 32, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			f := newPendingHTTPFixture(t, pendingHTTPSourceAllowance+1, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNoContent)
 			}))
 			var held []*pendingHTTPVisitor
 			for index := range pendingHTTPSourceAllowance {
 				v := f.mustOpen(t, uint8(index%2), netip.MustParseAddr(addresses[index%2]))
 				if err := v.handshake(t, false); err != nil {
-					t.Fatal("original eight-connection browser burst was rejected", err)
+					t.Fatal("pending browser burst was rejected", err)
 				}
 				held = append(held, v)
 			}
@@ -746,7 +746,7 @@ func TestServiceHTTPPendingSourceChargeSurvivesBlockedCleanupAndRelayReplacement
 	}
 	release()
 	// only this predecessor carried one setup. joining it is the actual
-	// retirement barrier; the other seven stay pending on the healthy slot.
+	// retirement barrier; the other source setups stay on the healthy slot.
 	old.stop(t)
 	if held.wire.physical.Load() != 1 {
 		t.Fatal("joined retirement physically closed the predecessor more than once", held.wire.physical.Load())

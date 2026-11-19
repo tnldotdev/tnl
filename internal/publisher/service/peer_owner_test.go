@@ -24,7 +24,9 @@ func TestConnectorPeerOwnerObservationRetainsOnlyOwnerAuthority(t *testing.T) {
 		pending.generation++
 		pending.until = time.Now().Add(time.Second)
 		p.pending, p.highwater = &pending, pending.generation
-		p.seen["spent"] = struct{}{}
+		if !p.rememberOpeningLocked("spent", time.Now(), time.Now().Add(time.Minute)) {
+			t.Fatal("could not seed opening history")
+		}
 		time.Sleep(time.Second)
 		started := time.Now()
 		page := peerOwnerPage(p, before.observedAt.Add(time.Second), before.authorityUntil.Add(time.Minute))

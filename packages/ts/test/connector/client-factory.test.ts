@@ -421,7 +421,7 @@ describe("ordinary client factories", () => {
     await expect(get.close()).rejects.toMatchObject({ errors: [a, b] });
   });
 
-  test("retained bindings are bounded without evicting a client still in use", async () => {
+  test("retains more than 64 bindings without evicting clients still in use", async () => {
     let key = 0;
     const close = vi.fn();
     const get = clientFactory(async () => ({ key: String(key), connection: key }), {
@@ -429,12 +429,12 @@ describe("ordinary client factories", () => {
       close,
     });
     const first = await get();
-    for (key = 1; key < 64; key++) await get();
-    await expect(get()).rejects.toMatchObject({ code: "sdk.client_capacity" });
+    for (key = 1; key < 257; key++) await get();
     key = 0;
     expect(await get()).toBe(first);
     expect(close).not.toHaveBeenCalled();
     await get.close();
-    expect(close).toHaveBeenCalledTimes(64);
+    expect(close).toHaveBeenCalledTimes(257);
+    expect(new Set(close.mock.calls.map(([client]) => client)).size).toBe(257);
   });
 });

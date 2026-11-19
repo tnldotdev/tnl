@@ -136,7 +136,7 @@ func (c *Client) GetDeploymentPublisherAppAssignments(ctx context.Context, token
 }
 
 func (c *Client) deploymentPublisherAssignments(ctx context.Context, token string, appOwned *bool) (controlv1.DeploymentPublisherAssignments, error) {
-	return request[controlv1.DeploymentPublisherAssignments](ctx, c, token, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+	return requestWithTimeoutAndLimit[controlv1.DeploymentPublisherAssignments](ctx, c, c.timeout, token, 32<<20, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetDeploymentPublisherAssignments(ctx, &controlv1.GetDeploymentPublisherAssignmentsParams{AppOwned: appOwned}, editors...)
 	})
 }

@@ -30,13 +30,13 @@ func (l Limits) Validate() error {
 
 func (l Limits) Defaults(tcp bool) Limits {
 	if l.Concurrency == 0 {
-		l.Concurrency = 64
+		l.Concurrency = 1024
 		if tcp {
 			l.Concurrency = 24
 		}
 	}
 	if l.RateRequests == 0 && l.RatePer == 0 {
-		l.RateRequests, l.RatePer, l.RateBurst = 60, time.Second, 60
+		l.RateRequests, l.RatePer, l.RateBurst = 1000, time.Second, 2000
 		if tcp {
 			l.RateRequests, l.RateBurst = 10, 20
 		}

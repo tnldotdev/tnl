@@ -106,7 +106,7 @@ var localAWSRegion = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]+$`)
 
 func (b DeploymentBinding) Validate() error {
 	canonical, err := clientstate.CanonicalServer(b.Scope.Server)
-	if err != nil || canonical != b.Scope.Server || b.Version != 1 || b.Scope.Team == "" || b.Scope.Deployment == "" || b.Scope.Publisher == "" || ValidateTrust([]byte(b.ServerCAPEM)) != nil || len(b.Discovery) > 128 || publisherprovenance.Validate(b.Deployment) != nil {
+	if err != nil || canonical != b.Scope.Server || b.Version != 1 || b.Scope.Team == "" || b.Scope.Deployment == "" || b.Scope.Publisher == "" || ValidateTrust([]byte(b.ServerCAPEM)) != nil || publisherprovenance.Validate(b.Deployment) != nil {
 		return ErrScope
 	}
 	requests := map[publisherdiscovery.Request]bool{}

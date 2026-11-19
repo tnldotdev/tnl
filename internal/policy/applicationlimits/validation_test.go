@@ -8,7 +8,7 @@ import (
 func TestDefaultsAndIndependentBurst(t *testing.T) {
 	for _, tcp := range []bool{false, true} {
 		l := (Limits{}).Defaults(tcp)
-		want := Limits{Concurrency: 64, RateRequests: 60, RatePer: time.Second, RateBurst: 60}
+		want := Limits{Concurrency: 1024, RateRequests: 1000, RatePer: time.Second, RateBurst: 2000}
 		if tcp {
 			want.Concurrency = 24
 			want.RateRequests = 10

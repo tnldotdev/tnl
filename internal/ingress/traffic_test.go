@@ -25,6 +25,66 @@ func trafficFixture(t *testing.T) *trafficAdmission {
 	return newTrafficAdmission(c, p)
 }
 
+func TestDefaultTrafficAdmits1024VisitorsFromOneSource(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		a := trafficFixture(t)
+		key := trafficKey{service: "service", id: "run", run: 1}
+		source := netip.MustParseAddr("192.0.2.1")
+		for range 1024 {
+			if !a.process() {
+				t.Fatal("default process rate rejected the browser burst")
+			}
+			releaseSource, reason := a.source(source)
+			if releaseSource == nil {
+				t.Fatal("default source budget rejected the browser burst", reason)
+			}
+			defer releaseSource()
+			release, reason := a.acquire(key, a.config.Default)
+			if release == nil {
+				t.Fatal("default service budget rejected the browser burst", reason)
+			}
+			defer release()
+		}
+		if release, reason := a.acquire(key, a.config.Default); release != nil || reason != "service_connections" {
+			t.Fatal("raised service concurrency was not enforced", reason)
+		}
+	})
+}
+
+func TestDefaultTrafficRateBurstAndPendingSourceStillBoundWork(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		a := trafficFixture(t)
+		key := trafficKey{service: "service", id: "run", run: 1}
+		for range 2000 {
+			release, reason := a.acquire(key, a.config.Default)
+			if release == nil {
+				t.Fatal("default burst stopped at an old threshold", reason)
+			}
+			release()
+		}
+		if release, reason := a.acquire(key, a.config.Default); release != nil || reason != "service_connection_rate" {
+			t.Fatal("raised connection burst was not enforced", reason)
+		}
+		time.Sleep(time.Second)
+		release, reason := a.acquire(key, a.config.Default)
+		if release == nil {
+			t.Fatal("rate did not refill", reason)
+		}
+		release()
+		source := netip.MustParseAddr("192.0.2.1")
+		for range 128 {
+			release, reason := a.acquirePending(key, source)
+			if release == nil {
+				t.Fatal("default pending budget stopped at an old threshold", reason)
+			}
+			defer release()
+		}
+		if release, reason := a.acquirePending(key, source); release != nil || reason != "pending_source_connections" {
+			t.Fatal("raised pending source capacity was not enforced", reason)
+		}
+	})
+}
+
 func TestRunBucketsSurviveRefreshAndSeparateRuns(t *testing.T) {
 	a := trafficFixture(t)
 	l := a.config.Default

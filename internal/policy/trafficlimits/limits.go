@@ -28,13 +28,13 @@ type Limits struct {
 }
 
 func Default() Limits {
-	return Limits{Connections: 32, Rate: 20, RatePer: time.Second, Burst: 40,
-		UploadBytes: 8 << 20, DownloadBytes: 16 << 20}
+	return Limits{Connections: 1024, Rate: 1000, RatePer: time.Second, Burst: 2000,
+		UploadBytes: 128 << 20, DownloadBytes: 256 << 20}
 }
 
 func Ceiling() Limits {
-	return Limits{Connections: 128, Rate: 100, RatePer: time.Second, Burst: 200,
-		UploadBytes: 64 << 20, DownloadBytes: 128 << 20}
+	return Limits{Connections: 4096, Rate: 10000, RatePer: time.Second, Burst: 20000,
+		UploadBytes: 1 << 30, DownloadBytes: 2 << 30}
 }
 
 func (l Limits) Period() time.Duration {

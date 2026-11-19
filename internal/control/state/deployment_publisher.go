@@ -333,9 +333,6 @@ func (d *Database) deploymentPublisherAssignments(ctx context.Context, token str
 	if err != nil {
 		return result, err
 	}
-	if len(checkpoints) > 1024 {
-		return result, ErrDeploymentPublisher
-	}
 	for _, checkpoint := range checkpoints {
 		var plan CertificatePlan
 		if json.Unmarshal(checkpoint, &plan) != nil {

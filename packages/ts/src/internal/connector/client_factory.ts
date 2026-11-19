@@ -38,7 +38,6 @@ export function clientFactory<Connection, Client>(
       if (closed) throw closedError;
       let entry = entries.get(binding.key);
       if (entry === undefined) {
-        if (entries.size >= 64) throw new TnlError("sdk.client_capacity");
         const created: Promise<Client> = Promise.resolve().then(async () => {
           if (closed) throw closedError;
           return options.create(binding.connection);
