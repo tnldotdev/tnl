@@ -254,7 +254,7 @@ func TestServiceHTTPPolicyRestorationAbsentPermissionDeadlineIsDenied(t *testing
 	if token, err := visitortoken.Sign(view.Issuer, "lifecycle", key, facts, time.Now()); token != "" || !errors.Is(err, visitortoken.ErrToken) {
 		t.Fatal("current signer accepted an unbounded permission", err)
 	}
-	original, err := jose.ParseSigned(valid.Reveal(), []jose.SignatureAlgorithm{jose.EdDSA})
+	original, err := jose.ParseSignedCompact(valid.Reveal(), []jose.SignatureAlgorithm{jose.EdDSA})
 	if err != nil {
 		t.Fatal(err)
 	}

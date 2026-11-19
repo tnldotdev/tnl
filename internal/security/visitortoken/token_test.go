@@ -225,7 +225,7 @@ func TestTokenClaimsAreClosedBoundedAndNeverLegacyCredentials(t *testing.T) {
 	key, permission, view, now := tokenFixture(t)
 	token := issueToken(t, key, permission, view, now)
 	parts := strings.Split(token.Reveal(), ".")
-	signed, err := jose.ParseSigned(token.Reveal(), []jose.SignatureAlgorithm{jose.EdDSA})
+	signed, err := jose.ParseSignedCompact(token.Reveal(), []jose.SignatureAlgorithm{jose.EdDSA})
 	if err != nil {
 		t.Fatal(err)
 	}

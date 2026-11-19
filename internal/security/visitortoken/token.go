@@ -286,7 +286,7 @@ func verifyPayload(token Token, view View, profile string, now time.Time) ([]byt
 	if len(public) != ed25519.PublicKeySize {
 		return nil, "", ErrKey
 	}
-	signed, err := jose.ParseSigned(token.Reveal(), []jose.SignatureAlgorithm{jose.EdDSA})
+	signed, err := jose.ParseSignedCompact(token.Reveal(), []jose.SignatureAlgorithm{jose.EdDSA})
 	if err != nil || len(signed.Signatures) != 1 {
 		return nil, "", ErrToken
 	}

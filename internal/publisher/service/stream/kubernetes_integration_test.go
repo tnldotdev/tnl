@@ -31,8 +31,8 @@ import (
 
 var kindBinary = flag.String("tnl-kind-binary", "kind", "kind v0.30.0 executable for disposable Kubernetes integration")
 
-const kindNode = "docker.io/kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a"
-const kubeBusybox = "docker.io/library/busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
+const kindNode = "docker.io/kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d"
+const kubeBusybox = "docker.io/library/busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
 
 // this opt-in fixture owns the entire disposable cluster and uses actual kubectl
 // commands through the native frontend. control admission is a narrow callback;
