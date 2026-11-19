@@ -13,12 +13,6 @@ const options = { absWorkingDir: demo, bundle: true, format: "esm", minify: true
 await buildPage({ configFile: path.join(demo, "vite.config.ts") });
 const index = await readFile(path.join(output, "index.html"), "utf8");
 await writeFile(path.join(output, "start.html"), index.replace('id="app"', 'id="app" data-start'));
-const css = await readFile(path.join(output, "index.css"), "utf8");
-const fontLicense = await readFile(
-  path.join(demo, "node_modules/@fontsource-variable/fira-code/LICENSE"),
-  "utf8",
-);
-await writeFile(path.join(output, "index.css"), `/*\n${fontLicense.trim()}\n*/\n${css}`);
 await mkdir(path.join(output, "hosting/wasm"), { recursive: true });
 await Promise.all([
   build({
@@ -36,18 +30,12 @@ await Promise.all([
 ]);
 
 const assets = await Promise.all(
-  [
-    "/app.js",
-    "/index.html",
-    "/index.css",
-    "/favicon.svg",
-    "/fira-code-latin-wght-normal.woff2",
-    WORKER_PATH,
-    WASM_PATH,
-  ].map(async (file): Promise<Asset> => {
-    const bytes = await readFile(path.join(output, file));
-    return { path: file, size: bytes.byteLength, sha256: await digest(bytes) };
-  }),
+  ["/app.js", "/index.html", "/index.css", "/favicon.svg", WORKER_PATH, WASM_PATH].map(
+    async (file): Promise<Asset> => {
+      const bytes = await readFile(path.join(output, file));
+      return { path: file, size: bytes.byteLength, sha256: await digest(bytes) };
+    },
+  ),
 );
 const id = await digest(new TextEncoder().encode(JSON.stringify(assets)));
 const release = await parseRelease({ id, assets });

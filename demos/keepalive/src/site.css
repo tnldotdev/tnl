@@ -3,10 +3,11 @@
   background: #fff;
   color: #171717;
   font:
-    1rem/1.6 "Fira Code",
-    ui-monospace,
+    1rem/1.6 ui-monospace,
     "SFMono-Regular",
+    Menlo,
     Consolas,
+    "Liberation Mono",
     monospace;
 }
 
@@ -54,11 +55,4 @@ footer {
   margin-top: 3rem;
   color: #595959;
   font-size: 0.875rem;
-}
-@font-face {
-  font-family: "Fira Code";
-  font-style: normal;
-  font-weight: 300 700;
-  font-display: swap;
-  src: url("@fontsource-variable/fira-code/files/fira-code-latin-wght-normal.woff2") format("woff2");
 }
