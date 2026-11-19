@@ -29,6 +29,20 @@ func TestIntegrationShareAndTeamAccessIncludeMoreThan32Services(t *testing.T) {
 	if err != nil || !enabled.TeamAccessEnabled || !slices.Equal(enabled.ServiceIDs, preview.ServiceIDs) {
 		t.Fatal("team access did not retain the preview's complete service set", err)
 	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity=$1`, len(services)); err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range services {
+		run := f.publish(t, service)
+		if service.ID == f.service.ID {
+			f.run = run
+		}
+	}
+	f.browser(t, preview.ID, f.project.ActorID)
+	var hostCount int
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT count(DISTINCT service_id) FROM control.service_http_browser_handoffs`).Scan(&hostCount); err != nil || hostCount != len(services) {
+		t.Fatalf("browser handoff has %d of %d preview hosts: %v", hostCount, len(services), err)
+	}
 }
 
 func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
