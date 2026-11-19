@@ -234,6 +234,7 @@ async function workerdSmoke(configuration: PortableFixture) {
     format: "esm",
     platform: "browser",
     conditions: ["workerd", "worker", "browser"],
+    external: ["cloudflare:*"],
     tsconfigRaw: {},
     plugins: [
       {

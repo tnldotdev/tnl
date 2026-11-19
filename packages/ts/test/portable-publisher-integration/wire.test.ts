@@ -12,6 +12,7 @@ const fixture = fixtureSchema.parse({
   deployment: "preview",
   token: "private-fixture-token",
   sibling_token: "private-sibling-fixture-token",
+  enrollment: "disposable-enrollment-fixture",
   control_url: "https://control.fixture.test",
   control_dial_address: "127.0.0.1:1234",
   control_root_pem: "fixture-control-ca",

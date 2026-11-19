@@ -17,6 +17,13 @@ tasks:
       - task: :js:build
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationPublisherWASMFixture$' -count=1 -timeout=15m -args -tnl-test-tier=integration -tnl-publisher-wasm-fixture-command='["node","scripts/test/portable-publisher.ts","--fixture","{fixture}","--runtime","{{.RUNTIME}}"]'
 
+  publisher-native:
+    desc: Check native publisher identity ownership and real relay traffic in Node, Bun, and Python
+    cmds:
+      - task: :js:build
+      - go test -race -v ./internal/daemon -run='^TestIntegrationNativePublisherFactory$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationNativePublisherRelayTraffic$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
   websocket:
     desc: Check Chrome and workerd WASM WebSocket/yamux bytes and authentication against the native relay transport
     cmds:
@@ -61,7 +68,7 @@ tasks:
     cmds:
       - task: :js:build
       - task: :py:sync
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(ConnectorDirect|WorkloadTransport(Lifecycle|Closure)$|WorkloadHTTPPublicStreamRenewal$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=12m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(NativePublisher(Factory|RelayTraffic)$|ConnectorDirect|WorkloadTransport(Lifecycle|Closure)$|WorkloadHTTPPublicStreamRenewal$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=12m -args -tnl-test-tier=integration
 
   runtime:leases:
     desc: Cross production private visitor lease cycles and outage deadlines on real sockets

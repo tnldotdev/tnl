@@ -288,17 +288,22 @@ async function startWorker(configuration: string) {
         }),
       ),
     ]);
+    async function request(route: string): Promise<Response> {
+      const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+        method: "POST",
+        signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(120_000)]),
+      });
+      check(
+        response.ok,
+        `actual Go/WASM durable publisher ${route} failed: HTTP ${response.status} ${redact((await response.clone().text()).slice(0, 500))}; ${redact(diagnostics.slice(-1500))}`,
+      );
+      return response;
+    }
     return {
       close,
+      request,
       async call(route: string) {
-        const response = await fetch(`http://127.0.0.1:${port}${route}`, {
-          method: "POST",
-          signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(120_000)]),
-        });
-        check(
-          response.ok,
-          `actual Go/WASM durable publisher ${route} failed: HTTP ${response.status}`,
-        );
+        const response = await request(route);
         return workerStatus.parse(await response.json());
       },
     };
@@ -320,6 +325,7 @@ async function workerdSmoke(configuration: PublisherFixture) {
     format: "esm",
     platform: "browser",
     conditions: ["workerd", "worker", "browser"],
+    external: ["cloudflare:workers"],
     tsconfigRaw: {},
     plugins: [
       packagedGoRuntime(),
@@ -396,6 +402,23 @@ async function workerdSmoke(configuration: PublisherFixture) {
         final.active_runs === 0,
       "restart resurrected persisted stopped intent",
     );
+    const managed = z.strictObject({ publisher: z.string(), calls: z.number().int() });
+    const managedFirst = managed.parse(await (await worker.request("/managed-start")).json());
+    const managedAgain = managed.parse(await (await worker.request("/managed-reopen")).json());
+    check(
+      managedFirst.calls === 1 &&
+        managedAgain.calls === 0 &&
+        managedFirst.publisher === managedAgain.publisher,
+      "managed publisher did not lazily reuse its identity",
+    );
+    const managedVisit = await fixtureCall(configuration, "/observe", restored.url, apiFetch);
+    check(
+      managedVisit.status === 200 && managedVisit.publisher_runtime === "managed",
+      "managed publication did not reach the default Worker handler",
+    );
+    await worker.request("/managed-stop");
+    const managedStopped = await fixtureCall(configuration, "/state", restored.url, apiFetch);
+    check(managedStopped.active_runs === 0, "managed publisher did not join its service run");
     return {
       actualGoWasm: true,
       sqliteDurableObject: true,
@@ -404,6 +427,7 @@ async function workerdSmoke(configuration: PublisherFixture) {
       identityReused: true,
       certificateReused: true,
       stopPersisted: true,
+      sdkManagedEnrollmentAndPublication: true,
     };
   } finally {
     await worker.close();
@@ -413,6 +437,7 @@ async function workerdSmoke(configuration: PublisherFixture) {
 function redact(message: string): string {
   return [
     fixture.token,
+    fixture.enrollment,
     fixture.sibling_token,
     fixture.api_token,
     fixture.runner_private_key_pem,

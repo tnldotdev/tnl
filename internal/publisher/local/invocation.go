@@ -68,7 +68,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		}
 	}
 	file := request.PublisherCredentialFile
-	if file == "" && request.PublisherIdentityId == "" && request.Deployment == nil {
+	if file == "" && request.PublisherIdentityId == "" && request.Deployment == nil && a.sdkPublisher == nil {
 		file = os.Getenv("TNL_PUBLISHER_CREDENTIAL_FILE")
 	}
 	if file != "" && (!filepath.IsAbs(file) || len(file) > 4096 || strings.ContainsRune(file, 0)) {
@@ -126,7 +126,15 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		}
 	}()
 	server := ""
-	if request.Deployment != nil {
+	if a.sdkPublisher != nil || request.EnrolledService != "" {
+		var selection deploymentInvocation
+		selection, err = a.prepareEnrolledInvocation(ctx, request)
+		if err != nil {
+			return publisherprotocol.Registration{}, err
+		}
+		native, saved, cfg = selection.native, selection.service, selection.config
+		server = native.ControlURL()
+	} else if request.Deployment != nil {
 		var selection deploymentInvocation
 		selection, err = a.prepareDeploymentInvocation(ctx, request, options)
 		cleanup = selection.cleanup

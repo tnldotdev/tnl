@@ -157,14 +157,16 @@ export interface PortablePublication extends Publication {
 }
 
 export async function publishPortable(options: {
-  readonly bridge: WasmBridge;
-  readonly selection: {
-    readonly project: string;
-    readonly deployment: string;
-    readonly credential: string;
-    readonly service?: string;
-    readonly temporary?: ReturnType<typeof portablePublicationOptions>["temporary"];
-  };
+  readonly bridge: Pick<WasmBridge, "publish">;
+  readonly selection:
+    | {
+        readonly project: string;
+        readonly deployment: string;
+        readonly credential: string;
+        readonly service?: string;
+        readonly temporary?: ReturnType<typeof portablePublicationOptions>["temporary"];
+      }
+    | { readonly service: string };
   readonly handler: FetchHandler;
   readonly storage: PublisherStorageHost;
   readonly signal: AbortSignal;

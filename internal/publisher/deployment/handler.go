@@ -93,6 +93,23 @@ func PrepareHandler(ctx context.Context, options HandlerOptions) (*PreparedHandl
 			return prepared, err
 		}
 	}
+	return prepareHandler(native, saved, prepared, options.Handler)
+}
+
+// PrepareEnrolledHandler selects only a current assignment from an enrolled
+// publisher. it does not manufacture registered deployment-credential approval.
+func PrepareEnrolledHandler(ctx context.Context, identity *publisheridentity.Deployment, apps publisheridentity.DeploymentAppControl, name string, handler http.Handler) (*PreparedHandler, error) {
+	if handler == nil {
+		return nil, publisheridentity.ErrScope
+	}
+	native, saved, err := identity.HTTPApp(ctx, apps, name)
+	if err != nil {
+		return nil, err
+	}
+	return prepareHandler(native, saved, &PreparedHandler{native: native}, handler)
+}
+
+func prepareHandler(native *publisheridentity.Native, saved controlv1.Service, prepared *PreparedHandler, handler http.Handler) (*PreparedHandler, error) {
 	if saved.Endpoint == nil || !saved.Endpoint.Public || saved.Endpoint.Port != 443 {
 		return prepared, publisheridentity.ErrScope
 	}
@@ -113,7 +130,7 @@ func PrepareHandler(ctx context.Context, options HandlerOptions) (*PreparedHandl
 		return prepared, err
 	}
 	prepared.Config = publisherservice.RunConfig{
-		Control: native, Access: native.Access, Handler: options.Handler,
+		Control: native, Access: native.Access, Handler: handler,
 		PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
 		ServiceID: publication.Id, Metadata: publisheridentity.ServiceMetadata(publication),
 	}

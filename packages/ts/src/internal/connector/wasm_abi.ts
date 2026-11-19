@@ -75,5 +75,14 @@ export interface WasmBridge {
     signal: AbortSignal,
   ): Promise<unknown>;
   publish?(optionsJSON: string, host: WasmPublisherHost): Promise<unknown>;
+  enrollPublisher?(
+    optionsJSON: string,
+    host: {
+      readonly controlFetch: TnlFetch;
+      readonly enrollment?: () => Promise<string>;
+      readonly storage: PublisherStorageHost;
+      readonly signal: AbortSignal;
+    },
+  ): Promise<unknown>;
   close(): Promise<unknown>;
 }

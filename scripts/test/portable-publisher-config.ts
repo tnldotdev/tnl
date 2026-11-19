@@ -29,7 +29,10 @@ const config :Workerd.Config = (
         (name = "publisher.wasm", wasm = embed ${JSON.stringify(wasm)})
       ],
       compatibilityDate = "2026-10-31",
-      durableObjectNamespaces = [(className = "Publisher", uniqueKey = "tnl-portable-publisher-integration-v1", enableSql = true)],
+      durableObjectNamespaces = [
+        (className = "Publisher", uniqueKey = "tnl-portable-publisher-integration-v1", enableSql = true),
+        (className = "TnlPublisher", uniqueKey = "tnl-managed-publisher-integration-v1", enableSql = true)
+      ],
       durableObjectStorage = (localDisk = "storage"),
       bindings = [
         (name = "FIXTURE", text = ${JSON.stringify(JSON.stringify(fixture))}),

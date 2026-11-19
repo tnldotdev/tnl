@@ -40,6 +40,7 @@ type Options struct {
 	Snapshot          io.Reader
 	TargetResolver    target.TargetResolver
 	AttachPublication func(context.Context, publisherapp.Service, *publisherservice.RunConfig) error
+	sdkPublisher      *sdkPublisher
 }
 
 func ResolveProject(ctx context.Context, options Options) (_ clientproject.Project, _ string, retErr error) {
@@ -70,7 +71,11 @@ func ResolveProject(ctx context.Context, options Options) (_ clientproject.Proje
 			return clientproject.Project{}, "", err
 		}
 		digest := sha256.Sum256([]byte(directory))
-		owner := filepath.Join(runtime, "publications-"+hex.EncodeToString(digest[:12]))
+		name := "publications-" + hex.EncodeToString(digest[:12])
+		if options.sdkPublisher != nil {
+			name = "sdk-publisher-" + options.sdkPublisher.instance
+		}
+		owner := filepath.Join(runtime, name)
 		if err := os.Mkdir(owner, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return clientproject.Project{}, "", err
 		}
@@ -270,6 +275,7 @@ type appRuntime struct {
 	capabilities   *publisherprotocol.Capabilities
 	project        clientproject.Project
 	state          *clientstate.Database
+	sdkPublisher   *sdkPublisher
 	TargetResolver target.TargetResolver
 	mu             sync.Mutex
 	preparing      map[string]*appPreparationGate
@@ -328,6 +334,9 @@ func Serve(ctx context.Context, options Options) (result error) {
 	}
 	lock, err := filelock.Acquire(path+".lock", filelock.Nonblocking, os.Geteuid())
 	if errors.Is(err, filelock.ErrLocked) {
+		if options.sdkPublisher != nil {
+			return err
+		}
 		return nil
 	}
 	if err != nil {
@@ -348,7 +357,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 		return err
 	}
 	defer state.Close()
-	a := &appRuntime{Telemetry: options.Telemetry, project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication}
+	a := &appRuntime{Telemetry: options.Telemetry, project: project, state: state, sdkPublisher: options.sdkPublisher, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication}
 	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration, AutomaticReadiness: true}
 	a.manager, err = publisherapp.New(observability.Independent(ctx), project.Root, state, publisherapp.ConfiguredServices(project), a.workers.Run)
 	if err != nil {
@@ -394,10 +403,19 @@ func Serve(ctx context.Context, options Options) (result error) {
 			result = errors.Join(result, serveError)
 		}
 	}()
-	if err := publisherprotocol.WriteEndpoint(path, capabilities.Owner()); err != nil {
-		return err
+	if a.sdkPublisher != nil {
+		// the pipe owns the publication runtime even while no app is registered.
+		// only its parent receives the owner capability; do not write a descriptor.
+		defer a.manager.BeginPreparation()()
+		if err := a.sdkPublisher.ready(capabilities.Owner()); err != nil {
+			return err
+		}
+	} else {
+		if err := publisherprotocol.WriteEndpoint(path, capabilities.Owner()); err != nil {
+			return err
+		}
+		defer publisherprotocol.RemoveEndpoint(path, capabilities.Owner().OwnerId)
 	}
-	defer publisherprotocol.RemoveEndpoint(path, capabilities.Owner().OwnerId)
 	finishStartup(nil)
 	ctx = observability.Independent(ctx)
 	ticker := time.NewTicker(time.Second)

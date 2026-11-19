@@ -188,6 +188,12 @@ checks, browser sign-in, and share handling. Its fixed HTML pages render without
 runtime template lookup, so the portable build does not retain unrelated control
 client methods.
 
+An enrolled browser publisher saves its signing key before redemption and holds
+an exclusive storage lock for that identity slot until its service runs join.
+Control returns only the app-owned assignments it approved for that identity.
+The SDK uses their exact service grants with the same service-run owner; it does
+not create a registered deployment credential or gain management authority.
+
 Browsers and Durable Objects can own hosted publishers; ordinary Workers own
 request-scoped connectors. A Durable Object persists running or stopped intent
 and restarts a publisher with fresh live connections. Certificate transitions

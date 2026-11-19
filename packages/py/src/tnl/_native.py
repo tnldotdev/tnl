@@ -182,7 +182,10 @@ class NativeRuntime:
             "unregister",
             "status",
             "publications/register",
+            "capabilities",
         }:
+            raise InvalidResponse()
+        if (operation == "capabilities") != (endpoint.scope == "owner"):
             raise InvalidResponse()
         data = None if payload is None else json.dumps(payload).encode()
         get = operation in {"health", "status"}
@@ -221,7 +224,12 @@ class NativeRuntime:
                     ):
                         raise RegistrationLost()
                     if response.status_code == 204:
-                        if body or operation in {"prepare", "status", "publications/register"}:
+                        if body or operation in {
+                            "prepare",
+                            "status",
+                            "publications/register",
+                            "capabilities",
+                        }:
                             raise InvalidResponse()
                         return None
                     if (
@@ -231,7 +239,12 @@ class NativeRuntime:
                         raise InvalidResponse()
                     value: object = json.loads(body)
                     if response.status_code == 200:
-                        if operation not in {"prepare", "status", "publications/register"}:
+                        if operation not in {
+                            "prepare",
+                            "status",
+                            "publications/register",
+                            "capabilities",
+                        }:
                             raise InvalidResponse()
                         return value
                     if (

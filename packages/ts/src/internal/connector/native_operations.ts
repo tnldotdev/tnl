@@ -5,16 +5,27 @@ import type {
   TemporaryPublicationOptions,
 } from "../publisher/publication.js";
 import type { LocalHTTPServer } from "../publisher/register.js";
+import { nativePublisherOperation, type Publisher } from "../publisher/native_publisher.js";
+import { TnlError } from "../../errors.js";
 import {
   createClient,
   type Deployment as NativeOwner,
   type LocalConnectionRegistry,
 } from "./client.js";
-import type { Deployment, DeploymentOptions, ServiceNames } from "./deployment_types.js";
+import type { Deployment, DeploymentOptions, Publish, ServiceNames } from "./deployment_types.js";
 import { deploymentHandles } from "./operation_handles.js";
 
 type NativeRegistry = TnlConnectionRegistry | LocalConnectionRegistry;
 const owners = deploymentHandles<NativeOwner<ServiceFacts, boolean>>();
+
+export interface NativePublish<Server> extends Publish<NativeRegistry, Server> {
+  (
+    owner: Publisher,
+    name: string,
+    target: FetchHandler | Server,
+    options?: NamedPublicationOptions,
+  ): ReturnType<Publish<NativeRegistry, Server>>;
+}
 
 export function deployment<
   const Name extends string,
@@ -60,6 +71,12 @@ export async function publishNative(
   second?: FetchHandler | LocalHTTPServer | TemporaryPublicationOptions,
   third?: NamedPublicationOptions,
 ) {
+  const learned = nativePublisherOperation(owner);
+  if (learned !== undefined) {
+    if (typeof first !== "string" || second === undefined)
+      throw new TnlError("sdk.configuration_invalid");
+    return learned(first, second as FetchHandler | LocalHTTPServer, third);
+  }
   const runtime = owners.get(owner);
   return typeof first === "string"
     ? runtime.publish(first, second as FetchHandler | LocalHTTPServer, third)

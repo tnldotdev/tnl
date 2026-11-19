@@ -222,7 +222,7 @@ test("packed consumers only bundle their selected runtime and WASM capability", 
       ["browser", "connect", ["connector.wasm"]],
       ["browser", "publish", ["publisher.wasm"]],
       ["cloudflare", "connect", ["connector.wasm"]],
-      ["cloudflare", "durablePublisher", ["publisher.wasm"]],
+      ["cloudflare", "TnlPublisher", ["publisher.wasm"]],
     ] as const) {
       const result = await build({
         stdin: {
@@ -235,6 +235,7 @@ test("packed consumers only bundle their selected runtime and WASM capability", 
         format: "esm",
         platform: "browser",
         conditions: path === "cloudflare" ? ["workerd"] : ["browser"],
+        external: path === "cloudflare" ? ["cloudflare:workers"] : [],
         loader: { ".wasm": "file" },
         assetNames: "[name]",
         outdir: "unused",

@@ -14,6 +14,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -42,7 +43,7 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 		TeamID: team, ActorID: session.Identity.Identity.ID, ProjectKey: "example", SourceFingerprint: strings.Repeat("a", 64), Now: now,
 		Configuration: controlstate.ProjectConfiguration{Settings: &controlstate.DeploymentSettings{}, Services: map[string]controlstate.ProjectServiceConfiguration{
 			"db":  {Protocol: "postgres", Target: "db.internal:5432"},
-			"web": {Target: "web.internal:3000"},
+			"web": {Target: "app"},
 		}},
 	})
 	if err != nil {
@@ -107,12 +108,69 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 			t.Fatal("invalid setup expanded authority or leaked input", invalid, err)
 		}
 	}
+	browserEnrollment, err := api.CreateDeploymentPublisherEnrollmentWithResponse(ctx, "example", "production",
+		&controlv1.CreateDeploymentPublisherEnrollmentParams{TeamId: team, IdempotencyKey: "browser"},
+		controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"db", "web"}}, auth)
+	if err != nil || browserEnrollment.JSON201 == nil || browserEnrollment.JSON201.MaxMembers != 1 {
+		t.Fatal("could not issue one-use browser enrollment", err)
+	}
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	redeemed, err := api.RedeemDeploymentPublisherEnrollmentWithResponse(ctx, controlv1.RedeemDeploymentPublisherEnrollmentRequest{EnrollmentKey: enrollment.EnrollmentKey, PublicKey: base64.RawURLEncoding.EncodeToString(public)})
-	if err != nil || redeemed.JSON200 == nil {
+	origin := func(_ context.Context, r *http.Request) error {
+		r.Header.Set("Origin", "https://publisher.example")
+		// neither redemption nor subsequent proof exchanges use ambient cookies.
+		r.Header.Set("Cookie", "control_session=not-authority")
+		return nil
+	}
+	browserPublic, browserPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := controlv1.RedeemDeploymentPublisherEnrollmentRequest{
+		EnrollmentKey: browserEnrollment.JSON201.EnrollmentKey, PublicKey: base64.RawURLEncoding.EncodeToString(browserPublic),
+		DeploymentId: new(browserEnrollment.JSON201.DeploymentId), ProjectKey: new("example"),
+	}
+	for _, mismatch := range []controlv1.RedeemDeploymentPublisherEnrollmentRequest{
+		{EnrollmentKey: bootstrap.EnrollmentKey, PublicKey: bootstrap.PublicKey, DeploymentId: new("dpl_" + strings.Repeat("x", 22)), ProjectKey: bootstrap.ProjectKey},
+		{EnrollmentKey: bootstrap.EnrollmentKey, PublicKey: bootstrap.PublicKey, DeploymentId: bootstrap.DeploymentId, ProjectKey: new("another")},
+	} {
+		wrong, err := api.RedeemDeploymentPublisherEnrollmentWithResponse(ctx, mismatch, origin)
+		if err != nil || wrong.StatusCode() < 400 || bytes.Contains(wrong.Body, []byte(bootstrap.EnrollmentKey)) {
+			t.Fatal("mismatched browser selection redeemed the enrollment key", err)
+		}
+	}
+	browser, err := api.RedeemDeploymentPublisherEnrollmentWithResponse(ctx, bootstrap, origin)
+	if err != nil || browser.JSON200 == nil {
+		t.Fatal("could not enroll app publisher", err)
+	}
+	m := browser.JSON200
+	proof, err := publisherproof.Sign(m.PublisherIdentityId, m.KeyId, m.DeploymentId, server.URL+"/v1/publisher/deployments/lease", browserPrivate, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := api.AcquireDeploymentPublisherLeaseWithResponse(ctx, controlv1.DeploymentPublisherLeaseRequest{PublisherIdentityId: m.PublisherIdentityId, DeploymentId: m.DeploymentId, Assertion: proof}, origin)
+	if err != nil || lease.JSON200 == nil || lease.HTTPResponse.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatal("app publisher did not acquire a signed lease", err)
+	}
+	bearer := func(_ context.Context, r *http.Request) error {
+		r.Header.Set("Authorization", "Bearer "+lease.JSON200.AccessToken)
+		return nil
+	}
+	for _, app := range []bool{false, true} {
+		want, target := "db", "db.internal:5432"
+		if app {
+			want, target = "web", "app"
+		}
+		assigned, err := api.GetDeploymentPublisherAssignmentsWithResponse(ctx, &controlv1.GetDeploymentPublisherAssignmentsParams{AppOwned: new(app)}, origin, bearer)
+		if err != nil || assigned.JSON200 == nil || assigned.HTTPResponse.Header.Get("Access-Control-Allow-Origin") != "*" || len(assigned.JSON200.Services) != 1 ||
+			assigned.JSON200.Services[0].Service != want || assigned.JSON200.Services[0].Configuration.Target != target || assigned.JSON200.Services[0].GrantId == "" {
+			t.Fatal("app and socket assignments mixed or lost their exact grant", app, err)
+		}
+	}
+	redeemed, err := api.RedeemDeploymentPublisherEnrollmentWithResponse(ctx, controlv1.RedeemDeploymentPublisherEnrollmentRequest{EnrollmentKey: enrollment.EnrollmentKey, PublicKey: base64.RawURLEncoding.EncodeToString(public)}, origin)
+	if err != nil || redeemed.JSON200 == nil || redeemed.HTTPResponse.Header.Get("Access-Control-Allow-Origin") != "*" || redeemed.HTTPResponse.Header.Get("Access-Control-Allow-Credentials") != "" {
 		t.Fatal("scoped setup did not use the existing redemption exchange", err)
 	}
 	publisher := redeemed.JSON200.PublisherIdentityId
@@ -126,7 +184,8 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 		}
 	}
 	listed, err := api.ListDeploymentPublishersWithResponse(ctx, "example", enrollment.DeploymentId, &controlv1.ListDeploymentPublishersParams{TeamId: team}, auth)
-	if err != nil || listed.JSON200 == nil || len(listed.JSON200.Publishers) != 1 || listed.JSON200.Publishers[0].PublisherIdentityId != publisher {
+	if err != nil || listed.JSON200 == nil || len(listed.JSON200.Publishers) != 2 ||
+		listed.JSON200.Publishers[0].PublisherIdentityId != publisher && listed.JSON200.Publishers[1].PublisherIdentityId != publisher {
 		t.Fatal("generated publisher list contract lost the selected identity", err)
 	}
 	foreign, err := api.GetDeploymentPublisherWithResponse(ctx, "example", "staging", publisher, &controlv1.GetDeploymentPublisherParams{TeamId: team}, auth)

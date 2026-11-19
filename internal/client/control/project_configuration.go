@@ -99,8 +99,19 @@ func (c *Client) GetProjectPublicMetadata(ctx context.Context, team, project str
 }
 
 func (c *Client) RedeemDeploymentPublisherEnrollment(ctx context.Context, key string, public ed25519.PublicKey) (controlv1.DeploymentPublisherIdentity, error) {
+	return c.redeemDeploymentPublisherEnrollment(ctx, key, public, nil, nil)
+}
+
+func (c *Client) RedeemScopedDeploymentPublisherEnrollment(ctx context.Context, key string, public ed25519.PublicKey, deploymentID, projectKey string) (controlv1.DeploymentPublisherIdentity, error) {
+	if deploymentID == "" && projectKey == "" {
+		return c.RedeemDeploymentPublisherEnrollment(ctx, key, public)
+	}
+	return c.redeemDeploymentPublisherEnrollment(ctx, key, public, &deploymentID, &projectKey)
+}
+
+func (c *Client) redeemDeploymentPublisherEnrollment(ctx context.Context, key string, public ed25519.PublicKey, deploymentID, projectKey *string) (controlv1.DeploymentPublisherIdentity, error) {
 	return request[controlv1.DeploymentPublisherIdentity](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RedeemDeploymentPublisherEnrollment(ctx, controlv1.RedeemDeploymentPublisherEnrollmentRequest{EnrollmentKey: key, PublicKey: base64.RawURLEncoding.EncodeToString(public)}, editors...)
+		return c.api.RedeemDeploymentPublisherEnrollment(ctx, controlv1.RedeemDeploymentPublisherEnrollmentRequest{EnrollmentKey: key, PublicKey: base64.RawURLEncoding.EncodeToString(public), DeploymentId: deploymentID, ProjectKey: projectKey}, editors...)
 	})
 }
 
@@ -117,8 +128,16 @@ func (c *Client) VerifyDeploymentIdentity(ctx context.Context, body controlv1.De
 }
 
 func (c *Client) GetDeploymentPublisherAssignments(ctx context.Context, token string) (controlv1.DeploymentPublisherAssignments, error) {
+	return c.deploymentPublisherAssignments(ctx, token, nil)
+}
+
+func (c *Client) GetDeploymentPublisherAppAssignments(ctx context.Context, token string) (controlv1.DeploymentPublisherAssignments, error) {
+	return c.deploymentPublisherAssignments(ctx, token, new(true))
+}
+
+func (c *Client) deploymentPublisherAssignments(ctx context.Context, token string, appOwned *bool) (controlv1.DeploymentPublisherAssignments, error) {
 	return request[controlv1.DeploymentPublisherAssignments](ctx, c, token, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetDeploymentPublisherAssignments(ctx, editors...)
+		return c.api.GetDeploymentPublisherAssignments(ctx, &controlv1.GetDeploymentPublisherAssignmentsParams{AppOwned: appOwned}, editors...)
 	})
 }
 

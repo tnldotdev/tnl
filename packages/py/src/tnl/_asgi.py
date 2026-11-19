@@ -253,6 +253,7 @@ class Publication:
         on_close: Callable[[Publication], None] | None = None,
         environment: Mapping[str, str] | None = None,
         shutdown_deadline: Callable[[], float | None] | None = None,
+        enrolled_service: str | None = None,
     ) -> None:
         deployment = None if deployment is None else dict(deployment)
         self._service = service
@@ -277,6 +278,8 @@ class Publication:
         }
         if deployment is not None:
             self._payload["deployment"] = deployment
+        if enrolled_service is not None:
+            self._payload["enrolled_service"] = enrolled_service
         if publisher_credential_file is not None:
             self._payload["publisher_credential_file"] = publisher_credential_file
         if publisher_identity_id is not None:
@@ -636,10 +639,25 @@ async def start_publication(
     on_start: Callable[[Publication], None] | None = None,
     environment: Mapping[str, str] | None = None,
     shutdown_deadline: Callable[[], float | None] | None = None,
+    enrolled_service: str | None = None,
+    native: NativeRuntime | None = None,
 ) -> Publication:
     """start ASGI, register its bound listener, and wait for native routability."""
     if service is not None:
         service_name(service)
+    if enrolled_service is not None:
+        service_name(enrolled_service)
+        if native is None or any(
+            value is not None
+            for value in (
+                deployment,
+                service,
+                server,
+                publisher_identity_id,
+                publisher_credential_file,
+            )
+        ):
+            raise TnlError("sdk.configuration_invalid", "select one captured publication owner")
     if deployment is not None and (
         service is not None
         or server is not None
@@ -647,9 +665,12 @@ async def start_publication(
         or publisher_credential_file is not None
     ):
         raise TnlError("sdk.configuration_invalid", "select one captured publication owner")
-    if (service is not None or deployment is not None and "service" in deployment) and (
-        access is not None or limits is not None or require_post_quantum
-    ):
+    if (
+        service is not None
+        or enrolled_service is not None
+        or deployment is not None
+        and "service" in deployment
+    ) and (access is not None or limits is not None or require_post_quantum):
         raise TnlError(
             "sdk.configuration_invalid", "named publication uses saved visitor policy and limits"
         )
@@ -668,6 +689,7 @@ async def start_publication(
         and publisher_identity_id is None
         and deployment is None
         and service is None
+        and enrolled_service is None
     ):
         publisher_credential_file = (os.environ if environment is None else environment).get(
             "TNL_PUBLISHER_CREDENTIAL_FILE"
@@ -704,7 +726,7 @@ async def start_publication(
     root = str(Path(directory or os.getcwd()).resolve())
     asgi_server, task, listener = await _start_asgi(app)
     tunnel = Publication(
-        _native,
+        _native if native is None else native,
         asgi_server,
         task,
         listener,
@@ -723,6 +745,7 @@ async def start_publication(
         on_close,
         environment,
         shutdown_deadline,
+        enrolled_service,
     )
     try:
         if on_start is not None:

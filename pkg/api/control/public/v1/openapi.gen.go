@@ -3661,8 +3661,13 @@ type RealizeLocalProjectServiceRequest struct {
 
 // RedeemDeploymentPublisherEnrollmentRequest defines model for RedeemDeploymentPublisherEnrollmentRequest.
 type RedeemDeploymentPublisherEnrollmentRequest struct {
-	EnrollmentKey string `json:"enrollment_key"`
-	PublicKey     string `json:"public_key"`
+	// DeploymentId If supplied, redeem only for this immutable deployment ID.
+	DeploymentId  *string `json:"deployment_id,omitempty"`
+	EnrollmentKey string  `json:"enrollment_key"`
+
+	// ProjectKey If supplied, redeem only for this project key.
+	ProjectKey *string `json:"project_key,omitempty"`
+	PublicKey  string  `json:"public_key"`
 }
 
 // RedeemServiceShareRequest Supply either a share ID and secret, or a one-use handoff token. The exact publisher service run token authenticates this operation separately.
@@ -4884,6 +4889,11 @@ type RevokePublisherGrantParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
+// GetDeploymentPublisherAssignmentsParams defines parameters for GetDeploymentPublisherAssignments.
+type GetDeploymentPublisherAssignmentsParams struct {
+	AppOwned *bool `form:"app_owned,omitempty" json:"app_owned,omitempty"`
+}
+
 // ListServicesParams defines parameters for ListServices.
 type ListServicesParams struct {
 	TeamId TeamIDQuery    `form:"team_id" json:"team_id"`
@@ -6102,10 +6112,10 @@ type ClientInterface interface {
 
 	// GetDeploymentPublisherAssignments Read services and grants assigned to one leased deployment replica
 	//
-	// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
+	// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. By default returns socket targets only; app_owned=true returns only app-owned bindings. A pta_ publisher token cannot read them.
 	//
 	// Corresponds with GET /v1/publisher/deployments/assignments (the `GetDeploymentPublisherAssignments` operationId).
-	GetDeploymentPublisherAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetDeploymentPublisherAssignments(ctx context.Context, params *GetDeploymentPublisherAssignmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AcknowledgeDeploymentPublisherConfigurationWithBody Acknowledge the exact configuration installed by a deployment replica
 	//
@@ -8444,11 +8454,11 @@ func (c *Client) RevokePublisherGrant(ctx context.Context, publisherIdentityId P
 
 // GetDeploymentPublisherAssignments Read services and grants assigned to one leased deployment replica
 //
-// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
+// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. By default returns socket targets only; app_owned=true returns only app-owned bindings. A pta_ publisher token cannot read them.
 //
 // Corresponds with GET /v1/publisher/deployments/assignments (the `GetDeploymentPublisherAssignments` operationId).
-func (c *Client) GetDeploymentPublisherAssignments(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetDeploymentPublisherAssignmentsRequest(c.Server)
+func (c *Client) GetDeploymentPublisherAssignments(ctx context.Context, params *GetDeploymentPublisherAssignmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDeploymentPublisherAssignmentsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -13552,7 +13562,7 @@ func NewRevokePublisherGrantRequest(server string, publisherIdentityId Publisher
 }
 
 // NewGetDeploymentPublisherAssignmentsRequest constructs an http.Request for the GetDeploymentPublisherAssignments method
-func NewGetDeploymentPublisherAssignmentsRequest(server string) (*http.Request, error) {
+func NewGetDeploymentPublisherAssignmentsRequest(server string, params *GetDeploymentPublisherAssignmentsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -13568,6 +13578,33 @@ func NewGetDeploymentPublisherAssignmentsRequest(server string) (*http.Request, 
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.AppOwned != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "app_owned", *params.AppOwned, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -17701,12 +17738,12 @@ type ClientWithResponsesInterface interface {
 
 	// GetDeploymentPublisherAssignmentsWithResponse Read services and grants assigned to one leased deployment replica
 	//
-	// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
+	// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. By default returns socket targets only; app_owned=true returns only app-owned bindings. A pta_ publisher token cannot read them.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/publisher/deployments/assignments (the `GetDeploymentPublisherAssignments` operationId).
-	GetDeploymentPublisherAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherAssignmentsResponse, error)
+	GetDeploymentPublisherAssignmentsWithResponse(ctx context.Context, params *GetDeploymentPublisherAssignmentsParams, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherAssignmentsResponse, error)
 
 	// AcknowledgeDeploymentPublisherConfigurationWithBodyWithResponse Acknowledge the exact configuration installed by a deployment replica
 	//
@@ -25725,13 +25762,13 @@ func (c *ClientWithResponses) RevokePublisherGrantWithResponse(ctx context.Conte
 
 // GetDeploymentPublisherAssignmentsWithResponse Read services and grants assigned to one leased deployment replica
 //
-// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. Assignments can include targets. A pta_ publisher token cannot read them.
+// Read the replica's assigned services and publisher grants using its current dpl_lease_ lease. By default returns socket targets only; app_owned=true returns only app-owned bindings. A pta_ publisher token cannot read them.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/publisher/deployments/assignments (the `GetDeploymentPublisherAssignments` operationId).
-func (c *ClientWithResponses) GetDeploymentPublisherAssignmentsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherAssignmentsResponse, error) {
-	rsp, err := c.GetDeploymentPublisherAssignments(ctx, reqEditors...)
+func (c *ClientWithResponses) GetDeploymentPublisherAssignmentsWithResponse(ctx context.Context, params *GetDeploymentPublisherAssignmentsParams, reqEditors ...RequestEditorFn) (*GetDeploymentPublisherAssignmentsResponse, error) {
+	rsp, err := c.GetDeploymentPublisherAssignments(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -31824,7 +31861,7 @@ type ServerInterface interface {
 	RevokePublisherGrant(w http.ResponseWriter, r *http.Request, publisherIdentityId PublisherIdentityID, grantId ResourceID, params RevokePublisherGrantParams)
 	// GetDeploymentPublisherAssignments Read services and grants assigned to one leased deployment replica
 	// (GET /v1/publisher/deployments/assignments)
-	GetDeploymentPublisherAssignments(w http.ResponseWriter, r *http.Request)
+	GetDeploymentPublisherAssignments(w http.ResponseWriter, r *http.Request, params GetDeploymentPublisherAssignmentsParams)
 	// AcknowledgeDeploymentPublisherConfiguration Acknowledge the exact configuration installed by a deployment replica
 	// (POST /v1/publisher/deployments/configuration-acknowledgements)
 	AcknowledgeDeploymentPublisherConfiguration(w http.ResponseWriter, r *http.Request)
@@ -34230,8 +34267,27 @@ func (siw *ServerInterfaceWrapper) RevokePublisherGrant(w http.ResponseWriter, r
 // GetDeploymentPublisherAssignments operation middleware
 func (siw *ServerInterfaceWrapper) GetDeploymentPublisherAssignments(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDeploymentPublisherAssignmentsParams
+
+	// ------------- Optional query parameter "app_owned" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "app_owned", r.URL.Query(), &params.AppOwned, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "app_owned"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app_owned", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetDeploymentPublisherAssignments(w, r)
+		siw.Handler.GetDeploymentPublisherAssignments(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

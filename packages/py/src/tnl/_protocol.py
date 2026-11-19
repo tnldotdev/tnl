@@ -184,7 +184,11 @@ def parse_assignment(value: object, endpoint: Endpoint) -> Assignment:
 
 
 def parse_endpoint(
-    value: object, *, service: str | None = None, invocation_id: str | None = None
+    value: object,
+    *,
+    service: str | None = None,
+    invocation_id: str | None = None,
+    owner_endpoint: bool = False,
 ) -> Endpoint:
     obj = object_value(
         value, {"version", "url", "capability", "owner_id", "scope", "service", "invocation_id"}
@@ -213,6 +217,10 @@ def parse_endpoint(
         or re.fullmatch(r"[a-f0-9]{32}", owner) is None
     ):
         raise InvalidResponse()
+    if owner_endpoint:
+        if obj.get("scope") != "owner" or "service" in obj or "invocation_id" in obj:
+            raise InvalidResponse()
+        return Endpoint(url, capability, owner, "owner")
     if obj.get("scope") == "app":
         name = service_name(obj.get("service"))
         if (

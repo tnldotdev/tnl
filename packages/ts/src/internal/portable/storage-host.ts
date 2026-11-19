@@ -37,25 +37,35 @@ export function createPublisherStorageHost(storage: PublisherStorage): Publisher
     } catch {
       throw new PublisherStorageError("sdk.publisher_storage_invalid");
     }
-    if (
-      typeof scope !== "object" ||
-      scope === null ||
-      Array.isArray(scope) ||
-      Object.keys(scope).length !== 3 ||
-      !("control_url" in scope) ||
-      !("team_id" in scope) ||
-      !("publisher_identity_id" in scope) ||
-      !scopeText(scope.control_url) ||
-      !scopeText(scope.team_id, true) ||
-      !scopeText(scope.publisher_identity_id)
-    )
+    if (typeof scope !== "object" || scope === null || Array.isArray(scope))
       throw new PublisherStorageError("sdk.publisher_storage_invalid");
-    const canonical = JSON.stringify([
-      scope.control_url,
-      scope.team_id,
-      scope.publisher_identity_id,
-      key,
-    ]);
+    const count = Object.keys(scope).length;
+    let canonical: string;
+    if (
+      count === 1 &&
+      "publisher_slot" in scope &&
+      typeof scope.publisher_slot === "string" &&
+      /^[a-z][a-z0-9-]{0,62}$/.test(scope.publisher_slot)
+    ) {
+      canonical = JSON.stringify(["enrollment", scope.publisher_slot, key]);
+    } else if (
+      count === 3 &&
+      "control_url" in scope &&
+      scopeText(scope.control_url) &&
+      "team_id" in scope &&
+      scopeText(scope.team_id, true) &&
+      "publisher_identity_id" in scope &&
+      scopeText(scope.publisher_identity_id)
+    ) {
+      canonical = JSON.stringify([
+        scope.control_url,
+        scope.team_id,
+        scope.publisher_identity_id,
+        key,
+      ]);
+    } else {
+      throw new PublisherStorageError("sdk.publisher_storage_invalid");
+    }
     try {
       const digest = new Uint8Array(
         await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical)),

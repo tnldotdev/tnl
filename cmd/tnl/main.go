@@ -658,6 +658,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 		return runRuntimeOwnerEndpoint(ctx, flags.Runtime.OwnerEndpoint, stdout)
 	case "runtime serve":
 		return runRuntimeServe(ctx, flags.Runtime.Serve)
+	case "runtime publisher":
+		return runRuntimePublisher(ctx, flags.Runtime.Publisher, stdout)
 	case "wait", "watch":
 		return runAppObservation(ctx, flags, parsedCommand, stdout)
 	case "publish <service-or-target>":

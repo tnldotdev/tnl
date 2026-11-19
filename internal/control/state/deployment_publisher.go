@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
@@ -62,10 +63,15 @@ type DeploymentPublisherAssignments struct {
 	CertificateStatePlans []CertificatePlan                      `json:"certificate_state_plans"`
 }
 
-func (d *Database) RedeemDeploymentPublisherEnrollment(ctx context.Context, secret string, public ed25519.PublicKey, now time.Time) (result DeploymentPublisherIdentity, retErr error) {
+func (d *Database) RedeemDeploymentPublisherEnrollment(ctx context.Context, secret string, public ed25519.PublicKey, now time.Time) (DeploymentPublisherIdentity, error) {
+	return d.RedeemScopedDeploymentPublisherEnrollment(ctx, secret, public, "", "", now)
+}
+
+func (d *Database) RedeemScopedDeploymentPublisherEnrollment(ctx context.Context, secret string, public ed25519.PublicKey, deploymentID, projectKey string, now time.Time) (result DeploymentPublisherIdentity, retErr error) {
 	clock := newAuthorizationClock(now)
 	parts := strings.Split(secret, ".")
-	if len(secret) > 256 || len(parts) != 2 || !opaqueid.Valid(parts[0], opaqueid.PublisherEnrollmentPrefix) || len(public) != ed25519.PublicKeySize {
+	if len(secret) > 256 || len(parts) != 2 || !opaqueid.Valid(parts[0], opaqueid.PublisherEnrollmentPrefix) || len(public) != ed25519.PublicKeySize ||
+		deploymentID != "" && !opaqueid.Valid(deploymentID, "dpl_") || projectKey != "" && !naming.ValidProjectKey(projectKey) {
 		return result, ErrDeploymentPublisher
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -77,6 +83,9 @@ func (d *Database) RedeemDeploymentPublisherEnrollment(ctx context.Context, secr
 	var team, project, gid string
 	if err = tx.QueryRow(ctx, `SELECT g.team_id,g.project_key,g.id FROM control.deployment_publisher_enrollments e JOIN control.deployments g ON g.id=e.deployment_id WHERE e.id=$1`, parts[0]).Scan(&team, &project, &gid); err != nil {
 		return result, publisherLookupError(err, ErrDeploymentPublisher)
+	}
+	if deploymentID != "" && deploymentID != gid || projectKey != "" && projectKey != project {
+		return result, ErrDeploymentPublisher
 	}
 	q := controlstatedb.New(tx)
 	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
@@ -275,7 +284,15 @@ func lockDeploymentPublisherLease(ctx context.Context, tx pgx.Tx, token string, 
 	return result, publisherLookupError(err, ErrDeploymentPublisher)
 }
 
-func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token string, now time.Time) (result DeploymentPublisherAssignments, retErr error) {
+func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token string, now time.Time) (DeploymentPublisherAssignments, error) {
+	return d.deploymentPublisherAssignments(ctx, token, false, now)
+}
+
+func (d *Database) GetDeploymentPublisherAppAssignments(ctx context.Context, token string, now time.Time) (DeploymentPublisherAssignments, error) {
+	return d.deploymentPublisherAssignments(ctx, token, true, now)
+}
+
+func (d *Database) deploymentPublisherAssignments(ctx context.Context, token string, appOwned bool, now time.Time) (result DeploymentPublisherAssignments, retErr error) {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -319,8 +336,8 @@ func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token 
 		if !ok {
 			return result, ErrDeploymentPublisher
 		}
-		// only the application's owner can supply its listener.
-		if configuration.Target == "app" {
+		// installed workers own socket targets; app publishers supply handlers.
+		if (configuration.Target == "app") != appOwned {
 			continue
 		}
 		if !s.ServiceID.Valid {
