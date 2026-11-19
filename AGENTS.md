@@ -1,8 +1,8 @@
 # writing and documentation
 
-Use this rule for all documentation:
-
-> we should rewrite these documents to be plainly written, spare, simple, clear, show me dont tell me, use ascii visuals, take inspiration from the readme.
+Write plain, concise documentation. Show how things work with concrete examples.
+Use ASCII diagrams when they make an explanation clearer. Follow the README's
+style.
 
 Keep `AGENTS.md` and `SKILL.md` uppercase for agent discovery. Write code-comment
 prose in lowercase, preserving identifiers, literal values, and tool-recognized
@@ -29,6 +29,10 @@ Never add to NOTICE. If you have a software license to add, ONLY add it to
 THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
 
 # stability
+
+Compatibility starts with the APIs and database schemas established when this
+policy is introduced. Preserve them from this point forward. Do not add adapters,
+state imports, or upgrade paths for releases or schemas that predate this point.
 
 - Preserve released public APIs and documented behavior, including SDKs, CLI
   commands, configuration, wire formats, and saved state. Internal refactoring

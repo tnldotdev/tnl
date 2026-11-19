@@ -76,25 +76,6 @@ signs:
       - --yes
 
 release:
-  header: |
-    ### database migration history
-
-    Control and client state now use numbered migrations without separate
-    baseline identities. The maintainer explicitly approved starting from the
-    current schema and dropping compatibility with older development databases
-    so future changes can follow one immutable migration history.
-
-    This is a one-time cutover: back up the old PostgreSQL database, storage
-    keys, and client state, then stop the old server roles and client processes.
-    Initialize a fresh PostgreSQL database with the matching `tnld migrate`
-    and `TNLD_DATABASE_DIRECT_URL`, start matching server roles, and use a fresh
-    `TNL_STATE_DIR` to sign in and enroll publishers again. There is no import
-    or in-place upgrade path from the older development schemas.
-
-    Keep the old deployment and its state together for recovery; do not point
-    old binaries at the new database. Future upgrades use numbered migrations
-    on existing data. Writable client opens apply pending SQLite migrations;
-    read-only opens require the supported schema version.
   draft: true
   replace_existing_draft: true
   prerelease: auto

@@ -10,6 +10,9 @@ Run from the repository root through `mise exec --`. Read `AGENTS.md` and
 
 ## keep upgrades boring
 
+Compatibility starts at the point established in `AGENTS.md`, not with earlier
+releases. Do not add historical adapters, state imports, or upgrade paths.
+
 Released APIs and documented behavior stay compatible. Introduce replacements
 alongside old APIs; keep deprecated behavior working and tested. Use the normal
 language or contract marker with the first released version and a replacement:
@@ -32,7 +35,9 @@ override.
 
 ## prepare
 
-1. Find the previous published release and review the changes since its tag.
+1. Review changes since the previous release covered by the stability policy
+   in `AGENTS.md`. For the first release under that policy, review the current
+   APIs and schemas without restoring support for earlier releases.
    Check public APIs, commands, configuration, protocols, and stored formats.
    Check existing consumers as well as tests written for the new code.
 2. Confirm the candidate version and commit. Use a prerelease for changes that
@@ -44,9 +49,9 @@ override.
 4. Write release notes with new behavior, deprecations and replacements, and
    upgrade steps. Include any approved break and its migration instructions.
    For schema changes, give the upgrade order and recovery procedure. Claim
-   rolling upgrades or binary rollback only when tested. Put these notes in
-   `.goreleaser.yaml`'s `release.header`, replacing any previous release's header.
-   CI replaces draft releases, so notes added to a draft beforehand will be lost.
+   rolling upgrades or binary rollback only when tested. Prepare release notes
+   during release preparation; do not change publishing configuration or add
+   release-specific cutover instructions in ordinary feature PRs.
 5. Run the relevant Task checks from `contributing.md`. The release commit must
    have successful `checks.yml` and `integration.yml` push runs on `main`.
    `mise exec -- task package` builds and verifies local release packages.
