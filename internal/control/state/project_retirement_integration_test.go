@@ -145,9 +145,10 @@ func TestIntegrationProjectRetirementRacesApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.ExpectedRevision = applied.Revision
-	service := r.Configuration.Services["web"]
-	service.Target = "http://localhost:4000"
-	r.Configuration.Services["web"] = service
+	// control doesn't store local targets. change a saved declaration so apply
+	// must compare revisions instead of succeeding as an idempotent retry.
+	r.ServiceDeclarations["api"] = "http"
+	r.Configuration.Services["api"] = ProjectServiceConfiguration{Target: "http://localhost:4000"}
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	go func() {
@@ -179,7 +180,11 @@ func TestIntegrationProjectRetirementRacesApply(t *testing.T) {
 	if err != nil || current.Revision != applied.Revision+1 {
 		t.Fatal("race advanced the project twice", current, err)
 	}
-	if current.RetiredAt != nil && len(current.Configuration.Services) != 0 {
-		t.Fatal("retired marker committed without resource cleanup")
+	if current.RetiredAt != nil {
+		if len(current.Configuration.Services) != 0 {
+			t.Fatal("retired marker committed without resource cleanup")
+		}
+	} else if current.Configuration.Services["api"].Protocol != "http" {
+		t.Fatal("winning apply didn't save the new service declaration")
 	}
 }
