@@ -246,7 +246,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         </p>
       ) : (
         <>
-          <p>This site runs in people's browsers.</p>
+          <p>This site is served from people's browsers.</p>
           <p>
             Keep this tab open and it'll host when needed, for up to {label}. You can stop anytime.
           </p>
