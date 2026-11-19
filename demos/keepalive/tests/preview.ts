@@ -325,6 +325,9 @@ try {
         .catch(async (error: unknown) => {
           throw new Error(`${name}: ${await page.locator("main").innerText()}`, { cause: error });
         });
+      await page
+        .getByText(bootstrap ? "serving 1 of ~1 tab" : "serving 54 of ~187 tabs", { exact: true })
+        .waitFor();
       await page.getByText(`${requests} requests`, { exact: true }).waitFor();
       const stop = page.getByRole("button", { name: "stop", exact: true });
       assert.equal(await stop.count(), 1, await page.locator(".actions").innerText());

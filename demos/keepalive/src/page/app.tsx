@@ -262,7 +262,8 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             <p>{countdown(hosting.endsAt, Math.max(now, hosting.since))} left in your turn</p>
             <div class="host-activity">
               <div>
-                {hosting.localTabs.toLocaleString()} / ~{hosting.tabs.toLocaleString()} tabs
+                serving {hosting.localTabs.toLocaleString()} of ~{hosting.tabs.toLocaleString()}{" "}
+                {hosting.tabs === 1 ? "tab" : "tabs"}
               </div>
               <div class="request-line">
                 <span class="request-pulse" aria-hidden="true">
