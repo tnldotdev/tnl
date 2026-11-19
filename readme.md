@@ -2,7 +2,7 @@
   <img src=".github/logo.svg" width="100" alt="tnl" />
 </p>
 <p align="center">
-  easy tunnels for dev and prod
+  tunnels for local apps and private services.
   <br/>
   by <a href="https://github.com/0xcadams">@0xcadams</a>
   <br/><br/>
@@ -11,7 +11,7 @@
 </p>
 <br/>
 
-`tnl` helps you connect to local and/or private services through end-to-end encrypted tunnels. It's like if Tailscale and Cloudflare Tunnel had a baby. And that baby came with a great devex.
+Give your local app an HTTPS URL you can share, or connect to a service on a private network. It's like if Tailscale and Cloudflare Tunnel had a baby. And that baby came with a great devex.
 
 ## `tnl` where?
 
