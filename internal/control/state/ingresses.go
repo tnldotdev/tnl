@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/region"
 
@@ -218,13 +219,11 @@ func (d *Database) BeginIngressDrain(
 }
 
 func validateIngressRegistration(registration IngressRegistration, leaseDuration time.Duration) error {
-	if len(registration.ServicePorts) > 256 || len(registration.ServicePorts) > 0 && !validStateText(registration.IngressPoolID) {
+	if len(registration.ServicePorts) > 0 && !validStateText(registration.IngressPoolID) {
 		return errors.New("ingress service port inventory is invalid")
 	}
-	for index, port := range registration.ServicePorts {
-		if port < 1024 || port > 65535 || index > 0 && port <= registration.ServicePorts[index-1] {
-			return errors.New("ingress service ports must be sorted, distinct network ports")
-		}
+	if !tcpport.ValidServicePorts(registration.ServicePorts) {
+		return errors.New("ingress service ports must be sorted, distinct network ports")
 	}
 	if !validStateText(registration.IngressID) || !validStateText(registration.IngressRunID) {
 		return errors.New("controlstate: ingress registration is invalid")

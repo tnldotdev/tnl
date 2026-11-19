@@ -7,17 +7,30 @@ import (
 	"strings"
 )
 
-var ErrInventory = errors.New("service port inventory must contain at most 256 non-overlapping ports from 1024 to 65535")
+var ErrInventory = errors.New("service port inventory must contain non-overlapping ports from 1024 to 65535")
 
-const MaxInventoryPorts = 256
-const MaxInventoryDeclarations = 128
+const (
+	FirstServicePort = 1024
+	LastServicePort  = 65535
+)
 
 // Range is an inclusive interval in one ingress pool's configured inventory.
 type Range struct {
 	First, Last int
 }
 
-func (r Range) Valid() bool { return r.First >= 1024 && r.First <= r.Last && r.Last <= 65535 }
+func (r Range) Valid() bool {
+	return r.First >= FirstServicePort && r.First <= r.Last && r.Last <= LastServicePort
+}
+
+func ValidServicePorts[T int | int32](ports []T) bool {
+	for index, port := range ports {
+		if port < FirstServicePort || port > LastServicePort || index > 0 && port <= ports[index-1] {
+			return false
+		}
+	}
+	return true
+}
 
 // Inventory is a validated, immutable set of service ports. its zero value has
 // no ports, for callers that do not serve managed TCP services.
@@ -26,18 +39,19 @@ type Inventory struct {
 }
 
 func (i Inventory) Contains(port int) bool {
-	for _, r := range i.ranges {
-		if port >= r.First && port <= r.Last {
-			return true
+	_, found := slices.BinarySearchFunc(i.ranges, port, func(r Range, port int) int {
+		if r.Last < port {
+			return -1
 		}
-	}
-	return false
+		if r.First > port {
+			return 1
+		}
+		return 0
+	})
+	return found
 }
 
 func ParseInventory(values []string) (Inventory, error) {
-	if len(values) > MaxInventoryDeclarations {
-		return Inventory{}, ErrInventory
-	}
 	ranges := make([]Range, 0, len(values))
 	for _, value := range values {
 		first, last, found := strings.Cut(value, "-")
@@ -56,20 +70,11 @@ func ParseInventory(values []string) (Inventory, error) {
 }
 
 // NewInventory copies and validates in-memory ranges. empty inventories serve
-// shared HTTPS without allocated non-HTTP ports. the textual declaration limit
-// does not apply to in-memory inventories, which may have 256 singletons.
+// shared HTTPS without allocated non-HTTP ports.
 func NewInventory(ranges []Range) (Inventory, error) {
-	if len(ranges) > MaxInventoryPorts {
-		return Inventory{}, ErrInventory
-	}
 	ranges = slices.Clone(ranges)
-	count := 0
 	for _, r := range ranges {
 		if !r.Valid() {
-			return Inventory{}, ErrInventory
-		}
-		count += r.Last - r.First + 1
-		if count > MaxInventoryPorts {
 			return Inventory{}, ErrInventory
 		}
 	}
@@ -87,7 +92,11 @@ func (i Inventory) Ranges() []Range { return slices.Clone(i.ranges) }
 
 // Ports returns a copy in ascending port order.
 func (i Inventory) Ports() []int {
-	ports := make([]int, 0)
+	count := 0
+	for _, interval := range i.ranges {
+		count += interval.Last - interval.First + 1
+	}
+	ports := make([]int, 0, count)
 	for _, interval := range i.ranges {
 		for port := interval.First; port <= interval.Last; port++ {
 			ports = append(ports, port)

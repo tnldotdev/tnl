@@ -109,7 +109,32 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	}
 }
 
-func TestIngressRegistrationRequiresExplicitBoundedPortInventory(t *testing.T) {
+func TestIngressRegistrationAcceptsFullPortInventory(t *testing.T) {
+	ports := make([]int, 65535-1024+1)
+	for i := range ports {
+		ports[i] = i + 1024
+	}
+	called := false
+	store := &ingressStoreStub{registerIngress: func(_ context.Context, got controlstate.IngressRegistration, _ time.Time, _ time.Duration) (controlstate.IngressLease, error) {
+		called = true
+		if len(got.ServicePorts) != len(ports) {
+			t.Fatalf("received %d ports, want %d", len(got.ServicePorts), len(ports))
+		}
+		for i, port := range got.ServicePorts {
+			if int(port) != ports[i] {
+				t.Fatalf("port %d = %d, want %d", i, port, ports[i])
+			}
+		}
+		return controlstate.IngressLease{}, nil
+	}}
+	body := ingressv1.IngressRegistration{Region: "local", IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100, IngressPoolId: "ingress-a", ServicePorts: ports}
+	response := serveIngressJSON(t, testIngressHandler(t, store, time.Now(), nil), http.MethodPost, "/internal/v1/ingresses/register", body)
+	if response.Code != http.StatusOK || !called {
+		t.Fatalf("registration status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestIngressRegistrationRequiresExplicitValidPortInventory(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		ports []int
