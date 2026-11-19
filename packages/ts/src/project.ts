@@ -23,6 +23,7 @@ export interface TnlConnectionRegistry {
     readonly host: "127.0.0.1";
     readonly port: number;
     readonly ssl: TnlNativeTLSOptions;
+    readonly open: TnlOpenStream;
   };
   mysql: {
     /** mysql2 verifies this hostname; stream dials the native loopback listener. */
@@ -31,13 +32,19 @@ export interface TnlConnectionRegistry {
     readonly ssl: TnlNativeTLSOptions & { readonly verifyIdentity: true };
     /** a fresh socket for each ordinary mysql2 connection, including pools. */
     readonly stream: () => import("node:net").Socket;
+    readonly open: TnlOpenStream<TnlTLSStream>;
   };
-  tcp: { readonly host: "127.0.0.1"; readonly port: number };
-  http: { readonly url: `https://${string}`; readonly fetch: TnlFetch };
+  tcp: { readonly host: "127.0.0.1"; readonly port: number; readonly open: TnlOpenStream };
+  http: {
+    readonly url: `https://${string}`;
+    readonly fetch: TnlFetch;
+    readonly open: TnlOpenStream;
+  };
   kubernetes: {
     readonly server: `https://${string}`;
     readonly kubeconfig: string;
     readonly context: string;
+    readonly open: TnlOpenStream;
   };
 }
 
@@ -69,8 +76,8 @@ export type TnlOpenStream<Stream extends TnlStream = TnlStream> = (
  *
  * these contracts require a portable, stream-aware driver adapter. stock pg,
  * mysql2, and filesystem-based kubernetes clients are not browser drivers.
- * using node drivers in a worker additionally requires the platform's node
- * compatibility mode and a driver-specific socket adapter; tnl supplies neither.
+ * using node drivers in a worker requires the platform's node compatibility
+ * mode and a driver-specific socket adapter.
  * tnl itself needs no node compatibility mode for these stream/fetch contracts.
  *
  * @example

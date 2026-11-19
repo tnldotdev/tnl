@@ -19,6 +19,7 @@ const services = {
   postgres: { protocol: "postgres" },
   mysql: { protocol: "mysql" },
   kubernetes: { protocol: "kubernetes" },
+  redis: { protocol: "tcp" },
 } as const;
 
 async function joinCleanup(
@@ -44,7 +45,7 @@ async function joinCleanup(
     );
 }
 
-function deployment(runtime: Runtime, fixture: PortableFixture) {
+export function fixtureDeployment(runtime: Runtime, fixture: PortableFixture) {
   // the runtime's normal package export selects browser/workerd. no private
   // bridge, native CLI, yamux implementation, or fabricated admission is used.
   return runtime.deployment(fixture.deployment, {
@@ -82,7 +83,7 @@ export interface SmokeReport {
 
 export async function runPortableSmoke(runtime: Runtime, input: unknown): Promise<SmokeReport> {
   const fixture = fixtureSchema.parse(input);
-  const selected = deployment(runtime, fixture);
+  const selected = fixtureDeployment(runtime, fixture);
   let closeWaiting: (() => Promise<void>) | undefined;
   const postgres = runtime.client(selected, "postgres", {
     create: async (connection) =>
@@ -280,7 +281,7 @@ export async function runPortableIsolation(
   run: string,
 ): Promise<IsolationReport> {
   const fixture = fixtureSchema.parse(input);
-  const selected = deployment(runtime, fixture);
+  const selected = fixtureDeployment(runtime, fixture);
   const get = runtime.client(selected, "postgres", {
     create: async (connection) =>
       PostgresFixtureClient.connect(

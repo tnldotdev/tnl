@@ -5,7 +5,7 @@ const credentials = z.strictObject({
   password: z.string().min(1),
   database: z.string().min(1),
 });
-const names = ["http", "tcp", "postgres", "mysql", "kubernetes"] as const;
+const names = ["http", "tcp", "postgres", "mysql", "kubernetes", "redis"] as const;
 const endpoint = z
   .object({
     hostname: z.string().min(1),
@@ -42,6 +42,7 @@ export const fixtureSchema = z.strictObject({
   api_token: z.string().min(1),
   postgres: credentials,
   mysql: credentials,
+  redis_password: z.string().min(1),
   kubernetes_token: z.string().min(1),
 });
 
