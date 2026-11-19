@@ -99,6 +99,29 @@ function network() {
 }
 
 describe("gossip", () => {
+  it("fits full reports and an indirect check inside the wire budget", () => {
+    const max = Number.MAX_SAFE_INTEGER;
+    const full = (n: number) =>
+      report(n, {
+        seq: max,
+        reportedAt: max,
+        runNumber: "9223372036854775807",
+        name: "silver-stone",
+        startingUntil: max,
+        endsAt: max,
+        departing: false,
+        tabs: { count: 512, observedAt: max },
+        copyFrom: host(1).runID,
+        certificate: certificate("f", max),
+      });
+    const view = new Gossip(release, host(1), max, full(1));
+    for (let i = 2; i < MAX_CHANGES + 2; i++) view.receive(message(full(i)), max);
+    const batch = view.message(max);
+    expect(batch.changes).toHaveLength(MAX_CHANGES);
+    const bytes = new TextEncoder().encode(JSON.stringify({ target: host(2), message: batch }));
+    expect(bytes.byteLength).toBeLessThanOrEqual(MAX_MESSAGE_BYTES);
+  });
+
   it("repairs a split and carries the earliest known start to every host", async () => {
     const net = network();
     const a = net.create(1);
@@ -311,9 +334,9 @@ describe("gossip", () => {
   it("reserves one ordinary slot for the best certificate by expiry then fingerprint", () => {
     const view = new Gossip(release, host(1), epoch, { certificate: certificate("f") });
     fillRoster(view, MAX_CHANGES * 3);
-    const earlierExpiry = report(90, { certificate: certificate("0", epoch + 59_000) });
-    const tieLoser = report(91, { certificate: certificate("e") });
-    const best = report(92, { certificate: certificate("d") });
+    const earlierExpiry = report(9_000, { certificate: certificate("0", epoch + 59_000) });
+    const tieLoser = report(9_001, { certificate: certificate("e") });
+    const best = report(9_002, { certificate: certificate("d") });
     view.receive(message(earlierExpiry, tieLoser, best), epoch);
     fillRoster(view, MAX_CHANGES, 300);
     const batch = view.message(epoch).changes;
@@ -359,13 +382,13 @@ describe("gossip", () => {
     const view = new Gossip(release, host(1), epoch);
     const ordinary = MAX_CHANGES * 6;
     fillRoster(view, ordinary);
-    const suspect = report(200, { certificate: certificate("a", epoch + 20_000) });
-    const fallback = report(201, { certificate: certificate("b", epoch + 19_000) });
-    const ended = report(202, {
+    const suspect = report(9_000, { certificate: certificate("a", epoch + 20_000) });
+    const fallback = report(9_001, { certificate: certificate("b", epoch + 19_000) });
+    const ended = report(9_002, {
       certificate: certificate("c", epoch + 30_000),
       endsAt: epoch + 1,
     });
-    const stopped = report(203, { certificate: certificate("d"), left: true });
+    const stopped = report(9_003, { certificate: certificate("d"), left: true });
     view.receive(message(suspect, fallback, ended, stopped), epoch);
     fillRoster(view, MAX_CHANGES * 2, 300);
 

@@ -131,7 +131,7 @@ counting B. An old mention from another host doesn't clear that suspicion;
 a direct reply or a report B sent after the grace period can. A host doesn't
 have to talk directly to every other host to count them.
 
-Each reply includes the sender's report and up to 24 others. Recently
+Each reply includes the sender's report and up to 40 others within 24 KiB. Recently
 learned hosts, stops, and other status changes get some of that space, with
 changes not yet forwarded ahead of repeats.
 Replies to a peer skip reports the request already carried unless the
