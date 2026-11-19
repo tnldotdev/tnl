@@ -106,7 +106,7 @@ afterEach(() => {
 });
 
 test("factories retain clients across renewal and separate exact native bindings", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   let owner = "a";
   native.request.mockImplementation(async () => ({
     stdout: JSON.stringify({
@@ -133,11 +133,11 @@ test("factories retain clients across renewal and separate exact native bindings
 });
 
 test("module copies and native executables have independent deployment lifetimes", async () => {
-  const first = await import("../../src/index.js");
+  const first = await import("../../src/internal/connector/client.js");
   const a = first.createClient(options).deployment("production");
   await a.connect("database");
   vi.resetModules();
-  const second = await import("../../src/index.js");
+  const second = await import("../../src/internal/connector/client.js");
   native.resolve.mockReturnValue("/installed/other/tnl");
   native.request.mockResolvedValueOnce({
     stdout: JSON.stringify({
@@ -162,7 +162,7 @@ test("module copies and native executables have independent deployment lifetimes
 });
 
 test("resolved settings are frozen plain driver options and never select again on spread", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient(options).deployment("production");
   const first = await deployment.connect("database");
   const calls = native.request.mock.calls.length;
@@ -181,7 +181,7 @@ test("resolved settings are frozen plain driver options and never select again o
 });
 
 test("malformed warm replies cannot retire an established owner or reveal private input", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient(options).deployment("production");
   const first = await deployment.connect("database");
   for (const invalid of [
@@ -219,7 +219,7 @@ test.each([
 ])(
   "native IPC failure %s retains its classification without private data",
   async (reason, code) => {
-    const { createClient } = await import("../../src/index.js");
+    const { createClient } = await import("../../src/internal/connector/client.js");
     const deployment = createClient(options).deployment("production");
     await deployment.connect("database");
     native.request.mockResolvedValueOnce({
@@ -245,7 +245,7 @@ test.each([undefined, "", "ctg_invalid"])(
   "rejects invalid transport identity %j",
   async (transport_id) => {
     vi.stubEnv("TNL_CONNECTION_HANDLE", "/private/action/handle.json");
-    const { createClient } = await import("../../src/index.js");
+    const { createClient } = await import("../../src/internal/connector/client.js");
     const deployment = createClient({
       project: options.project,
       services: options.services,
@@ -264,7 +264,7 @@ test.each([undefined, "", "ctg_invalid"])(
 
 test("borrowed snapshots reject protocol, metadata, secret fields, and expiry changes", async () => {
   vi.stubEnv("TNL_CONNECTION_HANDLE", "/private/action/handle.json");
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient({
     project: options.project,
     services: options.services,
@@ -298,7 +298,7 @@ test("borrowed snapshots reject protocol, metadata, secret fields, and expiry ch
 });
 
 test("failed preparation can retry without exposing native stderr or triggering SDK replacement", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient(options).deployment("production");
   native.request.mockRejectedValueOnce({ stderr: "private-secret", stdout: "private-key" });
   await expect(deployment.connect("database")).rejects.toMatchObject({
@@ -314,7 +314,7 @@ test("failed preparation can retry without exposing native stderr or triggering 
 });
 
 test("native cleanup failures retain typed causes and permit an explicit retry", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const { TnlCleanupError } = await import("../../src/errors.js");
   const deployment = createClient(options).deployment("production");
   native.request.mockRejectedValueOnce({

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -48,6 +49,151 @@ func deferredJSPromise() (promise, resolve, reject js.Value) {
 	executor := js.FuncOf(func(_ js.Value, args []js.Value) any { resolve, reject = args[0], args[1]; return nil })
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor), resolve, reject
+}
+
+func TestResponseHeadersDoNotCloseAnUnfinishedUpload(t *testing.T) {
+	for _, stop := range []bool{false, true} {
+		name := "echo"
+		if stop {
+			name = "deployment close"
+		}
+		t.Run(name, func(t *testing.T) { testResponseHeadersUpload(t, stop) })
+	}
+}
+
+func testResponseHeadersUpload(t *testing.T, stop bool) {
+	ctx, cancel := context.WithCancel(t.Context())
+	client, server := net.Pipe()
+	connection := &uploadConnection{ctx: ctx, cancel: cancel, serverDone: make(chan struct{})}
+	connection.transport = &http.Transport{DialTLSContext: func(context.Context, string, string) (net.Conn, error) { return client, nil }}
+	go func() {
+		defer close(connection.serverDone)
+		defer server.Close()
+		request, err := http.ReadRequest(bufio.NewReader(server))
+		if err == nil {
+			// return headers before the request body finishes, then echo each
+			// incoming byte through the actual HTTP transport's response body.
+			response := &http.Response{
+				StatusCode: http.StatusOK, ProtoMajor: 1, ProtoMinor: 1,
+				Header: make(http.Header), Body: request.Body, ContentLength: -1,
+				TransferEncoding: []string{"chunked"},
+			}
+			_ = response.Write(server)
+			_ = request.Body.Close()
+		}
+	}()
+	owner := &deploymentHandle{ctx: ctx, stop: cancel, connections: map[*connectionHandle]struct{}{}, bindings: map[string]*connectionHandle{}}
+	handle := &connectionHandle{owner: owner, connection: connection, stop: cancel, name: "web", streams: map[*streamHandle]struct{}{}, bodies: map[*responseBody]struct{}{}}
+	owner.connections[handle], owner.bindings["web"] = struct{}{}, handle
+	first := []byte("first\n")
+	last := bytes.Repeat([]byte("x"), 2*chunkBytes+7)
+	var controller js.Value
+	pulled, canceled := false, false
+	firstPull := make(chan struct{})
+	pull := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		controller = args[0]
+		if !pulled {
+			pulled = true
+			controller.Call("enqueue", jsBytes(first))
+			close(firstPull)
+		}
+		return nil
+	})
+	cancelUpload := js.FuncOf(func(js.Value, []js.Value) any { canceled = true; return nil })
+	defer func() {
+		cancel()
+		_ = client.Close()
+		_ = server.Close()
+		_ = owner.close()
+		pull.Release()
+		cancelUpload.Release()
+	}()
+	source := js.Global().Get("Object").New()
+	source.Set("pull", pull)
+	source.Set("cancel", cancelUpload)
+	stream := js.Global().Get("ReadableStream").New(source, map[string]any{"highWaterMark": 0})
+	input := js.Global().Get("Request").New("https://service.example.test/upload", map[string]any{
+		"method": "POST", "body": stream, "duplex": "half",
+	})
+	type result struct {
+		response any
+		err      error
+	}
+	fetched := make(chan result, 1)
+	go func() { response, err := handle.fetch([]js.Value{input}); fetched <- result{response, err} }()
+	var response js.Value
+	select {
+	case result := <-fetched:
+		if result.err != nil {
+			t.Fatal("headers failed before upload completed", result.err)
+		}
+		response = result.response.(js.Value)
+	case <-time.After(5 * time.Second):
+		t.Fatal("fetch waited for the entire upload before returning response headers")
+	}
+	if canceled {
+		t.Fatal("returning response headers canceled an unfinished request body")
+	}
+	select {
+	case <-firstPull:
+	case <-time.After(5 * time.Second):
+		t.Fatal("HTTP writer did not start the request body after response headers")
+	}
+	if stop {
+		closed := make(chan error, 1)
+		go func() { closed <- owner.close() }()
+		select {
+		case err := <-closed:
+			if err != nil {
+				t.Fatal("deployment close lost clean upload cancellation", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("deployment close did not join the unfinished upload")
+		}
+		if !canceled {
+			t.Fatal("deployment close left the host upload alive")
+		}
+		return
+	}
+	controller.Call("enqueue", jsBytes(last))
+	controller.Call("close")
+	body, err := await(response.Call("arrayBuffer"))
+	if err != nil {
+		t.Fatal("echoed upload failed", err)
+	}
+	array := js.Global().Get("Uint8Array").New(body)
+	got := make([]byte, array.Get("byteLength").Int())
+	js.CopyBytesToGo(got, array)
+	if !bytes.Equal(got, append(first, last...)) {
+		t.Fatal("response headers truncated the streamed upload", len(got))
+	}
+}
+
+type responseCleanupFailure struct {
+	io.Reader
+	err error
+}
+
+func (b responseCleanupFailure) Close() error { return b.err }
+
+func TestResponseEOFDoesNotHideCleanupFailure(t *testing.T) {
+	cleanup := errors.New("private response cleanup sentinel")
+	owner := &connectionHandle{bodies: make(map[*responseBody]struct{})}
+	body := &responseBody{
+		owner: owner, stop: func() {},
+		body: responseCleanupFailure{Reader: strings.NewReader(""), err: cleanup},
+	}
+	owner.bodies[body] = struct{}{}
+	response, err := body.export(&http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}, http.MethodGet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := await(response.Call("arrayBuffer")); err == nil {
+		t.Fatal("response EOF hid its independent cleanup failure")
+	}
+	if err := body.close(); !errors.Is(err, cleanup) || len(owner.bodies) != 0 {
+		t.Fatal("response cleanup failure or joined ownership was lost", err)
+	}
 }
 
 func TestRequestAbortAndDeploymentCloseJoinBlockedUpload(t *testing.T) {

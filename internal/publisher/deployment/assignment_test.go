@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -56,6 +57,34 @@ func TestAssignmentBrowserDiscoveryDoesNotGateOtherServices(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestServiceAssignmentPropagatesSavedServiceFailure(t *testing.T) {
+	options, control := handlerFixture(t)
+	failure := errors.New("saved service unavailable")
+	p := AssignmentPublisher{
+		Member: controlv1.DeploymentPublisherIdentity{DeploymentId: "deployment-one", DeploymentName: "production",
+			PublisherIdentityId: options.Approval.ClientId, KeyId: options.Approval.KeyId, TeamId: options.Approval.TeamId},
+		Private: options.Private, Authority: options.Authority,
+		Control: publisheridentity.NativeControl{Services: control},
+	}
+	a := controlv1.DeploymentPublisherServiceAssignment{
+		ServiceId: control.service.Id, GrantId: options.Approval.GrantId, TrustRevision: 1,
+		Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocolHTTP), Target: "http://127.0.0.1:3000", Public: new(true)},
+	}
+	control.lookupErr = publisheridentity.ErrScope
+	p.ServerDiscovery = serverDiscoveryFunc(func(context.Context) (controlv1.ControlDiscovery, error) {
+		return controlv1.ControlDiscovery{BrowserLoginAvailable: new(true)}, nil
+	})
+	if err := p.Publish(t.Context(), a, nil, nil); !errors.Is(err, publisheridentity.ErrScope) {
+		t.Fatal("service assignment accepted unauthorized service lookup", err)
+	}
+	// the saved-service lookup is the current preparation boundary. the fixture
+	// also checks that it receives this exact operation context.
+	control.lookupErr = failure
+	if err := p.Publish(t.Context(), a, nil, nil); !errors.Is(err, failure) {
+		t.Fatal("service assignment hid saved-service lookup failure", err)
 	}
 }
 

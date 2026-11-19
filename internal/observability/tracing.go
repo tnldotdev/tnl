@@ -13,10 +13,12 @@ import (
 )
 
 func (m *Metrics) tracer() trace.Tracer {
-	if m == nil || m.tracerProvider == nil {
-		return noop.NewTracerProvider().Tracer(scope)
+	if m != nil {
+		if tracer := m.processMetrics.tracer(); tracer != nil {
+			return tracer
+		}
 	}
-	return m.tracerProvider.Tracer(scope)
+	return noop.NewTracerProvider().Tracer(scope)
 }
 
 // Start records a finite, authored operation. callers must not pass paths,

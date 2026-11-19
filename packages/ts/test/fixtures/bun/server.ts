@@ -1,7 +1,7 @@
 /// <reference types="bun" />
 
 import { Hono } from "hono";
-import { tnl } from "@tnldotdev/tnl";
+import { tnl } from "@tnldotdev/tnl/bun";
 
 const publication = await tnl.prepare();
 const app = new Hono();

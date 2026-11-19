@@ -1,5 +1,7 @@
 import type { ServiceProtocol } from "../project/runtime.js";
 import type { TnlFetch } from "../../project.js";
+import type { PublisherStorageHost } from "../portable/storage-host.js";
+import type { FetchHandler } from "../publisher/fetch_types.js";
 
 // this is a binding boundary, not a second tunnel or credential protocol. go
 // validates credentials and owns service selection, admission, tls, and renewal.
@@ -48,11 +50,26 @@ export interface WasmDeployment {
   close(): Promise<unknown>;
 }
 
+export interface WasmPublisherHost {
+  readonly fetch: FetchHandler;
+  readonly controlFetch: TnlFetch;
+  readonly storage: PublisherStorageHost;
+  readonly signal: AbortSignal;
+}
+
+export interface WasmPublication {
+  readonly url: unknown;
+  readonly ready: PromiseLike<unknown>;
+  readonly closed: PromiseLike<unknown>;
+  close(): Promise<unknown>;
+}
+
 export interface WasmBridge {
-  createDeployment(
+  createDeployment?(
     options: WasmDeploymentOptions,
     host: WasmHost,
     signal: AbortSignal,
   ): Promise<unknown>;
+  publish?(optionsJSON: string, host: WasmPublisherHost): Promise<unknown>;
   close(): Promise<unknown>;
 }

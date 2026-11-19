@@ -317,12 +317,14 @@ func (h *connectionHandle) close() error {
 		}
 		h.mu.Unlock()
 		h.stop()
-		h.err = h.connection.Close()
-		for _, stream := range streams {
-			h.err = errors.Join(h.err, stream.close())
-		}
+		// response owners interrupt host uploads before connection shutdown
+		// joins the HTTP transport's read/write workers.
 		for _, body := range bodies {
 			h.err = errors.Join(h.err, body.close())
+		}
+		h.err = errors.Join(h.err, h.connection.Close())
+		for _, stream := range streams {
+			h.err = errors.Join(h.err, stream.close())
 		}
 		h.pending.Wait()
 		h.methods.retire()

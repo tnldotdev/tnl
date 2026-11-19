@@ -61,7 +61,10 @@ func normalizeServiceAllocation(r AllocateServiceRequest) (ProjectServiceConfigu
 		return s, "", err
 	}
 	descriptor, err := appliedLocalTargetDescriptor(s.Target, s.Protocol)
-	if err != nil || descriptor || s.Protocol != "http" || !opaqueid.Valid(r.Invocation, opaqueid.InvocationPrefix) {
+	// app names an inline HTTP handler, not host discovery. allocations still
+	// reject compose/docker descriptors and target TLS without a target socket.
+	if err != nil || descriptor && s.Target != "app" || s.Target == "app" && s.TargetTLS != nil ||
+		s.Protocol != "http" || !opaqueid.Valid(r.Invocation, opaqueid.InvocationPrefix) {
 		return s, "", ErrProjectConfigurationInvalid
 	}
 	mode := "restricted"

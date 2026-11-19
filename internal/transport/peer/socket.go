@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 package peer
 
 import (
@@ -37,6 +39,9 @@ type Socket struct {
 	once      sync.Once
 	err       error
 }
+
+// HostUDP indicates whether the build can open physical UDP sockets.
+const HostUDP = true
 
 var _ muxsession.QUICDialer = (*Socket)(nil)
 

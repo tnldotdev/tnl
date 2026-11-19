@@ -1,8 +1,8 @@
-import { createClient, type TnlConnectionRegistry } from "@tnldotdev/tnl";
+import { deployment, connect, client, type TnlConnectionRegistry } from "@tnldotdev/tnl/node";
 import { assertType, test } from "vitest";
 
 test("remote selections preserve every supported protocol and exact logical names", async () => {
-  const app = createClient({
+  const production = deployment("production", {
     project: "acme/shop",
     token: "private",
     services: {
@@ -13,19 +13,12 @@ test("remote selections preserve every supported protocol and exact logical name
       cluster: { protocol: "kubernetes" },
     },
   });
-  const production = app.deployment("production");
-  assertType<TnlConnectionRegistry["http"]>(await production.connect("web"));
-  assertType<TnlConnectionRegistry["mysql"]>(await production.connect("mysql"));
-  assertType<TnlConnectionRegistry["tcp"]>(await production.connect("cache"));
-  assertType<TnlConnectionRegistry["kubernetes"]>(await production.connect("cluster"));
-  production.client("web", { create: (connection) => connection.fetch, close: () => {} });
+  assertType<TnlConnectionRegistry["http"]>(await connect(production, "web"));
+  assertType<TnlConnectionRegistry["mysql"]>(await connect(production, "mysql"));
+  assertType<TnlConnectionRegistry["tcp"]>(await connect(production, "cache"));
+  assertType<TnlConnectionRegistry["kubernetes"]>(await connect(production, "cluster"));
+  client(production, "web", { create: (connection) => connection.fetch, close: () => {} });
   // @ts-expect-error facts never approve an undeclared logical name.
-  production.connect("other");
-  // @ts-expect-error runtime management creation needs an original request key.
-  app.deployments.create({ name: "customer", targets: { db: { address: "db:5432" } } });
-  // @ts-expect-error runtime updates need an explicit strong revision condition.
-  app.deployments.update("production", { targets: { db: { address: "db:5432" } } });
-  // @ts-expect-error runtime management cannot administer its own credentials.
-  app.credentials.create();
+  connect(production, "other");
   await production.close();
 });

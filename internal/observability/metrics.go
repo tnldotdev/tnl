@@ -2,26 +2,19 @@ package observability
 
 import (
 	"context"
-	"net/http"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/policy/readiness"
 	"go.opentelemetry.io/otel/metric"
-	sdklog "go.opentelemetry.io/otel/sdk/log"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // Metrics owns one process's OTel instruments, providers, and scrape exporter.
 type Metrics struct {
+	processMetrics
 	clientOperations            *histogram
 	clientLifecycle             *counter
 	publisherData               publisherData
@@ -31,13 +24,6 @@ type Metrics struct {
 	relayBytes                  *counter
 	relayCompletions            *counter
 	meter                       metric.Meter
-	meterProvider               *sdkmetric.MeterProvider
-	tracerProvider              *sdktrace.TracerProvider
-	loggerProvider              *sdklog.LoggerProvider
-	spanQueue                   *spanQueue
-	logProcessor                *sdklog.BatchProcessor
-	cancelExports               context.CancelFunc
-	resource                    *resource.Resource
 	publisherOperations         metric.Float64Histogram
 	publisherLease              metric.Float64Gauge
 	publisherReadiness          metric.Float64Gauge
@@ -45,8 +31,6 @@ type Metrics struct {
 	publisherConnectionAttempts metric.Int64Counter
 	authDecisions               *counter
 	serviceAudit                *counter
-	registry                    *prometheus.Registry
-	runtimeRegistry             *prometheus.Registry
 	relayLeaseMu                sync.Mutex
 	relayLeaseExpiry            map[string]time.Time
 	relayCertificateExpiry      map[string]time.Time
@@ -101,15 +85,6 @@ type Metrics struct {
 	routingHistoryFloor         atomic.Uint64
 	routingHistoryRows          *counter
 	routingHistorySkipped       *counter
-}
-
-// New constructs an isolated, local-only owner. it never reads export settings.
-func New(role string) *Metrics {
-	m, err := newOwner(role, Config{})
-	if err != nil {
-		panic(err)
-	}
-	return m
 }
 
 func (metrics *Metrics) initInstruments(role Role) {
@@ -277,15 +252,6 @@ func (m *Metrics) SetGuestTrialStats(issued, allocated, ready, expired, readyLim
 			m.guestTrialStats.With(eventDimension(stage)).Set(float64(count))
 		}
 	}
-}
-
-func (m *Metrics) Handler() http.Handler {
-	return promhttp.HandlerFor(prometheus.Gatherers{m.registry, m.runtimeRegistry}, promhttp.HandlerOpts{})
-}
-
-// Gather captures this process's registry using only passive collectors.
-func (m *Metrics) Gather() ([]*dto.MetricFamily, error) {
-	return (prometheus.Gatherers{m.registry, m.runtimeRegistry}).Gather()
 }
 
 func (m *Metrics) SetRelayLeases(state string, count int) {

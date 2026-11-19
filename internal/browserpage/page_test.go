@@ -2,7 +2,6 @@ package browserpage
 
 import (
 	"encoding/base64"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,30 +30,6 @@ func TestSharedShellAndBundledFont(t *testing.T) {
 	}
 	if strings.Contains(body, "<footer") || strings.Contains(body, "[ tnl ]") {
 		t.Fatal("standalone page repeats the wordmark")
-	}
-}
-
-func TestTemplatesEscapeDynamicValues(t *testing.T) {
-	t.Parallel()
-	attack := `"><script>alert("unsafe")</script><img src=x onerror=alert(1)>`
-	page := New(`<h1>{{.Text}}</h1><form><input name="value" value="{{.Text}}"><a href="{{.URL}}">continue</a></form>`)
-	body := page.HTML(Page{Title: attack, Content: struct{ Text, URL string }{attack, "javascript:alert(1)"}})
-	document, err := html.Parse(strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for node := range document.Descendants() {
-		if node.Type == html.ElementNode && (node.Data == "script" || node.Data == "img") {
-			t.Fatalf("dynamic value created an element: %s", node.Data)
-		}
-		for _, attribute := range node.Attr {
-			if strings.HasPrefix(attribute.Key, "on") || attribute.Val == "javascript:alert(1)" {
-				t.Fatal("dynamic value became executable markup")
-			}
-		}
-	}
-	if !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "#ZgotmplZ") {
-		t.Fatal("template did not escape text and reject an executable link")
 	}
 }
 
@@ -135,13 +110,36 @@ func TestErrorPreservesPlainTextAndNegotiatesHTML(t *testing.T) {
 	}
 }
 
-type failedWriter struct{ err error }
-
-func (w failedWriter) Write([]byte) (int, error) { return 0, w.err }
-
-func TestTemplateReportsWriteFailure(t *testing.T) {
-	cause := errors.New("connection closed")
-	if err := messagePage.Write(failedWriter{cause}, Page{}); !errors.Is(err, cause) {
-		t.Fatalf("write failure = %v", err)
+func TestFixedPagesEscapeTextAndURLs(t *testing.T) {
+	message := MessageHTML(Message{
+		Title:     `<script>payload</script>`,
+		Summary:   `" onload="payload`,
+		Code:      "<code>",
+		RequestID: "x&y",
+		HelpURL:   "javascript:alert(1)",
+	})
+	for _, want := range []string{"&lt;script&gt;payload&lt;/script&gt;", "&#34; onload=&#34;payload", "&lt;code&gt;", "x&amp;y", `href="#ZgotmplZ"`} {
+		if !strings.Contains(message, want) {
+			t.Errorf("message missing %q", want)
+		}
+	}
+	for _, test := range []struct{ url, want string }{
+		{`/app?one=1&two="x"`, `/app?one=1&amp;two=&#34;x&#34;`},
+		{"https://preview.example.test/a b", "https://preview.example.test/a%20b"},
+		{"javascript:alert(1)", "#ZgotmplZ"},
+		{"//other.example.test", "#ZgotmplZ"},
+		{"/%2Fother.example.test", "#ZgotmplZ"},
+		{`/\other.example.test`, "#ZgotmplZ"},
+		{"/%5Cother.example.test", "#ZgotmplZ"},
+		{"https://user@preview.example.test", "#ZgotmplZ"},
+	} {
+		w := httptest.NewRecorder()
+		Redirect(w, test.url)
+		body := w.Body.String()
+		if w.Code != http.StatusOK || w.Header().Get("Content-Security-Policy") != ContentSecurityPolicy ||
+			!strings.Contains(body, `href="`+test.want+`"`) ||
+			strings.Contains(body, `<meta http-equiv="refresh"`) != (test.want != "#ZgotmplZ") {
+			t.Errorf("unexpected handoff for %q", test.url)
+		}
 	}
 }

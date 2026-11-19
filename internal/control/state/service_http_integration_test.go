@@ -268,6 +268,9 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 			t.Fatal("concurrent browser requests rotated more than once", calls.Load())
 		}
 		check(a, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, true)
+		t.Run("read parent after browser lock", func(t *testing.T) {
+			testServiceBrowserRefreshSnapshot(t, d, a.Subject.ID, redemption.CookieSecret, issued.SessionID, now)
+		})
 		// the stored rotated credential must work again, not only the first one.
 		if _, err := d.pool.Exec(t.Context(), `UPDATE control.control_sessions SET access_expires_at=$2 WHERE id=$1`, issued.SessionID, now.Add(-time.Second)); err != nil {
 			t.Fatal(err)

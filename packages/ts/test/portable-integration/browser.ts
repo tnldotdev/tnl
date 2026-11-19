@@ -1,6 +1,10 @@
+import { client, connect, deployment } from "@tnldotdev/tnl/browser";
 import { fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
-import { PortableSmokeError, runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { PortableSmokeError } from "./errors.ts";
+
+const runtime = { client, connect, deployment };
 
 function failure(error: unknown): { phase: string; code: string; detail?: string | undefined }[] {
   const errors = error instanceof AggregateError ? error.errors : [error];
@@ -17,7 +21,7 @@ export async function smoke(input: unknown) {
   const fixture = fixtureSchema.parse(input);
   installFixtureHost(fixture);
   try {
-    return await runPortableSmoke(fixture);
+    return await runPortableSmoke(runtime, fixture);
   } catch (error) {
     throw new Error(JSON.stringify(failure(error)));
   }
@@ -27,7 +31,7 @@ export async function isolation(input: unknown, role: "first" | "second", run: s
   const fixture = fixtureSchema.parse(input);
   installFixtureHost(fixture);
   try {
-    return await runPortableIsolation(fixture, role, run);
+    return await runPortableIsolation(runtime, fixture, role, run);
   } catch (error) {
     throw new Error(JSON.stringify(failure(error)));
   }

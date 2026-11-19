@@ -1,5 +1,7 @@
 import { serviceHostnames, serializeRuntimePayload } from "./internal/project/runtime.js";
 import { canonicalLoopbackTarget } from "./internal/publisher/target.js";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import type { Plugin } from "vite";
 import { TnlError, TnlCleanupError, classifyTnlError } from "./errors.js";
 import type { PreparedService } from "./internal/publisher/app.js";
@@ -17,6 +19,11 @@ import { parseValue } from "./internal/validation.js";
 
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
 const allowedHostsSchema = z.union([z.literal(true), z.array(z.string())]).optional();
+const sdkWasmFiles = new Set(
+  ["connector.wasm", "publisher.wasm"].map((name) =>
+    fileURLToPath(new URL(`./wasm/${name}`, import.meta.url)),
+  ),
+);
 
 /** configures a Vite development server to register its listener and add project metadata. */
 export type { FrameworkOptions } from "./internal/publisher/framework.js";
@@ -24,10 +31,10 @@ export type { FrameworkOptions } from "./internal/publisher/framework.js";
 export default function tnl(options: FrameworkOptions = {}): Plugin {
   let assignment: PreparedService | null = null;
   let preview: ReturnType<typeof frameworkOptions>["preview"] = "auto";
+  let root: string;
   return {
     name: "tnl",
     enforce: "post",
-    apply: "serve",
     async config(userConfig = {}, configEnvironment) {
       assignment = null;
       if (configEnvironment.command !== "serve" || configEnvironment.isPreview === true) {
@@ -58,6 +65,32 @@ export default function tnl(options: FrameworkOptions = {}): Plugin {
         },
       };
       return result;
+    },
+    configResolved(config) {
+      root = config.root;
+    },
+    generateBundle: {
+      order: "post",
+      handler(_options, bundle) {
+        // vite can emit URL assets before tree shaking. keep only sdk wasm
+        // files referenced by the final chunks, including lazy chunks.
+        const referenced = new Set<string>();
+        for (const chunk of Object.values(bundle)) {
+          if (chunk.type === "asset") continue;
+          if (chunk.viteMetadata === undefined) return;
+          for (const asset of chunk.viteMetadata.importedAssets) referenced.add(asset);
+        }
+        for (const [file, asset] of Object.entries(bundle)) {
+          if (
+            asset.type === "asset" &&
+            !referenced.has(file) &&
+            asset.originalFileNames.length > 0 &&
+            asset.originalFileNames.every((name) => sdkWasmFiles.has(resolve(root, name)))
+          ) {
+            delete bundle[file];
+          }
+        }
+      },
     },
     configureServer(server) {
       const configured = assignment;

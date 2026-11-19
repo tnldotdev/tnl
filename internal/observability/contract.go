@@ -1,11 +1,9 @@
 package observability
 
 import (
-	"context"
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -95,21 +93,6 @@ type Vocabulary struct {
 	CardinalityLimit int                    `json:"cardinality_limit"`
 	Attributes       []AttributeDefinition  `json:"attributes"`
 	Instruments      []InstrumentDefinition `json:"instruments"`
-}
-
-// SharedVocabulary is offline. callbacks expose only local snapshots; no
-// environment, process instance, runtime counts, or I/O is included.
-func SharedVocabulary() Vocabulary {
-	m := New("standalone")
-	defer m.Shutdown(context.Background())
-	m.RegisterDatabase(func(time.Time) DatabaseSnapshot { return DatabaseSnapshot{} })
-	m.RegisterIngressRouting(func() IngressRoutingSnapshot { return IngressRoutingSnapshot{} })
-	m.RegisterIngressServiceRouting(func() time.Time { return time.Time{} })
-	m.RegisterIngressLease(func() time.Time { return time.Time{} })
-	m.RegisterControlCertificate(func() time.Time { return time.Time{} })
-	instruments := append(m.InstrumentDefinitions(), RuntimeInstrumentDefinitions()...)
-	slices.SortFunc(instruments, func(a, b InstrumentDefinition) int { return strings.Compare(a.Name, b.Name) })
-	return Vocabulary{1, "internal/observability: vocabulary.go and instrument declarations", 2000, VocabularyAttributes(), instruments}
 }
 
 func domainReasons() []string {

@@ -5,12 +5,12 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -66,7 +66,7 @@ func TestServiceCertificateExpiryInterruptsBlockedRenewal(t *testing.T) {
 				go func() { defer close(joined); done <- certificates.Maintain(ctx) }()
 				defer func() { cancel(); <-joined }()
 				<-installed
-				var lock *clientstate.Lock
+				var lock io.Closer
 				if mode == "cache-lock" {
 					lock, err = certificates.Cache.Lock(t.Context())
 					if err != nil {

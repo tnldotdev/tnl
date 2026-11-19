@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 package service
 
 import (
@@ -576,7 +578,7 @@ func TestFeedbackRunCompositionKeepsDirectServiceFacts(t *testing.T) {
 		t.Fatal("HTTP service did not compose its existing HTTP frontend")
 	}
 	frontend := httpVisitor.Frontend.(HTTP)
-	feedback := frontend.feedback
+	feedback, _ := frontend.feedback.(*feedbackRuntime)
 	if feedback == nil || feedback.previewID != cfg.PreviewID || feedback.service != cfg.ProjectService || feedback.projectRoot != cfg.ProjectRoot ||
 		feedback.serviceID != control.setup.ServiceId || feedback.runID != control.setup.ServiceRunId || feedback.number != control.setup.RunNumber ||
 		feedback.token.String() != control.setup.RunToken || frontend.browser.PreviewID != cfg.PreviewID ||

@@ -18,7 +18,7 @@ tasks:
       GOARCH: wasm
       CGO_ENABLED: "0"
     cmds:
-      - govulncheck ./packages/ts/wasm
+      - govulncheck -tags=tnlsdk ./packages/ts/wasm
 
   test:
     desc: Run routine Go tests and compile the public SDK example
@@ -70,12 +70,13 @@ tasks:
     vars:
       RUN: '{{default "." .RUN}}'
       RUNTIME: '{{default "node" .RUNTIME}}'
+      TAGS: '{{default "" .TAGS}}'
     env:
       GOOS: js
       GOARCH: wasm
       CGO_ENABLED: "0"
     cmds:
-      - go test -exec="node {{.ROOT_DIR}}/scripts/test/go-wasm-optimized.ts {{.RUNTIME}}" {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=5m
+      - go test -tags='{{.TAGS}}' -exec="node {{.ROOT_DIR}}/scripts/test/go-wasm-optimized.ts {{.RUNTIME}}" {{.PACKAGES}} -run='{{.RUN}}' -count=1 -timeout=5m
 
   test:coverage:
     desc: Produce a diagnostic Go coverage report

@@ -11,11 +11,10 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
-	clientserver "github.com/tnldotdev/tnl/internal/client/server"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
@@ -53,13 +52,22 @@ type RunControl interface {
 
 type SlotSession = tunnel.SlotSession
 
+// Telemetry starts the optional run-owned scope without requiring its native
+// collector's database or preference watcher in portable publication.
+type Telemetry interface {
+	BeginScope(telemetryv1.TransportReportRole) *clienttelemetry.Scope
+}
+
 type RunConfig struct {
-	Telemetry *clienttelemetry.Collector
+	Telemetry Telemetry
 	// framework is optional; unknown generated enum values are omitted.
-	Framework                                             telemetryv1.PublicationReadyFramework
-	PreferredRegions                                      []string
-	Control                                               RunControl
-	State                                                 *clientstate.Store
+	Framework        telemetryv1.PublicationReadyFramework
+	PreferredRegions []string
+	Control          RunControl
+	State            LocalState
+	// certificate storage is explicit for host publishers. when supplied, no
+	// certificate operation consults State or opens a native private directory.
+	CertificateStore                                      CertificateStore
 	Access                                                func(context.Context) (string, error)
 	PublisherIdentityID, PublisherGrantID, PublisherKeyID string
 	ServiceID                                             string
@@ -134,10 +142,23 @@ type RunStatus struct {
 func (RunConfig) String() string   { return "service publisher configuration" }
 func (RunConfig) GoString() string { return "service publisher configuration" }
 
+func (c RunConfig) hasFetchTarget() bool {
+	return c.Handler != nil && c.Metadata.Protocol == controlv1.ServiceProtocolHTTP && c.Target == "" &&
+		c.TargetResolver == nil && c.Metadata.TargetTls == nil && len(c.Mounts) == 0 && c.ResolveHTTPTarget == nil
+}
+
 // Publish keeps the managed certificate lifecycle, two independently claimed
 // relay slots and current control heartbeat together. live bytes are never replayed.
 func Publish(ctx context.Context, config RunConfig) (result error) {
-	if config.WebSocketOnly {
+	if err := validateFeedbackPlatform(config.Feedback, config.Demo, config.PreviewID); err != nil {
+		return err
+	}
+	if servicestream.HandlerOnly && !config.hasFetchTarget() {
+		return ErrPrivateStream
+	}
+	// disable relay UDP and direct peers without changing the inner QUIC session.
+	if !peer.HostUDP || config.WebSocketOnly {
+		config.WebSocketOnly = true
 		config.RelayQUIC = muxsession.DisabledConnector{}
 		config.Connectivity.DisableDirect = true
 	}
@@ -145,7 +166,10 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if result != nil {
 		return result
 	}
-	telemetry := config.Telemetry.BeginScope("publisher")
+	var telemetry *clienttelemetry.Scope
+	if config.Telemetry != nil {
+		telemetry = config.Telemetry.BeginScope("publisher")
+	}
 	defer telemetry.Close()
 	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || !config.InspectionMode.Valid() || config.DrainTime < 0 ||
 		!opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) ||
@@ -192,7 +216,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}()
 	var dialer muxsession.QUICDialer
 	var udpErr error
-	if config.RelayQUIC == nil {
+	if peer.HostUDP && config.RelayQUIC == nil {
 		var transport *muxsession.QUICTransport
 		transport, udpErr = muxsession.ListenQUICTransport("udp", ":0")
 		if udpErr == nil {
@@ -205,7 +229,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		return err
 	}
 	var discoveredTLS *tls.Config
-	if config.TargetResolver != nil {
+	if !servicestream.HandlerOnly && config.TargetResolver != nil {
 		var err error
 		config.Target, discoveredTLS, err = config.TargetResolver.ResolveTarget(ctx)
 		if err != nil {
@@ -217,10 +241,10 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		config.resolvedTargetTLS = discoveredTLS
 	}
 	if config.Handler != nil {
-		if config.Metadata.Protocol != controlv1.ServiceProtocolHTTP || config.Target != "" || config.TargetResolver != nil || config.Metadata.TargetTls != nil || len(config.Mounts) != 0 || config.ResolveHTTPTarget != nil {
+		if !config.hasFetchTarget() {
 			return ErrPrivateStream
 		}
-	} else {
+	} else if !servicestream.HandlerOnly {
 		if _, err := tcptarget.Normalize(config.Target); err != nil {
 			return err
 		}
@@ -262,22 +286,24 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	ctx = observability.WithPublisherRecovery(ctx)
 	_, startup := observability.PublisherOperation(ctx, "private_startup")
 	defer func() { startup(result) }()
-	trust, err := targetTrust(approved)
-	if err != nil {
-		return err
-	}
 	transport := targettransport.Transport{Protocol: serviceconfig.ProtocolName(approved.Protocol)}
-	if config.TargetResolver != nil {
-		// cloud trust comes from the exact assigned selector's publisher-side
-		// discovery, never from a local apply or a saved static CA override.
-		if trust != nil {
-			return ErrPrivateStream
-		}
-		transport.TLS = discoveredTLS
-	} else {
-		transport, err = targettransport.FromTrust(serviceconfig.ProtocolName(approved.Protocol), trust)
+	if !servicestream.HandlerOnly {
+		trust, err := targetTrust(approved)
 		if err != nil {
 			return err
+		}
+		if config.TargetResolver != nil {
+			// cloud trust comes from the exact assigned selector's publisher-side
+			// discovery, never from a local apply or a saved static CA override.
+			if trust != nil {
+				return ErrPrivateStream
+			}
+			transport.TLS = discoveredTLS
+		} else {
+			transport, err = targettransport.FromTrust(serviceconfig.ProtocolName(approved.Protocol), trust)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if err := transport.Validate(); err != nil {
@@ -295,7 +321,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	if config.Healthy == nil {
 		config.Healthy = func(ctx context.Context) bool {
-			if config.Handler != nil {
+			if servicestream.HandlerOnly || config.Handler != nil {
 				return true
 			}
 			probe, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -360,7 +386,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	defer stopRun()
 	bound.telemetry = telemetry
 	bound.connectivityOptions = telemetry.Connectivity(config.Connectivity)
-	if !config.Connectivity.DisableDirect {
+	if peer.HostUDP && !config.Connectivity.DisableDirect {
 		bound.peerSocket = config.PeerSocket
 		if bound.peerSocket == nil {
 			// UDP is an optimization; a blocked socket leaves relay WSS usable.
@@ -674,7 +700,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				}
 				ready = true
 				payload := telemetryv1.PublicationReady{ServerKind: telemetryv1.SelfHosted, PublishMode: telemetryv1.App}
-				if config.Control.ControlURL() == clientserver.DefaultURL {
+				if config.Control.ControlURL() == naming.DefaultControlURL {
 					payload.ServerKind = telemetryv1.Hosted
 				}
 				if config.Demo {
@@ -778,7 +804,7 @@ func (config RunConfig) connectionOptions(dialer muxsession.QUICDialer, udpErr e
 		roots.MinVersion = max(roots.MinVersion, tls.VersionTLS13)
 	}
 	options := ConnectOptions{QUIC: config.RelayQUIC, WebSocket: config.RelayWebSocket, PreferWebSocket: config.WebSocketOnly}
-	if options.QUIC == nil {
+	if peer.HostUDP && options.QUIC == nil {
 		if udpErr != nil {
 			options.QUIC = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return nil, udpErr })
 		} else {

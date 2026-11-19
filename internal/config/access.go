@@ -7,7 +7,6 @@ import (
 	"encoding/json/v2"
 
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"go.yaml.in/yaml/v3"
 )
 
 // Access is the complete visitor policy. an IP list narrows its mode; it
@@ -50,30 +49,6 @@ func (a *Access) UnmarshalJSON(data []byte) error {
 	var value object
 	if err := json.Unmarshal(data, &value, json.RejectUnknownMembers(true)); err != nil {
 		return fmt.Errorf("access must be a mode or an object: %w", err)
-	}
-	*a = Access(value)
-	return a.Validate()
-}
-
-func (a *Access) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
-		*a = Access{Mode: node.Value}
-		return a.Validate()
-	}
-	if node.Kind != yaml.MappingNode {
-		return errors.New("access must be a mode or an object")
-	}
-	for i := 0; i < len(node.Content); i += 2 {
-		switch node.Content[i].Value {
-		case "mode", "ip":
-		default:
-			return fmt.Errorf("unknown access field %q", node.Content[i].Value)
-		}
-	}
-	type object Access
-	var value object
-	if err := node.Decode(&value); err != nil {
-		return err
 	}
 	*a = Access(value)
 	return a.Validate()

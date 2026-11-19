@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 package service
 
 import (
@@ -47,15 +49,16 @@ func TestServiceHTTPDemoPreviewBindsExactRunBeforeFeedbackAndRecoversOnRetry(t *
 		if err != nil {
 			t.Fatal(err)
 		}
+		runtime, _ := prepared.feedback.(*feedbackRuntime)
 		if prepared.PreviewID != previewID || prepared.browser == nil || prepared.browser.PreviewID != previewID ||
-			prepared.feedback == nil || prepared.feedback.previewID != previewID || !prepared.feedback.demo ||
-			prepared.feedback.serviceID != scope.ID || prepared.feedback.runID != runID || prepared.feedback.number != number ||
-			prepared.feedback.token != runToken || prepared.feedback.projectRoot != "" ||
+			runtime == nil || runtime.previewID != previewID || !runtime.demo ||
+			runtime.serviceID != scope.ID || runtime.runID != runID || runtime.number != number ||
+			runtime.token != runToken || runtime.projectRoot != "" ||
 			prepared.ResponseHooks.ModifyHTML == nil || prepared.ResponseHooks.ObserveStatus == nil {
 			closeHTTP()
 			t.Fatal("demo browser/feedback did not use the recovered run preview and direct run facts")
 		}
-		source, err := prepared.feedback.sourceState(ctx)
+		source, err := runtime.sourceState(ctx)
 		if err != nil || source.SchemaVersion != 1 || source.Complete || source.ChangedFiles == nil || len(source.ChangedFiles) != 0 {
 			closeHTTP()
 			t.Fatal("demo source capture left its existing bounded mode", source, err)
@@ -119,9 +122,10 @@ func TestServiceHTTPConfiguredPreviewDoesNotAllocateADemoPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeHTTP()
+	runtime, _ := prepared.feedback.(*feedbackRuntime)
 	if calls != 0 || prepared.PreviewID != previewID || prepared.browser == nil || prepared.browser.PreviewID != previewID ||
-		prepared.feedback == nil || prepared.feedback.previewID != previewID || prepared.feedback.demo ||
-		prepared.feedback.projectRoot != facts.ProjectRoot {
+		runtime == nil || runtime.previewID != previewID || runtime.demo ||
+		runtime.projectRoot != facts.ProjectRoot {
 		t.Fatal("ordinary configured feedback allocated or replaced its preview", calls)
 	}
 }

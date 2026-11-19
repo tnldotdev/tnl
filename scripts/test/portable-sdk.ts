@@ -14,6 +14,7 @@ import {
   fixtureSchema,
   type PortableFixture,
 } from "../../packages/ts/test/portable-integration/fixture.ts";
+import { portableDiagnosticsSchema } from "../../packages/ts/test/portable-integration/errors.ts";
 import { chromeArguments, workerdConfiguration } from "./portable-sdk-config.ts";
 
 interface BrowserFixture {
@@ -36,7 +37,7 @@ if (!descriptor.isFile() || (descriptor.mode & 0o077) !== 0 || descriptor.size >
 const fixture = fixtureSchema.parse(JSON.parse(await readFile(values.fixture, "utf8")));
 const root = path.resolve(import.meta.dirname, "../..");
 const source = path.join(root, "packages/ts/test/portable-integration");
-const productionWasm = path.join(root, "packages/ts/dist/wasm/tnl.wasm");
+const productionWasm = path.join(root, "packages/ts/dist/wasm/connector.wasm");
 if ((await stat(productionWasm)).size < 1)
   throw new Error("build the actual SDK Go/WASM module first");
 const temporary = process.platform === "darwin" ? path.join(tmpdir(), "opencode") : tmpdir();
@@ -125,7 +126,7 @@ async function chromeSmoke(configuration: PortableFixture) {
       response.end(
         '<!doctype html><script type="module">import * as fixture from "/browser/browser.js"; globalThis.portableSDKFixture = fixture;</script>',
       );
-    } else if (request.url?.endsWith("/wasm/tnl.wasm")) {
+    } else if (request.url?.endsWith("/wasm/connector.wasm")) {
       response.writeHead(200, { "Content-Type": "application/wasm", "Content-Length": wasmSize });
       const stream = createReadStream(wasm);
       stream.on("error", () => response.destroy());
@@ -238,7 +239,11 @@ async function workerdSmoke(configuration: PortableFixture) {
       {
         name: "static-sdk-wasm",
         setup(builder) {
-          builder.onResolve({ filter: /\.wasm$/ }, () => ({ path: "tnl.wasm", external: true }));
+          builder.onResolve({ filter: /\.wasm$/ }, (args) => ({
+            path: path.basename(args.path),
+            external: true,
+            sideEffects: false,
+          }));
         },
       },
     ],
@@ -321,6 +326,7 @@ async function workerdSmoke(configuration: PortableFixture) {
         const failure = z
           .object({
             network: z.array(z.string().max(500)).max(64).optional(),
+            diagnostics: portableDiagnosticsSchema.optional(),
             failures: z.array(
               z.object({
                 phase: z.string().max(40),
@@ -364,7 +370,7 @@ try {
     "go",
     [
       "build",
-      "-tags=tnlwasmtest",
+      "-tags=tnlwasmtest,tnlsdk,tnlconnector",
       "-trimpath",
       "-ldflags=-s -w",
       "-o",

@@ -58,7 +58,7 @@ func TestWireTraceSamplingUsesLocalPolicyForEitherRemoteFlag(t *testing.T) {
 				exporter := tracetest.NewInMemoryExporter()
 				provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter), sdktrace.WithSampler(sdktrace.ParentBased(root, sdktrace.WithRemoteParentSampled(root), sdktrace.WithRemoteParentNotSampled(root))))
 				defer provider.Shutdown(t.Context())
-				owner := WithMetrics(t.Context(), &Metrics{tracerProvider: provider})
+				owner := WithMetrics(t.Context(), &Metrics{processMetrics: processMetrics{tracerProvider: provider}})
 				tc := tunnelv1.TraceContext{TraceParent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-" + flags}
 				ctx, end := Start(ExtractWireTrace(owner, tc), "relay.test_setup")
 				if trace.SpanContextFromContext(ctx).IsSampled() != sample {

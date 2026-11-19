@@ -109,7 +109,7 @@ func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
 	}
 	var direct *peer.CarrierSlot
 	var connectivityDone chan error
-	if p.bound.peerSocket != nil {
+	if peer.HostUDP && p.bound.peerSocket != nil {
 		direct = peer.NewCarrierSlot()
 	}
 	packets, err := peer.New(p.ctx, peer.Config{Key: binding.sessionKey, Role: 1, Binding: binding.revision(), Paths: [2]peer.Carrier{pathSlots[0], pathSlots[1]}, Direct: direct})
@@ -149,7 +149,7 @@ func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if p.bound.peerSocket != nil {
+	if peer.HostUDP && p.bound.peerSocket != nil {
 		connectivity := peer.NewConnectivity(p.bound.peerSocket, connection, packets, false, p.bound.connectivityOptions, func(packet tunnelv1.PeerPacket) bool {
 			return p.bound.admitPeerPacket(p.identity.pairID, int64(packet.BindingGeneration), packet)
 		})

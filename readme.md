@@ -357,13 +357,13 @@ The action uses GitHub's OIDC with secure, short-lived tokens to connect to the 
 ```ts
 // drizzle.config.ts
 import { defineConfig } from "drizzle-kit";
-import { createClient } from "@tnldotdev/tnl";
+import { connect, deployment } from "@tnldotdev/tnl/node";
 
-const production = createClient({
+const production = deployment("production", {
   project: "acme/demo",
   services: { orders: { protocol: "postgres" } },
-}).deployment("production");
-const database = await production.connect("orders");
+});
+const database = await connect(production, "orders");
 
 export default defineConfig({
   dialect: "postgresql",

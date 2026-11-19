@@ -339,7 +339,9 @@ func (p *connectorConnection) recordLegRecoveryFailure(err, canceled error) {
 }
 
 func prepareConnectorConnection(ctx, setup context.Context, config Config, signer Signer) (_ *connectorConnection, result error) {
-	if config.WebSocketOnly {
+	// select the outer relay transport here. WSS-only still carries inner QUIC.
+	if !peer.HostUDP || config.WebSocketOnly {
+		config.WebSocketOnly = true
 		config.RelayQUIC = muxsession.DisabledConnector{}
 		config.Connectivity.DisableDirect = true
 	}
@@ -374,7 +376,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 			result = fmt.Errorf("prepare connector %s: %w", stage, errors.Join(result, p.Close(p.cleanup.context())))
 		}
 	}()
-	if !config.Connectivity.DisableDirect {
+	if peer.HostUDP && !config.Connectivity.DisableDirect {
 		p.socket = config.PeerSocket
 		if p.socket == nil {
 			// inability to open UDP must not prevent WSS relay delivery.
@@ -418,7 +420,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	var results [2]error
 	var starts sync.WaitGroup
 	stage = "relay legs"
-	if config.RelayQUIC == nil {
+	if peer.HostUDP && config.RelayQUIC == nil {
 		transport, udpErr := muxsession.ListenQUICTransport("udp", ":0")
 		if udpErr == nil {
 			p.udpTransport = transport
@@ -461,7 +463,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	}
 	initialBinding := connectorBindingRevision(p.pair)
 	var direct *peer.CarrierSlot
-	if p.socket != nil {
+	if peer.HostUDP && p.socket != nil {
 		direct = peer.NewCarrierSlot()
 	}
 	p.endpoint, result = peer.New(packetLife, peer.Config{Key: frameKey, Role: 0, Paths: [2]peer.Carrier{p.paths[0].carrier, p.paths[1].carrier}, Direct: direct, Binding: initialBinding})
@@ -535,7 +537,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	if setup.Err() != nil || !p.currentLocked() {
 		return nil, errors.Join(ErrServiceConnection, context.Cause(setup))
 	}
-	if p.socket != nil {
+	if peer.HostUDP && p.socket != nil {
 		p.connectivity = peer.NewConnectivity(p.socket, p.connection, p.endpoint, true, config.Connectivity, p.admitDirectPacket)
 		p.connectivity.SetBinding(connectorConnectivityBinding(p.pair))
 	}
@@ -557,7 +559,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	for slot := range 2 {
 		p.servingWorkers.Go(func() { p.maintainLeg(slot) })
 	}
-	if p.socket != nil {
+	if peer.HostUDP && p.socket != nil {
 		p.workers.Go(func() {
 			if err := p.connectivity.Serve(packetLife); err != nil && packetLife.Err() == nil {
 				p.cancel(err)

@@ -66,24 +66,23 @@ for (const manager of ["npm", "pnpm"]) {
         `
       import assert from 'node:assert/strict';
       import {createRequire} from 'node:module';
-       import {tnl, TnlError, createClient} from '@tnldotdev/tnl';
+       import {tnl, TnlError, deployment, client, publish} from '@tnldotdev/tnl/node';
       import {defineConfig} from '@tnldotdev/tnl/config';
       import {withTnl} from '@tnldotdev/tnl/next';
       import vite from '@tnldotdev/tnl/vite';
        import {configureWorkload} from '@tnldotdev/tnl/workload';
-       import {createClient as createHttpClient, deployments, publishers} from '@tnldotdev/tnl/http';
-      const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
+       import * as control from '@tnldotdev/tnl/control';
+      const cjs = createRequire(import.meta.url)('@tnldotdev/tnl/node');
       assert.equal(cjs.tnl, tnl);
       assert.equal(typeof TnlError, 'function');
-        for (const value of [tnl.prepare, createClient, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+        for (const value of [tnl.prepare, deployment, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
         assert.equal('open' in tnl, false);
        assert.equal('connect' in tnl || 'client' in tnl, false);
-       assert.equal(typeof createHttpClient, 'function');
-       for (const value of [deployments.create, deployments.list, deployments.get, deployments.update, deployments.delete, publishers.createEnrollment, publishers.list, publishers.get, publishers.revoke]) assert.equal(typeof value, 'function');
-       for (const root of [{tnl, TnlError, createClient}, cjs]) {
-          const deployment = root.createClient({project:'team/project', services:{database:{protocol:'postgres'}}}).deployment('local');
-          assert.equal(typeof deployment.publish, 'function');
-         const getClient = deployment.client('database', {
+       for (const name of ['createControlClient','createDeployment','listDeployments','getDeployment','updateDeployment','deleteDeployment','createPublisherEnrollment','listPublishers','getPublisher','revokePublisher']) assert.equal(typeof control[name], 'function');
+       for (const root of [{tnl, TnlError, deployment, client, publish}, cjs]) {
+          const deployment = root.deployment('local', {project:'team/project', services:{database:{protocol:'postgres'}}});
+          assert.equal(typeof root.publish, 'function');
+         const getClient = root.client(deployment, 'database', {
           create() { throw new Error('factory creation must remain lazy'); },
           close() { throw new Error('unstarted factory has no driver to close'); },
         });
@@ -117,8 +116,8 @@ for (const manager of ["npm", "pnpm"]) {
         `
       import assert from 'node:assert/strict';
        import {createRequire} from 'node:module';
-       const esm = await import('@tnldotdev/tnl');
-       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
+       const esm = await import('@tnldotdev/tnl/browser');
+       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl/browser');
        let transportAttempts = 0;
        const unexpectedTransport = () => {
          transportAttempts++;
@@ -130,11 +129,11 @@ for (const manager of ["npm", "pnpm"]) {
        };
        for (const root of [esm, cjs]) {
          assert.equal('connect' in root.tnl || 'client' in root.tnl, false);
-         const app = root.createClient({project:'team/project', token:'private', services:{database:{protocol:'postgres'}}});
-         const deployment = app.deployment('production');
-         for (const method of ['connect', 'client', 'publish', 'close']) assert.equal(typeof deployment[method], 'function');
+         const options = {project:'team/project', token:'private', services:{database:{protocol:'postgres'}}};
+         const deployment = root.deployment('production', options);
+         for (const method of ['connect', 'client', 'publish']) assert.equal(typeof root[method], 'function');
          await deployment.close();
-         assert.throws(() => app.deployment('local'), error => error instanceof root.TnlError && error.code === 'sdk.capability_unsupported');
+         assert.throws(() => root.deployment('local', options), error => error instanceof root.TnlError && error.code === 'sdk.capability_unsupported');
        }
        assert.equal(transportAttempts, 0);
     `,

@@ -38,7 +38,8 @@ export type PackageManifest = z.infer<typeof packageManifestSchema>;
 // the lazy loader's assets are not export targets, but must travel with the SDK.
 export function assertWasmAssets(packedFiles: ReadonlySet<string>): void {
   for (const file of [
-    "dist/wasm/tnl.wasm",
+    "dist/wasm/connector.wasm",
+    "dist/wasm/publisher.wasm",
     "dist/wasm/wasm_exec.js",
     "dist/wasm/go-license.txt",
     "dist/wasm/third-party-licenses.txt",

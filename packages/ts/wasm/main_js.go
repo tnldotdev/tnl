@@ -222,8 +222,8 @@ func promiseFinally(work func() (any, error), after func()) js.Value {
 func main() {
 	initializeDispatcher()
 	api := js.Global().Get("Object").New()
-	registerConnector(api)
-	// publisher composition registers alongside connector composition here.
+	registerSelectedConnector(api)
+	registerPublisher(api)
 	done := make(chan struct{})
 	var once sync.Once
 	finishRuntime := js.FuncOf(func(js.Value, []js.Value) any {

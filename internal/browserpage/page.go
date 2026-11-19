@@ -6,10 +6,11 @@ package browserpage
 import (
 	_ "embed"
 	"encoding/base64"
-	"html/template"
+	"html"
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -23,34 +24,8 @@ const FormSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; font-
 //go:embed page.css
 var stylesheet string
 
-// only authored css and the bundled font enter this trusted template value.
-var styles = template.CSS(`@font-face{font-family:"Fira Code";font-style:normal;font-weight:300 700;font-display:swap;src:url("data:font/woff2;base64,` + base64.StdEncoding.EncodeToString(browserfonts.Latin) + `") format("woff2")}` + stylesheet)
-
-type Template struct{ page *template.Template }
-
-type Page struct {
-	Title      string
-	Content    any
-	RefreshURL string
-}
-
-// New composes an authored body template with the shared shell. dynamic values
-// belong in Page.Content and remain subject to contextual html escaping.
-func New(body string) *Template {
-	return &Template{template.Must(template.New("page").Funcs(template.FuncMap{
-		"styles": func() template.CSS { return styles },
-	}).Parse(shell + `{{define "content"}}` + body + `{{end}}`))}
-}
-
-func (t *Template) Write(w io.Writer, page Page) error { return t.page.Execute(w, page) }
-
-func (t *Template) HTML(page Page) string {
-	var result strings.Builder
-	if err := t.Write(&result, page); err != nil {
-		panic(err)
-	}
-	return result.String()
-}
+// the style element contains only the embedded stylesheet and font, never request data.
+var styles = `@font-face{font-family:"Fira Code";font-style:normal;font-weight:300 700;font-display:swap;src:url("data:font/woff2;base64,` + base64.StdEncoding.EncodeToString(browserfonts.Latin) + `") format("woff2")}` + stylesheet
 
 func Headers(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -85,17 +60,38 @@ type Message struct {
 	Paragraphs                               []string
 }
 
-var messagePage = New(`<h1>{{.Title}}</h1>
-{{if .Summary}}<p class="intro">{{.Summary}}</p>{{end}}
-{{range .Paragraphs}}<p>{{.}}</p>{{end}}
-{{if or .Code .RequestID .HelpURL}}<div class="details">
-{{if .Code}}<p><code>{{.Code}}</code></p>{{end}}
-{{if .RequestID}}<p class="muted">request <code>{{.RequestID}}</code></p>{{end}}
-{{if .HelpURL}}<p><a href="{{.HelpURL}}">help with this error</a></p>{{end}}
-</div>{{end}}`)
-
+// keep the portable message and handoff pages on fixed markup. html/template
+// looks up methods by name at runtime, which made the linker keep unused
+// control client methods in the wasm build.
 func MessageHTML(message Message) string {
-	return messagePage.HTML(Page{Title: message.Title, Content: message})
+	var page strings.Builder
+	writeShell(&page, message.Title, "")
+	page.WriteString("<h1>" + html.EscapeString(message.Title) + "</h1>\n")
+	if message.Summary != "" {
+		page.WriteString(`<p class="intro">` + html.EscapeString(message.Summary) + "</p>")
+	}
+	page.WriteByte('\n')
+	for _, paragraph := range message.Paragraphs {
+		page.WriteString("<p>" + html.EscapeString(paragraph) + "</p>")
+	}
+	page.WriteByte('\n')
+	if message.Code != "" || message.RequestID != "" || message.HelpURL != "" {
+		page.WriteString("<div class=\"details\">\n")
+		if message.Code != "" {
+			page.WriteString("<p><code>" + html.EscapeString(message.Code) + "</code></p>")
+		}
+		page.WriteByte('\n')
+		if message.RequestID != "" {
+			page.WriteString(`<p class="muted">request <code>` + html.EscapeString(message.RequestID) + "</code></p>")
+		}
+		page.WriteByte('\n')
+		if message.HelpURL != "" {
+			page.WriteString(`<p><a href="` + urlAttribute(message.HelpURL, false) + `">help with this error</a></p>`)
+		}
+		page.WriteString("\n</div>")
+	}
+	page.WriteString(shellEnd)
+	return page.String()
 }
 
 func WriteMessage(w http.ResponseWriter, status int, message Message) {
@@ -117,26 +113,65 @@ func Error(w http.ResponseWriter, r *http.Request, message string, status int) {
 	}
 }
 
-var redirectPage = New(`<p class="eyebrow">[ browser handoff ]</p>
+const redirectBody = `<p class="eyebrow">[ browser handoff ]</p>
 <h1>continue to the preview</h1>
 <p class="intro muted">Your browser should continue automatically.</p>
-<p><a class="button" href="{{.}}">continue to the preview</a></p>`)
+<p><a class="button" href="`
 
 func Redirect(w http.ResponseWriter, location string) {
 	Headers(w)
 	w.WriteHeader(http.StatusOK)
-	_ = redirectPage.Write(w, Page{Title: "continue to the preview", Content: location, RefreshURL: location})
+	location = urlAttribute(location, true)
+	refresh := location
+	if refresh == "#ZgotmplZ" {
+		// keep the inert fallback link, but do not navigate automatically.
+		refresh = ""
+	}
+	var page strings.Builder
+	writeShell(&page, "continue to the preview", refresh)
+	page.WriteString(redirectBody + location + `">continue to the preview</a></p>` + shellEnd)
+	_, _ = io.WriteString(w, page.String())
 }
 
-const shell = `<!doctype html>
+// escapedRefresh must come from urlAttribute; an empty value omits the refresh.
+func writeShell(page *strings.Builder, title, escapedRefresh string) {
+	page.WriteString(shellHead)
+	if escapedRefresh != "" {
+		page.WriteString(`<meta http-equiv="refresh" content="0;url=` + escapedRefresh + `">`)
+	}
+	page.WriteString("\n<title>" + html.EscapeString(title) + " - tnl</title>\n<style>" + styles + "</style>" + shellBody)
+}
+
+// urlAttribute validates the destination before escaping it for a quoted HTML
+// attribute. handoffs allow same-origin paths or absolute HTTPS; help links
+// also allow HTTP. check the decoded path to reject encoded separators.
+func urlAttribute(value string, redirect bool) string {
+	if value == "" || strings.ContainsAny(value, "\\\t\r\n") || strings.TrimSpace(value) != value {
+		return "#ZgotmplZ"
+	}
+	target, err := url.Parse(value)
+	if err != nil || target.User != nil {
+		return "#ZgotmplZ"
+	}
+	if target.IsAbs() {
+		if (target.Scheme != "https" && (redirect || target.Scheme != "http")) || target.Hostname() == "" {
+			return "#ZgotmplZ"
+		}
+	} else if target.Host != "" || !strings.HasPrefix(target.Path, "/") || strings.HasPrefix(target.Path, "//") ||
+		strings.ContainsAny(target.Path, "\\\t\r\n\x00") {
+		return "#ZgotmplZ"
+	}
+	return html.EscapeString(strings.ReplaceAll(target.String(), " ", "%20"))
+}
+
+const shellHead = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-{{if .RefreshURL}}<meta http-equiv="refresh" content="0;url={{.RefreshURL}}">{{end}}
-<title>{{.Title}} - tnl</title>
-<style>{{styles}}</style>
+`
+const shellBody = `
 </head>
 <body>
 <div class="site">
@@ -150,7 +185,8 @@ const shell = `<!doctype html>
 </a>
 <a href="https://tnl.dev/docs">[ docs ]</a>
 </header>
-<main>{{template "content" .Content}}</main>
+<main>`
+const shellEnd = `</main>
 </div>
 </body>
 </html>`

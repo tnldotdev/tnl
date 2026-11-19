@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"testing"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -18,11 +19,15 @@ import (
 )
 
 func TestOutageTerminalOnlyPreservesEveryJoinedCause(t *testing.T) {
-	staleDrain := &relay.ControlProblemError{Operation: "drain relay", Status: 409, Problem: &relayv1.Problem{Code: relayv1.RelayLeaseStale}}
+	staleDrain := &relay.ControlProblemError{
+		Operation: "drain relay", Status: http.StatusConflict,
+		Problem: &relayv1.Problem{Code: relayv1.RelayLeaseStale},
+	}
 	expected := []error{
 		clientcontrol.ErrUnavailable, context.Canceled, context.DeadlineExceeded,
 		publisherservice.ErrPrivateStream, controloutage.ErrDeadline,
-		ingress.ErrIngressLeaseLost, connectorstream.ErrServiceConnection, staleDrain,
+		ingress.ErrIngressLeaseLost, connectorstream.ErrServiceConnection,
+		staleDrain,
 	}
 	for _, cause := range expected {
 		if !outageTerminalOnly(cause) {
@@ -37,6 +42,19 @@ func TestOutageTerminalOnlyPreservesEveryJoinedCause(t *testing.T) {
 		want bool
 	}{
 		{"nil", nil, true},
+		{"wrapped stale drain", fmt.Errorf("relay shutdown: %w", staleDrain), true},
+		{"stale drain and independent cleanup", errors.Join(staleDrain, independent), false},
+		{"other relay operation", &relay.ControlProblemError{
+			Operation: "claim", Status: http.StatusConflict, Problem: staleDrain.Problem,
+		}, false},
+		{"other relay status", &relay.ControlProblemError{
+			Operation: "drain relay", Status: http.StatusForbidden, Problem: staleDrain.Problem,
+		}, false},
+		{"other relay code", &relay.ControlProblemError{
+			Operation: "drain relay", Status: http.StatusConflict,
+			Problem: &relayv1.Problem{Code: relayv1.RelayDraining},
+		}, false},
+		{"empty relay problem", &relay.ControlProblemError{Operation: "drain relay", Status: http.StatusConflict}, false},
 		{"all existing terminal causes", errors.Join(expected...), true},
 		{"direct mixed expiry", mixed, true},
 		{"wrapped mixed expiry", fmt.Errorf("terminal operation: %w", mixed), true},

@@ -160,7 +160,7 @@ afterEach(() => {
 });
 
 test("a timed-out prepared read retains the live owner and its fixed-port listener", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient({
     project: "team/project",
     token: "private",
@@ -183,7 +183,7 @@ test("a timed-out prepared read retains the live owner and its fixed-port listen
 
 async function assertHTTPPreparationCancellation(controlledReadEvent: boolean): Promise<void> {
   await configure({ protocol: "http" });
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient({
     project: "team/project",
     token: "private",
@@ -287,7 +287,7 @@ test("overlapping prepared handlers record one held read and preserve independen
 
 test("failed initial validation joins cleanup before any same-port replacement", async () => {
   await configure({ prepared: "invalid", stop: "hold" });
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient({
     project: "team/project",
     token: "private",
@@ -325,7 +325,7 @@ test("failed initial validation joins cleanup before any same-port replacement",
 
 test("an initial service read timeout retains the new shared owner for later preparation", async () => {
   await configure({ prepared: "blocked" });
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient({
     project: "team/project",
     token: "private",
@@ -346,7 +346,7 @@ test("an initial service read timeout retains the new shared owner for later pre
 
 test("concurrent awaits replace one same-port owner only after expired cleanup joins", async () => {
   await configure({ lifetimeMs: 4000, cleanup: "hold" });
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient({
     project: "team/project",
     token: "private",
@@ -404,7 +404,7 @@ test("expired caller-owned handles fail without SDK replacement or cleanup", asy
   const { stdout } = await run(binary, ["runtime", "connections", "start"]);
   const external = z.object({ connection_handle: z.string() }).parse(JSON.parse(stdout) as unknown);
   vi.stubEnv("TNL_CONNECTION_HANDLE", external.connection_handle);
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient({
     project: "team/project",
     services: { database: { protocol: "kubernetes" } },
@@ -420,7 +420,7 @@ test("expired caller-owned handles fail without SDK replacement or cleanup", asy
 
 test("expiry recovery reports current authentication denial instead of reusing old rights", async () => {
   await configure({ lifetimeMs: 4000 });
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const deployment = createClient({
     project: "team/project",
     token: "private",

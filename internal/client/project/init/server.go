@@ -105,7 +105,11 @@ func recognizedAPIServerSource(source []byte, kind, script string) ([]byte, bool
 	if strings.Contains(text, "from '"+kind+"'") {
 		quote = "'"
 	}
-	importLine := "import { tnl } from " + quote + "@tnldotdev/tnl" + quote
+	runtime := "node"
+	if strings.HasPrefix(script, "bun ") {
+		runtime = "bun"
+	}
+	importLine := "import { tnl } from " + quote + "@tnldotdev/tnl/" + runtime + quote
 	semicolon := ";"
 	trimmed := strings.TrimSuffix(text, "\n")
 	if !strings.HasSuffix(trimmed, ";") {

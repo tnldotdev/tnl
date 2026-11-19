@@ -334,6 +334,13 @@ func outageTerminalOnly(err error) bool {
 		}
 		return true
 	}
+	// this test deliberately expires role liveness before serving authority.
+	// cleanup can reach a still-serving relay after control refuses its drain.
+	// accept only that exact terminal reply, not other API or physical failures.
+	if problem, ok := err.(*relay.ControlProblemError); ok {
+		return problem.Operation == "drain relay" && problem.Status == http.StatusConflict &&
+			problem.Problem != nil && problem.Problem.Code == relayv1.RelayLeaseStale
+	}
 	if failure.Only(err, clientcontrol.ErrUnavailable) || failure.Only(err, context.Canceled) ||
 		failure.Only(err, context.DeadlineExceeded) || failure.Only(err, publisherservice.ErrPrivateStream) ||
 		failure.Only(err, controloutage.ErrDeadline) || failure.Only(err, ingress.ErrIngressLeaseLost) ||

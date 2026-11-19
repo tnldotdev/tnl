@@ -11,6 +11,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
+// DefaultControlURL is the hosted control origin shared by native and portable
+// clients. selecting saved native profiles remains with client/server.
+const DefaultControlURL = "https://control.tnl.dev"
+
 var ErrInvalidControlURL = errors.New("naming: control URL must be an HTTPS origin or loopback HTTP origin")
 var ErrInvalidControlPort = errors.New("naming: control URL port must be between 1 and 65535")
 

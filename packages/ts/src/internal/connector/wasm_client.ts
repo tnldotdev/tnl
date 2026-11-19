@@ -10,9 +10,24 @@ import type {
 } from "../../project.js";
 import { hostnameSchema, protocolSchema, serviceNameSchema } from "../values.js";
 import { clientFactory } from "./client_factory.js";
-import { loadWasm, type WasmRuntime } from "./wasm_loader.js";
+import type { WasmRuntime } from "./wasm_loader.js";
+import type { DeploymentOptions, HTTPNames, ServiceNames as Names } from "./deployment_types.js";
 import type { WasmConnection, WasmDeployment } from "./wasm_abi.js";
 import { isWasmByteStream, wasmStream } from "./wasm_stream.js";
+import type { FetchHandler } from "../publisher/fetch_types.js";
+import type {
+  Publication,
+  NamedPublicationOptions,
+  TemporaryPublicationOptions,
+} from "../publisher/publication.js";
+import {
+  portablePublicationOptions,
+  publishPortable,
+  type PortablePublication,
+} from "../portable/publication.js";
+import { createPublisherStorageHost, type PublisherStorageHost } from "../portable/storage-host.js";
+import { createBrowserPublisherStorage } from "../portable/storage-browser.js";
+import type { PublisherStorage } from "../portable/storage.js";
 
 interface Closable {
   close(): Promise<unknown>;
@@ -25,23 +40,66 @@ function isClosable(value: unknown): value is Closable {
     typeof value.close === "function"
   );
 }
+function isPublisherStorage(value: unknown): value is PublisherStorage {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "get" in value &&
+    typeof value.get === "function" &&
+    "put" in value &&
+    typeof value.put === "function" &&
+    "delete" in value &&
+    typeof value.delete === "function" &&
+    "sync" in value &&
+    typeof value.sync === "function" &&
+    "withLock" in value &&
+    typeof value.withLock === "function"
+  );
+}
 
-type Names<Services extends ServiceFacts> = Extract<keyof Services, string>;
 type Connection<
   Services extends ServiceFacts,
   Name extends Names<Services>,
 > = TnlStreamConnectionRegistry[Services[Name]["protocol"]];
 
-/** browser/worker deployment handles own one isolated go runtime each. */
+/** deployment handles own isolated go runtimes and load them on demand. */
 export interface StreamDeployment<Services extends ServiceFacts> {
   connect<Name extends Names<Services>>(name: Name): Promise<Connection<Services, Name>>;
   client<Name extends Names<Services>, Client>(
     name: Name,
     options: TnlClientOptions<Connection<Services, Name>, Client>,
   ): TnlClientFactory<Client>;
-  /** publication is native-only in this connector release. */
-  publish(...args: readonly unknown[]): Promise<never>;
+  /**
+   * publish a fetch handler through go's existing service-run owner. browser
+   * storage defaults to indexeddb and web locks; workers supply private durable
+   * storage, normally through the durable object factory. socket upgrades,
+   * get/head bodies, targetHostname and native telemetry are not supported.
+   * handlers and body sources must settle after request cancellation; close
+   * joins their actual cleanup rather than abandoning live callbacks.
+   */
+  publish<Name extends HTTPNames<Services>>(
+    name: Name,
+    handler: FetchHandler,
+    options?: NamedPublicationOptions,
+  ): Promise<Publication>;
+  publish(handler: FetchHandler, options?: TemporaryPublicationOptions): Promise<Publication>;
   close(): Promise<void>;
+}
+
+export interface StreamClientOptions<
+  Services extends ServiceFacts,
+> extends DeploymentOptions<Services> {
+  /** application-owned private storage; browsers otherwise use indexeddb. */
+  readonly publisherStorage?: PublisherStorage;
+}
+
+export type RuntimeKind = "connector" | "publisher";
+
+// only durable owners supply this context. request-local workers never share a
+// live go runtime, and the context does not confer publisher authority.
+export interface StreamRuntimeContext {
+  readonly storageHost?: PublisherStorageHost;
+  readonly signal?: AbortSignal;
 }
 
 const optionsSchema = z
@@ -59,6 +117,7 @@ const optionsSchema = z
       .record(serviceNameSchema, z.strictObject({ protocol: protocolSchema }))
       .refine((value) => Object.keys(value).length <= 32)
       .exactOptional(),
+    publisherStorage: z.custom<PublisherStorage>(isPublisherStorage).exactOptional(),
   })
   .refine((value) => value.services !== undefined || value.project !== undefined);
 const metadataSchema = z.strictObject({
@@ -126,12 +185,13 @@ function throwFailures(results: PromiseSettledResult<unknown>[], ignored?: unkno
  * provider token acquisition, installed owner, or local target discovery.
  */
 export function createStreamClient<const Services extends ServiceFacts = Record<never, never>>(
-  options: { project?: string; services?: Services; token?: string },
-  module?: WebAssembly.Module,
+  options: StreamClientOptions<Services>,
+  loadRuntime: (kind: RuntimeKind) => Promise<WasmRuntime>,
+  context: StreamRuntimeContext = {},
 ) {
   const parsed = optionsSchema.safeParse(options);
   if (!parsed.success) throw new TnlError("sdk.configuration_invalid");
-  const { project, token } = parsed.data;
+  const { project, token, publisherStorage } = parsed.data;
   const protocols = new Map(
     Object.entries(parsed.data.services ?? {}).map(([name, service]) => [name, service.protocol]),
   );
@@ -148,17 +208,24 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
       const credential = token;
       const closedError = new TnlError("sdk.client_closed");
       const lifetime = new AbortController();
+      const externalAbort = () => lifetime.abort();
+      context.signal?.addEventListener("abort", externalAbort, { once: true });
+      if (context.signal?.aborted) externalAbort();
       const pending = new Set<Promise<unknown>>();
+      const publicationPending = new Set<Promise<unknown>>();
       const factories = new Set<{ close(): Promise<void> }>();
       const connections = new Set<Closable>();
       const invalidStreams = new Set<Closable>();
       const streams = new Set<TnlTLSStream>();
-      let runtime: WasmRuntime | undefined;
+      const publications = new Set<PortablePublication>();
+      const runtimes = new Map<RuntimeKind, WasmRuntime>();
+      const startingRuntimes = new Map<RuntimeKind, Promise<WasmRuntime>>();
       let backend: Closable | undefined;
       let loading: Promise<WasmDeployment> | undefined;
+      let storageHost = context.storageHost;
+      let ownedStorage: ReturnType<typeof createBrowserPublisherStorage> | undefined;
       let closed = false;
       let closing: Promise<void> | undefined;
-      let runtimeClosed = false;
       let backendClosed = false;
 
       function track<Value>(work: Promise<Value>): Promise<Value> {
@@ -175,11 +242,30 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
         if (protocol === undefined) throw new TnlError("sdk.configuration_invalid");
         return protocol;
       }
+      function ownedRuntime(kind: RuntimeKind): Promise<WasmRuntime> {
+        const existing = startingRuntimes.get(kind);
+        if (existing !== undefined) return existing;
+        const starting = loadRuntime(kind).then((value) => {
+          runtimes.set(kind, value);
+          if (closed) throw closedError;
+          return value;
+        });
+        startingRuntimes.set(kind, starting);
+        return starting;
+      }
+      function publicationStorage(): PublisherStorageHost {
+        if (storageHost === undefined) {
+          const storage = publisherStorage ?? (ownedStorage ??= createBrowserPublisherStorage());
+          storageHost = createPublisherStorageHost(storage);
+        }
+        return storageHost;
+      }
       function selected(): Promise<WasmDeployment> {
         loading ??= (async () => {
-          runtime = await loadWasm(module);
-          if (closed) throw closedError;
-          const value = await runtime.bridge.createDeployment(
+          const current = await ownedRuntime("connector");
+          if (typeof current.bridge.createDeployment !== "function")
+            throw new TnlError("sdk.wasm_invalid");
+          const value = await current.bridge.createDeployment(
             // facts include publish-only services. connect authorizes the exact
             // requested name, not every declaration in the project.
             { project: selectedProject, name, credential, services: [] },
@@ -251,9 +337,13 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
             (async () => {
               let request: Request;
               try {
+                const requestOptions: RequestInit & { duplex?: "half" } = {
+                  ...init,
+                  ...(init?.body instanceof ReadableStream ? { duplex: "half" } : {}),
+                };
                 request = new Request(
                   input instanceof Request ? input : new URL(input.toString(), origin),
-                  init,
+                  requestOptions,
                 );
               } catch {
                 throw new TnlError("sdk.configuration_invalid");
@@ -348,71 +438,154 @@ export function createStreamClient<const Services extends ServiceFacts = Record<
           factories.add(factory);
           return factory;
         },
-        async publish(): Promise<never> {
+        async publish(
+          first: string | FetchHandler,
+          second?: FetchHandler | TemporaryPublicationOptions,
+          third?: NamedPublicationOptions,
+        ): Promise<Publication> {
           if (closed) throw closedError;
-          throw new TnlError("sdk.capability_unsupported");
+          if (publications.size + pending.size >= 64) throw new TnlError("sdk.client_capacity");
+          const service = typeof first === "string" ? first : undefined;
+          const handler = typeof first === "string" ? second : first;
+          if (
+            typeof handler !== "function" ||
+            (service !== undefined &&
+              (!serviceNameSchema.safeParse(service).success ||
+                (protocols.size > 0 && protocols.get(service) !== "http"))) ||
+            (service === undefined && (typeof second === "function" || third !== undefined))
+          )
+            throw new TnlError("sdk.configuration_invalid");
+          const chosen =
+            service === undefined ? (typeof second === "function" ? undefined : second) : third;
+          const parsed = portablePublicationOptions(chosen ?? {}, service !== undefined);
+          const signal =
+            parsed.signal === undefined
+              ? lifetime.signal
+              : AbortSignal.any([lifetime.signal, parsed.signal]);
+          const work = (async () => {
+            if (signal.aborted) throw operationError(undefined, signal);
+            const storage = publicationStorage();
+            const current = await ownedRuntime("publisher");
+            return publishPortable({
+              bridge: current.bridge,
+              selection: {
+                project: selectedProject,
+                deployment: name,
+                credential,
+                ...(service === undefined ? { temporary: parsed.temporary } : { service }),
+              },
+              handler,
+              storage,
+              signal,
+              retain: (publication) => publications.add(publication),
+              release: (publication) => publications.delete(publication),
+            });
+          })().catch((error: unknown) => {
+            if (closed && error instanceof Error && error.name === "AbortError") throw closedError;
+            throw error;
+          });
+          publicationPending.add(work);
+          void work.then(
+            () => publicationPending.delete(work),
+            () => publicationPending.delete(work),
+          );
+          return track(work);
         },
         close(): Promise<void> {
           closed = true;
+          context.signal?.removeEventListener("abort", externalAbort);
+          const stoppingPublications = [...publications].map((publication) => publication.close());
           lifetime.abort(closedError);
           closing ??= (async () => {
             const joining = [...pending];
+            const publicationWork = new Set(publicationPending);
             // stop established streams immediately, including those held by a
             // driver whose own close is still waiting on a blocked read.
             const stopped = [...streams].map((stream) => stream.close());
             const joined = await Promise.allSettled(joining);
-            const results = [
-              ...joined,
-              ...(await Promise.allSettled([
-                ...stopped,
-                ...[...streams].map((stream) => stream.close()),
-                ...[...factories].map(async (factory) => {
-                  await factory.close();
-                  factories.delete(factory);
-                }),
-                ...[...connections].map(async (connection) => {
-                  try {
-                    await connection.close();
-                    connections.delete(connection);
-                  } catch {
-                    throw new TnlError("sdk.cleanup_failed");
-                  }
-                }),
-                ...[...invalidStreams].map(async (stream) => {
-                  try {
-                    await stream.close();
-                    invalidStreams.delete(stream);
-                  } catch {
-                    throw new TnlError("sdk.cleanup_failed");
-                  }
-                }),
-              ])),
-            ];
+            const resourceResults = await Promise.allSettled([
+              ...stopped,
+              ...[...streams].map((stream) => stream.close()),
+              ...[...factories].map(async (factory) => {
+                await factory.close();
+                factories.delete(factory);
+              }),
+              ...[...connections].map(async (connection) => {
+                try {
+                  await connection.close();
+                  connections.delete(connection);
+                } catch {
+                  throw new TnlError("sdk.cleanup_failed");
+                }
+              }),
+              ...[...invalidStreams].map(async (stream) => {
+                try {
+                  await stream.close();
+                  invalidStreams.delete(stream);
+                } catch {
+                  throw new TnlError("sdk.cleanup_failed");
+                }
+              }),
+            ]);
+            const publicationResults = await Promise.allSettled([
+              ...stoppingPublications,
+              ...[...publications].map((publication) => publication.close()),
+            ]);
+            for (const publication of publications)
+              if (publication.joined) publications.delete(publication);
             if (backend !== undefined && !backendClosed) {
               try {
                 await backend.close();
                 backendClosed = true;
               } catch {
-                results.push({ status: "rejected", reason: new TnlError("sdk.cleanup_failed") });
+                resourceResults.push({
+                  status: "rejected",
+                  reason: new TnlError("sdk.cleanup_failed"),
+                });
               }
             }
-            // do not exit go after a failed owned close: a retry needs its live
-            // callbacks. successful closes never repeat on a later attempt.
-            const ownersClosed = results.every(
+            const results = [...joined, ...resourceResults, ...publicationResults];
+            const nonPublicationResults = [
+              ...joined.filter((_, index) => {
+                const work = joining[index];
+                return work === undefined || !publicationWork.has(work);
+              }),
+              ...resourceResults,
+            ];
+            // failed connector/driver closes retain live callbacks for retry.
+            // publication failures can exit only after their joined result;
+            // every failure still remains in results for the caller.
+            const ownersClosed = nonPublicationResults.every(
               (result) => result.status === "fulfilled" || result.reason === closedError,
             );
             if (
               ownersClosed &&
-              backendClosed === (backend !== undefined) &&
-              runtime !== undefined &&
-              !runtimeClosed
+              publications.size === 0 &&
+              backendClosed === (backend !== undefined)
             ) {
+              results.push(
+                ...(await Promise.allSettled(
+                  [...runtimes].map(async ([kind, runtime]) => {
+                    try {
+                      await runtime.bridge.close();
+                      await runtime.exited;
+                      runtimes.delete(kind);
+                    } catch {
+                      throw new TnlError("sdk.cleanup_failed");
+                    }
+                  }),
+                )),
+              );
+            }
+            if (runtimes.size === 0 && ownedStorage !== undefined) {
               try {
-                await runtime.bridge.close();
-                await runtime.exited;
-                runtimeClosed = true;
+                await ownedStorage.close();
+                ownedStorage = undefined;
               } catch {
-                results.push({ status: "rejected", reason: new TnlError("sdk.cleanup_failed") });
+                results.push({
+                  status: "rejected",
+                  reason: new TnlError("sdk.publication_cleanup_failed"),
+                });
               }
             }
             throwFailures(results, closedError);

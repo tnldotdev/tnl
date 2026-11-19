@@ -116,12 +116,12 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "unavailable",
     retry: "after_change",
     message:
-      "the tnl Go/WASM connector could not start; check the packaged WASM files and runtime support",
+      "the tnl Go/WASM runtime could not start; check the packaged WASM files and runtime support",
   },
   "sdk.wasm_invalid": {
     class: "internal",
     retry: "after_change",
-    message: "the tnl Go/WASM connector returned an invalid result; check SDK compatibility",
+    message: "the tnl Go/WASM runtime returned an invalid result; check SDK compatibility",
   },
   "sdk.client_closed": {
     class: "invalid",

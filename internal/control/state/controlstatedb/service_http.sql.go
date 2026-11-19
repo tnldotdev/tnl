@@ -200,6 +200,20 @@ func (q *Queries) ListServiceHTTPGrants(ctx context.Context, serviceID string) (
 }
 
 const lockServiceHTTPBrowserSession = `-- name: LockServiceHTTPBrowserSession :one
+SELECT token_digest
+FROM control.service_http_browser_sessions
+WHERE token_digest=$1
+FOR UPDATE NOWAIT
+`
+
+func (q *Queries) LockServiceHTTPBrowserSession(ctx context.Context, tokenDigest []byte) ([]byte, error) {
+	row := q.db.QueryRow(ctx, lockServiceHTTPBrowserSession, tokenDigest)
+	var token_digest []byte
+	err := row.Scan(&token_digest)
+	return token_digest, err
+}
+
+const readServiceHTTPBrowserSession = `-- name: ReadServiceHTTPBrowserSession :one
 SELECT session.token_digest, session.control_session_id, session.parent_control_session_id, session.refresh_ciphertext, session.storage_key_id, session.expires_at, session.revoked_at, parent.identity_id,person.display_name,parent.access_expires_at,
     LEAST(parent.refresh_expires_at,original.refresh_expires_at)::timestamptz AS refresh_expires_at,
     COALESCE(parent.revoked_at,original.revoked_at) AS parent_revoked_at
@@ -211,16 +225,15 @@ WHERE session.token_digest=$1 AND session.revoked_at IS NULL AND session.expires
     AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
         WHERE bound.session_digest=session.token_digest AND bound.service_id=$3
         AND bound.consumed_at IS NOT NULL AND bound.revoked_at IS NULL)
-FOR UPDATE OF session NOWAIT
 `
 
-type LockServiceHTTPBrowserSessionParams struct {
+type ReadServiceHTTPBrowserSessionParams struct {
 	CookieDigest []byte
 	ExpiresAt    pgtype.Timestamptz
 	ServiceID    string
 }
 
-type LockServiceHTTPBrowserSessionRow struct {
+type ReadServiceHTTPBrowserSessionRow struct {
 	TokenDigest            []byte
 	ControlSessionID       string
 	ParentControlSessionID pgtype.Text
@@ -235,9 +248,9 @@ type LockServiceHTTPBrowserSessionRow struct {
 	ParentRevokedAt        pgtype.Timestamptz
 }
 
-func (q *Queries) LockServiceHTTPBrowserSession(ctx context.Context, arg LockServiceHTTPBrowserSessionParams) (LockServiceHTTPBrowserSessionRow, error) {
-	row := q.db.QueryRow(ctx, lockServiceHTTPBrowserSession, arg.CookieDigest, arg.ExpiresAt, arg.ServiceID)
-	var i LockServiceHTTPBrowserSessionRow
+func (q *Queries) ReadServiceHTTPBrowserSession(ctx context.Context, arg ReadServiceHTTPBrowserSessionParams) (ReadServiceHTTPBrowserSessionRow, error) {
+	row := q.db.QueryRow(ctx, readServiceHTTPBrowserSession, arg.CookieDigest, arg.ExpiresAt, arg.ServiceID)
+	var i ReadServiceHTTPBrowserSessionRow
 	err := row.Scan(
 		&i.TokenDigest,
 		&i.ControlSessionID,

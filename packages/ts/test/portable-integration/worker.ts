@@ -1,6 +1,10 @@
-import { PortableSmokeError, runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { client, connect, deployment } from "@tnldotdev/tnl/cloudflare";
+import { runPortableIsolation, runPortableSmoke } from "./smoke.ts";
+import { PortableSmokeError, portableDiagnostics } from "./errors.ts";
 import { fixtureSchema } from "./fixture.ts";
 import { installFixtureHost } from "./host.ts";
+
+const runtime = { client, connect, deployment };
 
 interface Fetcher {
   fetch(request: Request): Promise<Response>;
@@ -56,7 +60,7 @@ export default {
           throw new Error("fixture host fetch failed");
         }
       });
-      if (url.pathname === "/smoke") return Response.json(await runPortableSmoke(fixture));
+      if (url.pathname === "/smoke") return Response.json(await runPortableSmoke(runtime, fixture));
       const role = url.searchParams.get("role");
       const run = url.searchParams.get("run");
       if (
@@ -64,7 +68,7 @@ export default {
         (role === "first" || role === "second") &&
         run !== null
       ) {
-        return Response.json(await runPortableIsolation(fixture, role, run));
+        return Response.json(await runPortableIsolation(runtime, fixture, role, run));
       }
       return new Response("unknown fixture operation", { status: 404 });
     } catch (error) {
@@ -77,7 +81,12 @@ export default {
           : [],
       );
       return Response.json(
-        { error: "portable SDK integration failed", failures: phases, network: [...hostRequests] },
+        {
+          error: "portable SDK integration failed",
+          failures: phases,
+          network: [...hostRequests],
+          diagnostics: portableDiagnostics(),
+        },
         { status: 500 },
       );
     }

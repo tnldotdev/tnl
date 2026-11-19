@@ -16,7 +16,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/client/state/certificatestore"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -32,6 +32,24 @@ type CertificateControl interface {
 	MarkServiceCertificateInstalled(context.Context, string, string, int64, string, time.Time, credentials.ServiceRunToken) error
 }
 
+// CertificateStore selects the shared engine's protected scope. host providers
+// bind scoped storage here and perform I/O in its context-aware methods.
+type CertificateStore interface {
+	CertificatesForPublisher(string, string, controlv1.CertificatePlan) (*certificatestore.CertificateCache, error)
+}
+
+// CertificateCache is the persistence consumed by one run's issuance worker.
+// issuance locks are independent of the engine's short mutation locks.
+type CertificateCache interface {
+	Lock(context.Context) (io.Closer, error)
+	Current(context.Context, string) (certificatestore.Material, bool, error)
+	Staged(context.Context, string) (certificatestore.Material, bool, error)
+	Pending(context.Context, string) (certificatestore.Pending, error)
+	NewPending(context.Context, string) (certificatestore.Pending, error)
+	Stage(context.Context, string, certificatestore.Pending, []byte, time.Time, string) (certificatestore.Material, error)
+	Promote(context.Context, string, string) error
+}
+
 var errManagedIssuanceFailed = errors.New("managed certificate issuance failed")
 var errCertificateExpired = errors.New("publisher: service certificate expired")
 
@@ -40,7 +58,7 @@ var errCertificateExpired = errors.New("publisher: service certificate expired")
 // possession of compatible cached material never grants publication authority.
 type Certificates struct {
 	Control             CertificateControl
-	Cache               *clientstate.CertificateCache
+	Cache               CertificateCache
 	ServiceID           string
 	RunID               string
 	PublisherIdentityID string
@@ -56,11 +74,11 @@ func (r Certificates) Maintain(ctx context.Context) error {
 	if r.Control == nil || r.Cache == nil || r.Install == nil || r.RunNumber < 1 || !opaqueid.Valid(r.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || r.Plan.ChallengeMethod != controlv1.Dns01 || !certificateidentity.Covers(r.Plan.Identifiers, r.Hostname) {
 		return servicestream.ErrEndpoint
 	}
-	var installed clientstate.Material
+	var installed certificatestore.Material
 	terminalRetried := false
 	for {
 		retriedTerminal := false
-		material, err := func() (clientstate.Material, error) {
+		material, err := func() (certificatestore.Material, error) {
 			attempt := ctx
 			stop := func() {}
 			if installed.Certificate.Leaf != nil {
@@ -138,13 +156,13 @@ func managedCertificateRetryable(err error) bool {
 	return errors.As(err, &network)
 }
 
-func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.Material, result error) {
+func (r Certificates) advance(ctx context.Context, initial bool) (_ certificatestore.Material, result error) {
 	ctx, finish := observability.PublisherOperation(ctx, "certificate")
 	defer func() { finish(result) }()
 	// atomic current snapshots can be acknowledged by a new run while another
 	// worker holds the separate issuance lock for renewal.
 	current, found, err := r.Cache.Current(ctx, r.Hostname)
-	if err != nil && !errors.Is(err, clientstate.ErrCertificateExpired) {
+	if err != nil && !errors.Is(err, certificatestore.ErrCertificateExpired) {
 		return current, err
 	}
 	if err == nil && found && (initial || time.Now().Before(current.RenewAt)) {
@@ -153,11 +171,11 @@ func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.
 	}
 	lock, err := r.Cache.Lock(ctx)
 	if err != nil {
-		return clientstate.Material{}, err
+		return certificatestore.Material{}, err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
 	current, found, err = r.Cache.Current(ctx, r.Hostname)
-	if err != nil && !errors.Is(err, clientstate.ErrCertificateExpired) {
+	if err != nil && !errors.Is(err, certificatestore.ErrCertificateExpired) {
 		return current, err
 	}
 	if err == nil && found && (initial || time.Now().Before(current.RenewAt)) {
@@ -165,13 +183,13 @@ func (r Certificates) advance(ctx context.Context, initial bool) (_ clientstate.
 		return current, err
 	}
 	staged, stagedFound, err := r.Cache.Staged(ctx, r.Hostname)
-	if err != nil && !errors.Is(err, clientstate.ErrCertificateExpired) {
+	if err != nil && !errors.Is(err, certificatestore.ErrCertificateExpired) {
 		return current, err
 	}
 	if err == nil && stagedFound {
 		return r.promote(ctx, staged)
 	}
-	if errors.Is(err, clientstate.ErrCertificateExpired) {
+	if errors.Is(err, certificatestore.ErrCertificateExpired) {
 		if _, err = r.Cache.NewPending(ctx, r.Hostname); err != nil {
 			return current, err
 		}
@@ -246,7 +264,7 @@ func (r Certificates) validateIssuance(issuance controlv1.ServiceCertificateIssu
 	return nil
 }
 
-func (r Certificates) promote(ctx context.Context, staged clientstate.Material) (clientstate.Material, error) {
+func (r Certificates) promote(ctx context.Context, staged certificatestore.Material) (certificatestore.Material, error) {
 	if err := r.Control.MarkServiceCertificateInstalled(ctx, r.ServiceID, r.RunID, r.RunNumber, staged.IssuanceID, staged.Certificate.Leaf.NotAfter, r.Token); err != nil {
 		return staged, err
 	}

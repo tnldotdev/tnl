@@ -20,12 +20,12 @@ test("real Bun deployment publication preserves its listener and restores stop",
     file,
     `
     import assert from "node:assert/strict";
-    import { createClient, tnl } from "@tnldotdev/tnl";
+    import { deployment, publish, tnl } from "@tnldotdev/tnl/bun";
     assert.equal("open" in tnl, false);
     const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() { return new Response("Bun publication"); } });
     const stop = server.stop;
-    const local = createClient({ services: { api: { protocol: "http" } } }).deployment("local");
-    const publication = await local.publish("api", server);
+    const local = deployment("local", { services: { api: { protocol: "http" } } });
+    const publication = await publish(local, "api", server);
     assert.equal(publication.url, "https://api.member.example");
     assert.notEqual(server.stop, stop);
     await publication.close();

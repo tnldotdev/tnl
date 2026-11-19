@@ -245,12 +245,12 @@ describe("private connection snapshots", () => {
     ).toThrow();
   });
   test("browser clients accept portable configuration without loading a backend", async () => {
-    const { tnl, createClient } = await import("../../src/index.browser.js");
+    const { tnl, deployment } = await import("../../src/browser.js");
     expect(Reflect.has(tnl, "connect")).toBe(false);
     expect(Reflect.has(tnl, "client")).toBe(false);
-    const client = createClient({ project: "team/project", token: "private" });
-    await client.deployment("production").close();
-    expect(() => client.deployment("local")).toThrow(
+    const options = { project: "team/project", token: "private" };
+    await deployment("production", options).close();
+    expect(() => deployment("local", options)).toThrow(
       expect.objectContaining({ code: "sdk.capability_unsupported" }),
     );
   });

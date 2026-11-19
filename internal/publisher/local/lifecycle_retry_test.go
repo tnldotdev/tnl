@@ -128,11 +128,23 @@ func TestConfiguredServiceRunRetryLeavesLiveRegistrationShutdownUnstarted(t *tes
 	entered := make(chan attempt, 2)
 	ready := make(chan struct{}, 1)
 	var attempts atomic.Int32
+	var lastStatus atomic.Pointer[publisherservice.RunStatus]
+	var lastConnect [2]atomic.Pointer[error]
 	a.AttachPublication = func(_ context.Context, _ publisherapp.Service, cfg *publisherservice.RunConfig) error {
 		entered <- attempt{number: attempts.Add(1), shutdown: cfg.ShutdownContext}
 		heartbeat.RunControl = cfg.Control
 		cfg.Control = heartbeat
 		cfg.HeartbeatInterval = 100 * time.Millisecond
+		onStatus := cfg.ObserveReadiness
+		cfg.ObserveReadiness = func(status publisherservice.RunStatus) {
+			lastStatus.Store(&status)
+			onStatus(status)
+		}
+		cfg.Connect = func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
+			session, err := bound.ConnectSlot(ctx, slot, options)
+			lastConnect[slot].Store(&err)
+			return session, err
+		}
 		onReady := cfg.Ready
 		cfg.Ready = func() error {
 			if err := onReady(); err != nil {
@@ -146,7 +158,19 @@ func TestConfiguredServiceRunRetryLeavesLiveRegistrationShutdownUnstarted(t *tes
 	registration := restoredRegisterApp(t, a, "web", target.URL, false)
 	first := restoredWorkerReceive(t, entered, 3*time.Second)
 	second := restoredWorkerReceive(t, entered, 3*time.Second)
-	restoredWorkerReceive(t, ready, 3*time.Second)
+	// readiness joins real TLS and both relay slots, not just entry into
+	// the worker. keep the wait below the registration's initial lease.
+	select {
+	case <-ready:
+	case <-time.After(10 * time.Second):
+		t.Errorf("replacement publisher never became ready: last status=%+v runs=%d", lastStatus.Load(), f.Runs.Load())
+		for slot := range lastConnect {
+			if err := lastConnect[slot].Load(); err != nil {
+				t.Errorf("slot %d last connect: %v", slot, *err)
+			}
+		}
+		t.FailNow()
+	}
 	if first.number != 1 || second.number != 2 || first.shutdown != second.shutdown || f.Runs.Load() != 2 {
 		t.Fatal("fixture did not retire one failed run and serve its replacement", first.number, second.number, f.Runs.Load())
 	}

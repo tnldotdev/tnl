@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,10 +19,30 @@ import (
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
 
+	"github.com/tnldotdev/tnl/internal/client/state/certificatestore"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 const durableTestPublisher = "pub_0123456789ABCDEFGHIJKL"
+
+const maxCertificateFileBytes = 512 << 10
+
+func certificateTestFilename(plan controlv1.CertificatePlan) string {
+	plan, _ = certificateidentity.CanonicalPlan(plan)
+	data, _ := json.Marshal(plan)
+	return fmt.Sprintf("certificate-%x.json", sha256.Sum256(data))
+}
+
+func certificateTestFiles(t *testing.T, store *Store, team, publisher string) *PrivateDirectory {
+	t.Helper()
+	files, err := store.PublisherIdentityFiles(team, publisher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
 
 func durableTestProfile(t *testing.T, runtime, identity string) *Store {
 	t.Helper()
@@ -99,7 +120,8 @@ func TestDurablePublisherCertificatesSurviveRuntimeDeletion(t *testing.T) {
 
 func TestCertificateFilesDoNotReleaseUndurableKeysOrStagedMaterial(t *testing.T) {
 	profile := durableTestProfile(t, filepath.Join(t.TempDir(), "runtime"), filepath.Join(t.TempDir(), "identity"))
-	cache, err := profile.CertificatesForPublisher("team", durableTestPublisher, exactCertificateTestPlan())
+	files := certificateTestFiles(t, profile, "team", durableTestPublisher)
+	cache, err := certificatestore.New(certificateFiles{files}, profile.certificateScope("team", durableTestPublisher), exactCertificateTestPlan())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +131,7 @@ func TestCertificateFilesDoNotReleaseUndurableKeysOrStagedMaterial(t *testing.T)
 		t.Fatal(err)
 	}
 	failing := true
-	cache.files.syncFile = func(file *os.File) error {
+	files.syncFile = func(file *os.File) error {
 		info, err := file.Stat()
 		if err != nil {
 			return err
@@ -128,14 +150,22 @@ func TestCertificateFilesDoNotReleaseUndurableKeysOrStagedMaterial(t *testing.T)
 			t.Fatal("unsynced key reached issuance", err)
 		}
 	}
-	saved, err := cache.read()
+	saved, _, err := files.Read(certificateTestFilename(exactCertificateTestPlan()), maxCertificateFileBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer saved.destroy()
+	defer clear(saved)
+	var document struct {
+		Pending struct {
+			CSRDER []byte `json:"csr_der"`
+		} `json:"pending"`
+	}
+	if err := json.Unmarshal(saved, &document); err != nil {
+		t.Fatal(err)
+	}
 	failing = false
 	pending, err := cache.Pending(t.Context(), "route.example")
-	if err != nil || saved.Pending == nil || !bytes.Equal(pending.CSRDER, saved.Pending.CSRDER) {
+	if err != nil || len(document.Pending.CSRDER) == 0 || !bytes.Equal(pending.CSRDER, document.Pending.CSRDER) {
 		t.Fatal("uncertain write regenerated a key", err)
 	}
 	failing = true
@@ -165,7 +195,8 @@ func TestCertificateFilesDoNotReleaseUndurableKeysOrStagedMaterial(t *testing.T)
 func TestCertificateReadersJoinInitialPlanCheckpoint(t *testing.T) {
 	profile := durableTestProfile(t, filepath.Join(t.TempDir(), "runtime"), filepath.Join(t.TempDir(), "identity"))
 	plan := exactCertificateTestPlan()
-	writer, err := profile.CertificatesForPublisher("team", durableTestPublisher, plan)
+	files := certificateTestFiles(t, profile, "team", durableTestPublisher)
+	writer, err := certificatestore.New(certificateFiles{files}, profile.certificateScope("team", durableTestPublisher), plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +207,7 @@ func TestCertificateReadersJoinInitialPlanCheckpoint(t *testing.T) {
 	renamed, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	resume := sync.OnceFunc(func() { close(release) })
 	var beforeCheckpoint sync.Once
-	writer.files.syncFile = func(file *os.File) error {
+	files.syncFile = func(file *os.File) error {
 		info, err := file.Stat()
 		if err != nil {
 			return err
@@ -229,8 +260,9 @@ func TestCertificateFilesRejectMissingScopeAndUnsafePaths(t *testing.T) {
 	if _, err := cache.Pending(t.Context(), "route.example"); err != nil {
 		t.Fatal(err)
 	}
-	name := certificateFilename(cache.planJSON)
-	data, _, err := cache.files.Read(name, maxCertificateFileBytes)
+	files := certificateTestFiles(t, profile, "team", durableTestPublisher)
+	name := certificateTestFilename(exactCertificateTestPlan())
+	data, _, err := files.Read(name, maxCertificateFileBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +277,7 @@ func TestCertificateFilesRejectMissingScopeAndUnsafePaths(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := cache.files.Write(name, invalid); err != nil {
+		if err := files.Write(name, invalid); err != nil {
 			t.Fatal(err)
 		}
 		clear(invalid)
@@ -253,10 +285,10 @@ func TestCertificateFilesRejectMissingScopeAndUnsafePaths(t *testing.T) {
 			t.Fatal("incomplete scope accepted", field)
 		}
 	}
-	if err := cache.files.Write(name, data); err != nil {
+	if err := files.Write(name, data); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(cache.files.Path(), name)
+	path := filepath.Join(files.Path(), name)
 	if err := os.Chmod(path, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +308,7 @@ func TestCertificateFilesRejectMissingScopeAndUnsafePaths(t *testing.T) {
 	if _, err := cache.Pending(t.Context(), "route.example"); err == nil {
 		t.Fatal("symlink accepted")
 	}
-	if err := cache.files.Write(name, data); err == nil {
+	if err := files.Write(name, data); err == nil {
 		t.Fatal("symlink overwritten")
 	}
 }

@@ -304,10 +304,11 @@ func (r *jsReader) Close() error {
 // and the original reader's read/cancel promises before returning its result.
 type jsRequestBody struct {
 	*jsReader
-	stop func() bool
-	done chan struct{}
-	once sync.Once
-	err  error
+	stop   func() bool
+	done   chan struct{}
+	joined chan struct{}
+	once   sync.Once
+	err    error
 }
 
 func newJSRequestBody(ctx context.Context, source js.Value) (*jsRequestBody, error) {
@@ -315,7 +316,7 @@ func newJSRequestBody(ctx context.Context, source js.Value) (*jsRequestBody, err
 	if err != nil {
 		return nil, err
 	}
-	body := &jsRequestBody{jsReader: reader, done: make(chan struct{})}
+	body := &jsRequestBody{jsReader: reader, done: make(chan struct{}), joined: make(chan struct{})}
 	body.stop = context.AfterFunc(ctx, func() { defer close(body.done); _ = reader.Close() })
 	return body, nil
 }
@@ -330,6 +331,7 @@ func (b *jsRequestBody) Close() error {
 		if err != nil {
 			b.err = &connectorstream.CleanupError{Err: err}
 		}
+		close(b.joined)
 	})
 	return b.err
 }
@@ -378,9 +380,18 @@ func (h *connectionHandle) fetch(args []js.Value) (_ any, result error) {
 	}
 	request.Header = headers
 	response, err := h.connection.Fetch(request)
-	bodyErr := body.Close()
-	body = nil
+	var bodyErr error
+	if err != nil {
+		bodyErr = body.Close()
+	} else {
+		select {
+		case <-body.joined:
+			bodyErr = body.err
+		default:
+		}
+	}
 	if err != nil || bodyErr != nil {
+		body = nil
 		if response != nil && response.Body != nil {
 			if closeErr := response.Body.Close(); closeErr != nil {
 				bodyErr = errors.Join(bodyErr, &connectorstream.CleanupError{Err: closeErr})
@@ -390,7 +401,10 @@ func (h *connectionHandle) fetch(args []js.Value) (_ any, result error) {
 	}
 	// net/http owns request-body closure after RoundTrip, including streaming
 	// bodies. response ownership below keeps cancellation attached until EOF.
-	output := &responseBody{owner: h, body: response.Body, stop: stop}
+	// response headers can arrive before the HTTP writer finishes its upload.
+	// retain that body until transport closure or joined response cleanup.
+	output := &responseBody{owner: h, body: response.Body, upload: body, stop: stop}
+	body = nil
 	h.mu.Lock()
 	closed := h.closed
 	if !closed {
@@ -411,6 +425,7 @@ func (h *connectionHandle) fetch(args []js.Value) (_ any, result error) {
 type responseBody struct {
 	owner   *connectionHandle
 	body    io.ReadCloser
+	upload  *jsRequestBody
 	stop    func()
 	methods methodSet
 	readMu  sync.Mutex
@@ -446,12 +461,17 @@ func (b *responseBody) export(response *http.Response, method string) (js.Value,
 			controller.Call("enqueue", jsBytes(data[:n]))
 		}
 		if err == io.EOF {
+			if closeErr := b.close(); closeErr != nil {
+				controller.Call("error", safeError(closeErr))
+				return nil, closeErr
+			}
 			controller.Call("close")
-			return nil, b.close()
+			return nil, nil
 		}
 		if err != nil {
+			err = errors.Join(err, b.close())
 			controller.Call("error", safeError(err))
-			return nil, errors.Join(err, b.close())
+			return nil, err
 		}
 		return nil, nil
 	})
@@ -463,6 +483,9 @@ func (b *responseBody) close() error {
 	b.once.Do(func() {
 		b.stop()
 		b.err = b.body.Close()
+		if b.upload != nil {
+			b.err = errors.Join(b.err, b.upload.Close())
+		}
 		b.methods.retire()
 		b.owner.mu.Lock()
 		delete(b.owner.bodies, b)

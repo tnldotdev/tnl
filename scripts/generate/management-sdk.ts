@@ -7,25 +7,25 @@ import { operationInventory, record, repositoryGraph, root } from "./api-contrac
 
 // this is the public runtime management boundary, not a second control contract.
 // the stock generator owns schema parsing, dependency pruning, and runtime code.
-export const managementOperations: Readonly<Record<string, readonly [string, string]>> = {
-  createDeployment: ["deployments", "create"],
-  listDeployments: ["deployments", "list"],
-  getDeployment: ["deployments", "get"],
-  updateDeployment: ["deployments", "update"],
-  deleteDeployment: ["deployments", "delete"],
-  createDeploymentPublisherEnrollment: ["publishers", "createEnrollment"],
-  listDeploymentPublishers: ["publishers", "list"],
-  getDeploymentPublisher: ["publishers", "get"],
-  revokeDeploymentPublisher: ["publishers", "revoke"],
-};
+export const managementOperations: ReadonlySet<string> = new Set([
+  "createDeployment",
+  "listDeployments",
+  "getDeployment",
+  "updateDeployment",
+  "deleteDeployment",
+  "createDeploymentPublisherEnrollment",
+  "listDeploymentPublishers",
+  "getDeploymentPublisher",
+  "revokeDeploymentPublisher",
+]);
 
 export async function managementSource() {
   const graph = await repositoryGraph();
   const document = graph.browserBundle("controlv1", []);
   const operations = operationInventory(document).filter((operation) =>
-    Object.hasOwn(managementOperations, operation.operationId),
+    managementOperations.has(operation.operationId),
   );
-  if (operations.length !== Object.keys(managementOperations).length) {
+  if (operations.length !== managementOperations.size) {
     throw new Error("the management SDK allowlist does not match the canonical operations");
   }
   // select canonical operations without changing their schemas. Hey API parses
@@ -88,16 +88,6 @@ export async function generateManagementSDK(): Promise<void> {
         name: "@hey-api/sdk",
         client: false,
         validator: { request: false, response: true },
-        operations: {
-          methods: "static",
-          containerName: { casing: "camelCase" },
-          segmentName: { casing: "camelCase" },
-          strategy(operation) {
-            const location = managementOperations[operation.operationId ?? ""];
-            if (location === undefined) throw new Error("unapproved management SDK operation");
-            return [location];
-          },
-        },
       },
       { name: "@hey-api/client-fetch", baseUrl: false },
     ],

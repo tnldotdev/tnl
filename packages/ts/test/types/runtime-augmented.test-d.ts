@@ -1,9 +1,11 @@
 import {
-  createClient,
+  deployment,
+  connect,
+  client,
   tnl,
   type TnlProjectFromConfig,
   type TnlConnectionRegistry,
-} from "@tnldotdev/tnl";
+} from "@tnldotdev/tnl/node";
 import { defineConfig } from "@tnldotdev/tnl/config";
 import { assert, assertType, expectTypeOf, test } from "vitest";
 import { Pool } from "pg";
@@ -40,7 +42,7 @@ declare module "@tnldotdev/tnl" {
   }
 }
 
-const deployment = createClient({
+const selectedDeployment = deployment("production", {
   project: "team/project",
   token: "private",
   services: {
@@ -49,7 +51,7 @@ const deployment = createClient({
     mysql: { protocol: "mysql" },
     cluster: { protocol: "kubernetes" },
   },
-}).deployment("production");
+});
 
 test("augmentation preserves exact service names and optional factory entries", () => {
   defineConfig(({ worktree }) => {
@@ -75,10 +77,10 @@ test("augmentation preserves exact service names and optional factory entries", 
   // @ts-expect-error service metadata is exposed directly, without a wrapper.
   void tnl.services.db.metadata;
   // @ts-expect-error unknown connection name.
-  deployment.connect("missing");
+  connect(selectedDeployment, "missing");
 });
 test("deployment connections expose protocol-owned readonly driver settings", async () => {
-  const db = await deployment.connect("db");
+  const db = await connect(selectedDeployment, "db");
   expectTypeOf(db.host).toEqualTypeOf<"127.0.0.1">();
   expectTypeOf(db.port).toEqualTypeOf<number>();
   expectTypeOf(db.ssl.rejectUnauthorized).toEqualTypeOf<true>();
@@ -92,7 +94,7 @@ test("deployment connections expose protocol-owned readonly driver settings", as
   db.port = 5432;
   // @ts-expect-error TLS verification is read-only.
   db.ssl.servername = "other.example";
-  const mysql = await deployment.connect("mysql");
+  const mysql = await connect(selectedDeployment, "mysql");
   assertType<string>(mysql.host);
   expectTypeOf(mysql.ssl.servername).toEqualTypeOf<string>();
   expectTypeOf(mysql.ssl.rejectUnauthorized).toEqualTypeOf<true>();
@@ -103,11 +105,11 @@ test("deployment connections expose protocol-owned readonly driver settings", as
     password: "application-owned",
     database: "app",
   }) satisfies import("mysql2").ConnectionOptions;
-  const cluster = await deployment.connect("cluster");
+  const cluster = await connect(selectedDeployment, "cluster");
   expectTypeOf(cluster.server).toEqualTypeOf<`https://${string}`>();
   expectTypeOf(cluster.kubeconfig).toEqualTypeOf<string>();
   expectTypeOf(cluster.context).toEqualTypeOf<string>();
-  const api = await deployment.connect("api");
+  const api = await connect(selectedDeployment, "api");
   assertType<typeof fetch>(api.fetch);
   expectTypeOf(api.fetch("/stock")).toEqualTypeOf<Promise<Response>>();
   // @ts-expect-error HTTP options are read-only.
@@ -129,7 +131,7 @@ test("deployment connections expose protocol-owned readonly driver settings", as
 });
 
 test("client factories infer ordinary clients and exact protocol callback settings", async () => {
-  const getDb = deployment.client("db", {
+  const getDb = client(selectedDeployment, "db", {
     create(connection) {
       expectTypeOf(connection).toEqualTypeOf<TnlConnectionRegistry["postgres"]>();
       return new Pool({
@@ -147,7 +149,7 @@ test("client factories infer ordinary clients and exact protocol callback settin
   expectTypeOf(getDb()).toEqualTypeOf<Promise<Pool>>();
   expectTypeOf(await getDb()).toEqualTypeOf<Pool>();
   expectTypeOf(getDb.close()).toEqualTypeOf<Promise<void>>();
-  const getAsync = deployment.client("db", {
+  const getAsync = client(selectedDeployment, "db", {
     async create(connection) {
       return new Pool({ ...connection, user: "app", database: "app" });
     },
@@ -158,7 +160,7 @@ test("client factories infer ordinary clients and exact protocol callback settin
   });
   expectTypeOf(getAsync()).toEqualTypeOf<Promise<Pool>>();
   // @ts-expect-error factory service names come from the generated project.
-  deployment.client("missing", { create: () => ({}), close: () => {} });
+  client(selectedDeployment, "missing", { create: () => ({}), close: () => {} });
 });
 
 type Union = TnlProjectFromConfig<{
@@ -170,7 +172,7 @@ test("a service protocol union remains a union", () => {
 });
 
 test("connection settings compose with ordinary driver options", async () => {
-  const settings = await deployment.connect("db");
+  const settings = await connect(selectedDeployment, "db");
   expectTypeOf(settings.host).toEqualTypeOf<"127.0.0.1">();
   ({ ...settings, user: "app", database: "app" }) satisfies import("pg").PoolConfig;
   const plain = { ...settings };

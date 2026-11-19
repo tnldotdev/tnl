@@ -55,17 +55,13 @@ func TestPortableCORSExactOperationAllowlist(t *testing.T) {
 		{"PUT", "/v1/projects/shop/deployments/staging", "authorization, content-type"},
 		{"GET", "/v1/projects/shop/deployments", "authorization, if-match"},
 		{"POST", "/v1/projects/shop/deployment-credentials", "authorization, content-type"},
-		{"POST", "/v1/projects/shop/deployments/staging/services", "authorization, content-type"},
 		{"POST", "/v1/services/svc_1234567890123456789012/connector-peer-pairs/cpp_1234567890123456789012/retire", "authorization, content-type"},
-		{"POST", "/v1/services/svc_1234567890123456789012/runs", "authorization, content-type"},
-		{"POST", "/v1/services/svc_1234567890123456789012/runs/srun_1234567890123456789012/connector-peer-pairs/cpp_1234567890123456789012/delivery", "authorization, content-type"},
 		{"POST", "/v1/guest-demo", "content-type"},
 		{"POST", "/v1/browser/challenge/attempt", "content-type"},
 		{"GET", "/v1/browser/service-login", ""},
 		{"GET", "/v1/browser/callback", ""},
 		{"GET", "/v1/admin/status", "authorization"},
 		{"GET", "/v1/services", "authorization"},
-		{"GET", "/v1/discovery", ""},
 	} {
 		t.Run("reject "+operation.method+" "+operation.path, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodOptions, operation.path, nil)

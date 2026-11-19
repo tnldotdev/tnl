@@ -29,6 +29,9 @@ func (target HTTPTarget) Serve(ctx context.Context, client net.Conn, hostname st
 		}
 		return httpstream.ServeHandler(ctx, client, wrap(target.Handler), target.Drain, target.RequestBodyIdleTimeout)
 	}
+	if HandlerOnly {
+		return ErrEndpoint
+	}
 	if target.proxy != nil {
 		if target.connector != nil {
 			return ErrEndpoint

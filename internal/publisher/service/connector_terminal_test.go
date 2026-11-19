@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -114,6 +115,85 @@ type terminalResultReturnGate struct {
 	entered chan struct{}
 	release <-chan struct{}
 	once    sync.Once
+}
+
+type terminalResultFailureGate struct {
+	muxsession.Stream
+	entered chan struct{}
+	release <-chan struct{}
+	err     error
+	once    sync.Once
+}
+
+func (s *terminalResultFailureGate) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(tunnelv1.ConnectorVisitorTerminalResultKind)) {
+		s.once.Do(func() { close(s.entered) })
+		<-s.release
+		return 0, s.err
+	}
+	return s.Stream.Write(p)
+}
+
+func TestConnectorTerminalNormalPeerCloseDuringResultWrite(t *testing.T) {
+	normal := &quic.ApplicationError{Remote: true}
+	independent := errors.New("independent terminal write failure")
+	for _, test := range []struct {
+		name string
+		err  error
+		want error
+	}{
+		{"normal", normal, nil},
+		{"abnormal", &quic.ApplicationError{Remote: true, ErrorCode: 7}, nil},
+		{"independent", errors.Join(normal, independent), independent},
+		{"physical", &muxsession.QUICTransportCloseError{Err: normal}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				entered, release := make(chan struct{}), make(chan struct{})
+				unblock := sync.OnceFunc(func() { close(release) })
+				defer unblock()
+				b, p, a, entry, control := newConnectorDeliveryAdmission(t, config.ProtocolHTTP, 3*time.Second,
+					func(stream muxsession.Stream) muxsession.Stream {
+						return &terminalResultFailureGate{Stream: stream, entered: entered, release: release, err: test.err}
+					})
+				if test.name != "normal" {
+					control.expectedFailure = test.err
+				}
+				finished := make(chan error, 1)
+				go func() { finished <- a.finishDelivery(nil) }()
+				<-a.stream.(*drainingConnectorWire).closed
+				control.Complete(p, tunnelv1.ConnectorVisitorCompletion{
+					Kind: tunnelv1.ConnectorVisitorCompleted, VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration,
+				})
+				if err := <-finished; err != nil {
+					t.Fatal(err)
+				}
+				joinModeledConnectorAdmission(a, nil)
+				<-entered
+				// model the owner's already-observed normal whole-session end.
+				// the held write must not invent ResultObserved or fence the run.
+				b.mu.Lock()
+				phase := a.terminal
+				p.endLocked(tunnel.ConnectorTerminalEnd{Cause: tunnel.ConnectorTerminalPeerTerminated})
+				b.mu.Unlock()
+				unblock()
+				<-phase.done
+				b.mu.Lock()
+				err, observed, fenced := p.err, phase.observed, b.closed
+				b.mu.Unlock()
+				if phase.end.Cause != tunnel.ConnectorTerminalPeerTerminated || observed || fenced {
+					t.Fatal("terminal write changed peer-end provenance", phase.end, observed, fenced)
+				}
+				if test.name == "normal" {
+					if err != nil {
+						t.Fatal("normal peer close escaped toward the publication fence", err)
+					}
+				} else if err == nil || test.want != nil && !errors.Is(err, test.want) {
+					t.Fatal("normal peer close hid an independent failure", err)
+				}
+			})
+		})
+	}
 }
 
 func (s *terminalResultReturnGate) Write(p []byte) (int, error) {

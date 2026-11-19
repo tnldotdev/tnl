@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 package service
 
 import (
@@ -260,7 +262,8 @@ func TestFeedbackConnectorProofUsesActualAdmissionAndAcceptedRenewal(t *testing.
 		t.Fatal("rejected renewal changed the selected feedback proof", err)
 	}
 	check(update.Permission.Token)
-	for _, path := range []string{"/__tnl/access", "/__tnl/feedback/evidence", frontend.feedback.assetPath} {
+	feedback := frontend.feedback.(*feedbackRuntime)
+	for _, path := range []string{"/__tnl/access", "/__tnl/feedback/evidence", feedback.assetPath} {
 		response, body := call(path)
 		if response.StatusCode != http.StatusOK || strings.Contains(string(body), update.Permission.Token) ||
 			strings.Contains(string(body), visitorfixture.BrowserCookie) {
@@ -273,7 +276,7 @@ func TestFeedbackConnectorProofUsesActualAdmissionAndAcceptedRenewal(t *testing.
 	default:
 	}
 	response, body := call("/")
-	if response.StatusCode != http.StatusOK || appCalls.Load() != 1 || !strings.Contains(string(body), frontend.feedback.assetPath) ||
+	if response.StatusCode != http.StatusOK || appCalls.Load() != 1 || !strings.Contains(string(body), feedback.assetPath) ||
 		strings.Contains(string(body), update.Permission.Token) {
 		t.Fatal("connector application lost shared toolbar hooks or leaked credentials")
 	}
@@ -347,7 +350,7 @@ func TestFeedbackGrantProofAndInvalidExplicitCredentialNeverFallsBack(t *testing
 	certificateRequest.URL.Path = "/__tnl/feedback"
 	certificateRequest.TLS.PeerCertificates = []*x509.Certificate{{}}
 	recorder := httptest.NewRecorder()
-	if !frontend.reserved(recorder, certificateRequest, frontend.authorizeFeedback) ||
+	if !frontend.reserved(recorder, certificateRequest, nil) ||
 		recorder.Code != http.StatusForbidden || len(control.pages) != 0 {
 		t.Fatal("public certificate feedback escaped its missing possession-proof boundary")
 	}

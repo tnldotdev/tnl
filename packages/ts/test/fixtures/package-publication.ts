@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createClient, tnl } from "@tnldotdev/tnl";
+import { deployment, publish, tnl } from "@tnldotdev/tnl/node";
 
 // installed-package proof: real SDK listeners and private HTTP registration.
 // control authorization and native worker behavior have separate integration tests.
@@ -120,12 +120,12 @@ try {
     { mode: 0o600 },
   );
   process.env.TNL_APP_ENDPOINT = descriptor;
-  const local = createClient({ services: { web: { protocol: "http" } } }).deployment("local");
-  const node = await local.publish("web", app);
+  const local = deployment("local", { services: { web: { protocol: "http" } } });
+  const node = await publish(local, "web", app);
   assert.equal(node.url, url);
   await node.close();
   assert.equal(app.listening, true);
-  const fetch = await local.publish("web", () => new Response("Fetch publication"));
+  const fetch = await publish(local, "web", () => new Response("Fetch publication"));
   assert.equal(fetch.url, url);
   await fetch.close();
   await local.close();

@@ -4,14 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -40,9 +38,8 @@ type HTTPControl interface {
 	httpaccess.TokenClient
 	httpaccess.BrowserClient
 	httpaccess.ShareClient
-	FeedbackClient
+	nativeHTTPControl
 	ControlURL() string
-	CreateServiceRunPreview(context.Context, string, string, int64, credentials.ServiceRunToken) (controlv1.Preview, error)
 }
 
 // HTTPRun contains the validated publication facts used by HTTP feature hooks.
@@ -55,7 +52,7 @@ type HTTPRun struct {
 // http binds each request to one trusted forwarding header. policy and
 // browser credential renewal are prepared once by the service run owner.
 type HTTP struct {
-	State                 *clientstate.Store
+	State                 LocalState
 	AuditSink             serviceaudit.Sink
 	InspectionMode        inspection.Mode
 	ObserveSummary        inspection.Observer
@@ -83,12 +80,15 @@ type HTTP struct {
 	Policy                *visitorlease.Lease
 	ReserveCapacity       func(context.Context) error
 	browser               *httpaccess.Browser
-	feedback              *feedbackRuntime
-	probes                *requestlimit.HTTP
-	preparations          chan struct{}
+	nativeHTTP
+	probes       *requestlimit.HTTP
+	preparations chan struct{}
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
+	if err := validateFeedbackPlatform(f.Feedback, f.Demo, f.PreviewID); err != nil {
+		return HTTP{}, nil, err
+	}
 	if f.Control == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || !f.InspectionMode.Valid() ||
 		!opaqueid.Valid(f.RunID, opaqueid.ServiceRunPrefix) || f.Number < 1 || f.Token == "" {
 		return HTTP{}, nil, servicestream.ErrEndpoint
@@ -108,19 +108,8 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 			f.BrowserLoginAvailable = new(*f.BrowserLoginAvailable)
 		}
 	}
-	if f.Demo {
-		// control creates or recovers this exact run's preview. never substitute
-		// caller metadata or start browser/feedback work before validating it.
-		preview, err := f.Control.CreateServiceRunPreview(ctx, f.Subject.ID, f.RunID, f.Number, f.Token)
-		if err != nil {
-			return HTTP{}, nil, fmt.Errorf("service: create demo feedback preview: %w", err)
-		}
-		if !opaqueid.Valid(preview.Id, opaqueid.PreviewPrefix) || preview.SchemaVersion != 1 ||
-			len(preview.ServiceIds) != 1 || preview.ServiceIds[0] != f.Subject.ID {
-			return HTTP{}, nil, failure.Wrap("create demo feedback preview", failure.ServerResponseInvalid,
-				errors.New("preview has an invalid ID, schema, or service membership"))
-		}
-		f.PreviewID = preview.Id
+	if err := f.prepareNativeHTTP(ctx); err != nil {
+		return HTTP{}, nil, err
 	}
 	f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(4)})
 	if err != nil {
@@ -137,20 +126,16 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 		return HTTP{}, nil, err
 	}
 	f.Policy = policy.Lease()
-	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: f.Control, PreviewID: f.PreviewID, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: controlURL, Policy: policy, Tokens: tokens}
-	f.feedback, err = newFeedbackRuntime(f)
-	if err != nil {
+	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: f.Control, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: controlURL, Policy: policy, Tokens: tokens}
+	if err := f.startNativeHTTP(); err != nil {
 		tokens.Close()
 		policy.Close()
 		return HTTP{}, nil, err
 	}
-	if f.feedback != nil {
-		f.ResponseHooks = f.feedback.responseHooks(f.ResponseHooks)
-	}
 	return f, func() error {
 		tokens.Close()
 		policy.Close()
-		return f.feedback.close(ctx)
+		return f.closeNativeHTTP(ctx)
 	}, nil
 }
 
@@ -206,15 +191,15 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 				servicestream.DenyHTTP(w, r, http.StatusMisdirectedRequest)
 				return
 			}
-			// only the validated forwarding metadata supplies the visitor source.
-			// reserved feedback requests need these same TLS and source facts.
+			// set the verified source and TLS state before dispatching reserved
+			// paths or applying visitor policy to application requests.
 			r.RemoteAddr = f.Source.String()
 			r.TLS = &state
 			if code := proxy.ValidateRequest(r, f.Hostname); code != "" {
 				diagnostic.WriteHTTP(w, r, code, "")
 				return
 			}
-			if f.reserved(w, r, f.authorizeFeedback) {
+			if f.reserved(w, r, nil) {
 				// browser preparation does not claim application access.
 				reported = true
 				return
@@ -319,22 +304,10 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 	return target.Serve(ctx, client, f.Hostname, wrap, f.ResponseHooks)
 }
 
-func (f HTTP) authorizeFeedback(w http.ResponseWriter, r *http.Request) (feedbackAuthorization, *httpaccess.Guard, *http.Request, error) {
-	var tokens *httpaccess.Tokens
-	if f.browser != nil {
-		tokens = f.browser.Tokens
-	}
-	authorization, guard, guarded, err := httpaccess.AuthorizeRequest(w, r, f.Policy, tokens)
-	if err != nil {
-		return feedbackAuthorization{permission: authorization.Permission()}, guard, guarded, err
-	}
-	access, err := bearerFeedbackAuthorization(authorization)
-	return access, guard, guarded, err
-}
-
-// reserved composes the same service-owned handlers for public and connector
-// HTTP. each path supplies its own admission; this code assumes no public header.
-func (f HTTP) reserved(w http.ResponseWriter, r *http.Request, authorize func(http.ResponseWriter, *http.Request) (feedbackAuthorization, *httpaccess.Guard, *http.Request, error)) bool {
+// reserved handles /__tnl/ paths without forwarding them to the application.
+// connector is nil on the public path; otherwise it carries the verified
+// admission from the connector stream, not from an HTTP header.
+func (f HTTP) reserved(w http.ResponseWriter, r *http.Request, connector *servicestream.ConnectorHTTPAuthorization) bool {
 	if !strings.HasPrefix(r.URL.Path, "/__tnl/") {
 		return false
 	}
@@ -344,28 +317,7 @@ func (f HTTP) reserved(w http.ResponseWriter, r *http.Request, authorize func(ht
 		servicestream.DenyHTTP(w, r, http.StatusForbidden)
 		return true
 	}
-	status := r.URL.Path == "/__tnl/access" && r.Method == http.MethodGet && f.PreviewID != ""
-	if status || f.feedback != nil && strings.HasPrefix(r.URL.Path, "/__tnl/feedback") {
-		authorization, guard, guarded, err := authorize(w, r)
-		if guard != nil {
-			defer guard.Finish()
-		}
-		if status {
-			if err != nil && servicestream.HTTPDecisionStatus(err) != http.StatusForbidden {
-				servicestream.DenyHTTP(w, r, servicestream.HTTPDecisionStatus(err))
-				return true
-			}
-			writePreviewAccessStatus(w, previewAccessStatus(f, authorization.permission, err == nil))
-			return true
-		}
-		if err != nil {
-			servicestream.DenyHTTP(w, r, servicestream.HTTPDecisionStatus(err))
-			return true
-		}
-		if guard != nil {
-			w = guard
-		}
-		f.feedback.handle(w, guarded, authorization)
+	if f.handleNativeReserved(w, r, connector) {
 		return true
 	}
 	if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
@@ -427,17 +379,11 @@ func (f HTTP) ConnectorReserved(w http.ResponseWriter, r *http.Request, authoriz
 		return true
 	}
 	r.RemoteAddr = netip.AddrPortFrom(authorization.Source.Unmap(), 1).String()
-	return f.reserved(w, r, func(http.ResponseWriter, *http.Request) (feedbackAuthorization, *httpaccess.Guard, *http.Request, error) {
-		access, err := connectorFeedbackAuthorization(authorization)
-		return access, nil, r, err
-	})
+	return f.reserved(w, r, &authorization)
 }
 
 func (f HTTP) ConnectorApplication(w http.ResponseWriter, r *http.Request) *http.Request {
-	if f.feedback != nil {
-		r = f.feedback.prepareBrowser(w, r)
-	}
-	return serviceApplicationRequest(r)
+	return serviceApplicationRequest(f.prepareNativeApplication(w, r))
 }
 
 func serviceApplicationRequest(r *http.Request) *http.Request {

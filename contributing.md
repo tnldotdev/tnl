@@ -47,15 +47,15 @@ API for authenticated yamux streams in both directions. The browser pins only th
 fixture's leaf key; no trust store is changed. The native listener still requires
 hybrid X25519 + ML-KEM-768. This is not hosted Cloudflare Worker qualification.
 
-The SDK build compiles its Go/WASM module, optimizes it with the pinned Binaryen
-compiler, and copies `wasm_exec.js` from the same Go toolchain. To rebuild only
-those assets or execute the bridge tests:
+The SDK build compiles its Go/WASM modules, optimizes them with the pinned
+Binaryen compiler, and copies `wasm_exec.js` from the same Go toolchain. To
+rebuild only those assets or execute the bridge tests:
 
 ```sh
 mise exec -- task js:wasm:build
 mise exec -- task go:test:wasm PACKAGES=./packages/ts/wasm
 mise exec -- task go:test:wasm:browser PACKAGES=./packages/ts/wasm
-mise exec -- task go:test:wasm:optimized PACKAGES=./packages/ts/wasm RUNTIME=chrome
+mise exec -- task go:test:wasm:optimized PACKAGES=./packages/ts/wasm RUNTIME=chrome TAGS=tnlsdk
 ```
 
 The last command runs the compiled Go tests in installed Google Chrome, not a

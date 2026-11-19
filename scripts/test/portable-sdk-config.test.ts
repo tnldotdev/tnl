@@ -51,6 +51,6 @@ test("workerd preserves TLS names while mapping exact loopback addresses", () =>
   expect(config.match(/certificateHost = "localhost"/g)).toHaveLength(2);
   expect(config).toContain('allow = ["127.0.0.0/8", "::1/128"]');
   expect(config).toContain("trustBrowserCas = false");
-  expect(config).toContain('(name = "tnl.wasm", wasm = embed "../tnl-fixture.wasm")');
+  expect(config).toContain('(name = "connector.wasm", wasm = embed "../tnl-fixture.wasm")');
   expect(config).not.toContain(fixture.token);
 });

@@ -173,7 +173,7 @@ test.each([
   { name: "TNL_STATE_DIR", initial: "/fixture/state-a", changed: "/fixture/state-b" },
   { name: "TNL_STATE_DIR", initial: undefined, changed: "/fixture/state-b" },
 ])("deployment scopes pin $name=$initial before yielding", async ({ name, initial, changed }) => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const gate = Promise.withResolvers<void>();
   fixture.gate = gate.promise;
   vi.stubEnv(name, initial);
@@ -195,7 +195,7 @@ test.each([
 });
 
 test("a borrowed handle appearing during startup cannot enter an owned scope", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const gate = Promise.withResolvers<void>();
   fixture.gate = gate.promise;
   const deployment = createClient({ ...options, token: "private" }).deployment("production");
@@ -210,7 +210,7 @@ test("a borrowed handle appearing during startup cannot enter an owned scope", a
 test.each(["TNL_SERVER", "TNL_STATE_DIR"])(
   "same-name callbacks stay in the captured %s context",
   async (name) => {
-    const { createClient } = await import("../../src/index.js");
+    const { createClient } = await import("../../src/internal/connector/client.js");
     const { configureWorkload } = await import("../../src/workload.js");
     const callbackA = vi.fn(async () => "assertion-a");
     const callbackB = vi.fn(async () => "assertion-b");
@@ -247,7 +247,7 @@ test.each(["TNL_SERVER", "TNL_STATE_DIR"])(
 );
 
 test("recovery and cleanup keep captured selection but use current tracing", async () => {
-  const { createClient } = await import("../../src/index.js");
+  const { createClient } = await import("../../src/internal/connector/client.js");
   const { configureWorkload } = await import("../../src/workload.js");
   let assertion = "first-assertion";
   configureWorkload({ name: "job", token: async () => assertion });

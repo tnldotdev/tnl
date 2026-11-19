@@ -5,9 +5,10 @@ import (
 	"context"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-const DefaultURL = "https://control.tnl.dev"
+const DefaultURL = naming.DefaultControlURL
 
 func Select(ctx context.Context, state *clientstate.Database, explicit string) (string, error) {
 	if explicit != "" {

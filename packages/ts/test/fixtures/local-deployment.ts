@@ -4,7 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
 import * as z from "zod";
-import { createClient } from "../../dist/index.js";
+import { deployment, client } from "@tnldotdev/tnl/node";
 
 const input = z
   .strictObject({
@@ -23,8 +23,8 @@ const { services } = z
   );
 
 process.chdir(input.directory);
-const local = createClient({ services }).deployment("local");
-const database = local.client("db", {
+const local = deployment("local", { services });
+const database = client(local, "db", {
   create: (connection) =>
     new Pool({
       ...connection,

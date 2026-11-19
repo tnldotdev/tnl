@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -18,30 +17,6 @@ import (
 
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
-
-func TestCSRRequiresConcreteMatchingECDSAKey(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	identifiers := []string{"app.example"}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{DNSNames: identifiers}, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateCSR(csr, key, identifiers); err != nil {
-		t.Fatal(err)
-	}
-	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, invalid := range []*ecdsa.PrivateKey{nil, other} {
-		if err := validateCSR(csr, invalid, identifiers); err == nil {
-			t.Fatal("CSR accepted a missing or different key")
-		}
-	}
-}
 
 func TestCertificateMaterialLifecycleSurvivesRestart(t *testing.T) {
 	for _, test := range []struct {

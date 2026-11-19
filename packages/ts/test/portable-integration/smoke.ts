@@ -1,4 +1,4 @@
-import { createClient } from "@tnldotdev/tnl";
+type Runtime = Pick<typeof import("@tnldotdev/tnl/browser"), "deployment" | "connect" | "client">;
 import * as z from "zod";
 import {
   check,
@@ -11,6 +11,7 @@ import {
 import { Wire } from "./bytes.ts";
 import { MySQLFixtureClient } from "./mysql.ts";
 import { PostgresFixtureClient } from "./postgres.ts";
+import { PortableSmokeError, type Phase } from "./errors.ts";
 
 const services = {
   http: { protocol: "http" },
@@ -20,46 +21,9 @@ const services = {
   kubernetes: { protocol: "kubernetes" },
 } as const;
 
-type Phase =
-  | "http"
-  | "tcp"
-  | "tcp-close"
-  | "mysql"
-  | "kubernetes"
-  | "postgres"
-  | "carrier-loss"
-  | "close-open-tcp"
-  | "close-deployment"
-  | "close-pending-read"
-  | "close-new-work"
-  | "close-tcp-stream"
-  | "isolation"
-  | "cleanup";
-
-export class PortableSmokeError extends Error {
-  readonly phase: Phase;
-  readonly code: string;
-  readonly detail: string | undefined;
-
-  constructor(phase: Phase, error: unknown) {
-    const code =
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      typeof error.code === "string" &&
-      /^sdk\.[a-z_]+$/.test(error.code)
-        ? error.code
-        : "fixture.assertion_failed";
-    super(`portable SDK ${phase} failed (${code})`);
-    this.phase = phase;
-    this.code = code;
-    this.detail = error instanceof FixtureAssertionError ? error.message : undefined;
-  }
-}
-
 async function joinCleanup(
   cleanups: Promise<unknown>[],
-  failed: PortableSmokeError | undefined,
+  failed: PortableSmokeError | AggregateError | undefined,
 ): Promise<void> {
   const results = await Promise.allSettled(cleanups);
   const errors = results.flatMap((result) => {
@@ -71,19 +35,23 @@ async function joinCleanup(
   });
   if (errors.length > 0)
     throw new AggregateError(
-      failed === undefined ? errors : [failed, ...errors],
+      failed === undefined
+        ? errors
+        : failed instanceof AggregateError
+          ? [...failed.errors, ...errors]
+          : [failed, ...errors],
       "portable SDK operation/cleanup failed",
     );
 }
 
-function deployment(fixture: PortableFixture) {
+function deployment(runtime: Runtime, fixture: PortableFixture) {
   // the runtime's normal package export selects browser/workerd. no private
   // bridge, native CLI, yamux implementation, or fabricated admission is used.
-  return createClient({
+  return runtime.deployment(fixture.deployment, {
     project: fixture.project,
     token: fixture.token,
     services,
-  }).deployment(fixture.deployment);
+  });
 }
 
 async function closed(operation: Promise<unknown>): Promise<void> {
@@ -112,11 +80,11 @@ export interface SmokeReport {
   closed: true;
 }
 
-export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
+export async function runPortableSmoke(runtime: Runtime, input: unknown): Promise<SmokeReport> {
   const fixture = fixtureSchema.parse(input);
-  const selected = deployment(fixture);
+  const selected = deployment(runtime, fixture);
   let closeWaiting: (() => Promise<void>) | undefined;
-  const postgres = selected.client("postgres", {
+  const postgres = runtime.client(selected, "postgres", {
     create: async (connection) =>
       PostgresFixtureClient.connect(
         await connection.open({ signal: AbortSignal.timeout(60_000) }),
@@ -126,9 +94,9 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
   });
   let blocked: string | undefined;
   let phase: Phase = "http";
-  let failed: PortableSmokeError | undefined;
+  let failed: PortableSmokeError | AggregateError | undefined;
   try {
-    const http = await selected.connect("http");
+    const http = await runtime.connect(selected, "http");
     const response = await http.fetch("/portable-smoke?source=sdk");
     check(response.status === 200, "SDK HTTP request failed");
     const observation = z
@@ -141,7 +109,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
     check(observation.fixture === "portable-sdk", "SDK HTTP response came from the wrong target");
 
     phase = "tcp";
-    const tcp = await selected.connect("tcp");
+    const tcp = await runtime.connect(selected, "tcp");
     const wire = new Wire(await tcp.open({ signal: AbortSignal.timeout(30_000) }));
     let exchanged = false;
     try {
@@ -160,7 +128,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
     }
 
     phase = "mysql";
-    const mysql = await selected.connect("mysql");
+    const mysql = await runtime.connect(selected, "mysql");
     const mysqlClient = await MySQLFixtureClient.connect(
       await mysql.open({ signal: AbortSignal.timeout(30_000) }),
       fixture.mysql,
@@ -173,7 +141,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
     }
 
     phase = "kubernetes";
-    const kubernetes = await selected.connect("kubernetes");
+    const kubernetes = await runtime.connect(selected, "kubernetes");
     const pods = await kubernetes.fetch("/api/v1/namespaces/portable/pods", {
       headers: { Authorization: `Bearer ${fixture.kubernetes_token}` },
     });
@@ -246,7 +214,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
 
     // close must settle a pending application read, then reject new work. its
     // peer-close behavior is separately exercised by concurrent Worker requests.
-    phase = "close-open-tcp";
+    phase = "close-open";
     const waiting = await tcp.open({ signal: AbortSignal.timeout(30_000) });
     const reader = waiting.readable.getReader();
     closeWaiting = async () => {
@@ -254,7 +222,7 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
       try {
         await waiting.close();
       } catch (error) {
-        throw new PortableSmokeError("close-tcp-stream", error);
+        throw new PortableSmokeError("close-stream", error);
       }
     };
     const read = reader.read().then(
@@ -263,10 +231,10 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
     );
     phase = "close-deployment";
     await Promise.all([selected.close(), selected.close()]);
-    phase = "close-pending-read";
+    phase = "close-read";
     check(await read, "blocked TCP read returned unexpected target bytes");
-    phase = "close-new-work";
-    await closed(selected.connect("tcp"));
+    phase = "close-reject";
+    await closed(runtime.connect(selected, "tcp"));
     return {
       protocols: ["http", "tcp", "postgres", "mysql", "kubernetes"],
       postgresBackendPID: pid,
@@ -277,7 +245,11 @@ export async function runPortableSmoke(input: unknown): Promise<SmokeReport> {
       closed: true,
     };
   } catch (error) {
-    failed = new PortableSmokeError(phase, error);
+    failed =
+      error instanceof AggregateError &&
+      error.errors.every((child: unknown) => child instanceof PortableSmokeError)
+        ? error
+        : new PortableSmokeError(phase, error);
     throw failed;
   } finally {
     await joinCleanup(
@@ -302,13 +274,14 @@ export interface IsolationReport {
 // call these concurrently from two Worker requests in the same workerd isolate.
 // the fixture rendezvous makes peer-close-before-query observable, not timed.
 export async function runPortableIsolation(
+  runtime: Runtime,
   input: unknown,
   role: "first" | "second",
   run: string,
 ): Promise<IsolationReport> {
   const fixture = fixtureSchema.parse(input);
-  const selected = deployment(fixture);
-  const get = selected.client("postgres", {
+  const selected = deployment(runtime, fixture);
+  const get = runtime.client(selected, "postgres", {
     create: async (connection) =>
       PostgresFixtureClient.connect(
         await connection.open({ signal: AbortSignal.timeout(60_000) }),

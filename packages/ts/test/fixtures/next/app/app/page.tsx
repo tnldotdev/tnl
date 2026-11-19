@@ -1,6 +1,6 @@
 "use client";
 
-import { tnl } from "@tnldotdev/tnl";
+import { tnl } from "@tnldotdev/tnl/browser";
 
 export default function Page() {
   const metadata = tnl.services.api;

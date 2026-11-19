@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
 import { request } from "node:https";
 import { readFile } from "node:fs/promises";
-import { createClient } from "@tnldotdev/tnl";
+import { deployment, connect } from "@tnldotdev/tnl/node";
 
 const protocol = process.argv[2];
 const name = protocol === "kubernetes" ? "cluster" : "api";
 const project = process.argv[3],
   hostname = process.argv[4];
 assert(project && hostname);
-const deployment = createClient({
+const selectedDeployment = deployment("remote", {
   project,
   services: { api: { protocol: "http" }, cluster: { protocol: "kubernetes" } },
-}).deployment("remote");
-const [first, second] = await Promise.all([deployment.connect(name), deployment.connect(name)]);
+});
+const [first, second] = await Promise.all([
+  connect(selectedDeployment, name),
+  connect(selectedDeployment, name),
+]);
 assert.deepEqual(Object.keys(first), Object.keys(second));
 assert.equal(Reflect.get(first, "then"), undefined);
 assert(Object.isFrozen(first));
@@ -60,4 +63,4 @@ if ("fetch" in first) {
   assert.equal(result.status, 201);
   assert.equal(result.body, "streamed-body");
 } else assert.fail("the native fixture returned the wrong protocol settings");
-await deployment.close();
+await selectedDeployment.close();

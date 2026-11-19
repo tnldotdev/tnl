@@ -1,12 +1,23 @@
 import { TnlError } from "../../errors.js";
-import { createClient, deployments, publishers } from "../../http.js";
+import {
+  createControlClient,
+  createDeployment,
+  deleteDeployment,
+  getDeployment,
+  listDeployments,
+  updateDeployment,
+  createPublisherEnrollment,
+  getPublisher,
+  listPublishers,
+  revokePublisher,
+} from "../../control.js";
 import type { Client } from "../management/client/index.js";
 import type {
   CreateDeploymentRequest,
   UpdateDeploymentRequest,
   CreateDeploymentPublisherEnrollmentRequest,
   Deployment,
-} from "../../http.js";
+} from "../../control.js";
 import { deploymentAccess } from "./connection.js";
 
 export type SavedDeployment = Deployment & { readonly etag: string };
@@ -56,7 +67,10 @@ export function boundManagement(project: string | undefined, token: string | und
   };
   const options = async () => {
     const selected = await access();
-    client ??= createClient({ baseUrl: selected.server, auth: async () => (await access()).token });
+    client ??= createControlClient({
+      baseUrl: selected.server,
+      auth: async () => (await access()).token,
+    });
     return {
       client,
       query: { team_id: selected.team_id },
@@ -67,7 +81,7 @@ export function boundManagement(project: string | undefined, token: string | und
   return Object.freeze({
     deployments: Object.freeze({
       async create(body: CreateDeploymentRequest, request: CreationOptions) {
-        const result = await deployments.create({
+        const result = await createDeployment({
           ...(await options()),
           body,
           headers: { "Idempotency-Key": request.idempotencyKey },
@@ -76,12 +90,11 @@ export function boundManagement(project: string | undefined, token: string | und
       },
       async list(page: PageOptions = {}) {
         const selected = await options();
-        return (await deployments.list({ ...selected, query: { ...selected.query, ...page } }))
-          .data;
+        return (await listDeployments({ ...selected, query: { ...selected.query, ...page } })).data;
       },
       async get(deployment: string) {
         const selected = await options();
-        const result = await deployments.get({
+        const result = await getDeployment({
           ...selected,
           path: { ...selected.path, deployment },
         });
@@ -89,7 +102,7 @@ export function boundManagement(project: string | undefined, token: string | und
       },
       async update(deployment: string, body: UpdateDeploymentRequest, request: MutationOptions) {
         const selected = await options();
-        const result = await deployments.update({
+        const result = await updateDeployment({
           ...selected,
           path: { ...selected.path, deployment },
           body,
@@ -99,7 +112,7 @@ export function boundManagement(project: string | undefined, token: string | und
       },
       async delete(deployment: string, request: MutationOptions) {
         const selected = await options();
-        await deployments.delete({
+        await deleteDeployment({
           ...selected,
           path: { ...selected.path, deployment },
           headers: { "If-Match": request.ifMatch },
@@ -114,7 +127,7 @@ export function boundManagement(project: string | undefined, token: string | und
       ) {
         const selected = await options();
         return (
-          await publishers.createEnrollment({
+          await createPublisherEnrollment({
             ...selected,
             path: { ...selected.path, deployment },
             body,
@@ -125,7 +138,7 @@ export function boundManagement(project: string | undefined, token: string | und
       async list(deployment: string, page: PageOptions = {}) {
         const selected = await options();
         return (
-          await publishers.list({
+          await listPublishers({
             ...selected,
             path: { ...selected.path, deployment },
             query: { ...selected.query, ...page },
@@ -135,12 +148,12 @@ export function boundManagement(project: string | undefined, token: string | und
       async get(deployment: string, publisher: string) {
         const selected = await options();
         return (
-          await publishers.get({ ...selected, path: { ...selected.path, deployment, publisher } })
+          await getPublisher({ ...selected, path: { ...selected.path, deployment, publisher } })
         ).data;
       },
       async revoke(deployment: string, publisher: string) {
         const selected = await options();
-        await publishers.revoke({ ...selected, path: { ...selected.path, deployment, publisher } });
+        await revokePublisher({ ...selected, path: { ...selected.path, deployment, publisher } });
       },
     }),
   });

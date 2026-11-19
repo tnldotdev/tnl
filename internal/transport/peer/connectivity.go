@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 package peer
 
 import (
@@ -17,35 +19,10 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-type ConnectivityState string
-
 const (
-	ConnectivityChecking     ConnectivityState = "checking"
-	ConnectivityDirect       ConnectivityState = "direct"
-	ConnectivityRelay        ConnectivityState = "relay"
-	connectivitySetupTimeout                   = 10 * time.Second
-	connectivityRetryDelay                     = 5 * time.Second
+	connectivitySetupTimeout = 10 * time.Second
+	connectivityRetryDelay   = 5 * time.Second
 )
-
-// connectivity settings belong to the native owner, never an application opening.
-type ConnectivityOptions struct {
-	DisableDirect   bool
-	IncludeLoopback bool
-	Observe         func(ConnectivityState)
-	ObserveAttempt  func(ConnectivityAttempt)
-	ObserveFallback func()
-}
-
-type ConnectivityAttempt struct {
-	Outcome  string
-	Duration time.Duration
-}
-
-type ConnectivityBinding struct {
-	Revision       BindingRevision
-	DeliveryID     string
-	RelayAddresses [2]string
-}
 
 type ConnectivityError struct {
 	Code  tunnelv1.ErrorCode

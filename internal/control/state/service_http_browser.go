@@ -492,13 +492,19 @@ func (d *Database) refreshServiceBrowserSession(ctx context.Context, service, se
 	if err != nil || d.storageKey == nil {
 		return result, ErrPreviewAccess
 	}
-	tx, err := d.pool.Begin(ctx)
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "refresh service browser session", &retErr)()
 	q := controlstatedb.New(tx)
-	row, err := q.LockServiceHTTPBrowserSession(ctx, controlstatedb.LockServiceHTTPBrowserSessionParams{ServiceID: service, CookieDigest: digest, ExpiresAt: timestamptz(now)})
+	if _, err := q.LockServiceHTTPBrowserSession(ctx, digest); err != nil {
+		return result, publisherLookupError(err, ErrPreviewAccess)
+	}
+	// read the parent under a fresh statement snapshot after taking the browser
+	// lock. a locking join can pair updated ciphertext with an old parent expiry.
+	// locking the parent instead would block the authority's own rotation.
+	row, err := q.ReadServiceHTTPBrowserSession(ctx, controlstatedb.ReadServiceHTTPBrowserSessionParams{ServiceID: service, CookieDigest: digest, ExpiresAt: timestamptz(now)})
 	if err != nil {
 		return result, publisherLookupError(err, ErrPreviewAccess)
 	}
