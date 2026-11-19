@@ -352,7 +352,7 @@ func ReadJSON(reader io.Reader, destination any) error {
 func (c Context) Validate() error {
 	if c.Schema != Schema || !filepath.IsAbs(c.Directory) || len(c.Directory) > 4096 || len(c.ConfigDigest) != 64 ||
 		c.Server == "" || c.Audience != c.Server || c.ProjectKey == "" || c.SourceID == "" || c.WorktreeKey == "" ||
-		len(c.Services) == 0 || len(c.Services) > 32 {
+		len(c.Services) == 0 {
 		return ErrInvalid
 	}
 	seen := map[string]bool{}

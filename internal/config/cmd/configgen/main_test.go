@@ -58,7 +58,7 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 		}
 	}
 	services := schemaForType(reflect.TypeOf(map[string]config.ServiceDeclaration{}))
-	if services.MaxProperties == nil || *services.MaxProperties != 128 || services.PropertyNames == nil ||
+	if services.MaxProperties != nil || services.PropertyNames == nil ||
 		services.PropertyNames.Pattern == "" || services.AdditionalProperties == nil {
 		t.Fatalf("services schema = %#v", services)
 	}

@@ -70,12 +70,12 @@ func (deploymentCredentialScope) teamOwnedDefault() bool                 { retur
 func (d *Database) RegisterDeploymentCredential(ctx context.Context, r RegisterDeploymentCredentialRequest) (result DeploymentCredential, retErr error) {
 	clock := newAuthorizationClock(r.Now)
 	if r.AccessToken != "" || !naming.ValidServiceName(r.Name) || !validIdempotencyKey(r.IdempotencyKey) || len(r.PublicKey) != ed25519.PublicKeySize ||
-		len(r.Permissions) == 0 && r.TemporaryPublication == "" || len(r.Permissions) > 3 || len(r.DeploymentIDs) > 128 || r.AllDeployments == (len(r.DeploymentIDs) > 0) || r.Lifetime < time.Minute || r.Lifetime > 30*24*time.Hour || r.TemporaryPublication != "" && r.TemporaryPublication != "restricted" && r.TemporaryPublication != "anonymous" {
+		len(r.Permissions) == 0 && r.TemporaryPublication == "" || len(r.Permissions) > 3 || r.AllDeployments == (len(r.DeploymentIDs) > 0) || r.Lifetime < time.Minute || r.Lifetime > 30*24*time.Hour || r.TemporaryPublication != "" && r.TemporaryPublication != "restricted" && r.TemporaryPublication != "anonymous" {
 		return result, ErrProjectConfigurationInvalid
 	}
 	permissions := make(map[string][]string, len(r.Permissions))
 	for capability, names := range r.Permissions {
-		if capability != "manage" && capability != "connect" && capability != "publish" || len(names) < 1 || len(names) > 128 {
+		if capability != "manage" && capability != "connect" && capability != "publish" || len(names) < 1 {
 			return result, ErrProjectConfigurationInvalid
 		}
 		names = slices.Clone(names)

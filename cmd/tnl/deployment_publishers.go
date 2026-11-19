@@ -20,8 +20,8 @@ func (f publisherServeCommand) fixedList() bool {
 }
 
 func validateFixedDeploymentRuntime(f publisherServeCommand) error {
-	if len(f.IdentityFile) < 1 || len(f.IdentityFile) > 256 || len(f.BindingFile) > len(f.IdentityFile) {
-		return publisherCLIError("select from 1 to 256 --identity-file inputs and at most one --binding-file per identity")
+	if len(f.IdentityFile) < 1 || len(f.BindingFile) > len(f.IdentityFile) {
+		return publisherCLIError("select at least one --identity-file and at most one --binding-file per identity")
 	}
 	if f.Deployment != "" || f.ProjectKey != "" || f.ServerURL != "" || f.Team != "" || f.AccessToken != "" || f.EnrollmentKey != "" || f.Instance != "" && f.Instance != "default" {
 		return publisherCLIError("fixed-list publishers use each identity's server, team, deployment, project, and instance; omit selection and enrollment overrides")

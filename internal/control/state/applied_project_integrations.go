@@ -10,9 +10,6 @@ import (
 // resolving provider catalogs or executing project source. integration handlers
 // remain local app registrations; deployment assignments contain service config only.
 func normalizeAppliedProjectIntegrations(c *ProjectConfiguration) error {
-	if len(c.Webhooks) > 32 {
-		return ErrProjectConfigurationInvalid
-	}
 	if c.Webhooks == nil {
 		c.Webhooks = map[string]ProjectWebhook{}
 	}

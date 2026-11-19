@@ -12,6 +12,25 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
+func TestIntegrationShareAndTeamAccessIncludeMoreThan32Services(t *testing.T) {
+	f := newServiceHTTPFixture(t)
+	services := []ServiceRecord{f.service}
+	for i := range 32 {
+		services = append(services, f.local(t, fmt.Sprintf("app-%02d", i), nil))
+	}
+	preview := f.preview(t, "many-services", services...)
+	share := f.share(t, preview.ID, "all-services", []byte("0123456789abcdefghijklmnopqrstuv"), services...)
+	if !slices.Equal(share.ServiceIDs, preview.ServiceIDs) || len(share.ServiceIDs) != 33 {
+		t.Fatalf("share has %d of %d preview services", len(share.ServiceIDs), len(preview.ServiceIDs))
+	}
+	enabled, err := f.database.SetPreviewTeamAccess(t.Context(), SetPreviewTeamAccessRequest{
+		PreviewID: preview.ID, TeamID: preview.TeamID, IdentityID: f.project.ActorID, Enabled: true,
+	}, f.now)
+	if err != nil || !enabled.TeamAccessEnabled || !slices.Equal(enabled.ServiceIDs, preview.ServiceIDs) {
+		t.Fatal("team access did not retain the preview's complete service set", err)
+	}
+}
+
 func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 	f := newServiceHTTPFixture(t)
 	database, now, service := f.database, f.now, f.service

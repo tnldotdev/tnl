@@ -563,8 +563,6 @@ class Client:
                     "sdk.configuration_invalid", "service facts contain only a supported protocol"
                 )
             self._services[name] = facts["protocol"]
-        if len(self._services) > 32:
-            raise TnlError("sdk.configuration_invalid", "select at most 32 services")
 
     def __repr__(self) -> str:
         return "<tnl client (private)>"

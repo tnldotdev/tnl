@@ -107,4 +107,4 @@ schemas:
     type: object
     additionalProperties: false
     properties:
-      services: { type: array, maxItems: 32, items: { type: string, maxLength: 63 } }
+      services: { type: array, items: { type: string, maxLength: 63 } }

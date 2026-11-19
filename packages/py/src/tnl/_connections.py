@@ -259,7 +259,7 @@ def _prepared(value: object, service: str) -> Connection:
         {"dev", "namespace", "services", "worktree", "oauth", "webhooks", "aliases"},
     )
     services = project.get("services")
-    if type(project.get("dev")) is not bool or not isinstance(services, dict) or len(services) > 32:
+    if type(project.get("dev")) is not bool or not isinstance(services, dict):
         raise _error("invalid")
     try:
         hostname(project.get("namespace"))

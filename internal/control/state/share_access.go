@@ -159,7 +159,7 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 		seen := map[string]bool{}
 		other := hosts[:0]
 		for _, host := range hosts {
-			if seen[host.CertificateHostname] || len(host.RunIds) == 0 || len(host.RunIds) > 256 {
+			if seen[host.CertificateHostname] || len(host.RunIds) == 0 {
 				return result, ErrShareStale
 			}
 			seen[host.CertificateHostname] = true

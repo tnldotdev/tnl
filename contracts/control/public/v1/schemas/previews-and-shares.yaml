@@ -64,7 +64,6 @@ schemas:
       service_ids:
         type: array
         minItems: 1
-        maxItems: 32
         uniqueItems: true
         items:
           $ref: "../openapi.yaml#/components/schemas/ServiceID"
@@ -118,7 +117,6 @@ schemas:
       service_ids:
         type: array
         minItems: 1
-        maxItems: 32
         uniqueItems: true
         items:
           $ref: "../openapi.yaml#/components/schemas/ServiceID"

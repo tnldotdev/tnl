@@ -50,9 +50,9 @@ func deploymentPublisherSession(ctx context.Context, flags scopedTeamFlags, proj
 
 func deploymentPublisherSetupBody(flags publisherSetupCommand) (controlv1.CreateDeploymentPublisherEnrollmentRequest, error) {
 	invalid := func() (controlv1.CreateDeploymentPublisherEnrollmentRequest, error) {
-		return controlv1.CreateDeploymentPublisherEnrollmentRequest{}, publisherCLIError("select --deployment and unique --service names, --members 1-256, and whole-second --expires-in from 1m to 24h; omit namespace, URL, and domain flags")
+		return controlv1.CreateDeploymentPublisherEnrollmentRequest{}, publisherCLIError("select --deployment and unique --service names, a positive 32-bit --members count, and whole-second --expires-in from 1m to 24h; omit namespace, URL, and domain flags")
 	}
-	if flags.Namespace || flags.URL != "" || flags.Domain != "" || len(flags.Services) < 1 || len(flags.Services) > 128 || flags.Members < 1 || flags.Members > 256 || flags.ExpiresIn < time.Minute || flags.ExpiresIn > 24*time.Hour || flags.ExpiresIn%time.Second != 0 {
+	if flags.Namespace || flags.URL != "" || flags.Domain != "" || len(flags.Services) < 1 || flags.Members < 1 || flags.Members > 1<<31-1 || flags.ExpiresIn < time.Minute || flags.ExpiresIn > 24*time.Hour || flags.ExpiresIn%time.Second != 0 {
 		return invalid()
 	}
 	seen := map[string]bool{}
@@ -161,7 +161,7 @@ func runDeploymentPublisherList(ctx context.Context, flags publisherListCommand,
 }
 
 func validateDeploymentPublisher(publisher controlv1.DeploymentPublisher, deployment controlv1.Deployment) error {
-	invalid := publisher.DeploymentId != deployment.Id || publisher.TeamId != deployment.TeamId || publisher.ProjectKey != deployment.ProjectKey || !opaqueid.Valid(publisher.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || publisher.SnapshotAt.IsZero() || len(publisher.Services) > 128
+	invalid := publisher.DeploymentId != deployment.Id || publisher.TeamId != deployment.TeamId || publisher.ProjectKey != deployment.ProjectKey || !opaqueid.Valid(publisher.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || publisher.SnapshotAt.IsZero()
 	for name, protocol := range publisher.Services {
 		invalid = invalid || !naming.ValidServiceName(name) || !protocol.Valid()
 	}

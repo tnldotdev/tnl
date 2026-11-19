@@ -10,7 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
-func TestIntegrationDeploymentCapacityExcludesDeletedHistory(t *testing.T) {
+func TestIntegrationLargeProjectPreservesDeploymentHistory(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "deployment_capacity_history")
 	ctx := t.Context()
 	if err := d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25600}}); err != nil {
@@ -33,7 +33,7 @@ func TestIntegrationDeploymentCapacityExcludesDeletedHistory(t *testing.T) {
 		r = selectedProjectRequest(r, fmt.Sprintf("deployment-%02d", index))
 		applied, err = d.ApplyProjectConfiguration(ctx, r)
 		if err != nil {
-			t.Fatal("could not fill live deployment capacity", index, err)
+			t.Fatal("could not apply deployment", index, err)
 		}
 		deployment, err := d.GetDeployment(ctx, scope, r.Deployment)
 		if err != nil {
@@ -53,17 +53,13 @@ func TestIntegrationDeploymentCapacityExcludesDeletedHistory(t *testing.T) {
 	r.ExpectedRevision--
 	replayed, err := d.ApplyProjectConfiguration(ctx, r)
 	if err != nil || !reflect.DeepEqual(replayed, applied) {
-		t.Fatal("apply retry consumed capacity or changed saved bindings", replayed, err)
+		t.Fatal("apply retry changed saved bindings", replayed, err)
 	}
 	r.ExpectedRevision = applied.Revision
 	excess := selectedProjectRequest(r, "excess")
 	excess.ExpectedRevision--
 	if _, err := d.ApplyProjectConfiguration(ctx, excess); !errors.Is(err, ErrProjectConfigurationStale) {
-		t.Fatal("capacity changed the stale apply revision fence", err)
-	}
-	excess.ExpectedRevision = applied.Revision
-	if _, err := d.ApplyProjectConfiguration(ctx, excess); !errors.Is(err, ErrProjectConfigurationInvalid) {
-		t.Fatal("apply accepted an excess live deployment", err)
+		t.Fatal("apply ignored the stale revision fence", err)
 	}
 	if err := d.DeleteDeployment(ctx, scope, saved[0].ID, saved[0].Revision, now); err != nil {
 		t.Fatal(err)
@@ -72,12 +68,12 @@ func TestIntegrationDeploymentCapacityExcludesDeletedHistory(t *testing.T) {
 	r = selectedProjectRequest(r, "fresh-applied")
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
-		t.Fatal("deleted desired history still consumed live deployment capacity", err)
+		t.Fatal("could not apply a new deployment after deleting another", err)
 	}
 	assertLiveCount(32)
 	replayed, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil || !reflect.DeepEqual(replayed, applied) {
-		t.Fatal("fresh apply retry changed saved state at capacity", replayed, err)
+		t.Fatal("fresh apply retry changed saved state", replayed, err)
 	}
 	r.ExpectedRevision = applied.Revision
 	if err := d.DeleteDeployment(ctx, scope, saved[1].ID, saved[1].Revision, now); err != nil {
@@ -89,17 +85,17 @@ func TestIntegrationDeploymentCapacityExcludesDeletedHistory(t *testing.T) {
 	}
 	created, err := d.CreateDeployment(ctx, request)
 	if err != nil {
-		t.Fatal("delete did not release management creation capacity", err)
+		t.Fatal("could not create a new deployment after deleting another", err)
 	}
 	assertLiveCount(32)
 	recovered, err := d.CreateDeployment(ctx, request)
 	if err != nil || !reflect.DeepEqual(recovered, created) {
-		t.Fatal("management retry consumed capacity or changed identity", recovered, err)
+		t.Fatal("management retry changed identity", recovered, err)
 	}
 	r = selectedProjectRequest(r, request.Name)
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
-		t.Fatal("applying an existing management-created deployment consumed capacity", err)
+		t.Fatal("could not apply an existing management-created deployment", err)
 	}
 	current, err := d.GetDeployment(ctx, scope, created.ID)
 	if err != nil || current.ID != created.ID || current.Services["db"].ID != created.Services["db"].ID {
@@ -107,15 +103,16 @@ func TestIntegrationDeploymentCapacityExcludesDeletedHistory(t *testing.T) {
 	}
 	r.ExpectedRevision = applied.Revision
 	excess = selectedProjectRequest(r, "excess")
-	if _, err := d.ApplyProjectConfiguration(ctx, excess); !errors.Is(err, ErrProjectConfigurationInvalid) {
-		t.Fatal("apply accepted an excess live deployment after history grew", err)
+	next, err := d.ApplyProjectConfiguration(ctx, excess)
+	if err != nil {
+		t.Fatal("could not apply a 33rd live deployment", err)
 	}
 	excessCreate := request
 	excessCreate.Name, excessCreate.IdempotencyKey = "excess-created", "excess-created"
-	if _, err := d.CreateDeployment(ctx, excessCreate); !errors.Is(err, ErrProjectConfigurationInvalid) {
-		t.Fatal("management creation accepted an excess live deployment", err)
+	if _, err := d.CreateDeployment(ctx, excessCreate); err != nil {
+		t.Fatal("could not create a 34th live deployment", err)
 	}
-	assertLiveCount(32)
+	assertLiveCount(34)
 	if err := d.DeleteDeployment(ctx, scope, current.ID, current.Revision, now); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +127,7 @@ func TestIntegrationDeploymentCapacityExcludesDeletedHistory(t *testing.T) {
 	if _, err := d.ApplyProjectConfiguration(ctx, historical); err == nil {
 		t.Fatal("historical apply resurrected a deleted deployment")
 	}
-	assertLiveCount(31)
+	assertLiveCount(33)
 	var owner string
 	if err := d.pool.QueryRow(ctx, `SELECT deployment_id FROM control.deployment_names
 		WHERE team_id=$1 AND project_key=$2 AND name=$3`, r.TeamID, r.ProjectKey, saved[0].Name).Scan(&owner); err != nil || owner != saved[0].ID {
@@ -140,12 +137,12 @@ func TestIntegrationDeploymentCapacityExcludesDeletedHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.Revision != applied.Revision {
-		t.Fatal("failed capacity or historical replay changed the project revision", row.Revision, applied.Revision)
+	if row.Revision != next.Revision {
+		t.Fatal("historical replay changed the project revision", row.Revision, next.Revision)
 	}
 	record, err := d.openAppliedProjectRecord(row)
-	if err != nil || len(record.Deployments) != 35 || !reflect.DeepEqual(record.Deployments["local"], local.Configuration) {
-		t.Fatal("live capacity changes discarded desired history or changed local input", len(record.Deployments), err)
+	if err != nil || len(record.Deployments) != 36 || !reflect.DeepEqual(record.Deployments["local"], local.Configuration) {
+		t.Fatal("larger project discarded desired history or changed local input", len(record.Deployments), err)
 	}
 	for _, name := range []string{saved[0].Name, saved[1].Name, created.Name} {
 		history, err := d.GetProjectConfiguration(ctx, r.TeamID, r.ProjectKey, r.ActorID, name)
@@ -155,7 +152,7 @@ func TestIntegrationDeploymentCapacityExcludesDeletedHistory(t *testing.T) {
 	}
 }
 
-func TestIntegrationDeploymentCapacityIncludesManagementCreatedSiblings(t *testing.T) {
+func TestIntegrationApplyWithManyManagementCreatedSiblings(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "deployment_capacity_management")
 	ctx := t.Context()
 	if err := d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, []tcpport.Range{{First: 25443, Last: 25600}}); err != nil {
@@ -179,24 +176,26 @@ func TestIntegrationDeploymentCapacityIncludesManagementCreatedSiblings(t *testi
 		request.Name = fmt.Sprintf("customer-%02d", index)
 		request.IdempotencyKey = request.Name
 		if _, err := d.CreateDeployment(ctx, request); err != nil {
-			t.Fatal("could not fill live deployment capacity", index, err)
+			t.Fatal("could not create deployment", index, err)
 		}
 	}
 	r.ExpectedRevision = applied.Revision
 	r = selectedProjectRequest(r, "excess")
-	if _, err := d.ApplyProjectConfiguration(ctx, r); !errors.Is(err, ErrProjectConfigurationInvalid) {
-		t.Error("apply ignored management-created siblings in live capacity", err)
+	next, err := d.ApplyProjectConfiguration(ctx, r)
+	if err != nil {
+		t.Fatal("could not apply another deployment with many management-created siblings", err)
 	}
 	request.Name, request.IdempotencyKey = "excess-created", "excess-created"
-	if _, err := d.CreateDeployment(ctx, request); !errors.Is(err, ErrProjectConfigurationInvalid) {
-		t.Error("management creation ignored live deployment capacity", err)
+	if _, err := d.CreateDeployment(ctx, request); err != nil {
+		t.Fatal("could not create another deployment", err)
 	}
 	deployments, err := d.ListDeployments(ctx, scope, "", 100)
-	if err != nil || len(deployments) != 32 {
-		t.Fatal("capacity rejection changed live deployments", len(deployments), err)
+	if err != nil || len(deployments) != 34 {
+		t.Fatal("did not retain all deployments", len(deployments), err)
 	}
 	local := selectedProjectRequest(r, "local")
+	local.ExpectedRevision = next.Revision
 	if _, err := d.ApplyProjectConfiguration(ctx, local); err != nil {
-		t.Fatal("local input consumed remote deployment capacity", err)
+		t.Fatal("could not apply local input", err)
 	}
 }

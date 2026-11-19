@@ -56,8 +56,7 @@
             "type": "string",
             "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
           },
-          "type": "object",
-          "maxProperties": 128
+          "type": "object"
         },
         "deployments": {
           "additionalProperties": {
@@ -324,7 +323,6 @@
                                 ]
                               },
                               "type": "object",
-                              "maxProperties": 32,
                               "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
@@ -596,7 +594,6 @@
                                 ]
                               },
                               "type": "object",
-                              "maxProperties": 32,
                               "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
@@ -871,7 +868,6 @@
                                 ]
                               },
                               "type": "object",
-                              "maxProperties": 32,
                               "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
@@ -1139,7 +1135,6 @@
                                 ]
                               },
                               "type": "object",
-                              "maxProperties": 32,
                               "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
@@ -1389,7 +1384,6 @@
                                 ]
                               },
                               "type": "object",
-                              "maxProperties": 32,
                               "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
@@ -1645,7 +1639,6 @@
                                 ]
                               },
                               "type": "object",
-                              "maxProperties": 32,
                               "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
@@ -1902,7 +1895,6 @@
                                 ]
                               },
                               "type": "object",
-                              "maxProperties": 32,
                               "description": "Mount another local HTTP service at a path on this HTTP service. Remote publisher assignments do not support path mounts."
                             }
                           },
@@ -1920,8 +1912,7 @@
                   "type": "string",
                   "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
                 },
-                "type": "object",
-                "maxProperties": 128
+                "type": "object"
               },
               "aws": false
             },
@@ -1932,8 +1923,7 @@
             "type": "string",
             "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
           },
-          "type": "object",
-          "maxProperties": 32
+          "type": "object"
         },
         "webhooks": {
           "additionalProperties": {
@@ -2005,8 +1995,7 @@
           "propertyNames": {
             "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
           },
-          "type": "object",
-          "maxProperties": 32
+          "type": "object"
         },
         "aliases": {
           "additionalProperties": {
@@ -2080,8 +2069,7 @@
           "propertyNames": {
             "pattern": "^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$"
           },
-          "type": "object",
-          "maxProperties": 32
+          "type": "object"
         },
         "workloads": {
           "additionalProperties": {
@@ -2099,7 +2087,6 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
                     "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
@@ -2313,7 +2300,6 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
                     "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
@@ -2398,7 +2384,6 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
                     "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
@@ -2481,7 +2466,6 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
                     "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
@@ -2571,7 +2555,6 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
                     "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
@@ -2652,7 +2635,6 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
                     "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
@@ -2740,7 +2722,6 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "maxItems": 32,
                     "minItems": 1,
                     "uniqueItems": true,
                     "description": "Exact bound service keys in the selected remote deployment; local services cannot be workload targets."
@@ -2982,7 +2963,7 @@
             "type": "integer"
           },
           "type": "object",
-          "description": "Override the publisher identity limit for a project (TEAM_ID/PROJECT_KEY=LIMIT). Defaults to 256 per project."
+          "description": "Set a publisher identity quota for a project (TEAM_ID/PROJECT_KEY=LIMIT). Omit to use no project quota."
         },
         "control_listen": {
           "type": "string",

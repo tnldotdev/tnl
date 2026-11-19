@@ -86,7 +86,7 @@ func deploymentTargets(flags deploymentTargetFlags) (map[string]controlv1.Deploy
 	invalid := func() error {
 		return failure.Wrap("select deployment targets", failure.InvalidTunnelFlags, errors.New("use unique --target SERVICE=ADDRESS entries; TLS settings must name a selected target"))
 	}
-	if len(flags.Target) < 1 || len(flags.Target) > 128 {
+	if len(flags.Target) < 1 {
 		return nil, invalid()
 	}
 	result := map[string]controlv1.DeploymentTarget{}

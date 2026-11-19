@@ -107,9 +107,6 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 		if r := s.HTTP.Readiness; r != nil && r.Path != "/" && !targetsyntax.ValidMountPrefix(r.Path) {
 			return ErrProjectConfigurationInvalid
 		}
-		if len(s.HTTP.Paths) > 32 {
-			return ErrProjectConfigurationInvalid
-		}
 		for prefix, mount := range s.HTTP.Paths {
 			if !targetsyntax.ValidMountPrefix(prefix) || !serviceName.MatchString(mount.Service) || mount.Service == key {
 				return ErrProjectConfigurationInvalid

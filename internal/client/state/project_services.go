@@ -7,7 +7,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
 )
 
-// KnownProjectServices returns bounded IDs previously published by this
+// KnownProjectServices returns IDs previously published by this
 // project/server, including services whose local tunnels have stopped.
 // these IDs select a fresh signed read; they do not prove current authority.
 func (d *Database) KnownProjectServices(ctx context.Context, project, server string) ([]string, error) {

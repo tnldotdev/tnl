@@ -11,11 +11,8 @@ export const deploymentTargetTlsSchema = z.strictObject({
 });
 
 export const createDeploymentPublisherEnrollmentRequestSchema = z.strictObject({
-  services: z
-    .array(z.string().regex(/^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$/))
-    .min(1)
-    .max(128),
-  max_members: z.int().gte(1).lte(256).optional().default(1),
+  services: z.array(z.string().regex(/^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$/)).min(1),
+  max_members: z.int().gte(1).lte(2147483647).optional().default(1),
   expires_in: z.int().gte(60).lte(86400).optional().default(600),
 });
 
@@ -137,7 +134,7 @@ export const deploymentPublisherEnrollmentSchema = z.strictObject({
   enrollment_key: z.string(),
   deployment_id: z.string(),
   expires_at: z.iso.datetime({ offset: true }),
-  max_members: z.int().gte(1).lte(256),
+  max_members: z.int().gte(1).lte(2147483647),
   services: z.record(z.string(), serviceProtocolSchema),
 });
 

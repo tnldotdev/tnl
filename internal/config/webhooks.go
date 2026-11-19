@@ -3,7 +3,6 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -55,9 +54,6 @@ func (w Webhook) DefinitionBytes() ([]byte, [32]byte, error) {
 // ValidateWebhooks checks the declared target and admission policy without
 // querying providers or publishing a URL.
 func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
-	if len(definitions) > 32 {
-		return errors.New("webhooks may contain at most 32 entries")
-	}
 	paths := make(map[string]string, len(definitions))
 	names := slices.Sorted(maps.Keys(definitions))
 	for _, name := range names {

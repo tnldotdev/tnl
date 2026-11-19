@@ -142,18 +142,16 @@ schemas:
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectConfiguration" }
   ProjectServiceDeclarations:
     type: object
-    maxProperties: 128
     propertyNames: { pattern: "^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$" }
     additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
   ProjectConfiguration:
     type: object
-    description: Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization. A project supports at most 256 active enrolled replicas across its deployments.
+    description: Normalized bindings for one selected deployment, at most 512 KiB encoded. Remote selections include settings and retain their encrypted publisher configuration; local selection omits settings, workloads, targets, readiness, mounts, and integration handlers. Logical declarations are sent separately. Local bindings allocate resources through source-bound worktree realization.
     additionalProperties: false
     required: [services, oauth, webhooks]
     properties:
       workloads:
         type: object
-        maxProperties: 32
         additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWorkload" }
       oauth:
         type: boolean
@@ -161,7 +159,6 @@ schemas:
         description: Publisher-only OAuth intent is not retained in shared configuration. Native clients send false.
       webhooks:
         type: object
-        maxProperties: 32
         additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ProjectWebhook" }
         description: Publisher-only webhook handler definitions are not retained in shared configuration. Native clients send an empty object.
       settings:
@@ -169,7 +166,6 @@ schemas:
       services:
         {
           type: object,
-          maxProperties: 128,
           additionalProperties:
             { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" },
         }
@@ -195,7 +191,6 @@ schemas:
       services:
         type: array
         minItems: 1
-        maxItems: 32
         uniqueItems: true
         items: { type: string }
       max_duration_seconds:
@@ -343,7 +338,6 @@ schemas:
           path: { type: string, minLength: 1, maxLength: 2048 }
       paths:
         type: object
-        maxProperties: 32
         additionalProperties:
           type: object
           additionalProperties: false

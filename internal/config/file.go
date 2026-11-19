@@ -41,9 +41,6 @@ func ValidateTNL(config TNL) error {
 	if config.Name != nil && !naming.ValidServiceName(*config.Name) {
 		return errors.New("name must be one lowercase DNS label beginning with a letter")
 	}
-	if len(config.Services) > 32 {
-		return errors.New("services may contain at most 32 entries")
-	}
 	deployment := SelectedDeployment(config)
 	if !naming.ValidServiceName(deployment) {
 		return errors.New("selected deployment must be a lowercase DNS label")
@@ -153,9 +150,6 @@ func ValidateTNL(config TNL) error {
 			return fmt.Errorf("services.%s.traffic: %w", name, err)
 		}
 		paths := ServicePaths(service)
-		if len(paths) > 32 {
-			return fmt.Errorf("services.%s.http.paths may contain at most 32 mounts", name)
-		}
 		prefixes := make([]string, 0, len(paths))
 		for prefix := range paths {
 			prefixes = append(prefixes, prefix)

@@ -153,9 +153,6 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 	if err = json.Unmarshal(data, &c); err != nil {
 		return c, "", err
 	}
-	if len(c.Services) > 128 {
-		return c, "", ErrProjectConfigurationInvalid
-	}
 	if c.Services == nil {
 		c.Services = map[string]ProjectServiceConfiguration{}
 	}
@@ -210,7 +207,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			r.ProjectLabel = identity.Label
 		}
 	}
-	if !naming.ValidProjectKey(r.ProjectKey) || !naming.ValidServiceName(r.Deployment) || r.ServiceDeclarations == nil || len(r.ServiceDeclarations) > 128 || r.SourceFingerprint != "" && !fingerprintPattern.MatchString(r.SourceFingerprint) || r.ExpectedRevision < 0 || r.ExpectedRevision == 1<<63-1 {
+	if !naming.ValidProjectKey(r.ProjectKey) || !naming.ValidServiceName(r.Deployment) || r.ServiceDeclarations == nil || r.SourceFingerprint != "" && !fingerprintPattern.MatchString(r.SourceFingerprint) || r.ExpectedRevision < 0 || r.ExpectedRevision == 1<<63-1 {
 		return result, ErrProjectConfigurationInvalid
 	}
 	for name, protocol := range r.ServiceDeclarations {
@@ -374,9 +371,6 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	}
 	if row.Revision != r.ExpectedRevision {
 		return result, ErrProjectConfigurationStale
-	}
-	if c.Settings != nil && !present && len(deployments) >= maxProjectDeployments {
-		return result, ErrProjectConfigurationInvalid
 	}
 	next := row.Revision + 1
 	if err = lockAppliedProjectPublications(ctx, tx, r.TeamID, r.ProjectKey); err != nil {
@@ -596,7 +590,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err != nil {
 		return result, err
 	}
-	if len(policies) > 32 || len(data) > 16<<20 {
+	if len(data) > 16<<20 {
 		return result, ErrProjectConfigurationInvalid
 	}
 	digest := sha256.Sum256(data)

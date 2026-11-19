@@ -293,7 +293,7 @@ WHERE service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
     AND (service.id=$2 OR EXISTS(
         SELECT 1 FROM control.preview_services included WHERE included.preview_id=$3::text
             AND included.service_id=service.id))
-GROUP BY service.id,service.certificate_hostname ORDER BY service.id LIMIT 32
+ GROUP BY service.id,service.certificate_hostname ORDER BY service.id
 `
 
 type ReadyServiceBrowserHostsParams struct {
@@ -455,7 +455,7 @@ SELECT s.team_id,s.guest_id,
              JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
                  AND signing.publisher_identity_id=run.publisher_identity_id
                  AND (grant_record.kind='service' OR signing.retired_at IS NULL))
-         ORDER BY run.run_number LIMIT 256)::text[] AS run_ids
+          ORDER BY run.run_number)::text[] AS run_ids
 FROM control.services s
 WHERE s.id=$3 AND s.protocol='http' AND s.enabled AND s.deleted_at IS NULL
 `

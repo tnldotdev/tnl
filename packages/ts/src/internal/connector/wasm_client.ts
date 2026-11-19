@@ -129,7 +129,6 @@ const optionsSchema = z
       .exactOptional(),
     services: z
       .record(serviceNameSchema, z.strictObject({ protocol: protocolSchema }))
-      .refine((value) => Object.keys(value).length <= 32)
       .exactOptional(),
     publisherStorage: z.custom<PublisherStorage>(isPublisherStorage).exactOptional(),
     controlUrl: z.string().min(1).max(1024).exactOptional(),

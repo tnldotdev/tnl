@@ -263,9 +263,6 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 				return ErrJobExists
 			}
 		}
-		if len(*jobs) >= 1024 {
-			return ErrScope
-		}
 		profile, err := r.database.Server(ctx, job.Server)
 		if err != nil {
 			return err
@@ -479,7 +476,7 @@ func (r *Registry) load(ctx context.Context) ([]Job, error) {
 		return nil, err
 	}
 	var jobs []Job
-	if httpjson.Decode(json.NewDecoder(bytes.NewReader(value)), &jobs) != nil || len(jobs) > 1024 {
+	if httpjson.Decode(json.NewDecoder(bytes.NewReader(value)), &jobs) != nil {
 		return nil, ErrUnsafeState
 	}
 	seen := map[string]bool{}
@@ -631,9 +628,6 @@ func (r *Registry) InstallConnector(ctx context.Context, job Job) error {
 				(*jobs)[i] = job
 				return nil
 			}
-		}
-		if len(*jobs) >= 1024 {
-			return ErrScope
 		}
 		job.Enabled, job.Revision, job.Status = true, 1, Status{State: JobStarting}
 		*jobs = append(*jobs, job)

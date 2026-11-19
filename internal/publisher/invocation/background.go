@@ -373,7 +373,7 @@ func SelectConfiguredPublisherCandidates(ctx context.Context, server string, pro
 	var selected authorityv1.PublisherEnrollmentResult
 	var key ed25519.PrivateKey
 	var savedService controlv1.Service
-	if profile == nil || len(ids) > 1024 {
+	if profile == nil {
 		return nil, selected, nil, savedService, installedjobs.ErrScope
 	}
 	seen := make(map[string]bool, len(ids))

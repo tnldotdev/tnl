@@ -43,7 +43,7 @@ type Config struct {
 	DatabaseURL   string `name:"database-url" env:"TNLD_DATABASE_URL" help:"Pooled PostgreSQL URL used by control and standalone."`
 	MetricsListen string `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
 
-	ProjectPublisherLimits map[string]int `name:"project-publisher-limit" env:"TNLD_PROJECT_PUBLISHER_LIMITS" help:"Override the publisher identity limit for a project (TEAM_ID/PROJECT_KEY=LIMIT). Defaults to 256 per project."`
+	ProjectPublisherLimits map[string]int `name:"project-publisher-limit" env:"TNLD_PROJECT_PUBLISHER_LIMITS" help:"Set a publisher identity quota for a project (TEAM_ID/PROJECT_KEY=LIMIT). Omit to use no project quota."`
 
 	ControlListen         string   `name:"control-listen" env:"TNLD_CONTROL_LISTEN" help:"Private HTTP backend for the deployment's control HTTPS proxy."`
 	ControlTrustedProxies []string `name:"control-trusted-proxies" env:"TNLD_CONTROL_TRUSTED_PROXIES" default:"127.0.0.1/32,::1/128" help:"Exact trusted control HTTPS proxy peer CIDRs."`
