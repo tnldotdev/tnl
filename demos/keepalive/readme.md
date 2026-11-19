@@ -18,7 +18,7 @@ visitor                 Cloudflare proxy                 host A
 [`src/worker.ts`](src/worker.ts) handles requests to `keepthisalive.com`.
 [`src/proxy.ts`](src/proxy.ts) fetches files from a browser host and checks
 their sizes and hashes against the release manifest. If it can't get a valid
-copy, it returns `503`.
+copy, it returns an empty `503` that browsers and caches must not store.
 
 ## adding a host
 
