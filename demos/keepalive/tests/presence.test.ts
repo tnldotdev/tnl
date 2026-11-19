@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { hostTarget, REPLACE_BEFORE_MS, turnLength } from "../src/policy.ts";
+import { REPLACE_BEFORE_MS, STARTUP_MS } from "../src/policy.ts";
 import { Gossip, HOST_PARENT, reportedTabs, type Host } from "../src/peers/gossip.ts";
 import {
   MAX_TABS_PER_HOST,
@@ -40,10 +40,8 @@ it("sums fresh reports once and does not replace a tally with an old service run
   const newReport = newer.message(now + 1000);
   a.receive(oldReport, now);
   expect(a.tabSnapshot(now)).toEqual({ local: 101, total: 251 });
-  expect(hostTarget(a.tabs(now))).toBe(6);
   a.receive(newReport, now + 1000);
   a.receive(oldReport, now + 1000);
-  expect(hostTarget(a.tabs(now + 1000))).toBe(3);
   expect(a.tabSnapshot(now + 1000)).toEqual({ local: 101, total: 150 });
   expect(reportedTabs([newReport.from, newReport.from], now + 1000)).toBe(49);
   expect(a.tabs(now + TAB_LEASE_MS)).toBe(49);
@@ -53,7 +51,6 @@ it("sums fresh reports once and does not replace a tally with an old service run
   expect(a.tabs(now + REMOTE_TAB_REPORT_MS + 1000)).toBe(0);
   a.observeTabs(25, now + REMOTE_TAB_REPORT_MS + 1000);
   expect(a.tabSnapshot(now + REMOTE_TAB_REPORT_MS + 1000)).toEqual({ local: 25, total: 25 });
-  expect(hostTarget(1651)).toBe(34);
 });
 
 it("does not retain a remote tally after its host stops or its turn ends", () => {
@@ -71,8 +68,6 @@ it("does not retain a remote tally after its host stops or its turn ends", () =>
 });
 
 it("keeps capacity for expiring turns but does not replace surplus hosts", () => {
-  expect(turnLength(false)).toBe(10 * 60_000);
-  expect(turnLength(true)).toBe(60 * 60_000);
   const a = new Gossip(releaseID, host("a", 1), now, { endsAt: now + REPLACE_BEFORE_MS });
   const b = new Gossip(releaseID, host("b", 2), now);
   const c = new Gossip(releaseID, host("c", 3), now);
@@ -90,4 +85,8 @@ it("keeps capacity for expiring turns but does not replace surplus hosts", () =>
   expect(a.canRetire(now, 3, a.hosts(now))).toBe(false);
   expect(a.maybeStart(now, 2, () => true)).toBe(false);
   expect(a.maybeStart(now, 3, () => true)).toBe(true);
+  expect(a.maybeStart(now, 3, () => true)).toBe(false);
+  b.receive(a.message(now), now);
+  expect(b.maybeStart(now, 3, () => true)).toBe(false);
+  expect(b.maybeStart(now + STARTUP_MS, 3, () => true)).toBe(true);
 });

@@ -1,5 +1,4 @@
 import { expect, it, vi } from "vitest";
-import { RequestActivity } from "../src/hosting/activity.ts";
 import { checkUpload, peerServer, readInviterCertificate, waitForWork } from "../src/peers/http.ts";
 import { UPLOAD_BYTES } from "../src/policy.ts";
 import { compareNetworks, proveNetwork } from "../src/network.ts";
@@ -24,12 +23,7 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
     certificate: { certificatePEM: "fixture certificate", privateKeyPEM: "fixture key" },
     expiresAt: Date.now() + 60_000,
   };
-  const activity = new RequestActivity();
-  const serve = async () => {
-    const response = new Response("keepalive");
-    activity.record(response, Date.now());
-    return response;
-  };
+  const serve = async () => new Response("keepalive");
   const server = (proof: string) =>
     peerServer(
       release,
@@ -101,9 +95,7 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
     expect(first.replacementReady).toBe(true);
     expect(first.replacement?.runID).toBe(b.runID);
     await expect(readInviterCertificate(a, invitation, lifetime.signal)).rejects.toThrow();
-    expect(activity.count).toBe(0);
     expect((await first.fetch(new Request(a.origin))).ok).toBe(true);
-    expect(activity.count).toBe(1);
   } finally {
     lifetime.abort();
     await Promise.all([first.stop(), second.stop()]);

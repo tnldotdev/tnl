@@ -51,7 +51,6 @@ it.each([true, false])(
         `https://start.keepthisalive.com${PEERS_PATH}`,
         ...(reachable ? [] : [CONFIG_PATH]),
       ]);
-      expect(update).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

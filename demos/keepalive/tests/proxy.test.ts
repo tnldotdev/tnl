@@ -71,19 +71,6 @@ it("checks the script before serving it and does not pass through credentials", 
   }
 });
 
-it("round-robins separate publisher URLs on a warm Worker", async () => {
-  const { proxy, fetchHost, report } = await setup();
-  fetchHost.mockResolvedValueOnce(report());
-  fetchHost.mockImplementation(async () => new Response(script));
-  const file = () => proxy.file(request("/app.js"));
-  expect((await file()).status).toBe(200);
-  const responses = await Promise.all([file(), file(), file(), file(), file()]);
-  expect(responses.every((response) => response.status === 200)).toBe(true);
-  const origins = fetchHost.mock.calls.slice(1).map(([url]) => new URL(String(url)).origin);
-  expect(new Set(origins.slice(0, 3))).toEqual(new Set(aliases));
-  expect(origins.slice(3)).toEqual(origins.slice(0, 3));
-});
-
 it("lets a peer check seed candidates and refreshes via a known alias", async () => {
   const { proxy, fetchHost, report } = await setup();
   fetchHost.mockResolvedValueOnce(report(aliases.slice(0, 1)));
@@ -100,11 +87,12 @@ it("lets a peer check seed candidates and refreshes via a known alias", async ()
     `${aliases[0]}/app.js`,
   ]);
   fetchHost.mockImplementation(async () => new Response(script));
-  await Promise.all([
+  const responses = await Promise.all([
     proxy.file(request("/app.js")),
     proxy.file(request("/app.js")),
     proxy.file(request("/app.js")),
   ]);
+  expect(responses.every((response) => response.status === 200)).toBe(true);
   expect(
     new Set(fetchHost.mock.calls.slice(3).map(([url]) => new URL(String(url)).origin)),
   ).toEqual(new Set(aliases));

@@ -203,17 +203,11 @@ before installing it. The shared key is exposed to browsers that host; stopping
 a tab does not revoke material it already copied. Use a dedicated subtree and
 do not share this certificate with other services.
 
-## checking the page
+## checking behavior
 
-After `task js:keepalive:build`, run `mise exec -- node demos/keepalive/tests/preview.ts`
-from the repository root with Chrome installed. It captures the built page
-in `dist/screenshots/ui/` with simulated peers and hosting worker messages.
-`task js:keepalive:handoff` instead uses an empty test deployment, checks
-that successive service runs advertise the bootstrap certificate after the
-previous host stops, and waits for a real volunteer turn to reach its
-replacement window.
+Run `mise exec -- task js:keepalive:test` for verified proxy serving,
+peer propagation, certificate access, and publication lifecycle checks.
 
-For propagation measurements without a deployment, run
-`mise exec -- node --max-old-space-size=8192 demos/keepalive/tests/membership-simulation.ts --proxy-sample --field-latency`.
-It measures what browser peers learn under modeled churn, partitions, and
-suspension. It doesn't open tunnels or issue certificates.
+`task js:keepalive:handoff` uses Chrome and an empty test deployment to check
+real browser handoffs, certificate reuse, final-host outage, and restart.
+It waits for a volunteer turn's replacement window.
