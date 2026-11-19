@@ -97,7 +97,7 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 	}
 	for _, invalid := range []string{
 		`{}`, `{"services":[]}`, `{"services":["db","db"]}`, `{"services":["stage"]}`,
-		`{"services":["db"],"max_members":0}`, `{"services":["db"],"max_members":257}`,
+		`{"services":["db"],"max_members":0}`, `{"services":["db"],"max_members":-1}`,
 		`{"services":["db"],"expires_in":59}`, `{"services":["db"],"expires_in":9223372036854775807}`,
 		`{"services":["db"],"targets":{"db":"private.invalid:5432"}}`,
 		`{"services":["db"],"capabilities":["manage","connect"]}`,
@@ -107,6 +107,12 @@ func TestIntegrationDeploymentPublisherHTTPContracts(t *testing.T) {
 		if err != nil || response.StatusCode() != 400 || bytes.Contains(response.Body, []byte("private.invalid")) {
 			t.Fatal("invalid setup expanded authority or leaked input", invalid, err)
 		}
+	}
+	largeEnrollment, err := api.CreateDeploymentPublisherEnrollmentWithResponse(ctx, "example", "production",
+		&controlv1.CreateDeploymentPublisherEnrollmentParams{TeamId: team, IdempotencyKey: "large"},
+		controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"db"}, MaxMembers: new(257)}, auth)
+	if err != nil || largeEnrollment.JSON201 == nil || largeEnrollment.JSON201.MaxMembers != 257 || len(largeEnrollment.JSON201.Services) != 1 || largeEnrollment.JSON201.Services["db"] != controlv1.Postgres {
+		t.Fatal("large enrollment lost its explicit allowance or captured service scope", err)
 	}
 	browserEnrollment, err := api.CreateDeploymentPublisherEnrollmentWithResponse(ctx, "example", "production",
 		&controlv1.CreateDeploymentPublisherEnrollmentParams{TeamId: team, IdempotencyKey: "browser"},
