@@ -279,7 +279,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         {!hosting && hosts > 0 && (
           <p>
             about {visitors} {visitors === 1 ? "tab" : "tabs"} · {hosts}{" "}
-            {hosts === 1 ? "host" : "hosts"} recently seen
+            {hosts === 1 ? "host" : "hosts"}
           </p>
         )}
         <Hosts
