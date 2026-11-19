@@ -30,6 +30,7 @@ host A                              volunteer B
    |                                      |
    |<-- wait for an invitation -----------|
    |-- "start" -------------------------->|
+   |<-- upload check ---------------------|
    |<-- download the site ----------------|
    |-- files ---------------------------->|
    |<-- I'm hosting too ------------------|
@@ -37,16 +38,26 @@ host A                              volunteer B
 
 [`src/hosting/tab.ts`](src/hosting/tab.ts) checks the downloaded files and
 hands them to a Web Worker. The worker serves them from memory through tnl.
-The invitation tells B when to try; tnl grants permission to publish.
+Before B publishes, it uploads 1 MiB to A within three seconds, with one
+retry. This is a screen for the connection between them, not a guarantee of
+serving performance. The bootstrap browser skips the check. The invitation
+tells B when to try; tnl grants permission to publish.
 
-Hosts aim for three running copies. Each has its own waiting list and allows
-one pending start at a time. They tell each other when they're starting a tab,
-but simultaneous invitations can still take them above three.
+Hosts aim for one running copy per 50 live tabs, rounded up, with a floor of
+three. Tabs send a short heartbeat to one host every 20 seconds. That host
+expires silent tabs after a minute and gossips its own count, not a global
+total. Counts are approximate, especially when a tab changes counting hosts.
+Each host allows one pending start at a time. Simultaneous invitations can
+still take them above the target: it is not a global admission limit.
 
-A turn lasts up to 30 minutes. The host starts looking for a replacement with
-two minutes left and stops at zero even if nobody takes over. To hand off
+An ordinary turn lasts up to ten minutes. A bootstrap turn lasts up to an
+hour. With about two minutes left, a host looks for a replacement if the
+pool needs it, and stops at zero even if nobody takes over. To hand off
 early, it checks that the replacement answers at its own address. The proxy
 won't approve a volunteer with the same public IP as the host inviting it.
+
+The page shows recently observed hosts by name. Its handoff history
+distinguishes sharing a verified copy from replacing a departing host.
 
 For the first host, `start.keepthisalive.com` supplies a permanent copy.
 That page stays available when no hosts remain. The main site never falls

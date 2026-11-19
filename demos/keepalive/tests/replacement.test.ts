@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
-import { peerServer, waitForWork } from "../src/hosting/peer-http.ts";
+import { checkUpload, peerServer, waitForWork } from "../src/hosting/peer-http.ts";
+import { UPLOAD_BYTES } from "../src/hosting/policy.ts";
 import { compareNetworks, proveNetwork } from "../src/network.ts";
 import { HOST_PARENT, type Host } from "../src/peers.ts";
 
@@ -29,7 +30,9 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
   ]);
   const directCheck = vi.fn();
   vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
-    const request = new Request(url, init);
+    const headers = new Headers(init.headers);
+    headers.set("Origin", proxyOrigin);
+    const request = new Request(url, { ...init, headers });
     const target = hosts.get(url.origin);
     if (target !== undefined) {
       if (url.origin === b.origin && request.method === "GET") directCheck();
@@ -50,18 +53,30 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
     await expect(waitForWork(a, aProof, lifetime.signal)).rejects.toThrow();
     await expect(waitForWork(a, `${bProof.slice(0, -1)}x`, lifetime.signal)).rejects.toThrow();
     const invitation = await waitForWork(a, bProof, lifetime.signal);
-    expect(invitation).not.toBeNull();
+    if (invitation === null) throw new Error("Expected a hosting invitation.");
     expect(first.replacementReady).toBe(false);
+    expect(await checkUpload(a, crypto.randomUUID(), lifetime.signal)).toBe(false);
+    const short = await first.fetch(
+      new Request(`${a.origin}/__keepalive/upload`, {
+        method: "POST",
+        body: new Uint8Array(UPLOAD_BYTES - 1),
+        headers: { Origin: proxyOrigin, "X-Keepalive-Ready": invitation },
+      }),
+    );
+    expect(short.status).toBe(422);
+    expect(first.replacementReady).toBe(false);
+    expect(await checkUpload(a, invitation, lifetime.signal)).toBe(true);
     await second.start(
       b,
       Date.now(),
       a,
-      invitation ?? undefined,
+      invitation,
       () => {},
       () => false,
     );
     expect(directCheck).toHaveBeenCalledOnce();
     expect(first.replacementReady).toBe(true);
+    expect(first.replacement?.runID).toBe(b.runID);
   } finally {
     lifetime.abort();
     await Promise.all([first.stop(), second.stop()]);

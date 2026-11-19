@@ -12,19 +12,22 @@ import {
   hostOrigin,
   hostSchema,
   parseMessage,
+  hostDetailsSchema,
   sameRun,
+  type Change,
   type GossipMessage,
   type Host,
 } from "../peers.ts";
-import { readJSON } from "../release.ts";
+import { heartbeatSchema, PRESENCE_PATH, TabLeases } from "../presence.ts";
+import { readBytes, readJSON } from "../release.ts";
 import { invitationSchema } from "./config.ts";
+import { hostTarget, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "./policy.ts";
 
 const CHECK_PATH = "/__keepalive/check";
 const WAIT_PATH = "/__keepalive/wait";
-const TARGET = 3;
+const UPLOAD_PATH = "/__keepalive/upload";
 const MAX_WAITING = 16;
 const WAIT_MS = 20_000;
-const INVITATION_MS = 90_000;
 const READY_HEADER = "X-Keepalive-Ready";
 const checkSchema = z.strictObject({ target: hostSchema, message: z.unknown() });
 
@@ -53,6 +56,26 @@ export async function waitForWork(host: Host, proof: string, signal: AbortSignal
   return invitationSchema.nullable().parse(await readJSON(response, 64));
 }
 
+export async function checkUpload(host: Host, invitation: string, signal: AbortSignal) {
+  const bytes = new Uint8Array(UPLOAD_BYTES);
+  for (let offset = 0; offset < bytes.length; offset += 65_536) {
+    crypto.getRandomValues(bytes.subarray(offset, offset + 65_536));
+  }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    signal.throwIfAborted();
+    const response = await fetch(new URL(UPLOAD_PATH, host.origin), {
+      ...options(signal, UPLOAD_MS),
+      method: "POST",
+      headers: { [READY_HEADER]: invitation },
+      body: bytes,
+    }).catch(() => undefined);
+    if (response?.status === 204) return true;
+    await response?.body?.cancel().catch(() => {});
+  }
+  signal.throwIfAborted();
+  return false;
+}
+
 function options(signal: AbortSignal | undefined, timeout: number): RequestInit {
   const deadline = AbortSignal.timeout(timeout);
   return {
@@ -73,13 +96,29 @@ export function peerServer(
   const app = new Hono();
   const allowed = (origin: string) => (allowedOrigins.includes(origin) ? origin : undefined);
   const waiting = new Set<(invitation: string) => void>();
+  const leases = new TabLeases();
   let gossip: Gossip | undefined;
-  let promotion: { invitation: string; endsAt: number; replacing: boolean } | undefined;
+  let promotion:
+    | {
+        invitation: string;
+        endsAt: number;
+        replacing: boolean;
+        uploadPassed: boolean;
+        uploads: number;
+        reading: boolean;
+      }
+    | undefined;
   let acceptedInvitation: string | undefined;
-  let replacementReady = false;
+  let replacement: Change | undefined;
   let checking = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let networkChecks = 0;
+
+  function reportMessage(now: number) {
+    if (gossip === undefined) throw new Error("No peer view yet.");
+    gossip.observeTabs(leases.count(now), now);
+    return gossip.message(now);
+  }
 
   async function send(
     target: Host,
@@ -103,7 +142,14 @@ export function peerServer(
     return undefined;
   }
 
-  app.use("*", cors({ origin: allowed, allowMethods: ["GET", "POST", "OPTIONS"] }));
+  app.use(
+    "*",
+    cors({
+      origin: allowed,
+      allowMethods: ["GET", "POST", "OPTIONS"],
+      allowHeaders: ["Content-Type", READY_HEADER],
+    }),
+  );
   app.use("*", async (c, next) => {
     await next();
     c.header("Cache-Control", "no-store");
@@ -113,10 +159,49 @@ export function peerServer(
     if (gossip === undefined || signal.aborted) return c.body(null, 503);
     const invitation = c.req.header(READY_HEADER);
     if (invitation !== undefined && invitation !== acceptedInvitation) return c.body(null, 403);
-    return c.json(gossip.message(Date.now()));
+    return c.json(reportMessage(Date.now()));
+  });
+  app.post(PRESENCE_PATH, async (c) => {
+    if (!allowed(c.req.header("Origin") ?? "")) return c.body(null, 403);
+    if (gossip === undefined || signal.aborted) return c.body(null, 503);
+    const deadline = AbortSignal.any([signal, c.req.raw.signal, AbortSignal.timeout(3_000)]);
+    const heartbeat = heartbeatSchema.safeParse(
+      await readJSON(new Response(c.req.raw.body), 192, deadline).catch(() => undefined),
+    );
+    if (!heartbeat.success || heartbeat.data.releaseID !== releaseID) return c.body(null, 400);
+    const now = Date.now();
+    if (!leases.touch(heartbeat.data.tab, now)) return c.body(null, 503);
+    return c.json(reportMessage(now));
+  });
+  app.post(UPLOAD_PATH, async (c) => {
+    const pending = promotion;
+    if (
+      pending === undefined ||
+      pending.endsAt <= Date.now() ||
+      signal.aborted ||
+      pending.invitation !== c.req.header(READY_HEADER) ||
+      !allowed(c.req.header("Origin") ?? "")
+    )
+      return c.body(null, 403);
+    if (pending.uploadPassed) return c.body(null, 204);
+    if (pending.reading || pending.uploads >= 2 || c.req.raw.body === null)
+      return c.body(null, 409);
+    pending.reading = true;
+    pending.uploads++;
+    try {
+      const deadline = AbortSignal.any([signal, c.req.raw.signal, AbortSignal.timeout(UPLOAD_MS)]);
+      await readBytes(new Response(c.req.raw.body), UPLOAD_BYTES, deadline, UPLOAD_BYTES);
+      if (promotion !== pending || pending.endsAt <= Date.now()) return c.body(null, 409);
+      pending.uploadPassed = true;
+      return c.body(null, 204);
+    } catch {
+      return c.body(null, 422);
+    } finally {
+      pending.reading = false;
+    }
   });
   app.post(PEERS_PATH, async (c) => {
-    if (gossip === undefined) return c.body(null, 503);
+    if (gossip === undefined || signal.aborted) return c.body(null, 503);
     const body = await readJSON(
       new Response(c.req.raw.body),
       MAX_MESSAGE_BYTES,
@@ -124,35 +209,42 @@ export function peerServer(
     ).catch(() => undefined);
     const message = parseMessage(body, releaseID, Date.now());
     if (message === undefined) return c.body(null, 400);
-    gossip.receive(message, Date.now());
     const pending = promotion;
-    if (
-      pending !== undefined &&
-      pending.endsAt > Date.now() &&
-      pending.invitation === c.req.header(READY_HEADER) &&
-      !message.from.left
-    ) {
+    const invitation = c.req.header(READY_HEADER);
+    if (invitation !== undefined) {
+      if (
+        !pending?.uploadPassed ||
+        pending.endsAt <= Date.now() ||
+        pending.invitation !== invitation ||
+        message.from.left ||
+        pending.reading
+      )
+        return c.body(null, 403);
+      pending.reading = true;
+      const reply = await readPeers(message.from.origin, releaseID, signal, invitation).catch(
+        () => undefined,
+      );
+      pending.reading = false;
+      if (
+        promotion !== pending ||
+        pending.endsAt <= Date.now() ||
+        reply === undefined ||
+        reply.from.left ||
+        !sameRun(reply.from, message.from) ||
+        signal.aborted
+      )
+        return c.body(null, 409);
       promotion = undefined;
       gossip.finishStart();
+      gossip.receive(reply, Date.now());
       if (pending.replacing) {
-        const reply = await readPeers(
-          message.from.origin,
-          releaseID,
-          signal,
-          pending.invitation,
-        ).catch(() => undefined);
-        if (
-          reply !== undefined &&
-          !reply.from.left &&
-          sameRun(reply.from, message.from) &&
-          !signal.aborted
-        ) {
-          gossip.receive(reply, Date.now());
-          replacementReady = true;
-        }
+        replacement = reply.from;
+        gossip.update({ replacedBy: replacement.runID });
       }
+    } else {
+      gossip.receive(message, Date.now());
     }
-    return c.json(gossip.message(Date.now()));
+    return c.json(reportMessage(Date.now()));
   });
   app.post(CHECK_PATH, async (c) => {
     if (gossip === undefined || checking) return c.body(null, 503);
@@ -223,7 +315,10 @@ export function peerServer(
   return {
     fetch: async (request: Request) => app.fetch(request),
     get replacementReady() {
-      return replacementReady;
+      return replacement !== undefined;
+    },
+    get replacement() {
+      return replacement;
     },
     async start(
       host: Host,
@@ -232,31 +327,44 @@ export function peerServer(
       invitation: string | undefined,
       report: (gossip: Gossip) => void,
       replacing: () => boolean,
+      details?: z.infer<typeof hostDetailsSchema>,
     ) {
-      const peers = new Gossip(releaseID, host, startedAt);
+      const peers = new Gossip(releaseID, host, startedAt, details);
       gossip = peers;
       acceptedInvitation = invitation;
       if (firstHostToContact !== undefined) {
         // a report from before startup doesn't tell us whether a host stayed up.
         const reply = await send(
           firstHostToContact,
-          peers.message(Date.now()),
+          reportMessage(Date.now()),
           undefined,
           signal,
           invitation,
         ).catch(() => undefined);
         if (reply !== undefined && !reply.from.left) peers.receive(reply, Date.now());
+        else if (invitation !== undefined)
+          throw new Error("The inviting host did not confirm this turn.");
       }
       signal.throwIfAborted();
       const tick = () => {
         const now = Date.now();
+        const departing = replacing();
+        peers.update({ departing });
+        peers.observeTabs(leases.count(now), now);
         if (promotion !== undefined && promotion.endsAt <= now) promotion = undefined;
         if (promotion === undefined)
-          peers.maybeStart(now, replacing() ? TARGET + 1 : TARGET, () => {
+          peers.maybeStart(now, hostTarget(peers.tabs(now)), () => {
             const next = waiting.values().next().value;
             if (next === undefined) return false;
             const invitation = crypto.randomUUID();
-            promotion = { invitation, endsAt: now + INVITATION_MS, replacing: replacing() };
+            promotion = {
+              invitation,
+              endsAt: now + STARTUP_MS,
+              replacing: departing,
+              uploadPassed: false,
+              uploads: 0,
+              reading: false,
+            };
             next(invitation);
             return true;
           });

@@ -1,4 +1,7 @@
 import * as z from "zod";
+import { hostNameSchema } from "./host-names.ts";
+import { BOOTSTRAP_TURN_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "./hosting/policy.ts";
+import { MAX_TABS_PER_HOST, TAB_LEASE_MS } from "./presence.ts";
 
 export const HOST_PARENT = "hosts.keepthisalive.com";
 export const SHARED_HOST = `https://prod.${HOST_PARENT}`;
@@ -10,7 +13,6 @@ export const PROBE_MS = 2_000;
 export const SUSPECT_MS = 15_000;
 export const QUIET_MS = 60_000;
 export const KEEP_MS = 5 * 60_000;
-const START_MS = 90_000;
 const COOLDOWN_MS = 30_000;
 const EARLIEST_START = Date.UTC(2026, 0, 1);
 export const releaseIDSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -35,6 +37,18 @@ const changeSchema = hostSchema.extend({
   seq: z.int().positive(),
   left: z.boolean(),
   startingUntil: z.int().nonnegative(),
+  name: hostNameSchema.optional(),
+  endsAt: z.int().positive().optional(),
+  departing: z.boolean().optional(),
+  tabs: z
+    .strictObject({
+      count: z.int().min(0).max(MAX_TABS_PER_HOST),
+      observedAt: z.int().positive(),
+    })
+    .optional(),
+  copyFrom: runIDSchema.optional(),
+  invitedBy: runIDSchema.optional(),
+  replacedBy: runIDSchema.optional(),
 });
 const startTimeSchema = z.int().min(EARLIEST_START);
 const messageSchema = z.strictObject({
@@ -44,7 +58,16 @@ const messageSchema = z.strictObject({
   changes: z.array(changeSchema).max(MAX_CHANGES),
 });
 export type Host = Readonly<z.infer<typeof hostSchema>>;
-type Change = Readonly<z.infer<typeof changeSchema>>;
+export type Change = Readonly<z.infer<typeof changeSchema>>;
+export const hostDetailsSchema = changeSchema.pick({
+  name: true,
+  endsAt: true,
+  departing: true,
+  copyFrom: true,
+  invitedBy: true,
+  replacedBy: true,
+});
+type HostDetails = z.infer<typeof hostDetailsSchema>;
 export type GossipMessage = Readonly<z.infer<typeof messageSchema>>;
 
 export type PeerTransport = (
@@ -81,7 +104,10 @@ export function parseMessage(
   )
     return;
   const valid = (change: Change) =>
-    hostOrigin(change.origin, parent) && change.startingUntil <= now + START_MS + 30_000;
+    hostOrigin(change.origin, parent) &&
+    change.startingUntil <= now + STARTUP_MS + 30_000 &&
+    (change.endsAt === undefined || change.endsAt <= now + BOOTSTRAP_TURN_MS + 30_000) &&
+    (change.tabs === undefined || change.tabs.observedAt <= now + 30_000);
   if (valid(parsed.data.from) && parsed.data.changes.every(valid)) return parsed.data;
   return undefined;
 }
@@ -114,9 +140,9 @@ export class Gossip {
   #round = 0;
   #probing = false;
 
-  constructor(releaseID: string, host: Host, startedAt: number) {
+  constructor(releaseID: string, host: Host, startedAt: number, details?: HostDetails) {
     this.releaseID = releaseID;
-    this.#self = { ...host, seq: 1, left: false, startingUntil: 0 };
+    this.#self = { ...host, ...details, seq: 1, left: false, startingUntil: 0 };
     this.#startedAt = startedAt;
   }
 
@@ -128,17 +154,31 @@ export class Gossip {
     return this.#peers.size;
   }
 
+  update(details: HostDetails) {
+    this.#self = { ...this.#self, ...details };
+  }
+
+  observeTabs(count: number, now: number) {
+    this.#self = { ...this.#self, tabs: { count, observedAt: now } };
+  }
+
+  roster(now: number) {
+    const live = [this.#self, ...this.hosts(now)];
+    const former = [...this.#peers.values()]
+      .filter(({ change }) => change.left)
+      .map(({ change }) => change)
+      .slice(-8);
+    return [...live, ...former];
+  }
+
+  tabs(now: number) {
+    return reportedTabs([this.#self, ...this.hosts(now)], now);
+  }
+
   receive(message: GossipMessage, now: number) {
     if (message.releaseID !== this.releaseID) return;
     this.#startedAt = Math.min(this.#startedAt, message.startedAt);
     this.#forgetOldPeers(now);
-    if (
-      !message.from.left &&
-      !this.#peers.has(message.from.publisherID) &&
-      message.from.publisherID !== this.#self.publisherID
-    ) {
-      this.finishStart();
-    }
     // consider the sender first in case the peer list is almost full.
     for (const change of [message.from, ...message.changes]) {
       this.#rememberChange(change, change === message.from, now);
@@ -180,7 +220,7 @@ export class Gossip {
     return this.message(now);
   }
 
-  hosts(now: number): readonly Host[] {
+  hosts(now: number): readonly Change[] {
     return this.#countedPeers(now).map(({ change }) => change);
   }
 
@@ -196,6 +236,7 @@ export class Gossip {
     return [...this.#peers.values()].filter(({ change, heardAt, suspectAt }) => {
       if (
         change.left ||
+        (change.endsAt !== undefined && change.endsAt <= now) ||
         now - heardAt >= QUIET_MS ||
         (suspectAt !== undefined && now - suspectAt >= SUSPECT_MS) ||
         origins.has(change.origin)
@@ -255,18 +296,45 @@ export class Gossip {
     }
   }
 
-  maybeStart(now: number, target: number, offer: () => boolean): boolean {
+  readyBeyondWindow(now: number) {
+    const cutoff = now + REPLACE_BEFORE_MS;
+    return [this.#self, ...this.hosts(now)].filter(
+      ({ endsAt, departing, left }) =>
+        !left && !departing && (endsAt === undefined || endsAt > cutoff),
+    ).length;
+  }
+
+  maybeStart(now: number, target: number, offer: () => boolean, random = Math.random): boolean {
     if (this.#self.left || now < this.#nextStart || now < this.#self.startingUntil) return false;
     const peers = this.#countedPeers(now);
     const starting = peers.filter(({ change }) => change.startingUntil > now).length;
-    const hostsIncludingThisTab = 1 + peers.length;
-    if (hostsIncludingThisTab + starting >= target || !offer()) return false;
-    this.#self = { ...this.#self, startingUntil: now + START_MS };
-    this.#nextStart = now + COOLDOWN_MS;
+    if (this.readyBeyondWindow(now) + starting >= target || !offer()) return false;
+    this.#self = { ...this.#self, startingUntil: now + STARTUP_MS };
+    this.#nextStart = now + COOLDOWN_MS + Math.floor(random() * 5_000);
     return true;
   }
 
   finishStart() {
     this.#self = { ...this.#self, startingUntil: 0 };
   }
+}
+
+export function reportedTabs(changes: readonly Change[], now: number) {
+  const seen = new Set<string>();
+  let tabs = 0;
+  for (const { publisherID, origin, left, endsAt, tabs: tally } of changes) {
+    if (
+      left ||
+      (endsAt !== undefined && endsAt <= now) ||
+      seen.has(publisherID) ||
+      seen.has(origin) ||
+      tally === undefined ||
+      now - tally.observedAt >= TAB_LEASE_MS
+    )
+      continue;
+    seen.add(publisherID);
+    seen.add(origin);
+    tabs += tally.count;
+  }
+  return tabs;
 }

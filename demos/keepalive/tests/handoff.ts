@@ -116,7 +116,7 @@ try {
     samples.every(({ status }) => status === 200),
     "A visitor failed during the handoff.",
   );
-  await first.getByRole("status").getByText("This tab stopped hosting.").waitFor();
+  await first.getByRole("status").getByText("is serving now. Thanks for hosting.").waitFor();
   const third = await join();
   assert.notEqual(third.sender, second.sender, "The first host supplied both copies.");
   const session = await second.page.context().newCDPSession(second.page);

@@ -56,3 +56,17 @@ footer {
   color: #595959;
   font-size: 0.875rem;
 }
+
+.host-details {
+  margin-block: 1rem;
+}
+
+.host-details summary {
+  cursor: pointer;
+}
+
+.host-roster {
+  list-style: none;
+  padding: 0;
+  overflow-wrap: anywhere;
+}

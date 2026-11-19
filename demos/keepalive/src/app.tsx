@@ -1,26 +1,115 @@
 import "./validation.ts";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { HostingUnavailable, hostTab, type HostState } from "./hosting/tab.ts";
+import { turnLabel } from "./hosting/policy.ts";
+import { HostingUnavailable, UploadTooSlow, hostTab, type HostState } from "./hosting/tab.ts";
+import { reportedTabs, type Change } from "./peers.ts";
+import { observeVisitors } from "./visitor.ts";
 
 const labels = {
   copying: "Downloading files to serve visitors…",
   waiting: "Waiting to host…",
+  checking: "Checking your upload…",
   starting: "Starting to host…",
   hosting: "This tab is hosting.",
   stopping: "Stopping…",
 } as const;
 
-function age(since: number) {
-  const minutes = Math.floor(Math.max(0, Date.now() - since) / 60_000);
+function countdown(endsAt: number, now: number) {
+  const seconds = Math.max(0, Math.ceil((endsAt - now) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function age(since: number, now: number) {
+  const minutes = Math.floor(Math.max(0, now - since) / 60_000);
   if (minutes < 1) return "less than a minute";
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-function countdown(endsAt: number, now: number) {
-  const seconds = Math.max(0, Math.ceil((endsAt - now) / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+type RosterEntry = Pick<
+  Change,
+  | "runID"
+  | "name"
+  | "left"
+  | "endsAt"
+  | "departing"
+  | "startingUntil"
+  | "copyFrom"
+  | "invitedBy"
+  | "replacedBy"
+>;
+
+function rosterLabels(roster: readonly RosterEntry[], self?: string) {
+  return new Map(
+    roster.map(({ name, runID }) => [
+      runID,
+      runID === self
+        ? `${name ?? "this tab"} (you)`
+        : name && roster.some((peer) => peer.name === name && peer.runID !== runID)
+          ? `${name}-${runID.slice(-4)}`
+          : (name ?? "unnamed host"),
+    ]),
+  );
+}
+
+function HostRoster({
+  roster,
+  now,
+  self,
+  files,
+  startedAt,
+}: {
+  roster: readonly RosterEntry[];
+  now: number;
+  self: string | undefined;
+  files: number | undefined;
+  startedAt: number | undefined;
+}) {
+  const names = rosterLabels(roster, self);
+  const live = roster.filter((peer) => !peer.left && (peer.endsAt ?? Infinity) > now);
+  const edges = roster
+    .flatMap((peer) => [
+      ...(peer.copyFrom && names.has(peer.copyFrom)
+        ? [{ from: peer.copyFrom, to: peer.runID, kind: "shared a copy" }]
+        : []),
+      ...(peer.invitedBy && peer.invitedBy !== peer.copyFrom && names.has(peer.invitedBy)
+        ? [{ from: peer.invitedBy, to: peer.runID, kind: "invited" }]
+        : []),
+      ...(peer.replacedBy && names.has(peer.replacedBy)
+        ? [{ from: peer.runID, to: peer.replacedBy, kind: "handed off" }]
+        : []),
+    ])
+    .slice(-12);
+  if (live.length === 0) return null;
+  return (
+    <details class="host-details">
+      <summary>hosts and handoffs</summary>
+      <ul class="host-roster">
+        {live.slice(0, 12).map((peer) => (
+          <li key={peer.runID}>
+            <span aria-hidden="true">+- </span>
+            {names.get(peer.runID)} · {peer.departing ? "leaving" : "hosting"}
+            {peer.endsAt === undefined ? "" : ` · ${countdown(peer.endsAt, now)}`}
+            {peer.startingUntil > now && " · inviting"}
+          </li>
+        ))}
+      </ul>
+      {edges.length > 0 && (
+        <ul class="host-roster">
+          {edges.map(({ from, to, kind }) => (
+            <li key={`${from}:${to}:${kind}`}>
+              {names.get(from)} <span aria-hidden="true">--&gt;</span> {names.get(to)}
+              {" · "}
+              {kind}
+            </li>
+          ))}
+        </ul>
+      )}
+      {files !== undefined && <p>{files} files served by this tab</p>}
+      {startedAt !== undefined && <p>experiment age: {age(startedAt, now)}</p>}
+    </details>
+  );
 }
 
 function App({ bootstrap }: { bootstrap: boolean }) {
@@ -29,13 +118,28 @@ function App({ bootstrap }: { bootstrap: boolean }) {
   const [replacing, setReplacing] = useState(false);
   const [message, setMessage] = useState("");
   const [now, setNow] = useState(Date.now);
+  const [observed, setObserved] = useState<Change[]>([]);
+  const label = turnLabel(bootstrap);
   const endsAt = host?.type === "hosting" ? host.endsAt : undefined;
   useEffect(() => {
-    if (endsAt === undefined) return;
-    const timer = setInterval(() => setNow(Date.now()), 250);
+    if (endsAt === undefined && observed.length === 0) return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
     setNow(Date.now());
     return () => clearInterval(timer);
-  }, [endsAt]);
+  }, [endsAt, observed.length === 0]);
+  useEffect(() => {
+    const lifetime = new AbortController();
+    void observeVisitors(lifetime.signal, setObserved);
+    return () => lifetime.abort();
+  }, []);
+  const hosting = host?.type === "hosting" ? host : undefined;
+  const roster = hosting?.roster ?? observed;
+  const hosts =
+    hosting?.hosts ??
+    observed.filter((peer) => !peer.left && (peer.endsAt ?? Infinity) > now).length;
+  const visitors = hosting?.tabs ?? reportedTabs(observed, now);
+  const copyFrom = roster.find((peer) => peer.runID === hosting?.runID)?.copyFrom;
+  const copyName = copyFrom && rosterLabels(roster).get(copyFrom);
 
   function start() {
     if (lifetime !== undefined) return;
@@ -51,15 +155,23 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       setHost(next);
     })
       .then(
-        ({ expired }) =>
-          setMessage(expired ? "Your 30-minute turn is over." : "This tab stopped hosting."),
+        ({ expired, replacement }) =>
+          setMessage(
+            replacement
+              ? `${replacement} is serving now. Thanks for hosting.`
+              : expired
+                ? `Your turn is over (${label}).`
+                : "This tab stopped hosting.",
+          ),
         (error: unknown) =>
           setMessage(
             stop.signal.aborted
               ? "This tab stopped."
               : error instanceof HostingUnavailable
                 ? "Hosting isn't available right now. Try again later."
-                : "This tab couldn't host the site. Try again.",
+                : error instanceof UploadTooSlow
+                  ? "This connection isn't fast enough to host right now."
+                  : "This tab couldn't host the site. Try again.",
           ),
       )
       .finally(() => {
@@ -76,14 +188,13 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       {bootstrap ? (
         <p>
           Start a browser host for <a href="https://keepthisalive.com">keepthisalive.com</a>. Keep
-          this tab open to serve the site. Each turn lasts up to 30 minutes.
+          this tab open to serve the site. A bootstrap turn lasts up to {label}.
         </p>
       ) : (
         <>
           <p>This site runs in people's browsers.</p>
           <p>
-            Keep this tab open and it'll host when needed, for up to 30 minutes. You can stop
-            anytime.
+            Keep this tab open and it'll host when needed, for up to {label}. You can stop anytime.
           </p>
         </>
       )}
@@ -92,15 +203,21 @@ function App({ bootstrap }: { bootstrap: boolean }) {
           {host === undefined ? message || "You can help keep it online." : labels[host.type]}
         </p>
         {host?.type === "copying" && <CopyProgress received={host.received} total={host.total} />}
-        {host?.type === "hosting" && (
-          <ul>
-            <li>hosting for {age(host.since)}</li>
-            <li>hosting ends in {countdown(host.endsAt, Math.max(now, host.since))}</li>
-            <li>{host.filesServed} files served by this tab</li>
-            <li>about {host.hosts} hosts seen</li>
-            <li>experiment age: {age(host.startedAt)}</li>
-          </ul>
+        {hosting && <p>{countdown(hosting.endsAt, Math.max(now, hosting.since))} remaining</p>}
+        {hosts > 0 && (
+          <p>
+            about {visitors} {visitors === 1 ? "tab" : "tabs"} · {hosts}{" "}
+            {hosts === 1 ? "host" : "hosts"} recently seen
+          </p>
         )}
+        {copyName && <p>your copy came from {copyName}</p>}
+        <HostRoster
+          roster={roster}
+          now={now}
+          self={hosting?.runID}
+          files={hosting?.filesServed}
+          startedAt={hosting?.startedAt}
+        />
       </section>
       {lifetime === undefined ? (
         <button type="button" onClick={start}>

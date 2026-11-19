@@ -4,8 +4,7 @@ import { httpsOriginSchema, releaseIDSchema } from "../peers.ts";
 
 export const CONFIG_PATH = "/__keepalive/config";
 export const CREDENTIALS_PATH = "/__keepalive/credentials";
-export const HOST_TURN_MS = 30 * 60_000;
-export const REPLACE_BEFORE_MS = 2 * 60_000;
+
 export const invitationSchema = z.uuid();
 export const credentialRequest = z.strictObject({
   releaseID: releaseIDSchema,

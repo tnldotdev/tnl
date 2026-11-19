@@ -7,8 +7,8 @@ export const networkProof = z.string().regex(/^[a-f0-9]{64}\.\d{13}\.[a-f0-9]{64
 const comparison = z.strictObject({ host: networkProof, volunteer: networkProof });
 const encoder = new TextEncoder();
 const algorithm = { name: "HMAC", hash: "SHA-256" };
-// allow time for startup as well as the 30-minute hosting turn.
-const NETWORK_PROOF_MS = 40 * 60_000;
+// cover bootstrap startup and its hour-long turn.
+const NETWORK_PROOF_MS = 70 * 60_000;
 
 const importKey = (secret: string) =>
   crypto.subtle.importKey("raw", encoder.encode(secret), algorithm, false, ["sign", "verify"]);

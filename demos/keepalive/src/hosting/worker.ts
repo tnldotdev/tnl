@@ -1,7 +1,8 @@
 import "../validation.ts";
 import { WASM_PATH, parseRelease, readJSON } from "../release.ts";
 import { serveRelease } from "../serving.ts";
-import { CREDENTIALS_PATH, HOST_TURN_MS, REPLACE_BEFORE_MS, enrollmentKey } from "./config.ts";
+import { CREDENTIALS_PATH, enrollmentKey } from "./config.ts";
+import { hostTarget, REPLACE_BEFORE_MS, turnLength } from "./policy.ts";
 import { hostCommand, type HostStart, type HostUpdate } from "./messages.ts";
 import { peerServer, readPeers } from "./peer-http.ts";
 import { startPublisher } from "./publish.ts";
@@ -11,6 +12,7 @@ const { signal } = lifetime;
 const emit = (update: HostUpdate) => globalThis.postMessage(update);
 let started = false;
 let replacing = false;
+const replacementJitter = Math.floor(Math.random() * 5_000);
 
 globalThis.addEventListener("message", ({ data }: MessageEvent<unknown>) => {
   const message = hostCommand.safeParse(data);
@@ -84,8 +86,12 @@ async function host(command: HostStart) {
     );
     const { host } = running;
     const since = Date.now();
-    endsAt = since + HOST_TURN_MS;
-    stopTimer = setTimeout(endTurn, HOST_TURN_MS);
+    if (since >= command.startupEndsAt) throw new Error("The hosting invitation expired.");
+    const duration = turnLength(command.bootstrap);
+    endsAt = since + duration;
+    stopTimer = setTimeout(endTurn, duration);
+    const departing = () =>
+      replacing || Date.now() >= endsAt - REPLACE_BEFORE_MS + replacementJitter;
     let nextDiscovery = since + 30_000;
     await peers.start(
       host,
@@ -95,7 +101,6 @@ async function host(command: HostStart) {
       (gossip) => {
         const now = Date.now();
         if (now >= endsAt) return endTurn();
-        if (now >= endsAt - REPLACE_BEFORE_MS) replacing = true;
         const hosts = gossip.hosts(now);
         if (now >= nextDiscovery) {
           nextDiscovery = now + 30_000;
@@ -105,19 +110,39 @@ async function host(command: HostStart) {
             })
             .catch(() => {});
         }
-        if (replacing && peers?.replacementReady) lifetime.abort();
+        if (
+          departing() &&
+          (peers?.replacementReady ||
+            (replacing && gossip.readyBeyondWindow(now) >= hostTarget(gossip.tabs(now))))
+        ) {
+          lifetime.abort();
+          return;
+        }
         emit({
           type: "hosting",
           since,
           endsAt,
-          replacing,
+          replacing: departing(),
           filesServed,
           hosts: hosts.length + 1,
           startedAt: gossip.startedAt,
           origin: host.origin,
+          runID: host.runID,
+          tabs: gossip.tabs(now),
+          roster: [...gossip.roster(now)].slice(0, 257),
         });
       },
-      () => replacing,
+      departing,
+      {
+        name: command.name,
+        endsAt,
+        ...(command.invitation && command.firstHostToContact
+          ? {
+              copyFrom: command.firstHostToContact.runID,
+              invitedBy: command.firstHostToContact.runID,
+            }
+          : {}),
+      },
     );
     await running.wait();
     failed = !signal.aborted;
@@ -132,7 +157,11 @@ async function host(command: HostStart) {
     } catch {
       failed = true;
     }
-    emit(failed ? { type: "failed" } : { type: "stopped", expired });
+    emit(
+      failed
+        ? { type: "failed" }
+        : { type: "stopped", expired, replacement: peers?.replacement?.name },
+    );
   }
 }
 

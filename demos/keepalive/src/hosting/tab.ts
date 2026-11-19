@@ -1,4 +1,5 @@
 import { NETWORK_PROOF_PATH, networkProof } from "../network.ts";
+import { browserHostName } from "../host-names.ts";
 import type { Host } from "../peers.ts";
 import {
   ARTIFACT_PREFIX,
@@ -13,14 +14,16 @@ import {
 } from "../release.ts";
 import { CONFIG_PATH, hostingConfig } from "./config.ts";
 import { hostUpdate, type HostStart, type HostUpdate } from "./messages.ts";
-import { readPeers, waitForWork } from "./peer-http.ts";
+import { checkUpload, readPeers, waitForWork } from "./peer-http.ts";
+import { STARTUP_MS } from "./policy.ts";
 
 export type HostState =
-  | { type: "waiting" | "starting" | "stopping" }
+  | { type: "waiting" | "checking" | "starting" | "stopping" }
   | { type: "copying"; received: number; total: number }
   | Extract<HostUpdate, { type: "hosting" }>;
 
 export class HostingUnavailable extends Error {}
+export class UploadTooSlow extends Error {}
 
 async function waitForInvitation(releaseID: string, signal: AbortSignal) {
   for (;;) {
@@ -59,14 +62,13 @@ async function copySite(
   let verification = 0;
   update({ type: "copying", received, total });
   for (const asset of release.assets) {
-    const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
     const response = await fetch(source + asset.path, {
       cache: "no-store",
       credentials: "omit",
       redirect: "error",
-      signal: deadline,
+      signal,
     });
-    const bytes = await readBytes(response, asset.size, deadline, asset.size, (bytes) => {
+    const bytes = await readBytes(response, asset.size, signal, asset.size, (bytes) => {
       if (performance.now() - lastUpdate < 100 && received + bytes !== total) return;
       lastUpdate = performance.now();
       update({ type: "copying", received: received + bytes, total });
@@ -121,11 +123,17 @@ export async function hostTab(
     invitation = selected.invitation;
     source = selected.host.origin;
   }
-  const config = bootstrapConfig ?? (await getHostingConfig(signal));
-  const files = await copySite(release, source, signal, update);
+  const startupEndsAt = Date.now() + STARTUP_MS - 2_000;
+  const preparing = AbortSignal.any([signal, AbortSignal.timeout(startupEndsAt - Date.now())]);
+  if (invitation !== undefined && firstHostToContact !== undefined) {
+    update({ type: "checking" });
+    if (!(await checkUpload(firstHostToContact, invitation, preparing))) throw new UploadTooSlow();
+  }
+  const config = bootstrapConfig ?? (await getHostingConfig(preparing));
+  const files = await copySite(release, source, preparing, update);
   const code = files.get(WORKER_PATH);
   if (code === undefined) throw new Error("The copy is missing the hosting code.");
-  signal.throwIfAborted();
+  preparing.throwIfAborted();
   update({ type: "starting" });
   const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
   const worker = new Worker(url, { type: "module", name: "keepalive" });
@@ -137,6 +145,9 @@ export async function hostTab(
         release,
         files,
         config,
+        bootstrap,
+        startupEndsAt,
+        name: browserHostName(),
         firstHostToContact,
         invitation,
         pageOrigin: location.origin,
@@ -158,23 +169,29 @@ function runWorker(
   replace: AbortSignal,
   update: (state: HostState) => void,
 ) {
-  return new Promise<{ expired: boolean }>((resolve, reject) => {
+  return new Promise<{ expired: boolean; replacement: string | undefined }>((resolve, reject) => {
     const started = performance.now();
     let startupMeasured = false;
     let stopTimer: ReturnType<typeof setTimeout> | undefined;
+    let startupExpired = false;
+    const startupError = new Error("This tab took too long to start.");
     const startup = setTimeout(
-      () => finish(new Error("This tab took too long to start.")),
-      120_000,
+      () => {
+        startupExpired = true;
+        if (stopTimer === undefined) stop();
+      },
+      Math.max(0, start.startupEndsAt - Date.now()),
     );
-    function finish(error?: Error, expired = false) {
+    function finish(error?: Error, expired = false, replacement?: string) {
       clearTimeout(startup);
       clearTimeout(stopTimer);
       signal.removeEventListener("abort", stop);
       replace.removeEventListener("abort", replaceHost);
-      if (error === undefined) resolve({ expired });
+      if (error === undefined) resolve({ expired, replacement });
       else reject(error);
     }
     function stop() {
+      if (stopTimer !== undefined) return;
       update({ type: "stopping" });
       worker.postMessage({ type: "stop" });
       stopTimer = setTimeout(() => finish(new Error("This tab did not stop in time.")), 15_000);
@@ -189,8 +206,13 @@ function runWorker(
       const message = hostUpdate.safeParse(data);
       if (!message.success) return;
       if (message.data.type === "failed") finish(new Error("This tab could not host the site."));
-      if (message.data.type === "stopped") finish(undefined, message.data.expired);
-      if (message.data.type === "hosting" && !signal.aborted) {
+      if (message.data.type === "stopped")
+        finish(
+          startupExpired ? startupError : undefined,
+          message.data.expired,
+          message.data.replacement,
+        );
+      if (message.data.type === "hosting" && !signal.aborted && !startupExpired) {
         if (!startupMeasured) {
           startupMeasured = true;
           performance.measure("keepalive startup", { start: started });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { STARTUP_MS } from "../src/hosting/policy.ts";
 import {
   Gossip,
   HOST_PARENT,
@@ -140,7 +141,7 @@ describe("gossip", () => {
     expect(a.maybeStart(net.clock(), 3, () => true)).toBe(false);
     net.exchange(a, b);
     expect(b.maybeStart(net.clock(), 3, () => true)).toBe(false);
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < Math.ceil(STARTUP_MS / 10_000); i++) {
       net.advance(10_000);
       net.exchange(a, b);
     }
