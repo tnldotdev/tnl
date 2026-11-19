@@ -142,7 +142,9 @@ export function peerServer(
   let acceptedInvitation: string | undefined;
   let replacement: Change | undefined;
   let checking = false;
-  let timer: ReturnType<typeof setInterval> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const probing = new AbortController();
+  let probe: Promise<void> | undefined;
   let networkChecks = 0;
   let pendingCertificateProof: { donor: Host; nonce: string; answered: boolean } | undefined;
   let checkingCertificate = false;
@@ -226,6 +228,7 @@ export function peerServer(
       startedAt: gossip.startedAt,
       tabs: gossip.tabSnapshot(now, live).total,
       hosts: live.length + 1,
+      saturated: gossip.saturated(now),
       fallback: hints,
     });
   });
@@ -241,22 +244,28 @@ export function peerServer(
       signal.aborted ||
       exportCertificate === undefined ||
       !pending?.uploadPassed ||
+      pending.reading ||
       pending.endsAt <= Date.now() ||
       pending.invitation !== c.req.header(READY_HEADER) ||
       !allowed(c.req.header("Origin") ?? "")
     )
       return c.body(null, 403);
     const deadline = AbortSignal.any([signal, c.req.raw.signal, AbortSignal.timeout(3_000)]);
-    const bundle = await exportCertificate(deadline).catch(() => undefined);
-    if (
-      deadline.aborted ||
-      promotion !== pending ||
-      pending.endsAt <= Date.now() ||
-      bundle === undefined ||
-      bundle.expiresAt <= Date.now()
-    )
-      return c.body(null, 503);
-    return c.json({ bundle, knownHosts: gossip.hosts(Date.now()).length + 1 });
+    pending.reading = true;
+    try {
+      const bundle = await exportCertificate(deadline).catch(() => undefined);
+      if (
+        deadline.aborted ||
+        promotion !== pending ||
+        pending.endsAt <= Date.now() ||
+        bundle === undefined ||
+        bundle.expiresAt <= Date.now()
+      )
+        return c.body(null, 503);
+      return c.json({ bundle, knownHosts: gossip.hosts(Date.now()).length + 1 });
+    } finally {
+      pending.reading = false;
+    }
   });
   app.post(CERTIFICATE_PROOF_PATH, async (c) => {
     const pending = pendingCertificateProof;
@@ -537,6 +546,7 @@ export function peerServer(
       }
       signal.throwIfAborted();
       const tick = () => {
+        if (signal.aborted || probing.signal.aborted) return;
         const now = Date.now();
         const departing = replacing();
         peers.update({ departing });
@@ -558,14 +568,25 @@ export function peerServer(
             next(invitation);
             return true;
           });
-        void peers.probe(Date.now, Math.random, send);
+        if (probe === undefined) {
+          const operation = AbortSignal.any([signal, probing.signal]);
+          probe = peers
+            .probe(Date.now, Math.random, (target, message, via) =>
+              send(target, message, via, operation),
+            )
+            .finally(() => {
+              probe = undefined;
+            });
+        }
         report(peers);
+        if (!signal.aborted) timer = setTimeout(tick, PROBE_MS + Math.random() * 1_000);
       };
       tick();
-      timer = setInterval(tick, PROBE_MS + Math.random() * 1000);
     },
     async stop() {
-      clearInterval(timer);
+      clearTimeout(timer);
+      probing.abort();
+      await probe;
       if (gossip === undefined) return;
       const peers = gossip.hosts(Date.now()).slice(0, 3);
       const message = gossip.leave(Date.now());

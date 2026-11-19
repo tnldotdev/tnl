@@ -8,12 +8,15 @@ export const HOST_PARENT = "hosts.keepthisalive.com";
 export const SHARED_HOST = `https://prod.${HOST_PARENT}`;
 export const PEERS_PATH = "/__keepalive/peers";
 export const MAX_MESSAGE_BYTES = 24 * 1024;
-export const MAX_PEERS = 256;
+export const MAX_PEERS = 8_192;
 export const MAX_CHANGES = 24;
 export const PROBE_MS = 2_000;
 export const SUSPECT_MS = 15_000;
-export const QUIET_MS = 60_000;
 export const KEEP_MS = 5 * 60_000;
+const PRIORITY_CHANGES = 8;
+const PRIORITY_SENDS = 3;
+const FRESH_CHANGES = 8;
+const FRESH_QUEUE_LIMIT = 128;
 const COOLDOWN_MS = 30_000;
 const EARLIEST_START = Date.UTC(2026, 0, 1);
 export const releaseIDSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -36,6 +39,7 @@ export const hostSchema = z.object({
 });
 const changeSchema = hostSchema.extend({
   seq: z.int().positive(),
+  reportedAt: z.int().positive(),
   left: z.boolean(),
   startingUntil: z.int().nonnegative(),
   name: hostNameSchema.optional(),
@@ -104,6 +108,7 @@ export function parseMessage(
     return;
   const valid = (change: Change) =>
     hostOrigin(change.origin, parent) &&
+    change.reportedAt <= now + 30_000 &&
     change.startingUntil <= now + STARTUP_MS + 30_000 &&
     (change.endsAt === undefined || change.endsAt <= now + BOOTSTRAP_TURN_MS + 30_000) &&
     (change.tabs === undefined || change.tabs.observedAt <= now + 30_000);
@@ -124,7 +129,23 @@ export function hostIdentity({ origin, publisherID, runID, runNumber }: Host): H
   return { origin, publisherID, runID, runNumber };
 }
 
-type Seen = { change: Change; heardAt: number; suspectAt?: number };
+type Seen = { change: Change; slot: number; suspectAt?: number };
+
+function recordDeadline(change: Change) {
+  return (
+    (change.left ? change.reportedAt : Math.max(change.reportedAt, change.endsAt ?? 0)) + KEEP_MS
+  );
+}
+
+function importantChange(next: Change, previous: Change) {
+  return (
+    !sameRun(next, previous) ||
+    next.left !== previous.left ||
+    next.startingUntil !== previous.startingUntil ||
+    next.departing !== previous.departing ||
+    next.certificate?.fingerprint !== previous.certificate?.fingerprint
+  );
+}
 
 function isNewerChange(next: Change, current: Change): boolean {
   if (next.runNumber !== current.runNumber) {
@@ -137,15 +158,27 @@ function isNewerChange(next: Change, current: Change): boolean {
 export class Gossip {
   readonly releaseID: string;
   readonly #peers = new Map<string, Seen>();
+  readonly #slots: Seen[] = [];
+  readonly #priority = new Map<string, number>();
+  readonly #fresh = new Set<string>();
+  #rotation = 0;
   #self: Change;
   #startedAt: number;
   #nextStart = 0;
-  #round = 0;
+  #nextPrune = Infinity;
+  #saturatedUntil = 0;
   #probing = false;
 
   constructor(releaseID: string, host: Host, startedAt: number, details?: HostDetails) {
     this.releaseID = releaseID;
-    this.#self = { ...host, ...details, seq: 1, left: false, startingUntil: 0 };
+    this.#self = {
+      ...host,
+      ...details,
+      seq: 1,
+      reportedAt: startedAt,
+      left: false,
+      startingUntil: 0,
+    };
     this.#startedAt = startedAt;
   }
 
@@ -159,6 +192,10 @@ export class Gossip {
 
   get size() {
     return this.#peers.size;
+  }
+
+  saturated(now: number) {
+    return this.#saturatedUntil > now;
   }
 
   update(details: HostDetails) {
@@ -185,6 +222,16 @@ export class Gossip {
     };
   }
 
+  canRetire(now: number, target: number, hosts: readonly Change[]) {
+    if (this.saturated(now) || this.readyBeyondWindow(now, hosts) < target) return false;
+    // don't call a host surplus when most peers' tab counts are too old to use.
+    return (
+      hosts.filter(({ tabs }) => tabs !== undefined && now - tabs.observedAt < TAB_LEASE_MS)
+        .length >=
+      hosts.length * 0.9
+    );
+  }
+
   receive(message: GossipMessage, now: number) {
     if (message.releaseID !== this.releaseID) return;
     this.#startedAt = Math.min(this.#startedAt, message.startedAt);
@@ -199,34 +246,97 @@ export class Gossip {
     if (change.publisherID === this.#self.publisherID || change.origin === this.#self.origin) {
       return;
     }
+    if (recordDeadline(change) <= now) return;
     const previous = this.#peers.get(change.publisherID);
-    if (previous !== undefined && !isNewerChange(change, previous.change)) return;
-    if (previous === undefined && this.#peers.size >= MAX_PEERS) return;
-
-    // hearing about a known run can update its report, but not when it last replied.
-    if (!fromSender && previous !== undefined && sameRun(previous.change, change)) {
-      this.#peers.set(change.publisherID, { ...previous, change });
-    } else {
-      this.#peers.set(change.publisherID, { change, heardAt: now });
+    if (previous !== undefined && !isNewerChange(change, previous.change)) {
+      if (
+        fromSender &&
+        previous.suspectAt !== undefined &&
+        !previous.change.left &&
+        !change.left &&
+        change.seq >= previous.change.seq &&
+        sameRun(change, previous.change)
+      ) {
+        delete previous.suspectAt;
+        this.#prioritize(change.publisherID);
+      }
+      return;
+    }
+    if (previous === undefined && this.#peers.size >= MAX_PEERS) {
+      this.#saturatedUntil = now + KEEP_MS;
+      return;
+    }
+    const suspectAt =
+      previous === undefined || !sameRun(change, previous.change) ? undefined : previous.suspectAt;
+    // an older forwarded report can't undo a failed probe; a fresh report
+    // after the grace period can show the host is serving another browser.
+    const recovered =
+      suspectAt !== undefined && (fromSender || change.reportedAt >= suspectAt + SUSPECT_MS);
+    const slot = previous?.slot ?? this.#slots.length;
+    const entry =
+      suspectAt !== undefined && !recovered ? { change, slot, suspectAt } : { change, slot };
+    this.#peers.set(change.publisherID, entry);
+    this.#slots[slot] = entry;
+    this.#nextPrune = Math.min(this.#nextPrune, recordDeadline(change));
+    if (previous === undefined || recovered || importantChange(change, previous.change))
+      this.#prioritize(change.publisherID);
+    else if (now - change.reportedAt < TAB_LEASE_MS) {
+      // send recent updates as well as cycling through the older reports.
+      this.#fresh.delete(change.publisherID);
+      this.#fresh.add(change.publisherID);
+      const oldest = this.#fresh.values().next();
+      if (this.#fresh.size > FRESH_QUEUE_LIMIT && !oldest.done) this.#fresh.delete(oldest.value);
     }
   }
 
   message(now: number): GossipMessage {
     this.#forgetOldPeers(now);
-    if (!this.#self.left) this.#self = { ...this.#self, seq: this.#self.seq + 1 };
-    const records = [...this.#peers.values()];
-    // rotate through small groups so a peer can repair a missed change over time.
+    if (!this.#self.left) this.#self = { ...this.#self, seq: this.#self.seq + 1, reportedAt: now };
+    const selected = new Set<string>();
     const changes: Change[] = [];
-    for (let index = 0; index < Math.min(MAX_CHANGES, records.length); index++) {
-      const peer = records[(this.#round + index) % records.length];
-      if (peer !== undefined) changes.push(peer.change);
+    const count = Math.min(PRIORITY_CHANGES, this.#priority.size);
+    for (let i = 0; i < count; i++) {
+      const next = this.#priority.entries().next();
+      if (next.done) break;
+      const [id, remaining] = next.value;
+      const peer = this.#peers.get(id);
+      this.#priority.delete(id);
+      if (peer === undefined) continue;
+      selected.add(id);
+      changes.push(peer.change);
+      if (remaining > 1) this.#priority.set(id, remaining - 1);
     }
-    this.#round += changes.length;
+    let fresh = 0;
+    for (const id of this.#fresh) {
+      if (fresh >= FRESH_CHANGES) break;
+      this.#fresh.delete(id);
+      const peer = this.#peers.get(id);
+      if (peer === undefined || selected.has(id) || now - peer.change.reportedAt >= TAB_LEASE_MS)
+        continue;
+      selected.add(id);
+      changes.push(peer.change);
+      fresh++;
+    }
+    // even during churn, reserve space for ordinary reports.
+    const limit = Math.min(MAX_CHANGES, this.#peers.size);
+    while (changes.length < limit) {
+      this.#rotation %= this.#slots.length;
+      const peer = this.#slots[this.#rotation++];
+      if (peer === undefined || selected.has(peer.change.publisherID)) continue;
+      selected.add(peer.change.publisherID);
+      changes.push(peer.change);
+    }
     return { releaseID: this.releaseID, startedAt: this.#startedAt, from: this.#self, changes };
   }
 
   leave(now: number): GossipMessage {
-    this.#self = { ...this.#self, seq: this.#self.seq + 1, left: true, startingUntil: 0 };
+    this.#self = {
+      ...this.#self,
+      seq: this.#self.seq + 1,
+      reportedAt: now,
+      left: true,
+      startingUntil: 0,
+    };
     return this.message(now);
   }
 
@@ -235,19 +345,37 @@ export class Gossip {
   }
 
   #forgetOldPeers(now: number) {
+    if (now < this.#nextPrune) return;
+    this.#nextPrune = Infinity;
     for (const [id, peer] of this.#peers) {
-      if (now - peer.heardAt >= KEEP_MS) this.#peers.delete(id);
+      const deadline = recordDeadline(peer.change);
+      if (deadline <= now) {
+        this.#peers.delete(id);
+        this.#priority.delete(id);
+        this.#fresh.delete(id);
+        const last = this.#slots.pop();
+        if (last !== undefined && last !== peer) {
+          this.#slots[peer.slot] = last;
+          last.slot = peer.slot;
+        }
+      } else {
+        this.#nextPrune = Math.min(this.#nextPrune, deadline);
+      }
     }
+  }
+
+  #prioritize(id: string) {
+    this.#priority.set(id, PRIORITY_SENDS);
   }
 
   #countedPeers(now: number) {
     this.#forgetOldPeers(now);
     const origins = new Set<string>();
-    return [...this.#peers.values()].filter(({ change, heardAt, suspectAt }) => {
+    return [...this.#peers.values()].filter(({ change, suspectAt }) => {
       if (
         change.left ||
         (change.endsAt !== undefined && change.endsAt <= now) ||
-        now - heardAt >= QUIET_MS ||
+        (change.endsAt === undefined && now - change.reportedAt >= KEEP_MS) ||
         (suspectAt !== undefined && now - suspectAt >= SUSPECT_MS) ||
         origins.has(change.origin)
       )
@@ -261,35 +389,44 @@ export class Gossip {
     if (this.#probing || this.#self.left) return;
     this.#forgetOldPeers(clock());
     // try suspect and quiet hosts too: a suspended tab can return at the same URL.
-    const candidates = [...this.#peers.values()].filter(({ change }) => !change.left);
-    const selected = candidates[Math.floor(random() * candidates.length)];
+    const now = clock();
+    const eligible = ({ change }: Seen) => !change.left && (change.endsAt ?? Infinity) > now;
+    let selected: Seen | undefined;
+    for (let i = 0; i < 8; i++) {
+      const candidate = this.#slots[Math.floor(random() * this.#slots.length)];
+      if (candidate !== undefined && eligible(candidate)) {
+        selected = candidate;
+        break;
+      }
+    }
+    if (selected === undefined) {
+      const candidates = this.#slots.filter(eligible);
+      selected = candidates[Math.floor(random() * candidates.length)];
+    }
     if (selected === undefined) return;
     const target = selected.change;
-    const helpers = this.hosts(clock()).filter((host) => host.publisherID !== target.publisherID);
-    const helper = helpers[Math.floor(random() * helpers.length)];
     this.#probing = true;
     try {
       const message = this.message(clock());
       let reply = await this.#probeReply(() => send(target, message), target);
-      if (reply === undefined && helper !== undefined) {
+      if (reply === undefined) {
         // ask one other host to check the same run.
-        reply = await this.#probeReply(() => send(target, message, helper), target);
+        const helpers = this.hosts(clock()).filter(
+          (host) => host.publisherID !== target.publisherID,
+        );
+        const helper = helpers[Math.floor(random() * helpers.length)];
+        if (helper !== undefined)
+          reply = await this.#probeReply(() => send(target, message, helper), target);
       }
-      const now = clock();
       if (reply !== undefined) {
-        this.receive(reply, now);
-        const current = this.#peers.get(target.publisherID);
-        if (
-          current !== undefined &&
-          sameRun(current.change, target) &&
-          !current.change.left &&
-          reply.from.seq >= current.change.seq
-        ) {
-          this.#peers.set(target.publisherID, { change: current.change, heardAt: now });
-        }
-      } else if (this.#peers.get(target.publisherID) === selected) {
+        this.receive(reply, clock());
+      } else if (
+        this.#peers.get(target.publisherID) === selected &&
+        selected.suspectAt === undefined
+      ) {
         // don't mark an updated peer record based on an earlier failed check.
-        selected.suspectAt ??= now;
+        selected.suspectAt = clock();
+        this.#prioritize(target.publisherID);
       }
     } finally {
       this.#probing = false;
@@ -306,9 +443,9 @@ export class Gossip {
     }
   }
 
-  readyBeyondWindow(now: number) {
+  readyBeyondWindow(now: number, hosts = this.hosts(now)) {
     const cutoff = now + REPLACE_BEFORE_MS;
-    return [this.#self, ...this.hosts(now)].filter(
+    return [this.#self, ...hosts].filter(
       ({ endsAt, departing, left }) =>
         !left && !departing && (endsAt === undefined || endsAt > cutoff),
     ).length;

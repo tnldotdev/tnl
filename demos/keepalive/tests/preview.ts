@@ -29,6 +29,7 @@ function host(key: string, name: string, count: number, details: Partial<Change>
     runNumber: String(key.charCodeAt(0)),
     name,
     seq: 1,
+    reportedAt: now,
     left: false,
     startingUntil: 0,
     endsAt: now + 402_000,
@@ -75,6 +76,7 @@ try {
       bootstrap?: boolean;
       seconds?: number;
       expanded?: boolean;
+      saturated?: boolean;
       finish?: "stop" | "expired";
       attention?: "background" | "muted";
     } = {},
@@ -84,6 +86,7 @@ try {
       bootstrap = false,
       seconds = 402,
       expanded = false,
+      saturated = false,
       finish,
       attention,
     } = options;
@@ -102,6 +105,7 @@ try {
       endsAt: now + seconds * 1000,
       startedAt: bootstrap ? now : startedAt,
       hosts: bootstrap ? 1 : 4,
+      saturated,
       runID: self.runID,
       tabs: bootstrap ? 1 : 187,
       localTabs: bootstrap ? 1 : 54,
@@ -203,6 +207,7 @@ try {
       },
       { mode, workerState, requests, now, wasmPath: WASM_PATH, quiet: "_".repeat(PULSE_SECONDS) },
     );
+    let treeRequests = 0;
     await page.route("**/*", async (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -225,6 +230,7 @@ try {
         return mode === "unavailable" ? route.fulfill({ status: 503, headers }) : ok(config);
       if (path === "/__keepalive/network-proof") return ok(proof);
       if (path === "/__keepalive/tree") {
+        treeRequests++;
         const host = roster.find((peer) => peer.origin === url.origin) ?? self;
         const hosts = (
           bootstrap ? [{ ...self, copyFrom: undefined, endsAt: now + seconds * 1000 }] : roster
@@ -245,6 +251,7 @@ try {
           startedAt,
           tabs: 187,
           hosts: 4,
+          saturated,
           fallback: roster.filter((peer) => peer !== host).slice(0, 3),
         });
       }
@@ -342,6 +349,7 @@ try {
       await status.getByText(messages[mode], { exact: true }).waitFor();
     }
     assert.equal(await soundToggle.count(), mode === "waiting" ? 1 : 0);
+    if (saturated) await page.getByText("Some hosts aren’t shown.", { exact: true }).waitFor();
     if (mode === "waiting")
       await page
         .getByText("Your turn starts when hosting begins and lasts up to 10 minutes.")
@@ -385,11 +393,13 @@ try {
         await page.waitForFunction(() => (window as FixtureWindow).stats.locks === 2);
       } else assert.equal((await stats()).notes, 0);
     }
+    assert.equal(treeRequests, 0, "The page must not fetch tree reports before opening hosts.");
     if (expanded) {
       await page.getByText("hosts", { exact: true }).click();
       await page.getByText("how it spread", { exact: true }).waitFor();
       await page.getByText("Each branch shows who copied from whom.", { exact: false }).waitFor();
       await page.getByText("still-water (you)", { exact: true }).waitFor();
+      assert.equal(treeRequests, 1);
       assert.ok((await page.locator(".host-tree li").count()) <= 8);
     }
     if (finish === "stop") {
@@ -425,6 +435,7 @@ try {
 
   await fixture("visitor", "visitor");
   await fixture("visitor-mobile", "visitor", { width: 360 });
+  await fixture("visitor-incomplete", "visitor", { saturated: true });
   await fixture("hosting", "hosting", { attention: "background" });
   await fixture("hosts", "hosting", { width: 360, expanded: true, attention: "muted" });
   await fixture("bootstrap", "hosting", { bootstrap: true, seconds: 3_600 });
@@ -439,7 +450,7 @@ try {
   await fixture("slow", "slow", { width: 360 });
   await fixture("already-running", "already", { bootstrap: true });
   await fixture("unavailable", "unavailable", { bootstrap: true });
-  console.log(`Captured 16 Chrome views with simulated hosts in ${output}`);
+  console.log(`Captured 17 Chrome views with simulated hosts in ${output}`);
 } finally {
   await browser.close();
 }

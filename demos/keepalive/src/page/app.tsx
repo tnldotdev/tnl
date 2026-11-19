@@ -345,6 +345,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             ~{visitors} {visitors === 1 ? "tab" : "tabs"} · {hosts} {hosts === 1 ? "host" : "hosts"}
           </p>
         )}
+        {(hosting?.saturated ?? observed?.saturated) && <p>Some hosts aren’t shown.</p>}
         <Hosts
           key={hosting?.runID}
           origin={hosting?.origin ?? observed?.host.origin}

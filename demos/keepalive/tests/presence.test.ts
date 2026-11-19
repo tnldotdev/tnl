@@ -58,6 +58,13 @@ it("keeps capacity for expiring turns but does not replace surplus hosts", () =>
   a.receive(b.message(now), now);
   a.receive(c.message(now), now);
   expect(a.readyBeyondWindow(now)).toBe(2);
+  expect(a.canRetire(now, 2, a.hosts(now))).toBe(false);
+  b.observeTabs(20, now);
+  c.observeTabs(30, now);
+  a.receive(b.message(now), now);
+  a.receive(c.message(now), now);
+  expect(a.canRetire(now, 2, a.hosts(now))).toBe(true);
+  expect(a.canRetire(now, 3, a.hosts(now))).toBe(false);
   expect(a.maybeStart(now, 2, () => true)).toBe(false);
   expect(a.maybeStart(now, 3, () => true)).toBe(true);
 });

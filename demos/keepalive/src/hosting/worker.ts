@@ -3,7 +3,7 @@ import { WASM_PATH, parseRelease, readJSON } from "../release.ts";
 import { serveRelease } from "./serving.ts";
 import { RequestActivity } from "./activity.ts";
 import { CREDENTIALS_PATH, enrollmentKey } from "../enrollment.ts";
-import { REPLACE_BEFORE_MS, turnLength } from "../policy.ts";
+import { REPLACE_BEFORE_MS, hostTarget, turnLength } from "../policy.ts";
 import { hostCommand, type HostStart, type HostUpdate } from "./messages.ts";
 import { peerServer, readPeers } from "../peers/http.ts";
 import { startPublisher } from "./publish.ts";
@@ -110,7 +110,8 @@ async function host(command: HostStart) {
     const reportActivity = () => {
       if (!signal.aborted) emit({ type: "activity", ...activity.snapshot(Date.now()) });
     };
-    let nextDiscovery = since + 30_000;
+    const discoveryDelay = () => 27_000 + Math.random() * 6_000;
+    let nextDiscovery = since + discoveryDelay();
     await peers.start(
       host,
       since,
@@ -121,7 +122,7 @@ async function host(command: HostStart) {
         if (now >= endsAt) return endTurn();
         const hosts = gossip.hosts(now);
         if (now >= nextDiscovery) {
-          nextDiscovery = now + 30_000;
+          nextDiscovery = now + discoveryDelay();
           void readPeers(command.pageOrigin, release.id, signal)
             .then((report) => {
               if (report !== undefined) gossip.receive(report, Date.now());
@@ -141,16 +142,20 @@ async function host(command: HostStart) {
               });
           }
         }
-        if (departing() && peers?.replacementReady) {
-          lifetime.abort();
+        const tabs = gossip.tabSnapshot(now, hosts);
+        if (
+          departing() &&
+          (peers?.replacementReady || gossip.canRetire(now, hostTarget(tabs.total), hosts))
+        ) {
+          endTurn();
           return;
         }
-        const tabs = gossip.tabSnapshot(now, hosts);
         emit({
           type: "hosting",
           since,
           endsAt,
           hosts: hosts.length + 1,
+          saturated: gossip.saturated(now),
           startedAt: gossip.startedAt,
           origin: host.origin,
           runID: host.runID,

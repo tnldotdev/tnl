@@ -30,6 +30,7 @@ it.each([true, false])(
                 runID: `srun_${"A".repeat(22)}`,
                 runNumber: "1",
                 seq: 1,
+                reportedAt: now,
                 left: false,
                 startingUntil: 0,
               },

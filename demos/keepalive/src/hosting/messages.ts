@@ -33,6 +33,7 @@ export const hostUpdate = z.discriminatedUnion("type", [
       endsAt: z.int(),
       startedAt: z.int(),
       hosts: z.int().positive(),
+      saturated: z.boolean(),
       runID: runIDSchema,
       tabs: z.int().nonnegative(),
       localTabs: z.int().nonnegative(),

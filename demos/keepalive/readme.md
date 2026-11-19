@@ -127,7 +127,22 @@ host A                    host C                    host B
 ```
 
 If both checks fail, A gives B a 15-second grace period before it stops
-counting B. Hearing another host mention B doesn't count as a reply from B.
+counting B. An old mention from another host doesn't clear that suspicion;
+a direct reply or a report B sent after the grace period can. A host doesn't
+have to talk directly to every other host to count them.
+
+Each reply includes the sender's report and up to 24 others. Recently
+learned hosts, stops, and other status changes get some of that space; the
+reply also includes fresh changes and rotates through older records. Reports
+carry the sender's Unix time in milliseconds so forwarding an old report
+doesn't make it new. A known host can count until its turn ends if no
+probe has failed, but a tab count older than a minute doesn't count toward
+the total. That can undercount tabs in a large group.
+
+Each browser can hold 8,192 peer records, including stopped hosts. It reclaims
+expired records before rejecting new ones and marks its counts as incomplete
+if it has to drop reports.
+
 [`src/peers/http.ts`](src/peers/http.ts) handles these requests
 and the waiting invitations.
 
@@ -191,3 +206,15 @@ in `dist/screenshots/ui/` with simulated peers and hosting worker messages.
 that successive service runs advertise the bootstrap certificate after the
 previous host stops, and waits for a real volunteer turn to reach its
 replacement window.
+
+To model membership at 5,000 hosts, run the deterministic simulation:
+
+```sh
+mise exec -- node --max-old-space-size=8192 demos/keepalive/tests/membership-simulation.ts
+```
+
+It reports sampled membership and tab-count estimates, report age, and
+certificate fingerprint propagation during churn, split groups, and suspended
+hosts. It does not open network connections, launch browsers, or issue
+certificates. Pass `--hosts 500` for a smaller run or `--proxy-sample` to add
+a periodic discovery request to a proxy that knows fewer than 2% of aliases.

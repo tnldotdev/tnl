@@ -2,14 +2,10 @@ import { sameRun, type Host } from "../peers/gossip.ts";
 import { readPeers } from "../peers/http.ts";
 import { heartbeatSchema, HEARTBEAT_MS, PRESENCE_PATH } from "../peers/presence.ts";
 import { presenceSummary } from "../peers/view.ts";
+import type * as z from "zod";
 import { MAX_MANIFEST_BYTES, parseRelease, readJSON, RELEASE_PATH } from "../release.ts";
 
-export type Observation = {
-  host: Host;
-  startedAt: number;
-  tabs: number;
-  hosts: number;
-};
+export type Observation = Omit<z.infer<typeof presenceSummary>, "fallback">;
 
 export async function observeVisitors(
   signal: AbortSignal,
@@ -57,15 +53,9 @@ export async function observeVisitors(
       const report = presenceSummary.safeParse(await readJSON(response, 4_096, deadline));
       if (!report.success || !sameRun(host, report.data.host))
         throw new Error("The counting host changed.");
-      const { host: selected } = report.data;
-      alternates = report.data.fallback.filter((candidate) => !sameRun(candidate, selected));
-      if (!signal.aborted)
-        update({
-          host: report.data.host,
-          startedAt: report.data.startedAt,
-          tabs: report.data.tabs,
-          hosts: report.data.hosts,
-        });
+      const { fallback, ...observation } = report.data;
+      alternates = fallback.filter((candidate) => !sameRun(candidate, observation.host));
+      if (!signal.aborted) update(observation);
     } catch {
       // retry discovery; a newer release may be active after a deployment.
       host = alternates.pop();

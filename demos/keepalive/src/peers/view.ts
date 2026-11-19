@@ -11,6 +11,7 @@ export const presenceSummary = z.strictObject({
   startedAt: z.int().nonnegative(),
   tabs: z.int().nonnegative(),
   hosts: z.int().positive(),
+  saturated: z.boolean(),
   fallback: z.array(visibleHost).max(MAX_FALLBACK_HOSTS),
 });
 export const treeHost = hostDetailsSchema

@@ -27,7 +27,7 @@ async function setup() {
     assets,
   });
   const fetchHost = vi.fn<typeof fetch>();
-  const report = (origins = aliases) => {
+  const report = (origins = aliases, forwardedAge = 0) => {
     const now = Date.now();
     const [from, ...changes] = origins.map((origin, index) => ({
       origin,
@@ -35,9 +35,10 @@ async function setup() {
       runID: `srun_${String(index).repeat(22)}`,
       runNumber: String(index + 1),
       seq: 1,
+      reportedAt: now - (index === 0 ? 0 : forwardedAge),
       left: false,
       startingUntil: 0,
-      endsAt: now + 30_000,
+      endsAt: now + 120_000,
     }));
     return Response.json({ releaseID: release.id, startedAt: now, from, changes });
   };
@@ -123,4 +124,15 @@ it("uses the shared address only for discovery when hosts stop", async () => {
     new URL(PEERS_PATH, SHARED_HOST),
     expect.anything(),
   );
+});
+
+it("does not give an old forwarded alias a fresh lifetime", async () => {
+  const { proxy, fetchHost, report } = await setup();
+  fetchHost.mockResolvedValueOnce(report(aliases, 61_000));
+  fetchHost.mockImplementation(async () => new Response(script));
+  expect((await proxy.file(request("/app.js"))).status).toBe(200);
+  expect(fetchHost.mock.calls.map(([url]) => String(url))).toEqual([
+    `${SHARED_HOST}${PEERS_PATH}`,
+    `${aliases[0]}/app.js`,
+  ]);
 });

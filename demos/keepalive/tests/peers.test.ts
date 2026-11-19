@@ -7,7 +7,6 @@ import {
   MAX_CHANGES,
   MAX_MESSAGE_BYTES,
   MAX_PEERS,
-  QUIET_MS,
   SUSPECT_MS,
   parseMessage,
   type GossipMessage,
@@ -150,29 +149,77 @@ describe("gossip", () => {
     expect(b.maybeStart(net.clock(), 3, () => true)).toBe(false);
   });
 
-  it("bounds its memory and each exchange, and forgets quiet hosts", () => {
+  it("keeps room for 5,000 active hosts plus churn and reclaims expired records", () => {
     const net = network();
     const a = net.create(1);
-    for (let i = 2; i <= 10_000; i++) {
-      const message: GossipMessage = {
-        releaseID: release,
-        startedAt: epoch,
-        changes: [],
-        from: { ...host(i), seq: 1, left: false, startingUntil: 0 },
-      };
-      a.receive(message, net.clock());
-    }
+    const report = (i: number, stopped = false): GossipMessage => ({
+      releaseID: release,
+      startedAt: epoch,
+      changes: [],
+      from: { ...host(i), seq: 1, reportedAt: net.clock(), left: stopped, startingUntil: 0 },
+    });
+    const active = 4_999;
+    const stopped = MAX_PEERS - active;
+    for (let i = 2; i < 2 + stopped; i++) a.receive(report(i, true), net.clock());
+    net.advance(60_000);
+    for (let i = 2 + stopped; i < 2 + MAX_PEERS; i++) a.receive(report(i), net.clock());
     expect(a.size).toBe(MAX_PEERS);
+    expect(a.hosts(net.clock())).toHaveLength(active);
+    expect(a.saturated(net.clock())).toBe(false);
+    a.receive(report(2 + MAX_PEERS), net.clock());
+    expect(a.saturated(net.clock())).toBe(true);
     const first = a.message(net.clock());
     expect(first.changes).toHaveLength(MAX_CHANGES);
     expect(a.message(net.clock()).changes).not.toEqual(first.changes);
     expect(new TextEncoder().encode(JSON.stringify(first)).byteLength).toBeLessThan(
       MAX_MESSAGE_BYTES,
     );
-    net.advance(QUIET_MS);
-    expect(a.hosts(net.clock())).toHaveLength(0);
+    net.advance(KEEP_MS - 60_000);
+    expect(a.hosts(net.clock())).toHaveLength(active);
+    a.receive(report(2 + MAX_PEERS), net.clock());
+    expect(a.size).toBe(active + 1);
     net.advance(KEEP_MS);
     expect(a.message(net.clock()).changes).toEqual([]);
+    expect(a.saturated(net.clock())).toBe(false);
+  });
+
+  it("uses fresh forwarded reports without mistaking a minute without contact for departure", () => {
+    const net = network();
+    const a = net.create(1);
+    const b = net.create(2);
+    const c = net.create(3);
+    net.exchange(a, b);
+    net.exchange(b, c);
+    net.advance(61_000);
+    expect(a.hosts(net.clock())).toEqual([expect.objectContaining({ runID: host(2).runID })]);
+    net.exchange(b, c);
+    const forwarded = b.message(net.clock());
+    a.receive(forwarded, net.clock());
+    net.advance(KEEP_MS - 1);
+    a.receive(forwarded, net.clock());
+    expect(a.hosts(net.clock())).toHaveLength(2);
+    net.advance(1);
+    a.receive(forwarded, net.clock());
+    expect(a.hosts(net.clock())).toHaveLength(0);
+  });
+
+  it("shares recent tab reports while keeping space for ordinary rotation", () => {
+    const net = network();
+    const observer = net.create(1);
+    const peers = Array.from({ length: MAX_CHANGES * 7 }, (_, i) => net.create(i + 2));
+    for (const peer of peers) observer.receive(peer.message(net.clock()), net.clock());
+    for (let i = 0; i < peers.length; i++) observer.message(net.clock());
+    net.advance(10_000);
+    const fresh = peers.slice(-24);
+    for (const peer of fresh) {
+      peer.observeTabs(54, net.clock());
+      observer.receive(peer.message(net.clock()), net.clock());
+    }
+    const first = observer.message(net.clock());
+    expect(first.changes.filter(({ tabs }) => tabs?.count === 54).length).toBeGreaterThanOrEqual(8);
+    expect(first.changes.some(({ tabs }) => tabs === undefined)).toBe(true);
+    const repeated = new Set(first.changes.map(({ publisherID }) => publisherID));
+    expect(repeated.size).toBe(MAX_CHANGES);
   });
 
   it("ignores unrelated releases, unsafe addresses, bad clocks and oversized messages", () => {

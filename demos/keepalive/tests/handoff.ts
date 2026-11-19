@@ -148,7 +148,10 @@ try {
     "A visitor failed during the handoff.",
   );
   assert.equal(third.sender, secondHost.origin, "The second host did not supply the new copy.");
-  await second.page.getByRole("status").getByText("Thanks for hosting.", { exact: true }).waitFor();
+  await second.page
+    .getByRole("status")
+    .getByText("Your turn is over. Thanks for hosting.", { exact: true })
+    .waitFor();
   const visitor = await browser.newPage();
   await openSite(visitor);
   await visitor.getByRole("heading", { name: "can we keep this alive?" }).waitFor();

@@ -57,7 +57,7 @@ export function createProxy(release: Release, fetchHost = fetch) {
       if (
         current !== undefined &&
         (run < current.run ||
-          (run === current.run && (current.stopped || host.seq < current.sequence)))
+          (run === current.run && (current.stopped || host.seq <= current.sequence)))
       ) {
         continue;
       }
@@ -65,7 +65,10 @@ export function createProxy(release: Release, fetchHost = fetch) {
         known.set(host.origin, {
           run,
           sequence: host.seq,
-          seenAt: now,
+          seenAt: Math.max(
+            current?.run === run ? current.seenAt : 0,
+            Math.min(now, host.reportedAt),
+          ),
           endsAt: host.endsAt ?? Infinity,
           retryAt: current?.run === run ? current.retryAt : 0,
           stopped: host.left,
@@ -191,8 +194,12 @@ export function createProxy(release: Release, fetchHost = fetch) {
       }
       return fromHost(request, sharedHost, retain, (origin, deadline) => {
         const signal = AbortSignal.any([deadline, AbortSignal.timeout(6_000)]);
+        const selected = known.get(origin);
         return get(origin, asset.path, signal, async (response) => {
           const bytes = await readAssetResponse(asset, response, signal);
+          signal.throwIfAborted();
+          if (selected !== undefined && known.get(origin) === selected)
+            selected.seenAt = Date.now();
           return new Response(bytes, { headers: siteHeaders(contentType(asset.path)) });
         });
       });
