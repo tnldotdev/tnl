@@ -20,6 +20,8 @@ export type HostState =
   | { type: "copying"; received: number; total: number }
   | Extract<HostUpdate, { type: "hosting" }>;
 
+export class HostingUnavailable extends Error {}
+
 async function waitForInvitation(releaseID: string, signal: AbortSignal) {
   for (;;) {
     signal.throwIfAborted();
@@ -93,6 +95,7 @@ async function getJSON(path: string, limit: number, signal: AbortSignal, method 
     redirect: "error",
     signal: deadline,
   });
+  if (path === CONFIG_PATH && response.status === 503) throw new HostingUnavailable();
   return readJSON(response, limit, deadline);
 }
 
@@ -102,6 +105,8 @@ export async function hostTab(
   replace: AbortSignal,
   update: (state: HostState) => void,
 ) {
+  // check bootstrap availability before probing peers or downloading the release.
+  const bootstrapConfig = bootstrap ? await getHostingConfig(signal) : undefined;
   const release = await parseRelease(await getJSON(RELEASE_PATH, MAX_MANIFEST_BYTES, signal));
   let source = ARTIFACT_PREFIX;
   let firstHostToContact: Host | undefined;
@@ -116,10 +121,10 @@ export async function hostTab(
     invitation = selected.invitation;
     source = selected.host.origin;
   }
+  const config = bootstrapConfig ?? (await getHostingConfig(signal));
   const files = await copySite(release, source, signal, update);
   const code = files.get(WORKER_PATH);
   if (code === undefined) throw new Error("The copy is missing the hosting code.");
-  const config = await getHostingConfig(signal);
   signal.throwIfAborted();
   update({ type: "starting" });
   const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));

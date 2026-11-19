@@ -1,3 +1,4 @@
+import "../validation.ts";
 import { WASM_PATH, parseRelease, readJSON } from "../release.ts";
 import { serveRelease } from "../serving.ts";
 import { CREDENTIALS_PATH, HOST_TURN_MS, REPLACE_BEFORE_MS, enrollmentKey } from "./config.ts";

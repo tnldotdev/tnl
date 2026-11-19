@@ -1,5 +1,6 @@
+import "./validation.ts";
 import { Hono } from "hono";
-import { credentials, type CredentialBindings } from "./credentials.ts";
+import { credentials, enrollmentConfigured, type CredentialBindings } from "./credentials.ts";
 import { CONFIG_PATH, CREDENTIALS_PATH, hostingConfig } from "./hosting/config.ts";
 import {
   NETWORK_CHECK_PATH,
@@ -46,9 +47,10 @@ app.post(NETWORK_PROOF_PATH, async (c) => {
 app.post(CONFIG_PATH, async (c) => {
   const origin = new URL(c.req.url).origin;
   if (c.req.header("Origin") !== origin) return c.body(null, 403);
+  if (!enrollmentConfigured(c.env)) return c.body(null, 503, siteHeaders());
   const { CONTROL_URL, CERTIFICATE_PEM, PRIVATE_KEY_PEM, NETWORK_SECRET } = c.env;
   const proof = await requestNetworkProof(c.req.raw, NETWORK_SECRET);
-  if (proof === undefined) return c.body(null, 503);
+  if (proof === undefined) return c.body(null, 503, siteHeaders());
   const certificate =
     CERTIFICATE_PEM && PRIVATE_KEY_PEM
       ? { certificatePEM: CERTIFICATE_PEM, privateKeyPEM: PRIVATE_KEY_PEM }

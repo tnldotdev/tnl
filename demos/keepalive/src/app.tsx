@@ -1,6 +1,7 @@
+import "./validation.ts";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { hostTab, type HostState } from "./hosting/tab.ts";
+import { HostingUnavailable, hostTab, type HostState } from "./hosting/tab.ts";
 
 const labels = {
   copying: "Downloading files to serve visitors…",
@@ -52,11 +53,13 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       .then(
         ({ expired }) =>
           setMessage(expired ? "Your 30-minute turn is over." : "This tab stopped hosting."),
-        () =>
+        (error: unknown) =>
           setMessage(
             stop.signal.aborted
               ? "This tab stopped."
-              : "This tab couldn't host the site. Try again.",
+              : error instanceof HostingUnavailable
+                ? "Hosting isn't available right now. Try again later."
+                : "This tab couldn't host the site. Try again.",
           ),
       )
       .finally(() => {

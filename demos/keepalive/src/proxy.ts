@@ -3,13 +3,14 @@ import { contentType, readAssetResponse, readJSON, type Release } from "./releas
 
 export function siteHeaders(type = "application/octet-stream") {
   return {
-    "Cache-Control": "no-store",
+    // do not let the edge inject scripts or change the checked response bytes.
+    "Cache-Control": "no-store, no-transform",
     "Content-Type": type,
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "Content-Security-Policy":
       "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src blob:; " +
-      "style-src 'self'; font-src 'self'; connect-src https: wss: 'self'; " +
+      "style-src 'self'; font-src 'self'; img-src 'self'; connect-src https: wss: 'self'; " +
       "frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
   };
 }
