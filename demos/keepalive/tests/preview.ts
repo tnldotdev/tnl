@@ -282,7 +282,7 @@ try {
     assert.equal(await soundToggle.count(), 0);
     if (mode !== "visitor") await startHosting.click();
     if (attention !== undefined) {
-      await status.getByText("Waiting to host…").waitFor();
+      await status.getByText("You've volunteered. This tab will host when needed.").waitFor();
       if (attention === "muted") {
         await page.getByRole("button", { name: "sound: on" }).click();
         await page.getByRole("button", { name: "sound: off" }).waitFor();
@@ -302,15 +302,21 @@ try {
     const messages = {
       visitor: "You can help keep it online.",
       hosting: "This tab is hosting.",
-      waiting: "Waiting to host…",
-      checking: "Checking your upload…",
-      download: "Downloading files to serve visitors…",
+      waiting: "You've volunteered. This tab will host when needed.",
+      checking: "Checking your connection…",
+      download: bootstrap ? "Copying the site to this tab…" : "Copying the site from another host…",
       starting: "Starting to host…",
       slow: "This connection isn't fast enough to host right now.",
-      unavailable: "Hosting isn't available right now. Try again later.",
+      unavailable: "This tab couldn't start hosting. Try again later.",
     };
     await status.getByText(messages[mode], { exact: true }).waitFor();
     assert.equal(await soundToggle.count(), mode === "waiting" ? 1 : 0);
+    if (mode === "waiting")
+      await page
+        .getByText("Your turn starts when hosting begins and lasts up to 10 minutes.")
+        .waitFor();
+    if (mode === "slow" || mode === "unavailable")
+      await page.getByRole("button", { name: "try again", exact: true }).waitFor();
     if (mode === "download")
       await page
         .getByRole("progressbar")
@@ -351,12 +357,13 @@ try {
     if (expanded) {
       await page.getByText("hosts", { exact: true }).click();
       await page.getByText("how it spread", { exact: true }).waitFor();
+      await page.getByText("Each branch shows who copied from whom.", { exact: false }).waitFor();
       await page.getByText("still-water (you)", { exact: true }).waitFor();
       assert.ok((await page.locator(".host-tree li").count()) <= 8);
     }
     if (finish === "stop") {
       await page.getByRole("button", { name: "stop", exact: true }).click();
-      await status.getByText("Stopping…").waitFor();
+      await status.getByText("Stopping hosting…").waitFor();
       await page.waitForFunction(() =>
         window.dispatchEvent(new Event("beforeunload", { cancelable: true })),
       );
@@ -364,6 +371,8 @@ try {
       await page.evaluate(() => (window as FixtureWindow).previewStop());
       await status.getByText("Your turn is over. Thanks for hosting.").waitFor();
       await page.getByText("219 requests handled").waitFor();
+      await page.getByText("You can close this tab or volunteer again.").waitFor();
+      await page.getByRole("button", { name: "volunteer again", exact: true }).waitFor();
       await page.waitForFunction(() =>
         window.dispatchEvent(new Event("beforeunload", { cancelable: true })),
       );
@@ -384,6 +393,7 @@ try {
   }
 
   await fixture("visitor", "visitor");
+  await fixture("visitor-mobile", "visitor", { width: 360 });
   await fixture("hosting", "hosting", { attention: "background" });
   await fixture("hosts", "hosting", { width: 360, expanded: true, attention: "muted" });
   await fixture("bootstrap", "hosting", { bootstrap: true, seconds: 3_600 });
@@ -397,7 +407,7 @@ try {
   await fixture("starting", "starting");
   await fixture("slow", "slow", { width: 360 });
   await fixture("unavailable", "unavailable", { bootstrap: true });
-  console.log(`Captured 14 Chrome states with simulated hosts in ${output}`);
+  console.log(`Captured 15 Chrome views with simulated hosts in ${output}`);
 } finally {
   await browser.close();
 }

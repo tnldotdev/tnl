@@ -150,7 +150,7 @@ try {
     async () => (await fetch("/", { cache: "no-store" })).status === 503,
   );
   const restartedAt = Date.now();
-  await first.getByRole("button", { name: "start hosting" }).click();
+  await first.getByRole("button", { name: "host again" }).click();
   await hosting(first);
   await openSite(visitor);
   await visitor.getByRole("heading", { name: "can we keep this alive?" }).waitFor();

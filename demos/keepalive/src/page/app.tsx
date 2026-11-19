@@ -11,12 +11,12 @@ import { reportedTabs } from "../peers/gossip.ts";
 import { observeVisitors, type Observation } from "./visitor.ts";
 
 const labels = {
-  copying: "Downloading files to serve visitors…",
-  waiting: "Waiting to host…",
-  checking: "Checking your upload…",
+  copying: "Copying the site from another host…",
+  waiting: "You've volunteered. This tab will host when needed.",
+  checking: "Checking your connection…",
   starting: "Starting to host…",
   hosting: "This tab is hosting.",
-  stopping: "Stopping…",
+  stopping: "Stopping hosting…",
 } as const;
 
 function countdown(endsAt: number, now: number) {
@@ -103,7 +103,11 @@ function Hosts({
   return (
     <details class="host-details">
       <summary>hosts</summary>
-      <p class="tree-note">how it spread</p>
+      <p class="tree-note">
+        <span>how it spread</span>
+        <br />
+        Each branch shows who copied from whom.
+      </p>
       {page.continued && <div aria-label="Earlier hosts not shown">...</div>}
       <ul class="host-tree">
         <BranchRow branch={page.root} now={now} self={self} />
@@ -130,6 +134,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
   const [lifetime, setLifetime] = useState<AbortController>();
   const [activity, setActivity] = useState<Extract<HostUpdate, { type: "activity" }>>();
   const [finished, setFinished] = useState<number>();
+  const [retry, setRetry] = useState(false);
   const [message, setMessage] = useState("");
   const [now, setNow] = useState(Date.now);
   const [observed, setObserved] = useState<Observation>();
@@ -184,6 +189,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
     setLifetime(stop);
     setActivity(undefined);
     setFinished(undefined);
+    setRetry(false);
     setMessage("");
     let hosted = false;
     void hostTab(
@@ -213,16 +219,18 @@ function App({ bootstrap }: { bootstrap: boolean }) {
                 : "This tab stopped.",
           );
         },
-        (error: unknown) =>
+        (error: unknown) => {
+          setRetry(!stop.signal.aborted);
           setMessage(
             stop.signal.aborted
               ? "This tab stopped."
               : error instanceof HostingUnavailable
-                ? "Hosting isn't available right now. Try again later."
+                ? "This tab couldn't start hosting. Try again later."
                 : error instanceof UploadTooSlow
                   ? "This connection isn't fast enough to host right now."
                   : "This tab couldn't host the site. Try again.",
-          ),
+          );
+        },
       )
       .finally(() => {
         closeChirp();
@@ -241,21 +249,35 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       </p>
       {bootstrap ? (
         <p>
-          Start a browser host for <a href="https://keepthisalive.com">keepthisalive.com</a>. Keep
-          this tab open to serve the site. A bootstrap turn lasts up to {label}.
+          This page lets you start the first host for{" "}
+          <a href="https://keepthisalive.com">keepthisalive.com</a>. Keep this tab open to serve the
+          site for up to {label}.
         </p>
       ) : (
         <>
-          <p>This site is served from people's browsers.</p>
           <p>
-            Keep this tab open and it'll host when needed, for up to {label}. You can stop anytime.
+            This site is served from people's browsers. Visitors copy it from each other and take
+            turns keeping it online. If the last host stops, the site goes down.
           </p>
+          {lifetime === undefined && finished === undefined && !retry && (
+            <p>
+              Click below to volunteer, then keep this tab open. It'll host when needed, for up to{" "}
+              {label}. You can stop anytime.
+            </p>
+          )}
         </>
       )}
       <section aria-label="keepalive">
         <p role="status">
-          {host === undefined ? message || "You can help keep it online." : labels[host.type]}
+          {host === undefined
+            ? message || "You can help keep it online."
+            : host.type === "copying" && bootstrap
+              ? "Copying the site to this tab…"
+              : labels[host.type]}
         </p>
+        {host?.type === "waiting" && (
+          <p>Your turn starts when hosting begins and lasts up to {label}.</p>
+        )}
         {host?.type === "copying" && <CopyProgress received={host.received} total={host.total} />}
         {hosting && (
           <>
@@ -276,7 +298,12 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             </div>
           </>
         )}
-        {finished !== undefined && <p>{pluralRequests(finished)} handled</p>}
+        {finished !== undefined && (
+          <>
+            <p>You can close this tab or {bootstrap ? "host" : "volunteer"} again.</p>
+            <p>{pluralRequests(finished)} handled</p>
+          </>
+        )}
         {!hosting && hosts > 0 && (
           <p>
             ~{visitors} {visitors === 1 ? "tab" : "tabs"} · {hosts} {hosts === 1 ? "host" : "hosts"}
@@ -293,7 +320,15 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       <div class="actions">
         {lifetime === undefined ? (
           <button type="button" onClick={start}>
-            {bootstrap ? "start hosting" : "i'll keep it alive"}
+            {retry
+              ? "try again"
+              : finished !== undefined
+                ? bootstrap
+                  ? "host again"
+                  : "volunteer again"
+                : bootstrap
+                  ? "start hosting"
+                  : "i'll keep it alive"}
           </button>
         ) : (
           <button
