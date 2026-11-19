@@ -57,6 +57,38 @@ func TestParseLimitsPreservesOmissionAndValidatesExplicitFields(t *testing.T) {
 	}
 }
 
+func TestDefaultHTTPBudgetAdmits1024RequestsAndEnforcesBurst(t *testing.T) {
+	a, err := New(applicationlimits.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for range 1024 {
+		if status, _ := a.enter(now); status != 0 {
+			t.Fatal("default concurrency stopped at an old threshold", status)
+		}
+	}
+	if status, _ := a.enter(now); status != http.StatusServiceUnavailable {
+		t.Fatal("raised HTTP concurrency was not enforced", status)
+	}
+	for range 1024 {
+		a.leave()
+	}
+	for range 976 {
+		if status, _ := a.enter(now); status != 0 {
+			t.Fatal("default HTTP burst stopped at an old threshold", status)
+		}
+		a.leave()
+	}
+	if status, _ := a.enter(now); status != http.StatusTooManyRequests {
+		t.Fatal("raised HTTP burst was not enforced", status)
+	}
+	if status, _ := a.enter(now.Add(time.Second)); status != 0 {
+		t.Fatal("default HTTP rate did not refill", status)
+	}
+	a.leave()
+}
+
 func TestHTTPRejectionsKeepDiagnosticAndRetryContracts(t *testing.T) {
 	for _, test := range []struct {
 		name, code, retry string

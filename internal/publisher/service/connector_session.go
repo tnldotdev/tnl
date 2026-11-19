@@ -456,7 +456,7 @@ func (p *PeerSession) reserve(caller context.Context, stream net.Conn) (*connect
 	defer b.mu.Unlock()
 	limit := b.streamCapacity
 	if limit == 0 {
-		limit = 64
+		limit = defaultStreamCapacity
 	}
 	p.pruneAdmissionsLocked()
 	if caller.Err() != nil || !b.drainUntil.IsZero() || !p.deliveryCurrentLocked() || b.connectorPending >= min(limit, 4096) || len(p.streams) >= maxConnectorPeerStreams {
@@ -764,7 +764,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		// valid acceptance spends history even when C or final handoff fails.
 		limit := b.streamCapacity
 		if limit == 0 {
-			limit = 64
+			limit = defaultStreamCapacity
 		}
 		valid = b.reservedStreams < limit
 		if valid {

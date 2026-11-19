@@ -302,6 +302,8 @@ func (b *Bound) currentLocked(ref tunnelv1.ServicePublisherConnectionRef) bool {
 	return !b.closed && ref.ConnectionSlot < 2 && b.prepared.connectionRef(b.connections[ref.ConnectionSlot]) == ref
 }
 
+const defaultStreamCapacity = 4096
+
 // reserveStream is the run's shared final capacity, across both relay slots and
 // connector peers. only joined physical cleanup returns this debit.
 func (b *Bound) reserveStream(ref tunnelv1.ServicePublisherConnectionRef) (func(), bool) {
@@ -309,7 +311,7 @@ func (b *Bound) reserveStream(ref tunnelv1.ServicePublisherConnectionRef) (func(
 	defer b.mu.Unlock()
 	limit := b.streamCapacity
 	if limit == 0 {
-		limit = 64
+		limit = defaultStreamCapacity
 	}
 	if !b.currentLocked(ref) || !b.drainUntil.IsZero() || b.reservedStreams >= limit {
 		return nil, false

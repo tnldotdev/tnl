@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	maxHTTPPendingRelay  = 16
-	maxHTTPPendingRun    = 32
-	maxHTTPPendingSource = 8
+	maxHTTPPendingRelay  = 256
+	maxHTTPPendingRun    = 512
+	maxHTTPPendingSource = 128
 )
 
 // boundVisitor is the existing run registry's owned entry. only public HTTP
@@ -217,7 +217,7 @@ func (a *httpAdmission) reserveCapacity(waiter context.Context, reserve func(con
 		_, verified := a.state.(verifiedHTTPAdmission)
 		limit := b.streamCapacity
 		if limit == 0 {
-			limit = 64
+			limit = defaultStreamCapacity
 		}
 		switch {
 		case !verified || a.ctx.Err() != nil || !b.currentLocked(a.ref) || !b.drainUntil.IsZero() || !time.Now().Before(a.setupUntil) || reserve == nil:

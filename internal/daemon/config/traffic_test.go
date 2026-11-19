@@ -29,24 +29,26 @@ func TestOperatorTrafficDefaultsAndEnvironment(t *testing.T) {
 		t.Fatalf("operator defaults: %+v %+v", c.TrafficDefaults(), c.TrafficCeiling())
 	}
 	traffic, pending, err := ValidateIngressTraffic(c.IngressTraffic(), c.IngressPending())
-	if err != nil || traffic.SourceConnections != 64 || traffic.SourceRate != 30 || traffic.SourceBurst != 60 || traffic.ProcessRate != 200 || traffic.ProcessBurst != 400 || traffic.ProcessUpload != 256<<20 || traffic.ProcessDownload != 256<<20 ||
-		pending.Connections != 64 || pending.ServiceConnections != 8 || pending.SourceConnections != 4 || pending.Timeout != 10*time.Second || pending.UploadBytes != 64<<10 || pending.DownloadBytes != 128<<10 || pending.ServiceRate != 5 || pending.ServiceBurst != 10 || pending.SourceRate != 3 || pending.SourceBurst != 6 {
+	fallbackTraffic, fallbackPending, fallbackErr := ValidateIngressTraffic(ingress.TrafficConfig{}, ingress.PendingConfig{})
+	if err != nil || fallbackErr != nil || traffic != fallbackTraffic || pending != fallbackPending ||
+		traffic.SourceConnections != 4096 || traffic.SourceRate != 2000 || traffic.SourceBurst != 4000 || traffic.ProcessRate != 10000 || traffic.ProcessBurst != 20000 || traffic.ProcessUpload != 2<<30 || traffic.ProcessDownload != 2<<30 ||
+		pending.Connections != 4096 || pending.ServiceConnections != 256 || pending.SourceConnections != 128 || pending.Timeout != 10*time.Second || pending.UploadBytes != 64<<10 || pending.DownloadBytes != 128<<10 || pending.ServiceRate != 1000 || pending.ServiceBurst != 2000 || pending.SourceRate != 2000 || pending.SourceBurst != 4000 {
 		t.Fatalf("process defaults: %+v %+v %v", traffic, pending, err)
 	}
 	t.Setenv("TNLD_TRAFFIC_DEFAULT_RATE", "40")
 	t.Setenv("TNLD_TRAFFIC_DEFAULT_RATE_PER", "2s")
-	t.Setenv("TNLD_TRAFFIC_MAX_UPLOAD_BYTES", "33554432")
+	t.Setenv("TNLD_TRAFFIC_MAX_UPLOAD_BYTES", "536870912")
 	t.Setenv("TNLD_TRAFFIC_PROCESS_UPLOAD_BYTES", "134217728")
 	t.Setenv("TNLD_PENDING_SERVICE_RATE", "7")
 	c = validCertificateConfig(t, RoleControl)
-	if c.TrafficDefaults().Rate != 40 || c.TrafficDefaults().RatePer != 2*time.Second || c.TrafficCeiling().UploadBytes != 32<<20 || c.IngressTraffic().ProcessUpload != 128<<20 || c.IngressPending().ServiceRate != 7 {
+	if c.TrafficDefaults().Rate != 40 || c.TrafficDefaults().RatePer != 2*time.Second || c.TrafficCeiling().UploadBytes != 512<<20 || c.IngressTraffic().ProcessUpload != 128<<20 || c.IngressPending().ServiceRate != 7 {
 		t.Fatalf("environment mapping: %+v", c)
 	}
 }
 
 func TestOperatorTrafficValidation(t *testing.T) {
 	for name, change := range map[string]func(*Config){
-		"default connections": func(c *Config) { c.TrafficDefaultConnections = 129 },
+		"default connections": func(c *Config) { c.TrafficDefaultConnections = c.TrafficMaxConnections + 1 },
 		"default period":      func(c *Config) { c.TrafficDefaultRatePer = time.Millisecond },
 		"maximum period":      func(c *Config) { c.TrafficMaxRatePer = 25 * time.Hour },
 		"default upload":      func(c *Config) { c.TrafficDefaultUploadBytes = 1 },

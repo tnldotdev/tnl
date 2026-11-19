@@ -32,18 +32,18 @@ func (c IngressConfig) Resolve() (IngressConfig, error) {
 		value    *int
 		fallback int
 	}{
-		{&c.SourceConnections, 64}, {&c.SourceRate, 30}, {&c.SourceBurst, 60},
-		{&c.ProcessRate, 200}, {&c.ProcessBurst, 400},
+		{&c.SourceConnections, 4096}, {&c.SourceRate, 2000}, {&c.SourceBurst, 4000},
+		{&c.ProcessRate, 10000}, {&c.ProcessBurst, 20000},
 	} {
 		if *p.value == 0 {
 			*p.value = p.fallback
 		}
 	}
 	if c.ProcessUpload == 0 {
-		c.ProcessUpload = 256 << 20
+		c.ProcessUpload = 2 << 30
 	}
 	if c.ProcessDownload == 0 {
-		c.ProcessDownload = 256 << 20
+		c.ProcessDownload = 2 << 30
 	}
 	if !c.Default.Within(c.Ceiling) || c.SourceConnections < 1 || c.SourceRate < 1 || c.SourceBurst < 1 || c.ProcessRate < 1 || c.ProcessBurst < 1 ||
 		c.SourceConnections > 1<<20 || c.SourceRate > 1<<31 || c.SourceBurst > 1<<31 || c.ProcessRate > 1<<31 || c.ProcessBurst > 1<<31 ||
@@ -63,8 +63,8 @@ func (c PendingConfig) Resolve() (PendingConfig, error) {
 		// ordinary restricted visitors now use pending capacity until the
 		// publisher can inspect their credential. leave room for browser assets
 		// while keeping independent per-source and per-URL ceilings.
-		{&c.Connections, 256}, {&c.ServiceConnections, 64}, {&c.SourceConnections, 16},
-		{&c.ServiceRate, 60}, {&c.ServiceBurst, 120}, {&c.SourceRate, 30}, {&c.SourceBurst, 60},
+		{&c.Connections, 4096}, {&c.ServiceConnections, 256}, {&c.SourceConnections, 128},
+		{&c.ServiceRate, 1000}, {&c.ServiceBurst, 2000}, {&c.SourceRate, 2000}, {&c.SourceBurst, 4000},
 	} {
 		if *p.value == 0 {
 			*p.value = p.fallback

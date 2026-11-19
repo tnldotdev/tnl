@@ -319,7 +319,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		declaration.PreferredRegions = &config.PreferredRegions
 	}
 	if config.StreamCapacity == 0 {
-		config.StreamCapacity = 64
+		config.StreamCapacity = defaultStreamCapacity
 	}
 	if config.StreamCapacity < 1 || config.StreamCapacity > 4096 {
 		return ErrPrivateStream
