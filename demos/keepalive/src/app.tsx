@@ -95,40 +95,46 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         {host?.type === "hosting" && (
           <ul>
             <li>hosting for {age(host.since)}</li>
-            <li>hosting ends in {countdown(host.endsAt, Math.max(now, host.since))}</li>
+            <li>
+              hosting ends in{" "}
+              <span class="numeric">{countdown(host.endsAt, Math.max(now, host.since))}</span>
+            </li>
             <li>{host.filesServed} files served by this tab</li>
             <li>about {host.hosts} hosts seen</li>
             <li>experiment age: {age(host.startedAt)}</li>
           </ul>
         )}
       </section>
-      {lifetime === undefined ? (
-        <button type="button" onClick={start}>
-          {bootstrap ? "start hosting" : "i'll keep it alive"}
-        </button>
-      ) : (
-        <>
-          {host?.type === "hosting" && (
-            <button
-              type="button"
-              disabled={replacing || host.replacing}
-              onClick={() => {
-                setReplacing(true);
-                lifetime.replace.abort();
-              }}
-            >
-              {replacing || host.replacing ? "looking for another host…" : "find my replacement"}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => lifetime.stop.abort()}
-            disabled={host?.type === "stopping"}
-          >
-            stop
+      <div class="actions">
+        {lifetime === undefined ? (
+          <button type="button" onClick={start}>
+            {bootstrap ? "start hosting" : "i'll keep it alive"}
           </button>
-        </>
-      )}
+        ) : (
+          <>
+            {host?.type === "hosting" && (
+              <button
+                type="button"
+                disabled={replacing || host.replacing}
+                onClick={() => {
+                  setReplacing(true);
+                  lifetime.replace.abort();
+                }}
+              >
+                {replacing || host.replacing ? "looking for another host…" : "find my replacement"}
+              </button>
+            )}
+            <button
+              class="secondary"
+              type="button"
+              onClick={() => lifetime.stop.abort()}
+              disabled={host?.type === "stopping"}
+            >
+              stop
+            </button>
+          </>
+        )}
+      </div>
       <footer>
         an experiment from <a href="https://tnl.dev">tnl</a> ·{" "}
         <a href="https://github.com/tnldotdev/tnl/tree/main/demos/keepalive">source</a>
@@ -138,22 +144,13 @@ function App({ bootstrap }: { bootstrap: boolean }) {
 }
 
 function CopyProgress({ received, total }: { received: number; total: number }) {
-  const filled = Math.floor((received / total) * 20);
   const mb = (bytes: number) => (bytes / 1_000_000).toFixed(1);
   return (
-    <p
-      class="copy-progress"
-      role="progressbar"
-      aria-label="Downloading hosting files"
-      aria-valuemin={0}
-      aria-valuemax={total}
-      aria-valuenow={received}
-    >
-      <span aria-hidden="true">
-        [{"#".repeat(filled)}
-        {"-".repeat(20 - filled)}]
-      </span>{" "}
-      {mb(received)} / {mb(total)} MB
+    <p class="copy-progress">
+      <progress aria-label="Downloading hosting files" value={received} max={total} />
+      <span class="numeric">
+        {mb(received)} / {mb(total)} MB
+      </span>
     </p>
   );
 }
