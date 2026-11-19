@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const clientBaselineIdentity = "tnl-client-fresh-v1-service-integrations"
+const clientBaselineIdentity = "v1-client"
 
 // openReadOnlySQLite reads existing client state without creating or migrating it.
 func openReadOnlySQLite(ctx context.Context, path string) (*sql.DB, error) {
@@ -130,7 +130,8 @@ func validateClientBaseline(ctx context.Context, db *sql.DB) error {
 	if err := db.QueryRowContext(ctx, "SELECT identity FROM baseline_identity WHERE id = 1").Scan(&baseline); err != nil {
 		return fmt.Errorf("read client state baseline; select a fresh state directory: %w", err)
 	}
-	if baseline != clientBaselineIdentity {
+	// retain the previous name for existing databases without rewriting their state.
+	if baseline != clientBaselineIdentity && baseline != "tnl-client-fresh-v1-service-integrations" {
 		return errors.New("client state baseline does not match; select a fresh state directory")
 	}
 	return nil

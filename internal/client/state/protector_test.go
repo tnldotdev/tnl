@@ -227,7 +227,7 @@ func TestFreshV1DoesNotReadOldDatabaseOrJournal(t *testing.T) {
 		t.Fatalf("old state imported: %v, %v", found, err)
 	}
 	var count int
-	if err := database.db.QueryRowContext(t.Context(), "SELECT count(*) FROM goose_db_version WHERE is_applied = 1 AND version_id > 0").Scan(&count); err != nil || count != 1 {
+	if err := database.db.QueryRowContext(t.Context(), "SELECT count(*) FROM goose_db_version WHERE is_applied = 1 AND version_id = 1").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("baseline count: %d, %v", count, err)
 	}
 	info, err := os.Stat(WrappingKeyPath(database.Root()))

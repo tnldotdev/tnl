@@ -125,10 +125,10 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	var identity string
-	if err := database.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&identity); err != nil || identity != "v1" {
-		t.Fatalf("baseline identity = %q, %v; want v1", identity, err)
+	if err := database.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&identity); err != nil || identity != "v1-control" {
+		t.Fatalf("baseline identity = %q, %v; want v1-control", identity, err)
 	}
-	// serving roles require the exact coordinated baseline and version.
+	// serving roles reject schema versions they have not been built to serve.
 	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.services ADD COLUMN future_note text`); err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +141,63 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	if newer, err := Open(ctx, databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated); err == nil {
 		newer.Close()
 		t.Fatal("open accepted a newer database schema")
+	}
+}
+
+func TestIntegrationMigrationPreservesPreviousBaselineIdentity(t *testing.T) {
+	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "previous_baseline_identity")
+	ctx := t.Context()
+	actor := seedControlServiceAuthority(t, d, now, "baseline")
+	service, err := d.CreateServiceAt(ctx, actor.TeamID, actor.ActingIdentityID, "baseline", "baseline", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{
+		`ALTER TABLE control.schema_identity DROP CONSTRAINT schema_identity_baseline_id_check`,
+		`UPDATE control.schema_identity SET baseline_id='v1' WHERE id=1`,
+		`ALTER TABLE control.schema_identity ADD CONSTRAINT schema_identity_baseline_id_check CHECK (baseline_id='v1')`,
+	} {
+		if _, err := d.pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot := func() string {
+		t.Helper()
+		var value string
+		if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_array(
+			(SELECT jsonb_agg(v ORDER BY id) FROM control.goose_db_version v),
+			(SELECT to_jsonb(i) FROM control.schema_identity i WHERE id=1),
+			(SELECT pg_get_constraintdef(oid) FROM pg_constraint
+			 WHERE conrelid='control.schema_identity'::regclass AND conname='schema_identity_baseline_id_check'),
+			(SELECT to_jsonb(s) FROM control.services s WHERE id=$1))::text`, service.ID).Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	before := snapshot()
+	for _, check := range []struct {
+		name string
+		run  func() error
+	}{
+		{"migrate", func() error { return Migrate(ctx, url) }},
+		{"repeat migration", func() error { return Migrate(ctx, url) }},
+		{"readiness", func() error { return d.Readiness(ctx) }},
+		{"open", func() error {
+			opened, err := Open(ctx, url, testStorageKey, "", naming.ManagedURLModeGenerated)
+			if opened != nil {
+				opened.Close()
+			}
+			return err
+		}},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			if err := check.run(); err != nil {
+				t.Fatal("previous baseline name rejected", err)
+			}
+			if snapshot() != before {
+				t.Fatal("baseline rename changed existing identity, schema history, or service")
+			}
+		})
 	}
 }
 

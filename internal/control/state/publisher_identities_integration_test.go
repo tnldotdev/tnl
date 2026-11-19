@@ -81,10 +81,6 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 			t.Fatalf("final table %s missing: %v", name, err)
 		}
 	}
-	files, err := migrationFiles.ReadDir("migrations")
-	if err != nil || len(files) != 1 || files[0].Name() != "00001_baseline.sql" || schemaVersion != 1 || baselineID != "v1" {
-		t.Fatalf("baseline = %v, %v", files, err)
-	}
 	var actualVersion int64
 	var actualBaseline string
 	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != schemaVersion {
@@ -93,13 +89,12 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	if err := d.pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&actualBaseline); err != nil || actualBaseline != baselineID {
 		t.Fatal("fresh baseline identity changed", actualBaseline, err)
 	}
-	// an older database's larger migration counter cannot pass this baseline's
-	// readiness check just because its numeric version is greater than one.
+	// a higher version alone does not prove that the serving binary supports it.
 	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES ($1, true)`, schemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.Readiness(t.Context()); err == nil {
-		t.Fatal("pre-cutover schema passed readiness")
+		t.Fatal("unsupported schema passed readiness")
 	}
 }
 
