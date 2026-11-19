@@ -283,6 +283,7 @@ var typeScriptKeyMappings = map[string]string{
 	"reusable_workflow":         "reusableWorkflow",
 	"require_post_quantum":      "requirePostQuantum",
 	"publisher_alias_parent":    "publisherAliasParent",
+	"certificate_scope":         "certificateScope",
 }
 
 // TypeScriptKeyMappings returns the static-to-TypeScript property mappings

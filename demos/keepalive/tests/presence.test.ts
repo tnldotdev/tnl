@@ -1,0 +1,92 @@
+import { expect, it } from "vitest";
+import { REPLACE_BEFORE_MS, STARTUP_MS } from "../src/policy.ts";
+import { Gossip, HOST_PARENT, reportedTabs, type Host } from "../src/peers/gossip.ts";
+import {
+  MAX_TABS_PER_HOST,
+  REMOTE_TAB_REPORT_MS,
+  TAB_LEASE_MS,
+  TabLeases,
+} from "../src/peers/presence.ts";
+
+const now = Date.UTC(2026, 10, 19);
+const releaseID = "a".repeat(64);
+
+function host(label: "a" | "b" | "c", run: number): Host {
+  return {
+    origin: `https://p-${label.repeat(26)}.${HOST_PARENT}`,
+    publisherID: `pub_${label.repeat(22)}`,
+    runID: `srun_${String(run).padStart(22, "0")}`,
+    runNumber: String(run),
+  };
+}
+
+it("refreshes a single tab lease, bounds memory and expires silent tabs", () => {
+  const leases = new TabLeases();
+  for (let n = 0; n < MAX_TABS_PER_HOST; n++) expect(leases.touch(`${n}`, now)).toBe(true);
+  expect(leases.touch("overflow", now)).toBe(false);
+  expect(leases.touch("0", now + 1000)).toBe(true);
+  expect(leases.count(now + TAB_LEASE_MS)).toBe(1);
+  expect(leases.count(now + TAB_LEASE_MS + 1000)).toBe(0);
+});
+
+it("sums fresh reports once and does not replace a tally with an old service run", () => {
+  const a = new Gossip(releaseID, host("a", 1), now);
+  const b = new Gossip(releaseID, host("b", 2), now);
+  const newer = new Gossip(releaseID, host("b", 3), now + 1000);
+  a.observeTabs(101, now);
+  b.observeTabs(150, now);
+  newer.observeTabs(49, now + 1000);
+  const oldReport = b.message(now);
+  const newReport = newer.message(now + 1000);
+  a.receive(oldReport, now);
+  expect(a.tabSnapshot(now)).toEqual({ local: 101, total: 251 });
+  a.receive(newReport, now + 1000);
+  a.receive(oldReport, now + 1000);
+  expect(a.tabSnapshot(now + 1000)).toEqual({ local: 101, total: 150 });
+  expect(reportedTabs([newReport.from, newReport.from], now + 1000)).toBe(49);
+  expect(a.tabs(now + TAB_LEASE_MS)).toBe(49);
+  expect(a.tabSnapshot(now + TAB_LEASE_MS)).toEqual({ local: 0, total: 49 });
+  expect(a.tabs(now + TAB_LEASE_MS + 1000)).toBe(49);
+  expect(a.tabs(now + REMOTE_TAB_REPORT_MS + 999)).toBe(49);
+  expect(a.tabs(now + REMOTE_TAB_REPORT_MS + 1000)).toBe(0);
+  a.observeTabs(25, now + REMOTE_TAB_REPORT_MS + 1000);
+  expect(a.tabSnapshot(now + REMOTE_TAB_REPORT_MS + 1000)).toEqual({ local: 25, total: 25 });
+});
+
+it("does not retain a remote tally after its host stops or its turn ends", () => {
+  const a = new Gossip(releaseID, host("a", 1), now);
+  const b = new Gossip(releaseID, host("b", 2), now);
+  const c = new Gossip(releaseID, host("c", 3), now, { endsAt: now + TAB_LEASE_MS + 1_000 });
+  b.observeTabs(13, now);
+  c.observeTabs(27, now);
+  a.receive(b.message(now), now);
+  a.receive(c.message(now), now);
+  expect(a.tabs(now + TAB_LEASE_MS)).toBe(40);
+  a.receive(b.leave(now + TAB_LEASE_MS), now + TAB_LEASE_MS);
+  expect(a.tabs(now + TAB_LEASE_MS)).toBe(27);
+  expect(a.tabs(now + TAB_LEASE_MS + 1_000)).toBe(0);
+});
+
+it("keeps capacity for expiring turns but does not replace surplus hosts", () => {
+  const a = new Gossip(releaseID, host("a", 1), now, { endsAt: now + REPLACE_BEFORE_MS });
+  const b = new Gossip(releaseID, host("b", 2), now);
+  const c = new Gossip(releaseID, host("c", 3), now);
+  a.receive(b.message(now), now);
+  a.receive(c.message(now), now);
+  expect(a.readyBeyondWindow(now)).toBe(2);
+  expect(a.canRetire(now, 2, a.hosts(now))).toBe(false);
+  b.observeTabs(20, now);
+  c.observeTabs(30, now);
+  a.receive(b.message(now), now);
+  a.receive(c.message(now), now);
+  expect(a.canRetire(now, 2, a.hosts(now))).toBe(true);
+  expect(a.tabs(now + TAB_LEASE_MS)).toBe(50);
+  expect(a.canRetire(now + TAB_LEASE_MS, 2, a.hosts(now + TAB_LEASE_MS))).toBe(false);
+  expect(a.canRetire(now, 3, a.hosts(now))).toBe(false);
+  expect(a.maybeStart(now, 2, () => true)).toBe(false);
+  expect(a.maybeStart(now, 3, () => true)).toBe(true);
+  expect(a.maybeStart(now, 3, () => true)).toBe(false);
+  b.receive(a.message(now), now);
+  expect(b.maybeStart(now, 3, () => true)).toBe(false);
+  expect(b.maybeStart(now + STARTUP_MS, 3, () => true)).toBe(true);
+});

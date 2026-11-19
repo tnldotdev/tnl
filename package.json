@@ -7,12 +7,12 @@
     "clean": "pnpm --recursive --if-present run clean",
     "format": "oxfmt --write '**/*'",
     "format:check": "oxfmt --check '**/*'",
-    "lint": "oxlint --deny-warnings --report-unused-disable-directives connect/src connect/test connect/scripts internal/client/project/loader.ts internal/publisher/toolbar internal/publisher/browserapi packages scripts vitest*.ts",
+    "lint": "oxlint --deny-warnings --report-unused-disable-directives connect/src connect/test connect/scripts demos/keepalive internal/client/project/loader.ts internal/publisher/toolbar internal/publisher/browserapi packages scripts vitest*.ts",
     "test": "pnpm build && pnpm test:run",
     "test:run": "vitest run",
     "test:coverage": "pnpm build && vitest run --coverage --mode coverage",
     "typecheck": "pnpm build && pnpm typecheck:run",
-    "typecheck:run": "vitest run --config vitest.types.config.ts && tsc --project internal/publisher/toolbar/tsconfig.json && tsc --project tsconfig.json"
+    "typecheck:run": "vitest run --config vitest.types.config.ts && tsc --project internal/publisher/toolbar/tsconfig.json && tsc --project demos/keepalive/tsconfig.json && tsc --project tsconfig.json"
   },
   "devDependencies": {
     "@apidevtools/json-schema-ref-parser": "15.5.2",

@@ -432,6 +432,27 @@ func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 	}
 }
 
+func TestTypeScriptDeploymentCertificateScope(t *testing.T) {
+	project, err := unmarshalTypeScriptTNL([]byte(`{
+		"services":{"web":{"protocol":"http"}},
+		"deployments":{"production":{"targets":{"web":{
+			"public":true,"hostname":"web.hosts.example.test",
+			"publisherAliasParent":"hosts.example.test","certificateScope":"hosts.example.test"
+		}}}}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := config.ResolveDeployment(project, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := resolved.Services["web"].CertificateScope
+	if scope == nil || *scope != "hosts.example.test" {
+		t.Fatalf("resolved certificate scope = %v", scope)
+	}
+}
+
 func TestTypeScriptDatabaseTargetTLSIsPublisherSide(t *testing.T) {
 	declared, err := unmarshalTypeScriptTNL([]byte(`{"services":{"web":{},"orders":{"protocol":"postgres"}},"deployments":{"local":{"targets":{"web":{"address":3000},"orders":{"address":"db.internal:5432","tls":{"hostname":"db.internal","ca":"system"}}}}}}`))
 	if err != nil {

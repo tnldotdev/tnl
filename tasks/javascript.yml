@@ -45,6 +45,37 @@ tasks:
     cmds:
       - pnpm build
 
+  keepalive:build:
+    desc: Build the Keepalive site and Worker
+    cmds:
+      - task: build
+      - node demos/keepalive/scripts/build.ts
+
+  keepalive:dev:
+    desc: Run the Keepalive proxy locally with Wrangler
+    vars:
+      FLAGS: '{{default "" .FLAGS}}'
+    cmds:
+      - task: keepalive:build
+      - wrangler dev --config demos/keepalive/wrangler.jsonc --ip 127.0.0.1 {{.FLAGS}}
+
+  keepalive:preview:
+    desc: Preview the Keepalive page with Vite (no host connections)
+    cmds:
+      - pnpm --filter @tnldotdev/keepalive exec vite
+
+  keepalive:test:
+    desc: Check the Keepalive proxy and host commands
+    cmds:
+      - pnpm exec vitest run demos/keepalive/tests
+
+  keepalive:handoff:
+    desc: Check a real browser handoff against an empty Keepalive test deployment
+    requires:
+      vars: [SITE, START, PEER_PROXY]
+    cmds:
+      - node demos/keepalive/tests/handoff.ts --site "{{.SITE}}" --start "{{.START}}" --peer-proxy "{{.PEER_PROXY}}"
+
   wasm:build:
     desc: Build the SDK's Go/WASM module and matching Go runtime
     cmds:

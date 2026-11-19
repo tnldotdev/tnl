@@ -1,5 +1,6 @@
 packages:
   - connect
+  - demos/keepalive
   - packages/ts
   - scripts/generate
 

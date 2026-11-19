@@ -134,6 +134,10 @@ export async function generateManagementSDK(): Promise<void> {
         : unknown)`,
     ),
   );
+  const serializerPath = resolve(output, "core/pathSerializer.gen.ts");
+  const serializer = await readFile(serializerPath, "utf8");
+  // escape the apostrophe in the generator's single-quoted string.
+  await writeFile(serializerPath, serializer.replace("aren’t supported", "aren\\'t supported"));
   execFileSync("pnpm", ["exec", "oxfmt", "--write", output], { cwd: root, stdio: "inherit" });
 }
 

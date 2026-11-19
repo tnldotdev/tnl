@@ -1,4 +1,5 @@
 {
+  "certificate_scope": "certificateScope",
   "download_bytes": "downloadBytes",
   "jwks_url": "jwksUrl",
   "machine_id": "machineId",

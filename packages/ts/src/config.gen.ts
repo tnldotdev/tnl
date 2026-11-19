@@ -74,10 +74,6 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
-                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
-                   */
-                  certificate_scope?: string;
-                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -141,6 +137,10 @@ export interface TnlConfig {
                      */
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
+                  /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificateScope?: string;
                   /**
                    * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
                    */
@@ -190,10 +190,6 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
-                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
-                   */
-                  certificate_scope?: string;
-                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -257,6 +253,10 @@ export interface TnlConfig {
                      */
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
+                  /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificateScope?: string;
                   /**
                    * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
                    */
@@ -306,10 +306,6 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
-                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
-                   */
-                  certificate_scope?: string;
-                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -373,6 +369,10 @@ export interface TnlConfig {
                      */
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
+                  /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificateScope?: string;
                   /**
                    * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
                    */
@@ -422,10 +422,6 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
-                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
-                   */
-                  certificate_scope?: string;
-                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -489,6 +485,10 @@ export interface TnlConfig {
                      */
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
+                  /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificateScope?: string;
                   /**
                    * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
                    */
@@ -526,10 +526,6 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
-                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
-                   */
-                  certificate_scope?: string;
-                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -593,6 +589,10 @@ export interface TnlConfig {
                      */
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
+                  /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificateScope?: string;
                   /**
                    * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
                    */
@@ -630,10 +630,6 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
-                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
-                   */
-                  certificate_scope?: string;
-                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -697,6 +693,10 @@ export interface TnlConfig {
                      */
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
+                  /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificateScope?: string;
                   /**
                    * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
                    */
@@ -734,10 +734,6 @@ export interface TnlConfig {
                    */
                   hostname?: string;
                   /**
-                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
-                   */
-                  certificate_scope?: string;
-                  /**
                    * Ready team domain used for the service endpoint.
                    */
                   domain?: string;
@@ -801,6 +797,10 @@ export interface TnlConfig {
                      */
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
+                  /**
+                   * Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree.
+                   */
+                  certificateScope?: string;
                   /**
                    * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
                    */
