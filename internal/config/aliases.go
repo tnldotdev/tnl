@@ -3,7 +3,6 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -53,9 +52,6 @@ func (a Alias) DefinitionBytes(key string) ([]byte, [32]byte, error) {
 // ValidateAliases validates local declarations without resolving a member
 // namespace, consulting server policy, or creating services.
 func ValidateAliases(config TNL) error {
-	if len(config.Aliases) > 32 {
-		return errors.New("aliases may contain at most 32 entries")
-	}
 	hostnames := make(map[string]string, len(config.Aliases))
 	for _, key := range slices.Sorted(maps.Keys(config.Aliases)) {
 		alias := config.Aliases[key]

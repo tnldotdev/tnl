@@ -20,13 +20,13 @@ func TestDeploymentPublisherEnrollmentHasBoundedIndependentTaskBudget(t *testing
 	if err != nil || *body.MaxMembers != 20 || *body.ExpiresIn != 3600 {
 		t.Fatalf("bootstrap bounds: %#v err=%v", body, err)
 	}
-	for _, entry := range []publisherSetupCommand{{Members: 0, ExpiresIn: time.Minute}, {Members: 257, ExpiresIn: time.Minute}, {Members: 1, ExpiresIn: 0}, {Members: 1, ExpiresIn: 59 * time.Second}, {Members: 1, ExpiresIn: 25 * time.Hour}, {Members: 1, ExpiresIn: time.Minute + time.Millisecond}} {
+	for _, entry := range []publisherSetupCommand{{Members: 0, ExpiresIn: time.Minute}, {Members: 1 << 31, ExpiresIn: time.Minute}, {Members: 1, ExpiresIn: 0}, {Members: 1, ExpiresIn: 59 * time.Second}, {Members: 1, ExpiresIn: 25 * time.Hour}, {Members: 1, ExpiresIn: time.Minute + time.Millisecond}} {
 		entry.Deployment, entry.Services = "cluster", []string{"db"}
 		if _, err := deploymentPublisherSetupBody(entry); err == nil {
 			t.Fatalf("unbounded bootstrap accepted: members=%d lifetime=%s", entry.Members, entry.ExpiresIn)
 		}
 	}
-	for _, entry := range []publisherSetupCommand{{Members: 1, ExpiresIn: time.Minute}, {Members: 256, ExpiresIn: 24 * time.Hour}} {
+	for _, entry := range []publisherSetupCommand{{Members: 1, ExpiresIn: time.Minute}, {Members: 257, ExpiresIn: 24 * time.Hour}} {
 		entry.Deployment, entry.Services = "cluster", []string{"db"}
 		if _, err := deploymentPublisherSetupBody(entry); err != nil {
 			t.Fatal(err)

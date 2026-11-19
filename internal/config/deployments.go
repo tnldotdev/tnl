@@ -70,9 +70,6 @@ func DeclaredProtocol(service ServiceDeclaration) string {
 }
 
 func ValidateProject(project Project) error {
-	if len(project.Services) > 128 || len(project.Deployments) > 32 || len(project.Workloads) > 32 {
-		return errors.New("configure at most 128 services, 32 deployments, and 32 workload policies")
-	}
 	for name, declaration := range project.Services {
 		if !naming.ValidServiceName(name) {
 			return errors.New("services must declare lowercase service names")

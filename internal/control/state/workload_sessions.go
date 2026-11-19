@@ -108,7 +108,7 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 	if services == nil {
 		services = slices.Clone(p.Services)
 	}
-	if len(services) == 0 || len(services) > 32 {
+	if len(services) == 0 {
 		return result, ErrWorkloadDenied
 	}
 	slices.Sort(services)

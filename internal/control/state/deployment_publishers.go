@@ -52,7 +52,7 @@ func deploymentPublisherEnrollmentContext(id string) string {
 // still usable. it never creates a replacement installation credential.
 func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r CreateDeploymentPublisherEnrollmentRequest) (result DeploymentPublisherEnrollment, retErr error) {
 	clock := newAuthorizationClock(r.Now)
-	if !validIdempotencyKey(r.IdempotencyKey) || len(r.Services) < 1 || len(r.Services) > 128 || r.MaxMembers < 1 || r.MaxMembers > 256 || r.Lifetime < time.Minute || r.Lifetime > 24*time.Hour {
+	if !validIdempotencyKey(r.IdempotencyKey) || len(r.Services) < 1 || r.MaxMembers < 1 || r.MaxMembers > 1<<31-1 || r.Lifetime < time.Minute || r.Lifetime > 24*time.Hour {
 		return result, ErrProjectConfigurationInvalid
 	}
 	names := slices.Clone(r.Services)
@@ -209,7 +209,7 @@ func (d *Database) currentPublisherEnrollmentServices(ctx context.Context, q *co
 	if err != nil {
 		return nil, err
 	}
-	if len(scopes) == 0 || len(scopes) > 128 {
+	if len(scopes) == 0 {
 		return nil, ErrPublisherEnrollment
 	}
 	configuration, err := d.openDeploymentConfiguration(deployment)

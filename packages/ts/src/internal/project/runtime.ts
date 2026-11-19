@@ -43,7 +43,6 @@ const mountPrefixSchema = z.templateLiteral(["/", z.string()]).refine(
 function metadataMap<K extends z.ZodType<string>, V extends z.ZodType>(key: K, value: V) {
   return z
     .record(key, value)
-    .refine((entries) => Object.keys(entries).length <= 32)
     .transform((entries): Readonly<Record<string, z.output<V> | undefined>> =>
       Object.freeze(Object.assign(Object.create(null), entries)),
     );

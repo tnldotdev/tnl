@@ -41,7 +41,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 	}
 	var body controlv1.CreateShareRequest
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.ExpiresAt.IsZero() || body.EntryServiceId == "" ||
-		len(body.ServiceIds) == 0 || len(body.ServiceIds) > 32 || previewID == "" && len(body.ServiceIds) != 1 ||
+		len(body.ServiceIds) == 0 || previewID == "" && len(body.ServiceIds) != 1 ||
 		!slices.Contains(body.ServiceIds, body.EntryServiceId) || body.Label != nil && len(*body.Label) > 128 {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid share request")
 		return

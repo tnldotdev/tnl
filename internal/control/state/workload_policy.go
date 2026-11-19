@@ -56,7 +56,7 @@ func (p ProjectWorkloadGitHub) matches(c oidc.GitHubExecution) bool {
 }
 
 func normalizeProjectWorkloads(c *ProjectConfiguration) error {
-	if len(c.Workloads) > 32 || c.Settings == nil && len(c.Workloads) != 0 {
+	if c.Settings == nil && len(c.Workloads) != 0 {
 		return ErrProjectConfigurationInvalid
 	}
 	for name, p := range c.Workloads {
@@ -79,7 +79,7 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 			if err := p.validateTrust(); err != nil {
 				return err
 			}
-			if !serviceName.MatchString(name) || p.MaxDurationSeconds < 0 || int64(p.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(p.Services) == 0 || len(p.Services) > 32 {
+			if !serviceName.MatchString(name) || p.MaxDurationSeconds < 0 || int64(p.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(p.Services) == 0 {
 				return ErrProjectConfigurationInvalid
 			}
 			seen := map[string]bool{}

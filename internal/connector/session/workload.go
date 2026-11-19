@@ -34,7 +34,7 @@ func NewWorkloadDeployment(ctx context.Context, request DeploymentOptions, optio
 		len(team) > 128 || len(project) > 128 || !fingerprint.MatchString(options.SourceFingerprint) ||
 		!naming.ValidServiceName(options.Name) || request.Credential != "" ||
 		request.Deployment == "local" || !(naming.ValidServiceName(request.Deployment) || opaqueid.Valid(request.Deployment, "dpl_")) ||
-		request.Name != "" && request.Deployment != request.Name || len(request.Services) == 0 || len(request.Services) > 32 {
+		request.Name != "" && request.Deployment != request.Name || len(request.Services) == 0 {
 		return nil, auth.ErrDeploymentCredential
 	}
 	request.Services = slices.Clone(request.Services)

@@ -235,12 +235,6 @@ func (m Metadata) Validate() error {
 			return err
 		}
 	}
-	if len(m.Services) > 32 {
-		return errors.New("project metadata may contain at most 32 services")
-	}
-	if len(m.Webhooks) > 32 {
-		return errors.New("project metadata may contain at most 32 webhooks")
-	}
 	for name, endpoint := range m.Webhooks {
 		if !naming.ValidServiceName(name) || !targetsyntax.ValidMountPrefix(endpoint.Path) {
 			return fmt.Errorf("invalid webhook %q", name)
@@ -293,9 +287,6 @@ func (m Metadata) Validate() error {
 		if err := validateServiceAddress(service); err != nil {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
-		if len(service.Paths) > 32 {
-			return fmt.Errorf("service %q may contain at most 32 path mounts", name)
-		}
 		prefixes := make([]string, 0, len(service.Paths))
 		for prefix := range service.Paths {
 			prefixes = append(prefixes, prefix)
@@ -313,9 +304,6 @@ func (m Metadata) Validate() error {
 				return fmt.Errorf("service %q path mount %q URL must be %s", name, prefix, service.URL+prefix)
 			}
 		}
-	}
-	if len(m.Aliases) > 32 {
-		return errors.New("project metadata may contain at most 32 aliases")
 	}
 	for name, alias := range m.Aliases {
 		if !naming.ValidServiceName(name) || alias.URL != "https://"+alias.Hostname {

@@ -150,7 +150,7 @@ func validateSession(r authorityv1.WorkloadSession) error {
 		return invalidSession()
 	}
 	subject, subjectErr := visitorsubject.Parse(r.Subject)
-	if subjectErr != nil || subject.Kind != tunnelv1.VisitorWorkloadSession || subject.WorkloadSessionID != r.Id || len(r.Credential) != 47 || r.Credential[:4] != "wlc_" || !r.LeaseExpiresAt.After(time.Now()) || len(r.ServiceIds) > 32 {
+	if subjectErr != nil || subject.Kind != tunnelv1.VisitorWorkloadSession || subject.WorkloadSessionID != r.Id || len(r.Credential) != 47 || r.Credential[:4] != "wlc_" || !r.LeaseExpiresAt.After(time.Now()) {
 		return invalidSession()
 	}
 	seen := map[string]bool{}
@@ -221,7 +221,7 @@ func (c *Client) IdentifyPolicy(ctx context.Context, team, project, source, work
 	if err != nil {
 		return r, err
 	}
-	if !bindingID.MatchString(r.Binding) || len(r.Services) == 0 || len(r.Services) > 32 || !r.AssertionExpiresAt.After(time.Now()) || r.AssertionExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute)) {
+	if !bindingID.MatchString(r.Binding) || len(r.Services) == 0 || !r.AssertionExpiresAt.After(time.Now()) || r.AssertionExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute)) {
 		return authorityv1.WorkloadIdentity{}, invalidSession()
 	}
 	seen := map[string]bool{}

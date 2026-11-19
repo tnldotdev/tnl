@@ -17,11 +17,11 @@ class DeploymentTargetTls(BaseModel):
 
 class CreateDeploymentPublisherEnrollmentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    services: Annotated[list[str], Field(min_length=1, max_length=128)] = Field(
+    services: Annotated[list[str], Field(min_length=1)] = Field(
         ...,
         description="Exact existing bindings to approve. Control captures their saved IDs and protocols; future names, reused names, and protocol changes never expand approval.",
     )
-    max_members: Annotated[int, Field(ge=1, le=256)] | None = 1
+    max_members: Annotated[int, Field(ge=1, le=2147483647)] | None = 1
     expires_in: Annotated[int, Field(ge=60, le=86400)] | None = 600
 
 
@@ -183,7 +183,7 @@ class DeploymentPublisherEnrollment(BaseModel):
     enrollment_key: str
     deployment_id: str
     expires_at: datetime
-    max_members: Annotated[int, Field(ge=1, le=256)]
+    max_members: Annotated[int, Field(ge=1, le=2147483647)]
     services: dict[str, ServiceProtocol]
 
 

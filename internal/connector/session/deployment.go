@@ -61,9 +61,6 @@ func NewDeployment(request DeploymentOptions, httpClient *http.Client) (*Deploym
 	if request.Deployment == "local" || !(naming.ValidServiceName(request.Deployment) || opaqueid.Valid(request.Deployment, "dpl_")) || request.ControlURL != "" && request.ControlURL != credential.ControlURL {
 		return nil, auth.ErrDeploymentCredential
 	}
-	if len(request.Services) > 32 {
-		return nil, auth.ErrDeploymentCredential
-	}
 	request.Services = slices.Clone(request.Services)
 	seen := map[string]bool{}
 	for _, name := range request.Services {

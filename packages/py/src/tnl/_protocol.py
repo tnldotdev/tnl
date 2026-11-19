@@ -115,7 +115,7 @@ def _service_metadata(name: str, value: object) -> dict[str, object]:
     elif url != "":
         raise InvalidResponse()
     paths = item.get("paths", {})
-    if not isinstance(paths, dict) or len(paths) > 32 or protocol != "http" and paths:
+    if not isinstance(paths, dict) or protocol != "http" and paths:
         raise InvalidResponse()
     for prefix, raw in paths.items():
         prefix = text(prefix, 256)
@@ -154,7 +154,7 @@ def parse_assignment(value: object, endpoint: Endpoint) -> Assignment:
         {"namespace", "dev", "services", "oauth", "webhooks", "aliases", "worktree"},
     )
     services = project.get("services")
-    if not isinstance(services, dict) or len(services) > 32 or project.get("dev") is not True:
+    if not isinstance(services, dict) or project.get("dev") is not True:
         raise InvalidResponse()
     if (
         project.get("namespace") != ""

@@ -298,10 +298,6 @@ func (s *Server) Handler() http.Handler {
 		if request.Services != nil {
 			names = *request.Services
 		}
-		if len(names) > 32 {
-			Problem(w, errors.New("too many services"))
-			return
-		}
 		snapshot, err := s.Check(r.Context(), names)
 		if err != nil {
 			Problem(w, err)

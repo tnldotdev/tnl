@@ -49,7 +49,7 @@ func (journal) GoString() string { return "protected publisher provisioning oper
 func Ensure(ctx context.Context, store *clientstate.Store, control Control, client Client, scope Scope, services []string, beforeEnroll ...func() error) (credentialfile.DeploymentFile, error) {
 	services = slices.Clone(services)
 	slices.Sort(services)
-	if len(services) < 1 || len(services) > 128 {
+	if len(services) < 1 {
 		return credentialfile.DeploymentFile{}, credentialfile.ErrInvalid
 	}
 	for i, name := range services {

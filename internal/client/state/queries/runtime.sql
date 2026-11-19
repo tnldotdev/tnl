@@ -31,4 +31,4 @@ ORDER BY sequence;
 -- name: ListKnownProjectServices :many
 SELECT service_id FROM project_service_inventory
 WHERE project_root = sqlc.arg(project_root) AND server_origin = sqlc.arg(server_origin)
-ORDER BY last_seen_at DESC, service_id LIMIT 256;
+ORDER BY last_seen_at DESC, service_id;

@@ -119,7 +119,7 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	slices.Sort(ids)
 	if request.PreviewID != "" && !opaqueid.Valid(request.PreviewID, opaqueid.PreviewPrefix) ||
 		request.ActingIdentityID == "" || len(request.Label) > 128 ||
-		request.IdempotencyKey == "" || len(request.IdempotencyKey) > 128 || len(ids) < 1 || len(ids) > 32 ||
+		request.IdempotencyKey == "" || len(request.IdempotencyKey) > 128 || len(ids) < 1 ||
 		request.PreviewID == "" && len(ids) != 1 || !slices.Contains(ids, request.EntryServiceID) {
 		return result, ErrShareInvalid
 	}
@@ -303,7 +303,7 @@ func (d *Database) currentShareIssuer(ctx context.Context, tx pgx.Tx, share cont
 	if err != nil {
 		return time.Time{}, err
 	}
-	if len(ids) == 0 || len(ids) > 32 || !slices.Contains(ids, share.EntryServiceID) {
+	if len(ids) == 0 || !slices.Contains(ids, share.EntryServiceID) {
 		return time.Time{}, ErrShareNotFound
 	}
 	if share.GuestID.Valid {
