@@ -12,6 +12,13 @@ export type CredentialBindings = {
   PRIVATE_KEY_PEM?: string;
 };
 
+export function enrollmentConfigured(
+  env: CredentialBindings,
+): env is CredentialBindings &
+  Required<Pick<CredentialBindings, "MANAGEMENT_TOKEN" | "PROJECT_KEY" | "TEAM_ID">> {
+  return Boolean(env.MANAGEMENT_TOKEN && env.PROJECT_KEY && env.TEAM_ID);
+}
+
 export async function credentials(request: Request, releaseID: string, env: CredentialBindings) {
   const { origin } = new URL(request.url);
   const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
@@ -29,7 +36,7 @@ export async function credentials(request: Request, releaseID: string, env: Cred
   if (!body.success || body.data.releaseID !== releaseID) {
     return new Response(null, { status: 400, headers });
   }
-  if (!env.MANAGEMENT_TOKEN || !env.PROJECT_KEY || !env.TEAM_ID) {
+  if (!enrollmentConfigured(env)) {
     return new Response(null, { status: 503, headers });
   }
   try {

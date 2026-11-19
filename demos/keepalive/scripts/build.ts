@@ -40,6 +40,7 @@ const assets = await Promise.all(
     "/app.js",
     "/index.html",
     "/index.css",
+    "/favicon.svg",
     "/fira-code-latin-wght-normal.woff2",
     WORKER_PATH,
     WASM_PATH,

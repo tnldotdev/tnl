@@ -43,7 +43,7 @@ it("checks the script before serving it and does not pass through credentials", 
   const response = await proxy.file(request("/app.js", { headers: { Cookie: "private=1" } }));
   expect(await response.text()).toBe(script);
   expect(response.headers.get("Set-Cookie")).toBeNull();
-  expect(response.headers.get("Cache-Control")).toBe("no-store");
+  expect(response.headers.get("Cache-Control")).toBe("no-store, no-transform");
   expect(fetchHost.mock.calls.map(([url]) => String(url))).toEqual([
     `${SHARED_HOST}/app.js`,
     `${SHARED_HOST}/app.js`,
