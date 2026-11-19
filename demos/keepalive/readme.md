@@ -69,9 +69,9 @@ pool needs it, and stops at zero even if nobody takes over. To hand off
 early, it checks that the replacement answers at its own address. The proxy
 won't approve a volunteer with the same public IP as the host inviting it.
 
-The page shows experiment age and a small tree under **hosts**. Each branch
-connects a tab to the host it copied from. The tree shows recent reports,
-not a complete history.
+The page shows the time since the first host started. Under **hosts**,
+a small tree connects each tab to the host it copied from. The tree shows
+recent reports, not a complete history.
 
 While hosting, the page shows successful file responses from this tab and
 its share of the estimated tab count. The two numbers measure different

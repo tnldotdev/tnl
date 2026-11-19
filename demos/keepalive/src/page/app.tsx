@@ -236,7 +236,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
     <main>
       <h1>{bootstrap ? "start keepalive" : "can we keep this alive?"}</h1>
       <p class="experiment-age">
-        <span>experiment age</span>
+        <span>time since start</span>
         <strong>{startedAt === undefined ? "—" : age(startedAt, now)}</strong>
       </p>
       {bootstrap ? (
@@ -261,6 +261,9 @@ function App({ bootstrap }: { bootstrap: boolean }) {
           <>
             <p>{countdown(hosting.endsAt, Math.max(now, hosting.since))} left in your turn</p>
             <div class="host-activity">
+              <div>
+                {hosting.localTabs.toLocaleString()} / ~{hosting.tabs.toLocaleString()} tabs
+              </div>
               <div class="request-line">
                 <span class="request-pulse" aria-hidden="true">
                   {activity
@@ -268,9 +271,6 @@ function App({ bootstrap }: { bootstrap: boolean }) {
                     : "_".repeat(PULSE_SECONDS)}
                 </span>
                 <span>{pluralRequests(activity?.requests ?? 0)}</span>
-              </div>
-              <div>
-                {hosting.localTabs.toLocaleString()} / ~{hosting.tabs.toLocaleString()} tabs
               </div>
             </div>
           </>
