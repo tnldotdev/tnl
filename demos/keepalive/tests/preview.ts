@@ -105,7 +105,6 @@ try {
       runID: self.runID,
       tabs: bootstrap ? 1 : 187,
       localTabs: bootstrap ? 1 : 54,
-      roster: bootstrap ? [{ ...self, copyFrom: undefined, endsAt: now + seconds * 1000 }] : roster,
     };
     const requests = seconds >= 600 ? 0 : 219;
     await page.addInitScript(
@@ -225,7 +224,31 @@ try {
       if (path === "/__keepalive/config")
         return mode === "unavailable" ? route.fulfill({ status: 503, headers }) : ok(config);
       if (path === "/__keepalive/network-proof") return ok(proof);
-      if (path === "/__keepalive/peers" || path === "/__keepalive/presence") {
+      if (path === "/__keepalive/tree") {
+        const host = roster.find((peer) => peer.origin === url.origin) ?? self;
+        const hosts = (
+          bootstrap ? [{ ...self, copyFrom: undefined, endsAt: now + seconds * 1000 }] : roster
+        ).map(({ runID, copyFrom, endsAt, name, left }) => ({
+          runID,
+          copyFrom,
+          endsAt,
+          name,
+          left,
+        }));
+        return ok({ hostRunID: host.runID, hosts });
+      }
+      if (path === "/__keepalive/presence") {
+        const host = roster.find((peer) => peer.origin === url.origin) ?? b;
+        if (bootstrap && mode !== "already") return route.fulfill({ status: 503, headers });
+        return ok({
+          host,
+          startedAt,
+          tabs: 187,
+          hosts: 4,
+          fallback: roster.filter((peer) => peer !== host).slice(0, 3),
+        });
+      }
+      if (path === "/__keepalive/peers") {
         if (bootstrap && mode !== "already") return route.fulfill({ status: 503, headers });
         const from = roster.find((peer) => peer.origin === url.origin) ?? b;
         return ok({

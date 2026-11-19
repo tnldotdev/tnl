@@ -1,9 +1,10 @@
 import * as z from "zod";
 import { hostNameSchema } from "../peers/host-names.ts";
-import { hostDetailsSchema, hostOrigin, hostSchema, runIDSchema } from "../peers/gossip.ts";
+import { hostOrigin, hostSchema, runIDSchema } from "../peers/gossip.ts";
 import { releaseSchema } from "../release.ts";
 import { PULSE_SECONDS } from "./activity.ts";
 import { hostingConfig, invitationSchema } from "../enrollment.ts";
+import { inheritedCertificate } from "./certificate.ts";
 
 export const hostCommand = z.discriminatedUnion("type", [
   z.strictObject({
@@ -11,6 +12,7 @@ export const hostCommand = z.discriminatedUnion("type", [
     release: releaseSchema,
     files: z.map(z.string(), z.instanceof(ArrayBuffer)),
     config: hostingConfig,
+    inherited: inheritedCertificate.optional(),
     bootstrap: z.boolean(),
     startupEndsAt: z.int(),
     name: hostNameSchema,
@@ -34,15 +36,6 @@ export const hostUpdate = z.discriminatedUnion("type", [
       runID: runIDSchema,
       tabs: z.int().nonnegative(),
       localTabs: z.int().nonnegative(),
-      roster: z
-        .array(
-          hostDetailsSchema.extend({
-            runID: runIDSchema,
-            left: z.boolean(),
-            startingUntil: z.int().nonnegative(),
-          }),
-        )
-        .max(257),
     })
     .refine(({ localTabs, tabs }) => localTabs <= tabs),
   z.strictObject({

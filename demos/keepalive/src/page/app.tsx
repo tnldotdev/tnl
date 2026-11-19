@@ -13,7 +13,7 @@ import {
   hostTab,
   type HostState,
 } from "../hosting/tab.ts";
-import { reportedTabs } from "../peers/gossip.ts";
+import { readTree } from "../peers/view.ts";
 import { observeVisitors, type Observation } from "./visitor.ts";
 
 const labels = {
@@ -88,37 +88,55 @@ function BranchRow({
 }
 
 function Hosts({
-  roster,
+  origin,
   now,
   self,
   focus,
 }: {
-  roster: readonly TreeHost[];
+  origin: string | undefined;
   now: number;
   self: string | undefined;
   focus: string | undefined;
 }) {
   const [anchor, setAnchor] = useState<string>();
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<{ origin: string; focus: string; hosts: readonly TreeHost[] }>();
+  useEffect(() => {
+    if (!open || origin === undefined || focus === undefined) return;
+    const lifetime = new AbortController();
+    setAnchor(undefined);
+    void readTree(origin, focus, lifetime.signal)
+      .then((hosts) => {
+        if (!lifetime.signal.aborted && hosts !== undefined) setView({ origin, focus, hosts });
+      })
+      .catch(() => {});
+    return () => lifetime.abort();
+  }, [open, origin, focus]);
+  const roster =
+    view?.origin === origin && view?.focus === focus ? (view?.hosts ?? emptyRoster) : emptyRoster;
   const pages = useMemo(() => hostBranches(roster, focus), [roster, focus]);
   const index = Math.max(
     0,
     pages.findIndex((page) => page.focusID === anchor),
   );
   const page = pages[index];
-  if (page === undefined) return null;
+  if (origin === undefined || focus === undefined) return null;
   return (
-    <details class="host-details">
+    <details class="host-details" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>hosts</summary>
       <p class="tree-note">
         <span>how it spread</span>
         <br />
         Each branch shows who copied from whom.
       </p>
-      {page.continued && <div aria-label="Earlier hosts not shown">...</div>}
-      <ul class="host-tree">
-        <BranchRow branch={page.root} now={now} self={self} />
-      </ul>
-      {pages.length > 1 && (
+      {page?.continued && <div aria-label="Earlier hosts not shown">...</div>}
+      {page !== undefined && (
+        <ul class="host-tree">
+          <BranchRow branch={page.root} now={now} self={self} />
+        </ul>
+      )}
+      {page === undefined && <p>Waiting for a host report.</p>}
+      {page !== undefined && pages.length > 1 && (
         <button
           class="text-action"
           type="button"
@@ -171,10 +189,8 @@ function App({ bootstrap }: { bootstrap: boolean }) {
     });
     return () => lifetime.abort();
   }, []);
-  const roster = hosting?.roster ?? observed?.roster ?? emptyRoster;
-  const hosts =
-    hosting?.hosts ?? roster.filter((peer) => !peer.left && (peer.endsAt ?? Infinity) > now).length;
-  const visitors = hosting?.tabs ?? reportedTabs(observed?.roster ?? [], now);
+  const hosts = hosting?.hosts ?? observed?.hosts ?? 0;
+  const visitors = hosting?.tabs ?? observed?.tabs ?? 0;
 
   function closeChirp() {
     chirp.current?.close();
@@ -331,10 +347,10 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         )}
         <Hosts
           key={hosting?.runID}
-          roster={roster}
+          origin={hosting?.origin ?? observed?.host.origin}
           now={now}
           self={hosting?.runID}
-          focus={hosting?.runID ?? observed?.hostRunID}
+          focus={hosting?.runID ?? observed?.host.runID}
         />
       </section>
       <div class="actions">

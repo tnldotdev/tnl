@@ -7,6 +7,7 @@ import { REPLACE_BEFORE_MS, turnLength } from "../policy.ts";
 import { hostCommand, type HostStart, type HostUpdate } from "./messages.ts";
 import { peerServer, readPeers } from "../peers/http.ts";
 import { startPublisher } from "./publish.ts";
+import { chooseCertificate, describeCertificate } from "./certificate.ts";
 
 const lifetime = new AbortController();
 const { signal } = lifetime;
@@ -35,6 +36,7 @@ async function host(command: HostStart) {
   let endsAt = Infinity;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
   let activityTimer: ReturnType<typeof setInterval> | undefined;
+  let checkingCertificate = false;
   const activity = new RequestActivity();
   function endTurn() {
     expired = true;
@@ -67,8 +69,13 @@ async function host(command: HostStart) {
       },
       signal,
       { proxyOrigin: command.pageOrigin, proof: command.config.networkProof },
+      async (request) => {
+        request.throwIfAborted();
+        return running?.exportCertificate();
+      },
     );
     const requestID = crypto.randomUUID();
+    const supplied = chooseCertificate(command.inherited, command.bootstrap, Date.now());
     running = await startPublisher(
       command.config,
       async (signal) => {
@@ -84,8 +91,16 @@ async function host(command: HostStart) {
       },
       peers.fetch,
       signal,
+      supplied === undefined
+        ? undefined
+        : async (operation) => {
+            const installed = running === undefined ? supplied : await running.exportCertificate();
+            const report = await describeCertificate(installed);
+            return ((await peers?.newerCertificate(report, operation)) ?? installed).certificate;
+          },
     );
     const { host } = running;
+    const certificate = await describeCertificate(await running.exportCertificate());
     const since = Date.now();
     if (since >= command.startupEndsAt) throw new Error("The hosting invitation expired.");
     const duration = turnLength(command.bootstrap);
@@ -112,6 +127,19 @@ async function host(command: HostStart) {
               if (report !== undefined) gossip.receive(report, Date.now());
             })
             .catch(() => {});
+          if (!checkingCertificate && running !== undefined) {
+            checkingCertificate = true;
+            void running
+              .exportCertificate()
+              .then(describeCertificate)
+              .then((installed) => {
+                if (!signal.aborted) peers?.advertiseCertificate(installed);
+              })
+              .catch(() => {})
+              .finally(() => {
+                checkingCertificate = false;
+              });
+          }
         }
         if (departing() && peers?.replacementReady) {
           lifetime.abort();
@@ -128,12 +156,12 @@ async function host(command: HostStart) {
           runID: host.runID,
           tabs: tabs.total,
           localTabs: tabs.local,
-          roster: gossip.roster(now),
         });
       },
       departing,
       {
         name: command.name,
+        certificate,
         endsAt,
         ...(command.invitation && command.firstHostToContact
           ? { copyFrom: command.firstHostToContact.runID }

@@ -1,12 +1,14 @@
-import { MAX_MESSAGE_BYTES, parseMessage, sameRun, type Change } from "../peers/gossip.ts";
+import { sameRun, type Host } from "../peers/gossip.ts";
 import { readPeers } from "../peers/http.ts";
 import { heartbeatSchema, HEARTBEAT_MS, PRESENCE_PATH } from "../peers/presence.ts";
+import { presenceSummary } from "../peers/view.ts";
 import { MAX_MANIFEST_BYTES, parseRelease, readJSON, RELEASE_PATH } from "../release.ts";
 
 export type Observation = {
-  roster: Change[];
-  hostRunID: string;
+  host: Host;
   startedAt: number;
+  tabs: number;
+  hosts: number;
 };
 
 export async function observeVisitors(
@@ -15,8 +17,8 @@ export async function observeVisitors(
 ) {
   const tab = crypto.randomUUID();
   let releaseID: string | undefined;
-  let host: Change | undefined;
-  let alternates: Change[] = [];
+  let host: Host | undefined;
+  let alternates: Host[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   function stop() {
     clearTimeout(timer);
@@ -52,18 +54,17 @@ export async function observeVisitors(
         redirect: "error",
         signal: deadline,
       });
-      const report = parseMessage(
-        await readJSON(response, MAX_MESSAGE_BYTES, deadline),
-        releaseID,
-        Date.now(),
-      );
-      if (report === undefined || report.from.left || !sameRun(host, report.from))
+      const report = presenceSummary.safeParse(await readJSON(response, 4_096, deadline));
+      if (!report.success || !sameRun(host, report.data.host))
         throw new Error("The counting host changed.");
+      const { host: selected } = report.data;
+      alternates = report.data.fallback.filter((candidate) => !sameRun(candidate, selected));
       if (!signal.aborted)
         update({
-          roster: [report.from, ...report.changes],
-          hostRunID: report.from.runID,
-          startedAt: report.startedAt,
+          host: report.data.host,
+          startedAt: report.data.startedAt,
+          tabs: report.data.tabs,
+          hosts: report.data.hosts,
         });
     } catch {
       // retry discovery; a newer release may be active after a deployment.

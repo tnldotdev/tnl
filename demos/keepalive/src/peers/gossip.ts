@@ -2,6 +2,7 @@ import * as z from "zod";
 import { hostNameSchema } from "./host-names.ts";
 import { BOOTSTRAP_TURN_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "../policy.ts";
 import { MAX_TABS_PER_HOST, TAB_LEASE_MS } from "./presence.ts";
+import { certificateReport } from "../hosting/certificate.ts";
 
 export const HOST_PARENT = "hosts.keepthisalive.com";
 export const SHARED_HOST = `https://prod.${HOST_PARENT}`;
@@ -47,6 +48,7 @@ const changeSchema = hostSchema.extend({
     })
     .optional(),
   copyFrom: runIDSchema.optional(),
+  certificate: certificateReport.optional(),
 });
 const startTimeSchema = z.int().min(EARLIEST_START);
 const messageSchema = z.strictObject({
@@ -62,6 +64,7 @@ export const hostDetailsSchema = changeSchema.pick({
   endsAt: true,
   departing: true,
   copyFrom: true,
+  certificate: true,
 });
 type HostDetails = z.infer<typeof hostDetailsSchema>;
 export type GossipMessage = Readonly<z.infer<typeof messageSchema>>;
@@ -117,6 +120,10 @@ export function sameRun(a: Host, b: Host): boolean {
   );
 }
 
+export function hostIdentity({ origin, publisherID, runID, runNumber }: Host): Host {
+  return { origin, publisherID, runID, runNumber };
+}
+
 type Seen = { change: Change; heardAt: number; suspectAt?: number };
 
 function isNewerChange(next: Change, current: Change): boolean {
@@ -144,6 +151,10 @@ export class Gossip {
 
   get startedAt() {
     return this.#startedAt;
+  }
+
+  get self(): Host {
+    return hostIdentity(this.#self);
   }
 
   get size() {

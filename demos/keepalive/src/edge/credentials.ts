@@ -8,8 +8,6 @@ export type CredentialBindings = {
   PROJECT_KEY?: string;
   TEAM_ID?: string;
   MANAGEMENT_TOKEN?: string;
-  CERTIFICATE_PEM?: string;
-  PRIVATE_KEY_PEM?: string;
 };
 
 export function enrollmentConfigured(

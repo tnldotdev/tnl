@@ -50,18 +50,13 @@ app.post(CONFIG_PATH, async (c) => {
   const origin = new URL(c.req.url).origin;
   if (c.req.header("Origin") !== origin) return c.body(null, 403);
   if (!enrollmentConfigured(c.env)) return c.body(null, 503, siteHeaders());
-  const { CONTROL_URL, CERTIFICATE_PEM, PRIVATE_KEY_PEM, NETWORK_SECRET } = c.env;
+  const { CONTROL_URL, NETWORK_SECRET } = c.env;
   const proof = await requestNetworkProof(c.req.raw, NETWORK_SECRET);
   if (proof === undefined) return c.body(null, 503, siteHeaders());
-  const certificate =
-    CERTIFICATE_PEM && PRIVATE_KEY_PEM
-      ? { certificatePEM: CERTIFICATE_PEM, privateKeyPEM: PRIVATE_KEY_PEM }
-      : undefined;
   const config = hostingConfig.parse({
     controlURL: CONTROL_URL,
     siteOrigin: c.env.SITE_ORIGIN,
     startHost: c.env.START_HOST,
-    certificate,
     networkProof: proof,
   });
   return c.json(config, 200, siteHeaders("application/json"));

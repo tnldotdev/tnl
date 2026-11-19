@@ -16,10 +16,4 @@ export const hostingConfig = z.strictObject({
   siteOrigin: httpsOriginSchema,
   startHost: z.hostname(),
   networkProof,
-  certificate: z
-    .strictObject({
-      certificatePEM: z.string().min(1).max(131072),
-      privateKeyPEM: z.string().min(1).max(16384),
-    })
-    .optional(),
 });

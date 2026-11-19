@@ -14,7 +14,7 @@ import {
 } from "../release.ts";
 import { CONFIG_PATH, hostingConfig } from "../enrollment.ts";
 import { hostUpdate, type HostStart, type HostUpdate } from "./messages.ts";
-import { checkUpload, readPeers, waitForWork } from "../peers/http.ts";
+import { checkUpload, readInviterCertificate, readPeers, waitForWork } from "../peers/http.ts";
 import { STARTUP_MS } from "../policy.ts";
 
 export type HostState =
@@ -88,7 +88,7 @@ async function copySite(
 }
 
 async function getHostingConfig(signal: AbortSignal) {
-  return hostingConfig.parse(await getJSON(CONFIG_PATH, 160 * 1024, signal, "POST"));
+  return hostingConfig.parse(await getJSON(CONFIG_PATH, 4_096, signal, "POST"));
 }
 
 async function getJSON(path: string, limit: number, signal: AbortSignal, method = "GET") {
@@ -115,7 +115,8 @@ export async function hostTab(
     ? await readPeers(location.origin, release.id, signal).catch(() => undefined)
     : undefined;
   signal.throwIfAborted();
-  if (report !== undefined && !report.from.left) throw new AlreadyHosting();
+  if (report !== undefined && !report.from.left && (report.from.endsAt ?? Infinity) > Date.now())
+    throw new AlreadyHosting();
   const bootstrap = startupPage;
   let source = ARTIFACT_PREFIX;
   let firstHostToContact: Host | undefined;
@@ -135,7 +136,12 @@ export async function hostTab(
     if (!(await checkUpload(firstHostToContact, invitation, preparing))) throw new UploadTooSlow();
   }
   const config = await getHostingConfig(preparing);
-  const files = await copySite(release, source, bootstrap, preparing, update);
+  const [files, inherited] = await Promise.all([
+    copySite(release, source, bootstrap, preparing, update),
+    invitation === undefined || firstHostToContact === undefined
+      ? undefined
+      : readInviterCertificate(firstHostToContact, invitation, preparing).catch(() => undefined),
+  ]);
   const code = files.get(WORKER_PATH);
   if (code === undefined) throw new Error("The copy is missing the hosting code.");
   preparing.throwIfAborted();
@@ -150,6 +156,7 @@ export async function hostTab(
         release,
         files,
         config,
+        inherited,
         bootstrap,
         startupEndsAt,
         name: browserHostName(),

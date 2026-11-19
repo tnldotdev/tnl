@@ -1,4 +1,4 @@
-import { publish, publisher } from "@tnldotdev/tnl/browser";
+import { publish, publisher, type ServiceCertificateSource } from "@tnldotdev/tnl/browser";
 import type * as z from "zod";
 import { parseHost } from "../peers/gossip.ts";
 import type { hostingConfig } from "../enrollment.ts";
@@ -8,6 +8,7 @@ export async function startPublisher(
   enrollment: (signal: AbortSignal) => Promise<string>,
   handler: (request: Request) => Promise<Response>,
   signal: AbortSignal,
+  certificate?: ServiceCertificateSource,
 ) {
   const owner = await publisher({
     instance: "keepalive",
@@ -17,7 +18,7 @@ export async function startPublisher(
   });
   try {
     const publication = await publish(owner, "production", handler, {
-      ...(config.certificate === undefined ? {} : { certificate: config.certificate }),
+      ...(certificate === undefined ? {} : { certificate }),
       signal,
     });
     const host = parseHost({
@@ -27,7 +28,12 @@ export async function startPublisher(
       runNumber: publication.run?.runNumber,
     });
     if (host === undefined) throw new Error("The publication has no host address.");
-    return { host, close: () => owner.close(), wait: () => publication.wait() };
+    return {
+      host,
+      exportCertificate: () => publication.exportCertificate(),
+      close: () => owner.close(),
+      wait: () => publication.wait(),
+    };
   } catch (error) {
     try {
       await owner.close();

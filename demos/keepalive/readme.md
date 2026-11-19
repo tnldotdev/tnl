@@ -67,7 +67,9 @@ tells B when to try; tnl grants permission to publish.
 Hosts aim for one running copy per 50 live tabs, rounded up, with a floor of
 three. Tabs send a short heartbeat to one host every 20 seconds. That host
 expires silent tabs after a minute and gossips its own count, not a global
-total. Counts are approximate, especially when a tab changes counting hosts.
+total. It replies with its current estimate of tabs and live hosts, the
+experiment start time, and up to three other host addresses. Counts are
+approximate, especially when a tab changes counting hosts.
 Each host allows one pending start at a time. Simultaneous invitations can
 still take them above the target: it is not a global admission limit.
 
@@ -78,8 +80,9 @@ early, it checks that the replacement answers at its own address. The proxy
 won't approve a volunteer with the same public IP as the host inviting it.
 
 The page shows the time since the first host started. Under **hosts**,
-a small tree connects each tab to the host it copied from. The tree shows
-recent reports, not a complete history.
+a small tree connects each tab to the host it copied from. The page fetches
+up to 64 reports when you open the tree, not on every heartbeat. The tree
+shows recent reports, not a complete history.
 
 While hosting, the page shows successful file responses from this tab and
 its share of the estimated tab count. The two numbers measure different
@@ -158,10 +161,33 @@ clock over.
 The clock shows time since the shared start, not independently measured
 uptime.
 
+## carrying the service certificate forward
+
+The bootstrap host asks tnl for a managed certificate for
+`*.hosts.keepthisalive.com`. The scope covers the shared address and individual
+publisher aliases, not the main site or startup site. It does not create a
+wildcard DNS record.
+
+After the upload check, an invited tab can fetch the inviter's installed
+certificate and private key over HTTPS using the invitation. These are not
+part of the site files or stored on the edge. A new host can reuse that
+certificate if it has time left for the turn, startup, and clock differences.
+In the last 24 hours of validity, each new host instead tries managed issuance
+with probability one divided by the number of hosts its inviter knows.
+
+Gossip carries only the installed certificate's fingerprint and expiry. A host
+using an inherited certificate can ask a peer for a newer one and must answer
+a one-time challenge at its own publisher alias. tnl checks the replacement
+before installing it. The shared key is exposed to browsers that host; stopping
+a tab does not revoke material it already copied. Use a dedicated subtree and
+do not share this certificate with other services.
+
 ## checking the page
 
 After `task js:keepalive:build`, run `mise exec -- node demos/keepalive/tests/preview.ts`
 from the repository root with Chrome installed. It captures the built page
 in `dist/screenshots/ui/` with simulated peers and hosting worker messages.
-`task js:keepalive:handoff` instead uses an empty test deployment and waits
-for a real volunteer turn to reach its replacement window.
+`task js:keepalive:handoff` instead uses an empty test deployment, checks
+that successive service runs advertise the bootstrap certificate after the
+previous host stops, and waits for a real volunteer turn to reach its
+replacement window.

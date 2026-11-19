@@ -11,6 +11,7 @@ export default defineConfig({
           http: { access: "anonymous" },
           hostname: "prod.hosts.keepthisalive.com",
           publisherAliasParent: "hosts.keepthisalive.com",
+          certificateScope: "hosts.keepthisalive.com",
         },
       },
     },

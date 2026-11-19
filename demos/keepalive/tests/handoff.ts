@@ -88,7 +88,14 @@ try {
   await first.goto(start.href);
   await first.getByRole("button", { name: "start hosting" }).click();
   await hosting(first);
-  const startedAt = (await currentReport()).startedAt;
+  const bootstrapReport = await currentReport();
+  const startedAt = bootstrapReport.startedAt;
+  const initialCertificate = bootstrapReport.from.certificate;
+  assert(initialCertificate, "The bootstrap host did not advertise its installed certificate.");
+  assert(
+    initialCertificate.expiresAt > Date.now() + 24 * 60 * 60_000,
+    "Use a fresh bootstrap certificate so a volunteer is expected to inherit it.",
+  );
   console.log("visitor before copy", await visitorSample("/"));
   const second = await join({ server: values["peer-proxy"] });
   const session = await second.page.context().newCDPSession(second.page);
@@ -101,6 +108,12 @@ try {
   await stop(first);
   assert((await visitorSample("/")).status === 200, "The first copy did not take over.");
   const secondHost = (await currentReport()).from;
+  assert.notEqual(secondHost.runID, bootstrapReport.from.runID);
+  assert.equal(
+    secondHost.certificate?.fingerprint,
+    initialCertificate.fingerprint,
+    "The second host did not install the bootstrap certificate.",
+  );
   assert(secondHost.endsAt !== undefined);
   // wait for the real replacement window; don't shorten the browser's turn.
   await second.page.waitForFunction(
@@ -143,6 +156,11 @@ try {
     (await currentReport()).startedAt,
     startedAt,
     "The clock should survive the handoffs.",
+  );
+  assert.equal(
+    (await currentReport()).from.certificate?.fingerprint,
+    initialCertificate.fingerprint,
+    "The third host did not install the same certificate.",
   );
   // close the active host without its stop button as well.
   await third.page.close();

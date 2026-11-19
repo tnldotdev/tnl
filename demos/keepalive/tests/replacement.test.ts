@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { RequestActivity } from "../src/hosting/activity.ts";
-import { checkUpload, peerServer, waitForWork } from "../src/peers/http.ts";
+import { checkUpload, peerServer, readInviterCertificate, waitForWork } from "../src/peers/http.ts";
 import { UPLOAD_BYTES } from "../src/policy.ts";
 import { compareNetworks, proveNetwork } from "../src/network.ts";
 import { HOST_PARENT, type Host } from "../src/peers/gossip.ts";
@@ -20,6 +20,10 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
   const b = host("b", "2");
   const aProof = await proveNetwork("192.0.2.1", secret);
   const bProof = await proveNetwork("192.0.2.2", secret);
+  const bundle = {
+    certificate: { certificatePEM: "fixture certificate", privateKeyPEM: "fixture key" },
+    expiresAt: Date.now() + 60_000,
+  };
   const activity = new RequestActivity();
   const serve = async () => {
     const response = new Response("keepalive");
@@ -27,7 +31,14 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
     return response;
   };
   const server = (proof: string) =>
-    peerServer(release, [proxyOrigin], serve, lifetime.signal, { proxyOrigin, proof });
+    peerServer(
+      release,
+      [proxyOrigin],
+      serve,
+      lifetime.signal,
+      { proxyOrigin, proof },
+      async () => bundle,
+    );
   const first = server(aProof);
   const second = server(bProof);
   const hosts = new Map([
@@ -60,6 +71,7 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
     await expect(waitForWork(a, `${bProof.slice(0, -1)}x`, lifetime.signal)).rejects.toThrow();
     const invitation = await waitForWork(a, bProof, lifetime.signal);
     if (invitation === null) throw new Error("Expected a hosting invitation.");
+    await expect(readInviterCertificate(a, invitation, lifetime.signal)).rejects.toThrow();
     expect(first.replacementReady).toBe(false);
     expect(await checkUpload(a, crypto.randomUUID(), lifetime.signal)).toBe(false);
     const short = await first.fetch(
@@ -72,6 +84,11 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
     expect(short.status).toBe(422);
     expect(first.replacementReady).toBe(false);
     expect(await checkUpload(a, invitation, lifetime.signal)).toBe(true);
+    await expect(readInviterCertificate(a, crypto.randomUUID(), lifetime.signal)).rejects.toThrow();
+    await expect(readInviterCertificate(a, invitation, lifetime.signal)).resolves.toEqual({
+      bundle,
+      knownHosts: 1,
+    });
     await second.start(
       b,
       Date.now(),
@@ -83,6 +100,7 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
     expect(directCheck).toHaveBeenCalledOnce();
     expect(first.replacementReady).toBe(true);
     expect(first.replacement?.runID).toBe(b.runID);
+    await expect(readInviterCertificate(a, invitation, lifetime.signal)).rejects.toThrow();
     expect(activity.count).toBe(0);
     expect((await first.fetch(new Request(a.origin))).ok).toBe(true);
     expect(activity.count).toBe(1);
