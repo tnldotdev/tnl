@@ -236,7 +236,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
     <main>
       <h1>{bootstrap ? "start keepalive" : "can we keep this alive?"}</h1>
       <p class="experiment-age">
-        <span>time since start</span>
+        <span>alive for</span>
         <strong>{startedAt === undefined ? "—" : age(startedAt, now)}</strong>
       </p>
       {bootstrap ? (
