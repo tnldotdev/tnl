@@ -266,6 +266,7 @@ type appPreparation struct {
 	assignment        publisherprotocol.Assignment
 	invocation        *publisherprotocol.Invocation
 	certificate       *invocationCertificate
+	certificateExport *publisherservice.CertificateExport
 }
 
 type appRuntime struct {
@@ -445,7 +446,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 }
 
 func (a *appRuntime) handler() http.Handler {
-	return (&localapi.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, RenewCertificate: a.renewInvocationCertificate, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
+	return (&localapi.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, RenewCertificate: a.renewInvocationCertificate, ExportCertificate: a.exportInvocationCertificate, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
 		_, digest, err := a.project.Snapshot()
 		return digest, err
 	}, AppService: func(name string) bool {

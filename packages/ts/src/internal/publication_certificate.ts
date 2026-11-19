@@ -11,10 +11,25 @@ export type ServiceCertificateSource =
   | ServiceCertificate
   | ((signal: AbortSignal) => ServiceCertificate | Promise<ServiceCertificate>);
 
-export const serviceCertificateSchema = z.strictObject({
-  certificatePEM: z.string().min(1).max(131072),
-  privateKeyPEM: z.string().min(1).max(16384),
-});
+export const serviceCertificateSchema = z
+  .strictObject({
+    certificatePEM: z.string().min(1).max(131072),
+    privateKeyPEM: z.string().min(1).max(16384),
+  })
+  .readonly();
+
+export interface ExportedCertificate {
+  readonly certificate: ServiceCertificate;
+  /** the installed certificate's validity deadline in Unix milliseconds. */
+  readonly expiresAt: number;
+}
+
+export const exportedCertificateSchema = z
+  .strictObject({
+    certificate: serviceCertificateSchema,
+    expiresAt: z.int().positive(),
+  })
+  .readonly();
 
 export const serviceCertificateSourceSchema = z.union([
   serviceCertificateSchema,
@@ -37,6 +52,6 @@ export async function resolveServiceCertificate(
   } catch {
     if (signal.aborted) throw new DOMException("publication canceled", "AbortError");
     // provider exceptions and parser diagnostics may contain private key bytes.
-    throw new TnlError("sdk.configuration_invalid");
+    throw new TnlError("sdk.certificate_invalid");
   }
 }

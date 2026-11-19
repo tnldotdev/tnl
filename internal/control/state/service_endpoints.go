@@ -6,9 +6,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
+
+func deploymentServicePlacement(s ProjectServiceConfiguration) ServicePlacement {
+	return ServicePlacement{DomainID: s.DomainID, Hostname: s.Hostname, RunAliasParent: s.RunAliasParent, CertificateScope: s.CertificateScope}
+}
 
 // endpoint identity is durable across runs, publisher replicas and deployment-key
 // renames. deployment moves never silently broaden certificate authority.
@@ -27,6 +32,7 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 	// a desired deployment move changes the endpoint, not the service's identity or
 	// visitor grants. the apply transaction has already revoked old publishers.
 	hostname = name + "." + namespace
+	certificateScope := namespace
 	if placement.Hostname != "" {
 		hostname = placement.Hostname
 		facts, err := serviceHostnameAuthority(ctx, tx, team, actor, domain, now)
@@ -39,6 +45,18 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 		}
 		if err := authorizeServiceHostname(facts, labels, team, "", hostname, "shared", d.managedURLMode); err != nil {
 			return err
+		}
+		certificateScope = hostname
+		if scope := placement.CertificateScope; scope != "" {
+			if !public || facts.DomainKind != "custom" || scope == facts.CanonicalDomain ||
+				!hostnameWithin(scope, facts.CanonicalDomain) ||
+				!config.ValidPublisherCertificateScope(hostname, placement.RunAliasParent, scope) {
+				return ErrProjectConfigurationInvalid
+			}
+			if err := claimDeploymentCertificateScope(ctx, tx, deployment, domain, scope, now); err != nil {
+				return err
+			}
+			certificateScope = scope
 		}
 		var conflict bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_namespace_claims
@@ -91,7 +109,7 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.services SET
-	    certificate_hostname=$2,certificate_scope=$3,domain_id=$4,ingress_pool_id=$5,name_scope=$6 WHERE id=$1`, service, hostname, namespace, domain, pool, deployment)
+	    certificate_hostname=$2,certificate_scope=$3,domain_id=$4,ingress_pool_id=$5,name_scope=$6 WHERE id=$1`, service, hostname, certificateScope, domain, pool, deployment)
 	if err != nil {
 		return projectConstraintError(err)
 	}

@@ -31,6 +31,7 @@ type Server struct {
 	Acquire             func(context.Context, publisherprotocol.Lease) (publisherprotocol.Registration, error)
 	Invocation          func(context.Context, publisherprotocol.Invocation) (publisherprotocol.Registration, error)
 	RenewCertificate    func(publisherprotocol.Registration) error
+	ExportCertificate   func(context.Context, string) (publisherprotocol.InstalledServiceCertificate, error)
 	Check               func(context.Context, []string) (publisherapp.Snapshot, error)
 	AppService          func(string) bool
 	ConfigurationDigest func() (string, error)
@@ -150,6 +151,38 @@ func (s *Server) Handler() http.Handler {
 			// running. unregister joins its worker and allocation cleanup.
 			_ = s.Manager.UnregisterTarget(registration.RegistrationID, registration.Owner, registration.Target)
 		}
+	})
+	mux.HandleFunc("POST /v1/publications/certificate", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		grant := publisherprotocol.Grant(r)
+		if grant.Scope != "invocation" || grant.InvocationId == nil || s.ExportCertificate == nil {
+			Problem(w, publisherprotocol.ErrForbidden)
+			return
+		}
+		var request publisherprotocol.Registration
+		if err := publisherprotocol.Decode(w, r, &request); err != nil {
+			Problem(w, err)
+			return
+		}
+		if request.Version != 1 || !publisherprotocol.ValidOwner(request.Owner) || request.Certificate != nil || request.ShutdownDeadline != nil {
+			Problem(w, publisherprotocol.ErrForbidden)
+			return
+		}
+		service, found := s.Manager.ServiceForRegistration(request.RegistrationID)
+		if !found || service.Name != *grant.InvocationId || !s.Manager.OwnsTarget(request.RegistrationID, request.Owner, request.Target) {
+			Problem(w, publisherapp.ErrRegistrationStale)
+			return
+		}
+		certificate, err := s.ExportCertificate(r.Context(), request.RegistrationID)
+		if err != nil {
+			Problem(w, err)
+			return
+		}
+		if !s.Manager.OwnsTarget(request.RegistrationID, request.Owner, request.Target) {
+			Problem(w, publisherapp.ErrRegistrationStale)
+			return
+		}
+		_ = publisherprotocol.Write(w, 200, certificate)
 	})
 	for _, operation := range []string{"register", "renew", "unregister"} {
 		mux.HandleFunc("POST /v1/"+operation, func(w http.ResponseWriter, r *http.Request) {
@@ -296,6 +329,10 @@ func Problem(w http.ResponseWriter, err error) {
 		status, code, message = 409, "runtime.owner_conflict", "another live app owns this service; stop it before starting another"
 	case errors.Is(err, publisherapp.ErrRegistrationStale):
 		status, code, message = 409, "runtime.registration_stale", "prepare and register the listener again"
+	case errors.Is(err, publisherprotocol.ErrCertificateUnavailable):
+		status, code, message = 409, "runtime.certificate_unavailable", "the publication has no valid installed certificate"
+	case errors.Is(err, publisherprotocol.ErrCertificateInvalid):
+		status, code, message = 400, "runtime.certificate_invalid", "the supplied certificate and key are invalid"
 	case errors.Is(err, publisherapp.ErrCursorExpired):
 		status, code, message = 410, "runtime.cursor_expired", "read a new status snapshot before resuming events"
 	case errors.Is(err, clientcontrol.ErrUnauthenticated):

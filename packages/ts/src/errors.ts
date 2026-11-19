@@ -1,5 +1,7 @@
 export type TnlErrorCode =
   | "sdk.publication_failed"
+  | "sdk.certificate_unavailable"
+  | "sdk.certificate_invalid"
   | "sdk.publication_cleanup_failed"
   | "sdk.owner_conflict"
   | "sdk.registration_stale"
@@ -44,6 +46,16 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "unavailable",
     retry: "later",
     message: "the public URL did not become available; check tnl status and the local listener",
+  },
+  "sdk.certificate_unavailable": {
+    class: "unavailable",
+    retry: "later",
+    message: "the publication has no valid installed certificate",
+  },
+  "sdk.certificate_invalid": {
+    class: "invalid",
+    retry: "after_change",
+    message: "the supplied certificate and key are invalid",
   },
   "sdk.publication_cleanup_failed": {
     class: "unavailable",

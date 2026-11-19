@@ -6,6 +6,7 @@ export type {
   PublicationRun,
   NamedPublicationOptions,
   TemporaryPublicationOptions,
+  ExportedCertificate,
   ServiceCertificate,
   ServiceCertificateSource,
 } from "./internal/publisher/publication.js";

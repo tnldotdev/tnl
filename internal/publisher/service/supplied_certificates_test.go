@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"strings"
@@ -108,6 +109,25 @@ func TestSuppliedCertificateWorkerInstallationAndReplacement(t *testing.T) {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		exporter := new(CertificateExport)
+		unbind, err := exporter.bind(ctx, prepared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unbind()
+		checkExport := func(want certificatetest.Material, deadline time.Time) {
+			t.Helper()
+			value, err := exporter.Snapshot(t.Context())
+			if err != nil || !value.ExpiresAt.Equal(deadline) {
+				t.Fatal("export missed the installed certificate", err)
+			}
+			defer clear(value.PrivateKeyPEM)
+			bundle, err := tls.X509KeyPair(value.CertificatePEM, value.PrivateKeyPEM)
+			if err != nil || !bytes.Equal(bundle.Certificate[0], want.Certificate.Certificate[0]) {
+				t.Fatal("exported chain/key do not match the installed leaf", err)
+			}
+		}
 		maintain, cleanup, err := configureServiceRun(ctx, cfg, prepared, base.setup, control, cfg.State, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -123,6 +143,9 @@ func TestSuppliedCertificateWorkerInstallationAndReplacement(t *testing.T) {
 		if _, err := prepared.currentCertificate(); err == nil {
 			t.Fatal("unacknowledged supplied key became available to visitor TLS")
 		}
+		if _, err := exporter.Snapshot(t.Context()); !errors.Is(err, ErrCertificateUnavailable) {
+			t.Fatal("export exposed a pending install", err)
+		}
 		close(release)
 		synctest.Wait()
 		if calls.Load() != 1 {
@@ -132,11 +155,19 @@ func TestSuppliedCertificateWorkerInstallationAndReplacement(t *testing.T) {
 		if err != nil || !bytes.Equal(certificate.Certificate[0], first.Certificate.Certificate[0]) {
 			t.Fatal("supplied leaf was not installed", err)
 		}
+		checkExport(first, now.Add(2*time.Minute))
 		time.Sleep(30 * time.Second)
 		synctest.Wait()
 		if calls.Load() != 1 {
 			t.Fatal("unchanged source created another control installation")
 		}
+		sourceMu.Lock()
+		selected = second
+		selected.Key = []byte("bad replacement")
+		sourceMu.Unlock()
+		time.Sleep(30 * time.Second)
+		synctest.Wait()
+		checkExport(first, now.Add(2*time.Minute))
 		sourceMu.Lock()
 		selected = second
 		sourceMu.Unlock()
@@ -146,7 +177,11 @@ func TestSuppliedCertificateWorkerInstallationAndReplacement(t *testing.T) {
 		if err != nil || calls.Load() != 2 || !bytes.Equal(certificate.Certificate[0], second.Certificate.Certificate[0]) {
 			t.Fatal("replacement did not reach the same run", err, calls.Load())
 		}
+		checkExport(second, now.Add(4*time.Minute))
 		cancel()
+		if _, err := exporter.Snapshot(t.Context()); !errors.Is(err, ErrCertificateUnavailable) {
+			t.Fatal("export outlived run cancellation", err)
+		}
 		if err := cleanup(); err != nil {
 			t.Fatal(err)
 		}
@@ -191,6 +226,12 @@ func TestSuppliedCertificateWorkerRecoversLostACKAndStopsAtChainExpiry(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
+		exporter := new(CertificateExport)
+		unbind, err := exporter.bind(t.Context(), prepared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unbind()
 		maintain, cleanup, err := configureServiceRun(t.Context(), cfg, prepared, base.setup, control, cfg.State, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -207,6 +248,11 @@ func TestSuppliedCertificateWorkerRecoversLostACKAndStopsAtChainExpiry(t *testin
 		if _, err := prepared.currentCertificate(); err != nil || calls != 2 {
 			t.Fatal("lost ACK was not recovered", err, calls)
 		}
+		exported, err := exporter.Snapshot(t.Context())
+		if err != nil || !exported.ExpiresAt.Equal(now.Add(5*time.Second)) {
+			t.Fatal("export used the leaf deadline rather than the verified chain deadline", err)
+		}
+		clear(exported.PrivateKeyPEM)
 		time.Sleep(5 * time.Second)
 		synctest.Wait()
 		if err := <-done; !errors.Is(err, errCertificateExpired) {
@@ -214,6 +260,9 @@ func TestSuppliedCertificateWorkerRecoversLostACKAndStopsAtChainExpiry(t *testin
 		}
 		if _, err := prepared.currentCertificate(); err == nil {
 			t.Fatal("expired supplied certificate remained available")
+		}
+		if _, err := exporter.Snapshot(t.Context()); !errors.Is(err, ErrCertificateUnavailable) {
+			t.Fatal("expired supplied certificate remained exportable", err)
 		}
 	})
 }

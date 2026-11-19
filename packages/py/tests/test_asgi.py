@@ -106,6 +106,52 @@ class FakeNative(NativeRuntime):
         }
 
 
+def test_explicit_publication_supplies_and_exports_certificates() -> None:
+    class CertificateNative(FakeNative):
+        async def request(
+            self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
+        ) -> object:
+            if operation == "publications/register":
+                assert payload is not None and payload["certificate"] == {
+                    "certificate_pem": "initial chain",
+                    "private_key_pem": "initial key",
+                }
+            if operation == "publications/certificate":
+                assert payload == self.registration
+                self.events.append("export")
+                return {
+                    "certificate": {
+                        "certificate_pem": "installed chain",
+                        "private_key_pem": "installed key",
+                    },
+                    "expires_at": 1234567,
+                }
+            return await super().request(endpoint, operation, payload)
+
+    async def scenario() -> None:
+        async def endpoint(_: Request) -> PlainTextResponse:
+            return PlainTextResponse("ok")
+
+        native = CertificateNative([])
+        initial = tnl.ServiceCertificate("initial chain", "initial key")
+        async with await start_publication(
+            tnl.handler(endpoint),
+            native=native,
+            certificate=lambda: initial,
+        ) as publication:
+            snapshot = await publication.export_certificate()
+            assert snapshot == tnl.ExportedCertificate(
+                tnl.ServiceCertificate("installed chain", "installed key"), 1234567
+            )
+            assert "installed key" not in repr(snapshot)
+        with pytest.raises(tnl.TnlError) as error:
+            await publication.export_certificate()
+        assert error.value.code == "sdk.certificate_unavailable"
+        assert native.events.count("export") == 1
+
+    asyncio.run(scenario())
+
+
 def test_status_is_filtered_and_fenced_by_registration_and_bound_target() -> None:
     native = FakeNative([])
     native.invocation_id = "ivk_" + "A" * 22

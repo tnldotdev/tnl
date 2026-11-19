@@ -539,6 +539,7 @@ export function createClient<const Services extends ServiceFacts = Record<never,
               get run() {
                 return base.run;
               },
+              exportCertificate: () => base.exportCertificate(),
               close,
               wait: () => base.wait(),
               [Symbol.asyncDispose]: close,

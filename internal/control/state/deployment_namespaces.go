@@ -78,7 +78,12 @@ func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r A
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_endpoints
 			WHERE deployment_id IS DISTINCT FROM $2
 			  AND (hostname=$1 OR right(hostname,length($1)+1)='.'||$1)
-			  AND (retired_at IS NULL OR reusable_after>$3))`, namespace, deploymentID, r.Now).Scan(&conflict); err != nil {
+			  AND (retired_at IS NULL OR reusable_after>$3))
+		    OR EXISTS(SELECT 1 FROM control.service_namespace_claims claim
+			WHERE claim.deployment_id IS DISTINCT FROM $2
+			  AND (claim.namespace=$1 OR right($1,length(claim.namespace)+1)='.'||claim.namespace
+			    OR right(claim.namespace,length($1)+1)='.'||$1)
+			  AND NOT control.service_namespace_reusable(claim.namespace,$3))`, namespace, deploymentID, r.Now).Scan(&conflict); err != nil {
 			return err
 		}
 		if conflict {

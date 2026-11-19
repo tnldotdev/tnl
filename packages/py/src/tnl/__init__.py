@@ -2,6 +2,7 @@
 
 from ._app import PreparedService, Server, prepare, run
 from ._asgi import AccessPolicy, Limits, Publication, RateLimit
+from ._certificate import ExportedCertificate, ServiceCertificate, ServiceCertificateSource
 from ._client import ClientFactory
 from ._connections import (
     Connection,
@@ -45,6 +46,7 @@ __all__ = [
     "ControlProject",
     "ClientFactory",
     "Client",
+    "ExportedCertificate",
     "Deployment",
     "LocalPostgresConnection",
     "LocalConnection",
@@ -71,6 +73,8 @@ __all__ = [
     "Publisher",
     "PublisherEnrollment",
     "Server",
+    "ServiceCertificate",
+    "ServiceCertificateSource",
     "handler",
     "configure_workload",
     "client",

@@ -43,7 +43,7 @@ func TestAppliedPublicationProjectionSeparatesEndpoints(t *testing.T) {
 			}
 		})
 	}
-	for _, field := range []string{"name", "protocol", "target", "discovery", "target hostname", "target roots", "target digest", "team access", "http access", "traffic", "ephemeral", "visitor tls"} {
+	for _, field := range []string{"name", "protocol", "target", "discovery", "target hostname", "target roots", "target digest", "team access", "http access", "traffic", "ephemeral", "visitor tls", "certificate grant"} {
 		t.Run(field, func(t *testing.T) {
 			next := original
 			switch field {
@@ -76,6 +76,11 @@ func TestAppliedPublicationProjectionSeparatesEndpoints(t *testing.T) {
 				next.Ephemeral = true
 			case "visitor tls":
 				next.RequirePostQuantum = new(true)
+			case "certificate grant":
+				next.CertificateScope = "publishers.example.test"
+				if appliedPublicationConfiguration(next).CertificateScope != "" {
+					t.Fatal("publisher received a copy of control's wildcard grant")
+				}
 			}
 			if sameAppliedPublication(original, next) || sameAppliedPublication(next, original) {
 				t.Fatal("a serving change was hidden by the endpoint projection")

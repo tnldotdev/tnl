@@ -310,6 +310,11 @@ schemas:
         type: string
         maxLength: 224
         description: Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases without changing target trust or stopping connector sessions.
+      certificate_scope:
+        type: string
+        minLength: 1
+        maxLength: 224
+        description: Authorize a managed wildcard for a public HTTP deployment binding. Must be a dedicated subtree of the selected custom domain, match publisher_alias_parent, and directly contain hostname. The deployment retains the scope until it is retired.
       require_post_quantum:
         type: boolean
         description: Require hybrid post-quantum key agreement for visitor TLS, independently of target TLS.

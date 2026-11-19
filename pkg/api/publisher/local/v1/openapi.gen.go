@@ -301,6 +301,14 @@ type Event struct {
 	Type        string       `json:"type"`
 }
 
+// InstalledServiceCertificate defines model for InstalledServiceCertificate.
+type InstalledServiceCertificate struct {
+	Certificate SuppliedServiceCertificateMaterial `json:"certificate"`
+
+	// ExpiresAt Installed certificate validity deadline in Unix milliseconds.
+	ExpiresAt int64 `json:"expires_at"`
+}
+
 // Invocation defines model for Invocation.
 type Invocation struct {
 	AccessMode  *InvocationAccessMode               `json:"access_mode,omitempty"`
@@ -497,6 +505,9 @@ type AcquireLeaseJSONRequestBody = Lease
 // PrepareJSONRequestBody defines body for Prepare for application/json ContentType.
 type PrepareJSONRequestBody = Prepare
 
+// ExportInvocationCertificateJSONRequestBody defines body for ExportInvocationCertificate for application/json ContentType.
+type ExportInvocationCertificateJSONRequestBody = Registration
+
 // RegisterInvocationJSONRequestBody defines body for RegisterInvocation for application/json ContentType.
 type RegisterInvocationJSONRequestBody = Invocation
 
@@ -638,6 +649,18 @@ type ClientInterface interface {
 	//
 	// App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 	Prepare(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExportInvocationCertificateWithBody performs a POST /v1/publications/certificate (the `ExportInvocationCertificate` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Exact invocation capability and current registration owner only. Export the installed certificate and private key without requesting issuance or renewing the registration. Never cache the response.
+	ExportInvocationCertificateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExportInvocationCertificate performs a POST /v1/publications/certificate (the `ExportInvocationCertificate` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Exact invocation capability and current registration owner only. Export the installed certificate and private key without requesting issuance or renewing the registration. Never cache the response.
+	ExportInvocationCertificate(ctx context.Context, body ExportInvocationCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterInvocationWithBody performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request,
 	// with any type of body and a specified content type.
@@ -839,6 +862,38 @@ func (c *Client) PrepareWithBody(ctx context.Context, contentType string, body i
 // App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 func (c *Client) Prepare(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExportInvocationCertificateWithBody performs a POST /v1/publications/certificate (the `ExportInvocationCertificate` operationId) request,
+// with any type of body and a specified content type.
+//
+// Exact invocation capability and current registration owner only. Export the installed certificate and private key without requesting issuance or renewing the registration. Never cache the response.
+func (c *Client) ExportInvocationCertificateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportInvocationCertificateRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExportInvocationCertificate performs a POST /v1/publications/certificate (the `ExportInvocationCertificate` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Exact invocation capability and current registration owner only. Export the installed certificate and private key without requesting issuance or renewing the registration. Never cache the response.
+func (c *Client) ExportInvocationCertificate(ctx context.Context, body ExportInvocationCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportInvocationCertificateRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1256,6 +1311,46 @@ func NewPrepareRequestWithBody(server string, contentType string, body io.Reader
 	return req, nil
 }
 
+// NewExportInvocationCertificateRequest calls the generic ExportInvocationCertificate builder with application/json body
+func NewExportInvocationCertificateRequest(server string, body ExportInvocationCertificateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExportInvocationCertificateRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewExportInvocationCertificateRequestWithBody constructs an http.Request for the ExportInvocationCertificate method, with any body, and a specified content type
+func NewExportInvocationCertificateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publications/certificate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRegisterInvocationRequest calls the generic RegisterInvocation builder with application/json body
 func NewRegisterInvocationRequest(server string, body RegisterInvocationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -1554,6 +1649,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 	PrepareWithResponse(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareResponse, error)
+
+	// ExportInvocationCertificateWithBodyWithResponse performs a POST /v1/publications/certificate (the `ExportInvocationCertificate` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Exact invocation capability and current registration owner only. Export the installed certificate and private key without requesting issuance or renewing the registration. Never cache the response.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ExportInvocationCertificateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExportInvocationCertificateResponse, error)
+
+	// ExportInvocationCertificateWithResponse performs a POST /v1/publications/certificate (the `ExportInvocationCertificate` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Exact invocation capability and current registration owner only. Export the installed certificate and private key without requesting issuance or renewing the registration. Never cache the response.
+	ExportInvocationCertificateWithResponse(ctx context.Context, body ExportInvocationCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*ExportInvocationCertificateResponse, error)
 
 	// RegisterInvocationWithBodyWithResponse performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request,
 	// with any type of body and a specified content type.
@@ -1894,6 +2003,54 @@ func (r PrepareResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PrepareResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExportInvocationCertificateResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *InstalledServiceCertificate
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExportInvocationCertificateResponse) GetJSON200() *InstalledServiceCertificate {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r ExportInvocationCertificateResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExportInvocationCertificateResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExportInvocationCertificateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExportInvocationCertificateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExportInvocationCertificateResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2247,6 +2404,32 @@ func (c *ClientWithResponses) PrepareWithResponse(ctx context.Context, body Prep
 	return ParsePrepareResponse(rsp)
 }
 
+// ExportInvocationCertificateWithBodyWithResponse performs a POST /v1/publications/certificate (the `ExportInvocationCertificate` operationId) request,
+// with any type of body and a specified content type.
+//
+// Exact invocation capability and current registration owner only. Export the installed certificate and private key without requesting issuance or renewing the registration. Never cache the response.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExportInvocationCertificateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExportInvocationCertificateResponse, error) {
+	rsp, err := c.ExportInvocationCertificateWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportInvocationCertificateResponse(rsp)
+}
+
+// ExportInvocationCertificateWithResponse performs a POST /v1/publications/certificate (the `ExportInvocationCertificate` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Exact invocation capability and current registration owner only. Export the installed certificate and private key without requesting issuance or renewing the registration. Never cache the response.
+func (c *ClientWithResponses) ExportInvocationCertificateWithResponse(ctx context.Context, body ExportInvocationCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*ExportInvocationCertificateResponse, error) {
+	rsp, err := c.ExportInvocationCertificate(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportInvocationCertificateResponse(rsp)
+}
+
 // RegisterInvocationWithBodyWithResponse performs a POST /v1/publications/register (the `RegisterInvocation` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -2558,6 +2741,39 @@ func ParsePrepareResponse(rsp *http.Response) (*PrepareResponse, error) {
 	return response, nil
 }
 
+// ParseExportInvocationCertificateResponse parses an HTTP response from a ExportInvocationCertificateWithResponse call
+func ParseExportInvocationCertificateResponse(rsp *http.Response) (*ExportInvocationCertificateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExportInvocationCertificateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest InstalledServiceCertificate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRegisterInvocationResponse parses an HTTP response from a RegisterInvocationWithResponse call
 func ParseRegisterInvocationResponse(rsp *http.Response) (*RegisterInvocationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2732,6 +2948,9 @@ type ServerInterface interface {
 	// (POST /v1/prepare)
 	Prepare(w http.ResponseWriter, r *http.Request)
 
+	// (POST /v1/publications/certificate)
+	ExportInvocationCertificate(w http.ResponseWriter, r *http.Request)
+
 	// (POST /v1/publications/register)
 	RegisterInvocation(w http.ResponseWriter, r *http.Request)
 
@@ -2870,6 +3089,20 @@ func (siw *ServerInterfaceWrapper) Prepare(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Prepare(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportInvocationCertificate operation middleware
+func (siw *ServerInterfaceWrapper) ExportInvocationCertificate(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportInvocationCertificate(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3080,6 +3313,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/check", wrapper.Check)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/leases", wrapper.AcquireLease)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publications/register", wrapper.RegisterInvocation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publications/certificate", wrapper.ExportInvocationCertificate)
 
 	return m
 }

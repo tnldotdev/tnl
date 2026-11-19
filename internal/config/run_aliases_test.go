@@ -30,3 +30,28 @@ func TestRunAliasParentValidationAndDeploymentResolution(t *testing.T) {
 		t.Fatal("non-HTTP service accepted run aliases")
 	}
 }
+
+func TestDeploymentCertificateScopeValidation(t *testing.T) {
+	parent := "hosts.example.test"
+	valid := DeploymentBinding{Hostname: new("production." + parent), Public: new(true), RunAliasParent: &parent, CertificateScope: &parent}
+	project := Project{Services: map[string]ServiceDeclaration{"web": {}}, Deployments: map[string]Deployment{
+		"production": {Targets: map[string]DeploymentBinding{"web": valid}},
+	}}
+	resolved, err := ResolveDeployment(project, "production")
+	if err != nil || resolved.Services["web"].CertificateScope == nil || *resolved.Services["web"].CertificateScope != parent {
+		t.Fatal("deployment lost its certificate scope", err)
+	}
+	for _, change := range []func(*DeploymentBinding){
+		func(b *DeploymentBinding) { b.RunAliasParent = nil },
+		func(b *DeploymentBinding) { b.Public = new(false) },
+		func(b *DeploymentBinding) { b.Hostname = new("nested.production." + parent) },
+		func(b *DeploymentBinding) { b.CertificateScope = new("*." + parent) },
+	} {
+		binding := valid
+		change(&binding)
+		project.Deployments["production"].Targets["web"] = binding
+		if _, err := ResolveDeployment(project, "production"); err == nil {
+			t.Fatal("accepted invalid wildcard binding")
+		}
+	}
+}

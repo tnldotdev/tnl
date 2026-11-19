@@ -2,6 +2,7 @@ import * as z from "zod";
 import { TnlError } from "../../errors.js";
 import { serviceNameSchema, httpsOriginSchema } from "../values.js";
 import { publicationRunSchema, publisherURLSchema } from "../publication_run.js";
+import { exportedCertificateSchema, type ExportedCertificate } from "../publication_certificate.js";
 import {
   bindEnrollment,
   enrollmentSourceSchema,
@@ -27,6 +28,7 @@ const resultSchema = z.strictObject({
 });
 export type WorkerPublicationData = z.input<typeof resultSchema>;
 export type WorkerPublication = Readonly<z.output<typeof resultSchema>> & {
+  exportCertificate(): Promise<ExportedCertificate>;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 };
@@ -34,6 +36,7 @@ export type WorkerPublication = Readonly<z.output<typeof resultSchema>> & {
 export interface WorkerPublisherRPC {
   open(controlUrl?: string, enrollment?: () => Promise<string>): Promise<unknown>;
   start(service: string, target: WorkerPublicationTarget): Promise<unknown>;
+  exportCertificate(service: string, id: string): Promise<unknown>;
   stop(service: string, id: string): Promise<void>;
 }
 
@@ -104,6 +107,27 @@ export async function publish(
     throw new TnlError("sdk.configuration_invalid");
   const evidence = resultSchema.safeParse(await stub.start(service, selection.data));
   if (!evidence.success) throw new TnlError("sdk.response_invalid");
-  const close = () => stub.stop(service, evidence.data.id);
-  return Object.freeze({ ...evidence.data, close, [Symbol.asyncDispose]: close });
+  let closed = false;
+  const close = () => {
+    closed = true;
+    return stub.stop(service, evidence.data.id);
+  };
+  const exportCertificate = async () => {
+    try {
+      if (closed) throw new TnlError("sdk.certificate_unavailable");
+      const snapshot = exportedCertificateSchema.parse(
+        await stub.exportCertificate(service, evidence.data.id),
+      );
+      if (!closed) return snapshot;
+    } catch {
+      // never forward an RPC or validation error containing private material.
+    }
+    throw new TnlError("sdk.certificate_unavailable");
+  };
+  return Object.freeze({
+    ...evidence.data,
+    exportCertificate,
+    close,
+    [Symbol.asyncDispose]: close,
+  });
 }

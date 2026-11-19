@@ -13,10 +13,14 @@ func appliedPublicationConfiguration(service ProjectServiceConfiguration) Projec
 	service.Public = nil
 	service.Hostname = ""
 	service.DomainID = ""
+	service.CertificateScope = ""
 	return service
 }
 
 // only changes to the serving definition replace existing publication authority.
 func sameAppliedPublication(previous, current ProjectServiceConfiguration) bool {
-	return reflect.DeepEqual(appliedPublicationConfiguration(previous), appliedPublicationConfiguration(current))
+	// changing the wildcard grant fences old publisher runs; endpoint-only
+	// edits leave the run's captured grant and certificate authority unchanged.
+	return previous.CertificateScope == current.CertificateScope &&
+		reflect.DeepEqual(appliedPublicationConfiguration(previous), appliedPublicationConfiguration(current))
 }

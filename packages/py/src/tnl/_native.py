@@ -182,6 +182,7 @@ class NativeRuntime:
             "unregister",
             "status",
             "publications/register",
+            "publications/certificate",
             "capabilities",
         }:
             raise InvalidResponse()
@@ -189,7 +190,16 @@ class NativeRuntime:
             raise InvalidResponse()
         data = None if payload is None else json.dumps(payload).encode()
         get = operation in {"health", "status"}
-        if get and data is not None or data is not None and len(data) > 64 << 10:
+        request_max = (256 if operation in {"publications/register", "renew"} else 64) << 10
+        response_max = (256 if operation == "publications/certificate" else 64) << 10
+        returns_json = operation in {
+            "prepare",
+            "status",
+            "publications/register",
+            "publications/certificate",
+            "capabilities",
+        }
+        if get and data is not None or data is not None and len(data) > request_max:
             raise InvalidResponse()
         headers = {
             "Host": endpoint.url.removeprefix("http://"),
@@ -215,7 +225,7 @@ class NativeRuntime:
                     body = bytearray()
                     async for chunk in response.aiter_raw():
                         body.extend(chunk)
-                        if len(body) > 64 << 10:
+                        if len(body) > response_max:
                             raise InvalidResponse()
                     if (
                         response.status_code == 401
@@ -224,12 +234,7 @@ class NativeRuntime:
                     ):
                         raise RegistrationLost()
                     if response.status_code == 204:
-                        if body or operation in {
-                            "prepare",
-                            "status",
-                            "publications/register",
-                            "capabilities",
-                        }:
+                        if body or returns_json:
                             raise InvalidResponse()
                         return None
                     if (
@@ -239,12 +244,7 @@ class NativeRuntime:
                         raise InvalidResponse()
                     value: object = json.loads(body)
                     if response.status_code == 200:
-                        if operation not in {
-                            "prepare",
-                            "status",
-                            "publications/register",
-                            "capabilities",
-                        }:
+                        if not returns_json:
                             raise InvalidResponse()
                         return value
                     if (
@@ -264,6 +264,8 @@ class NativeRuntime:
                         "runtime.owner_conflict": "sdk.owner_conflict",
                         "runtime.authentication_required": "sdk.authentication_required",
                         "runtime.publisher_setup_required": "sdk.publisher_setup_required",
+                        "runtime.certificate_unavailable": "sdk.certificate_unavailable",
+                        "runtime.certificate_invalid": "sdk.certificate_invalid",
                         "runtime.publisher_credential_file_invalid": (
                             "sdk.publisher_credential_file_invalid"
                         ),
@@ -271,6 +273,10 @@ class NativeRuntime:
                     if response.status_code >= 500 and code == "sdk.request_rejected":
                         raise NativeUnavailable()
                     message = {
+                        "sdk.certificate_unavailable": (
+                            "the publication has no valid installed certificate"
+                        ),
+                        "sdk.certificate_invalid": "the supplied certificate and key are invalid",
                         "sdk.publisher_setup_required": (
                             "no namespace publisher is set up; run tnl publisher setup"
                             " --namespace, then try again"

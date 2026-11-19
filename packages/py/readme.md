@@ -27,4 +27,8 @@ asyncio.run(main())
 
 Stop the script to remove the temporary URL. `publish("web", app)` uses a configured local service or an approved saved remote URL. Remote publication requires a registered deployment credential; connection-only sources cannot publish. The returned `Publication` is routable, supports `wait()` and retryable `aclose()`, and is an async context manager.
 
+An explicit publication can take a `ServiceCertificate` or a callback as `certificate=`.
+Use `await publication.export_certificate()` to read its installed chain, private
+key, and expiry. Treat the result as a secret.
+
 See the [publishing guide](https://tnl.dev/docs/publish), [quickstart](https://tnl.dev/docs), and [main README](https://github.com/tnldotdev/tnl#readme).

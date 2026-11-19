@@ -75,6 +75,7 @@ function fixture() {
       },
       ready: ready.promise,
       closed: closed.promise,
+      exportCertificate: vi.fn<() => Promise<unknown>>(),
       close: vi.fn(async () => {
         events.push("publication:close");
         ready.reject(new DOMException("stopped", "AbortError"));
@@ -129,6 +130,34 @@ function createDurableObjectPublisher(
 afterEach(() => {
   mocks.load.mockReset();
   mocks.browserStorage.mockReset();
+});
+
+test("exports only the bridge's current certificate and fences closure", async () => {
+  const f = fixture();
+  const remote = deployment();
+  const published = await remote.publish("app", () => new Response());
+  const snapshot = f.publications[0]?.raw.exportCertificate;
+  if (snapshot === undefined) throw new Error("missing publication fixture");
+  const first = {
+    certificate: { certificatePEM: "chain", privateKeyPEM: "private" },
+    expiresAt: 1000,
+  };
+  const replacement = { ...first, expiresAt: 2000 };
+  snapshot.mockResolvedValueOnce(first).mockResolvedValueOnce(replacement);
+  const value = await published.exportCertificate();
+  expect(value).toEqual(first);
+  expect(Object.isFrozen(value.certificate)).toBe(true);
+  await expect(published.exportCertificate()).resolves.toEqual(replacement);
+  snapshot.mockRejectedValueOnce(new Error("private supplier failure"));
+  await expect(published.exportCertificate()).rejects.toMatchObject({
+    code: "sdk.certificate_unavailable",
+  });
+  await published.close();
+  await expect(published.exportCertificate()).rejects.toMatchObject({
+    code: "sdk.certificate_unavailable",
+  });
+  expect(snapshot).toHaveBeenCalledTimes(3);
+  await remote.close();
 });
 
 test("named private publications wait for readiness and omit the public URL", async () => {

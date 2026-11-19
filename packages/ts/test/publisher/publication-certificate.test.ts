@@ -32,7 +32,7 @@ test("provider failures and invalid material never expose PEM through parser dia
     throw new Error(secret);
   };
   await expect(resolveServiceCertificate(provider, signal)).rejects.toMatchObject({
-    code: "sdk.configuration_invalid",
+    code: "sdk.certificate_invalid",
     message: expect.not.stringContaining(secret),
   });
   await expect(
@@ -44,7 +44,7 @@ test("provider failures and invalid material never expose PEM through parser dia
       signal,
     ),
   ).rejects.toMatchObject({
-    code: "sdk.configuration_invalid",
+    code: "sdk.certificate_invalid",
     message: expect.not.stringContaining(secret),
   });
 });

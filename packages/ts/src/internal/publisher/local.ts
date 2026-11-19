@@ -231,6 +231,7 @@ function runtimeRequestUntraced(
       "renew",
       "unregister",
       "publications/register",
+      "publications/certificate",
       "capabilities",
     ].includes(operation)
   )
@@ -238,6 +239,13 @@ function runtimeRequestUntraced(
   if ((operation === "capabilities") !== (endpoint.scope === "owner"))
     throw new TnlError("sdk.configuration_invalid");
   const get = operation === "health" || operation === "status";
+  const returnsJSON = [
+    "prepare",
+    "status",
+    "publications/register",
+    "publications/certificate",
+    "capabilities",
+  ].includes(operation);
   const payload = get ? undefined : JSON.stringify(body);
   if (
     (get && body !== undefined) ||
@@ -267,7 +275,8 @@ function runtimeRequestUntraced(
         let length = 0;
         response.on("data", (chunk: Buffer) => {
           length += chunk.length;
-          if (length > 64 * 1024) response.destroy(new TnlError("sdk.response_invalid"));
+          if (length > (operation === "publications/certificate" ? 256 : 64) * 1024)
+            response.destroy(new TnlError("sdk.response_invalid"));
           else chunks.push(chunk);
         });
         response.on("error", (cause: unknown) =>
@@ -281,11 +290,7 @@ function runtimeRequestUntraced(
             )
               throw new TnlError("sdk.registration_stale");
             if (response.statusCode === 204) {
-              if (
-                length !== 0 ||
-                ["prepare", "status", "publications/register", "capabilities"].includes(operation)
-              )
-                throw new TnlError("sdk.response_invalid");
+              if (length !== 0 || returnsJSON) throw new TnlError("sdk.response_invalid");
               resolve(undefined);
               return;
             }
@@ -299,6 +304,10 @@ function runtimeRequestUntraced(
                   throw new TnlError("sdk.response_invalid");
                 throw new TnlError("sdk.publication_cleanup_failed");
               }
+              if (problem.code === "runtime.certificate_unavailable")
+                throw new TnlError("sdk.certificate_unavailable");
+              if (problem.code === "runtime.certificate_invalid")
+                throw new TnlError("sdk.certificate_invalid");
               throw new TnlError(
                 problem.code === "runtime.owner_conflict"
                   ? "sdk.owner_conflict"
@@ -319,8 +328,7 @@ function runtimeRequestUntraced(
                             : "sdk.request_rejected",
               );
             }
-            if (!["prepare", "status", "publications/register", "capabilities"].includes(operation))
-              throw new TnlError("sdk.response_invalid");
+            if (!returnsJSON) throw new TnlError("sdk.response_invalid");
             resolve(value);
           } catch (cause) {
             reject(cause instanceof TnlError ? cause : new TnlError("sdk.response_invalid"));

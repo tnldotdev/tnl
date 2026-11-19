@@ -82,6 +82,9 @@ function runtime() {
         };
         return {
           url: "https://service.example",
+          exportCertificate: async () => {
+            throw new Error("fixture has no installed certificate");
+          },
           close,
           wait: () => complete.promise,
           [Symbol.asyncDispose]: close,

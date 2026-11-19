@@ -18,6 +18,7 @@ import (
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
+	api "github.com/tnldotdev/tnl/pkg/api/publisher/local/v1"
 )
 
 func TestLostStoppedUnregisterReplyReplaysOnlyItsExactScopedBinding(t *testing.T) {
@@ -343,5 +344,96 @@ func TestAdHocRegisterAcceptsDefaultOrOneExplicitPublisher(t *testing.T) {
 	var response *publisherprotocol.ResponseError
 	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", legacy, nil); !errors.As(err, &response) || response.Code != "runtime.request_invalid" || calls.Load() != 4 {
 		t.Fatalf("legacy enrollment key reached the native publisher: %v", err)
+	}
+}
+
+func TestInvocationCertificateExportRequiresLiveExactOwner(t *testing.T) {
+	ctx := t.Context()
+	id, err := opaqueid.New(opaqueid.InvocationPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const owner, target = "0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := clientstate.OpenWithOptions(ctx, filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	manager, err := publisherapp.New(ctx, root, db, []publisherapp.Service{{Name: id}}, func(ctx context.Context, _ publisherapp.Service, _ func(publisherapp.PublicationUpdate) error) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	registrationID, err := manager.Reserve(id, owner, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Register(registrationID, owner, target, "node"); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(nil)
+	caps, err := publisherprotocol.NewCapabilities("http://" + server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability, err := caps.Issue(publisherprotocol.CapabilityRequest{Scope: "invocation", InvocationId: &id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := opaqueid.New(opaqueid.InvocationPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCapability, err := caps.Issue(publisherprotocol.CapabilityRequest{Scope: "invocation", InvocationId: &otherID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	bundle := publisherprotocol.InstalledServiceCertificate{Certificate: api.SuppliedServiceCertificateMaterial{
+		CertificatePem: "fixture certificate", PrivateKeyPem: "fixture key",
+	}, ExpiresAt: 1000}
+	server.Config.Handler = (&Server{Capabilities: caps, Manager: manager, ExportCertificate: func(_ context.Context, requested string) (publisherprotocol.InstalledServiceCertificate, error) {
+		calls.Add(1)
+		if requested != registrationID {
+			t.Error("export crossed a registration")
+		}
+		return bundle, nil
+	}}).Handler()
+	server.Start()
+	defer server.Close()
+	request := publisherprotocol.Registration{Version: 1, RegistrationID: registrationID, Owner: owner, Target: target}
+	call := func(endpoint publisherprotocol.Endpoint, req publisherprotocol.Registration) (publisherprotocol.InstalledServiceCertificate, error) {
+		var result publisherprotocol.InstalledServiceCertificate
+		err := publisherprotocol.Call(ctx, endpoint, "POST", "/v1/publications/certificate", req, &result)
+		return result, err
+	}
+	wrongOwner, wrongTarget := request, request
+	wrongOwner.Owner = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	wrongTarget.Target = "http://127.0.0.1:3001"
+	for _, denied := range []struct {
+		capability publisherprotocol.Endpoint
+		request    publisherprotocol.Registration
+	}{
+		{caps.Owner(), request}, {otherCapability, request}, {capability, wrongOwner}, {capability, wrongTarget},
+	} {
+		if result, err := call(denied.capability, denied.request); err == nil || result.Certificate.PrivateKeyPem != "" {
+			t.Fatal("unauthorized certificate export succeeded")
+		}
+	}
+	if result, err := call(capability, request); err != nil || result != bundle {
+		t.Fatal("the exact live owner could not read its certificate", err)
+	}
+	if err := manager.UnregisterTarget(registrationID, owner, target); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := call(capability, request); err == nil || result.Certificate.PrivateKeyPem != "" || calls.Load() != 1 {
+		t.Fatal("a closed registration reached certificate export")
 	}
 }

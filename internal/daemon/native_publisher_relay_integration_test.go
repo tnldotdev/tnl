@@ -3,8 +3,10 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -174,9 +176,10 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 	}
 	installPublicationSDKs(t, repo, directory, shim)
 	type evidence struct {
-		Identity string `json:"identity"`
-		URL      string `json:"url"`
-		ExactURL string `json:"publisher_url"`
+		Identity          string `json:"identity"`
+		URL               string `json:"url"`
+		ExactURL          string `json:"publisher_url"`
+		CertificateSHA256 string `json:"certificate_sha256"`
 	}
 	type active struct {
 		evidence
@@ -238,7 +241,7 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 		var facts evidence
 		select {
 		case raw := <-line:
-			if err := json.Unmarshal([]byte(raw), &facts); err != nil || facts.Identity == "" {
+			if err := json.Unmarshal([]byte(raw), &facts); err != nil || facts.Identity == "" || len(facts.CertificateSHA256) != 64 {
 				t.Fatalf("%s did not report publication readiness: %v (%s)", sdk, err, stderr.String())
 			}
 		case <-time.After(90 * time.Second):
@@ -275,7 +278,17 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 			}
 		}}
 	}
-	visit := func(address, want string) {
+	assertCertificate := func(response *http.Response, want string) {
+		t.Helper()
+		if response.TLS == nil || len(response.TLS.PeerCertificates) == 0 {
+			t.Fatal("visitor did not receive a service certificate")
+		}
+		fingerprint := sha256.Sum256(response.TLS.PeerCertificates[0].Raw)
+		if hex.EncodeToString(fingerprint[:]) != want {
+			t.Fatal("exported leaf was not the certificate that served the visitor")
+		}
+	}
+	visit := func(address, want, certificate string) {
 		t.Helper()
 		privateWait(t, 15*time.Second, func(ctx context.Context) (bool, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
@@ -294,6 +307,9 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 			if resp.StatusCode == http.StatusOK && string(body) != want {
 				t.Fatalf("%s reached a different publisher (got %q, want %q)", address, body, want)
 			}
+			if resp.StatusCode == http.StatusOK {
+				assertCertificate(resp, certificate)
+			}
 			return resp.StatusCode == http.StatusOK && string(body) == want, err
 		})
 	}
@@ -303,15 +319,15 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 		instance := sdk + "-" + strconv.Itoa(index)
 		current := start(sdk, "web", instance, enrollment("web", instance))
 		t.Logf("%s: verify initial and reopened traffic on one exact address", sdk)
-		visit(current.ExactURL, instance+":initial")
+		visit(current.ExactURL, instance+":initial", current.CertificateSHA256)
 		current.stop()
-		visit(current.ExactURL, "")
-		visit(sibling.ExactURL, "sibling:initial")
+		visit(current.ExactURL, "", "")
+		visit(sibling.ExactURL, "sibling:initial", sibling.CertificateSHA256)
 		reopened := start(sdk, "web", instance, "")
 		if reopened.evidence != current.evidence || reopened.run <= current.run {
 			t.Fatal("reopening did not retain identity/address or advance the serving run", reopened.run, current.run)
 		}
-		visit(reopened.ExactURL, instance+":reopened")
+		visit(reopened.ExactURL, instance+":reopened", reopened.CertificateSHA256)
 		reopened.stop()
 
 		name := sdk + "-private"
@@ -342,5 +358,6 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 		if err != nil || response.StatusCode != http.StatusOK || string(body) != name+":initial" {
 			t.Fatalf("%s private publisher returned status %d, body %q (%v)", sdk, response.StatusCode, body, err)
 		}
+		assertCertificate(response, owner.CertificateSHA256)
 	}
 }

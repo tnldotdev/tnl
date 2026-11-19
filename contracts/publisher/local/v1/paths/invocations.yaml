@@ -15,6 +15,22 @@ paths:
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/Registration" }
+  /v1/publications/certificate:
+    post:
+      operationId: exportInvocationCertificate
+      description: Exact invocation capability and current registration owner only. Export the installed certificate and private key without requesting issuance or renewing the registration. Never cache the response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/Registration" }
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "200":
+          description: installed certificate and matching private key
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/InstalledServiceCertificate" }
   /v1/publications/register:
     post:
       operationId: registerInvocation

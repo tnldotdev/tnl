@@ -9,7 +9,11 @@ import {
   serviceNameSchema,
 } from "../values.js";
 import type { EndpointSelection, RuntimeEndpoint } from "./local.js";
-import type { ServiceCertificate } from "../publication_certificate.js";
+import {
+  exportedCertificateSchema,
+  type ExportedCertificate,
+  type ServiceCertificate,
+} from "../publication_certificate.js";
 
 export interface RegistrationRuntime {
   start(
@@ -74,6 +78,13 @@ const registrationSchema = z
     target: z.string(),
   })
   .readonly();
+const installedCertificateSchema = z.strictObject({
+  certificate: z.strictObject({
+    certificate_pem: z.string(),
+    private_key_pem: z.string(),
+  }),
+  expires_at: z.number(),
+});
 type Registration = {
   readonly version: 1;
   readonly registration_id: string;
@@ -219,6 +230,44 @@ export class NativeRegistration {
 
   async status(signal?: AbortSignal): Promise<unknown> {
     return this.runtime.request(this.endpoint, "status", undefined, signal);
+  }
+
+  async exportCertificate(signal: AbortSignal): Promise<ExportedCertificate> {
+    if (signal.aborted) throw new TnlError("sdk.certificate_unavailable");
+    if (this.acquisition.kind !== "invocation") throw new TnlError("sdk.capability_unsupported");
+    const registration = this.current;
+    if (registration === undefined) throw new TnlError("sdk.certificate_unavailable");
+    const endpoint = this.endpoint;
+    let value;
+    try {
+      value = await this.runtime.request(
+        endpoint,
+        "publications/certificate",
+        registration,
+        signal,
+      );
+    } catch (cause) {
+      if (signal.aborted) throw new TnlError("sdk.certificate_unavailable");
+      throw cause;
+    }
+    if (signal.aborted || this.current !== registration || this.currentEndpoint !== endpoint)
+      throw new TnlError("sdk.certificate_unavailable");
+    const { certificate, expires_at } = parseValue(
+      installedCertificateSchema,
+      value,
+      "sdk.response_invalid",
+    );
+    return parseValue(
+      exportedCertificateSchema,
+      {
+        certificate: {
+          certificatePEM: certificate.certificate_pem,
+          privateKeyPEM: certificate.private_key_pem,
+        },
+        expiresAt: expires_at,
+      },
+      "sdk.response_invalid",
+    );
   }
 
   async unregister(

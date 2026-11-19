@@ -6,6 +6,18 @@ schemas:
     properties:
       certificate_pem: { type: string, minLength: 1, maxLength: 131072 }
       private_key_pem: { type: string, minLength: 1, maxLength: 16384 }
+  InstalledServiceCertificate:
+    type: object
+    additionalProperties: false
+    required: [certificate, expires_at]
+    properties:
+      certificate:
+        { $ref: "../openapi.yaml#/components/schemas/SuppliedServiceCertificateMaterial" }
+      expires_at:
+        type: integer
+        format: int64
+        minimum: 1
+        description: Installed certificate validity deadline in Unix milliseconds.
   Registration:
     type: object
     additionalProperties: false

@@ -2,6 +2,7 @@ package tnl
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net/http"
 	"os"
@@ -63,6 +64,17 @@ func TestOpenRealPublicationReusesIdentityAndCleansCanceledContext(t *testing.T)
 			cancel()
 			t.Fatal("Go SDK lost the exact service run or public HTTPS requirement")
 		}
+		exported, err := tunnel.ExportCertificate(t.Context())
+		if err != nil {
+			cancel()
+			t.Fatal("ready Go publication could not export its certificate", err)
+		}
+		pair, err := tls.X509KeyPair(exported.Certificate.CertificatePEM, exported.Certificate.PrivateKeyPEM)
+		clear(exported.Certificate.PrivateKeyPEM)
+		if err != nil || !exported.ExpiresAt.Equal(pair.Leaf.NotAfter) || pair.Leaf.VerifyHostname(service.Endpoint.Hostname) != nil {
+			cancel()
+			t.Fatal("export did not contain the installed service certificate and matching key", err)
+		}
 		status, _, err := f.Visit(t.Context(), tunnel.URL())
 		if attempt == 0 {
 			if err != nil || status >= 200 && status < 300 || requests.Load() != 0 {
@@ -93,6 +105,9 @@ func TestOpenRealPublicationReusesIdentityAndCleansCanceledContext(t *testing.T)
 		}
 		if err := tunnel.Close(); err != nil {
 			t.Fatal(err)
+		}
+		if _, err := tunnel.ExportCertificate(t.Context()); !errors.Is(err, ErrCertificateUnavailable) {
+			t.Fatal("closed Go publication still exposed a certificate", err)
 		}
 	}
 	deleted := f.DeletedIDs()
