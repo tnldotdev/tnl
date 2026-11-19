@@ -92,20 +92,25 @@ func (Prepared) GoString() string { return "private publisher preparation" }
 // currentCertificate returns only a live installed certificate from the shared
 // cache lifecycle. no serving path generates a certificate or a fallback key.
 func (p *Prepared) currentCertificate() (*tls.Certificate, error) {
+	certificate, _, err := p.currentCertificateSnapshot()
+	return certificate, err
+}
+
+func (p *Prepared) currentCertificateSnapshot() (*tls.Certificate, time.Time, error) {
 	if p == nil || p.clock == nil {
-		return nil, ErrPrivateStream
+		return nil, time.Time{}, ErrPrivateStream
 	}
 	p.certMu.Lock()
 	defer p.certMu.Unlock()
 	now := p.clock()
 	if now.IsZero() {
-		return nil, ErrPrivateStream
+		return nil, time.Time{}, ErrPrivateStream
 	}
 	certificate := p.certificate
 	if len(certificate.Certificate) == 0 || !p.certValidTo.After(now) {
-		return nil, ErrPrivateStream
+		return nil, time.Time{}, ErrPrivateStream
 	}
-	return &certificate, nil
+	return &certificate, p.certValidTo, nil
 }
 
 func (p *Prepared) currentPolicy() bool {

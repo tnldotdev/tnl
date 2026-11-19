@@ -50,11 +50,21 @@ export async function smoke(input: unknown) {
     );
     step("public-exercise");
     const publicProof = await fixtureCall(fixture, "/exercise", publication.url);
+    const exported = await publication.exportCertificate();
+    const firstPEM = /-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/.exec(
+      exported.certificate.certificatePEM,
+    )?.[1];
+    check(firstPEM !== undefined, "export did not include the installed leaf");
+    const leafDER = Uint8Array.from(atob(firstPEM.replaceAll(/\s/g, "")), (c) => c.charCodeAt(0));
+    const fingerprint = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", leafDER)))
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
     check(
       publicProof.status === 200 &&
         publicProof.body === "portable-publisher" &&
-        publicProof.certificate_sha256.length === 64,
-      "public visitor did not verify publisher TLS",
+        publicProof.certificate_sha256 === fingerprint &&
+        exported.expiresAt > Date.now(),
+      "public visitor did not verify the exported publisher certificate",
     );
     step("exact-run-exercise");
     const exactRuntime = crypto.randomUUID();
@@ -207,6 +217,17 @@ export async function smoke(input: unknown) {
     await restricted.wait();
     await publication.close();
     await publication.wait();
+    let closedExport = false;
+    try {
+      await publication.exportCertificate();
+    } catch (error) {
+      closedExport =
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "sdk.certificate_unavailable";
+    }
+    check(closedExport, "closed browser publication could still export a certificate");
     await exactPublication.close();
     await exactPublication.wait();
     step("alias-no-fallback");

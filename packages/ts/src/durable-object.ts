@@ -224,6 +224,13 @@ export class DurableObjectPublisher {
     if (completion === undefined) throw new TnlError("sdk.publication_failed");
     return Object.freeze({
       ...(publication.url === undefined ? {} : { url: publication.url }),
+      get publisherURL() {
+        return publication.publisherURL;
+      },
+      get run() {
+        return publication.run;
+      },
+      exportCertificate: () => publication.exportCertificate(),
       close: () => this.#retain(this.#stop(revision)),
       wait: () => completion,
       [Symbol.asyncDispose]: () => this.#retain(this.#stop(revision)),

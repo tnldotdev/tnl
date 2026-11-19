@@ -14,6 +14,7 @@ import { preserveRequestHeaders } from "./request.js";
 import { httpsOriginSchema } from "../values.js";
 import { publicationRunSchema, publisherURLSchema } from "../publication_run.js";
 import {
+  exportedCertificateSchema,
   resolveServiceCertificate,
   serviceCertificateSourceSchema,
   type ServiceCertificateSource,
@@ -131,6 +132,8 @@ export function publicationError(
       case "sdk.wasm_invalid":
       case "sdk.wasm_unavailable":
       case "sdk.publication_failed":
+      case "sdk.certificate_invalid":
+      case "sdk.certificate_unavailable":
       case "sdk.publication_cleanup_failed":
         return new TnlError(cause.code);
       case "sdk.cleanup_failed":
@@ -297,6 +300,19 @@ export async function publishPortable(options: {
     },
     get run() {
       return run;
+    },
+    async exportCertificate() {
+      if (signal.aborted || joined) throw new TnlError("sdk.certificate_unavailable");
+      if (typeof base.exportCertificate !== "function")
+        throw new TnlError("sdk.capability_unsupported");
+      try {
+        const value = exportedCertificateSchema.parse(await base.exportCertificate());
+        if (signal.aborted || joined) throw new TnlError("sdk.certificate_unavailable");
+        return value;
+      } catch {
+        // never surface a bridge or schema error containing private material.
+        throw new TnlError("sdk.certificate_unavailable");
+      }
     },
     close,
     wait: () => completion,

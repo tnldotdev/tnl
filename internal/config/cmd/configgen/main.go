@@ -240,6 +240,7 @@ func deploymentBindingSchema() *jsonschema.Schema {
 	properties.Set("inspection", &jsonschema.Schema{Ref: "#/$defs/Inspection"})
 	properties.Set("hostname", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."})
 	properties.Set("publisher_alias_parent", &jsonschema.Schema{Type: "string", MaxLength: integerPointer(naming.MaxGeneratedHostnameParentBytes), Description: "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."})
+	properties.Set("certificate_scope", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(naming.MaxGeneratedHostnameParentBytes), Description: "Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree."})
 	properties.Set("domain", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Ready team domain used for the service endpoint."})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the service after its publication stops."})
 	properties.Set("require_post_quantum", &jsonschema.Schema{Type: "boolean", Description: "Require hybrid post-quantum key agreement for visitor TLS."})

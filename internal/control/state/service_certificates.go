@@ -38,7 +38,15 @@ func serviceCertificatePlan(ctx context.Context, tx pgx.Tx, service controlstate
 	}
 	if scope != service.CertificateHostname {
 		var allowed bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.applied_project_services assignment JOIN control.deployments g ON g.id=assignment.deployment_id AND g.deleted_at IS NULL JOIN control.deployment_publisher_members member ON member.deployment_id=g.id JOIN control.service_namespace_claims claim ON claim.deployment_id=g.id AND claim.namespace=g.namespace AND claim.retired_at IS NULL WHERE assignment.service_id=$1 AND member.publisher_identity_id=$2 AND g.namespace=$3)`, service.ID, publisher, service.CertificateScope).Scan(&allowed); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1
+		    FROM control.applied_project_services assignment
+		    JOIN control.deployments g ON g.id=assignment.deployment_id AND g.deleted_at IS NULL
+		    JOIN control.deployment_publisher_members member ON member.deployment_id=g.id
+		    JOIN control.service_namespace_claims claim ON claim.deployment_id=g.id
+		      AND claim.namespace=$3 AND claim.retired_at IS NULL
+		    WHERE assignment.service_id=$1 AND member.publisher_identity_id=$2
+		      AND (claim.namespace=g.namespace OR (claim.namespace=$4 AND claim.domain_id=$5)))`,
+			service.ID, publisher, scope, service.RunAliasParent, service.DomainID).Scan(&allowed); err != nil {
 			return CertificatePlan{}, err
 		}
 		if !allowed {

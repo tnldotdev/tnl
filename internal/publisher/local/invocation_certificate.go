@@ -8,6 +8,7 @@ import (
 
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
+	api "github.com/tnldotdev/tnl/pkg/api/publisher/local/v1"
 )
 
 // invocation material remains in the private local owner, never app snapshots.
@@ -22,10 +23,10 @@ func (*invocationCertificate) GoString() string { return "private invocation cer
 
 func (s *invocationCertificate) replace(chain, key string) error {
 	if len(chain) == 0 || len(chain) > 128<<10 || len(key) == 0 || len(key) > 16<<10 {
-		return errors.New("supplied certificate material is invalid")
+		return publisherprotocol.ErrCertificateInvalid
 	}
 	if _, err := tls.X509KeyPair([]byte(chain), []byte(key)); err != nil {
-		return errors.New("supplied certificate key does not match")
+		return publisherprotocol.ErrCertificateInvalid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -51,4 +52,28 @@ func (a *appRuntime) renewInvocationCertificate(request publisherprotocol.Regist
 		return publisherprotocol.ErrForbidden
 	}
 	return supplied.replace(request.Certificate.CertificatePem, request.Certificate.PrivateKeyPem)
+}
+
+func (a *appRuntime) exportInvocationCertificate(ctx context.Context, id string) (publisherprotocol.InstalledServiceCertificate, error) {
+	a.mu.Lock()
+	exporter := a.prepared[id].certificateExport
+	a.mu.Unlock()
+	if exporter == nil {
+		return publisherprotocol.InstalledServiceCertificate{}, publisherprotocol.ErrCertificateUnavailable
+	}
+	snapshot, err := exporter.Snapshot(ctx)
+	if err != nil {
+		if errors.Is(err, publisherservice.ErrCertificateUnavailable) {
+			err = publisherprotocol.ErrCertificateUnavailable
+		}
+		return publisherprotocol.InstalledServiceCertificate{}, err
+	}
+	defer clear(snapshot.PrivateKeyPEM)
+	return publisherprotocol.InstalledServiceCertificate{
+		Certificate: api.SuppliedServiceCertificateMaterial{
+			CertificatePem: string(snapshot.CertificatePEM),
+			PrivateKeyPem:  string(snapshot.PrivateKeyPEM),
+		},
+		ExpiresAt: snapshot.ExpiresAt.UnixMilli(),
+	}, nil
 }

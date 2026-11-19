@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 from starlette.types import ASGIApp
 
 from ._asgi import Publication, start_publication
+from ._certificate import ServiceCertificateSource
 from ._native import NativeRuntime, _join_cleanup, _shutdown_deadline, native_binary
 from ._protocol import (
     Endpoint,
@@ -140,7 +141,14 @@ class Publisher:
     def _local(self) -> bool:
         return self._pid == os.getpid() and self._loop is asyncio.get_running_loop()
 
-    async def publish(self, name: str, app: ASGIApp, *, telemetry: bool = True) -> Publication:
+    async def publish(
+        self,
+        name: str,
+        app: ASGIApp,
+        *,
+        telemetry: bool = True,
+        certificate: ServiceCertificateSource | None = None,
+    ) -> Publication:
         if not self._local() or self._close_task is not None or self._child.returncode is not None:
             raise TnlError("sdk.client_closed", "the publisher is closed; open it again")
         if len(self._pending) + len(self._publications) >= 64:
@@ -152,6 +160,7 @@ class Publisher:
                 native=self._runtime,
                 enrolled_service=name,
                 telemetry=telemetry,
+                certificate=certificate,
                 on_start=self._publications.add,
                 on_close=self._publications.discard,
                 shutdown_deadline=lambda: self._shutdown_until,

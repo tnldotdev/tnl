@@ -16,6 +16,14 @@ from urllib.parse import urlsplit
 import uvicorn
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from ._certificate import (
+    ExportedCertificate,
+    ServiceCertificate,
+    ServiceCertificateSource,
+    certificate_payload,
+    certificate_unavailable,
+    resolve_certificate,
+)
 from ._native import NativeRuntime, _join_cleanup, _shutdown_deadline
 from ._protocol import (
     InvalidResponse,
@@ -255,6 +263,8 @@ class Publication:
         shutdown_deadline: Callable[[], float | None] | None = None,
         public: bool | None = None,
         enrolled_service: str | None = None,
+        certificate: ServiceCertificate | None = None,
+        certificate_source: ServiceCertificateSource | None = None,
     ) -> None:
         deployment = None if deployment is None else dict(deployment)
         self._service = service
@@ -264,6 +274,7 @@ class Publication:
             or (deployment is not None and deployment.get("service") is not None)
         )
         self._on_close = on_close
+        self._certificate_source = certificate_source
         environment = dict(os.environ if environment is None else environment)
         self._pid = os.getpid()
         self._loop = asyncio.get_running_loop()
@@ -284,6 +295,8 @@ class Publication:
         }
         if deployment is not None:
             self._payload["deployment"] = deployment
+        if certificate is not None:
+            self._payload["certificate"] = certificate_payload(certificate)
         if enrolled_service is not None:
             self._payload["enrolled_service"] = enrolled_service
         if publisher_credential_file is not None:
@@ -358,6 +371,13 @@ class Publication:
     def publisher_url(self) -> str | None:
         """The optional address for this publisher, independent of the shared URL."""
         return self._publisher_url
+
+    async def export_certificate(self) -> ExportedCertificate:
+        """Read the installed certificate and private key without issuing or renewing."""
+        self._check()
+        if self._closed or self._finished.done() or not self._ready.done():
+            raise certificate_unavailable()
+        return await self._registration.export_certificate()
 
     async def _register(self) -> None:
         async with self._registration.lock:
@@ -458,7 +478,7 @@ class Publication:
                 if self._closed or self._finished.done():
                     return
                 if asyncio.get_running_loop().time() - last_renew >= 5:
-                    await self._registration.renew()
+                    await self._renew()
                     last_renew = asyncio.get_running_loop().time()
             except asyncio.CancelledError:
                 return
@@ -473,6 +493,22 @@ class Publication:
             except TnlError as cause:
                 self._fail(cause)
                 return
+
+    async def _renew(self) -> None:
+        if callable(self._certificate_source):
+            try:
+                async with asyncio.timeout(2):
+                    certificate = await resolve_certificate(self._certificate_source)
+            except (TnlError, TimeoutError):
+                pass  # keep installed material when a replacement is unavailable
+            else:
+                try:
+                    await self._registration.renew(certificate)
+                    return
+                except TnlError as cause:
+                    if cause.code != "sdk.certificate_invalid":
+                        raise
+        await self._registration.renew()
 
     def _fail(self, error: TnlError) -> None:
         if not self._ready.done():
@@ -656,11 +692,17 @@ async def start_publication(
     environment: Mapping[str, str] | None = None,
     shutdown_deadline: Callable[[], float | None] | None = None,
     enrolled_service: str | None = None,
+    certificate: ServiceCertificateSource | None = None,
     native: NativeRuntime | None = None,
 ) -> Publication:
     """start ASGI, register its bound listener, and wait for native routability."""
     if service is not None:
         service_name(service)
+        if certificate is not None:
+            raise TnlError(
+                "sdk.capability_unsupported",
+                "configured app registrations cannot supply certificates",
+            )
     if enrolled_service is not None:
         service_name(enrolled_service)
         if native is None or any(
@@ -741,6 +783,7 @@ async def start_publication(
             raise TnlError("sdk.configuration_invalid", "server must be an HTTPS origin")
     access_mode, ip = _access_payload(access)
     _limit_payload(limits)
+    material = None if certificate is None else await resolve_certificate(certificate)
     root = str(Path(directory or os.getcwd()).resolve())
     asgi_server, task, listener = await _start_asgi(app)
     tunnel = Publication(
@@ -765,6 +808,8 @@ async def start_publication(
         shutdown_deadline,
         public=public,
         enrolled_service=enrolled_service,
+        certificate=material,
+        certificate_source=certificate,
     )
     try:
         if on_start is not None:

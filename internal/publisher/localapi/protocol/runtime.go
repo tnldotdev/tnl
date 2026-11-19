@@ -15,6 +15,9 @@ import (
 const Version = 1
 const MaxBytes = 64 << 10
 
+var ErrCertificateUnavailable = errors.New("installed service certificate is unavailable")
+var ErrCertificateInvalid = errors.New("supplied service certificate is invalid")
+
 // certificate-carrying private operations have a separate bounded body budget.
 // descriptors, responses and ordinary app operations retain the smaller limit.
 func requestMaxBytes(path string) int64 {
@@ -53,6 +56,11 @@ type Registration api.Registration
 
 func (Registration) String() string   { return "private application registration" }
 func (Registration) GoString() string { return "private application registration" }
+
+type InstalledServiceCertificate api.InstalledServiceCertificate
+
+func (InstalledServiceCertificate) String() string   { return "private installed certificate" }
+func (InstalledServiceCertificate) GoString() string { return "private installed certificate" }
 
 type Problem = api.Problem
 

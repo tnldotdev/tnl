@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from starlette.types import ASGIApp
 
 from ._asgi import AccessPolicy, Limits, Publication, _join_cleanup, start_publication
+from ._certificate import ServiceCertificateSource
 from ._client import ClientFactory, _Factory
 from ._connections import (
     Connection,
@@ -330,6 +331,7 @@ class Deployment:
         require_post_quantum: bool | None = None,
         public: bool | None = None,
         telemetry: bool = True,
+        certificate: ServiceCertificateSource | None = None,
     ) -> Publication:
         if self._closed or self._pid != os.getpid():
             raise _error("closed")
@@ -379,6 +381,7 @@ class Deployment:
                 require_post_quantum=require_post_quantum or False,
                 public=public,
                 telemetry=telemetry,
+                certificate=certificate,
                 deployment=selection,
                 service=service if self._local else None,
                 on_close=self._publications.discard,

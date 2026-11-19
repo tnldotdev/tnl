@@ -26,6 +26,7 @@ import (
 
 type Options struct {
 	SuppliedCertificate func(context.Context) (publisherservice.CertificateMaterial, error)
+	CertificateExport   *publisherservice.CertificateExport
 	Telemetry           *clienttelemetry.Collector
 	RequirePostQuantum  bool
 	ControlURL          string

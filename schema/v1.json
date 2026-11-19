@@ -144,6 +144,12 @@
                           "maxLength": 224,
                           "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
+                        "certificate_scope": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "minLength": 1,
+                          "description": "Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree."
+                        },
                         "domain": {
                           "type": "string",
                           "maxLength": 253,
@@ -409,6 +415,12 @@
                           "type": "string",
                           "maxLength": 224,
                           "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
+                        },
+                        "certificate_scope": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "minLength": 1,
+                          "description": "Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree."
                         },
                         "domain": {
                           "type": "string",
@@ -679,6 +691,12 @@
                           "maxLength": 224,
                           "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
+                        "certificate_scope": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "minLength": 1,
+                          "description": "Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree."
+                        },
                         "domain": {
                           "type": "string",
                           "maxLength": 253,
@@ -941,6 +959,12 @@
                           "maxLength": 224,
                           "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
+                        "certificate_scope": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "minLength": 1,
+                          "description": "Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree."
+                        },
                         "domain": {
                           "type": "string",
                           "maxLength": 253,
@@ -1184,6 +1208,12 @@
                           "type": "string",
                           "maxLength": 224,
                           "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
+                        },
+                        "certificate_scope": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "minLength": 1,
+                          "description": "Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree."
                         },
                         "domain": {
                           "type": "string",
@@ -1435,6 +1465,12 @@
                           "maxLength": 224,
                           "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
                         },
+                        "certificate_scope": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "minLength": 1,
+                          "description": "Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree."
+                        },
                         "domain": {
                           "type": "string",
                           "maxLength": 253,
@@ -1685,6 +1721,12 @@
                           "type": "string",
                           "maxLength": 224,
                           "description": "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."
+                        },
+                        "certificate_scope": {
+                          "type": "string",
+                          "maxLength": 224,
+                          "minLength": 1,
+                          "description": "Authorize a managed wildcard for enrolled publishers of this public HTTP deployment binding. Match the publisher alias parent and directly contain the service hostname in a dedicated custom-domain subtree."
                         },
                         "domain": {
                           "type": "string",

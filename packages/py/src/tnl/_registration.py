@@ -7,6 +7,13 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 
+from ._certificate import (
+    ExportedCertificate,
+    ServiceCertificate,
+    certificate_payload,
+    certificate_unavailable,
+    parse_installed_certificate,
+)
 from ._native import NativeRuntime, _shutdown_timestamp
 from ._protocol import (
     Assignment,
@@ -162,11 +169,30 @@ class NativeRegistration:
             raise
         self.uncertain = False
 
-    async def renew(self) -> None:
+    async def renew(self, certificate: ServiceCertificate | None = None) -> None:
         self._check()
         if self.current is None:
             raise RegistrationLost()
-        await self._request(self.current.endpoint, "renew", self.payload())
+        payload = self.payload()
+        if certificate is not None:
+            payload["certificate"] = certificate_payload(certificate)
+        await self._request(self.current.endpoint, "renew", payload)
+
+    async def export_certificate(self) -> ExportedCertificate:
+        if self._invocation_id is None:
+            raise TnlError(
+                "sdk.capability_unsupported",
+                "configured app registrations cannot export certificates",
+            )
+        if self.closed or self.current is None:
+            raise certificate_unavailable()
+        current = self.current
+        value = await self._request(
+            current.endpoint, "publications/certificate", self.payload(current)
+        )
+        if self.closed or self.current != current:
+            raise certificate_unavailable()
+        return parse_installed_certificate(value)
 
     async def status(self) -> object:
         self._check()
