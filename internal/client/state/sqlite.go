@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const clientBaselineIdentity = "tnl-client-fresh-v1-service-integrations"
+const schemaVersion int64 = 1
 
 // openReadOnlySQLite reads existing client state without creating or migrating it.
 func openReadOnlySQLite(ctx context.Context, path string) (*sql.DB, error) {
@@ -31,15 +31,15 @@ func openReadOnlySQLite(ctx context.Context, path string) (*sql.DB, error) {
 	if err := db.PingContext(ctx); err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
-	if err := validateClientBaseline(ctx, db); err != nil {
+	if err := checkClientSchemaVersion(ctx, db, schemaVersion); err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
 	return db, nil
 }
 
 // openClientSQLite configures every connection, including replacements after
-// cancellation. only a fresh database applies the single baseline.
-func openClientSQLite(ctx context.Context, path string, fresh, noWait bool) (_ *sql.DB, retErr error) {
+// cancellation and applies pending migrations under the caller's migration lock.
+func openClientSQLite(ctx context.Context, path string, noWait bool) (_ *sql.DB, retErr error) {
 	// the caller has validated the owner-only root and its trusted ancestors.
 	// inspect metadata without opening these files: closing any extra descriptor
 	// for the database or -shm inode drops this process's posix locks, including
@@ -85,23 +85,7 @@ func openClientSQLite(ctx context.Context, path string, fresh, noWait bool) (_ *
 	if err != nil {
 		return nil, err
 	}
-	provider, err := goose.NewProvider(goose.DialectSQLite3, db, migrations, goose.WithDisableGlobalRegistry(true))
-	if err != nil {
-		return nil, err
-	}
-	if fresh {
-		if _, err := provider.Up(ctx); err != nil {
-			return nil, err
-		}
-	}
-	version, target, err := provider.GetVersions(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if version != 1 || target != 1 {
-		return nil, errors.New("clientstate: unsupported v1 database baseline")
-	}
-	if err := validateClientBaseline(ctx, db); err != nil {
+	if err := migrateClientSQLite(ctx, db, migrations, schemaVersion); err != nil {
 		return nil, err
 	}
 	rows, err := db.QueryContext(ctx, "PRAGMA foreign_key_check")
@@ -118,26 +102,43 @@ func openClientSQLite(ctx context.Context, path string, fresh, noWait bool) (_ *
 	return db, nil
 }
 
-func validateClientBaseline(ctx context.Context, db *sql.DB) error {
+func migrateClientSQLite(ctx context.Context, db *sql.DB, migrations fs.FS, supported int64) error {
+	provider, err := goose.NewProvider(goose.DialectSQLite3, db, migrations, goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		return err
+	}
+	current, target, err := provider.GetVersions(ctx)
+	if err != nil {
+		return fmt.Errorf("read client state schema version: %w", err)
+	}
+	if target != supported {
+		return fmt.Errorf("embedded client schema version %d does not match supported version %d", target, supported)
+	}
+	if current > target {
+		return fmt.Errorf("client state schema version %d is newer than supported version %d", current, target)
+	}
+	// current databases open without a write lock, including optional telemetry.
+	if current < target {
+		if _, err := provider.Up(ctx); err != nil {
+			return fmt.Errorf("migrate client state: %w", err)
+		}
+	}
+	return checkClientSchemaVersion(ctx, db, supported)
+}
+
+func checkClientSchemaVersion(ctx context.Context, db *sql.DB, supported int64) error {
 	var version int64
 	if err := db.QueryRowContext(ctx, "SELECT version_id FROM goose_db_version WHERE is_applied = 1 ORDER BY id DESC LIMIT 1").Scan(&version); err != nil {
-		return fmt.Errorf("read client state schema version; select a fresh state directory: %w", err)
+		return fmt.Errorf("read client state schema version: %w", err)
 	}
-	if version != 1 {
-		return errors.New("clientstate: unsupported v1 database baseline")
-	}
-	var baseline string
-	if err := db.QueryRowContext(ctx, "SELECT identity FROM baseline_identity WHERE id = 1").Scan(&baseline); err != nil {
-		return fmt.Errorf("read client state baseline; select a fresh state directory: %w", err)
-	}
-	if baseline != clientBaselineIdentity {
-		return errors.New("client state baseline does not match; select a fresh state directory")
+	if version != supported {
+		return fmt.Errorf("client state schema version %d does not match supported version %d", version, supported)
 	}
 	return nil
 }
 
 // initializeClientSQLite publishes the database filename only after the fresh
-// baseline and wrapping-key check are durable. interruption leaves no partial
+// schema and wrapping-key check are durable. interruption leaves no partial
 // canonical database for a later process to mistake for initialized state.
 // the caller holds the initialization lock from key creation through this call.
 func initializeClientSQLite(ctx context.Context, path string, mode ProtectionMode, protector secretProtector, noWait bool) (*sql.DB, error) {
@@ -152,7 +153,7 @@ func initializeClientSQLite(ctx context.Context, path string, mode ProtectionMod
 	if err := file.Close(); err != nil {
 		return nil, err
 	}
-	db, err := openClientSQLite(ctx, staging, true, noWait)
+	db, err := openClientSQLite(ctx, staging, noWait)
 	if err != nil {
 		return nil, err
 	}
@@ -187,5 +188,5 @@ func initializeClientSQLite(ctx context.Context, path string, mode ProtectionMod
 	if err != nil {
 		return nil, err
 	}
-	return openClientSQLite(ctx, path, false, noWait)
+	return openClientSQLite(ctx, path, noWait)
 }

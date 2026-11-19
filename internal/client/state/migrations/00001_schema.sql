@@ -1,10 +1,4 @@
 -- +goose Up
-CREATE TABLE baseline_identity (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-service-integrations')
-) STRICT;
-INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-service-integrations');
-
 -- feedback belongs to one local project/worktree, server, and preview. deleting
 -- a thread cascades through its entire history; the scoped clock never rewinds.
 CREATE TABLE feedback_clocks (

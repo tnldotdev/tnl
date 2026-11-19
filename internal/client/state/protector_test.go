@@ -212,7 +212,7 @@ func TestEncryptedSessionCertificateIdentityAndJobRegistryReopen(t *testing.T) {
 	}
 }
 
-func TestFreshV1DoesNotReadOldDatabaseOrJournal(t *testing.T) {
+func TestFreshStateDoesNotReadOtherDatabaseOrJournal(t *testing.T) {
 	root, err := PrepareRoot(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
@@ -225,10 +225,6 @@ func TestFreshV1DoesNotReadOldDatabaseOrJournal(t *testing.T) {
 	database := openFileDatabase(t, root)
 	if _, found, err := database.SavedServer(t.Context()); err != nil || found {
 		t.Fatalf("old state imported: %v, %v", found, err)
-	}
-	var count int
-	if err := database.db.QueryRowContext(t.Context(), "SELECT count(*) FROM goose_db_version WHERE is_applied = 1 AND version_id > 0").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("baseline count: %d, %v", count, err)
 	}
 	info, err := os.Stat(WrappingKeyPath(database.Root()))
 	if err != nil || info.Mode().Perm() != 0o600 {

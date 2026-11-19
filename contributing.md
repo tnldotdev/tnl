@@ -1,17 +1,11 @@
 # contributing
 
-For hosted Cloudflare Worker qualification, install the pinned Wrangler with
-`mise install npm:wrangler`, then run `mise exec -- wrangler login --device
---browser=false`. Open the verification URL and enter the code printed by
-Wrangler. Run `mise exec -- wrangler whoami` to confirm the account before
-creating a disposable Worker. Local workerd tests do not need this login.
-
-Use [architecture](architecture.md) to find the owner of a change and
-understand its dependencies. Read [AGENTS.md](AGENTS.md) for repository policies.
+Use [architecture](architecture.md) to find the code and [AGENTS.md](AGENTS.md)
+for repository rules.
 
 ## get set up
 
-Install [mise](https://mise.jdx.dev), then run these from the repository root:
+Install [mise](https://mise.jdx.dev), then run from the repository root:
 
 ```sh
 mise trust
@@ -20,13 +14,11 @@ mise exec -- pnpm install --frozen-lockfile
 mise exec -- uv sync --frozen --project packages/py
 ```
 
-Run repository commands through `mise exec --` to use the versions in `mise.toml`.
-CI installs selected tools from the same file. `flyctl` remains available for
-operator work but is not installed by routine CI jobs.
+Run repository commands through `mise exec --` to use the pinned tools.
 
 ## check your change
 
-Pick the checks for the code you changed:
+Run the checks for the code you changed:
 
 ```sh
 mise exec -- task go:test
@@ -42,205 +34,50 @@ For one Go package or test:
 mise exec -- task go:test:focused PACKAGES=./internal/publisher/target RUN=Test
 ```
 
-For the portable WebSocket wire proof, install Google Chrome and run:
+For a race-sensitive test, add `FLAGS='-race -shuffle=on' COUNT=10`.
+Keep tests beside the code they check.
+
+Find other checks with `mise exec -- task --list-all`. Integration tasks create
+and clean up their own services; they need Docker. Some CLI suites require Linux.
+Browser tests need Chrome. Hosted Worker tests also need a Wrangler login:
+`mise exec -- wrangler login --device --browser=false`.
+
+For example, to check PostgreSQL migrations:
 
 ```sh
-mise exec -- task go:test:integration:websocket
+mise exec -- task go:test:integration:state:shard RUN='^TestIntegration.*Migration'
 ```
-
-This starts a disposable local WSS listener and uses Chrome's standard WebSocket
-API for authenticated yamux streams in both directions. The browser pins only the
-fixture's leaf key; no trust store is changed. The native listener still requires
-hybrid X25519 + ML-KEM-768. This is not hosted Cloudflare Worker qualification.
-
-The SDK build compiles its Go/WASM modules, optimizes them with the pinned
-Binaryen compiler, and copies `wasm_exec.js` from the same Go toolchain. To
-rebuild only those assets or execute the bridge tests:
-
-```sh
-mise exec -- task js:wasm:build
-mise exec -- task go:test:wasm PACKAGES=./packages/ts/wasm
-mise exec -- task go:test:wasm:browser PACKAGES=./packages/ts/wasm
-mise exec -- task go:test:wasm:optimized PACKAGES=./packages/ts/wasm RUNTIME=chrome TAGS=tnlsdk
-```
-
-The last command runs the compiled Go tests in installed Google Chrome, not a
-Node Fetch substitute. The WASM build manifest records the compiler, module
-digest, and raw and compressed sizes. Generated assets remain under the SDK's
-disposable `dist/wasm` directory.
-
-Dependency checks keep the service tree and shared publisher packages from
-importing publisher root. For HTTP changes, use `internal/publisher/httpaccess`
-for visitor policy and browser authorization, `internal/publisher/requestlimit`
-for per-run budgets, and `internal/publisher/service/http.go` for service frontend
-composition. See [package dependencies](architecture.md#how-packages-fit-together)
-for those boundaries.
-
-Repeat a race-sensitive case without changing its test tier:
-
-```sh
-mise exec -- task go:test:focused PACKAGES=./internal/connector/stream RUN='^TestPreparedConnector' FLAGS='-race -shuffle=on -cpu=1,2,4' COUNT=50
-```
-
-`COUNT` defaults to one; use it instead of putting `-count` in `FLAGS`.
-Keep real-clock lease and network tests out of high-count repetitions. Prove
-their ordering rules with synchronized owner tests, then run the real boundary.
-
-Find integration, race, load, and packaging checks with
-`mise exec -- task --list-all`. Integration tests use Docker, Pebble, and kind
-as needed; mise installs Pebble and kind. Tasks that need test databases create
-and clean up their own. Some CLI integration tests need Linux. The full CI matrix
-lives in [the workflows](.github/workflows/).
-
-On macOS, qualify real encrypted state across subprocesses with:
-
-```sh
-mise exec -- task go:test:integration:state-keychain
-```
-
-The fixture creates and unlocks a disposable Keychain with a generated password,
-selects it through `TNL_STATE_KEYCHAIN`, and deletes it after its workers stop.
-It does not change your default Keychain or search list and does not need your
-login password. Setup and cleanup failures fail the test rather than skip it.
-The control-backed SDK publication suite uses the same fixture on macOS:
-
-```sh
-mise exec -- task go:test:integration:runtime RUN='^TestIntegrationDeploymentSDKPublication$'
-```
-
-PostgreSQL-backed suites and the connector suite compile their test executables
-before starting disposable services, then discover, shard, and run those same
-executables. CLI and connector
-suites also build the native client once and pass it with `-tnl-cli-binary`;
-individual tests do not rebuild it.
-
-To check one PostgreSQL-backed API boundary:
-
-```sh
-mise exec -- task go:test:integration:api PACKAGES=./internal/control/api/public RUN='^TestIntegrationCreateServiceDeclarationAPI$'
-```
-
-Omit `PACKAGES` to run the full API package set used by CI. A selected package
-run checks only that boundary, not the full API suite.
-
-CI downloads and verifies both Go modules before running checks. Only transient
-dependency downloads retry; tests do not. Go module caches are shared across
-build variants, while compiled caches stay separate for ordinary and race builds.
-
-Routine race CI runs the publisher service tree and the remaining packages in
-parallel so the longer service tests can start earlier. Run the same partitions
-with `mise exec -- task go:test:race:service` and
-`mise exec -- task go:test:race:rest`; the latter also compiles the public SDK
-example. `mise exec -- task go:test:race` still runs the complete routine suite.
-Both CI partitions must pass the `Go race` check.
-
-Linux Go CI runs routine tests separately from generation, static analysis,
-vulnerability scanning, and command builds. Both jobs retain their ten-minute
-limits and must pass the `Go (Linux)` check.
-
-For warm PostgreSQL latency, run `mise exec -- task go:test:load:postgres`.
-It compares a direct database connection with the connector/publisher path using
-the same query and retained sessions. The task owns its disposable databases;
-it does not use a deployed server. Keep baseline runs unprofiled, then repeat
-with `DIAGNOSTICS=metrics`, `cpu`, `contention`, or `trace` to inspect the
-publisher. Profiling changes timing, so compare like-for-like runs.
-The default `off` mode omits the publisher's metrics owner; use `metrics` for
-a recording-enabled comparison. `trace` captures a short Go execution trace,
-not SQL text or per-query distributed spans.
-
-Docker Hub images use `docker.io` directly and stay pinned by digest. Docker,
-Compose, and the test harness use existing Docker credentials, including credential
-helpers. Use `docker login` if you need authenticated pulls locally. GitHub-hosted
-runners pulling public images are
-[exempt from Docker Hub's pull rate limit](https://docs.github.com/en/actions/reference/limits#docker-hubs-rate-limit-for-github-actions).
 
 ## edit generated sources
 
-Edit the source named in a generated file's header, then regenerate:
+Edit the source, then regenerate and format:
 
 ```sh
 mise exec -- task generate
 mise exec -- task format
 ```
 
-OpenAPI sources live in `contracts/`. SQL sources live beside each state package's
-`sqlc.yaml`. [Generation tasks](tasks/generate.yml) list the generated paths.
-The tunnel protocol in `pkg/protocol/tunnelv1` is handwritten.
+```text
+contracts/                 -> HTTP APIs and validators
+state migrations + queries -> SQL access code
+internal/config            -> configuration schema and SDK types
+```
 
-SQL generation stages fresh output before replacing marked `sqlc` files, including
-removing output for retired queries. Handwritten files are preserved. Run
-`mise exec -- task generate:test` to check generation tooling.
+Generated file headers name their source. [Generation tasks](tasks/generate.yml)
+list the full pipeline. `pkg/protocol/tunnelv1` is handwritten.
 
-Hey API generates the browser and telemetry TypeScript validators. Its supported
-Zod resolvers keep closed request objects strict and JSON counters numeric; server
-authorization and validation remain authoritative. The generator uses a pinned
-TypeScript 6 compiler API without changing the TypeScript 7 application checks.
+Add new numbered SQL migrations. Existing migrations are frozen, including
+migration 1 in both state packages. Test upgrades with existing data.
 
-The deployment schema stays in `00001_baseline.sql`, with schema version `1`
-and baseline identity `v1`. Initialize a fresh PostgreSQL database with
-`tnld migrate`, then start matching server, publisher, and connector binaries.
-Do not rename the baseline identity for feature work or relabel an existing
-database. Replacing server builds requires a coordinated stop/start of all roles.
+`task format-check` is read-only. `task generate-check` regenerates and compares
+with `HEAD`; commit intended generated changes first.
 
-`tnld migrate` accepts only `TNLD_DATABASE_DIRECT_URL`; serving roles use pooled
-`TNLD_DATABASE_URL` and require the exact schema version and baseline identity.
-Use matching schema and binaries; the baseline identity is not a feature version.
-
-The HTTP management SDK is generated from the nine approved operations by
-`scripts/generate/management-sdk.ts`. Its stock Fetch helpers are built in a
-separate referenced TypeScript project: strict mode stays enabled, with only
-`exactOptionalPropertyTypes` disabled for generated code because Hey API 0.99
-assigns `undefined` to optional helper properties. Handwritten code and public
-consumer tests retain all repository checks. Only the stock `client`/`core`
-helpers are excluded from authored-code lint rules; generated operations,
-validators, and models remain linted, except the stock validator's escaped
-regex delimiters. Do not patch the generated runtime.
-
-`scripts/generate/python-management-sdk.ts` generates Pydantic models for the
-same nine operations and formats them with the locked Ruff version. Python's
-bound management calls use native's existing generated Go client; Hey API Python
-0.0.24 emits grouped HTTP methods without path, body, or header inputs, so those
-methods are not shipped. Keep models generated, preserve original response JSON
-for strict inbound validation, and do not add another HTTP engine to work around
-generator limits. Generated-only lint exceptions cover long schema descriptions
-and stock annotation style, not typing or validation. The generator dependencies
-live in the private `scripts/generate` workspace to keep their TypeScript 6
-compiler API separate from application checks.
-
-A publisher restart does not restore its application sockets.
-
-The client telemetry baseline also requires a fresh client state directory. Use
-`TNL_STATE_DIR` to select a new directory and sign in again; do not copy an older
-`v1.db` or its publisher credentials into it.
-
-tnl-owned formats also start at version 1: project metadata, tunnel snapshots,
-inspection JSON, and workload metadata. Regenerate project metadata
-with matching native and SDK versions when replacing an earlier build.
-
-`task format-check` checks without editing. `task generate-check` regenerates
-files and compares them with `HEAD`, so commit intended generated changes first.
-For Markdown edits, format just the files you changed:
+For Markdown-only changes, format just the edited files:
 
 ```sh
 mise exec -- pnpm exec oxfmt --write contributing.md
 mise exec -- pnpm exec oxfmt --check contributing.md
 ```
-
-## build release packages
-
-```sh
-mise exec -- task package
-```
-
-This builds the four Go release archives, then packages the same native client
-binaries for npm and Python. npm metadata is generated from the launcher's target
-catalog; Hatchling builds the platform wheels. The checks install the actual
-packages and run public API and native CLI smoke tests. SDK tests own browser
-boundaries and Node/Bun compatibility rather than repeating them in the packers.
-
-`task release:npm-package` and `task py:build` reuse an existing
-`task release:snapshot`. Both accept `OUTPUT` and an optional expected `VERSION`,
-so tag releases and local snapshots use the same packaging and checks.
 
 ## try the local stack
 
@@ -254,14 +91,23 @@ mise exec -- task local:tnl -- team current
 ```
 
 `local:trust` adds development certificates to the macOS login keychain.
-The stack keeps its data and login in `.local/`. `local:down` stops it and keeps
-that data; `local:reset` removes the data, containers, volumes, and local trust.
+State lives in `.local/`. `local:down` stops the stack and keeps its data;
+`local:reset` removes the data, containers, volumes, and local trust.
+
+## build packages
+
+```sh
+mise exec -- task package
+```
+
+This builds and checks native archives, npm packages, and Python wheels.
+All include `LICENSE`, `NOTICE`, and `THIRD_PARTY_LICENSES.txt`. Add dependency
+licenses only to `THIRD_PARTY_LICENSES.txt`.
+
+For publishing, use the [release skill](.opencode/skills/release/SKILL.md).
 
 ## send a pull request
 
-Explain what changes, why, and which checks you ran. Use a title such as
-`fix: reconnect after a relay restart`. Keep tests beside the code they check.
-
-Add new dependency licenses only to `THIRD_PARTY_LICENSES.txt`. Release archives, native
-npm packages, and Python wheels include `LICENSE`, `NOTICE`, and
-`THIRD_PARTY_LICENSES.txt`.
+Open a PR for each change. Use semantic commit messages and a title such as
+`fix: reconnect after a relay restart`. Explain what changes, why, and which
+checks passed.

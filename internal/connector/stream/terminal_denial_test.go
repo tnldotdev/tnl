@@ -43,14 +43,14 @@ func TestConnectorTerminalDenialFencesOnlyUnenteredWork(t *testing.T) {
 				defer finish()
 				left, right := net.Pipe()
 				defer left.Close()
-				defer right.Close()
 				decoded := make(chan tunnelv1.ConnectorVisitorTerminalRequest, 1)
+				serverReady := make(chan error, 1)
 				serverDone := make(chan struct{})
 				go func() {
 					defer close(serverDone)
 					control, err := tunnel.AcceptConnectorPermissionControl(setup, terminalDenialSession{stream: terminalDenialStream{right}})
+					serverReady <- err
 					if err != nil {
-						t.Error(err)
 						return
 					}
 					message, err := tunnelv1.ReadConnectorControlMessage(control)
@@ -58,17 +58,22 @@ func TestConnectorTerminalDenialFencesOnlyUnenteredWork(t *testing.T) {
 						decoded <- message.(tunnelv1.ConnectorVisitorAbort).TerminalRequest()
 					}
 				}()
+				defer func() {
+					_ = right.Close()
+					<-serverDone
+				}()
 				var err error
 				p.permissions, err = tunnel.OpenConnectorPermissionControl(p.packetCtx, setup,
 					terminalDenialSession{stream: terminalDenialStream{left}}, connectorTestControlScope())
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer func() {
-					_ = p.permissions.Close()
-					_ = right.Close()
-					<-serverDone
-				}()
+				defer p.permissions.Close()
+				// the client can read the hello before the server clears its setup
+				// deadline. do not close the pipe while the server is still doing that.
+				if err := <-serverReady; err != nil {
+					t.Fatal(err)
+				}
 				denial := &clientcontrol.ProblemError{Status: http.StatusForbidden, Problem: controlv1.Problem{Code: controlv1.Forbidden}}
 				use := &connectorUse{admitted: true, until: p.until, terminalKey: tunnelv1.ConnectorVisitorTerminalKey{
 					VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", DeliveryGeneration: 1}}
