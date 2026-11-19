@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { STARTUP_MS } from "../src/policy.ts";
 import {
   Gossip,
@@ -7,12 +7,16 @@ import {
   MAX_CHANGES,
   MAX_MESSAGE_BYTES,
   MAX_PEERS,
+  PEERS_PATH,
   SUSPECT_MS,
   parseMessage,
+  type Change,
   type GossipMessage,
   type Host,
   type PeerTransport,
 } from "../src/peers/gossip.ts";
+import { peerServer } from "../src/peers/http.ts";
+import { REMOTE_TAB_REPORT_MS } from "../src/peers/presence.ts";
 
 const epoch = Date.UTC(2026, 10, 18);
 const release = "a".repeat(64);
@@ -25,6 +29,29 @@ function host(n: number, run = n): Host {
     runID: "srun_" + String(run).padStart(22, "0"),
     runNumber: String(run),
   };
+}
+
+function report(n: number, details: Partial<Change> = {}): Change {
+  return {
+    ...host(n),
+    seq: 1,
+    reportedAt: epoch,
+    left: false,
+    startingUntil: 0,
+    ...details,
+  };
+}
+
+function message(from: Change, ...changes: Change[]): GossipMessage {
+  return { releaseID: release, startedAt: epoch, from, changes };
+}
+
+function certificate(fingerprint: string, expiresAt = epoch + 60_000) {
+  return { fingerprint: fingerprint.repeat(64), expiresAt };
+}
+
+function fillRoster(view: Gossip, count: number, first = 2) {
+  for (let i = first; i < first + count; i++) view.receive(message(report(i)), epoch);
 }
 
 function network() {
@@ -51,7 +78,7 @@ function network() {
     }
     const recipient = nodes.get(target.publisherID);
     recipient?.receive(message, now);
-    return recipient?.message(now);
+    return recipient?.message(now, message);
   };
   return {
     create,
@@ -220,6 +247,225 @@ describe("gossip", () => {
     expect(first.changes.some(({ tabs }) => tabs === undefined)).toBe(true);
     const repeated = new Set(first.changes.map(({ publisherID }) => publisherID));
     expect(repeated.size).toBe(MAX_CHANGES);
+  });
+
+  it("counts remote observations once without giving relayed observations a new deadline", () => {
+    const view = new Gossip(release, host(1), epoch);
+    const remote = report(2, { tabs: { count: 4, observedAt: epoch } });
+    const duplicatePublisher = { ...remote, origin: host(3).origin };
+    const duplicateOrigin = { ...remote, publisherID: host(4).publisherID };
+    view.observeTabs(2, epoch);
+    expect(view.tabSnapshot(epoch, [remote, duplicatePublisher, duplicateOrigin])).toEqual({
+      local: 2,
+      total: 6,
+    });
+
+    view.receive(message(remote), epoch);
+    const beforeExpiry = epoch + REMOTE_TAB_REPORT_MS - 1;
+    const relayed = { ...remote, seq: 2, reportedAt: beforeExpiry };
+    view.receive(message(report(3, { reportedAt: beforeExpiry }), relayed), beforeExpiry);
+    expect(view.tabSnapshot(beforeExpiry)).toEqual({ local: 0, total: 4 });
+    view.receive(
+      message(report(3, { seq: 2, reportedAt: beforeExpiry + 1 }), relayed),
+      beforeExpiry + 1,
+    );
+    expect(view.tabSnapshot(beforeExpiry + 1)).toEqual({ local: 0, total: 0 });
+  });
+
+  it("puts a new stop ahead of repeats, with fewer sends first and newest first within a tier", () => {
+    const view = new Gossip(release, host(1), epoch);
+    fillRoster(view, 8);
+    expect(view.message(epoch).changes[0]).toEqual(report(9));
+    view.receive(message(report(10)), epoch);
+    expect(view.message(epoch).changes[0]).toEqual(report(10));
+
+    const stop = report(9, { seq: 2, left: true });
+    view.receive(message(stop), epoch);
+    const tally = report(10, { seq: 2, tabs: { count: 3, observedAt: epoch } });
+    view.receive(message(tally), epoch);
+    const batch = view.message(epoch).changes;
+    expect(batch.slice(0, 4)).toEqual([stop, tally, report(2), report(8)]);
+    expect(batch.filter(({ publisherID }) => publisherID === stop.publisherID)).toEqual([stop]);
+  });
+
+  it("does not reset a stop's three priority sends on duplicate or older reports", () => {
+    const view = new Gossip(release, host(1), epoch);
+    const first = report(3);
+    const second = report(4);
+    view.receive(message(first, second), epoch);
+    for (let i = 0; i < 3; i++) view.message(epoch);
+
+    const stop = report(2, { seq: 2, left: true });
+    view.receive(message(stop), epoch);
+    for (let i = 0; i < 3; i++) {
+      view.receive(message(first, report(2), stop), epoch);
+      // move ordinary rotation to the second report without using a stop retry.
+      expect(view.message(epoch, message(stop, second)).changes).toEqual([first]);
+      expect(view.message(epoch).changes[0]).toEqual(stop);
+    }
+    view.receive(message(first, stop, report(2)), epoch);
+    expect(view.message(epoch, message(stop, second)).changes).toEqual([first]);
+    expect(view.message(epoch).changes).toEqual([second, stop, first]);
+  });
+
+  it("reserves one ordinary slot for the best certificate by expiry then fingerprint", () => {
+    const view = new Gossip(release, host(1), epoch, { certificate: certificate("f") });
+    fillRoster(view, MAX_CHANGES * 3);
+    const earlierExpiry = report(90, { certificate: certificate("0", epoch + 59_000) });
+    const tieLoser = report(91, { certificate: certificate("e") });
+    const best = report(92, { certificate: certificate("d") });
+    view.receive(message(earlierExpiry, tieLoser, best), epoch);
+    fillRoster(view, MAX_CHANGES, 300);
+    const batch = view.message(epoch).changes;
+    expect(batch).toHaveLength(MAX_CHANGES);
+    expect(new Set(batch.map(({ publisherID }) => publisherID)).size).toBe(MAX_CHANGES);
+    expect(batch.filter((peer) => peer.certificate !== undefined)).toEqual([best]);
+
+    const refreshed = { ...best, seq: 2, reportedAt: epoch + 1 };
+    view.receive(message(refreshed), epoch + 1);
+    view.message(epoch + 1); // sends the refresh from the fresh queue
+    expect(
+      view.message(epoch + 2).changes.filter((peer) => peer.certificate !== undefined),
+    ).toEqual([refreshed]);
+  });
+
+  it("uses ordinary slots when self wins, or the best peer is already selected or known", () => {
+    const best = report(2, { certificate: certificate("a") });
+    const selected = new Gossip(release, host(1), epoch);
+    fillRoster(selected, MAX_CHANGES, 3);
+    selected.receive(message(best), epoch);
+    const batch = selected.message(epoch).changes;
+    expect(batch).toHaveLength(MAX_CHANGES);
+    expect(batch.filter((peer) => peer.certificate !== undefined)).toEqual([best]);
+    expect(new Set(batch.map(({ publisherID }) => publisherID)).size).toBe(MAX_CHANGES);
+
+    const view = new Gossip(release, host(1), epoch, { certificate: certificate("a") });
+    fillRoster(view, MAX_CHANGES * 3, 3);
+    view.receive(message(best), epoch);
+    fillRoster(view, MAX_CHANGES, 300);
+    const selfWins = view.message(epoch);
+    expect(selfWins.from.certificate).toEqual(best.certificate);
+    expect(selfWins.changes).toHaveLength(MAX_CHANGES);
+    expect(selfWins.changes).not.toContain(best);
+
+    view.update({ certificate: certificate("b") });
+    const requesterKnowsBest = view.message(epoch, message(best));
+    expect(requesterKnowsBest.changes).toHaveLength(MAX_CHANGES);
+    expect(requesterKnowsBest.changes).not.toContain(best);
+    expect(view.message(epoch).changes).toContain(best);
+  });
+
+  it("reselects the certificate holder after suspicion grace, recovery, and expiration", async () => {
+    const view = new Gossip(release, host(1), epoch);
+    const ordinary = MAX_CHANGES * 6;
+    fillRoster(view, ordinary);
+    const suspect = report(200, { certificate: certificate("a", epoch + 20_000) });
+    const fallback = report(201, { certificate: certificate("b", epoch + 19_000) });
+    const ended = report(202, {
+      certificate: certificate("c", epoch + 30_000),
+      endsAt: epoch + 1,
+    });
+    const stopped = report(203, { certificate: certificate("d"), left: true });
+    view.receive(message(suspect, fallback, ended, stopped), epoch);
+    fillRoster(view, MAX_CHANGES * 2, 300);
+
+    await view.probe(
+      () => epoch + 1,
+      () => (ordinary + 0.5) / view.size,
+      async () => undefined,
+    );
+    const advertised = (now: number) =>
+      view.message(now).changes.filter((peer) => peer.certificate !== undefined);
+    expect(advertised(epoch + SUSPECT_MS)).toEqual([suspect]);
+    expect(advertised(epoch + SUSPECT_MS + 1)).toEqual([fallback]);
+    view.receive(message(suspect), epoch + SUSPECT_MS + 1);
+    expect(advertised(epoch + SUSPECT_MS + 1)).toEqual([suspect]);
+    expect(advertised(epoch + 20_000)).toEqual([]);
+  });
+
+  it("suppresses only same-or-older reports for exact runs and keeps the sender report", () => {
+    const view = new Gossip(release, host(1), epoch);
+    const known = report(2, { seq: 5 });
+    const newer = report(3, { seq: 2, left: true });
+    const older = report(4);
+    const otherRun = report(5);
+    view.receive(message(known, newer, older, otherRun), epoch);
+
+    const request = message(
+      known,
+      { ...known, seq: 1 },
+      { ...newer, seq: 1, left: false },
+      { ...older, seq: 4 },
+      { ...otherRun, ...host(5, 6) },
+      report(1, { seq: 100 }),
+    );
+    const reply = view.message(epoch, request);
+    expect(reply.from).toEqual(report(1, { seq: 2 }));
+    expect(reply.changes).toEqual([otherRun, newer]);
+  });
+
+  it("fills filtered batches without consuming priority retries for suppressed reports", () => {
+    const view = new Gossip(release, host(1), epoch);
+    const initial = message(report(2));
+    view.receive(initial, epoch);
+    expect(view.message(epoch, initial).changes).toEqual([]);
+    fillRoster(view, MAX_CHANGES * 6, 3);
+    const known = report(2, { seq: 2, left: true });
+    const request = message(known);
+    view.receive(request, epoch);
+    for (let i = 0; i < 4; i++) {
+      const reply = view.message(epoch, request);
+      expect(reply.changes).toHaveLength(MAX_CHANGES);
+      expect(reply.changes).not.toContain(known);
+    }
+    expect(view.message(epoch).changes[0]).toEqual(known);
+  });
+
+  it("filters echoed reports from HTTP POST replies", async () => {
+    const lifetime = new AbortController();
+    const local = host(1);
+    const page = "https://keepthisalive.com";
+    const peer = peerServer(release, [page], async () => new Response(), lifetime.signal, {
+      proxyOrigin: page,
+      proof: "",
+    });
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 503 }));
+    try {
+      const now = Date.now();
+      await peer.start(
+        local,
+        now,
+        undefined,
+        undefined,
+        () => {},
+        () => false,
+      );
+      const post = (request: GossipMessage) =>
+        peer.fetch(
+          new Request(new URL(PEERS_PATH, local.origin), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...request, startedAt: now }),
+          }),
+        );
+      const sender = report(2, { reportedAt: now });
+      const newest = report(3, { seq: 2, reportedAt: now });
+      const known = report(4, { reportedAt: now });
+      const first = await post(message(sender, newest, known));
+      expect(first.status).toBe(200);
+      expect(parseMessage(await first.json(), release, now)?.changes).toEqual([]);
+
+      const reply = await post(message(sender, { ...newest, seq: 1 }, known));
+      expect(reply.status).toBe(200);
+      expect(parseMessage(await reply.json(), release, now)).toMatchObject({
+        from: local,
+        changes: [newest],
+      });
+    } finally {
+      lifetime.abort();
+      await peer.stop();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("ignores unrelated releases, unsafe addresses, bad clocks and oversized messages", () => {

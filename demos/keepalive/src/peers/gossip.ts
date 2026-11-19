@@ -1,8 +1,8 @@
 import * as z from "zod";
 import { hostNameSchema } from "./host-names.ts";
 import { BOOTSTRAP_TURN_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "../policy.ts";
-import { MAX_TABS_PER_HOST, TAB_LEASE_MS } from "./presence.ts";
-import { certificateReport } from "../hosting/certificate.ts";
+import { MAX_TABS_PER_HOST, REMOTE_TAB_REPORT_MS, TAB_LEASE_MS } from "./presence.ts";
+import { certificateReport, newerCertificate } from "../hosting/certificate.ts";
 
 export const HOST_PARENT = "hosts.keepthisalive.com";
 export const SHARED_HOST = `https://prod.${HOST_PARENT}`;
@@ -131,10 +131,91 @@ export function hostIdentity({ origin, publisherID, runID, runNumber }: Host): H
 
 type Seen = { change: Change; slot: number; suspectAt?: number };
 
+type PriorityReport = { id: string; sent: number; queued: number };
+
+function preferredReport(a: PriorityReport, b: PriorityReport) {
+  return a.sent < b.sent || (a.sent === b.sent && a.queued > b.queued);
+}
+
+// an indexed heap keeps one entry per publisher across the send tiers.
+class PriorityReports {
+  readonly #entries: PriorityReport[] = [];
+  readonly #positions = new Map<string, number>();
+  #queued = 0;
+
+  enqueue(id: string) {
+    this.delete(id);
+    this.restore({ id, sent: 0, queued: ++this.#queued });
+  }
+
+  delete(id: string) {
+    const index = this.#positions.get(id);
+    if (index !== undefined) this.#remove(index);
+  }
+
+  take() {
+    return this.#remove(0);
+  }
+
+  restore(report: PriorityReport) {
+    if (report.sent < PRIORITY_SENDS) this.#place(this.#entries.length, report);
+  }
+
+  #remove(index: number) {
+    const report = this.#entries[index];
+    if (report === undefined) return;
+    this.#positions.delete(report.id);
+    const last = this.#entries.pop();
+    if (last !== undefined && last !== report) this.#place(index, last);
+    return report;
+  }
+
+  #place(index: number, report: PriorityReport) {
+    while (index > 0) {
+      const parentIndex = Math.floor((index - 1) / 2);
+      const parent = this.#entries[parentIndex];
+      if (parent === undefined || !preferredReport(report, parent)) break;
+      this.#set(index, parent);
+      index = parentIndex;
+    }
+    while (true) {
+      let childIndex = 2 * index + 1;
+      let child = this.#entries[childIndex];
+      if (child === undefined) break;
+      const right = this.#entries[childIndex + 1];
+      if (right !== undefined && preferredReport(right, child)) {
+        child = right;
+        childIndex++;
+      }
+      if (!preferredReport(child, report)) break;
+      this.#set(index, child);
+      index = childIndex;
+    }
+    this.#set(index, report);
+  }
+
+  #set(index: number, report: PriorityReport) {
+    this.#entries[index] = report;
+    this.#positions.set(report.id, index);
+  }
+}
+
 function recordDeadline(change: Change) {
   return (
     (change.left ? change.reportedAt : Math.max(change.reportedAt, change.endsAt ?? 0)) + KEEP_MS
   );
+}
+
+function liveCertificate({ change, suspectAt }: Seen, now: number) {
+  if (
+    change.left ||
+    (change.endsAt ?? change.reportedAt + KEEP_MS) <= now ||
+    (suspectAt !== undefined && suspectAt + SUSPECT_MS <= now) ||
+    change.certificate === undefined ||
+    change.certificate.expiresAt <= now
+  )
+    return undefined;
+  return change.certificate;
 }
 
 function importantChange(next: Change, previous: Change) {
@@ -159,8 +240,9 @@ export class Gossip {
   readonly releaseID: string;
   readonly #peers = new Map<string, Seen>();
   readonly #slots: Seen[] = [];
-  readonly #priority = new Map<string, number>();
+  readonly #priority = new PriorityReports();
   readonly #fresh = new Set<string>();
+  #certificateHolder: Seen | undefined;
   #rotation = 0;
   #self: Change;
   #startedAt: number;
@@ -216,10 +298,8 @@ export class Gossip {
   }
 
   tabSnapshot(now: number, hosts = this.hosts(now)) {
-    return {
-      local: reportedTabs([this.#self], now),
-      total: reportedTabs([this.#self, ...hosts], now),
-    };
+    const local = reportedTabs([this.#self], now);
+    return { local, total: local + reportedTabs(hosts, now, REMOTE_TAB_REPORT_MS, this.#self) };
   }
 
   canRetire(now: number, target: number, hosts: readonly Change[]) {
@@ -257,8 +337,9 @@ export class Gossip {
         change.seq >= previous.change.seq &&
         sameRun(change, previous.change)
       ) {
+        // the same report can clear local suspicion without resetting its sends.
         delete previous.suspectAt;
-        this.#prioritize(change.publisherID);
+        this.#considerCertificate(previous, now);
       }
       return;
     }
@@ -277,9 +358,10 @@ export class Gossip {
       suspectAt !== undefined && !recovered ? { change, slot, suspectAt } : { change, slot };
     this.#peers.set(change.publisherID, entry);
     this.#slots[slot] = entry;
+    this.#considerCertificate(entry, now);
     this.#nextPrune = Math.min(this.#nextPrune, recordDeadline(change));
-    if (previous === undefined || recovered || importantChange(change, previous.change))
-      this.#prioritize(change.publisherID);
+    if (previous === undefined || importantChange(change, previous.change))
+      this.#priority.enqueue(change.publisherID);
     else if (now - change.reportedAt < TAB_LEASE_MS) {
       // send recent updates as well as cycling through the older reports.
       this.#fresh.delete(change.publisherID);
@@ -289,26 +371,72 @@ export class Gossip {
     }
   }
 
-  message(now: number): GossipMessage {
+  #considerCertificate(peer: Seen, now: number) {
+    const candidate = liveCertificate(peer, now);
+    if (candidate === undefined) return;
+    const holder = this.#certificateHolder;
+    const best = holder?.change.certificate;
+    if (
+      best === undefined ||
+      newerCertificate(candidate, best) ||
+      (holder?.change.publisherID === peer.change.publisherID &&
+        candidate.expiresAt === best.expiresAt &&
+        candidate.fingerprint === best.fingerprint)
+    )
+      this.#certificateHolder = peer;
+  }
+
+  #bestCertificateHolder(now: number) {
+    const holder = this.#certificateHolder;
+    if (
+      holder !== undefined &&
+      (this.#peers.get(holder.change.publisherID) !== holder ||
+        liveCertificate(holder, now) === undefined)
+    ) {
+      // a better report or a refresh of the same holder updates the cache on receipt.
+      // only search the roster again if the cached holder is gone, worse, or no longer live.
+      this.#certificateHolder = undefined;
+      for (const peer of this.#slots) this.#considerCertificate(peer, now);
+    }
+    return this.#certificateHolder?.change;
+  }
+
+  message(now: number, requesterMessage?: GossipMessage): GossipMessage {
     this.#forgetOldPeers(now);
     if (!this.#self.left) this.#self = { ...this.#self, seq: this.#self.seq + 1, reportedAt: now };
+    let excluded: Set<string> | undefined;
+    if (requesterMessage?.releaseID === this.releaseID) {
+      for (const report of [requesterMessage.from, ...requesterMessage.changes]) {
+        const peer = this.#peers.get(report.publisherID);
+        if (peer !== undefined && report.seq >= peer.change.seq && sameRun(report, peer.change)) {
+          (excluded ??= new Set()).add(report.publisherID);
+        }
+      }
+    }
     const selected = new Set<string>();
     const changes: Change[] = [];
-    const count = Math.min(PRIORITY_CHANGES, this.#priority.size);
-    for (let i = 0; i < count; i++) {
-      const next = this.#priority.entries().next();
-      if (next.done) break;
-      const [id, remaining] = next.value;
+    const pending: PriorityReport[] = [];
+    while (changes.length < PRIORITY_CHANGES) {
+      const report = this.#priority.take();
+      if (report === undefined) break;
+      const { id } = report;
+      if (excluded?.has(id)) {
+        pending.push(report);
+        continue;
+      }
       const peer = this.#peers.get(id);
-      this.#priority.delete(id);
       if (peer === undefined) continue;
       selected.add(id);
       changes.push(peer.change);
-      if (remaining > 1) this.#priority.set(id, remaining - 1);
+      report.sent++;
+      pending.push(report);
     }
+    // don't revisit promoted retries or spend a send on a requester's echo.
+    for (const report of pending) this.#priority.restore(report);
     let fresh = 0;
     for (const id of this.#fresh) {
       if (fresh >= FRESH_CHANGES) break;
+      if (excluded?.has(id)) continue;
       this.#fresh.delete(id);
       const peer = this.#peers.get(id);
       if (peer === undefined || selected.has(id) || now - peer.change.reportedAt >= TAB_LEASE_MS)
@@ -318,11 +446,29 @@ export class Gossip {
       fresh++;
     }
     // even during churn, reserve space for ordinary reports.
-    const limit = Math.min(MAX_CHANGES, this.#peers.size);
-    while (changes.length < limit) {
+    const limit = Math.min(MAX_CHANGES, this.#peers.size - (excluded?.size ?? 0));
+    if (changes.length < limit) {
+      const holder = this.#bestCertificateHolder(now);
+      const installed = this.#self.certificate;
+      if (
+        holder?.certificate !== undefined &&
+        (installed === undefined || newerCertificate(holder.certificate, installed)) &&
+        !selected.has(holder.publisherID) &&
+        !excluded?.has(holder.publisherID)
+      ) {
+        selected.add(holder.publisherID);
+        changes.push(holder);
+      }
+    }
+    for (let scanned = 0; scanned < this.#slots.length && changes.length < limit; scanned++) {
       this.#rotation %= this.#slots.length;
       const peer = this.#slots[this.#rotation++];
-      if (peer === undefined || selected.has(peer.change.publisherID)) continue;
+      if (
+        peer === undefined ||
+        selected.has(peer.change.publisherID) ||
+        excluded?.has(peer.change.publisherID)
+      )
+        continue;
       selected.add(peer.change.publisherID);
       changes.push(peer.change);
     }
@@ -362,10 +508,6 @@ export class Gossip {
         this.#nextPrune = Math.min(this.#nextPrune, deadline);
       }
     }
-  }
-
-  #prioritize(id: string) {
-    this.#priority.set(id, PRIORITY_SENDS);
   }
 
   #countedPeers(now: number) {
@@ -426,7 +568,6 @@ export class Gossip {
       ) {
         // don't mark an updated peer record based on an earlier failed check.
         selected.suspectAt = clock();
-        this.#prioritize(target.publisherID);
       }
     } finally {
       this.#probing = false;
@@ -466,8 +607,13 @@ export class Gossip {
   }
 }
 
-export function reportedTabs(changes: readonly Change[], now: number) {
-  const seen = new Set<string>();
+export function reportedTabs(
+  changes: readonly Change[],
+  now: number,
+  maxAge = TAB_LEASE_MS,
+  exclude?: Host,
+) {
+  const seen = new Set(exclude === undefined ? [] : [exclude.publisherID, exclude.origin]);
   let tabs = 0;
   for (const { publisherID, origin, left, endsAt, tabs: tally } of changes) {
     if (
@@ -476,7 +622,7 @@ export function reportedTabs(changes: readonly Change[], now: number) {
       seen.has(publisherID) ||
       seen.has(origin) ||
       tally === undefined ||
-      now - tally.observedAt >= TAB_LEASE_MS
+      now - tally.observedAt >= maxAge
     )
       continue;
     seen.add(publisherID);

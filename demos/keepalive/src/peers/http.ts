@@ -149,10 +149,10 @@ export function peerServer(
   let pendingCertificateProof: { donor: Host; nonce: string; answered: boolean } | undefined;
   let checkingCertificate = false;
 
-  function reportMessage(now: number) {
+  function reportMessage(now: number, requesterMessage?: GossipMessage) {
     if (gossip === undefined) throw new Error("No peer view yet.");
     gossip.observeTabs(leases.count(now), now);
-    return gossip.message(now);
+    return gossip.message(now, requesterMessage);
   }
 
   async function send(
@@ -401,7 +401,7 @@ export function peerServer(
     } else {
       gossip.receive(message, Date.now());
     }
-    return c.json(reportMessage(Date.now()));
+    return c.json(reportMessage(Date.now(), message));
   });
   app.post(CHECK_PATH, async (c) => {
     if (gossip === undefined || checking) return c.body(null, 503);
