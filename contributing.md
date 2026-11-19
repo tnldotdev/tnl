@@ -110,6 +110,4 @@ For publishing, use the [release skill](.opencode/skills/release/SKILL.md).
 
 Open a PR for each change. Use semantic commit messages and a title such as
 `fix: reconnect after a relay restart`. Explain what changes, why, and which
-checks passed. Follow the compatibility starting point in [AGENTS.md](AGENTS.md);
-preserve behavior from that point forward. Deprecate an API with its release
-version and replacement while keeping it working.
+checks passed.
