@@ -39,6 +39,12 @@ schemas:
     additionalProperties: false
     required: [preview_id, run_number, operation, access]
     properties:
+      hostname:
+        type: string
+        minLength: 1
+        maxLength: 253
+        x-go-type-skip-optional-pointer: true
+        description: Exact HTTP hostname at which the publisher admitted the reviewer. Omission selects the canonical identity; connector proofs remain canonical.
       preview_id:
         $ref: "../openapi.yaml#/components/schemas/PreviewID"
       run_number:

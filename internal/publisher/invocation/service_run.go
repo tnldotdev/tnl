@@ -205,7 +205,14 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			cfg.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
 				prepared = readiness.prepare(pending, preparation)
 				notified = false
-				return observe(uint64(preparation.RunNumber), false)
+				if err := observe(uint64(preparation.RunNumber), false); err != nil {
+					return err
+				}
+				hostname := ""
+				if preparation.RunHostname != nil {
+					hostname = *preparation.RunHostname
+				}
+				return tunnel.SetServiceRun(ctx, preparation.ServiceRunId, uint64(preparation.RunNumber), hostname)
 			}
 			cfg.ReadinessProof = readinessProof
 			cfg.Healthy = func(probe context.Context) bool {

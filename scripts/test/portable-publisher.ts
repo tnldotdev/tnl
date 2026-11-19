@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { setTimeout as pause } from "node:timers/promises";
 import { parseArgs, promisify } from "node:util";
 import { build } from "esbuild";
 import { chromium } from "playwright";
@@ -170,15 +171,23 @@ async function chromeSmoke(configuration: PublisherFixture) {
       check(address !== null && typeof address !== "string", "HTTPS fixture listener did not bind");
       await page.goto(`https://localhost:${address.port}/`);
       await page.waitForFunction(() => "publisherFixture" in globalThis);
+      const observation = new AbortController();
       try {
-        return await page.evaluate(async (input) => {
-          const host = globalThis as typeof globalThis & {
-            publisherFixture?: { smoke(input: unknown): Promise<unknown> };
-          };
-          if (host.publisherFixture === undefined)
-            throw new Error("publisher fixture module is missing");
-          return host.publisherFixture.smoke(input);
-        }, configuration);
+        return await Promise.race([
+          page.evaluate(async (input) => {
+            const host = globalThis as typeof globalThis & {
+              publisherFixture?: { smoke(input: unknown): Promise<unknown> };
+            };
+            if (host.publisherFixture === undefined)
+              throw new Error("publisher fixture module is missing");
+            return host.publisherFixture.smoke(input);
+          }, configuration),
+          // playwright does not apply its default timeout to page.evaluate.
+          // capture diagnostics before the outer fixture closes the browser.
+          pause(120_000, undefined, { signal: observation.signal }).then(() => {
+            throw new Error("browser publisher observation timed out");
+          }),
+        ]);
       } catch (error) {
         const diagnostics = await page.evaluate(() =>
           Reflect.get(globalThis, "__tnlWasmFixtureDiagnostics"),
@@ -186,6 +195,8 @@ async function chromeSmoke(configuration: PublisherFixture) {
         throw new Error(
           `${error instanceof Error ? error.message : "publisher fixture failed"}; Go diagnostics: ${JSON.stringify(diagnostics)}; control requests: ${network.join("; ")}`,
         );
+      } finally {
+        observation.abort();
       }
     } finally {
       lifetime.signal.removeEventListener("abort", interrupted);
@@ -400,10 +411,12 @@ async function workerdSmoke(configuration: PublisherFixture) {
 }
 
 function redact(message: string): string {
-  return [fixture.token, fixture.api_token, fixture.runner_private_key_pem].reduce(
-    (output, secret) => output.replaceAll(secret, "[redacted]"),
-    message,
-  );
+  return [
+    fixture.token,
+    fixture.sibling_token,
+    fixture.api_token,
+    fixture.runner_private_key_pem,
+  ].reduce((output, secret) => output.replaceAll(secret, "[redacted]"), message);
 }
 
 // the source declaration keeps fixture typechecking independent of disposable

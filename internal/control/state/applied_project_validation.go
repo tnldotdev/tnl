@@ -175,6 +175,11 @@ func normalizeAppliedProjectService(key string, s *ProjectServiceConfiguration, 
 			return ErrProjectConfigurationInvalid
 		}
 	}
+	if s.RunAliasParent != "" {
+		if s.Protocol != "http" || !naming.ValidGeneratedHostnameParent(s.RunAliasParent) {
+			return ErrProjectConfigurationInvalid
+		}
+	}
 	if s.DomainID != "" && !opaqueid.Valid(s.DomainID, opaqueid.DomainPrefix) {
 		return ErrProjectConfigurationInvalid
 	}

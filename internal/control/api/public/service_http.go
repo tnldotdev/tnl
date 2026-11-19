@@ -15,7 +15,7 @@ import (
 
 type serviceHTTPStore interface {
 	ServiceHTTPBrowserTeam(context.Context, visitorscope.Scope, time.Time) (string, error)
-	BeginServiceBrowserLogin(context.Context, visitorscope.Scope, string, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
+	BeginServiceBrowserLogin(context.Context, visitorscope.Scope, string, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time, ...string) (string, error)
 	RedeemServiceBrowserHandoff(context.Context, controlstate.ServiceHTTPRun, string, time.Time) (controlv1.BrowserHandoffResponse, error)
 	ServiceBrowserSession(context.Context, controlstate.ServiceHTTPRun, string, bool, time.Time) (controlstate.VisitorPermission, error)
 	CreateServiceHTTPGrant(context.Context, string, string, controlv1.CreateVisitorCredentialRequest, time.Time) (controlv1.VisitorCredential, error)
@@ -50,7 +50,9 @@ func (h *handler) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Req
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid managed browser handoff")
 		return
 	}
-	result, err := store.RedeemServiceBrowserHandoff(r.Context(), serviceHTTPRun(service, run, token, body.RunNumber), body.Secret, time.Now())
+	auth := serviceHTTPRun(service, run, token, body.RunNumber)
+	auth.Hostname = body.Hostname
+	result, err := store.RedeemServiceBrowserHandoff(r.Context(), auth, body.Secret, time.Now())
 	if err != nil {
 		writeServiceHTTPBrowserProblem(r.Context(), w, err)
 		return
@@ -59,11 +61,11 @@ func (h *handler) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Req
 	if body.ShareId != nil {
 		source = controlstate.ShareSessionTokenSource{ShareID: *body.ShareId, Secret: *body.ShareCookieSecret, RunID: run}
 	}
-	permission, err := h.redeemedVisitorPermission(r.Context(), visitorscope.Scope{Kind: visitorscope.Service, ID: service}, source)
+	permission, err := h.redeemedVisitorPermission(r.Context(), visitorscope.Scope{Kind: visitorscope.Service, ID: service}, source, body.Hostname)
 	if errors.Is(err, controlstate.ErrVisitorPermission) && body.ShareId == nil {
 		// successful sign-in establishes identity even without visitor permission.
 		// a later request still needs its independent share or current team grant.
-		if _, identityErr := store.ServiceBrowserSession(r.Context(), serviceHTTPRun(service, run, token, body.RunNumber), result.CookieSecret, false, time.Now()); identityErr != nil {
+		if _, identityErr := store.ServiceBrowserSession(r.Context(), auth, result.CookieSecret, false, time.Now()); identityErr != nil {
 			writeServiceHTTPBrowserProblem(r.Context(), w, identityErr)
 			return
 		}
@@ -103,12 +105,14 @@ func (h *handler) serviceBrowserSession(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if !revoke {
-		if _, err := h.refreshBrowserSignIn(r.Context(), visitorscope.Scope{Kind: visitorscope.Service, ID: service}, body.Secret); err != nil {
+		if _, err := h.refreshBrowserSignIn(r.Context(), visitorscope.Scope{Kind: visitorscope.Service, ID: service}, body.Secret, body.Hostname); err != nil {
 			writeServiceHTTPBrowserProblem(r.Context(), w, err)
 			return
 		}
 	}
-	result, err := store.ServiceBrowserSession(r.Context(), serviceHTTPRun(service, run, token, body.RunNumber), body.Secret, revoke, time.Now())
+	auth := serviceHTTPRun(service, run, token, body.RunNumber)
+	auth.Hostname = body.Hostname
+	result, err := store.ServiceBrowserSession(r.Context(), auth, body.Secret, revoke, time.Now())
 	if err != nil {
 		writeServiceHTTPBrowserProblem(r.Context(), w, err)
 		return

@@ -26,6 +26,7 @@ type ServiceRunPreparation struct {
 	ExpiresAt                                                                                                time.Time
 	CertificatePlan                                                                                          CertificatePlan
 	Hostname, DomainID                                                                                       string
+	RunHostname                                                                                              string
 	Traffic                                                                                                  trafficlimits.Limits
 	RequirePostQuantum                                                                                       bool
 }
@@ -50,6 +51,8 @@ type ServiceRunState struct {
 	RunNumber                       int64
 	EndpointRevision                int64
 	PublicEndpointReady             bool
+	RunHostname                     string
+	RunAliasReady                   bool
 	ExpiresAt                       time.Time
 	ObservedAt, ServingUntil        time.Time
 	Connections                     []ServiceRunAssignment
@@ -75,6 +78,7 @@ func serviceRunPreparation(r controlstatedb.ControlServiceRun) (ServiceRunPrepar
 		PublisherKeyID: r.PublisherKeyID, IdempotencyKey: r.IdempotencyKey,
 		RunNumber: r.RunNumber, ExpiresAt: minTime(r.PreparationExpiresAt.Time, r.PublisherExpiresAt.Time),
 		Hostname: r.CertificateHostname, DomainID: r.CertificateDomainID.String,
+		RunHostname:        r.RunHostname,
 		Traffic:            traffic,
 		RequirePostQuantum: r.RequirePostQuantum,
 		CertificatePlan:    CertificatePlan{CacheKey: r.CertificateCacheKey, Scope: r.CertificateScope, Identifiers: slices.Clone(r.CertificateIdentifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}}, nil
@@ -260,6 +264,18 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if err != nil {
 		return result, err
 	}
+	runHostname, aliasParent := "", ""
+	if service.Public && service.RunAliasParent != "" {
+		if service.Protocol != "http" || service.GuestID.Valid {
+			return result, ErrServiceAccess
+		}
+		aliasParent = service.RunAliasParent
+		runHostname, err = servicePublisherHostname(ctx, tx, service, p.ID)
+		if err != nil {
+			return result, err
+		}
+	}
+	plan = certificatePlanWithRunAlias(plan, service.CertificateHostname, runHostname)
 	until := now.Add(2 * time.Minute)
 	if permission.Valid {
 		until = minTime(until, permission.Time)
@@ -276,9 +292,13 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		AssignmentSeedCiphertext: ciphertext, AssignmentSeedStorageKeyID: d.storageKey.CurrentID(),
 		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateDomainID: service.DomainID, CertificateHostname: service.CertificateHostname,
 		RequirePostQuantum: service.RequirePostQuantum,
-		Now:                timestamptz(now), PublisherExpiresAt: timestamptz(until),
+		RunHostname:        runHostname, RunAliasParent: aliasParent,
+		Now: timestamptz(now), PublisherExpiresAt: timestamptz(until),
 	})
 	if err != nil {
+		return result, err
+	}
+	if err := bindServicePublisherAlias(ctx, tx, service, p.ID, run.ID, runHostname, clock.current()); err != nil {
 		return result, err
 	}
 	if run.GuestID.Valid {
@@ -806,6 +826,10 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if err != nil {
 		return result, err
 	}
+	aliasReady, err := serviceRunAliasReady(ctx, tx, endpoint, run, endpointReady, clock.current())
+	if err != nil {
+		return result, err
+	}
 	if !previousExpiration.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) {
 		return result, ErrServiceAccess
 	}
@@ -831,6 +855,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	}
 	return ServiceRunState{ServiceID: serviceID, RunID: runID, RunNumber: run.RunNumber,
 		EndpointRevision: endpoint.revision, PublicEndpointReady: endpointReady,
+		RunHostname: run.RunHostname, RunAliasReady: aliasReady,
 		Healthy: run.Healthy, StreamCapacity: run.StreamCapacity, ReportedStreams: run.ReportedStreams,
 		State: run.State, ExpiresAt: run.PublisherExpiresAt.Time, ObservedAt: run.ServingObservedAt.Time, ServingUntil: run.ServingUntil.Time,
 		Connections: connections}, nil

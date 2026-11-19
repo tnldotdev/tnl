@@ -65,11 +65,29 @@ func serviceRunCertificatePlan(ctx context.Context, tx pgx.Tx, run controlstated
 		return CertificatePlan{}, publisherLookupError(err, ErrServiceAccess)
 	}
 	plan := authorization.ServiceCertificatePlan(run.CertificateHostname, run.CertificateScope, false, true)
-	if plan == nil || plan.CacheKey != run.CertificateCacheKey || plan.Scope != run.CertificateScope ||
-		!slices.Equal(plan.Identifiers, run.CertificateIdentifiers) || !certificateidentity.Covers(plan.Identifiers, run.CertificateHostname) {
+	if plan == nil {
 		return CertificatePlan{}, ErrServiceAccess
 	}
-	return CertificatePlan{CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: slices.Clone(plan.Identifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}, nil
+	captured := certificatePlanWithRunAlias(CertificatePlan{CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: slices.Clone(plan.Identifiers), ChallengeMethod: certificateidentity.ChallengeDNS01}, run.CertificateHostname, run.RunHostname)
+	if captured.CacheKey != run.CertificateCacheKey || captured.Scope != run.CertificateScope ||
+		!slices.Equal(captured.Identifiers, run.CertificateIdentifiers) || !certificateidentity.Covers(captured.Identifiers, run.CertificateHostname) {
+		return CertificatePlan{}, ErrServiceAccess
+	}
+	return captured, nil
+}
+
+// an alias never broadens a narrow publisher plan to its parent's wildcard.
+// exact SANs keep the plan within the two approved names when a wildcard cannot
+// be reused. the distinct cache key prevents mixing plans across runs.
+func certificatePlanWithRunAlias(plan CertificatePlan, hostname, alias string) CertificatePlan {
+	if alias == "" || certificateidentity.Covers(plan.Identifiers, alias) {
+		return plan
+	}
+	identifiers := []string{hostname, alias}
+	slices.Sort(identifiers)
+	digest := sha256.Sum256([]byte(identifiers[0] + "\x00" + identifiers[1]))
+	return CertificatePlan{CacheKey: "run-alias/" + hex.EncodeToString(digest[:]), Scope: hostname,
+		Identifiers: identifiers, ChallengeMethod: certificateidentity.ChallengeDNS01}
 }
 
 func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service, runID, token, directory, key string, number int64, der []byte, now time.Time) (result CertificateIssuance, retErr error) {

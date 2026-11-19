@@ -44,6 +44,7 @@ type Stream struct {
 	Protocol               config.ProtocolName
 	Public                 bool
 	Hostname               string
+	RunHostname            string
 	HTTPRequests           RequestLimits
 	HTTPProxy              *proxy.Proxy
 	HTTPDrain              httpstream.Drain
@@ -313,7 +314,9 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	}
 	frontTLS.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		hostname, err := naming.CanonicalizeHostname(hello.ServerName)
-		if (err != nil || hostname != s.Hostname) && !(s.Protocol == config.ProtocolMySQL && hello.ServerName == "") {
+		_, publicHTTP := s.Visitor.(HTTPVisitor)
+		alias := publicHTTP && s.Protocol == config.ProtocolHTTP && s.Public && s.RunHostname != "" && hostname == s.RunHostname
+		if (err != nil || hostname != s.Hostname && !alias) && !(s.Protocol == config.ProtocolMySQL && hello.ServerName == "") {
 			return nil, &VisitorHostnameRefusal{}
 		}
 		return nil, nil

@@ -191,7 +191,7 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 			return result, err
 		}
 		selection := c.Services[name]
-		if err = d.ensureServiceEndpoint(ctx, tx, serviceID, id, r.ActorID, ServicePlacement{DomainID: selection.DomainID, Hostname: selection.Hostname}, projectServicePublic(selection), r.DNSAutomation, r.Now); err != nil {
+		if err = d.ensureServiceEndpoint(ctx, tx, serviceID, id, r.ActorID, ServicePlacement{DomainID: selection.DomainID, Hostname: selection.Hostname, RunAliasParent: selection.RunAliasParent}, projectServicePublic(selection), r.DNSAutomation, r.Now); err != nil {
 			return result, err
 		}
 	}

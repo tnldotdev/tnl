@@ -13,7 +13,7 @@ import (
 
 const getPrivateDNSChallengeContext = `-- name: GetPrivateDNSChallengeContext :one
 SELECT service.id AS service_id,service.team_id,orders.certificate_domain_id AS domain_id,
-    domain.dns_authority_reference,orders.certificate_scope AS canonical_hostname,
+    domain.dns_authority_reference,orders.certificate_identifiers,
     domain.canonical_domain,auth.id AS authorization_id,auth.identifier,
     auth.challenge_digest,auth.presentation_reference,auth.state
 FROM control.acme_authorizations auth
@@ -30,17 +30,17 @@ type GetPrivateDNSChallengeContextParams struct {
 }
 
 type GetPrivateDNSChallengeContextRow struct {
-	ServiceID             string
-	TeamID                pgtype.Text
-	DomainID              pgtype.Text
-	DnsAuthorityReference pgtype.Text
-	CanonicalHostname     string
-	CanonicalDomain       string
-	AuthorizationID       string
-	Identifier            string
-	ChallengeDigest       []byte
-	PresentationReference pgtype.Text
-	State                 string
+	ServiceID              string
+	TeamID                 pgtype.Text
+	DomainID               pgtype.Text
+	DnsAuthorityReference  pgtype.Text
+	CertificateIdentifiers []string
+	CanonicalDomain        string
+	AuthorizationID        string
+	Identifier             string
+	ChallengeDigest        []byte
+	PresentationReference  pgtype.Text
+	State                  string
 }
 
 func (q *Queries) GetPrivateDNSChallengeContext(ctx context.Context, arg GetPrivateDNSChallengeContextParams) (GetPrivateDNSChallengeContextRow, error) {
@@ -51,7 +51,7 @@ func (q *Queries) GetPrivateDNSChallengeContext(ctx context.Context, arg GetPriv
 		&i.TeamID,
 		&i.DomainID,
 		&i.DnsAuthorityReference,
-		&i.CanonicalHostname,
+		&i.CertificateIdentifiers,
 		&i.CanonicalDomain,
 		&i.AuthorizationID,
 		&i.Identifier,

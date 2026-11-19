@@ -73,6 +73,7 @@ type HTTP struct {
 	Number                int64
 	Token                 credentials.ServiceRunToken
 	Hostname              string
+	RunHostname           string
 	Port                  uint16
 	Header                tunnelv1.ServiceForwardingHeader
 	Source                netip.AddrPort
@@ -83,9 +84,21 @@ type HTTP struct {
 	nativeHTTP
 	probes       *requestlimit.HTTP
 	preparations chan struct{}
+	alias        *HTTP
 }
 
 func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
+	return prepareHTTP(ctx, f, nil)
+}
+
+func prepareHTTP(ctx context.Context, f HTTP, primary *HTTP) (HTTP, func() error, error) {
+	baseHooks := f.ResponseHooks
+	if f.RunHostname != "" {
+		canonical, err := naming.CanonicalizeHostname(f.RunHostname)
+		if err != nil || canonical != f.RunHostname || f.RunHostname == f.Hostname {
+			return HTTP{}, nil, servicestream.ErrEndpoint
+		}
+	}
 	if err := validateFeedbackPlatform(f.Feedback, f.Demo, f.PreviewID); err != nil {
 		return HTTP{}, nil, err
 	}
@@ -108,15 +121,19 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 			f.BrowserLoginAvailable = new(*f.BrowserLoginAvailable)
 		}
 	}
-	if err := f.prepareNativeHTTP(ctx); err != nil {
-		return HTTP{}, nil, err
+	if primary == nil {
+		if err := f.prepareNativeHTTP(ctx); err != nil {
+			return HTTP{}, nil, err
+		}
+		f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(4)})
+		if err != nil {
+			return HTTP{}, nil, err
+		}
+		f.preparations = make(chan struct{}, 16)
+	} else {
+		f.probes, f.preparations = primary.probes, primary.preparations
 	}
-	f.probes, err = requestlimit.NewHTTP(&controlv1.ProjectHTTPApplicationLimits{Concurrency: new(4)})
-	if err != nil {
-		return HTTP{}, nil, err
-	}
-	f.preparations = make(chan struct{}, 16)
-	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil)
+	policy, err := httpaccess.PreparePolicy(ctx, f.Control, f.Subject, f.RunID, f.Number, f.Token.String(), nil, f.Hostname)
 	if err != nil {
 		return HTTP{}, nil, err
 	}
@@ -126,20 +143,41 @@ func PrepareHTTP(ctx context.Context, f HTTP) (HTTP, func() error, error) {
 		return HTTP{}, nil, err
 	}
 	f.Policy = policy.Lease()
-	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: f.Control, RunID: f.RunID, Number: f.Number, Token: f.Token, ControlURL: controlURL, Policy: policy, Tokens: tokens}
+	f.browser = &httpaccess.Browser{Subject: f.Subject, Client: f.Control, RunID: f.RunID, Number: f.Number, Token: f.Token, Hostname: f.Hostname, ControlURL: controlURL, Policy: policy, Tokens: tokens}
 	if err := f.startNativeHTTP(); err != nil {
 		tokens.Close()
 		policy.Close()
 		return HTTP{}, nil, err
 	}
-	return f, func() error {
+	closePrimary := func() error {
 		tokens.Close()
 		policy.Close()
 		return f.closeNativeHTTP(ctx)
-	}, nil
+	}
+	if f.PublicEndpoint && f.RunHostname != "" {
+		// the alias has its own host-bound visitor credentials, but shares this
+		// run's request budget and target proxy. both policy owners are joined.
+		binding := f
+		binding.Hostname, binding.RunHostname = f.RunHostname, ""
+		binding.ReadinessProof, binding.ResponseHooks, binding.alias = nil, baseHooks, nil
+		binding.nativeHTTP = nativeHTTP{}
+		alias, closeAlias, err := prepareHTTP(ctx, binding, &f)
+		if err != nil {
+			return HTTP{}, nil, errors.Join(err, closePrimary())
+		}
+		f.alias = &alias
+		return f, func() error { return errors.Join(closeAlias(), closePrimary()) }, nil
+	}
+	return f, closePrimary, nil
 }
 
 func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestream.HTTPTarget) error {
+	hostname, hostnameErr := naming.CanonicalizeHostname(client.ConnectionState().ServerName)
+	if f.alias != nil && hostnameErr == nil && hostname == f.RunHostname {
+		alias := *f.alias
+		alias.Header, alias.Source, alias.ReserveCapacity = f.Header, f.Source, f.ReserveCapacity
+		return alias.Forward(ctx, client, target)
+	}
 	h := f.Header
 	if f.ReserveCapacity == nil || f.Policy == nil || f.ReadinessProof != nil && f.probes == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port != 443 || h.Validate() != nil {
 		return servicestream.ErrEndpoint

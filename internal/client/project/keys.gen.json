@@ -5,6 +5,7 @@
   "max_bytes": "maxBytes",
   "max_duration": "maxDuration",
   "pipeline_source": "pipelineSource",
+  "publisher_alias_parent": "publisherAliasParent",
   "publisher_pool": "publisherPool",
   "rate_per": "ratePer",
   "request_body_idle_timeout": "requestBodyIdleTimeout",

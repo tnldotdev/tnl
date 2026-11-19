@@ -44,7 +44,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 		service := project.Config.Services[name]
 		savedName, protocol := config.ServiceName(name, service), controlv1.ServiceProtocol(config.Protocol(service))
 		entry := controlv1.ProjectServiceConfiguration{Name: &savedName, Protocol: &protocol, Public: service.Public,
-			Hostname: service.Hostname, Ephemeral: service.Ephemeral, RequirePostQuantum: service.RequirePostQuantum}
+			Hostname: service.Hostname, PublisherAliasParent: service.RunAliasParent, Ephemeral: service.Ephemeral, RequirePostQuantum: service.RequirePostQuantum}
 		if service.Domain != nil {
 			domain, err := current.ReadyDomain(*service.Domain)
 			if err != nil {

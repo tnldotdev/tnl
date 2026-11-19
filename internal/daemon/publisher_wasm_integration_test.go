@@ -41,6 +41,7 @@ type publisherWASMDescriptor struct {
 	Project             string             `json:"project"`
 	Deployment          string             `json:"deployment"`
 	Token               string             `json:"token"`
+	SiblingToken        string             `json:"sibling_token"`
 	ControlURL          string             `json:"control_url"`
 	ControlDialAddress  string             `json:"control_dial_address"`
 	ControlRootPEM      string             `json:"control_root_pem"`
@@ -58,6 +59,7 @@ type publisherWASMDescriptor struct {
 
 type publisherWASMObservation struct {
 	ServiceID         string `json:"service_id"`
+	ServiceRunID      string `json:"service_run_id"`
 	RunNumber         int64  `json:"run_number"`
 	ActiveRuns        int    `json:"active_runs"`
 	Deleted           bool   `json:"deleted"`
@@ -103,11 +105,12 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 	const project, deployment = "portable-publisher", "portable"
 	applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{
 		TeamId: f.identity.teamID, Source: &testProjectSource, Deployment: deployment,
-		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol, "restricted": protocol},
+		ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol, "restricted": protocol, "exact": protocol},
 		Configuration: controlv1.ProjectConfiguration{
 			Settings: &controlv1.DeploymentSettings{},
 			Services: map[string]controlv1.ProjectServiceConfiguration{
 				"web":        {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}},
+				"exact":      {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}},
 				"restricted": {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &restricted}}},
 			},
 		},
@@ -115,35 +118,54 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 	if err != nil || applied.Deployments == nil || len(*applied.Deployments) != 1 {
 		t.Fatal("apply portable publisher fixture", err)
 	}
-	public, private, err := ed25519.GenerateKey(rand.Reader)
+	configuration := applied.Configuration
+	for name, binding := range configuration.Services {
+		if name == "exact" {
+			binding.PublisherAliasParent = new((*applied.Deployments)[0].Namespace)
+			configuration.Services[name] = binding
+		}
+	}
+	applied, err = f.identity.routes.ApplyProjectConfiguration(t.Context(), project, controlv1.ApplyProjectConfigurationRequest{
+		TeamId: f.identity.teamID, Deployment: deployment, ExpectedRevision: applied.Revision,
+		ServiceDeclarations: applied.ServiceDeclarations, Configuration: configuration,
+	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal("approve exact-run publisher fixture addresses", err)
 	}
 	request := controlv1.RegisterDeploymentCredentialRequest{
-		Name: "portable-publisher", PublicKey: base64.RawURLEncoding.EncodeToString(public),
 		ExpiresIn: 1200, DeploymentIds: new([]string{(*applied.Deployments)[0].Id}),
 	}
 	request.Permissions.Publish = &controlv1.DeploymentPublishSelection{
-		Services:  new(controlv1.DeploymentCredentialServiceSelection{"web", "restricted"}),
+		Services:  new(controlv1.DeploymentCredentialServiceSelection{"web", "restricted", "exact"}),
 		Temporary: new(controlv1.TemporaryPublicationAnonymous),
 	}
 	selection := controlv1.DeploymentCredentialServiceSelection{"web"}
 	request.Permissions.Connect = &selection
-	approval, err := f.identity.routes.RegisterDeploymentCredential(t.Context(), f.identity.teamID, project, "portable-publisher", request)
-	if err != nil {
-		t.Fatal("register portable publisher credential", err)
-	}
 	team, err := f.identity.authority.GetTeam(t.Context(), f.identity.teamID)
 	if err != nil || team.DisplayName == "" {
 		t.Fatal("read portable publisher team", err)
 	}
-	token, err := (auth.DeploymentCredential{
-		Version: 1, ControlURL: f.controlConfig.ControlOrigin(), Team: team.DisplayName,
-		Approval: approval, PrivateKey: base64.RawURLEncoding.EncodeToString(private),
-	}).Encode()
-	if err != nil {
-		t.Fatal(err)
+	register := func(name string) string {
+		public, private, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := request
+		input.Name, input.PublicKey = name, base64.RawURLEncoding.EncodeToString(public)
+		approval, err := f.identity.routes.RegisterDeploymentCredential(t.Context(), f.identity.teamID, project, name, input)
+		if err != nil {
+			t.Fatal("register portable publisher credential", err)
+		}
+		token, err := (auth.DeploymentCredential{
+			Version: 1, ControlURL: f.controlConfig.ControlOrigin(), Team: team.DisplayName,
+			Approval: approval, PrivateKey: base64.RawURLEncoding.EncodeToString(private),
+		}).Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
 	}
+	token, siblingToken := register("portable-publisher"), register("alias-sibling")
 	addresses := make(map[string]string)
 	for _, service := range applied.Services {
 		if service.ServiceId == nil {
@@ -177,7 +199,7 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 	pin := sha256.Sum256(certificate.RawSubjectPublicKeyInfo)
 	pins = append(pins, base64.StdEncoding.EncodeToString(pin[:]))
 	descriptor := publisherWASMDescriptor{
-		Version: 1, Project: team.DisplayName + "/" + project, Deployment: deployment, Token: token,
+		Version: 1, Project: team.DisplayName + "/" + project, Deployment: deployment, Token: token, SiblingToken: siblingToken,
 		ControlURL: f.controlConfig.ControlOrigin(), ControlDialAddress: f.publicControlAddress,
 		ControlRootPEM: string(f.certificateAuthority.certificatePEM), RelayRootPEM: string(f.certificateAuthority.certificatePEM),
 		ServiceRootPEM: string(f.visitorRootPEM), NamedURL: addresses["web"], RestrictedURL: addresses["restricted"],
@@ -260,7 +282,7 @@ func newPublisherWASMAPI(t *testing.T, f *privateSeparatedFixture, token string,
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		if r.Method != http.MethodPost || r.URL.Path != "/observe" && r.URL.Path != "/exercise" && r.URL.Path != "/state" && r.URL.Path != "/await-restartable" {
+		if r.Method != http.MethodPost || r.URL.Path != "/observe" && r.URL.Path != "/exercise" && r.URL.Path != "/unavailable" && r.URL.Path != "/state" && r.URL.Path != "/await-restartable" {
 			http.NotFound(w, r)
 			return
 		}
@@ -286,15 +308,16 @@ func newPublisherWASMAPI(t *testing.T, f *privateSeparatedFixture, token string,
 		var result publisherWASMObservation
 		var readyAt time.Time
 		err = f.inspect.QueryRowContext(ctx, `
-			SELECT service.id, service.deleted_at IS NOT NULL,
-				COALESCE((SELECT max(run_number) FROM control.service_runs WHERE service_id=service.id),0),
+			SELECT service.id,COALESCE(endpoint.service_run_id,''),service.deleted_at IS NOT NULL,
+				COALESCE((SELECT max(run_number) FROM control.service_runs WHERE service_id=service.id
+				    AND (endpoint.service_run_id IS NULL OR id=endpoint.service_run_id)),0),
 				(SELECT count(*) FROM control.service_runs WHERE service_id=service.id AND closed_at IS NULL),
 				(SELECT count(*) FROM control.acme_orders WHERE service_id=service.id),
 				(SELECT COALESCE(max(ready_at),'epoch'::timestamptz) FROM control.service_runs WHERE service_id=service.id AND closed_at IS NULL)
 			FROM control.services service
 			JOIN control.service_endpoints endpoint ON endpoint.service_id=service.id
 			WHERE endpoint.hostname=$1 AND service.team_id=$2
-		`, address.Hostname(), f.identity.teamID).Scan(&result.ServiceID, &result.Deleted, &result.RunNumber, &result.ActiveRuns, &result.Orders, &readyAt)
+		`, address.Hostname(), f.identity.teamID).Scan(&result.ServiceID, &result.ServiceRunID, &result.Deleted, &result.RunNumber, &result.ActiveRuns, &result.Orders, &readyAt)
 		if err != nil {
 			http.Error(w, "observe saved fixture service", http.StatusBadRequest)
 			return
@@ -325,7 +348,10 @@ func newPublisherWASMAPI(t *testing.T, f *privateSeparatedFixture, token string,
 				}
 			}
 		}
-		if r.URL.Path == "/observe" || r.URL.Path == "/exercise" {
+		if r.URL.Path == "/observe" || r.URL.Path == "/exercise" || r.URL.Path == "/unavailable" {
+			if r.URL.Path == "/unavailable" {
+				readyAt = time.Now()
+			}
 			// publication readiness and ingress's background observation are
 			// separate events. wait on that actual observation, not a sleep.
 			ticker := time.NewTicker(20 * time.Millisecond)
@@ -345,6 +371,11 @@ func newPublisherWASMAPI(t *testing.T, f *privateSeparatedFixture, token string,
 			}
 			response, err := visitor.Do(request)
 			if err != nil {
+				if r.URL.Path == "/unavailable" {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(result)
+					return
+				}
 				http.Error(w, "verified public visitor failed", http.StatusBadGateway)
 				return
 			}

@@ -144,14 +144,25 @@ INSERT INTO local_tunnels (
 
 -- name: SetTunnelProvisioning :execrows
 UPDATE local_tunnels
-SET publish_run_number = sqlc.arg(publish_run_number),
+SET service_run_id=CASE WHEN publish_run_number IS sqlc.arg(publish_run_number) THEN service_run_id ELSE NULL END,
+    run_hostname=CASE WHEN publish_run_number IS sqlc.arg(publish_run_number) THEN run_hostname ELSE NULL END,
+    publish_run_number = sqlc.arg(publish_run_number),
     state = 'provisioning',
     updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
 
+-- name: SetTunnelServiceRun :execrows
+UPDATE local_tunnels
+SET service_run_id=sqlc.arg(service_run_id),run_hostname=sqlc.narg(run_hostname),updated_at=sqlc.arg(now)
+WHERE id=sqlc.arg(id) AND publish_run_number=sqlc.arg(publish_run_number) AND stopped_at IS NULL
+    AND service_id IS NOT NULL
+    AND (service_run_id IS NULL OR service_run_id=sqlc.arg(service_run_id) AND run_hostname IS sqlc.narg(run_hostname));
+
 -- name: SetTunnelReady :execrows
 UPDATE local_tunnels
-SET hostname = sqlc.arg(hostname),
+SET service_run_id=CASE WHEN publish_run_number IS sqlc.arg(publish_run_number) THEN service_run_id ELSE NULL END,
+    run_hostname=CASE WHEN publish_run_number IS sqlc.arg(publish_run_number) THEN run_hostname ELSE NULL END,
+    hostname = sqlc.arg(hostname),
     publish_run_number = sqlc.arg(publish_run_number),
     state = 'ready',
     updated_at = sqlc.arg(now)

@@ -62,10 +62,10 @@ func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request
 	if params.PreviewId != nil {
 		preview = *params.PreviewId
 	}
-	h.beginBrowserLogin(response, request, subject, team, preview, params.ReturnPath, params.SwitchAccount)
+	h.beginBrowserLogin(response, request, subject, team, preview, params.ReturnPath, params.Hostname, params.SwitchAccount)
 }
 
-func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.Request, subject visitorscope.Scope, team, preview, path string, switchAccount *bool) {
+func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.Request, subject visitorscope.Scope, team, preview, path, hostname string, switchAccount *bool) {
 	verifier := oauth2.GenerateVerifier()
 	nonceBytes := make([]byte, 32)
 	if _, err := rand.Read(nonceBytes); err != nil {
@@ -91,7 +91,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 			nonce = intent.Nonce
 		}
 	}
-	state, err := h.dependencies.ServiceHTTP.BeginServiceBrowserLogin(request.Context(), subject, preview, path, nonce, verifier, binding, intent, now)
+	state, err := h.dependencies.ServiceHTTP.BeginServiceBrowserLogin(request.Context(), subject, preview, path, nonce, verifier, binding, intent, now, hostname)
 	if err != nil {
 		writeControlStateProblem(request.Context(), response, "start browser sign-in", err)
 		return
@@ -200,7 +200,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 	http.Redirect(response, request, handoff.Origin+"/__tnl/team/handoff/"+handoff.Token, http.StatusSeeOther)
 }
 
-func (h *handler) refreshBrowserSignIn(ctx context.Context, scope visitorscope.Scope, token string) (controlstate.BrowserAccessSession, error) {
+func (h *handler) refreshBrowserSignIn(ctx context.Context, scope visitorscope.Scope, token string, hostnames ...string) (controlstate.BrowserAccessSession, error) {
 	now := time.Now()
 	store := h.dependencies.ServiceHTTP
 	if store == nil {
@@ -209,7 +209,7 @@ func (h *handler) refreshBrowserSignIn(ctx context.Context, scope visitorscope.S
 	if !scope.Valid() {
 		return controlstate.BrowserAccessSession{}, controlstate.ErrVisitorSignIn
 	}
-	return store.RefreshServiceBrowserSession(ctx, scope.ID, token, now, h.rotateBrowserCredentials)
+	return store.RefreshServiceBrowserSession(ctx, scope.ID, token, now, h.rotateBrowserCredentials, hostnames...)
 }
 
 func (h *handler) rotateBrowserCredentials(ctx context.Context, refreshToken string) (controlstate.BrowserTokenRotation, error) {
@@ -229,7 +229,7 @@ func (h *handler) rotateBrowserCredentials(ctx context.Context, refreshToken str
 }
 
 func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlstate.ServiceHTTPRun, token string) (controlstate.BrowserAccessSession, controlReadPrincipal, bool, error) {
-	session, err := h.refreshBrowserSignIn(ctxRequest.Context(), auth.Subject, token)
+	session, err := h.refreshBrowserSignIn(ctxRequest.Context(), auth.Subject, token, auth.Hostname)
 	if err != nil {
 		return controlstate.BrowserAccessSession{}, controlReadPrincipal{}, false, err
 	}

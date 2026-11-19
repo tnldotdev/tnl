@@ -161,11 +161,14 @@ type IngressServiceRun struct {
 	Port              int                           `json:"port"`
 	Protocol          externalRef0.ServiceProtocol  `json:"protocol"`
 	RecoveryEpisodeId *int64                        `json:"recovery_episode_id,omitempty"`
-	RunNumber         int64                         `json:"run_number"`
-	ServiceId         ServiceID                     `json:"service_id"`
-	ServiceRunId      ServiceRunID                  `json:"service_run_id"`
-	SourceAuthority   []byte                        `json:"source_authority"`
-	SourceKey         []byte                        `json:"source_key"`
+
+	// RunHostname An approved HTTP hostname selecting only this exact service run. Unavailable runs never fall back to the canonical pool.
+	RunHostname     *string      `json:"run_hostname,omitempty"`
+	RunNumber       int64        `json:"run_number"`
+	ServiceId       ServiceID    `json:"service_id"`
+	ServiceRunId    ServiceRunID `json:"service_run_id"`
+	SourceAuthority []byte       `json:"source_authority"`
+	SourceKey       []byte       `json:"source_key"`
 
 	// Traffic Immutable public endpoint traffic approval for one exact service run, enforced independently on each ingress process. Omitted totals are unlimited. Connector capacity is independent.
 	Traffic    IngressTrafficLimits `json:"traffic"`

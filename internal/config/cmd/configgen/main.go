@@ -16,6 +16,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 )
@@ -238,6 +239,7 @@ func deploymentBindingSchema() *jsonschema.Schema {
 	properties.Set("public", &jsonschema.Schema{Type: "boolean", Description: "Public endpoint access for this service binding, independent of visitor authorization. False keeps connector access only."})
 	properties.Set("inspection", &jsonschema.Schema{Ref: "#/$defs/Inspection"})
 	properties.Set("hostname", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Exact canonical DNS hostname for the service endpoint; never an HTTPS origin."})
+	properties.Set("publisher_alias_parent", &jsonschema.Schema{Type: "string", MaxLength: integerPointer(naming.MaxGeneratedHostnameParentBytes), Description: "Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate."})
 	properties.Set("domain", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253), Description: "Ready team domain used for the service endpoint."})
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the service after its publication stops."})
 	properties.Set("require_post_quantum", &jsonschema.Schema{Type: "boolean", Description: "Require hybrid post-quantum key agreement for visitor TLS."})

@@ -137,9 +137,20 @@ func (r visitorResource) permission(subject visitortoken.Subject, until, now tim
 // scoped permission model and current authentication facts, then records signing
 // key retention in the same transaction. serving processes never call this while
 // admitting a prepared visitor connection or request.
-func (d *Database) IssueVisitorToken(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
+func (d *Database) IssueVisitorToken(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time, hostnames ...string) (result IssuedVisitorToken, retErr error) {
+	hostname, err := serviceHTTPHostnameSelection(hostnames)
+	if err != nil {
+		return result, ErrVisitorPermission
+	}
+	if hostname != "" {
+		switch source.(type) {
+		case BrowserTokenSource, BrowserSessionTokenSource, ShareTokenSource, ShareSessionTokenSource, GrantTokenSource:
+		default:
+			return result, ErrVisitorPermission
+		}
+	}
 	return retryVisitorPreparation(ctx, now, func(at time.Time) (IssuedVisitorToken, error) {
-		return d.issueVisitorTokenTransaction(ctx, issuer, scope, source, at)
+		return d.issueVisitorTokenTransaction(ctx, issuer, scope, source, at, hostname)
 	})
 }
 
@@ -179,14 +190,14 @@ func retryVisitorPreparationWithLockAttempts[T any](ctx context.Context, now tim
 	}
 }
 
-func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
+func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time, hostname string) (result IssuedVisitorToken, retErr error) {
 	clock := newAuthorizationClock(now)
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "issue visitor token", &retErr)()
-	result, err = d.issueVisitorToken(ctx, tx, issuer, scope, source, clock)
+	result, err = d.issueVisitorToken(ctx, tx, issuer, scope, source, clock, hostname)
 	if err != nil {
 		return IssuedVisitorToken{}, err
 	}
@@ -204,8 +215,8 @@ func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer stri
 	return result, tx.Commit(ctx)
 }
 
-func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer string, scope visitorscope.Scope, source VisitorTokenSource, clock authorizationClock) (result IssuedVisitorToken, retErr error) {
-	authority, err := d.visitorAuthorityForSource(ctx, tx, scope, source, clock)
+func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer string, scope visitorscope.Scope, source VisitorTokenSource, clock authorizationClock, hostnames ...string) (result IssuedVisitorToken, retErr error) {
+	authority, err := d.visitorAuthorityForSource(ctx, tx, scope, source, clock, hostnames...)
 	if err != nil {
 		return result, err
 	}
@@ -237,7 +248,7 @@ type visitorAuthority struct {
 	WorkloadCredentialUntil time.Time
 }
 
-func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, source VisitorTokenSource, clock authorizationClock) (result visitorAuthority, retErr error) {
+func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, source VisitorTokenSource, clock authorizationClock, hostnames ...string) (result visitorAuthority, retErr error) {
 	now := clock.entered
 	var err error
 	// workload authentication owns the team guard and fixed session facts. it
@@ -254,6 +265,25 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		return result, err
 	}
 	q := controlstatedb.New(tx)
+	hostname, err := serviceHTTPHostnameSelection(hostnames)
+	if err != nil {
+		return result, ErrVisitorPermission
+	}
+	if hostname != "" {
+		switch source.(type) {
+		case BrowserTokenSource, BrowserSessionTokenSource, ShareTokenSource, ShareSessionTokenSource, GrantTokenSource:
+		default:
+			return result, ErrVisitorPermission
+		}
+		if scope.Kind != visitorscope.Service {
+			return result, ErrVisitorPermission
+		}
+		selected, err := selectServiceHTTPHostname(ctx, q, scope.ID, resource.Hostname, hostname, now)
+		if err != nil {
+			return result, publisherLookupError(err, ErrVisitorPermission)
+		}
+		resource.Hostname = selected
+	}
 	var subject visitortoken.Subject
 	var until time.Time
 	explicitLifetime := false
@@ -263,7 +293,7 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		preview := ""
 		var browserDeadline time.Time
 		if browser, ok := supplied.(BrowserSessionTokenSource); ok {
-			facts, err := d.browserTokenFacts(ctx, tx, scope, browser.Secret, now)
+			facts, err := d.browserTokenFacts(ctx, tx, scope, browser.Secret, resource.Hostname, now)
 			if err != nil {
 				return result, err
 			}
@@ -403,7 +433,7 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		if scope.Kind != visitorscope.Service {
 			return result, ErrVisitorPermission
 		}
-		until, err = d.shareVisitorPermission(ctx, tx, scope.ID, runID, shareID, sourceSecret, session, now)
+		until, err = d.shareVisitorPermission(ctx, tx, scope.ID, runID, shareID, sourceSecret, session, now, resource.Hostname)
 		if err != nil {
 			return result, err
 		}
@@ -465,7 +495,7 @@ type browserTokenFacts struct {
 
 // browser sign-in records supply authentication and the captured hostname scope.
 // the common permission model makes the resource decision after this boundary.
-func (d *Database) browserTokenFacts(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, secret string, now time.Time) (result browserTokenFacts, err error) {
+func (d *Database) browserTokenFacts(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, secret, hostname string, now time.Time) (result browserTokenFacts, err error) {
 	digest, err := browserDigest(secret)
 	if err != nil {
 		return result, ErrVisitorPermission
@@ -485,6 +515,8 @@ func (d *Database) browserTokenFacts(ctx context.Context, tx pgx.Tx, scope visit
 	    AND EXISTS(SELECT 1 FROM control.service_http_browser_handoffs bound
 	        JOIN control.service_runs run ON run.service_id=bound.service_id
 	        WHERE bound.session_digest=browser.token_digest AND bound.service_id=$1 AND bound.consumed_at IS NOT NULL
+	        AND bound.hostname=$4 AND ($4=(SELECT certificate_hostname FROM control.services WHERE id=$1)
+	            OR control.service_run_alias_current(run.id,$4))
 	        AND bound.revoked_at IS NULL AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
 	        AND run.publisher_expires_at>$3 AND run.certificate_expires_at>$3
 	        AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,
@@ -493,6 +525,6 @@ func (d *Database) browserTokenFacts(ctx context.Context, tx pgx.Tx, scope visit
 	            JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
 	                AND signing.publisher_identity_id=run.publisher_identity_id
 	                AND (grant_record.kind='service' OR signing.retired_at IS NULL)))
-	    FOR SHARE OF browser,parent`, scope.ID, digest, now).Scan(&result.Principal.SessionID, &result.Principal.IdentityID, &result.ExpiresAt)
+	    FOR SHARE OF browser,parent`, scope.ID, digest, now, hostname).Scan(&result.Principal.SessionID, &result.Principal.IdentityID, &result.ExpiresAt)
 	return result, publisherLookupError(err, ErrVisitorPermission)
 }

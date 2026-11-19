@@ -138,6 +138,10 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
@@ -245,6 +249,10 @@ export interface TnlConfig {
                      */
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
+                  /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
                   /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
@@ -354,6 +362,10 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
@@ -462,6 +474,10 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
@@ -557,6 +573,10 @@ export interface TnlConfig {
                      */
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
+                  /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
                   /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
@@ -654,6 +674,10 @@ export interface TnlConfig {
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
                   /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
+                  /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */
                   requirePostQuantum?: boolean;
@@ -749,6 +773,10 @@ export interface TnlConfig {
                      */
                     requestBodyIdleTimeout?: TnlRatePeriod;
                   };
+                  /**
+                   * Give each publisher a stable HTTP hostname for this service beneath this authorized DNS parent. Empty disables aliases; public reachability remains separate.
+                   */
+                  publisherAliasParent?: string;
                   /**
                    * Require hybrid post-quantum key agreement for visitor TLS.
                    */

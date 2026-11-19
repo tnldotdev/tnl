@@ -252,7 +252,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 			return result, e
 		}
 	}
-	if err = d.ensureLocalServiceEndpoint(ctx, tx, entry.ServiceID.String, r.ActorID, s.Name, ServicePlacement{DomainID: s.DomainID, Hostname: s.Hostname, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, projectServicePublic(s), r.Now); err != nil {
+	if err = d.ensureLocalServiceEndpoint(ctx, tx, entry.ServiceID.String, r.ActorID, s.Name, ServicePlacement{DomainID: s.DomainID, Hostname: s.Hostname, RunAliasParent: s.RunAliasParent, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, projectServicePublic(s), r.Now); err != nil {
 		return result, err
 	}
 	row, err := q.LockService(ctx, entry.ServiceID.String)

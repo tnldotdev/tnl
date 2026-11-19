@@ -2,7 +2,12 @@
 -- routing is read from one snapshot, never changed by a visitor connection.
 SELECT sqlc.embed(service),sqlc.embed(run),
     LEAST(run.serving_until,run.certificate_expires_at,permission.expires_at)::timestamptz AS valid_until,
-    policy.revision AS visitor_policy_revision,recovery.id AS recovery_episode_id
+    policy.revision AS visitor_policy_revision,recovery.id AS recovery_episode_id,
+    COALESCE((SELECT alias.hostname FROM control.service_endpoints alias
+      WHERE alias.service_run_id=run.id AND alias.service_id=service.id AND alias.hostname=run.run_hostname
+        AND run.run_alias_parent=service.run_alias_parent AND alias.domain_id=service.domain_id
+        AND alias.ingress_pool_id=service.ingress_pool_id AND alias.public AND alias.retired_at IS NULL
+        AND (alias.dns_state='published' OR alias.dns_state='unmanaged' AND NOT alias.dns_automation)),'')::text AS alias_hostname
 FROM control.services service
 JOIN control.service_runs run ON run.service_id=service.id
 JOIN control.visitor_policies policy ON policy.resource_id=service.id

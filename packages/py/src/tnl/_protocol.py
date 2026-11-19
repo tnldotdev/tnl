@@ -257,6 +257,7 @@ class Status:
     public_url: str | None
     publish_run_number: int | None
     failure: str | None
+    publisher_url: str | None = None
 
 
 def parse_status(value: object, service: str, registration_id: str, target: str) -> Status | None:
@@ -280,6 +281,7 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
         or len(publications) > 64
     ):
         raise InvalidResponse()
+    selected_publication: dict[str, object] | None = None
     for raw in publications:
         publication = object_value(
             raw,
@@ -293,6 +295,8 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
                 "service",
                 "service_protocol",
                 "service_id",
+                "service_run_id",
+                "run_hostname",
                 "publish_run_number",
                 "public_port",
                 "hostname",
@@ -323,6 +327,15 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
             not in ("starting", "provisioning", "ready", "draining", "stopped", "failed", "stale")
         ):
             raise InvalidResponse()
+        if (
+            "service_run_id" in publication
+            and re.fullmatch(r"srun_[A-Za-z0-9]{22}", text(publication["service_run_id"])) is None
+        ):
+            raise InvalidResponse()
+        if "run_hostname" in publication:
+            name = hostname(publication["run_hostname"])
+            if "service_run_id" not in publication or re.match(r"^p-[a-z2-7]{26}\.", name) is None:
+                raise InvalidResponse()
         for key in (
             "tunnel_id",
             "server",
@@ -344,6 +357,14 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
             and re.fullmatch(r"svc_[A-Za-z0-9]{22}", text(publication["service_id"])) is None
         ):
             raise InvalidResponse()
+        if (
+            services
+            and isinstance(services[0], dict)
+            and services[0].get("tunnel_id") == publication.get("tunnel_id")
+        ):
+            if selected_publication is not None:
+                raise InvalidResponse()
+            selected_publication = publication
     if not services:
         return None
     item = object_value(
@@ -447,6 +468,19 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
         return None
     if item["routable"] and (not item["registered"] or number is None):
         raise InvalidResponse()
+    publisher_url = None
+    if selected_publication is not None and "run_hostname" in selected_publication:
+        name = hostname(selected_publication["run_hostname"])
+        if (
+            public_url is None
+            or selected_publication.get("service_id") is None
+            or number is None
+            or selected_publication.get("publish_run_number") != number
+        ):
+            raise InvalidResponse()
+        publisher_url = f"https://{name}"
+        if publisher_url == public_url:
+            raise InvalidResponse()
     return Status(
         cast(bool, item["registered"]),
         cast(bool, item["routable"]),
@@ -454,4 +488,5 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
         cast(str | None, public_url),
         cast(int | None, number),
         cast(str | None, item.get("failure")),
+        publisher_url,
     )

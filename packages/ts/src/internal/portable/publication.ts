@@ -5,11 +5,13 @@ import type { WasmBridge, WasmPublication } from "../connector/wasm_abi.js";
 import type { FetchHandler } from "../publisher/fetch_types.js";
 import type {
   Publication,
+  PublicationRun,
   NamedPublicationOptions,
   TemporaryPublicationOptions,
 } from "../publisher/publication.js";
 import type { PublisherStorageHost } from "./storage-host.js";
 import { preserveRequestHeaders } from "./request.js";
+import { publicationRunSchema, publisherURLSchema } from "../publication_run.js";
 
 const optionsSchema = z.strictObject({
   targetHostname: z.string().min(1).exactOptional(),
@@ -225,6 +227,8 @@ export async function publishPortable(options: {
   );
   void completion.catch(() => {});
   const base = raw;
+  let run: PublicationRun | undefined;
+  let publisherURL: `https://${string}` | undefined;
   function close(): Promise<void> {
     signal.removeEventListener("abort", aborted);
     // fence the application callback before asking go to stop. a saved host
@@ -267,6 +271,12 @@ export async function publishPortable(options: {
     get joined() {
       return joined;
     },
+    get run() {
+      return run;
+    },
+    get publisherURL() {
+      return publisherURL;
+    },
     close,
     wait: () => completion,
     [Symbol.asyncDispose]: close,
@@ -278,6 +288,15 @@ export async function publishPortable(options: {
     if (!parsedURL.success) throw new TnlError("sdk.wasm_invalid");
     await raw.ready;
     if (signal.aborted) throw new DOMException("publication canceled", "AbortError");
+    const reference = publicationRunSchema.safeParse(raw.run);
+    if (!reference.success) throw new TnlError("sdk.wasm_invalid");
+    run = Object.freeze(reference.data);
+    if (raw.publisherURL !== undefined) {
+      const parsed = publisherURLSchema.safeParse(raw.publisherURL);
+      if (!parsed.success || run === undefined || parsed.data === publication.url)
+        throw new TnlError("sdk.wasm_invalid");
+      publisherURL = parsed.data;
+    }
     return publication;
   } catch (error) {
     const canceled = signal.aborted;

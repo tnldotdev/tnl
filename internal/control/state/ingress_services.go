@@ -21,6 +21,7 @@ import (
 // source authority proves the original socket addresses, not visitor permission.
 type IngressServiceRun struct {
 	ServiceID, RunID, Protocol, Hostname string
+	RunHostname                          *string
 	RunNumber, EndpointRevision          int64
 	Port                                 int
 	ValidUntil                           time.Time
@@ -120,6 +121,9 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 		entry := IngressServiceRun{ServiceID: service.ID, RunID: run.ID, RunNumber: run.RunNumber,
 			Protocol: service.Protocol, Hostname: service.CertificateHostname, Port: int(service.ServicePort.Int32),
 			EndpointRevision: service.EndpointRevision, ValidUntil: until, Relays: connected}
+		if row.AliasHostname != "" {
+			entry.RunHostname = &row.AliasHostname
+		}
 		if row.RecoveryEpisodeID.Valid {
 			entry.RecoveryEpisodeID = &row.RecoveryEpisodeID.Int64
 		}

@@ -64,12 +64,12 @@ type serviceBrowserTokenStore struct {
 	err               error
 }
 
-func (s *serviceBrowserTokenStore) RefreshServiceBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error) {
+func (s *serviceBrowserTokenStore) RefreshServiceBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error), ...string) (controlstate.BrowserAccessSession, error) {
 	s.refreshed = true
 	return controlstate.BrowserAccessSession{}, s.err
 }
 
-func (s *serviceBrowserTokenStore) IssueVisitorToken(context.Context, string, visitorscope.Scope, controlstate.VisitorTokenSource, time.Time) (controlstate.IssuedVisitorToken, error) {
+func (s *serviceBrowserTokenStore) IssueVisitorToken(context.Context, string, visitorscope.Scope, controlstate.VisitorTokenSource, time.Time, ...string) (controlstate.IssuedVisitorToken, error) {
 	s.issued = true
 	if !s.refreshed {
 		return controlstate.IssuedVisitorToken{}, controlstate.ErrVisitorPermission
@@ -107,7 +107,7 @@ type guestShareVisitorIssuer struct {
 	deny   bool
 }
 
-func (s *guestShareVisitorIssuer) IssueVisitorToken(_ context.Context, _ string, scope visitorscope.Scope, source controlstate.VisitorTokenSource, now time.Time) (controlstate.IssuedVisitorToken, error) {
+func (s *guestShareVisitorIssuer) IssueVisitorToken(_ context.Context, _ string, scope visitorscope.Scope, source controlstate.VisitorTokenSource, now time.Time, _ ...string) (controlstate.IssuedVisitorToken, error) {
 	s.calls++
 	s.scope, s.source = scope, source
 	if s.deny {

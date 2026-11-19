@@ -385,7 +385,7 @@ type publisherCORSBrowserStore struct {
 	calls, refresh int
 }
 
-func (s *publisherCORSBrowserStore) RefreshServiceBrowserSession(_ context.Context, service, secret string, _ time.Time, _ func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error) {
+func (s *publisherCORSBrowserStore) RefreshServiceBrowserSession(_ context.Context, service, secret string, _ time.Time, _ func(context.Context, string) (controlstate.BrowserTokenRotation, error), _ ...string) (controlstate.BrowserAccessSession, error) {
 	if service != publisherCORSService || secret != "explicit-body-secret" {
 		s.t.Fatal("browser session refresh used ambient cookies or changed scope")
 	}

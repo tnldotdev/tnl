@@ -59,6 +59,7 @@ type ProjectServiceConfiguration struct {
 	Protocol           string                   `json:"protocol,omitempty"`
 	Target             string                   `json:"target"`
 	Hostname           string                   `json:"hostname,omitempty"`
+	RunAliasParent     string                   `json:"publisher_alias_parent,omitempty"`
 	DomainID           string                   `json:"domain_id,omitempty"`
 	Ephemeral          bool                     `json:"ephemeral,omitempty"`
 	RequirePostQuantum *bool                    `json:"require_post_quantum,omitempty"`
@@ -529,7 +530,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			return result, err
 		}
 		if entry.ServiceID.Valid && entry.DeploymentID.Valid {
-			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.DeploymentID.String, r.ActorID, ServicePlacement{DomainID: s.DomainID, Hostname: s.Hostname}, projectServicePublic(s), r.DNSAutomation, r.Now); err != nil {
+			if err = d.ensureServiceEndpoint(ctx, tx, entry.ServiceID.String, entry.DeploymentID.String, r.ActorID, ServicePlacement{DomainID: s.DomainID, Hostname: s.Hostname, RunAliasParent: s.RunAliasParent}, projectServicePublic(s), r.DNSAutomation, r.Now); err != nil {
 				return result, err
 			}
 		}

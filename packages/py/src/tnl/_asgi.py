@@ -313,6 +313,7 @@ class Publication:
         self._registration_lock = asyncio.Lock()
         self._monitor: asyncio.Task[None] | None = None
         self._url: str | None = None
+        self._publisher_url: str | None = None
         self._run = 0
         loop = asyncio.get_running_loop()
         self._ready: asyncio.Future[None] = loop.create_future()
@@ -328,6 +329,11 @@ class Publication:
         if self._url is None or not self._ready.done() or self._ready.exception() is not None:
             raise InvalidResponse()
         return self._url
+
+    @property
+    def publisher_url(self) -> str | None:
+        """The optional address for this publisher, independent of the shared URL."""
+        return self._publisher_url
 
     async def _register(self) -> None:
         async with self._registration_lock:
@@ -472,6 +478,7 @@ class Publication:
                 self._unregister_reply_lost = False
 
     def _observe(self, status: Status) -> None:
+        self._publisher_url = status.publisher_url
         if status.public_url is not None:
             if self._url is not None and status.public_url != self._url:
                 raise InvalidResponse()
