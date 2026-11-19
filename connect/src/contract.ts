@@ -28,7 +28,6 @@ export const contextSchema = z
     services: z
       .array(serviceNameSchema)
       .min(1)
-      .max(32)
       .refine((values) => new Set(values).size === values.length),
   })
   .refine((context) => context.audience === context.server);
