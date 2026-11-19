@@ -33,6 +33,14 @@ The edge proxy checks file sizes and hashes against the release manifest.
 If it can't get a valid copy, it returns an empty `503` that browsers and
 caches must not store.
 
+The proxy discovers host addresses from the same bounded replies browsers
+use. Each Cloudflare Worker instance rotates through the individual addresses
+it knows and refreshes them in the background on incoming requests. It tries
+up to three different addresses. The shared address is for initial discovery
+and recovery, not file requests, so reusing one connection to the shared
+address doesn't pin those requests to one browser. Each Worker sees only a
+sample of the hosts; request distribution is not globally coordinated.
+
 ## adding a host
 
 A visitor can volunteer their tab. It waits with an existing host until that
@@ -85,8 +93,12 @@ warn before closing. These are browser-dependent; a tab can still be
 suspended or closed.
 
 For the first host, `start.keepthisalive.com` supplies a permanent copy.
-That page stays available when no hosts remain. The main site never falls
-back to that copy.
+When you click **start hosting**, the page checks whether a host answers
+through the proxy. If one does, the page sends you to the main site to
+volunteer. If none answers, it lets you start an hour-long bootstrap turn.
+A network error or two simultaneous starts can produce extra bootstrap
+hosts. The startup page stays available when no hosts remain; the main site
+never falls back to its copy.
 
 ## checking other hosts
 
@@ -120,24 +132,22 @@ and the waiting invitations.
 
 Suppose A knows B, and C knows D. Every 30 seconds or so, each
 [hosting worker](src/hosting/worker.ts) asks the proxy for
-`/__keepalive/peers`. Here, tnl sends the request to C:
+`/__keepalive/peers`. Here, the Worker knows C's individual address:
 
 ```text
-A knows B               proxy         prod.hosts.keepthisalive.com        C knows D
-    |-- GET peers ------->|                         |                         |
-    |                     |-- GET peers ----------->|                         |
-    |                     |                         |-- GET peers ----------->|
-    |                     |                         |<-- C and D -------------|
-    |                     |<-- C and D -------------|                         |
-    |<-- C and D ---------|                         |                         |
-    |                                                                         |
-    |-- send A and B to C's own address ------------------------------------->|
+A knows B               proxy                                 C knows D
+    |-- GET peers ------->|                                       |
+    |                     |-- GET peers at C's address ---------->|
+    |                     |<-- C and D ---------------------------|
+    |<-- C and D ---------|                                       |
+    |                                                             |
+    |-- send A and B to C's own address ------------------------->|
     |<-- C's reply -----------------------------------------------------------|
 ```
 
-A can now tell B about C and D; C can tell D about A and B. The proxy keeps no
-host list. A request can reach a host A already knows, so reconnecting depends
-on eventually reaching the other group.
+A can now tell B about C and D; C can tell D about A and B. The proxy's
+short-lived list can contain only hosts A already knows, so reconnecting
+depends on eventually reaching the other group.
 
 ## when the clock resets
 

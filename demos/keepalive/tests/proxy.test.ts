@@ -1,9 +1,10 @@
 import { expect, it, vi } from "vitest";
-import { SHARED_HOST } from "../src/peers/gossip.ts";
+import { HOST_PARENT, PEERS_PATH, SHARED_HOST } from "../src/peers/gossip.ts";
 import { createProxy } from "../src/edge/proxy.ts";
 import { WASM_PATH, WORKER_PATH, digest, parseRelease } from "../src/release.ts";
 
 const script = "export const version = 1;";
+const aliases = ["a", "b", "c"].map((letter) => `https://p-${letter.repeat(26)}.${HOST_PARENT}`);
 const request = (path: string, init?: RequestInit) =>
   new Request(`https://keepthisalive.com${path}`, init);
 
@@ -26,11 +27,26 @@ async function setup() {
     assets,
   });
   const fetchHost = vi.fn<typeof fetch>();
-  return { fetchHost, proxy: createProxy(release, fetchHost) };
+  const report = (origins = aliases) => {
+    const now = Date.now();
+    const [from, ...changes] = origins.map((origin, index) => ({
+      origin,
+      publisherID: `pub_${String(index).repeat(22)}`,
+      runID: `srun_${String(index).repeat(22)}`,
+      runNumber: String(index + 1),
+      seq: 1,
+      left: false,
+      startingUntil: 0,
+      endsAt: now + 30_000,
+    }));
+    return Response.json({ releaseID: release.id, startedAt: now, from, changes });
+  };
+  return { fetchHost, report, proxy: createProxy(release, fetchHost) };
 }
 
 it("checks the script before serving it and does not pass through credentials", async () => {
-  const { proxy, fetchHost } = await setup();
+  const { proxy, fetchHost, report } = await setup();
+  fetchHost.mockResolvedValueOnce(report());
   fetchHost.mockResolvedValueOnce(new Response("export const version = 2;"));
   fetchHost.mockResolvedValueOnce(
     new Response(script, {
@@ -44,11 +60,9 @@ it("checks the script before serving it and does not pass through credentials", 
   expect(await response.text()).toBe(script);
   expect(response.headers.get("Set-Cookie")).toBeNull();
   expect(response.headers.get("Cache-Control")).toBe("no-store, no-transform");
-  expect(fetchHost.mock.calls.map(([url]) => String(url))).toEqual([
-    `${SHARED_HOST}/app.js`,
-    `${SHARED_HOST}/app.js`,
-    `${SHARED_HOST}/app.js`,
-  ]);
+  const [discovery, ...files] = fetchHost.mock.calls.map(([url]) => String(url));
+  expect(discovery).toBe(`${SHARED_HOST}${PEERS_PATH}`);
+  expect(files.sort()).toEqual(aliases.map((origin) => `${origin}/app.js`));
   for (const [, init] of fetchHost.mock.calls) {
     expect(init?.credentials).toBe("omit");
     expect(init?.redirect).toBe("manual");
@@ -56,7 +70,46 @@ it("checks the script before serving it and does not pass through credentials", 
   }
 });
 
-it("has no fallback when hosts stop", async () => {
+it("round-robins separate publisher URLs on a warm Worker", async () => {
+  const { proxy, fetchHost, report } = await setup();
+  fetchHost.mockResolvedValueOnce(report());
+  fetchHost.mockImplementation(async () => new Response(script));
+  const file = () => proxy.file(request("/app.js"));
+  expect((await file()).status).toBe(200);
+  const responses = await Promise.all([file(), file(), file(), file(), file()]);
+  expect(responses.every((response) => response.status === 200)).toBe(true);
+  const origins = fetchHost.mock.calls.slice(1).map(([url]) => new URL(String(url)).origin);
+  expect(new Set(origins.slice(0, 3))).toEqual(new Set(aliases));
+  expect(origins.slice(3)).toEqual(origins.slice(0, 3));
+});
+
+it("lets a peer check seed candidates and refreshes via a known alias", async () => {
+  const { proxy, fetchHost, report } = await setup();
+  fetchHost.mockResolvedValueOnce(report(aliases.slice(0, 1)));
+  expect((await proxy.peers(request(PEERS_PATH))).status).toBe(200);
+  fetchHost.mockResolvedValueOnce(report()).mockResolvedValueOnce(new Response(script));
+  const tasks: Promise<void>[] = [];
+  expect(
+    (await proxy.file(request("/app.js"), SHARED_HOST, (work) => tasks.push(work))).status,
+  ).toBe(200);
+  await Promise.all(tasks);
+  expect(fetchHost.mock.calls.map(([url]) => String(url))).toEqual([
+    `${SHARED_HOST}${PEERS_PATH}`,
+    `${aliases[0]}${PEERS_PATH}`,
+    `${aliases[0]}/app.js`,
+  ]);
+  fetchHost.mockImplementation(async () => new Response(script));
+  await Promise.all([
+    proxy.file(request("/app.js")),
+    proxy.file(request("/app.js")),
+    proxy.file(request("/app.js")),
+  ]);
+  expect(
+    new Set(fetchHost.mock.calls.slice(3).map(([url]) => new URL(String(url)).origin)),
+  ).toEqual(new Set(aliases));
+});
+
+it("uses the shared address only for discovery when hosts stop", async () => {
   const { proxy, fetchHost } = await setup();
   fetchHost.mockRejectedValue(new Error("No connection"));
   const response = await proxy.file(request("/"));
@@ -66,5 +119,8 @@ it("has no fallback when hosts stop", async () => {
   expect(response.headers.get("Cache-Control")).toBe("no-store, no-transform");
   expect(response.headers.get("Location")).toBeNull();
   expect((await proxy.file(request(WORKER_PATH))).status).toBe(404);
-  expect(fetchHost).toHaveBeenCalledTimes(3);
+  expect(fetchHost).toHaveBeenCalledExactlyOnceWith(
+    new URL(PEERS_PATH, SHARED_HOST),
+    expect.anything(),
+  );
 });

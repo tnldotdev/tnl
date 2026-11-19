@@ -37,11 +37,16 @@ export async function readPeers(
   signal?: AbortSignal,
   invitation?: string,
 ) {
+  const request = options(signal, 5_000);
   const response = await fetch(new URL(PEERS_PATH, origin), {
-    ...options(signal, 5_000),
+    ...request,
     ...(invitation === undefined ? {} : { headers: { [READY_HEADER]: invitation } }),
   });
-  return parseMessage(await readJSON(response, MAX_MESSAGE_BYTES), releaseID, Date.now());
+  return parseMessage(
+    await readJSON(response, MAX_MESSAGE_BYTES, request.signal ?? undefined),
+    releaseID,
+    Date.now(),
+  );
 }
 
 /** waits for the host to pick this tab and returns its private invitation. */

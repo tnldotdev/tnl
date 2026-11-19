@@ -36,7 +36,9 @@ app.get(RELEASE_PATH, (c) => {
   if (c.req.method !== "GET" || new URL(c.req.url).search !== "") return c.body(null, 404);
   return c.json(release, 200, siteHeaders("application/json"));
 });
-app.get(PEERS_PATH, (c) => proxy.peers(c.req.raw, c.env.SHARED_HOST));
+app.get(PEERS_PATH, (c) =>
+  proxy.peers(c.req.raw, c.env.SHARED_HOST, (work) => c.executionCtx.waitUntil(work)),
+);
 app.post(CREDENTIALS_PATH, (c) => credentials(c.req.raw, release.id, c.env));
 app.post(NETWORK_PROOF_PATH, async (c) => {
   if (c.req.header("Origin") !== new URL(c.req.url).origin) return c.body(null, 403);
@@ -73,7 +75,7 @@ app.get("*", async (c) => {
   const request = c.req.raw;
   const url = new URL(request.url);
   if (url.hostname !== c.env.START_HOST) {
-    return proxy.file(request, c.env.SHARED_HOST);
+    return proxy.file(request, c.env.SHARED_HOST, (work) => c.executionCtx.waitUntil(work));
   }
 
   if (url.search !== "") return c.notFound();

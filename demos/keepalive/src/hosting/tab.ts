@@ -19,10 +19,11 @@ import { STARTUP_MS } from "../policy.ts";
 
 export type HostState =
   | { type: "waiting" | "checking" | "starting" | "stopping" }
-  | { type: "copying"; received: number; total: number }
+  | { type: "copying"; received: number; total: number; bootstrap: boolean }
   | Extract<HostUpdate, { type: "hosting" }>;
 
 export class HostingUnavailable extends Error {}
+export class AlreadyHosting extends Error {}
 export class UploadTooSlow extends Error {}
 
 async function waitForInvitation(releaseID: string, signal: AbortSignal) {
@@ -51,6 +52,7 @@ async function waitForInvitation(releaseID: string, signal: AbortSignal) {
 async function copySite(
   release: Release,
   source: string,
+  bootstrap: boolean,
   signal: AbortSignal,
   update: (state: HostState) => void,
 ) {
@@ -60,7 +62,7 @@ async function copySite(
   let lastUpdate = 0;
   const started = performance.now();
   let verification = 0;
-  update({ type: "copying", received, total });
+  update({ type: "copying", received, total, bootstrap });
   for (const asset of release.assets) {
     const response = await fetch(source + asset.path, {
       cache: "no-store",
@@ -71,7 +73,7 @@ async function copySite(
     const bytes = await readBytes(response, asset.size, signal, asset.size, (bytes) => {
       if (performance.now() - lastUpdate < 100 && received + bytes !== total) return;
       lastUpdate = performance.now();
-      update({ type: "copying", received: received + bytes, total });
+      update({ type: "copying", received: received + bytes, total, bootstrap });
     });
     const verifying = performance.now();
     await verifyAsset(asset, bytes);
@@ -102,21 +104,23 @@ async function getJSON(path: string, limit: number, signal: AbortSignal, method 
 }
 
 export async function hostTab(
-  bootstrap: boolean,
+  startupPage: boolean,
   signal: AbortSignal,
   update: (state: HostState) => void,
   activity: (state: Extract<HostUpdate, { type: "activity" }>) => void,
 ) {
-  // check bootstrap availability before probing peers or downloading the release.
-  const bootstrapConfig = bootstrap ? await getHostingConfig(signal) : undefined;
   const release = await parseRelease(await getJSON(RELEASE_PATH, MAX_MANIFEST_BYTES, signal));
+  // the startup page provides the seed copy only if no host answers the proxy.
+  const report = startupPage
+    ? await readPeers(location.origin, release.id, signal).catch(() => undefined)
+    : undefined;
+  signal.throwIfAborted();
+  if (report !== undefined && !report.from.left) throw new AlreadyHosting();
+  const bootstrap = startupPage;
   let source = ARTIFACT_PREFIX;
   let firstHostToContact: Host | undefined;
   let invitation: string | undefined;
-  if (bootstrap) {
-    const report = await readPeers(location.origin, release.id, signal).catch(() => undefined);
-    if (report !== undefined && !report.from.left) firstHostToContact = report.from;
-  } else {
+  if (!bootstrap) {
     update({ type: "waiting" });
     const selected = await waitForInvitation(release.id, signal);
     signal.throwIfAborted();
@@ -130,8 +134,8 @@ export async function hostTab(
     update({ type: "checking" });
     if (!(await checkUpload(firstHostToContact, invitation, preparing))) throw new UploadTooSlow();
   }
-  const config = bootstrapConfig ?? (await getHostingConfig(preparing));
-  const files = await copySite(release, source, preparing, update);
+  const config = await getHostingConfig(preparing);
+  const files = await copySite(release, source, bootstrap, preparing, update);
   const code = files.get(WORKER_PATH);
   if (code === undefined) throw new Error("The copy is missing the hosting code.");
   preparing.throwIfAborted();

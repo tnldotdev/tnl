@@ -62,6 +62,7 @@ type Mode =
   | "download"
   | "starting"
   | "slow"
+  | "already"
   | "unavailable";
 
 try {
@@ -225,7 +226,7 @@ try {
         return mode === "unavailable" ? route.fulfill({ status: 503, headers }) : ok(config);
       if (path === "/__keepalive/network-proof") return ok(proof);
       if (path === "/__keepalive/peers" || path === "/__keepalive/presence") {
-        if (bootstrap) return route.fulfill({ status: 503, headers });
+        if (bootstrap && mode !== "already") return route.fulfill({ status: 503, headers });
         const from = roster.find((peer) => peer.origin === url.origin) ?? b;
         return ok({
           releaseID: release.id,
@@ -307,9 +308,16 @@ try {
       download: bootstrap ? "Copying the site to this tab…" : "Copying the site from another host…",
       starting: "Starting to host…",
       slow: "This connection isn't fast enough to host right now.",
+      already: "Keepalive is already running. Visit the main site to volunteer.",
       unavailable: "This tab couldn't start hosting. Try again later.",
     };
-    await status.getByText(messages[mode], { exact: true }).waitFor();
+    if (mode === "already") {
+      await status.getByRole("link", { name: "Visit the main site" }).waitFor();
+      assert.equal(await status.innerText(), messages[mode]);
+      assert.equal(await startHosting.count(), 0);
+    } else {
+      await status.getByText(messages[mode], { exact: true }).waitFor();
+    }
     assert.equal(await soundToggle.count(), mode === "waiting" ? 1 : 0);
     if (mode === "waiting")
       await page
@@ -406,8 +414,9 @@ try {
   await fixture("downloading", "download");
   await fixture("starting", "starting");
   await fixture("slow", "slow", { width: 360 });
+  await fixture("already-running", "already", { bootstrap: true });
   await fixture("unavailable", "unavailable", { bootstrap: true });
-  console.log(`Captured 15 Chrome views with simulated hosts in ${output}`);
+  console.log(`Captured 16 Chrome views with simulated hosts in ${output}`);
 } finally {
   await browser.close();
 }

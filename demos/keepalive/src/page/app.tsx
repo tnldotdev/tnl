@@ -6,7 +6,13 @@ import { PULSE_SECONDS, requestPulse } from "../hosting/activity.ts";
 import { invitationChirp, protectHostingTab, saveSound, soundEnabled } from "./attention.ts";
 import type { HostUpdate } from "../hosting/messages.ts";
 import { turnLabel } from "../policy.ts";
-import { HostingUnavailable, UploadTooSlow, hostTab, type HostState } from "../hosting/tab.ts";
+import {
+  AlreadyHosting,
+  HostingUnavailable,
+  UploadTooSlow,
+  hostTab,
+  type HostState,
+} from "../hosting/tab.ts";
 import { reportedTabs } from "../peers/gossip.ts";
 import { observeVisitors, type Observation } from "./visitor.ts";
 
@@ -136,6 +142,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
   const [finished, setFinished] = useState<number>();
   const [retry, setRetry] = useState(false);
   const [message, setMessage] = useState("");
+  const [alreadyHosting, setAlreadyHosting] = useState(false);
   const [now, setNow] = useState(Date.now);
   const [observed, setObserved] = useState<Observation>();
   const [lastStart, setLastStart] = useState<number>();
@@ -191,6 +198,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
     setFinished(undefined);
     setRetry(false);
     setMessage("");
+    setAlreadyHosting(false);
     let hosted = false;
     void hostTab(
       bootstrap,
@@ -220,6 +228,10 @@ function App({ bootstrap }: { bootstrap: boolean }) {
           );
         },
         (error: unknown) => {
+          if (error instanceof AlreadyHosting) {
+            setAlreadyHosting(true);
+            return;
+          }
           setRetry(!stop.signal.aborted);
           setMessage(
             stop.signal.aborted
@@ -249,9 +261,8 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       </p>
       {bootstrap ? (
         <p>
-          This page lets you start the first host for{" "}
-          <a href="https://keepthisalive.com">keepthisalive.com</a>. Keep this tab open to serve the
-          site for up to {label}.
+          Start the first host for <a href="https://keepthisalive.com">keepthisalive.com</a> for up
+          to {label}. Keep this tab open to keep the site online.
         </p>
       ) : (
         <>
@@ -269,14 +280,23 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       )}
       <section aria-label="keepalive">
         <p role="status">
-          {host === undefined
-            ? message || "You can help keep it online."
-            : host.type === "copying" && bootstrap
-              ? "Copying the site to this tab…"
-              : labels[host.type]}
+          {host === undefined ? (
+            alreadyHosting ? (
+              <>
+                Keepalive is already running.{" "}
+                <a href="https://keepthisalive.com">Visit the main site</a> to volunteer.
+              </>
+            ) : (
+              message || "You can help keep it online."
+            )
+          ) : host.type === "copying" && host.bootstrap ? (
+            "Copying the site to this tab…"
+          ) : (
+            labels[host.type]
+          )}
         </p>
         {host?.type === "waiting" && (
-          <p>Your turn starts when hosting begins and lasts up to {label}.</p>
+          <p>Your turn starts when hosting begins and lasts up to {turnLabel(false)}.</p>
         )}
         {host?.type === "copying" && <CopyProgress received={host.received} total={host.total} />}
         {hosting && (
@@ -318,7 +338,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         />
       </section>
       <div class="actions">
-        {lifetime === undefined ? (
+        {alreadyHosting ? null : lifetime === undefined ? (
           <button type="button" onClick={start}>
             {retry
               ? "try again"
