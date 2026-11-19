@@ -147,6 +147,14 @@ deadline while waiting for local state. There is no cross-machine feedback store
 
 ## browser and worker sdk
 
+Each native SDK shares registration acknowledgment, captured recovery identity,
+renewal requests, and deadline-bound unregister between configured apps and
+explicit publications (`publisher/registration.ts` and `_registration.py`).
+Framework owners keep reload and listener replacement; explicit publication
+owners keep routability and completion. Native discovery and HTTP transport
+remain in `publisher/local.ts` and `_native.py`. Portable publishing does not
+use this local registration boundary.
+
 The TypeScript SDK uses native Go on Node and Bun. Its browser and Worker exports
 compose the same connector and service-run owners in Go/WASM, without a loopback
 listener. Go owns selection, authorization, renewal, visitor TLS, and the retained

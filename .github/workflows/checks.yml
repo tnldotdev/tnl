@@ -259,6 +259,9 @@ jobs:
           save-cache: true
           pnpm: true
 
+      - name: Check real Keychain subprocess state
+        run: task go:test:integration:state-keychain
+
       - name: Run Go tests
         run: task go:test
 

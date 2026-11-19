@@ -8,11 +8,11 @@ import { assert, afterEach, expect, onTestFinished, test, vi } from "vitest";
 import * as z from "zod";
 import {
   createPreparedService,
-  parseAssignment,
   reportFrameworkTarget,
   runtimeRequest,
   startRuntime,
 } from "../../dist/internal/publisher/app.js";
+import { parseAssignment } from "../../dist/internal/publisher/registration.js";
 import { TnlError } from "../../dist/errors.js";
 import { startTestBootstrap } from "../helpers/bootstrap.js";
 import {

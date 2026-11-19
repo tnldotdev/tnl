@@ -89,8 +89,10 @@ test.each(["unregister", "publications/register", "status"])(
   },
 );
 
-test.each(["terminal", "transient", "forgotten"])(
-  "Fetch closes its listener and recovers a lost %s unregister reply over real IPC",
+// successful replay runs through the production owner in the daemon SDK suite.
+// scripted failures here check SDK classification, not native lifecycle rules.
+test.each(["terminal", "forgotten"])(
+  "Fetch closes its listener and classifies a lost %s unregister reply",
   async (outcome) => {
     let service = "";
     let target = "";
@@ -123,14 +125,14 @@ test.each(["terminal", "transient", "forgotten"])(
                 message: "a replacement owner does not recognize the old capability",
               }),
             );
-          } else if (outcome === "terminal" || restored) {
+          } else {
             response.writeHead(409).end(
               JSON.stringify({
                 code: "runtime.publication_cleanup_failed",
                 message: "the exact registration stopped with failed remote cleanup",
               }),
             );
-          } else response.writeHead(204).end();
+          }
         } else response.writeHead(204).end();
       });
     });
@@ -183,16 +185,13 @@ test.each(["terminal", "transient", "forgotten"])(
         await expect(publication.close()).rejects.toMatchObject({
           code: "sdk.publication_cleanup_failed",
         });
-      } else if (outcome === "terminal") {
+      } else {
         await expect(publication.close()).rejects.toMatchObject({
           code: "sdk.publication_cleanup_failed",
         });
         await expect(publication.wait()).rejects.toMatchObject({
           code: "sdk.publication_cleanup_failed",
         });
-      } else {
-        await publication.close();
-        await publication.wait();
       }
       if (outcome !== "forgotten") expect(unregisters).toHaveLength(2);
       expect(unregisters.every((value) => value === unregisters[0])).toBe(true);
