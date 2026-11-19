@@ -26,6 +26,7 @@ import (
 type PreparedConnector struct {
 	ctx                context.Context
 	conn               net.Conn
+	raw                muxsession.Stream
 	mu                 sync.Mutex
 	stream             preparedStreamPhase
 	permission         preparedPermissionPhase
@@ -43,6 +44,8 @@ type PreparedConnector struct {
 	permissionUntil    time.Time
 	permissionErr      error
 	stdioClosedOnAbort bool
+	terminalHold       bool
+	terminalReleased   bool
 }
 
 // stream consumption and permission renewal are independent lifecycles. a
@@ -137,10 +140,10 @@ func (e *preparedPermissionOwnerStop) Unwrap() error { return context.Cause(e.li
 // the publisher independently checks the signed token, exact relay-attested
 // pair, current policy and C.
 func PrepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry) (_ *PreparedConnector, result error) {
-	return prepareConnector(lifetime, setup, session, run, entry, func() {})
+	return prepareConnector(lifetime, setup, session, run, entry, false, func() {})
 }
 
-func prepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry, accepted func()) (_ *PreparedConnector, result error) {
+func prepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry, warm bool, accepted func()) (_ *PreparedConnector, result error) {
 	setup, finish := observability.ClientOperation(setup, "connector.visitor_setup")
 	defer func() { finish(result) }()
 	ctx := lifetime
@@ -228,7 +231,7 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 		return nil, ErrServiceConnection
 	}
 	setupStopped = true
-	p := &PreparedConnector{ctx: ctx, conn: connection, stdio: selected, stream: streamPrepared{}, permission: permissionUsable{}, callbackDone: make(chan struct{}), permissionUntil: run.ValidUntil}
+	p := &PreparedConnector{ctx: ctx, conn: connection, raw: raw, stdio: selected, terminalHold: warm, stream: streamPrepared{}, permission: permissionUsable{}, callbackDone: make(chan struct{}), permissionUntil: run.ValidUntil}
 	p.stop = context.AfterFunc(ctx, func() { defer close(p.callbackDone); _ = p.closePhysical() })
 	p.mu.Lock()
 	p.startPermissionWorkerLocked()
@@ -238,13 +241,89 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 }
 
 func (p *PreparedConnector) closePhysical() error {
+	p.mu.Lock()
+	conn, selected, held := p.conn, p.stdio, p.terminalHold
+	aborted := p.terminalReleased
+	interrupted := false
+	if selected != nil {
+		o := selected.owner
+		o.mu.Lock()
+		if o.interrupted && o.selected == selected {
+			aborted = true
+			interrupted = true
+			held = held || !selected.released
+		}
+		if !held {
+			// claim physical cleanup before releasing either lock. a later
+			// caller stop cannot claim an already-entered TLS close as its own.
+			selected.physicalClosing = true
+		}
+		o.mu.Unlock()
+	}
+	p.mu.Unlock()
+	if held {
+		// a hold is not physical cleanup and must not consume physicalOnce.
+		return nil
+	}
 	p.physicalOnce.Do(func() {
-		p.physicalErr = p.conn.Close()
-		if _, secured := p.conn.(*tls.Conn); secured && p.stdio != nil {
-			p.physicalErr = p.stdio.tlsCloseResult(p.physicalErr)
+		if aborted && interrupted {
+			p.physicalErr = selected.owner.reset()
+		} else if aborted {
+			p.physicalErr = p.raw.Reset(0)
+		} else {
+			p.physicalErr = conn.Close()
+			if _, secured := conn.(*tls.Conn); secured && selected != nil {
+				p.physicalErr = selected.tlsCloseResult(p.physicalErr)
+			}
 		}
 	})
 	return p.physicalErr
+}
+
+func (p *PreparedConnector) releaseTerminal() error {
+	p.mu.Lock()
+	// only an unused warm preparation or a selected interruption held cleanup.
+	// normal completion already joined its ordinary physical close.
+	p.terminalReleased = p.terminalReleased || p.terminalHold
+	p.terminalHold = false
+	if selected := p.stdio; selected != nil {
+		selected.owner.mu.Lock()
+		selected.released = true
+		selected.owner.mu.Unlock()
+	}
+	p.mu.Unlock()
+	return p.Close()
+}
+
+// bindOperation also adopts the already TLS-verified warm TCP use. the wrapper
+// retains that exact connection and resets its existing multiplexed stream.
+func (p *PreparedConnector) bindOperation(operation *stdioOperation, abort func() error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closedLocked() || p.ctx.Err() != nil {
+		return ErrServiceConnection
+	}
+	if p.stdio == nil {
+		selected, err := operation.bind(&preparedOperationStream{Conn: p.conn, raw: p.raw})
+		if err != nil {
+			return err
+		}
+		p.conn, p.stdio = selected, selected
+	}
+	return operation.activateWithAbort(p.stdio, abort)
+}
+
+type preparedOperationStream struct {
+	net.Conn
+	raw muxsession.Stream
+}
+
+func (s *preparedOperationStream) Reset(code uint32) error { return s.raw.Reset(code) }
+func (s *preparedOperationStream) CloseWrite() error {
+	if writer, ok := s.Conn.(interface{ CloseWrite() error }); ok {
+		return writer.CloseWrite()
+	}
+	return errors.ErrUnsupported
 }
 
 func (p *PreparedConnector) finish() {
@@ -368,6 +447,11 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 				p.mu.Lock()
 				if context.Cause(ctx) != p.permissionStop || !failure.Only(err, p.permissionStop) {
 					p.permissionErr = err
+					if context.Cause(ctx) == p.permissionStop {
+						// an entered renewal returned an independent failure while
+						// shutdown was joining it, even if its leaf is Canceled.
+						p.permissionErr = &CleanupError{Err: err}
+					}
 				}
 				p.mu.Unlock()
 				p.finish() // the owner joins this worker; it never joins itself.
@@ -386,7 +470,7 @@ func (p *PreparedConnector) Close() error {
 	p.mu.Lock()
 	permissionErr := p.permissionErr
 	p.mu.Unlock()
-	return errors.Join(p.closeErr, permissionErr)
+	return errors.Join(p.closeErr, p.closePhysical(), permissionErr)
 }
 
 // renewPermission fences only new writes for this visitor until the publisher
@@ -450,8 +534,12 @@ func (p *PreparedConnector) waitPermission(ctx context.Context) error {
 		p.mu.Lock()
 		pending := p.permissionWaitLocked()
 		invalid := p.closedLocked() || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionDeniedLocked() || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now())
+		abort := p.stdioAbortLocked(ctx)
 		p.mu.Unlock()
 		if invalid {
+			if abort != nil {
+				return abort
+			}
 			return ErrServiceConnection
 		}
 		if pending == nil {
@@ -480,6 +568,7 @@ func (p *PreparedConnector) Forward(ctx context.Context, local net.Conn) (result
 		return ErrServiceConnection
 	}
 	p.stream = streamForwarding{}
+	p.terminalHold = false
 	p.work.Add(1)
 	p.mu.Unlock()
 	defer p.work.Done()
@@ -522,13 +611,20 @@ func (c *preparedConnectorUse) current() error {
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
 	// the first copy worker closed this prepared stream after the selected
-	// stdio reset. its sibling can observe that local close before its read
-	// returns the reset; tag only this close, not an unrelated permission loss.
-	if c.owner.stdioClosedOnAbort && c.owner.closedLocked() && c.owner.ctx.Err() == nil && c.ctx.Err() == nil && !c.owner.permissionDeniedLocked() && (c.owner.permissionUntil.IsZero() || c.owner.permissionUntil.After(time.Now())) {
-		return &stdioPreparedAbortError{owner: c.owner.stdio.owner, stream: c.owner.stdio}
+	// stdio interruption. its sibling can observe that local close before its
+	// read returns; tag only this close, not an unrelated permission loss.
+	if abort := c.owner.stdioAbortLocked(c.ctx); abort != nil {
+		return abort
 	}
 	if c.owner.closedLocked() || c.owner.ctx.Err() != nil || c.ctx.Err() != nil || c.owner.permissionDeniedLocked() || !c.owner.permissionUntil.IsZero() && !c.owner.permissionUntil.After(time.Now()) {
 		return ErrServiceConnection
+	}
+	return nil
+}
+
+func (p *PreparedConnector) stdioAbortLocked(ctx context.Context) error {
+	if p.stdioClosedOnAbort && p.closedLocked() && p.ctx.Err() == nil && ctx.Err() == nil && p.permissionErr == nil && !p.permissionDeniedLocked() && (p.permissionUntil.IsZero() || p.permissionUntil.After(time.Now())) {
+		return &stdioPreparedAbortError{owner: p.stdio.owner, stream: p.stdio}
 	}
 	return nil
 }
@@ -564,12 +660,12 @@ func (c *preparedConnectorUse) Close() error {
 	if selected := c.owner.stdio; selected != nil && !c.owner.closedLocked() {
 		o := selected.owner
 		o.mu.Lock()
-		c.owner.stdioClosedOnAbort = o.expected && o.resetStarted && o.selected == selected
+		c.owner.stdioClosedOnAbort = o.expected && o.interrupted && o.selected == selected
 		o.mu.Unlock()
 	}
-	c.owner.stream = streamClosed{}
 	c.owner.mu.Unlock()
-	return c.owner.closePhysical()
+	c.owner.finish()
+	return c.owner.closeErr
 }
 func (c *preparedConnectorUse) LocalAddr() net.Addr            { return c.owner.conn.LocalAddr() }
 func (c *preparedConnectorUse) RemoteAddr() net.Addr           { return c.owner.conn.RemoteAddr() }

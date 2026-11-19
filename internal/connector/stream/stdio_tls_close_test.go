@@ -67,12 +67,24 @@ func TestStdioTLSCloseRetainsOnlyIndependentFailures(t *testing.T) {
 				stream.failing.Store(fault != nil)
 				cancel()
 				<-o.abortDone
+				// the interrupted path must not send close-notify. exercise the
+				// actual TLS close result separately after the exact owned reset.
+				if err := o.reset(); err != nil {
+					t.Fatal(err)
+				}
+				o.mu.Lock()
+				selected.released = true
+				o.mu.Unlock()
+				closeErr := selected.tlsCloseResult(secured.Close())
+				if fault == nil && closeErr != nil || fault != nil && !errors.Is(closeErr, fault) {
+					t.Fatal("TLS cleanup changed an independent close result", fault, closeErr)
+				}
 				err = prepared.closePhysical()
 				if fault == nil && err != nil {
 					t.Fatal("owned stdio reset became an independent TLS close failure", err)
 				}
-				if fault != nil && !errors.Is(err, fault) {
-					t.Fatal("owned stdio reset hid an independent TLS close failure", fault, err)
+				if fault != nil && !errors.Is(errors.Join(err, closeErr), fault) {
+					t.Fatal("owned stdio reset hid an independent TLS close failure", fault, err, closeErr)
 				}
 				if replay := prepared.closePhysical(); replay != err {
 					t.Fatal("physical TLS cleanup changed on replay", replay, err)

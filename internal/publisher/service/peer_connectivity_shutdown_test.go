@@ -7,12 +7,46 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
+
+type closingConnectivitySession struct {
+	muxsession.Session
+	done <-chan struct{}
+	err  error
+}
+
+func (s closingConnectivitySession) Done() <-chan struct{} { return s.done }
+func (s closingConnectivitySession) Err() error            { return s.err }
+
+func TestPeerConnectivityShutdownJoinsPendingQUICClose(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		p := &PeerSession{bound: &Bound{boundState: &boundState{}}, ctx: ctx, cancel: cancel, changed: make(chan struct{})}
+		raw := &quic.ApplicationError{Remote: true}
+		done := make(chan struct{})
+		session := closingConnectivitySession{done: done, err: errors.Join(muxsession.ErrClosed, raw)}
+		result := make(chan error, 1)
+		go func() { result <- p.finishConnectivity(session, raw) }()
+		synctest.Wait()
+		select {
+		case err := <-result:
+			t.Fatal("raw signaling return ended the peer before its connection confirmed closure", err)
+		default:
+		}
+		close(done)
+		if err := <-result; err != nil || p.ctx.Err() != nil ||
+			p.terminalEnd.Cause != tunnel.ConnectorTerminalPeerTerminated || p.terminalEnd.Err != nil {
+			t.Fatal("normal QUIC close escaped the peer", p.terminalEnd, err)
+		}
+	})
+}
 
 // these barriers hold only observation of real transport returns. they do not
 // change the connection's Done/Err facts or manufacture a connectivity result.

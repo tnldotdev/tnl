@@ -12,5 +12,6 @@ overrides:
 
 allowBuilds:
   esbuild: false
+  workerd: false
 
 autoInstallPeers: false

@@ -17,6 +17,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorsession "github.com/tnldotdev/tnl/internal/connector/session"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -32,7 +33,7 @@ func newDeploymentKubeBackend(t *testing.T, credential auth.DeploymentCredential
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := newDeploymentConnection(request, client)
+	deployment, err := connectorsession.NewDeployment(connectorsession.DeploymentOptions{Project: request.Project, Deployment: request.Name, Credential: request.Token}, client)
 	if err != nil {
 		t.Fatal(err)
 	}

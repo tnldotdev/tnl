@@ -507,6 +507,10 @@ type ownerTeardownFixture struct {
 }
 
 func newOwnerTeardownFixture(t *testing.T, retainPackets, holdControlRead bool) *ownerTeardownFixture {
+	return newOwnerTeardownStdioFixture(t, retainPackets, holdControlRead, nil)
+}
+
+func newOwnerTeardownStdioFixture(t *testing.T, retainPackets, holdControlRead bool, stdio *stdioOperation) *ownerTeardownFixture {
 	t.Helper()
 	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
 	operation, stopOwner := context.WithCancelCause(ctx)
@@ -689,7 +693,11 @@ func newOwnerTeardownFixture(t *testing.T, retainPackets, holdControlRead bool) 
 		f.remote = tls.Server(raw, serverTLS)
 		ready <- f.remote.HandshakeContext(ctx)
 	})
-	prepared, err := PrepareConnector(operation, ctx, f.owner.session, run, entry)
+	lifetime := context.Context(operation)
+	if stdio != nil {
+		lifetime = stdio.ctx
+	}
+	prepared, err := PrepareConnector(lifetime, ctx, f.owner.session, run, entry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -722,7 +730,9 @@ func newOwnerTeardownFixture(t *testing.T, retainPackets, holdControlRead bool) 
 			closeErr = f.remoteRaw.Close()
 		}
 		f.remoteWorkers.Wait()
-		closeErr = errors.Join(closeErr, f.remote.Close())
+		if request.Purpose == tunnelv1.ConnectorTerminalCompletion {
+			closeErr = errors.Join(closeErr, f.remote.Close())
+		}
 		f.remoteMu.Lock()
 		joinedErr, visitor := f.remoteErr, f.remoteVisitor
 		f.remoteMu.Unlock()

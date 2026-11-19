@@ -17,6 +17,27 @@ type interruptedSocketConn struct {
 	fault   error
 }
 
+func TestTargetDialInterruptionRetainsCauseAndIndependentFailures(t *testing.T) {
+	cause := errors.New("visitor stopped")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(cause)
+	_, dialErr := (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:1")
+	var stopped *SocketInterruption
+	result := targetDialResult(ctx, dialErr)
+	if !errors.As(result, &stopped) || !stopped.StoppedBy(cause) || !errors.Is(result, dialErr) {
+		t.Fatal("canceled target dial lost its cause or owner", result)
+	}
+	independent := errors.New("dial failed")
+	for _, err := range []error{independent, errors.Join(dialErr, independent), context.DeadlineExceeded} {
+		if result := targetDialResult(ctx, err); result != err {
+			t.Fatal("canceled target dial claimed an independent error", result)
+		}
+	}
+	if result := targetDialResult(t.Context(), dialErr); result != dialErr {
+		t.Fatal("a different dial context claimed the cancellation", result)
+	}
+}
+
 func (c *interruptedSocketConn) Read(data []byte) (int, error) {
 	close(c.reading)
 	return c.Conn.Read(data)

@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -68,8 +69,12 @@ type Control interface {
 	Close(context.Context) error
 }
 
+type Telemetry interface {
+	BeginScope(telemetryv1.TransportReportRole) *clienttelemetry.Scope
+}
+
 type Config struct {
-	Telemetry                       *clienttelemetry.Collector
+	Telemetry                       Telemetry
 	telemetry                       *clienttelemetry.Scope
 	Control                         Control
 	ServiceID, IdentityID, Protocol string
@@ -122,17 +127,8 @@ type connectionConsumer func(context.Context, func(context.Context, net.Conn) er
 func serveConnections(ctx context.Context, config Config, consume connectionConsumer) (result error) {
 	startup, finish := observability.ClientOperation(ctx, "connector.startup")
 	defer func() { finish(result) }()
-	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) || config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !validProtocol(config.Protocol) || config.TrustRevision < 1 || config.Endpoint == nil || !serviceendpoint.Valid(config.Protocol, config.Endpoint.Hostname, config.Endpoint.Port, config.Endpoint.Public) {
-		return ErrServiceConnection
-	}
-	if config.TransportTLS != nil && config.TransportTLS.InsecureSkipVerify || config.ServiceTLS == nil || config.ServiceTLS.InsecureSkipVerify || len(config.ServiceTLS.Certificates) != 0 || config.ServiceTLS.GetClientCertificate != nil {
-		return ErrServiceConnection
-	}
-	if config.MaxConnections == 0 {
-		config.MaxConnections = 64
-	}
-	if config.MaxConnections < 1 || config.MaxConnections > 4096 {
-		return ErrServiceConnection
+	if err := validateConfig(&config); err != nil {
+		return err
 	}
 	config.cleanup = newConnectorCleanup(ctx, config.CleanupContext)
 	defer func() {
@@ -186,6 +182,22 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 		return errors.Join(ErrServiceConnection, cause, err)
 	}
 	return err
+}
+
+func validateConfig(config *Config) error {
+	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) || config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !validProtocol(config.Protocol) || config.TrustRevision < 1 || config.Endpoint == nil || !serviceendpoint.Valid(config.Protocol, config.Endpoint.Hostname, config.Endpoint.Port, config.Endpoint.Public) {
+		return ErrServiceConnection
+	}
+	if config.TransportTLS != nil && config.TransportTLS.InsecureSkipVerify || config.ServiceTLS == nil || config.ServiceTLS.InsecureSkipVerify || len(config.ServiceTLS.Certificates) != 0 || config.ServiceTLS.GetClientCertificate != nil {
+		return ErrServiceConnection
+	}
+	if config.MaxConnections == 0 {
+		config.MaxConnections = 64
+	}
+	if config.MaxConnections < 1 || config.MaxConnections > 4096 {
+		return ErrServiceConnection
+	}
+	return nil
 }
 
 func validProtocol(protocol string) bool {

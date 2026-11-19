@@ -343,7 +343,9 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		config.RelayQUIC = muxsession.DisabledConnector{}
 		config.Connectivity.DisableDirect = true
 	}
-	config.telemetry = config.Telemetry.BeginScope("connector")
+	if config.Telemetry != nil {
+		config.telemetry = config.Telemetry.BeginScope("connector")
+	}
 	config.Connectivity = config.telemetry.Connectivity(config.Connectivity)
 	life, cancelServing := context.WithCancelCause(context.WithoutCancel(ctx))
 	packetLife, cancelPackets := context.WithCancelCause(context.WithoutCancel(ctx))
@@ -524,7 +526,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		use := &connectorUse{entry: opening.entry, until: opening.until, terminalKey: connectorTerminalKey(opening.entry)}
 		p.warm = use
 		p.active[use] = struct{}{}
-		prepared, err := prepareConnector(life, setup, p.session, preparedRun, opening.entry, func() { use.admitted = true })
+		prepared, err := prepareConnector(life, setup, p.session, preparedRun, opening.entry, true, func() { use.admitted = true })
 		use.prepared = prepared
 		if err != nil {
 			return nil, err
@@ -1233,6 +1235,9 @@ func connectorReconnectError(err error) reconnectDisposition {
 }
 
 func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (result error) {
+	if operation := stdioOperationFor(ctx); operation != nil {
+		operation.bindCleanup(p.cleanup)
+	}
 	p.mu.Lock()
 	if !p.currentLocked() || ctx.Err() != nil || len(p.active) >= p.config.MaxConnections && p.warm == nil {
 		p.mu.Unlock()
@@ -1303,7 +1308,7 @@ func (p *connectorConnection) forwardUse(ctx context.Context, local net.Conn, us
 				<-stopped
 			}
 		}()
-		prepared, err := prepareConnector(p.ctx, setup, p.session, run, entry, func() {
+		prepared, err := prepareConnector(p.ctx, setup, p.session, run, entry, false, func() {
 			p.mu.Lock()
 			use.admitted = true
 			p.mu.Unlock()
@@ -1321,7 +1326,7 @@ func (p *connectorConnection) forwardUse(ctx context.Context, local net.Conn, us
 		}
 	}
 	if operation := stdioOperationFor(ctx); operation != nil {
-		if err := operation.activateWithAbort(use.prepared.stdio, func() error {
+		if err := use.prepared.bindOperation(operation, func() error {
 			err := p.terminalUse(use, context.Canceled)
 			if failure.Only(err, context.Canceled) {
 				return nil

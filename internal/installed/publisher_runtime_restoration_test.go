@@ -140,16 +140,32 @@ type restoredPublisherStatus struct {
 
 func restoredPublisherStatusUntil(t *testing.T, events <-chan restoredPublisherStatus, predicate func(restoredPublisherStatus) bool) restoredPublisherStatus {
 	t.Helper()
-	timer := time.NewTimer(2 * time.Second)
+	return restoredPublisherStatusWithin(t, events, 2*time.Second, predicate)
+}
+
+func restoredPublisherReadyStatus(t *testing.T, events <-chan restoredPublisherStatus) restoredPublisherStatus {
+	t.Helper()
+	// the first heartbeat can precede the separate local health observation.
+	// wait for the next scheduled heartbeat without changing the engine.
+	return restoredPublisherStatusWithin(t, events, 12*time.Second, func(e restoredPublisherStatus) bool {
+		return e.status.State == JobReady || e.status.State == JobBlocked || e.status.State == JobRetrying
+	})
+}
+
+func restoredPublisherStatusWithin(t *testing.T, events <-chan restoredPublisherStatus, budget time.Duration, predicate func(restoredPublisherStatus) bool) restoredPublisherStatus {
+	t.Helper()
+	timer := time.NewTimer(budget)
 	defer timer.Stop()
+	var last Status
 	for {
 		select {
 		case event := <-events:
+			last = event.status
 			if predicate(event) {
 				return event
 			}
 		case <-timer.C:
-			t.Fatal("installed publisher did not reach its actual status boundary within 2s")
+			t.Fatalf("installed publisher did not reach its status boundary within %s: last status=%+v", budget, last)
 			return restoredPublisherStatus{}
 		}
 	}
@@ -410,9 +426,7 @@ func TestInstalledPublishersKeepTelemetryChoiceAcrossTwoSupervisorStarts(t *test
 		}()
 		// release before the join cleanup on an early assertion failure too.
 		t.Cleanup(allowEnabled)
-		disabledReady := restoredPublisherStatusUntil(t, statuses, func(e restoredPublisherStatus) bool {
-			return e.status.State == JobReady || e.status.State == JobBlocked || e.status.State == JobRetrying
-		})
+		disabledReady := restoredPublisherReadyStatus(t, statuses)
 		if disabledReady.job != "disabled" || disabledReady.status.State != JobReady || disabledReady.status.Attempts != 1 || disabledReady.status.RunNumber != uint64(boot+1) {
 			t.Fatalf("boot %d disabled publisher did not reach actual Ready before the enabled preparation was released: %+v", boot+1, disabledReady)
 		}
@@ -422,9 +436,7 @@ func TestInstalledPublishersKeepTelemetryChoiceAcrossTwoSupervisorStarts(t *test
 		}
 		allowEnabled()
 		for {
-			event := restoredPublisherStatusUntil(t, statuses, func(e restoredPublisherStatus) bool {
-				return e.status.State == JobReady || e.status.State == JobBlocked || e.status.State == JobRetrying
-			})
+			event := restoredPublisherReadyStatus(t, statuses)
 			if event.status.State != JobReady || event.status.Attempts != 1 || event.status.RunNumber != uint64(boot+1) {
 				t.Fatalf("boot %d publisher did not reach real Ready on its first boot attempt: %+v", boot+1, event)
 			}

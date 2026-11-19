@@ -1,0 +1,15 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "declaration": false,
+    "noEmit": true,
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "skipLibCheck": true,
+    "customConditions": ["browser"],
+    "types": ["node"]
+  },
+  "references": [{ "path": "../../tsconfig.management.json" }],
+  "include": ["*.ts"],
+  "exclude": ["*.test.ts"]
+}

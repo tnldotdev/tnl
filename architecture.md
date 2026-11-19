@@ -145,6 +145,21 @@ without receiving that content. The publisher HTTP frontend and CLI compose
 those decisions with the same SQLite owner; a decision never outlives its original
 deadline while waiting for local state. There is no cross-machine feedback store.
 
+## browser and worker sdk
+
+The TypeScript SDK uses native Go on Node and Bun. Its browser and Worker exports
+compose the same connector owners in Go/WASM, without a loopback listener. Go owns
+selection, authorization, renewal, visitor TLS, and the retained inner connection;
+TypeScript supplies Fetch, WebSockets, and bounded Web Streams. Portable clients
+use WSS relays only. Their HTTP and Kubernetes settings expose Fetch; TCP and
+database settings expose streams rather than machine-local ports.
+
+`packages/ts/wasm` is the SDK's Go entrypoint, not another connector engine. It
+binds JavaScript calls to existing operations and joins its resources before
+exiting. A deployment handle owns a fresh Go instance. Workers share compiled
+code, never a live scheduler or a connection across requests. Browser control
+requests use explicit credentials with uncredentialed CORS, not ambient cookies.
+
 ## find the code
 
 ```text
@@ -169,6 +184,7 @@ internal/
     toolbar/           development-only browser assets
   connector/           selects and connects to a service
     runtime/           listeners, renewal, and expiry
+    session/           in-memory deployment selection, streams, and HTTP clients
     stream/            encrypted connections to a publisher
     workload/          workload authentication
     kubeconfig/        Kubernetes client configuration
@@ -197,6 +213,7 @@ pkg/
   protocol/tunnelv1/   handwritten tunnel protocol
   tnl/                 public Go SDK
 packages/ts/           TypeScript SDK and framework integrations
+  wasm/                Go/WASM SDK composition and host bindings
 packages/py/           Python ASGI binding and packaging
 connect/               independently built GitHub Action
 schema/                generated project configuration schema

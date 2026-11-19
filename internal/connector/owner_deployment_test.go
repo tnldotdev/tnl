@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorsession "github.com/tnldotdev/tnl/internal/connector/session"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -96,7 +97,7 @@ func newDeploymentOwnerFixture(t *testing.T, duration time.Duration, selectRun f
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := newDeploymentConnection(request, server.Client())
+	deployment, err := connectorsession.NewDeployment(connectorsession.DeploymentOptions{Project: request.Project, Deployment: request.Name, Credential: request.Token}, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}

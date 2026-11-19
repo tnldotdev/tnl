@@ -2,20 +2,26 @@ import { parseRuntimePayload } from "./internal/project/runtime.js";
 import { serviceMetadata } from "./internal/project/service_metadata.js";
 import type { TnlRuntime } from "./index.js";
 import { TnlError } from "./errors.js";
+import { createStreamClient } from "./internal/connector/wasm_client.js";
+import type { ServiceFacts } from "./project.js";
 export type * from "./project.js";
+export type { TnlStreamConnectionRegistry as TnlConnectionRegistry } from "./project.js";
 export type { TnlRuntime, TnlProjectConfig } from "./index.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 export type {
-  ServiceFacts,
-  Deployment,
   LocalDeployment,
   LocalPostgresConnection,
   LocalConnectionRegistry,
 } from "./internal/connector/client.js";
+export type { StreamDeployment as Deployment } from "./internal/connector/wasm_client.js";
 
-export const createClient: typeof import("./internal/connector/client.js").createClient = () => {
-  throw new TnlError("sdk.connection_server_only");
-};
+export function createClient<const Services extends ServiceFacts = Record<never, never>>(options: {
+  project?: string;
+  services?: Services;
+  token?: string;
+}) {
+  return createStreamClient(options);
+}
 
 declare const process: { readonly env?: { readonly TNL_PROJECT_RUNTIME?: string } } | undefined;
 

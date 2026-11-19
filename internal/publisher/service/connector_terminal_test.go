@@ -209,7 +209,7 @@ func TestConnectorAbortClassificationKeepsJoinedIndependentFailures(t *testing.T
 	ctx, abort := context.WithCancelCause(t.Context())
 	abort(errConnectorAdmissionAbort)
 	independent := errors.New("independent physical cleanup failed")
-	err := connectorAbortOperation(errors.Join(context.Canceled, independent), ctx)
+	err := connectorAbortOperation(errors.Join(context.Canceled, independent), &connectorAdmission{ctx: ctx})
 	if !errors.Is(err, errConnectorAdmissionAbort) || !errors.Is(err, independent) ||
 		serviceWorkerError(err, errConnectorAdmissionAbort) == nil {
 		t.Fatal("owned Abort hid an independent joined failure", err)

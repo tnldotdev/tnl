@@ -482,6 +482,10 @@ func (a *connectorAdmission) closeStream() error {
 
 func (a *connectorAdmission) stopAndClose() { a.Stop(); _ = a.closeStream() }
 
+func (a *connectorAdmission) TargetAborting() bool {
+	return context.Cause(a.ctx) == errConnectorAdmissionAbort
+}
+
 func (a *connectorAdmission) CheckUse(ctx context.Context) (time.Time, error) {
 	b := a.peer.bound
 	b.mu.Lock()
@@ -551,7 +555,7 @@ func (c *connectorOwnedConn) Read(p []byte) (int, error) {
 		return c.prefix.Read(p)
 	}
 	n, err := c.Conn.Read(p)
-	return n, connectorAbortOperation(err, c.admission.ctx)
+	return n, connectorAbortOperation(err, c.admission)
 }
 
 func (c *connectorOwnedConn) Write(p []byte) (int, error) {
@@ -559,7 +563,7 @@ func (c *connectorOwnedConn) Write(p []byte) (int, error) {
 		return 0, errConnectorAdmissionAbort
 	}
 	n, err := c.Conn.Write(p)
-	return n, connectorAbortOperation(err, c.admission.ctx)
+	return n, connectorAbortOperation(err, c.admission)
 }
 
 func (c *connectorOwnedConn) Close() error {
@@ -808,7 +812,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 	}
 	visitorCtx := observability.WithVisitor(observability.ExtractWireTrace(a.ctx, entry.TraceContext), entry.VisitorConnectionID)
 	err = b.forwardManaged(visitorCtx, owned, servicestream.ConnectorVisitor{Admission: a, HTTPProof: a}, "", a.finishDelivery)
-	return connectorAbortOperation(err, a.ctx)
+	return connectorAbortOperation(err, a)
 }
 
 // dispatch never waits for policy installation or application IO. at most one

@@ -10,7 +10,7 @@ import (
 // each publication owns its scope and closes it after its transport workers.
 // only fixed-size counters are touched by transport and recovery callbacks.
 type Scope struct {
-	collector    *Collector
+	collector    scopeCollector
 	role         api.TransportReportRole
 	mu           sync.Mutex
 	epoch        int64
@@ -27,18 +27,14 @@ type Scope struct {
 	}
 }
 
-func (c *Collector) BeginScope(role api.TransportReportRole) *Scope {
-	if c == nil || !role.Valid() {
-		return nil
-	}
-	c.scopesMu.Lock()
-	defer c.scopesMu.Unlock()
-	if c.closed.Load() {
-		return nil
-	}
-	s := &Scope{collector: c, role: role, epoch: c.preference.Load().Epoch}
-	c.scopes[s] = struct{}{}
-	return s
+// storage and preference watching belong to the native collector, not to a
+// transport scope. request-scoped runtimes may omit collection entirely.
+type scopeCollector interface {
+	scopePreference() (bool, int64)
+	scopeClosed() bool
+	enqueue(api.Event, int64)
+	removeScope(*Scope)
+	Flush()
 }
 
 var operations = [...]api.Operation{api.RelayConnect, api.DirectConnect, api.Fallback, api.Recovery}
@@ -85,14 +81,14 @@ func (s *Scope) Record(operation api.Operation, path api.Path, outcome api.Outco
 
 // enabled is called with mu held; an epoch change drops every pending fact.
 func (s *Scope) enabled() bool {
-	p := s.collector.preference.Load()
-	if p.Epoch != s.epoch {
+	enabled, epoch := s.collector.scopePreference()
+	if epoch != s.epoch {
 		s.counts = [4][3][3][4]int64{}
 		s.ready, s.demo, s.seenReady, s.seenDemo = nil, false, false, false
 		clear(s.integrations[:])
-		s.epoch = p.Epoch
+		s.epoch = epoch
 	}
-	return !s.closed && p.Enabled && !s.collector.closed.Load()
+	return !s.closed && enabled && !s.collector.scopeClosed()
 }
 
 func (s *Scope) Ready(payload api.PublicationReady) {
@@ -157,9 +153,9 @@ func (s *Scope) flush() {
 func (s *Scope) flushTo(emit func(api.Event, int64)) {
 	s.mu.Lock()
 	var events []api.Event
-	p := s.collector.preference.Load()
+	enabled, epoch := s.collector.scopePreference()
 	report := api.TransportReport{Role: s.role}
-	if p.Enabled && p.Epoch == s.epoch {
+	if enabled && epoch == s.epoch {
 		for i, op := range operations {
 			for j, path := range paths {
 				for k, outcome := range outcomes {
@@ -177,7 +173,7 @@ func (s *Scope) flushTo(emit func(api.Event, int64)) {
 		}
 	}
 	s.counts = [4][3][3][4]int64{}
-	if p.Enabled && p.Epoch == s.epoch {
+	if enabled && epoch == s.epoch {
 		if s.ready != nil {
 			events = append(events, Ready(*s.ready))
 		}
@@ -200,7 +196,7 @@ func (s *Scope) flushTo(emit func(api.Event, int64)) {
 	for i := range s.integrations {
 		s.integrations[i].pending = false
 	}
-	epoch := s.epoch
+	epoch = s.epoch
 	s.mu.Unlock()
 	for _, event := range events {
 		emit(event, epoch)
@@ -215,9 +211,7 @@ func (s *Scope) Close() {
 		s.mu.Lock()
 		s.closed = true
 		s.mu.Unlock()
-		s.collector.scopesMu.Lock()
-		delete(s.collector.scopes, s)
-		s.collector.scopesMu.Unlock()
+		s.collector.removeScope(s)
 		s.flush()
 		s.collector.Flush()
 	})

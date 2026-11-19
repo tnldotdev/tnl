@@ -174,6 +174,13 @@ func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
 
 func (p *PeerSession) finishConnectivity(session muxsession.Session, err error) error {
 	if err != nil && session != nil {
+		var application *quic.ApplicationError
+		if muxsession.NormalSessionCloseOnly(err) && errors.As(err, &application) {
+			// raw QUIC signaling can return the connection's close error
+			// before quic-go cancels its context. join that same connection's
+			// already-decided end; unrelated errors cannot wait here.
+			<-session.Done()
+		}
 		select {
 		case <-session.Done():
 			// connectivity reads raw QUIC errors. record an actual normal

@@ -12,7 +12,9 @@ import (
 
 	yamux "github.com/libp2p/go-yamux/v5"
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
 
 type stdioOperationKey struct{}
@@ -40,10 +42,15 @@ type stdioOperation struct {
 	expected        bool
 	selected        *stdioStream
 	active          bool
+	interrupted     bool
 	resetStarted    bool
+	resetDone       chan struct{}
+	resetErr        error
 	resetOK         bool
 	localClosing    bool
 	failures        []error
+	stoppedAt       time.Time
+	cleanup         *connectorCleanup
 	abortTerminal   func() error
 	terminalOnce    sync.Once
 	terminalErr     error
@@ -53,7 +60,7 @@ type stdioOperation struct {
 
 func newStdioOperation(caller context.Context, local net.Conn) *stdioOperation {
 	life, cancel := context.WithCancelCause(context.WithoutCancel(caller))
-	o := &stdioOperation{caller: caller, cancel: cancel, parentDone: make(chan struct{}), abortDone: make(chan struct{})}
+	o := &stdioOperation{caller: caller, cancel: cancel, cleanup: newConnectorCleanup(caller, nil), parentDone: make(chan struct{}), abortDone: make(chan struct{})}
 	o.local = &stdioLocalConn{Conn: local, owner: o}
 	o.ctx = stdioContext{Context: context.WithValue(life, stdioOperationKey{}, o), caller: caller}
 	o.stopParent = context.AfterFunc(caller, func() {
@@ -76,6 +83,12 @@ func (o *stdioOperation) serve(config Config) (result error) {
 	})
 }
 
+func (o *stdioOperation) forward(connection *connectorConnection) (result error) {
+	defer func() { result = o.finish(result) }()
+	defer o.complete()
+	return connection.Forward(o.ctx, o.local)
+}
+
 func (o *stdioOperation) stop(cause error, caller bool) {
 	o.mu.Lock()
 	if o.stopping {
@@ -83,36 +96,32 @@ func (o *stdioOperation) stop(cause error, caller bool) {
 		return
 	}
 	o.stopping, o.cause, o.expected = true, cause, caller && cause == context.Canceled
-	// reset can wake a copy worker that closes local before Reset returns.
+	o.stoppedAt = time.Now()
+	// interruption can wake a copy worker that closes local before stop returns.
 	// publish ownership before either worker can observe that close.
 	o.localClosing = true
 	selected, active := o.selected, o.active
-	o.resetStarted = active && selected != nil && selected.closeDone == nil
-	terminal := o.abortTerminal
+	o.interrupted = active && selected != nil && selected.closeDone == nil && !selected.physicalClosing
+	interrupt := o.interrupted
+	cleanup, stoppedAt := o.cleanup, o.stoppedAt
 	o.mu.Unlock()
-	if o.resetStarted && terminal != nil {
-		// authenticate the abort before interrupting visitor TLS. the publisher
-		// must own and join that exact stop before a remote zero reset is ours.
-		o.terminalOnce.Do(func() {
-			o.mu.Lock()
-			o.terminalStarted = true
-			o.mu.Unlock()
-			o.terminalErr = terminal()
-			o.mu.Lock()
-			o.terminalOK = o.terminalErr == nil
-			o.mu.Unlock()
-		})
+	if cleanup != nil && caller {
+		cleanup.beginAt(stoppedAt)
+		_ = cleanup.context() // capture the caller's original cleanup bound now.
 	}
-	if o.resetStarted {
-		// the local reset must succeed too. a remote zero reset additionally
-		// requires the exact terminal abort's joined success.
-		err := selected.Stream.Reset(0)
+	if interrupt {
+		// wake only local i/o. the publisher must receive authenticated Abort
+		// before a stream reset can become its admission's first stop cause.
+		err := selected.interrupt()
 		o.mu.Lock()
-		o.resetOK = err == nil
 		if err != nil {
 			o.failures = append(o.failures, err)
 		}
 		o.mu.Unlock()
+		if err != nil {
+			// retain failed interruption even if reset must wake the workers.
+			_ = o.reset()
+		}
 	}
 	var closeErr error
 	if local, ok := o.local.(*stdioLocalConn); ok {
@@ -143,20 +152,77 @@ func (o *stdioOperation) complete() {
 }
 
 func (o *stdioOperation) finish(result error) error {
+	defer o.cleanup.close()
 	if !o.stopParent() {
 		<-o.parentDone
 	}
 	o.stop(nil, false)
 	<-o.abortDone
+	// forwarding has joined its authenticated terminal exchange before reset.
+	_ = o.reset()
 	o.cancel(o.cause)
 	o.mu.Lock()
-	result = errors.Join(append([]error{result, o.terminalErr}, o.failures...)...)
+	result = errors.Join(append([]error{result, o.terminalErr, o.cause}, o.failures...)...)
 	expected := o.expected && (!o.resetStarted || o.resetOK)
 	o.mu.Unlock()
 	if expected && context.Cause(o.caller) == context.Canceled && o.abortOnly(result) {
 		return nil
 	}
 	return result
+}
+
+func (o *stdioOperation) bindCleanup(parent *connectorCleanup) {
+	if parent == nil {
+		return
+	}
+	parent.mu.Lock()
+	authority, source := parent.authority, parent.source
+	parent.mu.Unlock()
+	cleanup := newConnectorCleanup(o.caller, source)
+	cleanup.observe(authority)
+	o.mu.Lock()
+	o.cleanup = cleanup
+	stoppedAt := o.stoppedAt
+	o.mu.Unlock()
+	if !stoppedAt.IsZero() {
+		cleanup.beginAt(stoppedAt)
+		_ = cleanup.context()
+	}
+}
+
+func (o *stdioOperation) cleanupBound(until time.Time) time.Time {
+	o.mu.Lock()
+	cleanup := o.cleanup
+	o.mu.Unlock()
+	return cleanup.bound(until)
+}
+
+func (o *stdioOperation) reset() error {
+	o.mu.Lock()
+	if !o.interrupted {
+		o.mu.Unlock()
+		return nil
+	}
+	if o.resetStarted {
+		done := o.resetDone
+		o.mu.Unlock()
+		<-done
+		return o.resetErr
+	}
+	o.resetStarted = true
+	o.resetDone = make(chan struct{})
+	selected := o.selected
+	o.mu.Unlock()
+	err := selected.Stream.Reset(0)
+	o.mu.Lock()
+	o.resetErr = err
+	o.resetOK = err == nil
+	if err != nil {
+		o.failures = append(o.failures, err)
+	}
+	close(o.resetDone)
+	o.mu.Unlock()
+	return err
 }
 
 func (o *stdioOperation) bind(stream muxsession.Stream) (*stdioStream, error) {
@@ -188,7 +254,21 @@ func (o *stdioOperation) activateWithAbort(stream *stdioStream, abort func() err
 func (o *stdioOperation) terminalUse(operation error, exchange func(error) error) error {
 	// caller abort and natural EOF join one exact visitor exchange, rather than
 	// issuing competing terminal numbers or turning a failed ack into success.
-	o.terminalOnce.Do(func() { o.terminalErr = exchange(operation) })
+	o.terminalOnce.Do(func() {
+		o.mu.Lock()
+		abort := o.abortTerminal
+		stopped := o.expected && o.interrupted && abort != nil
+		o.terminalStarted = stopped
+		o.mu.Unlock()
+		if stopped {
+			o.terminalErr = abort()
+		} else {
+			o.terminalErr = exchange(operation)
+		}
+		o.mu.Lock()
+		o.terminalOK = stopped && o.terminalErr == nil
+		o.mu.Unlock()
+	})
 	return errors.Join(operation, o.terminalErr)
 }
 
@@ -200,6 +280,17 @@ type stdioAbortError struct {
 
 func (*stdioAbortError) Error() string   { return "the selected stdio stream was aborted by its caller" }
 func (e *stdioAbortError) Unwrap() error { return e.cause }
+
+type stdioInterruptError struct {
+	owner  *stdioOperation
+	stream *stdioStream
+	cause  error
+}
+
+func (*stdioInterruptError) Error() string {
+	return "the selected stdio stream's local i/o was interrupted by its caller"
+}
+func (e *stdioInterruptError) Unwrap() error { return e.cause }
 
 type stdioLocalAbortError struct {
 	owner *stdioOperation
@@ -227,6 +318,17 @@ type stdioLocalConn struct {
 func (c *stdioLocalConn) abort(cause error) error {
 	if aborter, ok := c.Conn.(interface{ Abort(error) error }); ok {
 		return aborter.Abort(cause)
+	}
+	return c.Conn.Close()
+}
+
+func (c *stdioLocalConn) Close() error {
+	o := c.owner
+	o.mu.Lock()
+	expected, cause := o.expected && o.localClosing, o.cause
+	o.mu.Unlock()
+	if expected {
+		return c.abort(cause)
 	}
 	return c.Conn.Close()
 }
@@ -291,10 +393,70 @@ func (c *stdioLocalConn) CloseWrite() error {
 
 type stdioStream struct {
 	muxsession.Stream
-	owner        *stdioOperation
-	foreignReset atomic.Bool
-	closeDone    chan struct{}
-	closeErr     error
+	owner            *stdioOperation
+	foreignReset     atomic.Bool
+	closeDone        chan struct{}
+	closeErr         error
+	readDeadline     time.Time
+	writeDeadline    time.Time
+	interruptAt      time.Time
+	readInterrupted  bool
+	writeInterrupted bool
+	physicalClosing  bool
+	released         bool
+}
+
+func (s *stdioStream) interrupt() error {
+	o := s.owner
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	at := time.Now()
+	s.interruptAt = at
+	readErr := s.Stream.SetReadDeadline(at)
+	writeErr := s.Stream.SetWriteDeadline(at)
+	s.readInterrupted = readErr == nil && (s.readDeadline.IsZero() || s.readDeadline.After(at))
+	s.writeInterrupted = writeErr == nil && (s.writeDeadline.IsZero() || s.writeDeadline.After(at))
+	return errors.Join(readErr, writeErr)
+}
+
+// exact deadline leaves, not arbitrary Timeout or Is implementations, identify
+// the transport's local deadline. an earlier deadline is never owned by stop.
+func stdioDeadlineOnly(err error) bool {
+	for range 16 {
+		switch err {
+		case os.ErrDeadlineExceeded, yamux.ErrTimeout:
+			return true
+		case nil:
+			return false
+		}
+		switch typed := err.(type) {
+		case *CleanupError, *tunnel.SessionCleanupError, *muxsession.QUICTransportCloseError, *failure.Error:
+			return false
+		case interface{ Unwrap() error }:
+			err = typed.Unwrap()
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func (s *stdioStream) ioResult(err error, read bool) error {
+	completed := time.Now()
+	if stdioDeadlineOnly(err) && !s.foreignReset.Load() {
+		o := s.owner
+		o.mu.Lock()
+		owned := s.writeInterrupted
+		if read {
+			owned = s.readInterrupted
+		}
+		expected := owned && o.expected && o.interrupted && o.selected == s && !s.interruptAt.After(completed)
+		o.mu.Unlock()
+		if expected {
+			return &stdioInterruptError{owner: o, stream: s, cause: err}
+		}
+	}
+	return s.result(err)
 }
 
 func stdioLocalZeroAbort(err error) bool {
@@ -337,13 +499,32 @@ func (s *stdioStream) result(err error) error {
 
 func (s *stdioStream) Read(p []byte) (int, error) {
 	n, err := s.Stream.Read(p)
-	return n, s.result(err)
+	return n, s.ioResult(err, true)
 }
 func (s *stdioStream) Write(p []byte) (int, error) {
 	n, err := s.Stream.Write(p)
-	return n, s.result(err)
+	return n, s.ioResult(err, false)
 }
 func (s *stdioStream) CloseWrite() error { return s.result(s.Stream.CloseWrite()) }
+func (s *stdioStream) SetDeadline(at time.Time) error {
+	return errors.Join(s.SetReadDeadline(at), s.SetWriteDeadline(at))
+}
+func (s *stdioStream) SetReadDeadline(at time.Time) error {
+	o := s.owner
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	s.readInterrupted = false
+	s.readDeadline = at
+	return s.Stream.SetReadDeadline(at)
+}
+func (s *stdioStream) SetWriteDeadline(at time.Time) error {
+	o := s.owner
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	s.writeInterrupted = false
+	s.writeDeadline = at
+	return s.Stream.SetWriteDeadline(at)
+}
 func (s *stdioStream) Reset(code uint32) error {
 	s.foreignReset.Store(true)
 	return s.Stream.Reset(code)
@@ -351,15 +532,13 @@ func (s *stdioStream) Reset(code uint32) error {
 func (s *stdioStream) Close() error {
 	o := s.owner
 	o.mu.Lock()
-	if o.selected == s && o.resetStarted {
-		done := o.abortDone
+	if o.selected == s && o.interrupted {
+		released := s.released
 		o.mu.Unlock()
-		<-done
-		o.mu.Lock()
-		if o.resetOK {
-			o.mu.Unlock()
-			return nil
+		if released {
+			return o.reset()
 		}
+		return nil
 	}
 	if s.closeDone != nil {
 		done := s.closeDone
@@ -428,6 +607,8 @@ func (o *stdioOperation) abortOnly(err error) bool {
 			return false
 		}
 		switch typed := cause.(type) {
+		case *CleanupError, *tunnel.SessionCleanupError, *muxsession.QUICTransportCloseError, *failure.Error:
+			return false
 		case *stdioPreparedAbortError:
 			if typed == nil || typed.owner != o || typed.stream != o.selected {
 				return false
@@ -441,6 +622,10 @@ func (o *stdioOperation) abortOnly(err error) bool {
 			owned := typed != nil && typed.owner == o && typed.stream == o.selected && o.ownsStreamAbortLocked(typed.cause)
 			o.mu.Unlock()
 			if !owned {
+				return false
+			}
+		case *stdioInterruptError:
+			if typed == nil || typed.owner != o || typed.stream != o.selected || !stdioDeadlineOnly(typed.cause) {
 				return false
 			}
 		case *net.OpError:

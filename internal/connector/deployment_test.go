@@ -16,6 +16,8 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorsession "github.com/tnldotdev/tnl/internal/connector/session"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -148,11 +150,11 @@ func TestDeploymentConnectorUsesRegisteredSourceAndCurrentRevocation(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := newDeploymentConnection(connectorruntime.DeploymentRequest{Project: "acme/shop", Name: "production", Token: token}, server.Client())
+	d, err := connectorsession.NewDeployment(connectorsession.DeploymentOptions{Project: "acme/shop", Deployment: "production", Credential: token}, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := d.controlFor("db", service)
+	control, err := d.ControlFor("db", service)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +165,7 @@ func TestDeploymentConnectorUsesRegisteredSourceAndCurrentRevocation(t *testing.
 	if signer.Subject.Kind != tunnelv1.VisitorRegisteredKey || !ed25519.Verify(signer.PublicKey, []byte("proof"), signer.Sign([]byte("proof"))) {
 		t.Fatal("wrong registered signer")
 	}
-	if _, err := control.ConnectorSigner(context.Background(), "person"); !errors.Is(err, connectorruntime.ErrUnauthorized) {
+	if _, err := control.ConnectorSigner(context.Background(), "person"); !errors.Is(err, connectorstream.ErrServiceConnection) {
 		t.Fatal("registered signer accepted a human identity")
 	}
 	for range 2 {
@@ -178,7 +180,7 @@ func TestDeploymentConnectorUsesRegisteredSourceAndCurrentRevocation(t *testing.
 	if _, err := control.ResolveService(t.Context(), service); err == nil {
 		t.Fatal("retained token bypassed current revocation")
 	}
-	if _, err := control.ResolveService(t.Context(), "svc_bbbbbbbbbbbbbbbbbbbbbb"); !errors.Is(err, connectorruntime.ErrUnauthorized) {
+	if _, err := control.ResolveService(t.Context(), "svc_bbbbbbbbbbbbbbbbbbbbbb"); !errors.Is(err, connectorstream.ErrServiceConnection) {
 		t.Fatal("adapter selected another saved binding", err)
 	}
 }

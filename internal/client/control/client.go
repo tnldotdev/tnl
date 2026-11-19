@@ -18,10 +18,10 @@ import (
 	"strconv"
 	"time"
 
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -70,7 +70,7 @@ func NewExternallyAuthenticated(server string, httpClient *http.Client) (*Client
 }
 
 func New(server string, httpClient *http.Client, access credentials.AccessToken) (*Client, error) {
-	server, err := clientstate.CanonicalServer(server)
+	server, err := naming.CanonicalControlURL(server)
 	if err != nil {
 		return nil, failure.Wrap("select control server", failure.InvalidControlURL, err)
 	}

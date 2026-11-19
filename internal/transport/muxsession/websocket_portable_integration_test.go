@@ -8,10 +8,13 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	"encoding/pem"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,8 +26,34 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func TestIntegrationWebSocketPortableClient(t *testing.T) {
+func TestIntegrationWebSocketWASMClient(t *testing.T) {
+	testWebSocketWASMClient(t, "testdata/websocket-wasm.ts")
+}
+
+func TestIntegrationWebSocketWorkerdClient(t *testing.T) {
+	testWebSocketWASMClient(t, "testdata/websocket-workerd.ts")
+}
+
+func testWebSocketWASMClient(t *testing.T, fixture string) {
+	t.Helper()
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	wasm := filepath.Join(t.TempDir(), "websocket.wasm")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", wasm, "./testdata/websocketwasm")
+	build.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build executable WASM fixture: %v\n%s", err, output)
+	}
+	testWebSocketPortableClient(t, fixture, wasm)
+}
+
+func testWebSocketPortableClient(t *testing.T, fixture, wasm string) {
+	t.Helper()
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	goroot, err := exec.CommandContext(t.Context(), "go", "env", "GOROOT").Output()
+	if err != nil {
+		t.Fatalf("locate the WASM compiler runtime: %v", err)
+	}
+	wasmExec := filepath.Join(strings.TrimSpace(string(goroot)), "lib", "wasm", "wasm_exec.js")
 	certificate := visitorfixture.Certificate(t, "localhost")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -52,10 +81,13 @@ func TestIntegrationWebSocketPortableClient(t *testing.T) {
 		}
 		defer transport.Close()
 		state := transport.(muxsession.AcceptedPeer).TLSConnectionState()
-		if state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768 {
-			done <- fmt.Errorf("Chrome relay TLS: want TLS 1.3 with X25519MLKEM768, got version %#x with %s", state.Version, state.CurveID)
+		hybrid := fixture != "testdata/websocket-workerd.ts"
+		if state.Version != tls.VersionTLS13 || hybrid && state.CurveID != tls.X25519MLKEM768 ||
+			!hybrid && state.CurveID != tls.X25519 && state.CurveID != tls.CurveP256 {
+			done <- io.ErrUnexpectedEOF
 			return
 		}
+		t.Logf("outer WSS negotiated TLS 1.3 with %s", state.CurveID)
 		session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, hello tunnelv1.Message) error {
 			if hello.Role != tunnelv1.Ingress || hello.Credential != "portable-fixture-only" {
 				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
@@ -95,16 +127,15 @@ func TestIntegrationWebSocketPortableClient(t *testing.T) {
 			}
 			defer stream.Close()
 			_, err = io.WriteString(stream, "server-open")
+			if err == nil {
+				err = stream.CloseWrite()
+			}
 			var response []byte
 			if err == nil {
 				response, err = io.ReadAll(stream)
 			}
 			if err == nil && string(response) != "server-open" {
-				err = fmt.Errorf("server-open stream did not receive the complete echo")
-			}
-			// the FIN acknowledges that Go consumed the browser's echo.
-			if err == nil {
-				err = stream.CloseWrite()
+				err = io.ErrUnexpectedEOF
 			}
 			results <- err
 		})
@@ -115,7 +146,8 @@ func TestIntegrationWebSocketPortableClient(t *testing.T) {
 				return
 			}
 		}
-		// the browser must observe every response before the server closes.
+		// CloseWrite queues a FIN; it does not prove the client received the
+		// response. let the client finish reading before retiring its transport.
 		select {
 		case <-transport.Done():
 		case <-ctx.Done():
@@ -134,17 +166,19 @@ func TestIntegrationWebSocketPortableClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	pin := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
-	input, err := json.Marshal(map[string]any{"server": "wss://localhost:" + port + muxsession.WebSocketPath, "hello": hello.Bytes(), "spki": base64.StdEncoding.EncodeToString(pin[:])})
+	parameters := map[string]any{"server": "wss://localhost:" + port + muxsession.WebSocketPath, "hello": hello.Bytes(), "spki": base64.StdEncoding.EncodeToString(pin[:]), "wasm": wasm, "wasmExec": wasmExec}
+	if fixture == "testdata/websocket-workerd.ts" {
+		parameters["certificate"] = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}))
+	}
+	input, err := json.Marshal(parameters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.CommandContext(ctx, "node", "../../../packages/ts/test/fixtures/relay-websocket-native.ts")
+	command := exec.CommandContext(ctx, "node", fixture)
 	command.Stdin = bytes.NewReader(input)
 	output, runErr := command.CombinedOutput()
-	if runErr != nil {
-		cancel()
-		_ = listener.Close()
-	}
+	cancel()
+	_ = listener.Close()
 	serverErr := <-done
 	if runErr != nil || serverErr != nil || string(output) != "ok\n" {
 		t.Fatalf("portable WebSocket conformance: process=%v server=%v output=%s", runErr, serverErr, output)

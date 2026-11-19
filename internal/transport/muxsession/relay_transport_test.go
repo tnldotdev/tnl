@@ -13,7 +13,7 @@ import (
 func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 	for _, name := range []string{"quic", "quic-basic", "wss"} {
 		tcp := name == "wss"
-		for _, variant := range []string{"current", "classical only", "retired alpn", "unknown alpn", "wrong hostname", "untrusted certificate"} {
+		for _, variant := range []string{"current", "classical only", "tls12", "retired alpn", "unknown alpn", "wrong hostname", "untrusted certificate"} {
 			t.Run(name+"/"+variant, func(t *testing.T) {
 				serverTLS, roots := testTLSConfigs(t)
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -71,6 +71,8 @@ func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 				switch variant {
 				case "classical only":
 					client.CurvePreferences = []tls.CurveID{tls.X25519}
+				case "tls12":
+					client.MaxVersion = tls.VersionTLS12
 				case "retired alpn":
 					client.NextProtos = []string{"tnl-connector/1"}
 				case "unknown alpn":
@@ -102,7 +104,7 @@ func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 						_ = connection.CloseWithError(0, "")
 					}
 				}
-				if (err == nil) != (variant == "current") {
+				if (err == nil) != (variant == "current" || tcp && variant == "classical only") {
 					t.Fatalf("transport boundary: %v", err)
 				}
 			})

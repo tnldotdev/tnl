@@ -26,6 +26,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connector/kubeconfig"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorsession "github.com/tnldotdev/tnl/internal/connector/session"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/observability"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -35,7 +36,7 @@ import (
 )
 
 type connectorConnectionBackend struct {
-	deployment *deploymentConnection
+	deployment *connectorsession.Deployment
 	telemetry  *clienttelemetry.Collector
 	sdk        *SDKOptions
 	connectorConnectionSession
@@ -200,9 +201,9 @@ func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMeta
 	services := map[string]controlv1.ServiceSummary{}
 	if b.deployment != nil {
 		// the owner renews a finite horizon without moving the credential's cap.
-		b.deadline = minTime(time.Now().Add(time.Hour), b.deployment.source.Credential.Approval.ExpiresAt)
+		b.deadline = minTime(time.Now().Add(time.Hour), b.deployment.ExpiresAt())
 		for _, name := range b.scope.Services {
-			service, err := b.deployment.selectService(ctx, name)
+			service, err := b.deployment.SelectService(ctx, name)
 			if err != nil {
 				continue
 			}
@@ -436,7 +437,7 @@ func (b *connectorConnectionBackend) refreshService(ctx context.Context, name st
 		if approved.Id == "" && !slices.Contains(b.scope.Services, name) {
 			return service, connectorruntime.ErrUnauthorized
 		}
-		current, err := b.deployment.selectService(ctx, name)
+		current, err := b.deployment.SelectService(ctx, name)
 		if err != nil {
 			return service, err
 		}
@@ -567,7 +568,7 @@ func (b *connectorConnectionBackend) Renew(ctx context.Context) (time.Time, erro
 		return time.Time{}, err
 	}
 	if b.deployment != nil {
-		if _, err := b.deployment.source.Token(ctx); err != nil {
+		if err := b.deployment.Refresh(ctx); err != nil {
 			return time.Time{}, err
 		}
 		b.mu.Lock()
@@ -576,7 +577,7 @@ func (b *connectorConnectionBackend) Renew(ctx context.Context) (time.Time, erro
 		if b.closed || !b.deadline.After(now) {
 			return time.Time{}, connectorruntime.ErrExpired
 		}
-		b.deadline = minTime(now.Add(time.Hour), b.deployment.source.Credential.Approval.ExpiresAt)
+		b.deadline = minTime(now.Add(time.Hour), b.deployment.ExpiresAt())
 		b.publishLocked()
 		return b.deadline, nil
 	}

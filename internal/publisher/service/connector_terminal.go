@@ -74,8 +74,8 @@ func connectorAdmissionRoutineError(err error) bool {
 
 // replace only identified owned interruption leaves. physical-close markers
 // and every unrelated operation/cleanup cause keep their original provenance.
-func connectorAbortOperation(err error, ctx context.Context) error {
-	if context.Cause(ctx) != errConnectorAdmissionAbort {
+func connectorAbortOperation(err error, admission *connectorAdmission) error {
+	if !admission.TargetAborting() {
 		return err
 	}
 	if err == context.Canceled {
@@ -93,17 +93,17 @@ func connectorAbortOperation(err error, ctx context.Context) error {
 			return errConnectorAdmissionAbort
 		}
 	case *servicestream.VisitorProtocolRefusal:
-		if cause != nil && connectorAbortOnly(connectorAbortOperation(cause.Unwrap(), ctx)) {
+		if cause != nil && connectorAbortOnly(connectorAbortOperation(cause.Unwrap(), admission)) {
 			return errConnectorAdmissionAbort
 		}
 	case *servicestream.VisitorTLSIOFailure:
-		if cause != nil && connectorAbortOnly(connectorAbortOperation(cause.Unwrap(), ctx)) {
+		if cause != nil && connectorAbortOnly(connectorAbortOperation(cause.Unwrap(), admission)) {
 			return errConnectorAdmissionAbort
 		}
 	case interface{ Unwrap() []error }:
 		var causes []error
 		for _, child := range cause.Unwrap() {
-			causes = append(causes, connectorAbortOperation(child, ctx))
+			causes = append(causes, connectorAbortOperation(child, admission))
 		}
 		return errors.Join(causes...)
 	}

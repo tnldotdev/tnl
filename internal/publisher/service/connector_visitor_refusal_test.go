@@ -117,7 +117,7 @@ func TestConnectorVisitorRefusalPreservesWorkerCleanupProvenance(t *testing.T) {
 					}
 					aborted, abort := context.WithCancelCause(ctx)
 					abort(errConnectorAdmissionAbort)
-					if normalized := connectorAbortOperation(refusal, aborted); normalized != refusal {
+					if normalized := connectorAbortOperation(refusal, &connectorAdmission{ctx: aborted}); normalized != refusal {
 						t.Fatal("Abort replaced an independent visitor TLS protocol refusal", normalized)
 					}
 					for _, required := range []error{
@@ -195,7 +195,7 @@ func TestConnectorTLSCallbackFailureCannotBorrowVisitorRefusalProvenance(t *test
 			}
 			aborted, abort := context.WithCancelCause(ctx)
 			abort(errConnectorAdmissionAbort)
-			normalized := connectorAbortOperation(serving.err, aborted)
+			normalized := connectorAbortOperation(serving.err, &connectorAdmission{ctx: aborted})
 			if !errors.Is(normalized, problem.err) || serviceWorkerError(normalized, errConnectorAdmissionAbort) == nil {
 				t.Fatal("Abort hid a required TLS callback failure", normalized)
 			}
@@ -244,13 +244,14 @@ func TestConnectorTLSRefusalRetainsIgnoredAlertWriteFailure(t *testing.T) {
 			}
 			aborted, abort := context.WithCancelCause(ctx)
 			abort(errConnectorAdmissionAbort)
-			normalized := connectorAbortOperation(serving.err, aborted)
+			admission := &connectorAdmission{ctx: aborted}
+			normalized := connectorAbortOperation(serving.err, admission)
 			var retained *servicestream.VisitorTLSIOFailure
 			if !errors.Is(normalized, problem.err) || !errors.As(normalized, &retained) || retained != operation ||
 				serviceWorkerError(normalized, errConnectorAdmissionAbort) == nil {
 				t.Fatal("Abort replaced an independent TLS socket operation failure", normalized)
 			}
-			if normalized := connectorAbortOperation(operation, aborted); normalized != operation ||
+			if normalized := connectorAbortOperation(operation, admission); normalized != operation ||
 				serviceWorkerError(normalized, errConnectorAdmissionAbort) == nil {
 				t.Fatal("retained TLS I/O provenance was erased by the worker's Abort filter", normalized)
 			}

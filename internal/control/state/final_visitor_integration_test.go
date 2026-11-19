@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -101,11 +102,18 @@ func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testin
 	if err != nil || len(inventory) != 1 || inventory[0].ID != f.service.ID || inventory[0].VisitorAccess != "identity_grant" {
 		t.Fatalf("invited inventory: %+v %v", inventory, err)
 	}
-	encoded, _ := json.Marshal(inventory)
-	for _, forbidden := range [][]byte{[]byte("target"), []byte("ip_policy"), []byte("token"), []byte("secret"), []byte("digest")} {
-		if bytes.Contains(encoded, forbidden) {
-			t.Fatalf("visitor inventory exposed %s", forbidden)
-		}
+	encoded, err := json.Marshal(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// random identifiers and hostnames can contain the same substrings as
+	// field names. check JSON keys and the actual invitation secret.
+	var fields any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if privateInventoryField(fields) || bytes.Contains(encoded, []byte(invitation.Secret)) {
+		t.Fatal("visitor inventory included private fields or invitation material")
 	}
 	if err = d.RevokeServiceInvitation(ownerCtx, f.service.ID, owner, invitation.ID, f.now); err != nil {
 		t.Fatal(err)
@@ -135,6 +143,23 @@ func TestIntegrationFinalVisitorGrantsInventoryInvitationAndRevocation(t *testin
 	if err != nil || len(inventory) != 0 {
 		t.Fatal("revocation left the service in visitor inventory", inventory, err)
 	}
+}
+
+func privateInventoryField(value any) bool {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, field := range value {
+			key = strings.ReplaceAll(strings.ToLower(key), "_", "")
+			if strings.Contains(key, "target") || strings.Contains(key, "ippolicy") ||
+				strings.Contains(key, "token") || strings.Contains(key, "secret") ||
+				strings.Contains(key, "digest") || privateInventoryField(field) {
+				return true
+			}
+		}
+	case []any:
+		return slices.ContainsFunc(value, privateInventoryField)
+	}
+	return false
 }
 
 func TestIntegrationFinalVisitorLiveIPPolicyAndRunBoundary(t *testing.T) {

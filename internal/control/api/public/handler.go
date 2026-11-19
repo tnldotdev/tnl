@@ -197,7 +197,7 @@ func NewHandler(
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
 	}
 	controlv1.HandlerWithOptions(h, controlv1.StdHTTPServerOptions{
-		BaseRouter: mux, ErrorHandlerFunc: parameterError,
+		BaseRouter: portableCORSRouter(mux), ErrorHandlerFunc: parameterError,
 		Middlewares: []controlv1.MiddlewareFunc{publisherRequestSourceMiddleware},
 	})
 	mux.HandleFunc("/", notFound)

@@ -6,7 +6,18 @@ import (
 	"net"
 	"os"
 	"sync"
+
+	"github.com/tnldotdev/tnl/internal/failure"
 )
+
+// net.Dialer can wrap its own cancellation sentinel instead of returning the
+// context's stop cause. keep the dial error and identify which caller stopped it.
+func targetDialResult(ctx context.Context, err error) error {
+	if ctx.Err() == context.Canceled && failure.Only(err, context.Canceled) {
+		return &SocketInterruption{err: err, stop: context.Cause(ctx)}
+	}
+	return err
+}
 
 // streamSocket joins the first physical close and records its result even if a
 // completed request removes the socket before visitor cleanup. wrapping a socket
@@ -34,8 +45,8 @@ func (c *streamSocket) Close() error {
 	return c.err
 }
 
-// SocketInterruption identifies I/O interrupted by this socket owner's close.
-// it never replaces the physical close result or unrelated I/O failures.
+// SocketInterruption identifies I/O interrupted by a socket owner's close or
+// a caller canceling its dial. it retains the original I/O error.
 type SocketInterruption struct {
 	err  error
 	stop error

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -88,6 +89,97 @@ func TestWebSocketSessionSurvivesSetupCancellation(t *testing.T) {
 		t.Fatal("lost chunked stream bytes", err, len(got))
 	}
 	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWebSocketYamuxFramesIgnoreMessageBoundaries(t *testing.T) {
+	listener, serverTLS, roots := webSocketTestListener(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	var workers sync.WaitGroup
+	t.Cleanup(workers.Wait)
+	received := make(chan error, 1)
+	payloads := []string{"split frame", "first coalesced frame", "second coalesced frame"}
+	workers.Go(func() {
+		network, err := listener.Accept()
+		if err != nil {
+			received <- err
+			return
+		}
+		session, err := AcceptWebSocket(ctx, network, serverTLS, WebSocketConfig{})
+		if err != nil {
+			received <- err
+			return
+		}
+		defer session.Close()
+		for _, want := range payloads {
+			stream, err := session.AcceptStream(ctx)
+			if err != nil {
+				received <- err
+				return
+			}
+			_ = stream.SetReadDeadline(time.Now().Add(5 * time.Second))
+			got, readErr := io.ReadAll(stream)
+			if err := errors.Join(readErr, stream.Close()); err != nil {
+				received <- err
+				return
+			}
+			if string(got) != want {
+				received <- errors.New("yamux stream payload changed at a WebSocket message boundary")
+				return
+			}
+		}
+		received <- nil
+	})
+	// unblock Accept before joining the worker if client setup fails.
+	defer listener.Close()
+	dialer := net.Dialer{}
+	client, _, err := websocket.Dial(ctx, "wss://relay.test"+WebSocketPath, &websocket.DialOptions{
+		HTTPClient: &http.Client{Transport: &http.Transport{
+			TLSClientConfig: roots,
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "tcp", listener.Addr().String())
+			},
+		}},
+		Subprotocols: []string{WebSocketProtocol},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for {
+			if _, _, err := client.Read(ctx); err != nil {
+				return
+			}
+		}
+	}()
+	defer func() {
+		_ = client.CloseNow()
+		<-drained
+	}()
+	dataFrame := func(stream uint32, flags uint16, payload string) []byte {
+		frame := make([]byte, 12, 12+len(payload))
+		binary.BigEndian.PutUint16(frame[2:4], flags)
+		binary.BigEndian.PutUint32(frame[4:8], stream)
+		binary.BigEndian.PutUint32(frame[8:12], uint32(len(payload)))
+		return append(frame, payload...)
+	}
+	// keep DATA and FIN in separate yamux frames, as the real writer does.
+	// message boundaries still split the first frame and join the later ones.
+	streamFrames := func(id uint32, payload string) []byte {
+		return append(dataFrame(id, 1, payload), dataFrame(id, 4, "")...)
+	}
+	split := streamFrames(1, payloads[0])
+	combined := append(streamFrames(3, payloads[1]), streamFrames(5, payloads[2])...)
+	for _, message := range [][]byte{split[:7], split[7:], combined} {
+		if err := client.Write(ctx, websocket.MessageBinary, message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := <-received; err != nil {
 		t.Fatal(err)
 	}
 }
@@ -303,11 +395,17 @@ func TestWebSocketFailureClassificationPreservesCauseAndSafeOutput(t *testing.T)
 		{"upgrade_failed", 401, cause, false},
 		{"upgrade_failed", 307, cause, false},
 		{"upgrade_failed", 0, io.EOF, true},
+		{"upgrade_failed", 0, nil, false},
 		{"upgrade_failed", 0, context.Canceled, false},
+		{"upgrade_failed", 0, &tls.CertificateVerificationError{Err: cause}, false},
+		{"host_upgrade_failed", 0, nil, true},
+		{"host_upgrade_failed", 401, nil, false},
+		{"host_upgrade_failed", 0, cause, false},
 		{"subprotocol_invalid", 101, cause, false},
 	} {
 		problem := &WebSocketError{Code: test.code, Status: test.status, Err: test.cause}
-		if problem.Retryable() != test.retry || !errors.Is(problem, test.cause) ||
+		if problem.Retryable() != test.retry || problem.Unwrap() != test.cause ||
+			test.cause != nil && !errors.Is(problem, test.cause) ||
 			problem.Error() != "relay websocket "+test.code {
 			t.Fatal("lost classification, cause, or safe output", problem)
 		}
