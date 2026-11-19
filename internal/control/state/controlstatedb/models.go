@@ -877,11 +877,6 @@ type ControlRelayServiceReservation struct {
 	ReservedSlotCount int64
 }
 
-type ControlSchemaIdentity struct {
-	ID         int16
-	BaselineID string
-}
-
 type ControlService struct {
 	ID                      string
 	TeamID                  pgtype.Text

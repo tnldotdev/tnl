@@ -67,8 +67,8 @@ func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 	}
 }
 
-func TestIntegrationPublisherFreshBaseline(t *testing.T) {
-	d, _ := newControlStateIntegrationDatabase(t, "publisher_baseline")
+func TestIntegrationPublisherSchema(t *testing.T) {
+	d, _ := newControlStateIntegrationDatabase(t, "publisher_schema")
 	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "service_tickets", "publish_run_publisher_grants", "browser_access_sessions", "browser_access_handoffs", "browser_login_attempts", "publisher_service_runs", "publisher_service_connection_slots"} {
 		var absent bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NULL`, name).Scan(&absent); err != nil || !absent {
@@ -82,12 +82,8 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 		}
 	}
 	var actualVersion int64
-	var actualBaseline string
 	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != schemaVersion {
 		t.Fatal("fresh database did not initialize the current schema", actualVersion, err)
-	}
-	if err := d.pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&actualBaseline); err != nil || actualBaseline != baselineID {
-		t.Fatal("fresh baseline identity changed", actualBaseline, err)
 	}
 	// a higher version alone does not prove that the serving binary supports it.
 	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES ($1, true)`, schemaVersion+1); err != nil {

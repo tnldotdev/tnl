@@ -2,8 +2,8 @@ package state
 
 import "testing"
 
-func TestIntegrationPrivateServiceBaselinePreservesReservations(t *testing.T) {
-	d, directURL, now := newControlStateIntegrationDatabaseWithURL(t, "private_port_baseline")
+func TestIntegrationPrivateServiceMigrationPreservesReservations(t *testing.T) {
+	d, directURL, now := newControlStateIntegrationDatabaseWithURL(t, "private_port_migration")
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = ProjectConfiguration{Settings: &DeploymentSettings{}, Services: map[string]ProjectServiceConfiguration{
@@ -20,8 +20,7 @@ func TestIntegrationPrivateServiceBaselinePreservesReservations(t *testing.T) {
 		var value string
 		if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_array(
 			(SELECT to_jsonb(s) FROM control.services s WHERE id=$1),
-			(SELECT to_jsonb(p) FROM control.service_port_claims p WHERE service_id=$1),
-			(SELECT to_jsonb(i) FROM control.schema_identity i WHERE id=1))::text`, service.ServiceID).Scan(&value); err != nil {
+			(SELECT to_jsonb(p) FROM control.service_port_claims p WHERE service_id=$1))::text`, service.ServiceID).Scan(&value); err != nil {
 			t.Fatal(err)
 		}
 		return value

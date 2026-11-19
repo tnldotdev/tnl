@@ -400,7 +400,7 @@ func TestPersistedTunnelSnapshotExpiresWithoutHeartbeat(t *testing.T) {
 	}
 }
 
-func TestTunnelProjectStateIsPartOfFreshV1Baseline(t *testing.T) {
+func TestTunnelProjectStateSchema(t *testing.T) {
 	data, err := migrationFiles.ReadFile("migrations/00001_schema.sql")
 	if err != nil {
 		t.Fatal(err)

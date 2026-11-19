@@ -23,9 +23,8 @@ import (
 )
 
 const (
-	// schema versions advance with migrations; the baseline identity stays fixed.
+	// schema versions advance with numbered migrations.
 	schemaVersion       int64 = 1
-	baselineID                = "v1-control"
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond
 )
@@ -114,12 +113,6 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 	if current > target {
 		return fmt.Errorf("controlstate: migrate: database schema version %d is newer than supported version %d", current, target)
 	}
-	if current != 0 {
-		var stored string
-		if err := lockTx.QueryRowContext(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id = 1`).Scan(&stored); err != nil || !supportedBaseline(stored) {
-			return errors.New("controlstate: incompatible database baseline; use a fresh PostgreSQL database")
-		}
-	}
 	if _, err := provider.Up(ctx); err != nil {
 		return fmt.Errorf("controlstate: migrate database: %w", err)
 	}
@@ -129,10 +122,6 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 	}
 	if current != target || current != schemaVersion {
 		return fmt.Errorf("controlstate: migrate: database schema version %d does not match supported version %d", current, schemaVersion)
-	}
-	var stored string
-	if err := lockTx.QueryRowContext(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id = 1`).Scan(&stored); err != nil || !supportedBaseline(stored) {
-		return errors.New("controlstate: incompatible database baseline; use a fresh PostgreSQL database")
 	}
 	if err := lockTx.Commit(); err != nil {
 		return fmt.Errorf("controlstate: migrate: release lock: %w", err)
@@ -213,7 +202,7 @@ func (d *Database) Readiness(ctx context.Context) error {
 	return checkSchemaVersion(ctx, d.pool)
 }
 
-// serving roles require their schema version and a recognized baseline identity.
+// serving roles require the schema version they were built to serve.
 func checkSchemaVersion(ctx context.Context, database schemaVersionQuerier) error {
 	version, err := readSchemaVersion(ctx, database)
 	if err != nil {
@@ -222,16 +211,7 @@ func checkSchemaVersion(ctx context.Context, database schemaVersionQuerier) erro
 	if version != schemaVersion {
 		return fmt.Errorf("controlstate: incompatible database schema version %d; required version is %d", version, schemaVersion)
 	}
-	var stored string
-	if err := database.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id = 1`).Scan(&stored); err != nil || !supportedBaseline(stored) {
-		return errors.New("controlstate: incompatible database baseline; use a fresh PostgreSQL database")
-	}
 	return nil
-}
-
-func supportedBaseline(identity string) bool {
-	// v1 is the previous name of this same baseline; existing databases keep it.
-	return identity == baselineID || identity == "v1"
 }
 
 type schemaVersionQuerier interface {

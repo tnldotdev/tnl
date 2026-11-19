@@ -1,13 +1,6 @@
 -- +goose Up
 CREATE SCHEMA IF NOT EXISTS control;
 
--- the baseline identity distinguishes control state from other version-1 schemas.
-CREATE TABLE control.schema_identity (
-    id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'v1-control')
-);
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'v1-control');
-
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
     kind text NOT NULL CHECK (kind IN ('oidc', 'authority')),

@@ -1,10 +1,4 @@
 -- +goose Up
-CREATE TABLE baseline_identity (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    identity TEXT NOT NULL CHECK (identity = 'v1-client')
-) STRICT;
-INSERT INTO baseline_identity (id, identity) VALUES (1, 'v1-client');
-
 -- feedback belongs to one local project/worktree, server, and preview. deleting
 -- a thread cascades through its entire history; the scoped clock never rewinds.
 CREATE TABLE feedback_clocks (

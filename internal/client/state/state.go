@@ -18,8 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-// databaseFilename identifies the fresh client-state baseline independently of
-// the SQLite migration and local event schema versions.
+// databaseFilename stays fixed as numbered migrations update the schema.
 const databaseFilename = "v1.db"
 
 //go:embed migrations/*.sql
@@ -98,7 +97,7 @@ type OpenOptions struct {
 	Protection ProtectionMode
 }
 
-// Open initializes fresh v1 state without reading any earlier database.
+// Open initializes client state or applies pending migrations to existing state.
 func Open(ctx context.Context, root string) (result *Database, retErr error) {
 	return OpenWithOptions(ctx, root, OpenOptions{})
 }
@@ -155,7 +154,7 @@ func OpenWithOptions(ctx context.Context, root string, options OpenOptions) (res
 	protector := &encryptedProtector{key: key, account: account}
 	var db *sql.DB
 	if exists {
-		db, err = openClientSQLite(ctx, path, false, options.NoWait)
+		db, err = openClientSQLite(ctx, path, options.NoWait)
 	} else {
 		db, err = initializeClientSQLite(ctx, path, mode, protector, options.NoWait)
 	}

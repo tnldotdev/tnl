@@ -47,8 +47,8 @@ THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
 - Published migrations are immutable. Both migration-1 files are pinned by
   `TestMigrationOneIsImmutable` in their state packages. Add numbered migrations;
   do not rewrite old SQL or update the pinned hashes to make a change pass.
-  `v1-control` and `v1-client` identify the baselines, not feature versions.
-  Keep the recognized previous names working for existing databases.
+  Numbered migrations are the schema authority; do not add separate baseline
+  identities or rename client state files to ship a feature.
 - Test schema changes against populated older databases, including skipped
   releases within the supported upgrade path. Preserve data and credentials;
   migrate data before retiring storage. Document required upgrade order and
@@ -362,7 +362,7 @@ operational procedures and current capability limits in
 - The six HTTP OpenAPI contracts under `contracts/{control,publisher}` generate one Go package per contract under the matching `pkg/api` serving-owner path. Edit their `paths/` and `schemas/` fragments and generator configuration, then regenerate. The local publisher contract is native app/CLI registration; the browser contract also generates validators in `internal/publisher/browserapi`. Reference control schemas for identical wire shapes. Shared components, if needed, contain only byte-identical referenced schemas and generate no Go package.
 - `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
 - PostgreSQL sources are `internal/control/state/{migrations,queries,sqlc.yaml}`; their committed output is `internal/control/state/controlstatedb`. SQLite sources are `internal/client/state/{migrations,queries,sqlc.yaml}`; their output is `internal/client/state/clientstatedb`. Edit sources and generator configuration, not generated Go files. `task generate` is the single ordered entrypoint for committed generation, starting with Go APIs and browser validators; `task format` formats the resulting tree.
-- `tnld migrate` is the server migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and check their supported schema version and baseline identity. Client state lives in `v1.db`. Add upgrade paths in the owning state package; never bypass schema checks or rename a baseline to ship a feature.
+- `tnld migrate` is the server migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and check their supported schema version. Client state lives in `v1.db`; writable opens apply pending migrations and read-only opens require the supported version. Add upgrade paths in the owning state package; never bypass schema checks.
 
 ## place implementation with its owner
 

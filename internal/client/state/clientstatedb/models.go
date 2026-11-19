@@ -26,11 +26,6 @@ type AliasPublishRun struct {
 	TargetRunNumber   int64
 }
 
-type BaselineIdentity struct {
-	ID       int64
-	Identity string
-}
-
 type Connector struct {
 	ServerOrigin   string
 	IdentityID     string
