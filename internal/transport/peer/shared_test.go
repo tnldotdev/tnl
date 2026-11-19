@@ -667,22 +667,64 @@ func TestPeerSharedDatagramsBoundRegistrations(t *testing.T) {
 	for _, c := range carriers {
 		_ = c.Close()
 	}
-	// each admission leaves a bounded tombstone even after its carrier closes.
+	// historical pairs do not consume active slots or exhaust the outer session.
 	_ = extraCarrier.Close()
-	lastAccepted := 101 + sharedMaxAdmissions - (sharedMaxPeers + 1)
-	for i := 101; i < lastAccepted+2; i++ {
+	for i := 101; i < 4300; i++ {
 		b := extra
 		b.Delivery.Pair = [16]byte{byte(i), byte(i >> 8)}
 		c, err := owner.Register(b)
-		if i < lastAccepted && err != nil {
-			t.Fatal("premature admission exhaustion", i, err)
+		if err != nil {
+			t.Fatal("historical pairs exhausted the borrowed session", i, err)
 		}
-		if i >= lastAccepted && !errors.Is(err, ErrConfiguration) {
-			t.Fatal("unbounded tombstones", i, err)
+		_ = c.Close()
+	}
+	if _, err := owner.Register(extra); !errors.Is(err, ErrConfiguration) {
+		t.Fatal("growing history forgot a retired generation", err)
+	}
+	extra.Delivery.Generation++
+	if carrier, err := owner.Register(extra); err != nil {
+		t.Fatal("new generation could not reuse the original pair", err)
+	} else {
+		_ = carrier.Close()
+	}
+}
+
+func TestPeerSharedStreamsHistoryBeyond4096Pairs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	serverTLS, clientTLS := peerTLS(t)
+	left, right := sharedTLSPair(t, ctx, serverTLS, clientTLS)
+	owner, err := NewSharedStreams(ctx, right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = owner.Close() })
+	first, _ := sharedBinding(t, 1, RelayB)
+	for i := 1; i <= 4097; i++ {
+		b := first
+		b.Delivery.Pair = [16]byte{byte(i), byte(i >> 8)}
+		pair, err := owner.Register(b)
+		if err != nil {
+			t.Fatal("historical pairs exhausted the borrowed session", i, err)
 		}
-		if c != nil {
-			_ = c.Close()
+		if err := pair.Close(); err != nil {
+			t.Fatal(err)
 		}
+	}
+	if _, err := owner.Register(first); !errors.Is(err, ErrConfiguration) {
+		t.Fatal("growing history forgot a retired generation", err)
+	}
+	first.Delivery.Generation++
+	pair, err := owner.Register(first)
+	if err != nil {
+		t.Fatal("new generation could not reuse the original pair", err)
+	}
+	_ = pair.Close()
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if left.Err() != nil || right.Err() != nil {
+		t.Fatal("retiring packet history closed the borrowed WSS session")
 	}
 }
 
