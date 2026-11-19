@@ -63,7 +63,8 @@ export interface WasmPublisherHost {
 }
 
 export interface WasmPublication {
-  readonly url: unknown;
+  readonly public?: unknown;
+  readonly url?: unknown;
   readonly publisherURL?: unknown;
   readonly run: unknown;
   readonly ready: PromiseLike<unknown>;

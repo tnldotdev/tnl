@@ -39,6 +39,8 @@ export type Phase =
   | "mysql"
   | "kubernetes"
   | "postgres"
+  | "pg-adapter"
+  | "redis-adapter"
   | "workload"
   | "carrier-loss"
   | "close-open"

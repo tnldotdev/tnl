@@ -84,6 +84,7 @@ export type DurableObjectWasmPublisherOptions = Omit<
 >;
 
 const publicationOptionsSchema = z.strictObject({
+  public: z.boolean().exactOptional(),
   targetHostname: z.string().min(1).max(253).exactOptional(),
   telemetry: z.boolean().exactOptional(),
   requirePostQuantum: z.boolean().exactOptional(),
@@ -222,9 +223,7 @@ export class DurableObjectPublisher {
     const completion = this.#completions.get(publication);
     if (completion === undefined) throw new TnlError("sdk.publication_failed");
     return Object.freeze({
-      get url(): `https://${string}` {
-        return publication.url;
-      },
+      ...(publication.url === undefined ? {} : { url: publication.url }),
       close: () => this.#retain(this.#stop(revision)),
       wait: () => completion,
       [Symbol.asyncDispose]: () => this.#retain(this.#stop(revision)),

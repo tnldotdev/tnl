@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherlocal "github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
@@ -106,14 +107,15 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 	configuration := controlv1.ProjectConfiguration{
 		Settings: &controlv1.DeploymentSettings{},
 		Services: map[string]controlv1.ProjectServiceConfiguration{
-			"web": {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}},
+			"web":      {Target: "app", Protocol: &protocol, Public: new(true), Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}}},
+			"internal": {Target: "app", Protocol: &protocol, Public: new(false)},
 		},
 	}
 	apply := func(revision int64) controlv1.AppliedProjectConfiguration {
 		t.Helper()
 		request := controlv1.ApplyProjectConfigurationRequest{
 			TeamId: f.identity.teamID, Deployment: deployment, Configuration: configuration,
-			ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol}, ExpectedRevision: revision,
+			ServiceDeclarations: controlv1.ProjectServiceDeclarations{"web": protocol, "internal": protocol}, ExpectedRevision: revision,
 		}
 		if revision == 0 {
 			request.Source = &testProjectSource
@@ -128,7 +130,25 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 	binding := configuration.Services["web"]
 	binding.PublisherAliasParent = new((*first.Deployments)[0].Namespace)
 	configuration.Services["web"] = binding
-	apply(first.Revision)
+	applied := apply(first.Revision)
+	var internalID string
+	for _, service := range applied.Services {
+		if service.Service == "internal" && service.ServiceId != nil {
+			internalID = *service.ServiceId
+		}
+	}
+	privateService, err := f.identity.routes.GetService(t.Context(), internalID)
+	if err != nil || privateService.Endpoint == nil || privateService.Endpoint.Public {
+		t.Fatal("private HTTP fixture did not realize a connector-only service", err)
+	}
+	person, err := f.identity.authority.IdentityContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	directory, repo := t.TempDir(), integrationRepositoryRoot(t)
 	topology := filepath.Join(directory, "relay.json")
@@ -156,24 +176,25 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 	type evidence struct {
 		Identity string `json:"identity"`
 		URL      string `json:"url"`
+		ExactURL string `json:"publisher_url"`
 	}
 	type active struct {
 		evidence
 		run  int64
 		stop func()
 	}
-	enrollment := func(instance string) string {
+	enrollment := func(service, instance string) string {
 		t.Helper()
 		approval, err := f.identity.routes.CreateDeploymentPublisherEnrollment(t.Context(), f.identity.teamID, project, deployment, instance,
-			controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{"web"}, MaxMembers: new(1), ExpiresIn: new(600)})
+			controlv1.CreateDeploymentPublisherEnrollmentRequest{Services: []string{service}, MaxMembers: new(1), ExpiresIn: new(600)})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return approval.EnrollmentKey
 	}
-	start := func(sdk, instance, key string) active {
+	start := func(sdk, service, instance, key string) active {
 		t.Helper()
-		args := []string{f.controlConfig.ControlOrigin(), sdk, instance}
+		args := []string{f.controlConfig.ControlOrigin(), sdk, instance, service}
 		var command *exec.Cmd
 		if sdk == "python" {
 			command = exec.Command("uv", append([]string{"run", "--frozen", "--project", filepath.Join(repo, "packages/py"), "python", filepath.Join(directory, "enrolled-publisher-traffic.py")}, args...)...)
@@ -217,16 +238,29 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 		var facts evidence
 		select {
 		case raw := <-line:
-			if err := json.Unmarshal([]byte(raw), &facts); err != nil || !strings.HasPrefix(facts.URL, "https://p-") || facts.Identity == "" {
-				t.Fatalf("%s did not advertise its publisher address: %v (%s)", sdk, err, stderr.String())
+			if err := json.Unmarshal([]byte(raw), &facts); err != nil || facts.Identity == "" {
+				t.Fatalf("%s did not report publication readiness: %v (%s)", sdk, err, stderr.String())
 			}
 		case <-time.After(90 * time.Second):
 			t.Fatalf("%s publisher did not become ready: %s", sdk, stderr.String())
 		}
 		var run int64
-		if err := f.inspect.QueryRowContext(t.Context(), `SELECT run.run_number FROM control.service_endpoints ep JOIN control.service_runs run ON ep.service_run_id=run.id WHERE ep.hostname=$1 AND run.publisher_identity_id=$2 AND run.closed_at IS NULL`,
-			strings.TrimPrefix(facts.URL, "https://"), facts.Identity).Scan(&run); err != nil {
-			t.Fatal("published address did not identify the actual current run", err)
+		if service == "web" {
+			if !strings.HasPrefix(facts.URL, "https://") || !strings.HasPrefix(facts.ExactURL, "https://p-") {
+				t.Fatal("public publication did not return its pool and exact addresses")
+			}
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT run.run_number FROM control.service_endpoints ep JOIN control.service_runs run ON ep.service_run_id=run.id WHERE ep.hostname=$1 AND run.publisher_identity_id=$2 AND run.closed_at IS NULL`,
+				strings.TrimPrefix(facts.ExactURL, "https://"), facts.Identity).Scan(&run); err != nil {
+				t.Fatal("published address did not identify the actual current run", err)
+			}
+		} else {
+			if facts.URL != "" || facts.ExactURL != "" {
+				t.Fatal("connector-only publication returned an address")
+			}
+			var publicCount int
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.service_endpoints WHERE service_id=$1 AND public`, internalID).Scan(&publicCount); err != nil || publicCount != 0 {
+				t.Fatal("connector-only publication installed public routing", err, publicCount)
+			}
 		}
 		return active{facts, run, func() {
 			t.Helper()
@@ -263,21 +297,50 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 			return resp.StatusCode == http.StatusOK && string(body) == want, err
 		})
 	}
-	sibling := start("node", "sibling", enrollment("sibling"))
+	sibling := start("node", "web", "sibling", enrollment("web", "sibling"))
 	defer sibling.stop()
 	for index, sdk := range []string{"node", "bun", "python"} {
 		instance := sdk + "-" + strconv.Itoa(index)
-		current := start(sdk, instance, enrollment(instance))
+		current := start(sdk, "web", instance, enrollment("web", instance))
 		t.Logf("%s: verify initial and reopened traffic on one exact address", sdk)
-		visit(current.URL, instance+":initial")
+		visit(current.ExactURL, instance+":initial")
 		current.stop()
-		visit(current.URL, "")
-		visit(sibling.URL, "sibling:initial")
-		reopened := start(sdk, instance, "")
+		visit(current.ExactURL, "")
+		visit(sibling.ExactURL, "sibling:initial")
+		reopened := start(sdk, "web", instance, "")
 		if reopened.evidence != current.evidence || reopened.run <= current.run {
 			t.Fatal("reopening did not retain identity/address or advance the serving run", reopened.run, current.run)
 		}
-		visit(reopened.URL, instance+":reopened")
+		visit(reopened.ExactURL, instance+":reopened")
 		reopened.stop()
+
+		name := sdk + "-private"
+		owner := start(sdk, "internal", name, enrollment("internal", name))
+		_, wss := f.connectors()
+		listener, stop := startRuntimeConnector(t, f, privateService, connectorstream.Config{
+			Control: control, IdentityID: person.Identity.Id, RelayQUIC: privateDisabledConnector(), RelayWebSocket: wss,
+		}, revokedConnectorOwnerStop)
+		roots := f.visitorRoots.Clone()
+		roots.ServerName = privateService.Endpoint.Hostname
+		transport := &http.Transport{
+			TLSClientConfig: roots,
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
+			},
+		}
+		t.Cleanup(transport.CloseIdleConnections)
+		client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+		response, err := client.Get("https://" + privateService.Endpoint.Hostname)
+		if err != nil {
+			t.Fatal("connector-only publisher did not serve a private request", err)
+		}
+		body, err := io.ReadAll(io.LimitReader(response.Body, 2048))
+		err = errors.Join(err, response.Body.Close())
+		transport.CloseIdleConnections()
+		stop()
+		owner.stop()
+		if err != nil || response.StatusCode != http.StatusOK || string(body) != name+":initial" {
+			t.Fatalf("%s private publisher returned status %d, body %q (%v)", sdk, response.StatusCode, body, err)
+		}
 	}
 }

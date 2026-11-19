@@ -1,9 +1,15 @@
-import { publish, publisher, TnlPublisher as PublisherObject } from "@tnldotdev/tnl/cloudflare";
+import {
+  connect,
+  deployment,
+  publish,
+  publisher,
+  TnlPublisher as PublisherObject,
+} from "@tnldotdev/tnl/cloudflare";
 import {
   durablePublisher,
   type DurableObjectPublisherState,
 } from "../../dist/durable-object.worker.js";
-import { check, fixtureSchema } from "./fixture.ts";
+import { check, fixtureSchema, publisherFailures } from "./fixture.ts";
 import { publisherHandler } from "./handler.ts";
 import { installPublisherFixtureHost, runtimeStarts } from "./host.ts";
 
@@ -19,6 +25,7 @@ interface Environment {
     idFromName(name: string): unknown;
     get(id: unknown): Fetcher;
   };
+  PRIVATE_PUBLISHERS: Environment["PUBLISHERS"];
 }
 const nativeFetch = globalThis.fetch.bind(globalThis);
 
@@ -36,24 +43,15 @@ export class TnlPublisher extends PublisherObject {
 export class Publisher {
   readonly #owner: ReturnType<typeof durablePublisher>;
   readonly #runtime = crypto.randomUUID();
-  readonly #url: string;
+  readonly #url: string | undefined;
   #identityImports = 0;
 
-  constructor(state: DurableObjectPublisherState, environment: Environment) {
+  constructor(state: DurableObjectPublisherState, environment: Environment, service = "web") {
     const fixture = fixtureSchema.parse(JSON.parse(environment.FIXTURE));
-    this.#url = fixture.named_url;
-    installPublisherFixtureHost(fixture);
-    Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const request = new Request(input, init);
-      const url = new URL(request.url);
-      if (url.origin === fixture.control_url) return environment.CONTROL.fetch(request);
-      const index = fixture.relays.findIndex((relay) => relay.address === url.host);
-      if (index !== -1)
-        return (index === 0 ? environment.RELAY0 : environment.RELAY1).fetch(request);
-      return nativeFetch(request);
-    });
+    this.#url = service === "web" ? fixture.named_url : undefined;
+    prepareFixtureHost(fixture, environment);
     this.#owner = durablePublisher(state, {
-      configuration: { project: fixture.project, deployment: fixture.deployment, service: "web" },
+      configuration: { project: fixture.project, deployment: fixture.deployment, service },
       identity: () => {
         this.#identityImports++;
         return new TextEncoder().encode(fixture.token);
@@ -69,6 +67,8 @@ export class Publisher {
       if (operation === "/start") {
         const publication = await this.#owner.start();
         check(publication.url === this.#url, "named durable publication changed URL");
+        if (this.#url === undefined)
+          check(!("url" in publication), "private durable publication exposed a public URL");
       } else if (operation === "/stop") {
         await this.#owner.stop();
       } else if (operation === "/resume" || operation === "/status") {
@@ -90,6 +90,12 @@ export class Publisher {
 
   async alarm(): Promise<void> {
     await this.#owner.alarm();
+  }
+}
+
+export class PrivatePublisher extends Publisher {
+  constructor(state: DurableObjectPublisherState, environment: Environment) {
+    super(state, environment, "private");
   }
 }
 
@@ -123,8 +129,7 @@ export default {
     ctx: { exports: unknown },
   ): Promise<Response> {
     const route = new URL(request.url);
-    if (route.pathname === "/probe")
-      return new Response("managed publisher", { headers: { "X-Publisher-Runtime": "managed" } });
+    if (route.pathname === "/managed-target") return new Response("private managed publisher");
     if (route.pathname.startsWith("/managed-")) {
       const fixture = fixtureSchema.parse(JSON.parse(environment.FIXTURE));
       prepareFixtureHost(fixture, environment);
@@ -132,7 +137,7 @@ export default {
       try {
         if (route.pathname === "/managed-stop") {
           const owner = await publisher(ctx);
-          await (await publish(owner, "web")).close();
+          await (await publish(owner, "private")).close();
           return Response.json({ stopped: true });
         }
         if (route.pathname === "/managed-start" || route.pathname === "/managed-reopen") {
@@ -147,16 +152,41 @@ export default {
             enrollment,
           });
           phase = "publish";
-          const managed = await publish(owner, "web");
-          check(managed.url === fixture.named_url, "managed publication changed the service URL");
+          const managed = await publish(owner, "private");
+          check(!("url" in managed), "managed private publication returned a public URL");
           return Response.json({ publisher: owner.publisherIdentityID, calls });
         }
       } catch (error) {
-        return Response.json(
-          { phase, kind: error instanceof Error ? error.name : "failure" },
-          { status: 500 },
-        );
+        return Response.json(publisherFailures(error, phase), { status: 500 });
       }
+    }
+    if (route.pathname === "/private-visit" || route.pathname === "/managed-visit") {
+      const fixture = fixtureSchema.parse(JSON.parse(environment.FIXTURE));
+      prepareFixtureHost(fixture, environment);
+      const owner = deployment(fixture.deployment, {
+        project: fixture.project,
+        token: fixture.token,
+        services: { private: { protocol: "http" } },
+      });
+      try {
+        const connection = await connect(owner, "private");
+        const managedVisit = route.pathname === "/managed-visit";
+        const response = await connection.fetch(managedVisit ? "/managed-target" : "/probe");
+        if (
+          response.ok &&
+          (await response.text()) ===
+            (managedVisit ? "private managed publisher" : "portable-publisher")
+        )
+          return Response.json({ private: true });
+        return Response.json({ error: "private target did not respond" }, { status: 502 });
+      } finally {
+        await owner.close();
+      }
+    }
+    if (route.pathname === "/private-start" || route.pathname === "/private-stop") {
+      route.pathname = route.pathname === "/private-start" ? "/start" : "/stop";
+      const namespace = environment.PRIVATE_PUBLISHERS;
+      return namespace.get(namespace.idFromName("private")).fetch(new Request(route, request));
     }
     return environment.PUBLISHERS.get(environment.PUBLISHERS.idFromName("publisher")).fetch(
       request,

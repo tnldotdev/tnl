@@ -43,12 +43,15 @@ func normalizeServiceAllocation(r AllocateServiceRequest) (ProjectServiceConfigu
 		s.Name = "temporary"
 	}
 	if s.Hostname != "" || s.DomainID != "" || s.TargetDiscovery != nil ||
-		s.Access != nil || s.Public != nil && !*s.Public ||
+		s.Access != nil ||
 		s.HTTP != nil && (len(s.HTTP.Paths) != 0 || s.HTTP.Readiness != nil ||
 			s.HTTP.Access != nil && s.HTTP.Access.IP != nil && len(s.HTTP.Access.IP) == 0) {
 		return s, "", ErrProjectConfigurationInvalid
 	}
-	s.Ephemeral, s.Public = true, new(true)
+	s.Ephemeral = true
+	if s.Public == nil {
+		s.Public = new(true)
+	}
 	if err = normalizeAppliedProjectService(s.Name, &s, savedServiceConfiguration); err != nil {
 		return s, "", err
 	}
@@ -233,7 +236,7 @@ func (d *Database) allocateService(ctx context.Context, tx pgx.Tx, p PublisherId
 	if err = q.InsertPublisherAllocation(ctx, controlstatedb.InsertPublisherAllocationParams{ServiceID: id, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, InvocationID: r.Invocation, DeploymentID: nullableText(deployment), RequiredTemporaryApproval: mode, RequestedExpiresAt: nullableTime(requestedExpiry)}); err != nil {
 		return ServiceRecord{}, err
 	}
-	if err = allocateServiceEndpoint(ctx, tx, id, deployment, domain, namespace, clock.current()); err != nil {
+	if err = allocateServiceEndpoint(ctx, tx, id, deployment, domain, namespace, projectServicePublic(s), clock.current()); err != nil {
 		return ServiceRecord{}, err
 	}
 	if err = auditPrivateMutation(ctx, tx, id, p.CreatorID, "service.create", id, clock.current()); err != nil {

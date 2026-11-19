@@ -11,6 +11,7 @@ from ._connections import (
     PostgresConnection,
     TCPConnection,
 )
+from ._control import Control, ControlProject, control
 from ._deployments import (
     Client,
     Deployment,
@@ -20,7 +21,10 @@ from ._deployments import (
     LocalMySQLConnection,
     LocalPostgresConnection,
     LocalTCPConnection,
+    client,
+    connect,
     create_client,
+    deployment,
 )
 from ._handler import handler
 from ._management_client import ManagementError, SavedDeployment
@@ -30,12 +34,15 @@ from ._protocol import (
     RegistrationLost,
     TnlError,
 )
+from ._publish import publish
 from ._publisher import Publisher, PublisherEnrollment, publisher
 from ._workload import configure_workload
 
 __all__ = [
     "AccessPolicy",
     "Connection",
+    "Control",
+    "ControlProject",
     "ClientFactory",
     "Client",
     "Deployment",
@@ -66,7 +73,12 @@ __all__ = [
     "Server",
     "handler",
     "configure_workload",
+    "client",
+    "connect",
+    "control",
+    "deployment",
     "prepare",
     "publisher",
+    "publish",
     "run",
 ]

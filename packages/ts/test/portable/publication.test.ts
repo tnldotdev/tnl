@@ -66,6 +66,7 @@ function fixture() {
     const closed = deferred();
     ready.resolve();
     const raw = {
+      public: true,
       url: "https://app.example.test",
       run: {
         serviceID: `svc_${"S".repeat(22)}`,
@@ -100,6 +101,12 @@ function fixture() {
   return { bridge, connector, connection, publications, events, store, publication };
 }
 
+const privateRun = {
+  serviceID: `svc_${"S".repeat(22)}`,
+  serviceRunID: `srun_${"R".repeat(22)}`,
+  runNumber: "1",
+};
+
 function deployment() {
   return createClient({
     project: "acme/shop",
@@ -122,6 +129,32 @@ function createDurableObjectPublisher(
 afterEach(() => {
   mocks.load.mockReset();
   mocks.browserStorage.mockReset();
+});
+
+test("named private publications wait for readiness and omit the public URL", async () => {
+  const f = fixture();
+  const ready = deferred();
+  const closed = deferred();
+  const entered = deferred();
+  const close = vi.fn(async () => closed.resolve());
+  f.bridge.publish.mockImplementationOnce(async () => {
+    entered.resolve();
+    return { public: false, run: privateRun, ready: ready.promise, closed: closed.promise, close };
+  });
+  const remote = deployment();
+  const reached = vi.fn();
+  const pending = remote.publish("app", () => new Response());
+  void pending.then(reached);
+  await entered.promise;
+  expect(reached).not.toHaveBeenCalled();
+  ready.resolve();
+  const publication = await pending;
+  expect(publication).not.toHaveProperty("url");
+  expect(publication).not.toHaveProperty("publisherURL");
+  await publication.close();
+  await publication.wait();
+  await remote.close();
+  expect(close).toHaveBeenCalledOnce();
 });
 
 test("browser loads publisher WASM only when publish is called", async () => {
@@ -267,6 +300,32 @@ test("temporary publication forwards visitor policy and limits without another a
   await remote.close();
 });
 
+test("private temporary publication forwards exposure and omits a URL", async () => {
+  const f = fixture();
+  const closed = deferred();
+  f.bridge.publish.mockResolvedValueOnce({
+    public: false,
+    run: privateRun,
+    ready: Promise.resolve(),
+    closed: closed.promise,
+    close: async () => closed.resolve(),
+  });
+  const remote = deployment();
+  const publication = await remote.publish(() => new Response(), { public: false });
+  expect(f.bridge.publish).toHaveBeenCalledWith(
+    JSON.stringify({
+      project: "acme/shop",
+      deployment: "production",
+      credential: "private-credential",
+      temporary: { public: false },
+    }),
+    expect.anything(),
+  );
+  expect(publication).not.toHaveProperty("url");
+  expect(publication).not.toHaveProperty("publisherURL");
+  await remote.close();
+});
+
 test("publishing and connecting load separate modules without requesting publish-only connect grants", async () => {
   const f = fixture();
   const remote = deployment();
@@ -349,7 +408,13 @@ test("close during pre-readiness startup aborts and joins the exact Go publicati
   });
   f.bridge.publish.mockImplementationOnce(async () => {
     entered.resolve();
-    return { url: "https://app.example.test", ready: ready.promise, closed: closed.promise, close };
+    return {
+      public: true,
+      url: "https://app.example.test",
+      ready: ready.promise,
+      closed: closed.promise,
+      close,
+    };
   });
   const remote = deployment();
   const pending = remote.publish("app", () => new Response());
@@ -384,6 +449,7 @@ test("late startup acknowledgments remain owned when close races acquisition", a
     closed.resolve();
   });
   acquired.resolve({
+    public: true,
     url: "https://app.example.test",
     ready: Promise.resolve(),
     closed: closed.promise,
@@ -399,6 +465,7 @@ test("publication and deployment close wait for Go's joined closed promise", asy
   const closed = deferred();
   const close = vi.fn(async () => {});
   f.bridge.publish.mockResolvedValueOnce({
+    public: true,
     url: "https://app.example.test",
     run: {
       serviceID: `svc_${"S".repeat(22)}`,
@@ -453,7 +520,13 @@ test("startup errors and independent cleanup failures are both preserved and red
   });
   f.bridge.publish.mockImplementationOnce(async () => {
     entered.resolve();
-    return { url: "https://app.example.test", ready: ready.promise, closed: closed.promise, close };
+    return {
+      public: true,
+      url: "https://app.example.test",
+      ready: ready.promise,
+      closed: closed.promise,
+      close,
+    };
   });
   const remote = deployment();
   const pending = remote.publish(() => new Response());
@@ -486,6 +559,7 @@ test("cancellation never hides an independent startup cleanup failure", async ()
   f.bridge.publish.mockImplementationOnce(async () => {
     entered.resolve();
     return {
+      public: true,
       url: "https://app.example.test",
       ready: ready.promise,
       closed: closed.promise,

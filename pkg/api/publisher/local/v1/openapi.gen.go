@@ -315,19 +315,22 @@ type Invocation struct {
 	} `json:"deployment,omitempty"`
 
 	// EnrolledService Named app assignment on an SDK-enrolled publisher owner. Cannot be combined with any credential or authority selection.
-	EnrolledService         string                                     `json:"enrolled_service,omitempty"`
-	InvocationId            string                                     `json:"invocation_id"`
-	Ip                      *[]string                                  `json:"ip,omitempty"`
-	Limits                  *externalRef0.ProjectHTTPApplicationLimits `json:"limits,omitempty"`
-	Owner                   string                                     `json:"owner"`
-	Pid                     int                                        `json:"pid"`
-	PublisherCredentialFile string                                     `json:"publisher_credential_file,omitempty"`
-	PublisherIdentityId     string                                     `json:"publisher_identity_id,omitempty"`
-	RequirePostQuantum      *bool                                      `json:"require_post_quantum,omitempty"`
-	ServerUrl               *string                                    `json:"server_url,omitempty"`
-	Target                  string                                     `json:"target"`
-	TelemetryDisabled       bool                                       `json:"telemetry_disabled,omitempty"`
-	Version                 InvocationVersion                          `json:"version"`
+	EnrolledService string                                     `json:"enrolled_service,omitempty"`
+	InvocationId    string                                     `json:"invocation_id"`
+	Ip              *[]string                                  `json:"ip,omitempty"`
+	Limits          *externalRef0.ProjectHTTPApplicationLimits `json:"limits,omitempty"`
+	Owner           string                                     `json:"owner"`
+	Pid             int                                        `json:"pid"`
+
+	// Public Defaults to true for a temporary service. False enables connector access only. Omit for a saved named binding.
+	Public                  *bool             `json:"public,omitempty"`
+	PublisherCredentialFile string            `json:"publisher_credential_file,omitempty"`
+	PublisherIdentityId     string            `json:"publisher_identity_id,omitempty"`
+	RequirePostQuantum      *bool             `json:"require_post_quantum,omitempty"`
+	ServerUrl               *string           `json:"server_url,omitempty"`
+	Target                  string            `json:"target"`
+	TelemetryDisabled       bool              `json:"telemetry_disabled,omitempty"`
+	Version                 InvocationVersion `json:"version"`
 }
 
 // InvocationAccessMode defines model for Invocation.AccessMode.

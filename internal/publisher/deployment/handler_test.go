@@ -181,8 +181,23 @@ func TestHandlerTemporaryLostAllocationReplyRetainsRecovery(t *testing.T) {
 	}
 }
 
+func TestHandlerNamedPreparationUsesPrivateEndpoint(t *testing.T) {
+	options, control := handlerFixture(t)
+	control.service.Endpoint.Public = false
+	prepared, err := PrepareHandler(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Service.Endpoint.Public || prepared.Config.ServiceID != control.service.Id || prepared.Config.Handler == nil {
+		t.Fatal("private service did not use the named publication lifecycle")
+	}
+	if err := prepared.Cleanup(t.Context()); err != nil || len(control.requests) != 0 || len(control.deletes) != 0 {
+		t.Fatal("private publication changed the saved service", err)
+	}
+}
+
 func TestHandlerPreparationRejectsMixedModesAndTargetTrust(t *testing.T) {
-	for _, boundary := range []string{"missing handler", "mixed settings", "target trust", "private endpoint", "invalid limits", "empty IP", "invalid IP", "invalid mode"} {
+	for _, boundary := range []string{"missing handler", "mixed settings", "target trust", "invalid endpoint", "invalid limits", "empty IP", "invalid IP", "invalid mode"} {
 		t.Run(boundary, func(t *testing.T) {
 			options, control := handlerFixture(t)
 			switch boundary {
@@ -192,8 +207,8 @@ func TestHandlerPreparationRejectsMixedModesAndTargetTrust(t *testing.T) {
 				options.Temporary = &TemporaryHandlerOptions{}
 			case "target trust":
 				control.service.TargetTls = &controlv1.ServiceTargetTLS{Hostname: "upstream.example.test", Digest: "invalid"}
-			case "private endpoint":
-				control.service.Endpoint.Public = false
+			case "invalid endpoint":
+				control.service.Endpoint.Port = 0
 			default:
 				options.Service = ""
 				options.Temporary = &TemporaryHandlerOptions{}

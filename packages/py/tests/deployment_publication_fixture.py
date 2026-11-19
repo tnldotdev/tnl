@@ -18,6 +18,12 @@ async def main() -> None:
     assert not hasattr(tnl, "open")
     client = tnl.create_client(project="acme/sdk-publication")
     async with client.deployment("production") as deployment:
+        if sys.argv[1] == "python-private":
+            async with await deployment.publish("private", tnl.handler(endpoint)) as publication:
+                assert publication.url is None
+                print(json.dumps({}), flush=True)
+                await asyncio.to_thread(sys.stdin.readline)
+            return
         if sys.argv[1] == "python-lost-reply":
             try:
                 await deployment.publish(tnl.handler(endpoint), access="anonymous")

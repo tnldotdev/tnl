@@ -7,13 +7,14 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Protocol
 
 from pydantic import BaseModel
 
 from . import models
-from ._connections import _command, _error, _object
+from ._connections import _command, _object
 from ._native import native_binary
-from ._protocol import TnlError
+from ._protocol import InvalidResponse, TnlError
 
 
 class ManagementError(TnlError):
@@ -31,11 +32,15 @@ class SavedDeployment:
     etag: str
 
 
+def _invalid_management() -> InvalidResponse:
+    return InvalidResponse("the control management response is invalid")
+
+
 def _validated[M: BaseModel](model: type[M], value: object) -> M:
     try:
         return model.model_validate_json(json.dumps(value), strict=True)
     except (ValueError, TypeError):
-        raise _error("invalid") from None
+        raise _invalid_management() from None
 
 
 def _body[M: BaseModel](model: type[M], value: M | Mapping[str, object]) -> dict[str, object]:
@@ -48,7 +53,11 @@ def _body[M: BaseModel](model: type[M], value: M | Mapping[str, object]) -> dict
     return parsed.model_dump(mode="json", by_alias=True, exclude_unset=True)
 
 
-class Management:
+class Management(Protocol):
+    async def request(self, operation: str, **inputs: object) -> dict[str, object]: ...
+
+
+class NativeManagement:
     def __init__(self, project: str, token: str | None) -> None:
         self._project, self._token = project, token
 
@@ -98,28 +107,34 @@ class Management:
     def _response(raw: object) -> dict[str, object]:
         result = _object(raw, {"schema", "data", "etag", "status", "problem"})
         if type(result.get("schema")) is not int or result["schema"] != 1:
-            raise _error("invalid")
+            raise _invalid_management()
         if "status" in result:
             status = result["status"]
             if type(status) is not int or not 400 <= status <= 599:
-                raise _error("invalid")
-            problem = _validated(models.Problem, result.get("problem"))
-            if problem.status != status or "data" in result or "etag" in result:
-                raise _error("invalid")
-            raise ManagementError(status, problem)
+                raise _invalid_management()
+            if "data" in result or "etag" in result:
+                raise _invalid_management()
+            raise _management_problem(status, result.get("problem"))
         if "problem" in result:
-            raise _error("invalid")
+            raise _invalid_management()
         return result
 
-    @staticmethod
-    def saved(result: dict[str, object]) -> SavedDeployment:
-        etag = result.get("etag")
-        if not isinstance(etag, str) or re.fullmatch(r'"[1-9][0-9]*"', etag) is None:
-            raise _error("invalid")
-        deployment = _validated(models.Deployment, result.get("data"))
-        if etag != f'"{deployment.revision}"':
-            raise _error("invalid")
-        return SavedDeployment(deployment, etag)
+
+def _management_problem(status: int, data: object) -> ManagementError:
+    problem = _validated(models.Problem, data)
+    if problem.status != status:
+        raise _invalid_management()
+    return ManagementError(status, problem)
+
+
+def _saved(result: dict[str, object]) -> SavedDeployment:
+    etag = result.get("etag")
+    if not isinstance(etag, str) or re.fullmatch(r'"[1-9][0-9]*"', etag) is None:
+        raise _invalid_management()
+    deployment = _validated(models.Deployment, result.get("data"))
+    if etag != f'"{deployment.revision}"':
+        raise _invalid_management()
+    return SavedDeployment(deployment, etag)
 
 
 class Deployments:
@@ -129,7 +144,7 @@ class Deployments:
     async def create(
         self, body: models.CreateDeploymentRequest | Mapping[str, object], *, idempotency_key: str
     ) -> SavedDeployment:
-        return self._management.saved(
+        return _saved(
             await self._management.request(
                 "deployments.create",
                 body=_body(models.CreateDeploymentRequest, body),
@@ -142,9 +157,7 @@ class Deployments:
         return _validated(models.DeploymentPage, result.get("data"))
 
     async def get(self, deployment: str) -> SavedDeployment:
-        return self._management.saved(
-            await self._management.request("deployments.get", deployment=deployment)
-        )
+        return _saved(await self._management.request("deployments.get", deployment=deployment))
 
     async def update(
         self,
@@ -153,7 +166,7 @@ class Deployments:
         *,
         if_match: str,
     ) -> SavedDeployment:
-        return self._management.saved(
+        return _saved(
             await self._management.request(
                 "deployments.update",
                 deployment=deployment,

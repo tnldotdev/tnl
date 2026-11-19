@@ -10,6 +10,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	publisheradhoc "github.com/tnldotdev/tnl/internal/publisher/adhoc"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -31,7 +32,7 @@ type deploymentInvocation struct {
 // the existing invocation manager owns the worker and its exact allocation.
 func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publisherprotocol.Invocation, options publisheradhoc.Options) (result deploymentInvocation, err error) {
 	selection := r.Deployment
-	if selection == nil || r.ServerUrl != nil || r.PublisherCredentialFile != "" || r.PublisherIdentityId != "" || selection.Service != "" && (r.AccessMode != nil || r.Ip != nil || r.Limits != nil || r.RequirePostQuantum != nil) {
+	if selection == nil || r.ServerUrl != nil || r.PublisherCredentialFile != "" || r.PublisherIdentityId != "" || selection.Service != "" && (r.AccessMode != nil || r.Ip != nil || r.Limits != nil || r.RequirePostQuantum != nil || r.Public != nil) {
 		return result, publisheridentity.ErrScope
 	}
 	credential, err := auth.ParseDeploymentCredential(selection.Credential)
@@ -70,7 +71,8 @@ func (a *appRuntime) prepareDeploymentInvocation(ctx context.Context, r publishe
 			return result, err
 		}
 		result.native, result.service = native, *service
-		if service.Endpoint == nil || !service.Endpoint.Public || service.Endpoint.Port != 443 {
+		if service.Protocol != controlv1.ServiceProtocolHTTP || service.Endpoint == nil ||
+			!serviceendpoint.Valid("http", service.Endpoint.Hostname, service.Endpoint.Port, service.Endpoint.Public) {
 			return result, publisheridentity.ErrScope
 		}
 		target, err := targetsyntax.ParseCanonicalTarget(r.Target)

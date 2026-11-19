@@ -17,6 +17,7 @@ export async function smoke(input: unknown) {
     services: {
       web: { protocol: "http" },
       restricted: { protocol: "http" },
+      private: { protocol: "http" },
       exact: { protocol: "http" },
     },
   } as const;
@@ -29,7 +30,7 @@ export async function smoke(input: unknown) {
   const connector = deployment(fixture.deployment, {
     project: fixture.project,
     token: fixture.token,
-    services: { web: { protocol: "http" } },
+    services: { web: { protocol: "http" }, private: { protocol: "http" } },
   });
   const publisherRuntime = crypto.randomUUID();
   const handler = publisherHandler(publisherRuntime);
@@ -42,6 +43,7 @@ export async function smoke(input: unknown) {
   const operation = async () => {
     step("publish");
     const publication = await publish(publisher, "web", handler.handle);
+    check(publication.url === fixture.named_url, "public publication has the wrong URL");
     check(
       publication.run !== undefined && publication.publisherURL === undefined,
       "canonical-only publication lost its run metadata or enabled an alias implicitly",
@@ -153,11 +155,24 @@ export async function smoke(input: unknown) {
     }
     step("restricted");
     const restricted = await publish(publisher, "restricted", restrictedHandler.handle);
+    check(restricted.url === fixture.restricted_url, "restricted publication has the wrong URL");
     const denied = await fixtureCall(fixture, "/observe", restricted.url);
     check(
       denied.status === 403 && restrictedHandler.calls() === 0,
       "restricted public request reached the handler",
     );
+
+    step("private");
+    const privatePublication = await publish(publisher, "private", handler.handle);
+    check(!("url" in privatePublication), "private publication exposed a public URL");
+    const privateConnection = await connect(connector, "private");
+    const privateResponse = await privateConnection.fetch("/probe");
+    check(
+      privateResponse.status === 200 && (await privateResponse.text()) === "portable-publisher",
+      "authorized connector could not reach the private publication",
+    );
+    const privateState = await fixtureCall(fixture, "/state", `https://${fixture.private_host}`);
+    check(privateState.active_runs === 1, "private publication did not keep a ready service run");
     // join the connector's own stream and pair retirement before taking down
     // its peer. relay loss and retained-session shutdown are tested separately.
     step("connector-close");
@@ -181,6 +196,13 @@ export async function smoke(input: unknown) {
       "sibling alias selected another publisher",
     );
     step("named-close");
+    await privatePublication.close();
+    await privatePublication.wait();
+    const privateClosed = await fixtureCall(fixture, "/state", `https://${fixture.private_host}`);
+    check(
+      privateClosed.active_runs === 0 && !privateClosed.deleted,
+      "private publication cleanup changed the retained service",
+    );
     await restricted.close();
     await restricted.wait();
     await publication.close();
@@ -211,6 +233,7 @@ export async function smoke(input: unknown) {
 
     step("temporary");
     const temporary = await publish(publisher, handler.handle, { access: "anonymous" });
+    check(temporary.url !== undefined, "public temporary publication omitted its URL");
     const temporaryProof = await fixtureCall(fixture, "/observe", temporary.url);
     check(
       temporaryProof.status === 200 && temporaryProof.body === "portable-publisher",
@@ -223,6 +246,10 @@ export async function smoke(input: unknown) {
       removed.deleted && removed.active_runs === 0,
       "temporary publication survived joined close",
     );
+    const privateTemporary = await publish(publisher, handler.handle, { public: false });
+    check(!("url" in privateTemporary), "private temporary publication exposed a public URL");
+    await privateTemporary.close();
+    await privateTemporary.wait();
     check(runtimeStarts() >= 2, "connector and publisher did not use separate actual Go runtimes");
     return {
       actualGoWasm: true,
@@ -235,6 +262,8 @@ export async function smoke(input: unknown) {
       canceled: true,
       restrictedDeniedBeforeHandler: true,
       connectorToWasmPublisher: true,
+      connectorOnlyPublication: true,
+      connectorOnlyTemporary: true,
       exactRunAliases: true,
       noSiblingFallback: true,
       joined: true,

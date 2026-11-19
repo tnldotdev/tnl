@@ -101,6 +101,53 @@ func TestOpenRealPublicationReusesIdentityAndCleansCanceledContext(t *testing.T)
 	}
 }
 
+func TestOpenConnectorOnlyAllocationJoinsAndOmitsPublicURL(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	ready := make(chan testutil.PublishingRun, 1)
+	f := publishingtest.New(t, testutil.PublishingHooks{Ready: func(_ context.Context, run testutil.PublishingRun) error {
+		ready <- run
+		return nil
+	}})
+	enrollment, err := f.NamespaceEnrollment(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel, err := Open(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), Options{
+		Public: new(false), EnrollmentKey: enrollment, ServerURL: f.URL, HTTPClient: f.HTTP,
+		StateDir: filepath.Join(t.TempDir(), "state"), StateProtection: ProtectionFile, NoTelemetry: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := tunnel.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	service := tunnel.Service()
+	if service.Endpoint == nil || service.Endpoint.Public || service.Endpoint.Hostname == "" || tunnel.URL() != "" {
+		t.Fatal("private service lost its connector endpoint or exposed a public URL")
+	}
+	select {
+	case run := <-ready:
+		if run.Service.Id != service.Id || run.Service.Endpoint.Public || run.Setup.RunNumber < 1 {
+			t.Fatal("wrong connector-only run became ready")
+		}
+	default:
+		t.Fatal("private publication returned before its service run was ready")
+	}
+	if err := tunnel.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if deleted := f.DeletedIDs(); len(deleted) != 1 || deleted[0] != service.Id {
+		t.Fatal("close did not delete the exact private allocation")
+	}
+}
+
 func TestOpenCancellationBeforeReadyStillCleansExactAllocation(t *testing.T) {
 	if !testutil.IsolatedPublishingTest(t) {
 		return

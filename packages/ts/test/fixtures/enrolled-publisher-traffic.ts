@@ -10,7 +10,8 @@ const key = await lines.next();
 assert.ok(!key.done);
 const instance = process.argv[4];
 const controlUrl = process.argv[2];
-assert.ok(instance && controlUrl);
+const service = process.argv[5];
+assert.ok(instance && controlUrl && service);
 const owner = await sdk.publisher({
   instance,
   ...(key.value === "" ? {} : { controlUrl }),
@@ -27,10 +28,16 @@ const server =
 try {
   const publication =
     server === undefined
-      ? await (await import("@tnldotdev/tnl/node")).publish(owner, "web", handler)
-      : await (await import("@tnldotdev/tnl/bun")).publish(owner, "web", server);
+      ? await (await import("@tnldotdev/tnl/node")).publish(owner, service, handler)
+      : await (await import("@tnldotdev/tnl/bun")).publish(owner, service, server);
+  if (service === "internal")
+    assert.ok(!("url" in publication) && !("publisherURL" in publication));
   console.log(
-    JSON.stringify({ identity: owner.publisherIdentityID, url: publication.publisherURL }),
+    JSON.stringify({
+      identity: owner.publisherIdentityID,
+      url: publication.url,
+      publisher_url: publication.publisherURL,
+    }),
   );
   await lines.next();
 } finally {

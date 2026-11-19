@@ -230,7 +230,7 @@ def _limit_payload(value: Limits | None) -> dict[str, object] | None:
 
 
 class Publication:
-    """one public URL publication and its owned ASGI adapter listener."""
+    """one HTTP service publication and its owned ASGI adapter listener."""
 
     def __init__(
         self,
@@ -253,10 +253,16 @@ class Publication:
         on_close: Callable[[Publication], None] | None = None,
         environment: Mapping[str, str] | None = None,
         shutdown_deadline: Callable[[], float | None] | None = None,
+        public: bool | None = None,
         enrolled_service: str | None = None,
     ) -> None:
         deployment = None if deployment is None else dict(deployment)
         self._service = service
+        self._named = (
+            service is not None
+            or enrolled_service is not None
+            or (deployment is not None and deployment.get("service") is not None)
+        )
         self._on_close = on_close
         environment = dict(os.environ if environment is None else environment)
         self._pid = os.getpid()
@@ -291,6 +297,9 @@ class Publication:
             self._payload["access_mode"] = access_mode
         if require_post_quantum:
             self._payload["require_post_quantum"] = True
+        if public is not None:
+            self._payload["public"] = public
+        self._public = public
         if ip is not None:
             self._payload["ip"] = ip
         if limits is not None:
@@ -340,8 +349,8 @@ class Publication:
         server.tunnel = self
 
     @property
-    def url(self) -> str:
-        if self._url is None or not self._ready.done() or self._ready.exception() is not None:
+    def url(self) -> str | None:
+        if not self._ready.done() or self._ready.exception() is not None:
             raise InvalidResponse()
         return self._url
 
@@ -404,6 +413,8 @@ class Publication:
         await self._registration.unregister(self._begin_shutdown(), attempts=3)
 
     def _observe(self, status: Status) -> None:
+        if self._public is False and status.public_url is not None:
+            raise InvalidResponse()
         self._publisher_url = status.publisher_url
         if status.public_url is not None:
             if self._url is not None and status.public_url != self._url:
@@ -413,12 +424,16 @@ class Publication:
             if status.publish_run_number < self._run:
                 raise InvalidResponse()
             self._run = status.publish_run_number
-        if status.routable and status.public_url is None:
+        if (
+            status.routable
+            and status.public_url is None
+            and (self._url is not None or (not self._named and self._public is not False))
+        ):
             raise InvalidResponse()
         if status.routable and not self._ready.done():
             self._ready.set_result(None)
         elif status.failure:
-            self._fail(TnlError("sdk.publication_failed", "the public URL could not be published"))
+            self._fail(TnlError("sdk.publication_failed", "the service could not be published"))
 
     async def _follow(self) -> None:
         last_renew = asyncio.get_running_loop().time()
@@ -632,6 +647,7 @@ async def start_publication(
     access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
     limits: Limits | None = None,
     require_post_quantum: bool = False,
+    public: bool | None = None,
     telemetry: bool = True,
     deployment: dict[str, str] | None = None,
     service: str | None = None,
@@ -670,7 +686,7 @@ async def start_publication(
         or enrolled_service is not None
         or deployment is not None
         and "service" in deployment
-    ) and (access is not None or limits is not None or require_post_quantum):
+    ) and (access is not None or limits is not None or require_post_quantum or public is not None):
         raise TnlError(
             "sdk.configuration_invalid", "named publication uses saved visitor policy and limits"
         )
@@ -678,6 +694,8 @@ async def start_publication(
         raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
     if not isinstance(require_post_quantum, bool):
         raise TnlError("sdk.configuration_invalid", "require_post_quantum must be a boolean")
+    if public is not None and type(public) is not bool:
+        raise TnlError("sdk.configuration_invalid", "public must be a boolean")
     if type(telemetry) is not bool:
         raise TnlError("sdk.configuration_invalid", "telemetry must be a boolean")
     if publisher_credential_file is not None and publisher_identity_id is not None:
@@ -745,7 +763,8 @@ async def start_publication(
         on_close,
         environment,
         shutdown_deadline,
-        enrolled_service,
+        public=public,
+        enrolled_service=enrolled_service,
     )
     try:
         if on_start is not None:

@@ -35,6 +35,7 @@ export async function exerciseBrowserPublication() {
           await host.fetch(new Request("https://app.example.test/"))
         ).text();
         return {
+          public: true,
           url: "https://app.example.test",
           run: {
             serviceID: `svc_${"S".repeat(22)}`,
