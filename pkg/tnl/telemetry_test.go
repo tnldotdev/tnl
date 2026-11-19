@@ -2,6 +2,7 @@ package tnl
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
@@ -18,9 +20,10 @@ import (
 )
 
 type sdkTelemetryTransport struct {
-	next http.RoundTripper
-	mu   sync.Mutex
-	data [][]byte
+	next     http.RoundTripper
+	mu       sync.Mutex
+	data     [][]byte
+	received chan struct{}
 }
 
 func (r *sdkTelemetryTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -37,7 +40,30 @@ func (r *sdkTelemetryTransport) RoundTrip(request *http.Request) (*http.Response
 	r.mu.Lock()
 	r.data = append(r.data, data)
 	r.mu.Unlock()
+	select {
+	case r.received <- struct{}{}:
+	default:
+	}
 	return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+}
+
+func (r *sdkTelemetryTransport) awaitConnections(t *testing.T, want int64, private ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for {
+		if got := r.connections(t, private...); got >= want {
+			if got != want {
+				t.Fatalf("delivered SDK relay observations = %d, want %d", got, want)
+			}
+			return
+		}
+		select {
+		case <-r.received:
+		case <-ctx.Done():
+			t.Fatalf("delivered SDK relay observations = %d, want %d: %v", r.connections(t, private...), want, context.Cause(ctx))
+		}
+	}
 }
 
 func (r *sdkTelemetryTransport) connections(t *testing.T, private ...string) int64 {
@@ -183,7 +209,7 @@ func TestOpenTelemetryOptOutNeverChangesSiblingOrSavedPreference(t *testing.T) {
 	fixture := publishingtest.New(t, testutil.PublishingHooks{})
 	options := preparedSDKOptions(t, fixture)
 	original := http.DefaultTransport
-	recorded := &sdkTelemetryTransport{next: original}
+	recorded := &sdkTelemetryTransport{next: original, received: make(chan struct{}, 1)}
 	http.DefaultTransport = recorded
 	defer func() { http.DefaultTransport = original }()
 	var publications []*Tunnel
@@ -218,6 +244,9 @@ func TestOpenTelemetryOptOutNeverChangesSiblingOrSavedPreference(t *testing.T) {
 		}
 	}
 	enabled := open(options)
+	// optional telemetry drops writes when SQLite is busy. observe the enabled
+	// report before sibling publications start writing to the shared state.
+	recorded.awaitConnections(t, 2, fixture.URL, fixture.OwnerToken, options.StateDir)
 	disabledOptions := options
 	disabledOptions.NoTelemetry = true
 	for range 2 {
