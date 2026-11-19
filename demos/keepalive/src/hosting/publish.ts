@@ -1,7 +1,7 @@
 import { publish, publisher } from "@tnldotdev/tnl/browser";
 import type * as z from "zod";
-import { parseHost } from "../peers.ts";
-import type { hostingConfig } from "./config.ts";
+import { parseHost } from "../peers/gossip.ts";
+import type { hostingConfig } from "../enrollment.ts";
 
 export async function startPublisher(
   config: z.infer<typeof hostingConfig>,

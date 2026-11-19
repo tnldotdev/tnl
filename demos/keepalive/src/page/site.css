@@ -1,0 +1,148 @@
+:root {
+  color-scheme: light;
+  background: #fff;
+  color: #171717;
+  font:
+    1rem/1.6 ui-monospace,
+    "SFMono-Regular",
+    Menlo,
+    Consolas,
+    "Liberation Mono",
+    monospace;
+}
+
+main {
+  max-width: 36rem;
+  margin: min(16vh, 7rem) auto 2rem;
+  padding: 0 1.25rem;
+}
+
+h1,
+a {
+  color: #171717;
+}
+
+h1 {
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.experiment-age {
+  margin-block: 1.5rem;
+  color: #595959;
+  font-size: 0.875rem;
+}
+
+.experiment-age strong {
+  display: block;
+  color: #171717;
+  font-size: clamp(1.25rem, 6.5vw, 2.125rem);
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+section {
+  border: 1px solid #8d8d8d;
+  margin-block: 2rem 1.25rem;
+  padding: 0.35rem 1.25rem;
+}
+
+button {
+  border: 3px double #171717;
+  color: #171717;
+  background: transparent;
+  font: inherit;
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.actions,
+.request-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+
+.host-activity {
+  margin-block: 1rem;
+  font-size: 0.875rem;
+}
+
+.request-pulse {
+  color: #595959;
+  font-size: min(1em, 3.8vw);
+  white-space: pre;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .request-pulse {
+    display: none;
+  }
+}
+
+.text-action {
+  padding: 0.2rem 0;
+  border: 0;
+  color: #595959;
+  font-size: 0.875rem;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.copy-progress {
+  color: #171717;
+}
+
+footer {
+  margin-top: 3rem;
+  color: #595959;
+  font-size: 0.875rem;
+}
+
+.host-details {
+  margin-block: 1rem;
+}
+
+.host-details summary {
+  cursor: pointer;
+}
+
+.host-tree {
+  list-style: none;
+  padding: 0;
+  overflow-wrap: anywhere;
+}
+
+.host-tree ul {
+  margin: 0;
+}
+
+.tree-note,
+.tree-edge,
+.former-host {
+  color: #595959;
+}
+
+.tree-note {
+  margin-block: 0.75rem 0;
+  font-size: 0.875rem;
+}
+
+.tree-edge {
+  white-space: pre;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

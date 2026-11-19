@@ -1,8 +1,9 @@
 import { expect, it, vi } from "vitest";
-import { checkUpload, peerServer, waitForWork } from "../src/hosting/peer-http.ts";
-import { UPLOAD_BYTES } from "../src/hosting/policy.ts";
+import { RequestActivity } from "../src/hosting/activity.ts";
+import { checkUpload, peerServer, waitForWork } from "../src/peers/http.ts";
+import { UPLOAD_BYTES } from "../src/policy.ts";
 import { compareNetworks, proveNetwork } from "../src/network.ts";
-import { HOST_PARENT, type Host } from "../src/peers.ts";
+import { HOST_PARENT, type Host } from "../src/peers/gossip.ts";
 
 it("refuses the same IP and requires a direct reply from the invited host", async () => {
   const release = "a".repeat(64);
@@ -19,7 +20,12 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
   const b = host("b", "2");
   const aProof = await proveNetwork("192.0.2.1", secret);
   const bProof = await proveNetwork("192.0.2.2", secret);
-  const serve = async () => new Response("keepalive");
+  const activity = new RequestActivity();
+  const serve = async () => {
+    const response = new Response("keepalive");
+    activity.record(response, Date.now());
+    return response;
+  };
   const server = (proof: string) =>
     peerServer(release, [proxyOrigin], serve, lifetime.signal, { proxyOrigin, proof });
   const first = server(aProof);
@@ -77,6 +83,9 @@ it("refuses the same IP and requires a direct reply from the invited host", asyn
     expect(directCheck).toHaveBeenCalledOnce();
     expect(first.replacementReady).toBe(true);
     expect(first.replacement?.runID).toBe(b.runID);
+    expect(activity.count).toBe(0);
+    expect((await first.fetch(new Request(a.origin))).ok).toBe(true);
+    expect(activity.count).toBe(1);
   } finally {
     lifetime.abort();
     await Promise.all([first.stop(), second.stop()]);

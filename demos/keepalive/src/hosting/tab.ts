@@ -1,6 +1,6 @@
 import { NETWORK_PROOF_PATH, networkProof } from "../network.ts";
-import { browserHostName } from "../host-names.ts";
-import type { Host } from "../peers.ts";
+import { browserHostName } from "../peers/host-names.ts";
+import type { Host } from "../peers/gossip.ts";
 import {
   ARTIFACT_PREFIX,
   MAX_MANIFEST_BYTES,
@@ -12,10 +12,10 @@ import {
   verifyAsset,
   type Release,
 } from "../release.ts";
-import { CONFIG_PATH, hostingConfig } from "./config.ts";
+import { CONFIG_PATH, hostingConfig } from "../enrollment.ts";
 import { hostUpdate, type HostStart, type HostUpdate } from "./messages.ts";
-import { checkUpload, readPeers, waitForWork } from "./peer-http.ts";
-import { STARTUP_MS } from "./policy.ts";
+import { checkUpload, readPeers, waitForWork } from "../peers/http.ts";
+import { STARTUP_MS } from "../policy.ts";
 
 export type HostState =
   | { type: "waiting" | "checking" | "starting" | "stopping" }
@@ -104,8 +104,8 @@ async function getJSON(path: string, limit: number, signal: AbortSignal, method 
 export async function hostTab(
   bootstrap: boolean,
   signal: AbortSignal,
-  replace: AbortSignal,
   update: (state: HostState) => void,
+  activity: (state: Extract<HostUpdate, { type: "activity" }>) => void,
 ) {
   // check bootstrap availability before probing peers or downloading the release.
   const bootstrapConfig = bootstrap ? await getHostingConfig(signal) : undefined;
@@ -119,6 +119,7 @@ export async function hostTab(
   } else {
     update({ type: "waiting" });
     const selected = await waitForInvitation(release.id, signal);
+    signal.throwIfAborted();
     firstHostToContact = selected.host;
     invitation = selected.invitation;
     source = selected.host.origin;
@@ -153,8 +154,8 @@ export async function hostTab(
         pageOrigin: location.origin,
       },
       signal,
-      replace,
       update,
+      activity,
     );
   } finally {
     worker.terminate();
@@ -166,10 +167,10 @@ function runWorker(
   worker: Worker,
   start: HostStart,
   signal: AbortSignal,
-  replace: AbortSignal,
   update: (state: HostState) => void,
+  activity: (state: Extract<HostUpdate, { type: "activity" }>) => void,
 ) {
-  return new Promise<{ expired: boolean; replacement: string | undefined }>((resolve, reject) => {
+  return new Promise<{ expired: boolean; requests: number }>((resolve, reject) => {
     const started = performance.now();
     let startupMeasured = false;
     let stopTimer: ReturnType<typeof setTimeout> | undefined;
@@ -182,12 +183,11 @@ function runWorker(
       },
       Math.max(0, start.startupEndsAt - Date.now()),
     );
-    function finish(error?: Error, expired = false, replacement?: string) {
+    function finish(error?: Error, expired = false, requests = 0) {
       clearTimeout(startup);
       clearTimeout(stopTimer);
       signal.removeEventListener("abort", stop);
-      replace.removeEventListener("abort", replaceHost);
-      if (error === undefined) resolve({ expired, replacement });
+      if (error === undefined) resolve({ expired, requests });
       else reject(error);
     }
     function stop() {
@@ -196,11 +196,7 @@ function runWorker(
       worker.postMessage({ type: "stop" });
       stopTimer = setTimeout(() => finish(new Error("This tab did not stop in time.")), 15_000);
     }
-    function replaceHost() {
-      worker.postMessage({ type: "replace" });
-    }
     signal.addEventListener("abort", stop, { once: true });
-    replace.addEventListener("abort", replaceHost, { once: true });
     worker.onerror = () => finish(new Error("The hosting code could not run."));
     worker.onmessage = ({ data }: MessageEvent<unknown>) => {
       const message = hostUpdate.safeParse(data);
@@ -210,8 +206,10 @@ function runWorker(
         finish(
           startupExpired ? startupError : undefined,
           message.data.expired,
-          message.data.replacement,
+          message.data.requests,
         );
+      if (message.data.type === "activity" && !signal.aborted && !startupExpired)
+        activity(message.data);
       if (message.data.type === "hosting" && !signal.aborted && !startupExpired) {
         if (!startupMeasured) {
           startupMeasured = true;

@@ -1,4 +1,4 @@
-import { contentType, type Release } from "./release.ts";
+import { contentType, type Release } from "../release.ts";
 
 export function serveRelease(release: Release, files: ReadonlyMap<string, ArrayBuffer>) {
   const assets = new Map(release.assets.map((asset) => [asset.path, asset]));

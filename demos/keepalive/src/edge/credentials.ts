@@ -1,7 +1,7 @@
 import { control, createPublisherEnrollment } from "@tnldotdev/tnl/control";
-import { credentialRequest, enrollmentKey } from "./hosting/config.ts";
-import { httpsOriginSchema } from "./peers.ts";
-import { readJSON } from "./release.ts";
+import { credentialRequest, enrollmentKey } from "../enrollment.ts";
+import { httpsOriginSchema } from "../peers/gossip.ts";
+import { readJSON } from "../release.ts";
 
 export type CredentialBindings = {
   CONTROL_URL: string;

@@ -1,16 +1,16 @@
-import "./validation.ts";
+import "../validation.ts";
 import { Hono } from "hono";
 import { credentials, enrollmentConfigured, type CredentialBindings } from "./credentials.ts";
-import { CONFIG_PATH, CREDENTIALS_PATH, hostingConfig } from "./hosting/config.ts";
+import { CONFIG_PATH, CREDENTIALS_PATH, hostingConfig } from "../enrollment.ts";
 import {
   NETWORK_CHECK_PATH,
   NETWORK_PROOF_PATH,
   compareNetworks,
   proveNetwork,
-} from "./network.ts";
-import { PEERS_PATH } from "./peers.ts";
+} from "../network.ts";
+import { PEERS_PATH } from "../peers/gossip.ts";
 import { createProxy, siteHeaders } from "./proxy.ts";
-import { ARTIFACT_PREFIX, RELEASE_PATH, contentType, releaseSchema } from "./release.ts";
+import { ARTIFACT_PREFIX, RELEASE_PATH, contentType, releaseSchema } from "../release.ts";
 
 declare const KEEPALIVE_RELEASE: unknown;
 const release = releaseSchema.parse(KEEPALIVE_RELEASE);

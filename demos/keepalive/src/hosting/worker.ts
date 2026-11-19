@@ -1,17 +1,17 @@
 import "../validation.ts";
 import { WASM_PATH, parseRelease, readJSON } from "../release.ts";
-import { serveRelease } from "../serving.ts";
-import { CREDENTIALS_PATH, enrollmentKey } from "./config.ts";
-import { hostTarget, REPLACE_BEFORE_MS, turnLength } from "./policy.ts";
+import { serveRelease } from "./serving.ts";
+import { RequestActivity } from "./activity.ts";
+import { CREDENTIALS_PATH, enrollmentKey } from "../enrollment.ts";
+import { REPLACE_BEFORE_MS, turnLength } from "../policy.ts";
 import { hostCommand, type HostStart, type HostUpdate } from "./messages.ts";
-import { peerServer, readPeers } from "./peer-http.ts";
+import { peerServer, readPeers } from "../peers/http.ts";
 import { startPublisher } from "./publish.ts";
 
 const lifetime = new AbortController();
 const { signal } = lifetime;
 const emit = (update: HostUpdate) => globalThis.postMessage(update);
 let started = false;
-let replacing = false;
 const replacementJitter = Math.floor(Math.random() * 5_000);
 
 globalThis.addEventListener("message", ({ data }: MessageEvent<unknown>) => {
@@ -21,7 +21,6 @@ globalThis.addEventListener("message", ({ data }: MessageEvent<unknown>) => {
     return;
   }
   if (message.data.type === "stop") lifetime.abort();
-  else if (message.data.type === "replace") replacing = true;
   else if (!started) {
     started = true;
     void host(message.data);
@@ -35,6 +34,8 @@ async function host(command: HostStart) {
   let expired = false;
   let endsAt = Infinity;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
+  let activityTimer: ReturnType<typeof setInterval> | undefined;
+  const activity = new RequestActivity();
   function endTurn() {
     expired = true;
     lifetime.abort();
@@ -45,7 +46,6 @@ async function host(command: HostStart) {
     if (wasm === undefined) throw new Error("The copy is missing the hosting code.");
     useLocalWasm(wasm, command.pageOrigin);
 
-    let filesServed = 0;
     const serve = serveRelease(release, command.files);
     const allowedOrigins = [
       command.pageOrigin,
@@ -56,12 +56,13 @@ async function host(command: HostStart) {
       release.id,
       allowedOrigins,
       async (request) => {
+        if (signal.aborted) return new Response(null, { status: 503 });
         if (Date.now() >= endsAt) {
           endTurn();
           return new Response(null, { status: 503 });
         }
         const response = await serve(request);
-        if (response.ok) filesServed++;
+        if (endsAt !== Infinity) activity.record(response, Date.now());
         return response;
       },
       signal,
@@ -90,8 +91,10 @@ async function host(command: HostStart) {
     const duration = turnLength(command.bootstrap);
     endsAt = since + duration;
     stopTimer = setTimeout(endTurn, duration);
-    const departing = () =>
-      replacing || Date.now() >= endsAt - REPLACE_BEFORE_MS + replacementJitter;
+    const departing = () => Date.now() >= endsAt - REPLACE_BEFORE_MS + replacementJitter;
+    const reportActivity = () => {
+      if (!signal.aborted) emit({ type: "activity", ...activity.snapshot(Date.now()) });
+    };
     let nextDiscovery = since + 30_000;
     await peers.start(
       host,
@@ -110,26 +113,22 @@ async function host(command: HostStart) {
             })
             .catch(() => {});
         }
-        if (
-          departing() &&
-          (peers?.replacementReady ||
-            (replacing && gossip.readyBeyondWindow(now) >= hostTarget(gossip.tabs(now))))
-        ) {
+        if (departing() && peers?.replacementReady) {
           lifetime.abort();
           return;
         }
+        const tabs = gossip.tabSnapshot(now, hosts);
         emit({
           type: "hosting",
           since,
           endsAt,
-          replacing: departing(),
-          filesServed,
           hosts: hosts.length + 1,
           startedAt: gossip.startedAt,
           origin: host.origin,
           runID: host.runID,
-          tabs: gossip.tabs(now),
-          roster: [...gossip.roster(now)].slice(0, 257),
+          tabs: tabs.total,
+          localTabs: tabs.local,
+          roster: gossip.roster(now),
         });
       },
       departing,
@@ -137,19 +136,19 @@ async function host(command: HostStart) {
         name: command.name,
         endsAt,
         ...(command.invitation && command.firstHostToContact
-          ? {
-              copyFrom: command.firstHostToContact.runID,
-              invitedBy: command.firstHostToContact.runID,
-            }
+          ? { copyFrom: command.firstHostToContact.runID }
           : {}),
       },
     );
+    reportActivity();
+    activityTimer = setInterval(reportActivity, 1_000);
     await running.wait();
     failed = !signal.aborted;
   } catch {
     failed = !signal.aborted;
   } finally {
     clearTimeout(stopTimer);
+    clearInterval(activityTimer);
     try {
       // closing the publisher ends HTTP streams even after abrupt tab closure.
       await peers?.stop();
@@ -157,11 +156,7 @@ async function host(command: HostStart) {
     } catch {
       failed = true;
     }
-    emit(
-      failed
-        ? { type: "failed" }
-        : { type: "stopped", expired, replacement: peers?.replacement?.name },
-    );
+    emit(failed ? { type: "failed" } : { type: "stopped", expired, requests: activity.count });
   }
 }
 

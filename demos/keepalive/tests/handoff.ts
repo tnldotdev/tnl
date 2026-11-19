@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { parseArgs } from "node:util";
 import { chromium, type Page } from "playwright";
-import { readPeers } from "../src/hosting/peer-http.ts";
-import { hostOrigin } from "../src/peers.ts";
+import { readPeers } from "../src/peers/http.ts";
+import { REPLACE_BEFORE_MS } from "../src/policy.ts";
+import { hostOrigin } from "../src/peers/gossip.ts";
 import { RELEASE_PATH, WASM_PATH, releaseSchema } from "../src/release.ts";
 
 const { values } = parseArgs({
@@ -26,7 +27,7 @@ async function hosting(page: Page) {
 
 async function stop(page: Page) {
   await page.getByRole("button", { name: "stop", exact: true }).click();
-  await page.getByRole("status").getByText("This tab stopped hosting.").waitFor();
+  await page.getByRole("status").getByText("Thanks for hosting.", { exact: true }).waitFor();
 }
 
 async function openSite(page: Page) {
@@ -78,18 +79,35 @@ async function visitorSample(path: string) {
 try {
   assert.equal((await fetch(site)).status, 503, "Use an empty test deployment.");
   const release = releaseSchema.parse(await (await fetch(new URL(RELEASE_PATH, site))).json());
-  async function startTime() {
+  async function currentReport() {
     const report = await readPeers(site.origin, release.id);
     assert(report, "Expected a peer report from a running host.");
-    return report.startedAt;
+    return report;
   }
   const first = await browser.newPage();
   await first.goto(start.href);
   await first.getByRole("button", { name: "start hosting" }).click();
   await hosting(first);
-  const startedAt = await startTime();
+  const startedAt = (await currentReport()).startedAt;
   console.log("visitor before copy", await visitorSample("/"));
-  await first.getByRole("button", { name: "find my replacement" }).click();
+  const second = await join({ server: values["peer-proxy"] });
+  const session = await second.page.context().newCDPSession(second.page);
+  await session.send("Page.setWebLifecycleState", { state: "frozen" });
+  try {
+    assert.equal((await visitorSample("/")).status, 200, "The site failed with a host frozen.");
+  } finally {
+    await session.send("Page.setWebLifecycleState", { state: "active" });
+  }
+  await stop(first);
+  assert((await visitorSample("/")).status === 200, "The first copy did not take over.");
+  const secondHost = (await currentReport()).from;
+  assert(secondHost.endsAt !== undefined);
+  // wait for the real replacement window; don't shorten the browser's turn.
+  await second.page.waitForFunction(
+    (at) => Date.now() >= at,
+    secondHost.endsAt - REPLACE_BEFORE_MS + 7_000,
+    { timeout: 10 * 60_000, polling: 500 },
+  );
   let copyingDone = false;
   let copyStarted!: () => void;
   const copyStartedPromise = new Promise<void>((resolve) => {
@@ -104,8 +122,8 @@ try {
     }
     return samples;
   }
-  const [second, samples] = await Promise.all([
-    join({ server: values["peer-proxy"] }, copyStarted).finally(() => {
+  const [third, samples] = await Promise.all([
+    join(undefined, copyStarted).finally(() => {
       copyingDone = true;
       copyStarted();
     }),
@@ -116,19 +134,18 @@ try {
     samples.every(({ status }) => status === 200),
     "A visitor failed during the handoff.",
   );
-  await first.getByRole("status").getByText("is serving now. Thanks for hosting.").waitFor();
-  const third = await join();
-  assert.notEqual(third.sender, second.sender, "The first host supplied both copies.");
-  const session = await second.page.context().newCDPSession(second.page);
-  await session.send("Page.setWebLifecycleState", { state: "frozen" });
-  assert.equal((await visitorSample("/")).status, 200, "The site failed with a host frozen.");
-  await session.send("Page.setWebLifecycleState", { state: "active" });
-  await second.page.close();
+  assert.equal(third.sender, secondHost.origin, "The second host did not supply the new copy.");
+  await second.page.getByRole("status").getByText("Thanks for hosting.", { exact: true }).waitFor();
   const visitor = await browser.newPage();
   await openSite(visitor);
   await visitor.getByRole("heading", { name: "can we keep this alive?" }).waitFor();
-  assert.equal(await startTime(), startedAt, "The clock should survive the handoffs.");
-  await stop(third.page);
+  assert.equal(
+    (await currentReport()).startedAt,
+    startedAt,
+    "The clock should survive the handoffs.",
+  );
+  // close the active host without its stop button as well.
+  await third.page.close();
   await visitor.waitForFunction(
     async () => (await fetch("/", { cache: "no-store" })).status === 503,
   );
@@ -137,9 +154,12 @@ try {
   await hosting(first);
   await openSite(visitor);
   await visitor.getByRole("heading", { name: "can we keep this alive?" }).waitFor();
-  assert((await startTime()) >= restartedAt, "The clock should reset after all hosts stop.");
+  assert(
+    (await currentReport()).startedAt >= restartedAt,
+    "The clock should reset after all hosts stop.",
+  );
   await stop(first);
-  console.log("Two browser handoffs, final-host outage, and restart passed.");
+  console.log("Browser copies, automatic replacement, final-host outage, and restart passed.");
 } finally {
   await browser.close();
 }

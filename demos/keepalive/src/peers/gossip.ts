@@ -1,6 +1,6 @@
 import * as z from "zod";
 import { hostNameSchema } from "./host-names.ts";
-import { BOOTSTRAP_TURN_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "./hosting/policy.ts";
+import { BOOTSTRAP_TURN_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "../policy.ts";
 import { MAX_TABS_PER_HOST, TAB_LEASE_MS } from "./presence.ts";
 
 export const HOST_PARENT = "hosts.keepthisalive.com";
@@ -47,8 +47,6 @@ const changeSchema = hostSchema.extend({
     })
     .optional(),
   copyFrom: runIDSchema.optional(),
-  invitedBy: runIDSchema.optional(),
-  replacedBy: runIDSchema.optional(),
 });
 const startTimeSchema = z.int().min(EARLIEST_START);
 const messageSchema = z.strictObject({
@@ -64,8 +62,6 @@ export const hostDetailsSchema = changeSchema.pick({
   endsAt: true,
   departing: true,
   copyFrom: true,
-  invitedBy: true,
-  replacedBy: true,
 });
 type HostDetails = z.infer<typeof hostDetailsSchema>;
 export type GossipMessage = Readonly<z.infer<typeof messageSchema>>;
@@ -163,16 +159,19 @@ export class Gossip {
   }
 
   roster(now: number) {
-    const live = [this.#self, ...this.hosts(now)];
-    const former = [...this.#peers.values()]
-      .filter(({ change }) => change.left)
-      .map(({ change }) => change)
-      .slice(-8);
-    return [...live, ...former];
+    this.#forgetOldPeers(now);
+    return [this.#self, ...[...this.#peers.values()].map(({ change }) => change)];
   }
 
   tabs(now: number) {
-    return reportedTabs([this.#self, ...this.hosts(now)], now);
+    return this.tabSnapshot(now).total;
+  }
+
+  tabSnapshot(now: number, hosts = this.hosts(now)) {
+    return {
+      local: reportedTabs([this.#self], now),
+      total: reportedTabs([this.#self, ...hosts], now),
+    };
   }
 
   receive(message: GossipMessage, now: number) {

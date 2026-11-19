@@ -1,5 +1,5 @@
-import { MAX_MESSAGE_BYTES, PEERS_PATH, SHARED_HOST, parseMessage } from "./peers.ts";
-import { contentType, readAssetResponse, readJSON, type Release } from "./release.ts";
+import { MAX_MESSAGE_BYTES, PEERS_PATH, SHARED_HOST, parseMessage } from "../peers/gossip.ts";
+import { contentType, readAssetResponse, readJSON, type Release } from "../release.ts";
 
 export function siteHeaders(type = "application/octet-stream") {
   return {

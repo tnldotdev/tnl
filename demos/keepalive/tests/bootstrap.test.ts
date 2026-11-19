@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { CONFIG_PATH } from "../src/hosting/config.ts";
+import { CONFIG_PATH } from "../src/enrollment.ts";
 import { HostingUnavailable, hostTab } from "../src/hosting/tab.ts";
 
 it("does not probe peers or download hosting files when bootstrap is unavailable", async () => {
@@ -9,7 +9,9 @@ it("does not probe peers or download hosting files when bootstrap is unavailable
   vi.stubGlobal("fetch", fetch);
   try {
     const { signal } = new AbortController();
-    await expect(hostTab(true, signal, signal, vi.fn())).rejects.toBeInstanceOf(HostingUnavailable);
+    await expect(hostTab(true, signal, vi.fn(), vi.fn())).rejects.toBeInstanceOf(
+      HostingUnavailable,
+    );
     expect(fetch).toHaveBeenCalledExactlyOnceWith(
       CONFIG_PATH,
       expect.objectContaining({ method: "POST" }),

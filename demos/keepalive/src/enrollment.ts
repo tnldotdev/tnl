@@ -1,6 +1,6 @@
 import * as z from "zod";
-import { networkProof } from "../network.ts";
-import { httpsOriginSchema, releaseIDSchema } from "../peers.ts";
+import { networkProof } from "./network.ts";
+import { httpsOriginSchema, releaseIDSchema } from "./peers/gossip.ts";
 
 export const CONFIG_PATH = "/__keepalive/config";
 export const CREDENTIALS_PATH = "/__keepalive/credentials";

@@ -17,11 +17,11 @@ import {
   type Change,
   type GossipMessage,
   type Host,
-} from "../peers.ts";
-import { heartbeatSchema, PRESENCE_PATH, TabLeases } from "../presence.ts";
+} from "./gossip.ts";
+import { heartbeatSchema, PRESENCE_PATH, TabLeases } from "./presence.ts";
 import { readBytes, readJSON } from "../release.ts";
-import { invitationSchema } from "./config.ts";
-import { hostTarget, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "./policy.ts";
+import { invitationSchema } from "../enrollment.ts";
+import { hostTarget, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "../policy.ts";
 
 const CHECK_PATH = "/__keepalive/check";
 const WAIT_PATH = "/__keepalive/wait";
@@ -237,10 +237,7 @@ export function peerServer(
       promotion = undefined;
       gossip.finishStart();
       gossip.receive(reply, Date.now());
-      if (pending.replacing) {
-        replacement = reply.from;
-        gossip.update({ replacedBy: replacement.runID });
-      }
+      if (pending.replacing) replacement = reply.from;
     } else {
       gossip.receive(message, Date.now());
     }

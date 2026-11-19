@@ -1,9 +1,18 @@
-import { readPeers } from "./hosting/peer-http.ts";
-import { MAX_MESSAGE_BYTES, parseMessage, sameRun, type Change } from "./peers.ts";
-import { heartbeatSchema, HEARTBEAT_MS, PRESENCE_PATH } from "./presence.ts";
-import { MAX_MANIFEST_BYTES, parseRelease, readJSON, RELEASE_PATH } from "./release.ts";
+import { MAX_MESSAGE_BYTES, parseMessage, sameRun, type Change } from "../peers/gossip.ts";
+import { readPeers } from "../peers/http.ts";
+import { heartbeatSchema, HEARTBEAT_MS, PRESENCE_PATH } from "../peers/presence.ts";
+import { MAX_MANIFEST_BYTES, parseRelease, readJSON, RELEASE_PATH } from "../release.ts";
 
-export async function observeVisitors(signal: AbortSignal, update: (roster: Change[]) => void) {
+export type Observation = {
+  roster: Change[];
+  hostRunID: string;
+  startedAt: number;
+};
+
+export async function observeVisitors(
+  signal: AbortSignal,
+  update: (observation: Observation | undefined) => void,
+) {
   const tab = crypto.randomUUID();
   let releaseID: string | undefined;
   let host: Change | undefined;
@@ -50,12 +59,17 @@ export async function observeVisitors(signal: AbortSignal, update: (roster: Chan
       );
       if (report === undefined || report.from.left || !sameRun(host, report.from))
         throw new Error("The counting host changed.");
-      if (!signal.aborted) update([report.from, ...report.changes]);
+      if (!signal.aborted)
+        update({
+          roster: [report.from, ...report.changes],
+          hostRunID: report.from.runID,
+          startedAt: report.startedAt,
+        });
     } catch {
       // retry discovery; a newer release may be active after a deployment.
       host = alternates.pop();
       if (host === undefined) releaseID = undefined;
-      if (!signal.aborted) update([]);
+      if (!signal.aborted) update(undefined);
     } finally {
       if (!signal.aborted) timer = setTimeout(() => void beat(), HEARTBEAT_MS);
     }

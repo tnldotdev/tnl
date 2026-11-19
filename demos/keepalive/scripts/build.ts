@@ -42,7 +42,7 @@ const release = await parseRelease({ id, assets });
 await writeFile(path.join(dist, "release.json"), JSON.stringify(release) + "\n");
 await build({
   ...options,
-  entryPoints: ["src/worker.ts"],
+  entryPoints: ["src/edge/worker.ts"],
   outfile: path.join(dist, "worker.mjs"),
   define: { KEEPALIVE_RELEASE: JSON.stringify(release) },
 });

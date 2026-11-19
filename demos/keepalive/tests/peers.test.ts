@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STARTUP_MS } from "../src/hosting/policy.ts";
+import { STARTUP_MS } from "../src/policy.ts";
 import {
   Gossip,
   HOST_PARENT,
@@ -13,7 +13,7 @@ import {
   type GossipMessage,
   type Host,
   type PeerTransport,
-} from "../src/peers.ts";
+} from "../src/peers/gossip.ts";
 
 const epoch = Date.UTC(2026, 10, 18);
 const release = "a".repeat(64);

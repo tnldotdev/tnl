@@ -1,7 +1,21 @@
 # can we keep this alive?
 
-Keepalive is a website served by browser tabs. Tabs copy the site from each
-other and serve it through tnl. If every host stops, the site goes down.
+Keepalive is a website served by browser tabs. One tab starts with a copy
+from `start.keepthisalive.com`. Other tabs can volunteer: they copy the site
+from a running host and start serving it through tnl. If the last host stops,
+`keepthisalive.com` goes down. The startup site stays online.
+
+## start here
+
+| Follow                          | Open                                                                                                                                                      |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A visit**                     | [Edge entry point](src/edge/worker.ts) → [proxy](src/edge/proxy.ts) → [file serving in the host tab](src/hosting/serving.ts)                              |
+| **A new host**                  | [Page](src/page/app.tsx) → [wait, copy, and verify](src/hosting/tab.ts) → [browser worker](src/hosting/worker.ts) → [tnl publish](src/hosting/publish.ts) |
+| **Hosts talking to each other** | [Peer HTTP](src/peers/http.ts) handles invitations and heartbeats; [gossip](src/peers/gossip.ts) tracks recent hosts and decides when to recruit.         |
+
+`src/page/` runs on the browser's main thread, `src/hosting/worker.ts` runs
+in a dedicated worker in a host tab, and `src/edge/` runs on Cloudflare.
+They share the [release manifest](src/release.ts) and [turn rules](src/policy.ts).
 
 ## serving the site
 
@@ -15,10 +29,9 @@ visitor                 Cloudflare proxy                 host A
    |<-- checked app.js --------|                            |
 ```
 
-[`src/worker.ts`](src/worker.ts) handles requests to `keepthisalive.com`.
-[`src/proxy.ts`](src/proxy.ts) fetches files from a browser host and checks
-their sizes and hashes against the release manifest. If it can't get a valid
-copy, it returns an empty `503` that browsers and caches must not store.
+The edge proxy checks file sizes and hashes against the release manifest.
+If it can't get a valid copy, it returns an empty `503` that browsers and
+caches must not store.
 
 ## adding a host
 
@@ -56,8 +69,20 @@ pool needs it, and stops at zero even if nobody takes over. To hand off
 early, it checks that the replacement answers at its own address. The proxy
 won't approve a volunteer with the same public IP as the host inviting it.
 
-The page shows recently observed hosts by name. Its handoff history
-distinguishes sharing a verified copy from replacing a departing host.
+The page shows experiment age and a small tree under **hosts**. Each branch
+connects a tab to the host it copied from. The tree shows recent reports,
+not a complete history.
+
+While hosting, the page shows successful file responses from this tab and
+its share of the estimated tab count. The two numbers measure different
+things: a tab's presence is counted by one host, but its file requests can
+reach another.
+
+The **stop** button ends a turn without waiting for a successor. When a
+background volunteer is picked, the tab can play a short chirp. While
+hosting, the page asks the browser to keep the visible screen awake and to
+warn before closing. These are browser-dependent; a tab can still be
+suspended or closed.
 
 For the first host, `start.keepthisalive.com` supplies a permanent copy.
 That page stays available when no hosts remain. The main site never falls
@@ -70,7 +95,7 @@ address and each host its own address under `hosts.keepthisalive.com`. The
 proxy can use any host. When A checks B, it needs B's address so that B is
 the one that answers.
 
-[`src/peers.ts`](src/peers.ts) holds each host's view of the others. Every few
+[`src/peers/gossip.ts`](src/peers/gossip.ts) holds each host's view of the others. Every few
 seconds, a host checks one peer and exchanges reports about who it knows.
 Passing those reports along is the gossip.
 
@@ -88,7 +113,7 @@ host A                    host C                    host B
 
 If both checks fail, A gives B a 15-second grace period before it stops
 counting B. Hearing another host mention B doesn't count as a reply from B.
-[`src/hosting/peer-http.ts`](src/hosting/peer-http.ts) handles these requests
+[`src/peers/http.ts`](src/peers/http.ts) handles these requests
 and the waiting invitations.
 
 ## reconnecting two groups
@@ -119,3 +144,14 @@ on eventually reaching the other group.
 Running hosts pass the start time to new hosts. If A hands off to B and A
 stops, B keeps the clock going. If everyone stops, the next host starts the
 clock over.
+
+The clock shows time since the shared start, not independently measured
+uptime.
+
+## checking the page
+
+After `task js:keepalive:build`, run `mise exec -- node demos/keepalive/tests/preview.ts`
+from the repository root with Chrome installed. It captures the built page
+in `dist/screenshots/ui/` with simulated peers and hosting worker messages.
+`task js:keepalive:handoff` instead uses an empty test deployment and waits
+for a real volunteer turn to reach its replacement window.

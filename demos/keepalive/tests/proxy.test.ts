@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
-import { SHARED_HOST } from "../src/peers.ts";
-import { createProxy } from "../src/proxy.ts";
+import { SHARED_HOST } from "../src/peers/gossip.ts";
+import { createProxy } from "../src/edge/proxy.ts";
 import { WASM_PATH, WORKER_PATH, digest, parseRelease } from "../src/release.ts";
 
 const script = "export const version = 1;";
