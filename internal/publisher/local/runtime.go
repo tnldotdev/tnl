@@ -434,6 +434,10 @@ func Serve(ctx context.Context, options Options) (result error) {
 			if a.manager.Sweep(a.manager.Alive) {
 				return nil
 			}
+			// capture time before the snapshot: a concurrent authenticated
+			// preparation must not be expired before its registration appears.
+			now := time.Now()
+			a.capabilities.ExpireInvocations(now, a.manager.RegisteredServices())
 			a.mu.Lock()
 			for id := range a.prepared {
 				if _, found := a.manager.ServiceForRegistration(id); !found {

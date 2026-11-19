@@ -184,6 +184,7 @@ type capabilityGrant struct {
 	url, ownerID, capability string
 	scope                    api.EndpointScope
 	service, invocationID    string
+	lastUsed                 time.Time
 }
 
 func (g capabilityGrant) endpoint() Endpoint {
@@ -235,18 +236,40 @@ func (c *Capabilities) Issue(request CapabilityRequest) (Endpoint, error) {
 	grant := capabilityGrant{url: e.Url, ownerID: e.OwnerId, capability: e.Capability, scope: e.Scope, service: optional(e.Service), invocationID: optional(e.InvocationId)}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// bounded grants are stable per selected service/invocation, so SDK retries
+	grant.lastUsed = time.Now()
+	// grants are stable per selected service/invocation, so SDK retries
 	// cannot exhaust owner memory or revoke another application's capability.
-	for _, existing := range c.grants {
+	for digest, existing := range c.grants {
 		if existing.scope == grant.scope && existing.service == grant.service && existing.invocationID == grant.invocationID {
+			existing.lastUsed = grant.lastUsed
+			c.grants[digest] = existing
 			return existing.endpoint(), nil
 		}
 	}
-	if len(c.grants) >= 256 {
-		return Endpoint{}, ErrForbidden
-	}
 	c.grants[sha256.Sum256([]byte(secret))] = grant
 	return grant.endpoint(), nil
+}
+
+// ExpireInvocations forgets unused invocation grants. retain current registrations,
+// including cleanup retries. a grace period covers requests preparing a registration
+// and exact unregister retries after its worker has stopped.
+func (c *Capabilities) ExpireInvocations(now time.Time, retained map[string]bool) {
+	const idleGrace = 5 * time.Minute
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for digest, grant := range c.grants {
+		if grant.scope != "invocation" {
+			continue
+		}
+		if retained[grant.invocationID] {
+			if grant.lastUsed.Before(now) {
+				grant.lastUsed = now
+				c.grants[digest] = grant
+			}
+		} else if now.Sub(grant.lastUsed) >= idleGrace {
+			delete(c.grants, digest)
+		}
+	}
 }
 
 func optional(value *string) string {
@@ -280,7 +303,12 @@ func (c *Capabilities) Handler(next http.Handler) http.Handler {
 			return
 		}
 		c.mu.Lock()
-		grant, found := c.grants[sha256.Sum256([]byte(bearer[7:]))]
+		digest := sha256.Sum256([]byte(bearer[7:]))
+		grant, found := c.grants[digest]
+		if found && grant.scope == "invocation" && r.Method == http.MethodPost && r.URL.Path == "/v1/publications/register" {
+			grant.lastUsed = time.Now()
+			c.grants[digest] = grant
+		}
 		c.mu.Unlock()
 		if !found {
 			Write(w, 401, Problem{Code: "runtime.unauthorized", Message: "use the current private endpoint descriptor"})

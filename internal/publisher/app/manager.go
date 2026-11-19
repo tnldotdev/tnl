@@ -188,6 +188,18 @@ func (m *Manager) Snapshot() Snapshot {
 	return copy
 }
 
+// RegisteredServices returns the service selectors whose registrations still
+// own a worker, a preparation, or retryable cleanup.
+func (m *Manager) RegisteredServices() map[string]bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	services := make(map[string]bool, len(m.registrations))
+	for service := range m.registrations {
+		services[service] = true
+	}
+	return services
+}
+
 func (m *Manager) BeginPreparation() func() {
 	m.mu.Lock()
 	m.preparing++
