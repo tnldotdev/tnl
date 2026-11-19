@@ -16,13 +16,7 @@ export function siteHeaders(type = "application/octet-stream") {
 }
 
 function unavailable() {
-  return new Response(
-    "No host could serve the site. Start one at https://start.keepthisalive.com/.\n",
-    {
-      status: 503,
-      headers: siteHeaders("text/plain; charset=utf-8"),
-    },
-  );
+  return new Response(null, { status: 503, headers: siteHeaders() });
 }
 
 export function createProxy(release: Release, fetchHost = fetch) {
