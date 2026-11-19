@@ -16,7 +16,7 @@ const (
 	streamIntroductionWorkers = 8
 )
 
-// SharedStreams borrows an outer TLS/yamux session. the own-accept constructor
+// SharedStreams borrows an outer WSS/yamux session. the own-accept constructor
 // takes exclusive acceptance; the dispatched constructor accepts introductions
 // from a single external acceptor. neither owns the outer session.
 type SharedStreams struct {

@@ -81,8 +81,10 @@ type Config struct {
 	ServiceTLS                      *tls.Config            `json:"-"`
 	CleanupContext                  func() context.Context `json:"-"`
 	cleanup                         *connectorCleanup
-	RelayQUIC, RelayTCP             muxsession.Connector
-	Connectivity                    peer.ConnectivityOptions
+	RelayQUIC, RelayWebSocket       muxsession.Connector
+	// WebSocketOnly disables outer QUIC and direct UDP before opening sockets.
+	WebSocketOnly bool
+	Connectivity  peer.ConnectivityOptions
 	// PeerSocket is borrowed by qualification; the default connection owns one.
 	PeerSocket *peer.Socket
 }

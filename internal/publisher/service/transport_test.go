@@ -45,7 +45,7 @@ func privateTransportTLS(t *testing.T) (*tls.Config, *tls.Config) {
 }
 
 func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testing.T) {
-	for _, transport := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportTLSTCP} {
+	for _, transport := range []tunnel.Transport{tunnel.TransportQUIC, tunnel.TransportWSS} {
 		t.Run(string(transport), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -104,7 +104,7 @@ func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testin
 					if err != nil {
 						return
 					}
-					session, err := muxsession.AcceptTLSYamux(ctx, network, serverTLS, muxsession.TLSYamuxConfig{})
+					session, err := muxsession.AcceptWebSocket(ctx, network, serverTLS, muxsession.WebSocketConfig{})
 					if err == nil {
 						accept(session)
 					}

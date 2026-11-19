@@ -22,7 +22,7 @@ import (
 
 func TestIntegrationPublisherFallbackRestorationCountsPerActualRun(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			fixture := newStandalonePublishFixture(t, "fallback-count-"+transport)
 			var calls atomic.Int32
@@ -34,10 +34,10 @@ func TestIntegrationPublisherFallbackRestorationCountsPerActualRun(t *testing.T)
 			quic, tcp := fixture.connectors()
 			wantTransport, wantFallbacks := tunnel.TransportQUIC, 0
 			if transport == "quic" {
-				tcp, _ = disabledIntegrationConnector("TLS/TCP disabled by fallback-count restoration")
+				tcp, _ = disabledIntegrationConnector("WSS disabled by fallback-count restoration")
 			} else {
 				quic, _ = disabledIntegrationConnector("QUIC disabled by fallback-count restoration")
-				wantTransport, wantFallbacks = tunnel.TransportTLSTCP, 1
+				wantTransport, wantFallbacks = tunnel.TransportWSS, 1
 			}
 			saved, cfg := fixture.identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{})
 			// this case checks per-run callbacks, not the default heartbeat's
@@ -90,7 +90,7 @@ func TestIntegrationPublisherFallbackRestorationCountsPerActualRun(t *testing.T)
 				TransportFallback: func(number uint64, actual string) error {
 					mu.Lock()
 					defer mu.Unlock()
-					if preparations != 1 || number != uint64(preparation.RunNumber) || actual != string(tunnel.TransportTLSTCP) {
+					if preparations != 1 || number != uint64(preparation.RunNumber) || actual != string(tunnel.TransportWSS) {
 						return errors.New("fallback callback lost the prepared service run or transport")
 					}
 					fallbacks = append(fallbacks, notification{preparation.ServiceId, preparation.ServiceRunId, number, actual})

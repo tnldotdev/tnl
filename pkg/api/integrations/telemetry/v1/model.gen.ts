@@ -23,7 +23,7 @@ export const integrationOutcomeSchema = z.strictObject({
 
 export const operationSchema = z.enum(["relay_connect", "direct_connect", "fallback", "recovery"]);
 
-export const pathSchema = z.enum(["quic", "tls_tcp", "direct_udp"]);
+export const pathSchema = z.enum(["quic", "wss", "direct_udp"]);
 
 export const outcomeSchema = z.enum(["succeeded", "failed", "canceled"]);
 

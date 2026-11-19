@@ -303,7 +303,7 @@ func TestPeerForwardFencesAllQueuedPublisherPackets(t *testing.T) {
 
 func TestPeerForwardReplacementCannotCompleteOldFragments(t *testing.T) {
 	for _, tcp := range []bool{false, true} {
-		t.Run(map[bool]string{false: "quic", true: "tls-tcp"}[tcp], func(t *testing.T) {
+		t.Run(map[bool]string{false: "quic", true: "wss"}[tcp], func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			source := NewCarrierSlot()
@@ -372,7 +372,7 @@ func TestPeerForwardReplacementCannotCompleteOldFragments(t *testing.T) {
 
 func TestPeerForwardRegistrationBindsBothDirections(t *testing.T) {
 	for _, tcp := range []bool{false, true} {
-		t.Run(map[bool]string{false: "quic", true: "tls-tcp"}[tcp], func(t *testing.T) {
+		t.Run(map[bool]string{false: "quic", true: "wss"}[tcp], func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			connector := NewCarrierSlot()

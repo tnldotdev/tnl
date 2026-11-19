@@ -122,7 +122,7 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 
 func (f *standalonePublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
 	return redirectIntegrationConnector(f.relayUDPAddress, muxsession.QUICConnector{TLSConfig: f.relayTLS, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: f.relayTransport}),
-		redirectIntegrationConnector(f.publicAddress, muxsession.TLSYamuxConnector{TLSConfig: f.relayTLS})
+		redirectIntegrationConnector(f.publicAddress, muxsession.WebSocketConnector{TLSConfig: f.relayTLS})
 }
 
 func (f *standalonePublishFixture) startPublisher(t *testing.T, target string, quicConnector, tcpConnector muxsession.Connector) *integrationPublisher {

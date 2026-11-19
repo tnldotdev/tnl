@@ -29,10 +29,10 @@ type TransportValue uint8
 
 const (
 	TransportQUIC TransportValue = iota + 1
-	TransportTLSTCP
+	TransportWSS
 )
 
-var transports = []string{"", "quic", "tls-tcp"}
+var transports = []string{"", "quic", "wss"}
 
 func (v TransportValue) String() string { return enumString(transports, int(v)) }
 func ParseTransport(value string) (TransportValue, bool) {

@@ -298,8 +298,8 @@ func testHTTPAssignment(t *testing.T, restricted bool, browserLogin *bool) {
 				defer connection.Close()
 				stop := context.AfterFunc(relayCtx, func() { _ = connection.Close() })
 				defer stop()
-				transport, err := muxsession.AcceptTLSYamux(relayCtx, connection, &tls.Config{MinVersion: tls.VersionTLS13,
-					Certificates: []tls.Certificate{{Certificate: [][]byte{ca.Raw}, PrivateKey: caKey}}}, muxsession.TLSYamuxConfig{})
+				transport, err := muxsession.AcceptWebSocket(relayCtx, connection, &tls.Config{MinVersion: tls.VersionTLS13,
+					Certificates: []tls.Certificate{{Certificate: [][]byte{ca.Raw}, PrivateKey: caKey}}}, muxsession.WebSocketConfig{})
 				if err != nil {
 					return
 				}

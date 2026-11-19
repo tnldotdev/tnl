@@ -27,7 +27,7 @@ func TestIntegrationPublicConnectionCapacityRestoration(t *testing.T) {
 		if standalone {
 			topology = "standalone"
 		}
-		for _, transport := range []string{"quic", "tls-tcp"} {
+		for _, transport := range []string{"quic", "wss"} {
 			t.Run(topology+"/"+transport, func(t *testing.T) {
 				const capacity, requestCapacity = 4, 8
 				var owner *runtimeTopology
@@ -100,7 +100,7 @@ func TestIntegrationPublicConnectionCapacityRestoration(t *testing.T) {
 				}))
 				cleanupIntegrationHTTPServer(t, target, owner)
 				if transport == "quic" {
-					tcp, _ = disabledIntegrationConnector("TLS/TCP disabled by connection-capacity restoration")
+					tcp, _ = disabledIntegrationConnector("WSS disabled by connection-capacity restoration")
 				} else {
 					quic, _ = disabledIntegrationConnector("QUIC disabled by connection-capacity restoration")
 				}

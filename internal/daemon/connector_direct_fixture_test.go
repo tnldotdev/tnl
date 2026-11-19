@@ -245,7 +245,7 @@ func startConnectorDirectPublisher(t *testing.T, f *privateSeparatedFixture, ser
 		if socket != nil {
 			// the physical UDP fence must cover every relay carrier in direct-only
 			// exchanges. default composition separately exercises both transports.
-			config.RelayTCP = privateDisabledConnector()
+			config.RelayWebSocket = privateDisabledConnector()
 		}
 		done <- publisherservice.Publish(ctx, config)
 	}()
@@ -299,7 +299,7 @@ func startConnectorDirectRuntime(t *testing.T, f *privateSeparatedFixture, targe
 	control := &rebindingControl{Control: production, t: t}
 	config := connectorstream.Config{Control: control, IdentityID: person.Identity.Id, PeerSocket: sockets[0], Connectivity: options[0]}
 	if sockets[0] != nil {
-		config.RelayTCP = privateDisabledConnector()
+		config.RelayWebSocket = privateDisabledConnector()
 	}
 	listener, stop := startRuntimeConnector(t, f, service, config)
 	return connectorDirectRuntime{service: service, listener: listener, control: control, stop: stop}

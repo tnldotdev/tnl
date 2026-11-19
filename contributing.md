@@ -36,6 +36,17 @@ For one Go package or test:
 mise exec -- task go:test:focused PACKAGES=./internal/publisher/target RUN=Test
 ```
 
+For the portable WebSocket wire proof, install Google Chrome and run:
+
+```sh
+mise exec -- task go:test:integration:websocket
+```
+
+This starts a disposable local WSS listener and uses Chrome's standard WebSocket
+API for authenticated yamux streams in both directions. The browser pins only the
+fixture's leaf key; no trust store is changed. The native listener still requires
+hybrid X25519 + ML-KEM-768. This is not hosted Cloudflare Worker qualification.
+
 Dependency checks keep the service tree and shared publisher packages from
 importing publisher root. For HTTP changes, use `internal/publisher/httpaccess`
 for visitor policy and browser authorization, `internal/publisher/requestlimit`

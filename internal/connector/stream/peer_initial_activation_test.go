@@ -9,7 +9,7 @@ import (
 )
 
 func TestConnectorInitialActivationRetriesKeepOperationAndFreshHelloSeparate(t *testing.T) {
-	for _, transport := range []string{"quic", "tls_tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, lost := range []string{"hello", "activation"} {
 			t.Run(transport+"/"+lost, func(t *testing.T) {
 				f := newConfiguredConnectorFixture(t, transport, "", func(f *connectorFixture, _ *Config) {

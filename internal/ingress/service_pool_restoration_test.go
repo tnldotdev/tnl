@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"reflect"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -211,7 +210,7 @@ func TestServicePoolRestorationEightColdOpensShareRealSession(t *testing.T) {
 		seen[request.header.VisitorConnectionID] = true
 	}
 	if connector.calls.Load() != 1 || server.accepted.Load() != 1 {
-		t.Fatalf("connects=%d accepted TLS/yamux sessions=%d", connector.calls.Load(), server.accepted.Load())
+		t.Fatalf("connects=%d accepted WSS/yamux sessions=%d", connector.calls.Load(), server.accepted.Load())
 	}
 }
 
@@ -615,7 +614,8 @@ func TestServicePoolRestorationRejectsWrongRelayTLSHostname(t *testing.T) {
 	}
 	select {
 	case err := <-server.errors:
-		if err == nil || !strings.Contains(err.Error(), "tls: bad certificate") {
+		var setup *muxsession.WebSocketError
+		if !errors.As(err, &setup) || setup.Code != "tls_failed" || setup.Err == nil {
 			t.Fatal("server did not observe certificate rejection", err)
 		}
 	case <-time.After(time.Second):

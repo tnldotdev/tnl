@@ -160,7 +160,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			ready, pubDone := make(chan struct{}), make(chan error, 1)
 			go func() {
 				pubDone <- publisherservice.Publish(pubCtx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target.address,
-					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
+					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayWebSocket: tcp})
 			}()
 			t.Cleanup(func() {
 				stopPub()
@@ -193,7 +193,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			visitCtx, stopVisit := context.WithCancel(t.Context())
 			visitorReady, visitDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				visitDone <- connectorstream.Serve(visitCtx, listener, connectorstream.Config{Control: production, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(visitorReady); return nil }})
+				visitDone <- connectorstream.Serve(visitCtx, listener, connectorstream.Config{Control: production, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayWebSocket: tcp, Ready: func() error { close(visitorReady); return nil }})
 			}()
 			joined := false
 			t.Cleanup(func() {

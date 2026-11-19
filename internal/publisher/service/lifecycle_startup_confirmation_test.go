@@ -192,7 +192,7 @@ func newStartupConfirmationFixture(t *testing.T, protocol controlv1.ServiceProto
 		t.Error("startup confirmation attempted a real relay dial")
 		return nil, ErrPrivateStream
 	})
-	cfg.RelayQUIC, cfg.RelayTCP = unused, unused
+	cfg.RelayQUIC, cfg.RelayWebSocket = unused, unused
 	control := &startupConfirmationControl{
 		lifecycleControl: base, ackEntered: make(chan struct{}), ackReturned: make(chan struct{}),
 		allowACK: make(chan struct{}), confirmationEntered: make(chan struct{}), endpointRevision: 7,

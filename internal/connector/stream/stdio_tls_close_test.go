@@ -29,7 +29,7 @@ func (s *stdioTLSCloseStream) Write(data []byte) (int, error) {
 }
 
 func TestStdioTLSCloseRetainsOnlyIndependentFailures(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, fault := range []error{nil, io.EOF, net.ErrClosed, errors.New("independent TLS alert write failure")} {
 			name := "owned abort"
 			if fault != nil {

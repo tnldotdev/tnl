@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -303,20 +304,27 @@ func TestEventRecorderCanceledWaitLeavesHistoryAvailable(t *testing.T) {
 }
 
 func TestPollConditionBoundsBlockingProbe(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
-	defer cancel()
-	var calls int
-	err := pollCondition(ctx, time.Millisecond, 20*time.Millisecond, func(operation context.Context) (bool, error) {
-		calls++
-		if _, ok := operation.Deadline(); !ok {
-			t.Fatal("probe has no deadline")
+	synctest.Test(t, func(t *testing.T) {
+		const budget = 150 * time.Millisecond
+		const probeBudget = 20 * time.Millisecond
+		started := time.Now()
+		ctx, cancel := context.WithTimeout(t.Context(), budget)
+		defer cancel()
+		var calls int
+		err := pollCondition(ctx, time.Millisecond, probeBudget, func(operation context.Context) (bool, error) {
+			calls++
+			want := started.Add(min(budget, time.Since(started)+probeBudget))
+			if deadline, ok := operation.Deadline(); !ok || !deadline.Equal(want) {
+				t.Fatalf("probe deadline = %v, want %v", deadline, want)
+			}
+			<-operation.Done()
+			return false, fmt.Errorf("blocked query: %w", operation.Err())
+		})
+		if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "blocked query") ||
+			calls < 2 || time.Since(started) != budget {
+			t.Fatalf("poll = %d calls in %s, %v", calls, time.Since(started), err)
 		}
-		<-operation.Done()
-		return false, fmt.Errorf("blocked query: %w", operation.Err())
 	})
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "blocked query") || calls < 2 {
-		t.Fatalf("poll = %d calls, %v", calls, err)
-	}
 }
 
 func TestTopologyCleanupKeepsControlUntilAllIncarnationsDrain(t *testing.T) {

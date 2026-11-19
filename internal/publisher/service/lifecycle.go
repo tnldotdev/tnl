@@ -102,12 +102,14 @@ type RunConfig struct {
 	ShutdownContext context.Context
 	Connect         func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error)
 	// prepared observes validated control facts once, before starting that run.
-	Prepared     func(controlv1.ServiceRunPreparation) error
-	Ready        func() error
-	TransportTLS *tls.Config
-	RelayQUIC    muxsession.Connector
-	RelayTCP     muxsession.Connector
-	Connectivity peer.ConnectivityOptions
+	Prepared       func(controlv1.ServiceRunPreparation) error
+	Ready          func() error
+	TransportTLS   *tls.Config
+	RelayQUIC      muxsession.Connector
+	RelayWebSocket muxsession.Connector
+	// WebSocketOnly avoids native UDP resources, including direct discovery.
+	WebSocketOnly bool
+	Connectivity  peer.ConnectivityOptions
 	// PeerSocket is borrowed by qualification; the default service run owns one.
 	PeerSocket       *peer.Socket
 	Metadata         controlv1.ServiceMetadata
@@ -135,6 +137,10 @@ func (RunConfig) GoString() string { return "service publisher configuration" }
 // Publish keeps the managed certificate lifecycle, two independently claimed
 // relay slots and current control heartbeat together. live bytes are never replayed.
 func Publish(ctx context.Context, config RunConfig) (result error) {
+	if config.WebSocketOnly {
+		config.RelayQUIC = muxsession.DisabledConnector{}
+		config.Connectivity.DisableDirect = true
+	}
 	config.PreferredRegions, result = region.Preferences(config.PreferredRegions)
 	if result != nil {
 		return result
@@ -357,7 +363,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if !config.Connectivity.DisableDirect {
 		bound.peerSocket = config.PeerSocket
 		if bound.peerSocket == nil {
-			// UDP is an optimization; a blocked socket leaves relay TLS/TCP usable.
+			// UDP is an optimization; a blocked socket leaves relay WSS usable.
 			// relay slots retain admitted visitors through caller cancellation.
 			// the deferred close follows their bounded drain and joined cleanup.
 			bound.peerSocket, _ = peer.ListenSocket(context.WithoutCancel(ctx), "udp", ":0")
@@ -481,7 +487,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}()
 	paths, err := tunnel.NewSlots(context.WithoutCancel(ctx), tunnel.SlotsConfig{SingleUse: true, Connect: func(ctx context.Context, slot uint8, preferTCP bool) (tunnel.SlotSession, error) {
 		options := connectOptions
-		options.PreferTCP = preferTCP
+		options.PreferWebSocket = config.WebSocketOnly || preferTCP
 		if config.Connect != nil {
 			return config.Connect(ctx, bound, slot, options)
 		}
@@ -771,7 +777,7 @@ func (config RunConfig) connectionOptions(dialer muxsession.QUICDialer, udpErr e
 		roots = roots.Clone()
 		roots.MinVersion = max(roots.MinVersion, tls.VersionTLS13)
 	}
-	options := ConnectOptions{QUIC: config.RelayQUIC, TCP: config.RelayTCP}
+	options := ConnectOptions{QUIC: config.RelayQUIC, WebSocket: config.RelayWebSocket, PreferWebSocket: config.WebSocketOnly}
 	if options.QUIC == nil {
 		if udpErr != nil {
 			options.QUIC = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return nil, udpErr })
@@ -779,8 +785,8 @@ func (config RunConfig) connectionOptions(dialer muxsession.QUICDialer, udpErr e
 			options.QUIC = muxsession.QUICConnector{TLSConfig: roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: dialer}
 		}
 	}
-	if options.TCP == nil {
-		options.TCP = muxsession.TLSYamuxConnector{TLSConfig: roots}
+	if options.WebSocket == nil {
+		options.WebSocket = muxsession.WebSocketConnector{TLSConfig: roots}
 	}
 	return options, nil
 }

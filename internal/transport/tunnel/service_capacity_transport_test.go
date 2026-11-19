@@ -54,7 +54,7 @@ func capacityVisitorPair(t *testing.T, sender, receiver *Session, header tunnelv
 }
 
 func TestServiceCapacityRealTransportsCarryRepliesThroughRelay(t *testing.T) {
-	for _, transport := range []string{"quic", "tls_yamux"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			header := maximumServiceHeader("relay-a")
 			ref := ServiceForwardingRef(header)
@@ -147,7 +147,7 @@ func TestServiceCapacityRealTransportsCarryRepliesThroughRelay(t *testing.T) {
 }
 
 func TestServiceCapacityRealTransportsKeepCapacityRejection(t *testing.T) {
-	for _, transport := range []string{"quic", "tls_yamux"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			requester, ingress := realTunnelPairWithHello(t, transport, ingressBoundsHello())
 			serveTestCapacity(t, ingress)

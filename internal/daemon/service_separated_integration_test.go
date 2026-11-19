@@ -202,7 +202,7 @@ func TestIntegrationStandalonePrivateTwoIngressTwoRelayLifecycle(t *testing.T) {
 
 func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newServiceRuntimeFixture(t, standalone, nil)
 			target := startPrivateEchoTarget(t, f.owner)
@@ -234,7 +234,7 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			} else {
 				quic = privateDisabledConnector()
 			}
-			listener, stopConnector := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp}, revokedConnectorOwnerStop)
+			listener, stopConnector := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayWebSocket: tcp}, revokedConnectorOwnerStop)
 			defer stopConnector()
 			connection, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
 			if err != nil {

@@ -22,8 +22,8 @@ import (
 func TestIntegrationWorkloadColdPOSTRestoration(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	f, issuer := newWorkloadTransportFixture(t)
-	process := startSeparatedPrivateIngress(t, f, 0, "tls-tcp", nil)
-	second := startSeparatedPrivateIngress(t, f, 1, "tls-tcp", nil)
+	process := startSeparatedPrivateIngress(t, f, 0, "wss", nil)
+	second := startSeparatedPrivateIngress(t, f, 1, "wss", nil)
 	payload := bytes.Repeat([]byte("\x00workload\xff\n"), 32<<10)
 	var echoes, once, unexpected atomic.Int32
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +110,7 @@ func TestIntegrationWorkloadColdPOSTRestoration(t *testing.T) {
 	})
 	// establish the real session before publishers take their initial policy
 	// snapshot. this case tests cold connections, not session-propagation latency.
-	startWorkloadPublishers(t, f, group, "tls-tcp")
+	startWorkloadPublishers(t, f, group, "wss")
 	inventory, err := job.ListServices(t.Context())
 	if err != nil || len(inventory.Services) != 1 || inventory.Services[0].Service != "api" {
 		t.Fatal("cold POST workload did not select its exact service", err)

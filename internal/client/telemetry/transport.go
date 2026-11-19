@@ -11,8 +11,8 @@ import (
 
 func Path(transport tunnel.Transport) api.Path {
 	switch transport {
-	case tunnel.TransportTLSTCP:
-		return api.TlsTcp
+	case tunnel.TransportWSS:
+		return api.Wss
 	case tunnel.TransportQUIC:
 		return api.Quic
 	default:

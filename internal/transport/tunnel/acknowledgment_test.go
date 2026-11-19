@@ -24,7 +24,7 @@ func (s *closeAfterPeerCancellation) Close() error {
 }
 
 func TestOpeningAcknowledgmentPrecedesMetadataAndVisitorBytes(t *testing.T) {
-	for _, transport := range []string{"quic", "tls_yamux"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, hop := range []string{"publisher", "relay"} {
 			for _, reject := range []bool{false, true} {
 				name := transport + "/" + hop + map[bool]string{false: "/accept", true: "/reject"}[reject]

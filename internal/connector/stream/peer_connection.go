@@ -127,6 +127,9 @@ func connectorClassifiedTemporary(err error) (classified, retry bool) {
 	var visit func(error)
 	visit = func(err error) {
 		switch cause := err.(type) {
+		case *muxsession.WebSocketError:
+			classified = true
+			retry = retry && cause.Retryable()
 		case *CleanupError, *tunnel.SessionCleanupError, *muxsession.QUICTransportCloseError, *connectorLegAttemptError:
 			classified, retry = true, false
 			return
@@ -336,6 +339,10 @@ func (p *connectorConnection) recordLegRecoveryFailure(err, canceled error) {
 }
 
 func prepareConnectorConnection(ctx, setup context.Context, config Config, signer Signer) (_ *connectorConnection, result error) {
+	if config.WebSocketOnly {
+		config.RelayQUIC = muxsession.DisabledConnector{}
+		config.Connectivity.DisableDirect = true
+	}
 	config.telemetry = config.Telemetry.BeginScope("connector")
 	config.Connectivity = config.telemetry.Connectivity(config.Connectivity)
 	life, cancelServing := context.WithCancelCause(context.WithoutCancel(ctx))
@@ -368,7 +375,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	if !config.Connectivity.DisableDirect {
 		p.socket = config.PeerSocket
 		if p.socket == nil {
-			// inability to open UDP must not prevent TLS/TCP relay delivery.
+			// inability to open UDP must not prevent WSS relay delivery.
 			p.socket, _ = peer.ListenSocket(packetLife, "udp", ":0")
 			p.ownedSocket = p.socket != nil
 		}

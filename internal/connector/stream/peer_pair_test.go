@@ -229,9 +229,9 @@ func legRetryConfig(helloTransport string, session *legRetrySession, alternate e
 		return nil, alternate
 	})
 	if helloTransport == "quic" {
-		return Config{RelayQUIC: hello, RelayTCP: failed}
+		return Config{RelayQUIC: hello, RelayWebSocket: failed}
 	}
-	return Config{RelayQUIC: failed, RelayTCP: hello}
+	return Config{RelayQUIC: failed, RelayWebSocket: hello}
 }
 
 func assertLegRetryHello(t *testing.T, ctx context.Context, s *legRetrySession) {
@@ -247,7 +247,7 @@ func assertLegRetryHello(t *testing.T, ctx context.Context, s *legRetrySession) 
 }
 
 func TestConnectorLegDialLostHelloRetainsOwnedRetryEvidence(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
 			defer stop()
@@ -279,7 +279,7 @@ func TestConnectorLegDialLostHelloRetainsOwnedRetryEvidence(t *testing.T) {
 }
 
 func TestConnectorLegDialIndependentOperationVetoesRetry(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, stage := range []string{"connect", "hello"} {
 			t.Run(transport+"/"+stage, func(t *testing.T) {
 				ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
@@ -307,7 +307,7 @@ func TestConnectorLegDialIndependentOperationVetoesRetry(t *testing.T) {
 }
 
 func TestConnectorLegDialTypedFailureVetoesRetry(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, kind := range []string{"connector cleanup", "session cleanup", "physical cleanup", "HTTP denial", "reasoned denial"} {
 			t.Run(transport+"/"+kind, func(t *testing.T) {
 				ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
@@ -347,7 +347,7 @@ func TestConnectorLegDialTypedFailureVetoesRetry(t *testing.T) {
 }
 
 func TestConnectorLegDialProtocolDenialVetoesSiblingEOF(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
 			defer stop()
@@ -367,7 +367,7 @@ func TestConnectorLegDialProtocolDenialVetoesSiblingEOF(t *testing.T) {
 }
 
 func TestConnectorLegDialJoinsCleanupBeforeExposingWinner(t *testing.T) {
-	for _, winnerTransport := range []string{"quic", "tls-tcp"} {
+	for _, winnerTransport := range []string{"quic", "wss"} {
 		for _, failedClose := range []bool{false, true} {
 			name := winnerTransport + "/clean-close"
 			if failedClose {
@@ -398,9 +398,9 @@ func TestConnectorLegDialJoinsCleanupBeforeExposingWinner(t *testing.T) {
 							return nil, context.Cause(call)
 						}
 					})
-					config := Config{RelayQUIC: losing, RelayTCP: winning}
+					config := Config{RelayQUIC: losing, RelayWebSocket: winning}
 					if winnerTransport == "quic" {
-						config.RelayQUIC, config.RelayTCP = winning, losing
+						config.RelayQUIC, config.RelayWebSocket = winning, losing
 					}
 					done := make(chan struct{})
 					var leg *connectorRelayLeg
@@ -483,7 +483,7 @@ func TestConnectorLegDialCancellationJoinsLateSession(t *testing.T) {
 				var err error
 				go func() {
 					defer close(done)
-					leg, err = dialConnectorLeg(ctx, budget, Config{RelayQUIC: primary, RelayTCP: fallback},
+					leg, err = dialConnectorLeg(ctx, budget, Config{RelayQUIC: primary, RelayWebSocket: fallback},
 						signer, pair, [32]byte{1}, 0, nil, tunnelv1.ConnectorHandoffID{1})
 				}()
 				defer func() { unblock(); cancel(nil); <-done }()
@@ -523,7 +523,7 @@ func TestConnectorLegDialCancellationJoinsLateSession(t *testing.T) {
 }
 
 func TestConnectorLegDialAuthenticatedLoserCleanup(t *testing.T) {
-	for _, winnerTransport := range []string{"quic", "tls-tcp"} {
+	for _, winnerTransport := range []string{"quic", "wss"} {
 		for _, failedClose := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/failed-close=%t", winnerTransport, failedClose), func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
@@ -550,9 +550,9 @@ func TestConnectorLegDialAuthenticatedLoserCleanup(t *testing.T) {
 							return nil, context.Cause(call)
 						}
 					})
-					config := Config{RelayQUIC: losing, RelayTCP: winning}
+					config := Config{RelayQUIC: losing, RelayWebSocket: winning}
 					if winnerTransport == "quic" {
-						config.RelayQUIC, config.RelayTCP = winning, losing
+						config.RelayQUIC, config.RelayWebSocket = winning, losing
 					}
 					done := make(chan struct{})
 					var leg *connectorRelayLeg
@@ -597,7 +597,7 @@ func TestConnectorLegDialAuthenticatedLoserCleanup(t *testing.T) {
 }
 
 func TestConnectorLegDialUnownedWinnerRetainsCleanup(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
 			defer stop()
@@ -635,7 +635,7 @@ func TestConnectorLegDialCapabilityFailureRetainsCleanup(t *testing.T) {
 		RelayQUIC: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 			return legRetryWithoutDatagrams{Session: incapable}, nil
 		}),
-		RelayTCP: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return hello, nil }),
+		RelayWebSocket: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return hello, nil }),
 	}
 	leg, err := dialConnectorLeg(ctx, ctx, config, signer, pair, [32]byte{1}, 0, nil, tunnelv1.ConnectorHandoffID{1})
 	assertLegRetryHello(t, ctx, hello)
@@ -647,7 +647,7 @@ func TestConnectorLegDialCapabilityFailureRetainsCleanup(t *testing.T) {
 }
 
 func TestConnectorLegDialCapacityRetainsOwnedRetryDecision(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
 			defer stop()
@@ -698,7 +698,7 @@ func TestConnectorLegDialWinnerCancellationRetainsIndependentLoser(t *testing.T)
 						return nil, context.Cause(call)
 					}
 				})
-				leg, err := dialConnectorLeg(ctx, ctx, Config{RelayQUIC: losing, RelayTCP: winning},
+				leg, err := dialConnectorLeg(ctx, ctx, Config{RelayQUIC: losing, RelayWebSocket: winning},
 					signer, pair, [32]byte{1}, 0, nil, tunnelv1.ConnectorHandoffID{1})
 				assertLegRetryHello(t, ctx, winner)
 				if leg != nil {
@@ -1042,7 +1042,7 @@ func legOriginConfig(session *legOriginSession, alternate error, calls *[2]atomi
 			calls[0].Add(1)
 			return session, nil
 		}),
-		RelayTCP: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+		RelayWebSocket: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 			calls[1].Add(1)
 			return nil, alternate
 		}),
@@ -1237,8 +1237,8 @@ func TestConnectorLegNormalEndCannotAuthorizeAnotherCandidate(t *testing.T) {
 	second := newLegOriginSession(t, call, cancel, pair, legOriginScript{
 		phase: connectorAttemptHello, operation: independent, ended: true, sessionErr: normal})
 	config := Config{
-		RelayQUIC: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return first, nil }),
-		RelayTCP:  muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return second, nil }),
+		RelayQUIC:      muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return first, nil }),
+		RelayWebSocket: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return second, nil }),
 	}
 	leg, err := prepareConnectorLeg(call, ctx, config, signer, pair, [32]byte{1}, 0, nil, tunnelv1.ConnectorHandoffID{1})
 	if leg != nil {

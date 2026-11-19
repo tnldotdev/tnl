@@ -45,7 +45,7 @@ const testProjectSourceFingerprint = "a4c232311b1a5083342e81207d920e296029c9181e
 // capped sibling ends at its original 205-second hard deadline.
 func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f, issuer := newWorkloadTransportFixture(t)
 			byName, pg := startWorkloadRuntimeServices(t, f, transport)
@@ -166,7 +166,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 
 func TestIntegrationWorkloadTransportClosure(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f, issuer := newWorkloadTransportFixture(t)
 			services, pg := startWorkloadRuntimeServices(t, f, transport)
@@ -300,8 +300,8 @@ func newWorkloadTransportFixture(t *testing.T, configure ...func(*daemonconfig.C
 func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	f, issuer := newWorkloadTransportFixture(t)
-	process := startSeparatedPrivateIngress(t, f, 0, "tls-tcp", nil)
-	startSeparatedPrivateIngress(t, f, 1, "tls-tcp", nil)
+	process := startSeparatedPrivateIngress(t, f, 0, "wss", nil)
+	startSeparatedPrivateIngress(t, f, 1, "wss", nil)
 	var forwarded atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
@@ -321,7 +321,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	startWorkloadPublishers(t, f, group, "tls-tcp")
+	startWorkloadPublishers(t, f, group, "wss")
 	job, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
 	if err != nil {
 		t.Fatal(err)
@@ -476,7 +476,7 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 		}
 		ready, done := make(chan struct{}), make(chan error, 1)
 		go func() {
-			err := publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
+			err := publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayWebSocket: tcp})
 			if ctx.Err() == nil {
 				t.Logf("workload publisher service=%s protocol=%s ended before cleanup: %v", service.Id, service.Protocol, err)
 			}
@@ -604,7 +604,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			quic = privateDisabledConnector()
 		}
 		go func() {
-			err := connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
+			err := connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayWebSocket: tcp, Ready: func() error { close(ready); return nil }})
 			if ctx.Err() == nil {
 				p.ended <- fmt.Errorf("workload connector %s/%s source=%s ended: %v", transport, name, source.Id, err)
 			}

@@ -37,7 +37,7 @@ func TestConnectorAuthorityRefreshTracksInstallationDeadline(t *testing.T) {
 }
 
 func TestConnectorPairDenialKeepsStartupAndRetirementBoundaries(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, stage := range []string{"startup", "renewal"} {
 			t.Run(transport+"/"+stage, func(t *testing.T) {
 				problem := &clientcontrol.ProblemError{Status: http.StatusForbidden, Problem: controlv1.Problem{Code: controlv1.Forbidden, Title: "connector peer pair source or run is no longer authorized"}}

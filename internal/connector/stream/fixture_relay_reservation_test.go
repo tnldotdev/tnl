@@ -14,7 +14,7 @@ import (
 func TestConnectorFixtureReservesUDPWhileTestingTCPFallback(t *testing.T) {
 	foreignHello := make(chan string, 2)
 	foreignListeners := 0
-	f := newConfiguredConnectorFixture(t, "tls-tcp", "", func(f *connectorFixture, _ *Config) {
+	f := newConfiguredConnectorFixture(t, "wss", "", func(f *connectorFixture, _ *Config) {
 		for _, endpoint := range f.endpoints {
 			// TCP alone does not reserve UDP. model a different relay acquiring
 			// the advertised port before the connector starts its QUIC attempt.

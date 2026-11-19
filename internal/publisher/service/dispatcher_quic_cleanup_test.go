@@ -175,7 +175,7 @@ func newDispatcherQUICCleanupFixture(t *testing.T, bound *Bound, idle time.Durat
 				beforeAcceptError: beforeAcceptError}
 			return observed, nil
 		}),
-		TCP: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+		WebSocket: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 			return nil, net.ErrClosed
 		}),
 	}

@@ -216,7 +216,7 @@ func TestRelayForwardingDiagnosticRetainsQUICHalfCloseOrigin(t *testing.T) {
 				t.Fatal(err)
 			}
 			acceptResult := make(chan error, 1)
-			address := traceMuxServer(t, ctx, tunnel.TransportTLSTCP, material.TLS, func(owner context.Context, mux muxsession.Session) error {
+			address := traceMuxServer(t, ctx, tunnel.TransportWSS, material.TLS, func(owner context.Context, mux muxsession.Session) error {
 				err := acceptor.Accept(owner, mux)
 				acceptResult <- err
 				return err

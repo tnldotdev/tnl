@@ -106,7 +106,7 @@ func (c *rebindingTransport) Connect(ctx context.Context, endpoint muxsession.En
 	var err error
 	if c.tcp {
 		endpoint.Address = c.fixture.tcpAddresses[endpoint.Address]
-		connector := muxsession.TLSYamuxConnector{TLSConfig: c.fixture.roots, Config: muxsession.TLSYamuxConfig{Dialer: &net.Dialer{LocalAddr: &net.TCPAddr{IP: local}}}}
+		connector := muxsession.WebSocketConnector{TLSConfig: c.fixture.roots, Config: muxsession.WebSocketConfig{Dialer: &net.Dialer{LocalAddr: &net.TCPAddr{IP: local}}}}
 		session, err = connector.Connect(ctx, endpoint)
 	} else {
 		endpoint.Address = c.fixture.quicAddresses[endpoint.Address]
@@ -312,9 +312,9 @@ func startRebindingConnector(t *testing.T, f *privateSeparatedFixture, tcp, sile
 	transport := newRebindingTransport(t, f, tcp)
 	transport.silent = silent
 	recorded := &recordedConnectorConnector{Connector: transport, opened: make(chan connectorOuter, 64)}
-	config := connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: recorded, RelayTCP: privateDisabledConnector()}
+	config := connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: recorded, RelayWebSocket: privateDisabledConnector()}
 	if tcp {
-		config.RelayQUIC, config.RelayTCP = privateDisabledConnector(), recorded
+		config.RelayQUIC, config.RelayWebSocket = privateDisabledConnector(), recorded
 	}
 	listener, stop := startRuntimeConnector(t, f, service, config)
 	return rebindingConnectionFixture{service: service, listener: listener, stop: stop, control: control, transport: transport, recorded: recorded}

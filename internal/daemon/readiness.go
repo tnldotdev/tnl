@@ -77,7 +77,7 @@ func (d *daemon) readyRelays(role daemonconfig.Role, now time.Time) error {
 		return errors.New("relay runtimes are not ready")
 	}
 	for _, runtime := range d.relays {
-		if runtime.controller == nil || !runtime.controller.Ready(now) || runtime.serviceRegistry == nil || runtime.internalListener == nil {
+		if runtime.controller == nil || !runtime.controller.Ready(now) || runtime.serviceRegistry == nil || runtime.internalListener == nil || runtime.internalUDP == nil {
 			return errors.New("relay lease, certificate, or internal listener is not ready")
 		}
 	}

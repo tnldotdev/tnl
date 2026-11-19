@@ -44,7 +44,7 @@ func copyYamuxPair(t *testing.T, resetOnClose bool) (muxsession.Session, muxsess
 		}
 		closed := make(chan struct{})
 		stop := context.AfterFunc(ctx, func() { _ = connection.Close(); close(closed) })
-		session, err := muxsession.AcceptTLSYamux(ctx, connection, &tls.Config{Certificates: []tls.Certificate{certificate}}, muxsession.TLSYamuxConfig{})
+		session, err := muxsession.AcceptWebSocket(ctx, connection, &tls.Config{Certificates: []tls.Certificate{certificate}}, muxsession.WebSocketConfig{})
 		if !stop() {
 			<-closed
 		}
@@ -59,7 +59,7 @@ func copyYamuxPair(t *testing.T, resetOnClose bool) (muxsession.Session, muxsess
 		select {
 		case <-joined:
 		case <-time.After(5 * time.Second):
-			t.Error("TLS/yamux fixture did not join")
+			t.Error("WSS/yamux fixture did not join")
 		}
 	})
 	dialer := new(net.Dialer)
@@ -72,7 +72,7 @@ func copyYamuxPair(t *testing.T, resetOnClose bool) (muxsession.Session, muxsess
 			return errors.Join(controlErr, socketErr)
 		}
 	}
-	client, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}, Config: muxsession.TLSYamuxConfig{Dialer: dialer}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
+	client, err := (muxsession.WebSocketConnector{TLSConfig: &tls.Config{RootCAs: roots}, Config: muxsession.WebSocketConfig{Dialer: dialer}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 	if err != nil {
 		t.Fatal(err)
 	}

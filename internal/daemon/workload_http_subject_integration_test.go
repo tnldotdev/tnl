@@ -23,8 +23,8 @@ import (
 func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	f, issuer := newWorkloadTransportFixture(t)
-	process := startSeparatedPrivateIngress(t, f, 0, "tls-tcp", nil)
-	startSeparatedPrivateIngress(t, f, 1, "tls-tcp", nil)
+	process := startSeparatedPrivateIngress(t, f, 0, "wss", nil)
+	startSeparatedPrivateIngress(t, f, 1, "wss", nil)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for {
 			if _, err := io.WriteString(w, "tick\n"); err != nil {
@@ -54,7 +54,7 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	startWorkloadPublishers(t, f, group, "tls-tcp")
+	startWorkloadPublishers(t, f, group, "wss")
 	open := func(name, execution string) (*http.Response, string, time.Time) {
 		t.Helper()
 		job, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)

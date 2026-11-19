@@ -102,7 +102,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			publisherCtx, stopPublisher := context.WithCancel(t.Context())
 			publisherReady, publisherDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				publisherDone <- publisherservice.Publish(publisherCtx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: targetAddress, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, RelayQUIC: quic, RelayTCP: tcp})
+				publisherDone <- publisherservice.Publish(publisherCtx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: targetAddress, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, RelayQUIC: quic, RelayWebSocket: tcp})
 			}()
 			t.Cleanup(func() {
 				stopPublisher()
@@ -139,7 +139,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			connectorReady, connectorDone := make(chan struct{}), make(chan error, 1)
 			connectorJoined := false
 			go func() {
-				connectorDone <- connectorstream.Serve(connectorCtx, listener, connectorstream.Config{Control: production, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(connectorReady); return nil }})
+				connectorDone <- connectorstream.Serve(connectorCtx, listener, connectorstream.Config{Control: production, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayWebSocket: tcp, Ready: func() error { close(connectorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stopConnector()

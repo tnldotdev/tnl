@@ -776,7 +776,7 @@
       "key": "tnl.transport",
       "values": [
         "quic",
-        "tls-tcp"
+        "wss"
       ],
       "semantics": "selected transport (omit when not selected), or initial preference",
       "dimension_policy": "bounded"
@@ -785,7 +785,7 @@
       "key": "tnl.transport_preference",
       "values": [
         "quic",
-        "tls-tcp"
+        "wss"
       ],
       "semantics": "selected transport (omit when not selected), or initial preference",
       "dimension_policy": "bounded"

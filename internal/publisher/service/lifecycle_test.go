@@ -386,8 +386,8 @@ func TestPrivateLifecycleReplacesOnlyChangedSlotAndKeepsEndpointPlan(t *testing.
 		}
 		connected <- connection{slot, options}
 		transport := tunnel.TransportQUIC
-		if options.PreferTCP {
-			transport = tunnel.TransportTLSTCP
+		if options.PreferWebSocket {
+			transport = tunnel.TransportWSS
 		}
 		return &transportedSlot{heldSlot: &heldSlot{stopped: make(chan struct{})}, transport: transport}, nil
 	}
@@ -401,13 +401,13 @@ func TestPrivateLifecycleReplacesOnlyChangedSlotAndKeepsEndpointPlan(t *testing.
 		select {
 		case current := <-connected:
 			counts[current.slot]++
-			if current.options.PreferTCP != (counts[current.slot] == 2) {
-				t.Fatal("replacement did not receive its slot's transport preference", current.options.PreferTCP)
+			if current.options.PreferWebSocket != (counts[current.slot] == 2) {
+				t.Fatal("replacement did not receive its slot's transport preference", current.options.PreferWebSocket)
 			}
 			if first.QUIC == nil {
 				first = current.options
 			}
-			if current.options.QUIC != first.QUIC || current.options.TCP != first.TCP {
+			if current.options.QUIC != first.QUIC || current.options.WebSocket != first.WebSocket {
 				t.Fatal("slot retry recomposed the run's verified connectors")
 			}
 		case err := <-done:

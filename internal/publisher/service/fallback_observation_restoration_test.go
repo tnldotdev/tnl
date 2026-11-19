@@ -47,7 +47,7 @@ func newObservationRelay(t *testing.T, cfg *RunConfig, control *lifecycleControl
 		return nil, net.ErrClosed
 	})
 	if transport == tunnel.TransportQUIC {
-		cfg.RelayTCP = disabled
+		cfg.RelayWebSocket = disabled
 	} else {
 		cfg.RelayQUIC = disabled
 	}
@@ -102,7 +102,7 @@ func newObservationRelay(t *testing.T, cfg *RunConfig, control *lifecycleControl
 			}
 			workers.Go(func() {
 				defer conn.Close()
-				outer, err := muxsession.AcceptTLSYamux(ctx, conn, serverTLS, muxsession.TLSYamuxConfig{})
+				outer, err := muxsession.AcceptWebSocket(ctx, conn, serverTLS, muxsession.WebSocketConfig{})
 				if err == nil {
 					serve(outer)
 				}
@@ -133,7 +133,7 @@ func newObservationRelay(t *testing.T, cfg *RunConfig, control *lifecycleControl
 func TestServiceFallbackObservationRestorationStaleAcceptedTLSIsNeverConnected(t *testing.T) {
 	cfg, control := lifecycleFixture(t)
 	bounds := make(chan *Bound, 1)
-	relay := newObservationRelay(t, &cfg, control, tunnel.TransportTLSTCP, func(tunnelv1.ServicePublisherConnectionRef) {
+	relay := newObservationRelay(t, &cfg, control, tunnel.TransportWSS, func(tunnelv1.ServicePublisherConnectionRef) {
 		bound := <-bounds
 		bound.Invalidate()
 	})

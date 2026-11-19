@@ -394,7 +394,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 	for i, url := range publishers.URLs {
 		cohortByURL[url] = "quic"
 		if i%2 != 0 || *runtimeLoadScenario == "udp-fallback" {
-			cohortByURL[url] = "tls-tcp"
+			cohortByURL[url] = "wss"
 		}
 	}
 	var streams []*benchworkload.HeldStream

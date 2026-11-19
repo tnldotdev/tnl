@@ -58,7 +58,7 @@ func TestConnectorPairRenewalPreservesContextAtResponseValidation(t *testing.T) 
 }
 
 func TestConnectorRefreshLateResponseRetainsAuthorityAndApplication(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			f := newConnectorFixture(t, transport)
 			var calls atomic.Int64

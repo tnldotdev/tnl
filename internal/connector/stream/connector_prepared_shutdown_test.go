@@ -95,7 +95,7 @@ func TestPreparedConnectorCloseJoinsRenewalDecision(t *testing.T) {
 }
 
 func TestPreparedConnectorEOFCancelsPendingPermission(t *testing.T) {
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()

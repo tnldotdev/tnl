@@ -131,20 +131,20 @@ func sharedTLSPair(t *testing.T, ctx context.Context, serverTLS, clientTLS *tls.
 			accepted <- nil
 			return
 		}
-		s, err := muxsession.AcceptTLSYamux(ctx, conn, serverTLS, muxsession.TLSYamuxConfig{})
+		s, err := muxsession.AcceptWebSocket(ctx, conn, serverTLS, muxsession.WebSocketConfig{})
 		if err != nil {
 			accepted <- nil
 			return
 		}
 		accepted <- s
 	}()
-	left, err := (muxsession.TLSYamuxConnector{TLSConfig: clientTLS}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "peer.test"})
+	left, err := (muxsession.WebSocketConnector{TLSConfig: clientTLS}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "peer.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	right := <-accepted
 	if right == nil {
-		t.Fatal("TLS/yamux acceptance failed")
+		t.Fatal("WSS/yamux acceptance failed")
 	}
 	t.Cleanup(func() { _ = left.Close(); _ = right.Close() })
 	return left, right
@@ -632,7 +632,7 @@ func TestPeerSharedStreamsIncompleteIntroductionDoesNotBlockSibling(t *testing.T
 		t.Fatal(err)
 	}
 	if left.Err() != nil || right.Err() != nil {
-		t.Fatal("normal peer closure closed outer TLS/yamux")
+		t.Fatal("normal peer closure closed outer WSS/yamux")
 	}
 }
 
@@ -825,12 +825,12 @@ func TestPeerSharedStreamsRejectUnboundAndPreserveOuterSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if left.Err() != nil || right.Err() != nil {
-		t.Fatal("peer streams closed outer TLS/yamux")
+		t.Fatal("peer streams closed outer WSS/yamux")
 	}
 }
 
 // the same inner QUIC stream survives a pair-specific QUIC datagram failure
-// and moves to a different framed stream on the shared TLS/yamux session.
+// and moves to a different framed stream on the shared WSS/yamux session.
 func TestPeerSharedMixedCarrierKeepsInnerStreamAndSibling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
 	defer cancel()

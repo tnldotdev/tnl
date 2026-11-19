@@ -183,7 +183,7 @@ func TestYamuxConnectorHelloStopRetainsNativeDeadlineAndOwnedCleanup(t *testing.
 				if err != nil {
 					return err
 				}
-				transport, err := muxsession.AcceptTLSYamux(budget, network, serverTLS, muxsession.TLSYamuxConfig{})
+				transport, err := muxsession.AcceptWebSocket(budget, network, serverTLS, muxsession.WebSocketConfig{})
 				if err != nil {
 					return err
 				}
@@ -199,7 +199,7 @@ func TestYamuxConnectorHelloStopRetainsNativeDeadlineAndOwnedCleanup(t *testing.
 				<-closeServer
 				return nil
 			})
-			transport, err := (muxsession.TLSYamuxConnector{TLSConfig: clientTLS}).Connect(budget,
+			transport, err := (muxsession.WebSocketConnector{TLSConfig: clientTLS}).Connect(budget,
 				muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 			if err != nil {
 				t.Fatal(err)

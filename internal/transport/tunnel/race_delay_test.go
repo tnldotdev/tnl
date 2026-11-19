@@ -34,7 +34,7 @@ func testRaceStartsFallbackWhenPrimaryRemainsBlocked(t *testing.T) {
 	session, transport, err := Race(
 		ctx,
 		Candidate{Connector: primary, Transport: TransportQUIC},
-		Candidate{Connector: fallback, Transport: TransportTLSTCP},
+		Candidate{Connector: fallback, Transport: TransportWSS},
 		fallbackDelay,
 		publisherHello(),
 	)
@@ -42,8 +42,8 @@ func testRaceStartsFallbackWhenPrimaryRemainsBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
-	if transport != TransportTLSTCP {
-		t.Fatalf("transport = %q; want %q", transport, TransportTLSTCP)
+	if transport != TransportWSS {
+		t.Fatalf("transport = %q; want %q", transport, TransportWSS)
 	}
 	select {
 	case <-primaryStarted:

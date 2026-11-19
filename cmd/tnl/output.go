@@ -136,9 +136,9 @@ func (o *publishOutput) transportFallback(publishRunNumber uint64, transport str
 	}
 	o.fallbackPublicURL = publishRunNumber
 	if o.mode == publishOutputHuman {
-		return writeHumanFrame(o.stderr, o.command, "transport fallback", "tunnel continues over TLS/TCP",
+		return writeHumanFrame(o.stderr, o.command, "transport fallback", "tunnel continues over WSS",
 			clioutput.Fields(
-				clioutput.Field{Label: "transport", Value: "TLS/TCP"},
+				clioutput.Field{Label: "transport", Value: "WSS"},
 				clioutput.Field{Label: "code", Value: string(failure.TransportFallback)},
 				clioutput.Field{Label: "help", Value: failure.HelpURL(failure.TransportFallback, "")},
 			),
@@ -204,7 +204,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "20 min ready across runs"})
 			}
 			if o.fallbackPublicURL == publishRunNumber {
-				fields = append(fields, clioutput.Field{Label: "transport", Value: "TLS/TCP fallback"})
+				fields = append(fields, clioutput.Field{Label: "transport", Value: "WSS fallback"})
 			}
 			label := url
 			if label == "" {

@@ -24,7 +24,7 @@ func TestIntegrationPublicStreamTransports(t *testing.T) {
 
 func testIntegrationPublicStreamTransports(t *testing.T, restricted bool) {
 	for _, role := range []string{"split", "standalone"} {
-		for _, transport := range []string{"quic", "tls_yamux"} {
+		for _, transport := range []string{"quic", "wss"} {
 			t.Run(role+"/"+transport, func(t *testing.T) {
 				var owner *runtimeTopology
 				var identity *integrationPublishingIdentity

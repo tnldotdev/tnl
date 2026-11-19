@@ -97,7 +97,7 @@ func TestSDKTelemetryReceiverCountsDistinctObservations(t *testing.T) {
 		if err := event.FromTransportEvent(api.TransportEvent{
 			EventId: id, EventVersion: 1, Name: "transport.report",
 			Payload: api.TransportReport{Role: api.TransportReportRolePublisher, Measurements: []api.Measurement{{
-				Operation: api.RelayConnect, Path: api.TlsTcp, Outcome: api.Succeeded, Duration: api.Lt1s, Count: 2,
+				Operation: api.RelayConnect, Path: api.Wss, Outcome: api.Succeeded, Duration: api.Lt1s, Count: 2,
 			}}},
 		}); err != nil {
 			t.Fatal(err)

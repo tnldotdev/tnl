@@ -18,6 +18,12 @@ See [contributing](contributing.md) for setup and checks,
 and two logical relay services in one process. It still needs PostgreSQL.
 Ingress and relay never open the database themselves.
 
+Publishers, connectors, and ingress share the relay connection scheduler in
+`transport/tunnel`. `transport/muxsession` provides QUIC and secure WebSockets
+with yamux. Publishers and connectors use public relay addresses and give QUIC
+a 250 ms head start. Ingress connects to the exact relay process over private
+QUIC or WebSockets on the same port and gives QUIC a 50 ms head start.
+
 ## how an app publishes a service
 
 The SDK tells the local `tnl` process where the app is listening.

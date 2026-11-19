@@ -199,7 +199,7 @@ func TestIntegrationPreviewConnectorOnlyHTTPIndependentGrantTraffic(t *testing.T
 	err = connectorstream.Serve(setup, deniedListener, connectorstream.Config{
 		Control: native, IdentityID: session.Identity.Identity.ID, ServiceID: service.Id,
 		Protocol: string(service.Protocol), TrustRevision: service.TrustRevision, Endpoint: service.Endpoint,
-		ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp,
+		ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayWebSocket: tcp,
 		Ready: func() error { deniedReady.Store(true); return nil },
 	})
 	finishSetup()
@@ -218,7 +218,7 @@ func TestIntegrationPreviewConnectorOnlyHTTPIndependentGrantTraffic(t *testing.T
 		t.Fatal("independent grant did not select the exact connector-only service", err)
 	}
 	listener, stopConnector := startRuntimeConnector(t, f, service, connectorstream.Config{
-		Control: native, IdentityID: session.Identity.Identity.ID, RelayQUIC: quic, RelayTCP: tcp,
+		Control: native, IdentityID: session.Identity.Identity.ID, RelayQUIC: quic, RelayWebSocket: tcp,
 	}, revokedConnectorOwnerStop)
 	defer stopConnector()
 	run, err := native.ResolveService(ctx, service.Id)

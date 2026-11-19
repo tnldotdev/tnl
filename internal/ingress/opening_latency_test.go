@@ -10,7 +10,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-// a small real TLS/yamux workload shared by the serial and pipelined opening
+// a small real WSS/yamux workload shared by the serial and pipelined opening
 // implementations. run with -v through go:test:focused to retain the samples.
 func TestPublicOpeningLatency(t *testing.T) {
 	f := newAdmissionTransportFixture(t)

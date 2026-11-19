@@ -41,7 +41,7 @@ func (c *heldRebindControl) RenewConnectorPeerPair(ctx context.Context, service 
 
 func TestConnectorAssignmentConflictRetainsApplicationWhileControlPreparesRebinding(t *testing.T) {
 	entered := make(chan struct{})
-	f := newConfiguredConnectorFixture(t, "tls-tcp", "", func(f *connectorFixture, config *Config) {
+	f := newConfiguredConnectorFixture(t, "wss", "", func(f *connectorFixture, config *Config) {
 		f.drainRejections = true
 		config.Control = &heldRebindControl{Control: f, fixture: f, entered: entered}
 	})

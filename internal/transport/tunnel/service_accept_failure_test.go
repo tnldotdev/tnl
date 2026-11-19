@@ -6,6 +6,7 @@ import (
 	"net"
 	"testing"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -112,5 +113,46 @@ func TestServiceDispatcherRetainsRejectedStreamCloseFailure(t *testing.T) {
 	}
 	if client.Err() != nil || server.Err() != nil {
 		t.Fatal("dispatcher closed its borrowed session")
+	}
+}
+
+func TestServiceCapacityQUICSessionClosureRetainsIndependentFailures(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		for _, remote := range []bool{false, true} {
+			normal := errors.Join(muxsession.ErrClosed, &quic.ApplicationError{Remote: remote})
+			abnormal := &quic.ApplicationError{Remote: remote, ErrorCode: 17}
+			independent := errors.New("independent capacity accept failure")
+			cleanup := &muxsession.QUICTransportCloseError{Err: net.ErrClosed}
+			for _, test := range []struct {
+				name string
+				err  error
+				want bool
+			}{
+				{"normal", normal, false},
+				{"nonzero", errors.Join(muxsession.ErrClosed, abnormal), true},
+				{"independent", errors.Join(normal, context.Canceled, independent), true},
+				{"physical_cleanup", errors.Join(normal, cleanup), true},
+			} {
+				name := test.name + map[bool]string{false: "/local", true: "/remote"}[remote] +
+					map[bool]string{false: "/live", true: "/canceled"}[canceled]
+				t.Run(name, func(t *testing.T) {
+					_, outer := newMemoryPair(t)
+					transport := terminalAcceptTransport{Session: outer, entered: make(chan struct{}), result: make(chan error, 1)}
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					session := &Session{transport: transport, role: tunnelv1.Ingress}
+					done := tunnelWorker(t, cancel, func() error { return session.ServeServiceCapacity(ctx) })
+					await(t, transport.entered)
+					if canceled {
+						cancel()
+					}
+					transport.result <- test.err
+					err := await(t, done)
+					if (err != nil) != test.want || test.want && !errors.Is(err, test.err) {
+						t.Fatal("capacity changed normal session closure or lost an independent accept/cleanup cause", err)
+					}
+				})
+			}
+		}
 	}
 }

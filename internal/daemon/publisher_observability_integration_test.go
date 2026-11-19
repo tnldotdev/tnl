@@ -155,7 +155,7 @@ func (c *topologyTraceCollector) assertChainState(t *testing.T, state string, na
 
 func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			collector := newTopologyTraceCollector(t)
 			fixture := newSplitPublishFixtureWithOptions(t, "trace", splitPublishOptions{processContext: func(role string) context.Context { return collector.process(t, role) }})
@@ -213,7 +213,7 @@ func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 
 func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			collector := newTopologyTraceCollector(t)
 			f := newServiceRuntimeFixtureContext(t, false, nil, true, func(role string) context.Context { return collector.process(t, role) })
@@ -244,7 +244,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			go func() {
 				done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId, ServiceID: service.Id, Target: target.address,
 					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
-					Ready:    func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp,
+					Ready:    func() error { close(ready); return nil }, RelayQUIC: quic, RelayWebSocket: tcp,
 				})
 			}()
 			t.Cleanup(func() {
@@ -281,7 +281,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			visitorCtx, stop := context.WithCancel(collector.process(t, "client"))
 			visitorReady, visitorDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				visitorDone <- connectorstream.Serve(visitorCtx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(visitorReady); return nil }})
+				visitorDone <- connectorstream.Serve(visitorCtx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayWebSocket: tcp, Ready: func() error { close(visitorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stop()
@@ -325,7 +325,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 
 func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, transport := range []string{"quic", "tls-tcp"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			collector := newTopologyTraceCollector(t)
 			f := newServiceRuntimeFixtureContext(t, false, nil, true, func(role string) context.Context { return collector.process(t, role) })

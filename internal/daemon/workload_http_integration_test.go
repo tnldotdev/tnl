@@ -23,8 +23,8 @@ import (
 func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	f, issuer := newWorkloadTransportFixture(t)
-	process := startSeparatedPrivateIngress(t, f, 0, "tls-tcp", nil)
-	startSeparatedPrivateIngress(t, f, 1, "tls-tcp", nil)
+	process := startSeparatedPrivateIngress(t, f, 0, "wss", nil)
+	startSeparatedPrivateIngress(t, f, 1, "wss", nil)
 	var requests, once atomic.Int32
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -98,7 +98,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	startWorkloadPublishers(t, f, group, "tls-tcp")
+	startWorkloadPublishers(t, f, group, "wss")
 	newJob := func(name, execution string) *workload.Client {
 		t.Helper()
 		job, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)

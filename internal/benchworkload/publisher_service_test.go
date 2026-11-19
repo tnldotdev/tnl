@@ -2,6 +2,7 @@ package benchworkload
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -18,6 +19,23 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestTransportObservationKeepsPreferenceJSONField(t *testing.T) {
+	body, err := json.Marshal(TransportObservation{PreferredWebSocket: true, Transport: tunnel.TransportWSS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["preferred_tcp"]) != "true" || string(fields["transport"]) != `"wss"` {
+		t.Fatal("benchmark transport observation changed its wire shape", string(body))
+	}
+	if _, renamed := fields["preferred_websocket"]; renamed {
+		t.Fatal("renamed the historical machine field")
+	}
+}
 
 func TestBenchmarkDeclarationKeepsRequestLimitsSeparateFromTrafficAndTargetTLS(t *testing.T) {
 	for _, target := range []string{"http://localhost:8080", "https://origin.example.test:8443"} {
@@ -222,10 +240,10 @@ func TestBenchmarkTransportObservesActualSlotsAndOneFallbackPerRun(t *testing.T)
 	ctx, stop := context.WithCancelCause(t.Context())
 	defer stop(nil)
 	connect := group.observeConnections(9, func(_ context.Context, _ *publisherservice.Bound, _ uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
-		if options.PreferTCP {
+		if options.PreferWebSocket {
 			t.Error("auto changed production transport preference")
 		}
-		return &benchmarkSlotSession{transport: tunnel.TransportTLSTCP}, nil
+		return &benchmarkSlotSession{transport: tunnel.TransportWSS}, nil
 	}, stop)
 	var workers sync.WaitGroup
 	for slot := range uint8(2) {
@@ -247,7 +265,7 @@ func TestBenchmarkTransportObservesActualSlotsAndOneFallbackPerRun(t *testing.T)
 	_ = session.Close()
 	var fallback, slotZero, slotOne int
 	for _, observation := range observations {
-		if observation.Transport != tunnel.TransportTLSTCP || observation.PreferredTCP {
+		if observation.Transport != tunnel.TransportWSS || observation.PreferredWebSocket {
 			t.Fatal("observation did not come from the claimed session")
 		}
 		if observation.FirstFallback {
@@ -274,7 +292,7 @@ func TestBenchmarkTransportCohortsKeepConfiguredPreferences(t *testing.T) {
 			count := 0
 			group := &Publishers{config: PublisherConfig{Transport: test.cohort, ObserveTransport: func(_ int, observation TransportObservation) error {
 				count++
-				if observation.PreferredTCP != test.tcp || observation.FirstFallback {
+				if observation.PreferredWebSocket != test.tcp || observation.FirstFallback {
 					t.Error("an explicit cohort was counted as automatic fallback")
 				}
 				return nil
@@ -282,16 +300,16 @@ func TestBenchmarkTransportCohortsKeepConfiguredPreferences(t *testing.T) {
 			ctx, stop := context.WithCancelCause(t.Context())
 			defer stop(nil)
 			connect := group.observeConnections(test.index, func(_ context.Context, _ *publisherservice.Bound, _ uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
-				if options.PreferTCP != test.tcp {
+				if options.PreferWebSocket != test.tcp {
 					t.Error("cohort used a stale replacement transport preference")
 				}
 				transport := tunnel.TransportQUIC
 				if test.tcp {
-					transport = tunnel.TransportTLSTCP
+					transport = tunnel.TransportWSS
 				}
 				return &benchmarkSlotSession{transport: transport}, nil
 			}, stop)
-			session, err := connect(ctx, nil, 0, publisherservice.ConnectOptions{PreferTCP: !test.tcp})
+			session, err := connect(ctx, nil, 0, publisherservice.ConnectOptions{PreferWebSocket: !test.tcp})
 			if err != nil {
 				t.Fatal(err)
 			}

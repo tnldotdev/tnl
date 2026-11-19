@@ -27,12 +27,12 @@ func PublisherReadiness(ctx context.Context, ready bool) {
 
 func PublisherConnection(ctx context.Context, transport string, preferTCP bool, err error) {
 	if m := FromContext(ctx); m != nil {
-		if transport != "quic" && transport != "tls-tcp" {
+		if transport != "quic" && transport != "wss" {
 			transport = ""
 		}
 		preference := TransportQUIC
 		if preferTCP {
-			preference = TransportTLSTCP
+			preference = TransportWSS
 		}
 		attrs := append(publisherDataAttributes(ctx), TransportPreference.Value(preference), OutcomeKey.Value(ErrorOutcome(err)))
 		if transport != "" {

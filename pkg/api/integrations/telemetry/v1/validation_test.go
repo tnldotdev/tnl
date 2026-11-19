@@ -54,7 +54,7 @@ func TestTelemetryBatchBoundsAndDuplicateIDs(t *testing.T) {
 func TestTelemetryTransportBounds(t *testing.T) {
 	payload := TransportReport{Role: "connector"}
 	for _, op := range []Operation{RelayConnect, DirectConnect, Fallback, Recovery} {
-		for _, path := range []Path{Quic, TlsTcp, DirectUdp} {
+		for _, path := range []Path{Quic, Wss, DirectUdp} {
 			for _, outcome := range []Outcome{Succeeded, Failed, Canceled} {
 				for _, duration := range []Duration{Lt1s, Lt10s, Lt1m, Longer} {
 					payload.Measurements = append(payload.Measurements, Measurement{Operation: op, Path: path, Outcome: outcome, Duration: duration, Count: 1_000_000_000})
@@ -67,6 +67,9 @@ func TestTelemetryTransportBounds(t *testing.T) {
 	data, _ := json.Marshal(event)
 	if err := ValidateEvent(data); err != nil {
 		t.Fatalf("maximum report rejected (%d bytes): %v", len(data), err)
+	}
+	if ValidateEvent([]byte(strings.ReplaceAll(string(data), `"path":"wss"`, `"path":"tls_tcp"`))) == nil {
+		t.Fatal("retired relay transport accepted")
 	}
 	collected, _ := json.Marshal(CollectedEvent{Client: Client{Version: strings.Repeat("v", 64), Os: ClientOsWindows, Arch: ClientArchAmd64}, Event: event})
 	if err := ValidateCollectedEvent(collected); err != nil {

@@ -125,6 +125,7 @@ services:
     expose:
       - "9090"
       - "9445"
+      - "9445/udp"
 
   relay-b:
     <<: *tnld
@@ -154,3 +155,4 @@ services:
     expose:
       - "9090"
       - "9445"
+      - "9445/udp"

@@ -450,7 +450,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	}
 	relayTLS := &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}
 	quic := redirectIntegrationConnector(relayUDPAddress, muxsession.QUICConnector{TLSConfig: relayTLS, Config: muxsession.QUICConfig{Config: &quicgo.Config{EnableDatagrams: true}}, Dialer: owner.quicTransport(t)})
-	tcp := redirectIntegrationConnector(publicAddress, muxsession.TLSYamuxConnector{TLSConfig: relayTLS})
+	tcp := redirectIntegrationConnector(publicAddress, muxsession.WebSocketConnector{TLSConfig: relayTLS})
 	if !address.IsLoopback() {
 		t.Fatalf("guest fixture control transport source is not loopback: %s", address)
 	}
@@ -593,7 +593,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		PublisherIdentityID: issuedPublisher.ClientId, PublisherGrantID: issuedPublisher.GrantId, PublisherKeyID: issuedPublisher.KeyId,
 		Metadata: publisheridentity.ServiceMetadata(service), Target: strings.TrimPrefix(transferTarget.URL, "http://"),
 		Demo: true, Feedback: true, ProjectService: "demo",
-		RelayQUIC: quic, RelayTCP: tcp, HeartbeatInterval: 100 * time.Millisecond, DrainTime: time.Second,
+		RelayQUIC: quic, RelayWebSocket: tcp, HeartbeatInterval: 100 * time.Millisecond, DrainTime: time.Second,
 		Prepared: func(run controlv1.ServiceRunPreparation) error { preparing <- run; return nil },
 	}
 	if deadlineProof {

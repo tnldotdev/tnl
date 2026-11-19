@@ -256,7 +256,7 @@ func privateRelayPair(t *testing.T, hello tunnelv1.Message) (*tunnel.Session, *t
 		if err != nil {
 			return
 		}
-		transport, err := muxsession.AcceptTLSYamux(t.Context(), conn, &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}, muxsession.TLSYamuxConfig{})
+		transport, err := muxsession.AcceptWebSocket(t.Context(), conn, &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}, muxsession.WebSocketConfig{})
 		if err != nil {
 			return
 		}
@@ -270,7 +270,7 @@ func privateRelayPair(t *testing.T, hello tunnelv1.Message) (*tunnel.Session, *t
 			accepted <- server
 		}
 	}()
-	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(t.Context(), muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
+	transport, err := (muxsession.WebSocketConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(t.Context(), muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 	if err != nil {
 		t.Fatal(err)
 	}

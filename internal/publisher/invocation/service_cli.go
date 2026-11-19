@@ -163,7 +163,7 @@ func RunServiceCLI(ctx context.Context, tunnel *clientstate.Tunnel, saved contro
 		}
 		if !fallback {
 			for slot, transport := range current.Transports {
-				if current.Connected[slot] && transport == tunneltransport.TransportTLSTCP {
+				if current.Connected[slot] && transport == tunneltransport.TransportWSS {
 					fallback = true
 					if record(output.transportFallback(number, string(transport))) != nil {
 						return

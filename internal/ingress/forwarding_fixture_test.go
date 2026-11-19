@@ -94,6 +94,7 @@ func newTestForwarder(t *testing.T, material forwardingTestMaterial) *Forwarder 
 	t.Helper()
 	forwarder, err := NewForwarder(ForwarderConfig{
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}, ClusterSecret: forwardingClusterSecret,
+		QUIC: muxsession.DisabledConnector{},
 	})
 	if err != nil {
 		t.Fatalf("NewForwarder: %v", err)
@@ -156,7 +157,7 @@ func startForwardingTestServerWithCertificate(t *testing.T, material forwardingT
 				stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
 				defer stop()
 				_ = connection.SetDeadline(time.Now().Add(fixtureTimeout))
-				transport, err := muxsession.AcceptTLSYamux(ctx, connection, tlsConfig, muxsession.TLSYamuxConfig{})
+				transport, err := muxsession.AcceptWebSocket(ctx, connection, tlsConfig, muxsession.WebSocketConfig{})
 				if err != nil {
 					if ctx.Err() == nil {
 						server.errors <- err

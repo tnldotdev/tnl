@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -25,8 +24,8 @@ type Candidate struct {
 type Transport string
 
 const (
-	TransportQUIC   Transport = "quic"
-	TransportTLSTCP Transport = "tls-tcp"
+	TransportQUIC Transport = "quic"
+	TransportWSS  Transport = "wss"
 )
 
 type candidateResult struct {
@@ -51,7 +50,7 @@ func Race(
 ) (session *Session, transport Transport, retErr error) {
 	ctx, finish := observability.Start(ctx, "tunnel.transport_race", trace.WithAttributes(observability.TransportPreference.Value(boundedTransport(primary.Transport))))
 	defer func() {
-		if transport == TransportQUIC || transport == TransportTLSTCP {
+		if transport == TransportQUIC || transport == TransportWSS {
 			trace.SpanFromContext(ctx).SetAttributes(observability.Transport.Value(boundedTransport(transport)))
 		}
 		finish(retErr)
@@ -62,90 +61,36 @@ func Race(
 	if cause := context.Cause(ctx); cause != nil {
 		return nil, "", errors.Join(ctx.Err(), cause)
 	}
-	raceCtx, cancel := context.WithCancel(ctx)
-	results := make(chan candidateResult, 2)
-	var workers sync.WaitGroup
-	remaining := 0
-	var failures []error
-	var cleanupErr error
-	defer func() {
-		cancel()
-		for range remaining {
-			result := <-results
-			failures = append(failures, result.err)
-			cleanupErr = errors.Join(cleanupErr, result.cleanupErr)
-			if result.session != nil {
-				cleanupErr = errors.Join(cleanupErr, result.session.Close())
-			}
-		}
-		workers.Wait()
-		if cause := context.Cause(ctx); cause != nil {
-			retErr = errors.Join(retErr, ctx.Err(), cause)
-		}
-		if session != nil && (retErr != nil || cleanupErr != nil) {
-			cleanupErr = errors.Join(cleanupErr, session.Close())
-			session, transport = nil, ""
-		}
-		if cleanupErr != nil {
-			retErr = &SessionCleanupError{Err: errors.Join(retErr, errors.Join(failures...), cleanupErr)}
-		}
-	}()
-	start := func(candidate Candidate) {
-		remaining++
-		workers.Go(func() {
+	attempt := func(candidate Candidate) func(context.Context) AttemptResult[candidateResult] {
+		return func(raceCtx context.Context) AttemptResult[candidateResult] {
 			started := time.Now()
 			result := dialCandidate(raceCtx, candidate, hello)
 			if candidate.Observe != nil {
 				candidate.Observe(raceCtx, candidate.Transport, time.Since(started), result.err)
 			}
-			results <- result
-		})
-	}
-	start(primary)
-	timer := time.NewTimer(fallbackDelay)
-	defer timer.Stop()
-	fallbackStarted := false
-	var duplicateFailure error
-	for remaining > 0 {
-		select {
-		case <-ctx.Done():
-			return nil, "", context.Cause(ctx)
-		case <-timer.C:
-			if !fallbackStarted {
-				fallbackStarted = true
-				start(fallback)
-			}
-		case result := <-results:
-			remaining--
-			cleanupErr = errors.Join(cleanupErr, result.cleanupErr)
-			if result.session != nil {
-				return result.session, result.transport, nil
-			}
-			failures = append(failures, result.err)
-			if result.terminal {
-				var protocolError *ProtocolError
-				if errors.As(result.err, &protocolError) && protocolError.Code == tunnelv1.DuplicatePublisherConnection && remaining > 0 {
-					duplicateFailure = result.err
-					continue
-				}
-				return nil, "", result.err
-			}
-			if !fallbackStarted {
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				fallbackStarted = true
-				start(fallback)
-			}
+			var protocolError *ProtocolError
+			duplicate := errors.As(result.err, &protocolError) && protocolError.Code == tunnelv1.DuplicatePublisherConnection
+			return AttemptResult[candidateResult]{Value: result, Accepted: result.session != nil,
+				Err: result.err, CleanupErr: result.cleanupErr, Terminal: result.terminal, WaitForSibling: duplicate}
 		}
 	}
-	if duplicateFailure != nil {
-		return nil, "", duplicateFailure
+	winner, failures, err := RaceAttempts(ctx, fallbackDelay, attempt(primary), attempt(fallback), func(result candidateResult) error { return result.session.Close() })
+	var cleanupErr, failed error
+	for _, failure := range failures {
+		cleanupErr = errors.Join(cleanupErr, failure.CleanupErr)
+		failed = errors.Join(failed, failure.Err)
 	}
-	return nil, "", fmt.Errorf("tunnel: all transport candidates failed: %w", errors.Join(failures...))
+	if winner.Accepted && (err != nil || cleanupErr != nil) {
+		cleanupErr = errors.Join(cleanupErr, winner.Value.session.Close())
+		winner.Accepted = false
+	}
+	if cleanupErr != nil {
+		return nil, "", &SessionCleanupError{Err: errors.Join(err, failed, cleanupErr)}
+	}
+	if winner.Accepted {
+		return winner.Value.session, winner.Value.transport, nil
+	}
+	return nil, "", fmt.Errorf("tunnel: all transport candidates failed: %w", err)
 }
 
 func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Message) (result candidateResult) {
@@ -154,7 +99,9 @@ func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Mess
 	defer func() {
 		err := errors.Join(result.err, result.cleanupErr)
 		finish(err)
-		observability.PublisherTransportCandidate(ctx, string(candidate.Transport), time.Since(started), err)
+		if hello.Role == tunnelv1.Publisher {
+			observability.PublisherTransportCandidate(ctx, string(candidate.Transport), time.Since(started), err)
+		}
 	}()
 	setupCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()

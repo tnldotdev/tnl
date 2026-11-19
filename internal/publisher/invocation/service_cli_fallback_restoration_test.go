@@ -34,7 +34,7 @@ import (
 )
 
 // control is a fake authority; Publish still owns real certificate work, relay
-// hellos, claimed TLS/yamux sessions, readiness and joined local shutdown.
+// hellos, claimed WSS/yamux sessions, readiness and joined local shutdown.
 type cliFallbackObservationControl struct {
 	publisherservice.RunControl
 	saved       controlv1.Service
@@ -198,7 +198,7 @@ func cliFallbackObservationFixture(t *testing.T) (*clientstate.Database, *client
 				defer conn.Close()
 				stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 				defer stop()
-				outer, err := muxsession.AcceptTLSYamux(ctx, conn, serverTLS, muxsession.TLSYamuxConfig{})
+				outer, err := muxsession.AcceptWebSocket(ctx, conn, serverTLS, muxsession.WebSocketConfig{})
 				if err != nil {
 					return
 				}
@@ -305,7 +305,7 @@ func TestServiceCLIFallbackRestorationRealPublishReportsBeforeReadyAndJoins(t *t
 			}
 			reportErr := errors.New("real TLS fallback reporting failed")
 			output := &Presentation{TransportFallback: func(number uint64, transport string) error {
-				if number != 7 || transport != string(tunnel.TransportTLSTCP) || fallback.Add(1) != 1 {
+				if number != 7 || transport != string(tunnel.TransportWSS) || fallback.Add(1) != 1 {
 					t.Error("real accepted fallback was misidentified or repeated")
 				}
 				close(entered)
@@ -388,7 +388,7 @@ func TestServiceCLIFallbackRestorationRealPublishReportsBeforeReadyAndJoins(t *t
 					for _, label := range point.Label {
 						labels[label.GetName()] = label.GetValue()
 					}
-					if labels["tnl_transport"] == "tls-tcp" && labels["tnl_transport_preference"] == "quic" && labels["tnl_outcome"] == "success" {
+					if labels["tnl_transport"] == "wss" && labels["tnl_transport_preference"] == "quic" && labels["tnl_outcome"] == "success" {
 						successes += point.GetCounter().GetValue()
 					}
 				}

@@ -35,7 +35,7 @@ type serviceTransportTransfer struct {
 	err error
 }
 
-// both hops use verified TLS/yamux and real service stream acknowledgments.
+// both hops use verified WSS/yamux and real service stream acknowledgments.
 func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConnectionRef, relay ingressv1.ServiceRelay) *serviceTransportFixture {
 	t.Helper()
 	material := newForwardingTestMaterial(t)
@@ -57,7 +57,7 @@ func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConne
 		return session.ServeServiceCapacity(ctx)
 	})
 	setup := ingressContext(t)
-	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}}).Connect(
+	transport, err := (muxsession.WebSocketConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}}).Connect(
 		setup, muxsession.Endpoint{Address: f.publisherServer.address(), ServerName: material.serverName})
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func newServiceTransportFixture(t *testing.T, ref tunnelv1.ServicePublisherConne
 		}
 	})
 	f.relay.InternalRelayAddress, f.relay.TlsServerName = f.relayServer.address(), material.serverName
-	connector, err := newTLSRelayConnector(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}, forwardingClusterSecret, muxsession.TLSYamuxConfig{})
+	connector, err := newWebSocketRelayConnector(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}, forwardingClusterSecret, muxsession.WebSocketConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

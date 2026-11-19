@@ -432,10 +432,10 @@ func TestPublishOutputTransportFallbackWarning(t *testing.T) {
 	if err := output.starting("tunnel_0123456789abcdef0123456789abcdef", "http://127.0.0.1:3000"); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.transportFallback(2, "tls-tcp"); err != nil {
+	if err := output.transportFallback(2, "wss"); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.transportFallback(2, "tls-tcp"); err != nil {
+	if err := output.transportFallback(2, "wss"); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.ready("https://demo.example", 2); err != nil {
@@ -450,7 +450,7 @@ func TestPublishOutputTransportFallbackWarning(t *testing.T) {
 		}
 	}
 	if starting.Type != "starting" || warning.Type != "warning" || warning.PublishRunNumber != 2 ||
-		warning.Transport != "tls-tcp" || warning.Retryable == nil || *warning.Retryable ||
+		warning.Transport != "wss" || warning.Retryable == nil || *warning.Retryable ||
 		!strings.Contains(warning.Message, "QUIC did not establish") || ready.Type != "ready" {
 		t.Fatalf("events = %#v, %#v, %#v", starting, warning, ready)
 	}
@@ -466,7 +466,7 @@ func TestPublishOutputHumanShowsTransportFallbackAtReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := output.transportFallback(3, "tls-tcp"); err != nil {
+	if err := output.transportFallback(3, "wss"); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.ready("https://demo.example", 3); err != nil {
@@ -474,8 +474,8 @@ func TestPublishOutputHumanShowsTransportFallbackAtReady(t *testing.T) {
 	}
 	got := stderr.String()
 	if strings.Count(got, "+--[ tnl publish ]-- transport fallback ") != 1 ||
-		!strings.Contains(got, "tunnel continues over TLS/TCP") ||
-		!strings.Contains(got, "transport") || !strings.Contains(got, "TLS/TCP fallback") {
+		!strings.Contains(got, "tunnel continues over WSS") ||
+		!strings.Contains(got, "transport") || !strings.Contains(got, "WSS fallback") {
 		t.Fatalf("human output = %q", got)
 	}
 }
@@ -618,7 +618,7 @@ func TestPublicationPresentationSemanticDiagnosticsKeepExistingOutput(t *testing
 				func() error { return presentation.Starting("tun_fixture", "http://127.0.0.1:3000") },
 				func() error { return presentation.Provisioning("app.example", 7) },
 				func() error { return presentation.ProvisioningStalled(7) },
-				func() error { return presentation.TransportFallback(7, "tls-tcp") },
+				func() error { return presentation.TransportFallback(7, "wss") },
 				presentation.TargetUnavailable,
 				func() error { return presentation.Ready("https://app.example", 7) },
 				presentation.Stopped,
@@ -652,7 +652,7 @@ func TestPublicationPresentationSemanticDiagnosticsKeepExistingOutput(t *testing
 					t.Fatal("semantic callbacks changed diagnostic codes or NDJSON lifecycle shape", event)
 				}
 				if index == 1 && (event.PublishRunNumber != 7 || event.Retryable == nil || !*event.Retryable) ||
-					index == 2 && (event.PublishRunNumber != 7 || event.Transport != "tls-tcp" || event.Retryable == nil || *event.Retryable) {
+					index == 2 && (event.PublishRunNumber != 7 || event.Transport != "wss" || event.Retryable == nil || *event.Retryable) {
 					t.Fatal("semantic warning lost its actual run/transport or retry meaning", event)
 				}
 			}

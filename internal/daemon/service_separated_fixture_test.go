@@ -308,7 +308,7 @@ func (f *privateSeparatedFixture) connectors() (muxsession.Connector, muxsession
 			return connector.Connect(ctx, endpoint)
 		})
 	}
-	return redirect(f.quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: f.relayTransport}), redirect(f.tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
+	return redirect(f.quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: f.relayTransport}), redirect(f.tcpAddresses, muxsession.WebSocketConnector{TLSConfig: f.roots})
 }
 
 func privateDisabledConnector() muxsession.Connector {

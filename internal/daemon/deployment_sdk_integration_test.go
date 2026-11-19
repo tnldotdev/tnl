@@ -96,7 +96,7 @@ func TestIntegrationDeploymentSDKPublication(t *testing.T) {
 		quic, tcp := f.connectors()
 		cfg.TransportTLS = f.roots.Clone()
 		cfg.DrainTime = time.Second
-		cfg.RelayQUIC, cfg.RelayTCP = quic, tcp
+		cfg.RelayQUIC, cfg.RelayWebSocket = quic, tcp
 		var preparation controlv1.ServiceRunPreparation
 		prepared, onReady := cfg.Prepared, cfg.Ready
 		cfg.Prepared = func(run controlv1.ServiceRunPreparation) error {

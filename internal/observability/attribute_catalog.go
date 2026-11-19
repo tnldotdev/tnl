@@ -46,7 +46,7 @@ func VocabularyAttributes() []AttributeDefinition {
 		add(k, PolicyTraceLog, "closed Kubernetes request classification; unknown groups/resources normalize to other; no namespace, object name, query, command, or payload")
 	}
 	for _, k := range []attributeKey{Transport, TransportPreference} {
-		add(k, PolicyBounded, "selected transport (omit when not selected), or initial preference", "quic", "tls-tcp")
+		add(k, PolicyBounded, "selected transport (omit when not selected), or initial preference", "quic", "wss")
 	}
 	add(AccessPath, PolicyBounded, "visitor admission path", "connector", "public_endpoint")
 	add(Exposure, PolicyBounded, "service reachability", "private", "public")

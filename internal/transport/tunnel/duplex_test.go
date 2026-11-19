@@ -77,13 +77,13 @@ func realTunnelPairWithHello(t *testing.T, transport string, hello tunnelv1.Mess
 			if err != nil {
 				return nil, err
 			}
-			session, err := muxsession.AcceptTLSYamux(ctx, connection, serverTLS, muxsession.TLSYamuxConfig{})
+			session, err := muxsession.AcceptWebSocket(ctx, connection, serverTLS, muxsession.WebSocketConfig{})
 			if err != nil {
 				_ = connection.Close()
 			}
 			return session, err
 		}
-		connector = muxsession.TLSYamuxConnector{TLSConfig: clientTLS}
+		connector = muxsession.WebSocketConnector{TLSConfig: clientTLS}
 	}
 	t.Cleanup(closeListener)
 	type accepted struct {
@@ -170,7 +170,7 @@ func tunnelTCPPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
 }
 
 func TestPublicReturnStreamRealHalfCloseAndServerFirst(t *testing.T) {
-	for _, transport := range []string{"quic", "tls_yamux"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			client, server := realTunnelPair(t, transport)
 			stream, publisher := realVisitorPair(t, client, server)
@@ -223,7 +223,7 @@ func TestPublicReturnStreamRealHalfCloseAndServerFirst(t *testing.T) {
 }
 
 func TestPublicReturnStreamEndOwnsPostTLSDeadline(t *testing.T) {
-	for _, transport := range []string{"quic", "tls_yamux"} {
+	for _, transport := range []string{"quic", "wss"} {
 		t.Run(transport, func(t *testing.T) {
 			client, server := realTunnelPair(t, transport)
 			stream, publisher := realVisitorPair(t, client, server)
@@ -244,7 +244,7 @@ func TestPublicReturnStreamEndOwnsPostTLSDeadline(t *testing.T) {
 }
 
 func TestPublicReturnStreamRealResetAndSessionLossJoinCopies(t *testing.T) {
-	for _, transport := range []string{"quic", "tls_yamux"} {
+	for _, transport := range []string{"quic", "wss"} {
 		for _, loss := range []bool{false, true} {
 			t.Run(transport+map[bool]string{false: "/reset", true: "/session_loss"}[loss], func(t *testing.T) {
 				client, server := realTunnelPair(t, transport)
@@ -257,7 +257,7 @@ func TestPublicReturnStreamRealResetAndSessionLossJoinCopies(t *testing.T) {
 					t.Fatal(err)
 				}
 				err := await(t, copyDone)
-				if transport == "tls_yamux" {
+				if transport == "wss" {
 					if !errors.Is(err, yamux.ErrStreamReset) {
 						t.Fatalf("lost reset: %v", err)
 					}

@@ -95,10 +95,10 @@ type PublishedService struct {
 }
 
 type TransportObservation struct {
-	Slot          uint8            `json:"connection_slot"`
-	Transport     tunnel.Transport `json:"transport"`
-	PreferredTCP  bool             `json:"preferred_tcp"`
-	FirstFallback bool             `json:"first_fallback"`
+	Slot               uint8            `json:"connection_slot"`
+	Transport          tunnel.Transport `json:"transport"`
+	PreferredWebSocket bool             `json:"preferred_tcp"`
+	FirstFallback      bool             `json:"first_fallback"`
 }
 
 type ShutdownResult struct {
@@ -453,7 +453,7 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedServi
 					cfg.Connect = g.observeConnections(index, connect, stop)
 					switch g.cohort(index) {
 					case TransportQUIC:
-						cfg.RelayTCP = disabledConnector{}
+						cfg.RelayWebSocket = disabledConnector{}
 					case TransportTCP:
 						cfg.RelayQUIC = disabledConnector{}
 					}
@@ -551,9 +551,9 @@ func (g *Publishers) observeConnections(index int, connect func(context.Context,
 	return func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
 		switch g.cohort(index) {
 		case TransportQUIC:
-			options.PreferTCP = false
+			options.PreferWebSocket = false
 		case TransportTCP:
-			options.PreferTCP = true
+			options.PreferWebSocket = true
 		}
 		session, err := connect(ctx, bound, slot, options)
 		if err == nil && session == nil {
@@ -571,8 +571,8 @@ func (g *Publishers) observeConnections(index int, connect func(context.Context,
 			}
 			return nil, err
 		}
-		observation := TransportObservation{Slot: slot, Transport: session.Transport(), PreferredTCP: options.PreferTCP}
-		if g.cohort(index) == TransportAuto && observation.Transport == tunnel.TransportTLSTCP && !options.PreferTCP {
+		observation := TransportObservation{Slot: slot, Transport: session.Transport(), PreferredWebSocket: options.PreferWebSocket}
+		if g.cohort(index) == TransportAuto && observation.Transport == tunnel.TransportWSS && !options.PreferWebSocket {
 			fallback.Do(func() { observation.FirstFallback = true })
 		}
 		if g.config.ObserveTransport != nil {

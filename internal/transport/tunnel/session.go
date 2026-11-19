@@ -190,9 +190,7 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 		if hello.Role == tunnelv1.Publisher {
 			return dialResult{err: errors.Join(rejection, acknowledgePublisherRejection(setupCtx, transport, control, closeTransport))}
 		}
-		if native {
-			_ = control.CloseWrite()
-		}
+		_ = control.CloseWrite()
 		return dialResult{err: rejection}
 	}
 	if response.Type != tunnelv1.HelloAccepted {
@@ -272,7 +270,7 @@ func AcceptWithResult(ctx context.Context, transport muxsession.Session, authent
 		if hello.Role == tunnelv1.Publisher {
 			return nil, tunnelv1.Message{}, errors.Join(authErr, rejectPublisherHello(setupCtx, control, code, closeTransport))
 		}
-		if writeProtocolError(control, code) == nil && hello.Role == tunnelv1.Connector {
+		if writeProtocolError(control, code) == nil {
 			drainConnectorRejection(setupCtx, control)
 		}
 		return nil, tunnelv1.Message{}, authErr

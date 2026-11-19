@@ -107,7 +107,7 @@ func TestRunTargetTLSKeepsRelayAndVisitorTrustSeparate(t *testing.T) {
 	}
 	status, body, err := fixture.Visit(ctx, "https://"+service.Endpoint.Hostname)
 	if err != nil || status != http.StatusOK || string(body) != "separate target TLS" || requests.Load() != 1 {
-		t.Fatal("real TLS/yamux publication did not deliver verified target bytes", status, string(body), err)
+		t.Fatal("real WSS/yamux publication did not deliver verified target bytes", status, string(body), err)
 	}
 	select {
 	case err := <-done:

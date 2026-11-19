@@ -79,7 +79,7 @@ func endpointReadinessFixture(t *testing.T, protocol controlv1.ServiceProtocol, 
 		t.Error("readiness fixture attempted a real relay dial")
 		return nil, ErrPrivateStream
 	})
-	cfg.RelayQUIC, cfg.RelayTCP = unused, unused
+	cfg.RelayQUIC, cfg.RelayWebSocket = unused, unused
 	control := &endpointReadinessControl{lifecycleControl: base, ready: ready, revision: revision}
 	cfg.Control = control
 	observed := &endpointReadinessObservations{}

@@ -143,7 +143,7 @@ func TestIntegrationLocalHTTPServicePublicEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	quic, tcp := f.connectors()
-	local, stop := startRuntimeConnectorOn(t, f, service, listener, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp})
+	local, stop := startRuntimeConnectorOn(t, f, service, listener, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayWebSocket: tcp})
 	defer stop()
 	localTransport := &http.Transport{TLSClientConfig: verification.Clone(), ForceAttemptHTTP2: true}
 	defer localTransport.CloseIdleConnections()
@@ -279,7 +279,7 @@ func TestIntegrationLocalServicePortReleaseRetainsLiveConnector(t *testing.T) {
 		t.Fatal(err)
 	}
 	quic, tcp := f.connectors()
-	local, stop := startRuntimeConnectorOn(t, f, service, listener, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp})
+	local, stop := startRuntimeConnectorOn(t, f, service, listener, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayWebSocket: tcp})
 	defer stop()
 	connection, err := net.Dial("tcp", local.Addr().String())
 	if err != nil {
@@ -412,7 +412,7 @@ func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(
 				t.Fatal(err)
 			}
 			var completed atomic.Bool
-			local, stop := startRuntimeConnectorOn(t, f, service, listener, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp},
+			local, stop := startRuntimeConnectorOn(t, f, service, listener, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayWebSocket: tcp},
 				func(err error) bool { return completed.Load() && completedHTTPConnectorDenied(err) })
 			defer func() {
 				started := time.Now()

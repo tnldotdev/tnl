@@ -116,7 +116,7 @@ func TestIntegrationConnectorOnlyViteCanonicalHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	listener, stopConnector := startRuntimeConnector(t, f, service, connectorstream.Config{
-		Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp})
+		Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayWebSocket: tcp})
 	defer stopConnector()
 	transport := &http.Transport{Proxy: nil, TLSClientConfig: f.visitorRoots.Clone(),
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {

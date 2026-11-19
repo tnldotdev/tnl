@@ -509,7 +509,7 @@ func (e Outcome) Valid() bool {
 const (
 	DirectUdp Path = "direct_udp"
 	Quic      Path = "quic"
-	TlsTcp    Path = "tls_tcp"
+	Wss       Path = "wss"
 )
 
 // Valid indicates whether the value is a known member of the Path enum.
@@ -519,7 +519,7 @@ func (e Path) Valid() bool {
 		return true
 	case Quic:
 		return true
-	case TlsTcp:
+	case Wss:
 		return true
 	default:
 		return false

@@ -283,6 +283,12 @@ func TestServiceCapacityPreservesStreamCloseFailures(t *testing.T) {
 			if side == "reader" && !errors.Is(err, failure) || side == "requester" && err != nil {
 				t.Fatal("capacity reader lost its cleanup failure", err)
 			}
+			if side == "reader" {
+				var cleanup *SessionCleanupError
+				if !errors.As(err, &cleanup) {
+					t.Fatal("capacity reader did not distinguish owned cleanup from session loss", err)
+				}
+			}
 		})
 	}
 }

@@ -120,7 +120,7 @@ func startFrameworkNativeOwner(t *testing.T, directory string, services config.S
 	routable := make(chan string, 1)
 	options := publisherlocal.Options{Directory: directory, StateDir: state.Root(), Snapshot: bytes.NewReader(snapshot),
 		AttachPublication: func(_ context.Context, _ publisherapp.Service, cfg *publisherservice.RunConfig) error {
-			cfg.RelayQUIC, cfg.RelayTCP = setup.quic, setup.tcp
+			cfg.RelayQUIC, cfg.RelayWebSocket = setup.quic, setup.tcp
 			cfg.TransportTLS, cfg.DrainTime = setup.relayTLS.Clone(), time.Second
 			onReady := cfg.Ready
 			cfg.Ready = func() error {

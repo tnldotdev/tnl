@@ -15,7 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func TestPeerServiceDispatcherOnAuthenticatedTLSYamux(t *testing.T) {
+func TestPeerServiceDispatcherOnAuthenticatedWebSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
@@ -31,16 +31,16 @@ func TestPeerServiceDispatcherOnAuthenticatedTLSYamux(t *testing.T) {
 			accepted <- nil
 			return
 		}
-		s, _ := muxsession.AcceptTLSYamux(ctx, conn, serverTLS, muxsession.TLSYamuxConfig{})
+		s, _ := muxsession.AcceptWebSocket(ctx, conn, serverTLS, muxsession.WebSocketConfig{})
 		accepted <- s
 	}()
-	client, err := (muxsession.TLSYamuxConnector{TLSConfig: clientTLS}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "peer.test"})
+	client, err := (muxsession.WebSocketConnector{TLSConfig: clientTLS}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "peer.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := <-accepted
 	if server == nil {
-		t.Fatal("TLS/yamux acceptance failed")
+		t.Fatal("WSS/yamux acceptance failed")
 	}
 	defer client.Close()
 	defer server.Close()

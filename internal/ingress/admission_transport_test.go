@@ -65,7 +65,7 @@ func (c admissionRelayControl) DisconnectServicePublisherConnection(context.Cont
 	return nil
 }
 
-// both hops use the real service-only relay acceptors and verified TLS/yamux.
+// both hops use the real service-only relay acceptors and verified WSS/yamux.
 // control supplies one exact claim; no legacy publisher or forwarding adapter runs.
 func newAdmissionTransportFixture(t *testing.T) *admissionTransportFixture {
 	t.Helper()
@@ -109,7 +109,7 @@ func newAdmissionTransportFixture(t *testing.T) *admissionTransportFixture {
 		t.Fatal(err)
 	}
 	publisherServer := startForwardingTestServer(t, material, acceptor.Accept)
-	transport, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}}).Connect(
+	transport, err := (muxsession.WebSocketConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}}).Connect(
 		ingressContext(t), muxsession.Endpoint{Address: publisherServer.address(), ServerName: material.serverName})
 	if err != nil {
 		t.Fatal(err)

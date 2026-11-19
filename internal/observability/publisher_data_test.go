@@ -237,7 +237,7 @@ func TestPublisherConnectionRedundancyAndRecoveryStayRunLocal(t *testing.T) {
 	ctx := WithPublisherRecovery(WithMetrics(t.Context(), m))
 	other := WithPublisherRecovery(WithMetrics(t.Context(), m))
 	endFirst := PublisherConnectionLifetime(ctx, "quic", 0)
-	endSecond := PublisherConnectionLifetime(ctx, "tls-tcp", 1)
+	endSecond := PublisherConnectionLifetime(ctx, "wss", 1)
 	if got := dataMetric(t, m, "tnl_publisher_connections_active", map[string]string{"tnl_connection_slot": "0"}); got != 1 {
 		t.Fatal(got)
 	}
