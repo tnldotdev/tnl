@@ -29,10 +29,11 @@ import (
 	kubev1 "k8s.io/client-go/tools/clientcmd/api/v1"
 )
 
-var kindBinary = flag.String("tnl-kind-binary", "kind", "kind v0.30.0 executable for disposable Kubernetes integration")
-
+const kindVersion = "v0.33.0"
 const kindNode = "docker.io/kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d"
 const kubeBusybox = "docker.io/library/busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
+
+var kindBinary = flag.String("tnl-kind-binary", "kind", "kind "+kindVersion+" executable for disposable Kubernetes integration")
 
 // this opt-in fixture owns the entire disposable cluster and uses actual kubectl
 // commands through the native frontend. control admission is a narrow callback;
@@ -47,11 +48,11 @@ func TestIntegrationKubernetesKubectl(t *testing.T) {
 	defer cancel()
 	kind, err := exec.LookPath(*kindBinary)
 	if err != nil {
-		t.Fatal("install kind v0.30.0 or pass -tnl-kind-binary")
+		t.Fatalf("install kind %s or pass -tnl-kind-binary", kindVersion)
 	}
 	version, err := exec.CommandContext(ctx, kind, "version").Output()
-	if err != nil || !strings.Contains(string(version), "v0.30.0") {
-		t.Fatal("disposable fixture requires kind v0.30.0")
+	if err != nil || !strings.HasPrefix(string(version), "kind "+kindVersion+" ") {
+		t.Fatalf("disposable fixture requires kind %s", kindVersion)
 	}
 	kubectl, err := exec.LookPath("kubectl")
 	if err != nil {

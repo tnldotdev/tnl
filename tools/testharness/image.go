@@ -12,7 +12,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// testcontainers v0.44 drains pull progress without decoding daemon errors.
+// testcontainers drains pull progress without decoding daemon errors.
 // finish the pull here so a registry failure cannot become a later "no such
 // image" at container creation. use the same digest and never retry the tests.
 func prepareFixtureImage(ctx context.Context, image string) error {
