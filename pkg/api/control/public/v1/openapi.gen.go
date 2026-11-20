@@ -3616,6 +3616,33 @@ type PublisherVisitorPolicyRequest struct {
 	RunNumber int64                `json:"run_number,string"`
 }
 
+// PublisherWatchChange defines model for PublisherWatchChange.
+type PublisherWatchChange struct {
+	// ConnectorRevision Current connector revision, or -1 if the scope is unavailable. Never confirms access or retirement.
+	ConnectorRevision int64        `json:"connector_revision,string"`
+	ServiceRunId      ServiceRunID `json:"service_run_id"`
+}
+
+// PublisherWatchRequest defines model for PublisherWatchRequest.
+type PublisherWatchRequest struct {
+	Runs []PublisherWatchRun `json:"runs"`
+}
+
+// PublisherWatchResponse defines model for PublisherWatchResponse.
+type PublisherWatchResponse struct {
+	Changes []PublisherWatchChange `json:"changes"`
+}
+
+// PublisherWatchRun defines model for PublisherWatchRun.
+type PublisherWatchRun struct {
+	// ConnectorRevision Last applied revision. Omit it to request an initial reconciliation.
+	ConnectorRevision *int64       `json:"connector_revision,string,omitempty"`
+	RunNumber         int64        `json:"run_number,string"`
+	RunToken          string       `json:"run_token"`
+	ServiceId         ServiceID    `json:"service_id"`
+	ServiceRunId      ServiceRunID `json:"service_run_id"`
+}
+
 // ReadinessResponse defines model for ReadinessResponse.
 type ReadinessResponse struct {
 	Checks struct {
@@ -5103,6 +5130,9 @@ type StopPublisherRuntimeJSONRequestBody = PublisherRuntimeRequest
 // AllocatePublisherServiceJSONRequestBody defines body for AllocatePublisherService for application/json ContentType.
 type AllocatePublisherServiceJSONRequestBody = AllocateServiceRequest
 
+// WatchPublisherRunsJSONRequestBody defines body for WatchPublisherRuns for application/json ContentType.
+type WatchPublisherRunsJSONRequestBody = PublisherWatchRequest
+
 // AcceptServiceInvitationJSONRequestBody defines body for AcceptServiceInvitation for application/json ContentType.
 type AcceptServiceInvitationJSONRequestBody = ServiceInvitationCredential
 
@@ -6295,6 +6325,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/publisher/services/{service_id} (the `GetPublisherService` operationId).
 	GetPublisherService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WatchPublisherRunsWithBody Wait for changes to exact, authenticated service runs
+	//
+	// Each subscription supplies its own run token and last applied connector revision. The response is a hint to fetch and apply authorized state, not a grant or a renewal. An empty response means the wait ended without a detected change; it does not confirm serving authority.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/publisher/watch (the `WatchPublisherRuns` operationId).
+	WatchPublisherRunsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WatchPublisherRuns Wait for changes to exact, authenticated service runs
+	//
+	// Each subscription supplies its own run token and last applied connector revision. The response is a hint to fetch and apply authorized state, not a grant or a renewal. An empty response means the wait ended without a detected change; it does not confirm serving authority.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/publisher/watch (the `WatchPublisherRuns` operationId).
+	WatchPublisherRuns(ctx context.Context, body WatchPublisherRunsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReadiness Confirm that the tnld role is ready to serve
 	//
@@ -8838,6 +8886,44 @@ func (c *Client) DeletePublisherService(ctx context.Context, serviceId ServiceID
 // Corresponds with GET /v1/publisher/services/{service_id} (the `GetPublisherService` operationId).
 func (c *Client) GetPublisherService(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPublisherServiceRequest(c.Server, serviceId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// WatchPublisherRunsWithBody Wait for changes to exact, authenticated service runs
+//
+// Each subscription supplies its own run token and last applied connector revision. The response is a hint to fetch and apply authorized state, not a grant or a renewal. An empty response means the wait ended without a detected change; it does not confirm serving authority.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/publisher/watch (the `WatchPublisherRuns` operationId).
+func (c *Client) WatchPublisherRunsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWatchPublisherRunsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// WatchPublisherRuns Wait for changes to exact, authenticated service runs
+//
+// Each subscription supplies its own run token and last applied connector revision. The response is a hint to fetch and apply authorized state, not a grant or a renewal. An empty response means the wait ended without a detected change; it does not confirm serving authority.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/publisher/watch (the `WatchPublisherRuns` operationId).
+func (c *Client) WatchPublisherRuns(ctx context.Context, body WatchPublisherRunsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWatchPublisherRunsRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14074,6 +14160,46 @@ func NewGetPublisherServiceRequest(server string, serviceId ServiceID) (*http.Re
 	return req, nil
 }
 
+// NewWatchPublisherRunsRequest calls the generic WatchPublisherRuns builder with application/json body
+func NewWatchPublisherRunsRequest(server string, body WatchPublisherRunsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewWatchPublisherRunsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewWatchPublisherRunsRequestWithBody constructs an http.Request for the WatchPublisherRuns method, with any body, and a specified content type
+func NewWatchPublisherRunsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher/watch")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetReadinessRequest constructs an http.Request for the GetReadiness method
 func NewGetReadinessRequest(server string) (*http.Request, error) {
 	var err error
@@ -17928,6 +18054,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/publisher/services/{service_id} (the `GetPublisherService` operationId).
 	GetPublisherServiceWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*GetPublisherServiceResponse, error)
 
+	// WatchPublisherRunsWithBodyWithResponse Wait for changes to exact, authenticated service runs
+	//
+	// Each subscription supplies its own run token and last applied connector revision. The response is a hint to fetch and apply authorized state, not a grant or a renewal. An empty response means the wait ended without a detected change; it does not confirm serving authority.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/watch (the `WatchPublisherRuns` operationId).
+	WatchPublisherRunsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WatchPublisherRunsResponse, error)
+
+	// WatchPublisherRunsWithResponse Wait for changes to exact, authenticated service runs
+	//
+	// Each subscription supplies its own run token and last applied connector revision. The response is a hint to fetch and apply authorized state, not a grant or a renewal. An empty response means the wait ended without a detected change; it does not confirm serving authority.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/publisher/watch (the `WatchPublisherRuns` operationId).
+	WatchPublisherRunsWithResponse(ctx context.Context, body WatchPublisherRunsJSONRequestBody, reqEditors ...RequestEditorFn) (*WatchPublisherRunsResponse, error)
+
 	// GetReadinessWithResponse Confirm that the tnld role is ready to serve
 	//
 	// Check the configured tnld role's readiness without a credential. An unready process returns the same readiness shape with HTTP 503 rather than a successful health check.
@@ -21775,6 +21919,54 @@ func (r GetPublisherServiceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetPublisherServiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type WatchPublisherRunsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherWatchResponse
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r WatchPublisherRunsResponse) GetJSON200() *PublisherWatchResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r WatchPublisherRunsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r WatchPublisherRunsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r WatchPublisherRunsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r WatchPublisherRunsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r WatchPublisherRunsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26078,6 +26270,36 @@ func (c *ClientWithResponses) GetPublisherServiceWithResponse(ctx context.Contex
 	return ParseGetPublisherServiceResponse(rsp)
 }
 
+// WatchPublisherRunsWithBodyWithResponse Wait for changes to exact, authenticated service runs
+//
+// Each subscription supplies its own run token and last applied connector revision. The response is a hint to fetch and apply authorized state, not a grant or a renewal. An empty response means the wait ended without a detected change; it does not confirm serving authority.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/watch (the `WatchPublisherRuns` operationId).
+func (c *ClientWithResponses) WatchPublisherRunsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WatchPublisherRunsResponse, error) {
+	rsp, err := c.WatchPublisherRunsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWatchPublisherRunsResponse(rsp)
+}
+
+// WatchPublisherRunsWithResponse Wait for changes to exact, authenticated service runs
+//
+// Each subscription supplies its own run token and last applied connector revision. The response is a hint to fetch and apply authorized state, not a grant or a renewal. An empty response means the wait ended without a detected change; it does not confirm serving authority.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/publisher/watch (the `WatchPublisherRuns` operationId).
+func (c *ClientWithResponses) WatchPublisherRunsWithResponse(ctx context.Context, body WatchPublisherRunsJSONRequestBody, reqEditors ...RequestEditorFn) (*WatchPublisherRunsResponse, error) {
+	rsp, err := c.WatchPublisherRuns(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWatchPublisherRunsResponse(rsp)
+}
+
 // GetReadinessWithResponse Confirm that the tnld role is ready to serve
 //
 // Check the configured tnld role's readiness without a credential. An unready process returns the same readiness shape with HTTP 503 rather than a successful health check.
@@ -29591,6 +29813,39 @@ func ParseGetPublisherServiceResponse(rsp *http.Response) (*GetPublisherServiceR
 	return response, nil
 }
 
+// ParseWatchPublisherRunsResponse parses an HTTP response from a WatchPublisherRunsWithResponse call
+func ParseWatchPublisherRunsResponse(rsp *http.Response) (*WatchPublisherRunsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &WatchPublisherRunsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherWatchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetReadinessResponse parses an HTTP response from a GetReadinessWithResponse call
 func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -31898,6 +32153,9 @@ type ServerInterface interface {
 	// GetPublisherService Read one service covered by the current publisher grant
 	// (GET /v1/publisher/services/{service_id})
 	GetPublisherService(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
+	// WatchPublisherRuns Wait for changes to exact, authenticated service runs
+	// (POST /v1/publisher/watch)
+	WatchPublisherRuns(w http.ResponseWriter, r *http.Request)
 	// GetReadiness Confirm that the tnld role is ready to serve
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
@@ -34526,6 +34784,20 @@ func (siw *ServerInterfaceWrapper) GetPublisherService(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// WatchPublisherRuns operation middleware
+func (siw *ServerInterfaceWrapper) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WatchPublisherRuns(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReadiness operation middleware
 func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.Request) {
 
@@ -36720,6 +36992,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}/publishers/{publisher}", wrapper.GetDeploymentPublisher)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments", wrapper.ListDeployments)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/deployments", wrapper.CreateDeployment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher/watch", wrapper.WatchPublisherRuns)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}", wrapper.DeleteDeployment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}", wrapper.GetDeployment)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/projects/{project_key}/deployments/{deployment}", wrapper.UpdateDeployment)

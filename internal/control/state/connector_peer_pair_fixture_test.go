@@ -25,16 +25,16 @@ type connectorPairFixture struct {
 func newConnectorPairFixture(t *testing.T, retainedPublicPort ...bool) connectorPairFixture {
 	t.Helper()
 	d, now, _, leases := newConnectorPairPrerequisites(t)
-	return connectorPairFixtureInDatabase(t, d, now, leases, retainedPublicPort...)
+	return connectorPairFixtureInDatabase(t, d, now, leases, "observations", retainedPublicPort...)
 }
 
-func connectorPairFixtureInDatabase(t *testing.T, d *Database, now time.Time, leases map[string]RelayLease, retainedPublicPort ...bool) connectorPairFixture {
+func connectorPairFixtureInDatabase(t *testing.T, d *Database, now time.Time, leases map[string]RelayLease, name string, retainedPublicPort ...bool) connectorPairFixture {
 	t.Helper()
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
 	visitor := WithControlPrincipal(t.Context(), principal)
 	member := session.Identity.Memberships[0]
-	service, err := d.CreateServiceAt(visitor, member.TeamID, principal.IdentityID, "observations", "observations", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
+	service, err := d.CreateServiceAt(visitor, member.TeamID, principal.IdentityID, name, name, ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

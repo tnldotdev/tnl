@@ -28,7 +28,7 @@ func TestPublicAPISurfacesFollowRegisteredRoutes(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metrics := observability.New("control")
-			handler, err := newPublicAPIHandler(daemonconfig.Config{Role: daemonconfig.RoleControl},
+			handler, err := newPublicAPIHandler(t.Context(), daemonconfig.Config{Role: daemonconfig.RoleControl},
 				time.Now(), &http.Client{}, nil, metrics, &daemon{}, nil)
 			if err != nil {
 				t.Fatal(err)

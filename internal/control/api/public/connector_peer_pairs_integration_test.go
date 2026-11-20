@@ -2,6 +2,7 @@ package public
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -187,6 +189,50 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	}
 	path := "/v1/services/" + service.ID + "/connector-peer-pairs"
 	sign(&request)
+	watchClient, comparing := newConnectorPeerWatchFixture(t, url)
+	subscription := controlv1.PublisherWatchRun{ServiceId: run.ServiceID, ServiceRunId: run.RunID, RunNumber: run.RunNumber, RunToken: run.Token}
+	watchCall := func(subscription controlv1.PublisherWatchRun, want int64) {
+		t.Helper()
+		call, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+		defer cancel()
+		changes, err := watchClient.WatchPublisherRuns(call, []controlv1.PublisherWatchRun{subscription})
+		expected := []controlv1.PublisherWatchChange{{ServiceRunId: run.RunID, ConnectorRevision: want}}
+		if err != nil || !slices.Equal(changes, expected) {
+			t.Fatalf("publisher watch = %v, %v; want %v", changes, err, expected)
+		}
+	}
+	watchCall(subscription, 0)
+	subscription.ConnectorRevision = new(int64)
+	wait, cancelWait := context.WithTimeout(t.Context(), 4*time.Second)
+	defer cancelWait()
+	type watchReply struct {
+		changes []controlv1.PublisherWatchChange
+		err     error
+	}
+	reply := make(chan watchReply, 1)
+	go func() {
+		defer close(reply)
+		changes, err := watchClient.WatchPublisherRuns(wait, []controlv1.PublisherWatchRun{subscription})
+		reply <- watchReply{changes, err}
+	}()
+	defer func() {
+		cancelWait()
+		for range reply {
+		}
+	}()
+	// wait for the second control to complete an unchanged comparison before
+	// the first control commits the pair. neither needs a dedicated connection.
+	for observed := false; !observed; {
+		select {
+		case check := <-comparing:
+			observed = slices.Contains(check.scopes, controlstate.ConnectorPeerWatchVersion{RunID: run.RunID, Revision: 0})
+			if observed && check.borrowed != 0 {
+				t.Fatalf("quiet watch held %d database connections", check.borrowed)
+			}
+		case <-wait.Done():
+			t.Fatal("watch did not enter comparison", wait.Err())
+		}
+	}
 	response := call(path, owner.AccessToken.String(), request)
 	if response.Code != 200 {
 		t.Fatal("create pair", response.Code, response.Body.String())
@@ -195,6 +241,14 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &pair); err != nil || pair.Key == "" || pair.PairId == "" {
 		t.Fatal("missing pair", err)
 	}
+	firstNotice := <-reply
+	if firstNotice.err != nil || !slices.Equal(firstNotice.changes, []controlv1.PublisherWatchChange{{ServiceRunId: run.RunID, ConnectorRevision: 1}}) {
+		t.Fatalf("waiting publisher did not see the other control's commit: %v, %v", firstNotice.changes, firstNotice.err)
+	}
+	watchCall(subscription, 1) // the first notice was not acknowledged.
+	invalid := subscription
+	invalid.RunNumber++
+	watchCall(invalid, -1)
 	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
 		t.Fatal(err)
@@ -561,4 +615,53 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	if one := selectRun(); one.PairReady != nil {
 		t.Fatal("one surviving ready slot advertised a pair")
 	}
+}
+
+type observingPublisherWatchStore struct {
+	*controlstate.Database
+	compared chan publisherWatchComparison
+}
+
+type publisherWatchComparison struct {
+	scopes   []controlstate.ConnectorPeerWatchVersion
+	borrowed int32
+}
+
+func (s observingPublisherWatchStore) CompareConnectorPeerWatchVersions(ctx context.Context, scopes []controlstate.ConnectorPeerWatchVersion) ([]controlstate.ConnectorPeerWatchVersion, error) {
+	result, err := s.Database.CompareConnectorPeerWatchVersions(ctx, scopes)
+	if err == nil {
+		select {
+		case s.compared <- publisherWatchComparison{slices.Clone(scopes), s.Database.PoolStats().AcquiredConns()}:
+		default:
+		}
+	}
+	return result, err
+}
+
+func newConnectorPeerWatchFixture(t *testing.T, url string) (*clientcontrol.Client, <-chan publisherWatchComparison) {
+	t.Helper()
+	reader, err := controlstate.Open(t.Context(), url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(reader.Close)
+	store := observingPublisherWatchStore{Database: reader, compared: make(chan publisherWatchComparison, 4)}
+	watch := NewPublisherWatch(store)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- watch.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	})
+	mux := testHandler(t, Config{PublisherWatch: watch}, nil, nil, nil)
+	server := httptest.NewTLSServer(mux)
+	t.Cleanup(server.Close)
+	client, err := clientcontrol.New(server.URL, server.Client(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client, store.compared
 }

@@ -70,6 +70,8 @@ type Querier interface {
 	CompanySessionRefreshValid(ctx context.Context, arg CompanySessionRefreshValidParams) (pgtype.Bool, error)
 	CompanySubjectDeadline(ctx context.Context, arg CompanySubjectDeadlineParams) (pgtype.Timestamptz, error)
 	CompanySubjectSessionAuthorized(ctx context.Context, arg CompanySubjectSessionAuthorizedParams) (bool, error)
+	// an untouched run starts at zero. a missing or closed run has no version.
+	CompareConnectorPeerWatchVersions(ctx context.Context, arg CompareConnectorPeerWatchVersionsParams) ([]CompareConnectorPeerWatchVersionsRow, error)
 	// only a checked publisher report can advance this startup barrier. a retry
 	// retains a newer report, capped by the currently checked delivery authority.
 	ConfirmConnectorPeerPairPrepared(ctx context.Context, arg ConfirmConnectorPeerPairPreparedParams) (int64, error)

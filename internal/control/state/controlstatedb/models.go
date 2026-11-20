@@ -286,6 +286,11 @@ type ControlConnectorPeerPendingBinding struct {
 	PublisherProofDigest   []byte
 }
 
+type ControlConnectorPeerWatchVersion struct {
+	ServiceRunID string
+	Revision     int64
+}
+
 type ControlControlSession struct {
 	ID                      string
 	IdentityID              string

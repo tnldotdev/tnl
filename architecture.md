@@ -71,6 +71,10 @@ carry the same encrypted peer session; changing paths does not replay requests.
 Public endpoint access starts at ingress and can also use a direct publisher
 path. Making an endpoint public does not remove its access rules.
 
+Control's publisher watch reads run change versions in batches through the
+existing PostgreSQL pool. A watch only identifies runs to reconcile. The run
+must still fetch authorized state; a wait or notice never extends a deadline.
+
 ## who decides what
 
 | Component | Owns                                                                                    |

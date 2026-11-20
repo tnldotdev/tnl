@@ -33,6 +33,7 @@ func portableCORSRouter(mux *http.ServeMux) *serverhttp.CredentialCORSRouter {
 		"POST /v1/publisher/deployments/enroll":                                                        body,
 		"POST /v1/publisher/deployments/verify":                                                        body,
 		"POST /v1/publisher/deployments/lease":                                                         body,
+		"POST /v1/publisher/watch":                                                                     body,
 		"GET /v1/publisher/deployments/assignments":                                                    bearer,
 		"POST /v1/projects/{project_key}/deployments/{deployment}/services/{service}/select":           source,
 		"POST /v1/visitor-tokens":                                                                      source,

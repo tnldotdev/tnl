@@ -60,6 +60,7 @@ func authorityAPIConfigFrom(cfg daemonconfig.Config, httpClient *http.Client) co
 }
 
 func newPublicAPIHandler(
+	lifetime context.Context,
 	cfg daemonconfig.Config,
 	startedAt time.Time,
 	httpClient *http.Client,
@@ -74,6 +75,9 @@ func newPublicAPIHandler(
 	controlConfig.Route53CredentialsReadiness = route53Readiness
 	controlConfig.ControlReadiness = func() error { return d.readyControl(cfg.Role, time.Now()) }
 	controlConfig.AcceptingNewWork = func() bool { return !d.draining.Load() }
+	if database != nil {
+		controlConfig.PublisherWatch = controlpublic.NewPublisherWatch(database)
+	}
 	if cfg.Role == daemonconfig.RoleStandalone {
 		controlConfig.IngressReadiness = func() error { return d.readyIngress(time.Now()) }
 		controlConfig.RelayReadiness = func() error { return d.readyRelays(cfg.Role, time.Now()) }
@@ -85,11 +89,7 @@ func newPublicAPIHandler(
 		return nil, err
 	}
 	var authorityRoutes controlauthority.Routes
-	owner := d.ctx
-	if owner == nil {
-		owner = observability.WithMetrics(context.Background(), metrics)
-	}
-	seedContext, stopSeeding := context.WithTimeout(owner, 30*time.Second)
+	seedContext, stopSeeding := context.WithTimeout(lifetime, 30*time.Second)
 	defer stopSeeding()
 	if err := database.SeedHumanAuthentication(seedContext, cfg.ManagedDomain, controlstate.HumanAuthenticationSeeds{Issuer: cfg.OIDCIssuer, Administrators: cfg.InitialAdministrators, TeamOwners: cfg.InitialTeamOwners, DefaultTeam: cfg.DefaultTeam, DefaultTeamMembers: cfg.DefaultTeamMembers}, time.Now()); err != nil {
 		return nil, err
@@ -104,6 +104,9 @@ func newPublicAPIHandler(
 	authorityRoutes, err = controlauthority.Register(mux, authorityAPIConfigFrom(cfg, httpClient), database)
 	if err != nil {
 		return nil, err
+	}
+	if watch := controlConfig.PublisherWatch; watch != nil {
+		d.start("run publisher watch", func() error { return watch.Run(lifetime) })
 	}
 	controlObserved := metrics.APIRequests("control", mux)
 	authorityObserved := metrics.APIRequests("authority", mux)

@@ -77,6 +77,8 @@ paths:
     $ref: "./paths/deployment-publishers.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}~1publishers~1{publisher}"
   /v1/projects/{project_key}/deployments:
     $ref: "./paths/deployments.yaml#/paths/~1v1~1projects~1{project_key}~1deployments"
+  /v1/publisher/watch:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1publisher~1watch"
   /v1/projects/{project_key}/deployments/{deployment}:
     $ref: "./paths/deployments.yaml#/paths/~1v1~1projects~1{project_key}~1deployments~1{deployment}"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:
@@ -333,6 +335,14 @@ components:
       $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairOwnerAuthority"
     ConnectorPeerPairCandidates:
       $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairCandidates"
+    PublisherWatchRequest:
+      $ref: "./schemas/service-runs.yaml#/schemas/PublisherWatchRequest"
+    PublisherWatchResponse:
+      $ref: "./schemas/service-runs.yaml#/schemas/PublisherWatchResponse"
+    PublisherWatchRun:
+      $ref: "./schemas/service-runs.yaml#/schemas/PublisherWatchRun"
+    PublisherWatchChange:
+      $ref: "./schemas/service-runs.yaml#/schemas/PublisherWatchChange"
     ConnectorPeerPairDelivery:
       $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairDelivery"
     ConnectorPeerPairPrepared:
