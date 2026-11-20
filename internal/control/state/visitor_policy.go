@@ -278,5 +278,14 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	if row.CertificateExpiresAt.Valid {
 		result.Policy.ValidUntil = minTime(result.Policy.ValidUntil, row.CertificateExpiresAt.Time)
 	}
+	if result.Policy.Enabled && result.Policy.Hostname == row.CertificateHostname {
+		confirmation, err := d.policyConfirmation(ctx, q, row, now)
+		if err != nil {
+			return result, err
+		}
+		if confirmation != nil && !confirmation.ValidUntil.After(result.Policy.ValidUntil) {
+			result.ConfirmationKey = &confirmation.ConfirmationKey
+		}
+	}
 	return result, tx.Commit(ctx)
 }

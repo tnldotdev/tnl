@@ -15,6 +15,24 @@ SELECT issuer FROM control.visitor_token_issuer WHERE id;
 -- name: ReadVisitorPolicyService :one
 SELECT * FROM control.services WHERE id=sqlc.arg(id);
 
+-- name: ReadPublisherPolicyConfirmation :one
+-- confirm only ordinary canonical scopes without time-dependent parents.
+-- every check, including the change bookmark, uses one statement snapshot.
+SELECT watched.bookmark::text AS bookmark,issuer.issuer,service.certificate_hostname,
+    LEAST(sqlc.arg(max_until)::timestamptz,service.expires_at,run.serving_until,run.certificate_expires_at)::timestamptz AS valid_until
+FROM control.service_runs run
+JOIN control.services service ON service.id=run.service_id AND service.certificate_hostname=run.certificate_hostname
+JOIN control.teams team ON team.id=service.team_id AND team.deleted_at IS NULL
+JOIN control.publisher_policy_watch_bookmarks watched ON watched.service_id=service.id
+JOIN control.visitor_token_issuer issuer ON issuer.id
+WHERE run.id=sqlc.arg(run_id) AND run.service_id=sqlc.arg(service_id)
+    AND run.run_number=sqlc.arg(run_number) AND run.closed_at IS NULL AND run.started_at IS NOT NULL
+    AND service.enabled AND service.deleted_at IS NULL AND service.guest_id IS NULL
+    AND NOT EXISTS (SELECT 1 FROM control.workload_session_services w WHERE w.service_id=service.id)
+    AND NOT EXISTS (SELECT 1 FROM control.applied_project_services b WHERE b.service_id=service.id)
+    AND EXISTS (SELECT 1 FROM control.visitor_token_keys k WHERE k.retired_at IS NULL AND k.revoked_at IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM control.visitor_token_keys k WHERE k.retired_at IS NOT NULL AND k.revoked_at IS NULL);
+
 -- name: HasVisitorPolicyRegisteredKeyCandidates :one
 SELECT EXISTS (
     SELECT 1

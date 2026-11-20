@@ -3550,6 +3550,14 @@ type PublisherIdentityPage struct {
 	NextCursor *ResourceID         `json:"next_cursor,omitempty"`
 }
 
+// PublisherPolicyConfirmation defines model for PublisherPolicyConfirmation.
+type PublisherPolicyConfirmation struct {
+	ConfirmationKey string    `json:"confirmation_key"`
+	Hostname        string    `json:"hostname"`
+	ObservedAt      time.Time `json:"observed_at"`
+	ValidUntil      time.Time `json:"valid_until"`
+}
+
 // PublisherRuntimeRequest Signed runtime command. The publisher identity and action must match the endpoint; the one-use proof binds both, the remaining fields, and the full endpoint audience.
 type PublisherRuntimeRequest struct {
 	Action    PublisherRuntimeRequestAction `json:"action"`
@@ -4158,6 +4166,9 @@ type ServiceRunState struct {
 	// ObservedAt Control observation used with publisher_expires_at to derive the local serving deadline from the request start.
 	ObservedAt time.Time `json:"observed_at"`
 
+	// PolicyConfirmation A fresh visitor-policy observation for a matching complete snapshot. The publisher lease and the watch do not confer this authority.
+	PolicyConfirmation *PublisherPolicyConfirmation `json:"policy_confirmation,omitempty"`
+
 	// PublicEndpointReady The current public endpoint has compatible ingress and published or explicitly unmanaged DNS for this run. This fact does not grant access, extend authority, or affect connector readiness.
 	PublicEndpointReady  bool                   `json:"public_endpoint_ready"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
@@ -4491,7 +4502,10 @@ type VisitorPolicySnapshot struct {
 
 // VisitorPolicyUpdate defines model for VisitorPolicyUpdate.
 type VisitorPolicyUpdate struct {
-	AfterRevision    int64                 `json:"after_revision,string"`
+	AfterRevision int64 `json:"after_revision,string"`
+
+	// ConfirmationKey Binds this full snapshot to later exact-run policy confirmations. Absent when fresh parent or hostname facts are required.
+	ConfirmationKey  *string               `json:"confirmation_key,omitempty"`
 	Policy           VisitorPolicySnapshot `json:"policy"`
 	Revisions        RevisionList          `json:"revisions"`
 	SnapshotRequired bool                  `json:"snapshot_required"`

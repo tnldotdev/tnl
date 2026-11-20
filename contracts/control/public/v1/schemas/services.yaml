@@ -569,6 +569,9 @@ schemas:
         type: boolean
         description: Both the canonical endpoint and this run's exact alias have current public DNS and ingress readiness.
       publisher_expires_at: { type: string, format: date-time }
+      policy_confirmation:
+        $ref: "../openapi.yaml#/components/schemas/PublisherPolicyConfirmation"
+        description: A fresh visitor-policy observation for a matching complete snapshot. The publisher lease and the watch do not confer this authority.
       observed_at:
         type: string
         format: date-time

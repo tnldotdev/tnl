@@ -27,6 +27,56 @@ func (q *Queries) HasVisitorPolicyRegisteredKeyCandidates(ctx context.Context, s
 	return exists, err
 }
 
+const readPublisherPolicyConfirmation = `-- name: ReadPublisherPolicyConfirmation :one
+SELECT watched.bookmark::text AS bookmark,issuer.issuer,service.certificate_hostname,
+    LEAST($1::timestamptz,service.expires_at,run.serving_until,run.certificate_expires_at)::timestamptz AS valid_until
+FROM control.service_runs run
+JOIN control.services service ON service.id=run.service_id AND service.certificate_hostname=run.certificate_hostname
+JOIN control.teams team ON team.id=service.team_id AND team.deleted_at IS NULL
+JOIN control.publisher_policy_watch_bookmarks watched ON watched.service_id=service.id
+JOIN control.visitor_token_issuer issuer ON issuer.id
+WHERE run.id=$2 AND run.service_id=$3
+    AND run.run_number=$4 AND run.closed_at IS NULL AND run.started_at IS NOT NULL
+    AND service.enabled AND service.deleted_at IS NULL AND service.guest_id IS NULL
+    AND NOT EXISTS (SELECT 1 FROM control.workload_session_services w WHERE w.service_id=service.id)
+    AND NOT EXISTS (SELECT 1 FROM control.applied_project_services b WHERE b.service_id=service.id)
+    AND EXISTS (SELECT 1 FROM control.visitor_token_keys k WHERE k.retired_at IS NULL AND k.revoked_at IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM control.visitor_token_keys k WHERE k.retired_at IS NOT NULL AND k.revoked_at IS NULL)
+`
+
+type ReadPublisherPolicyConfirmationParams struct {
+	MaxUntil  pgtype.Timestamptz
+	RunID     string
+	ServiceID string
+	RunNumber int64
+}
+
+type ReadPublisherPolicyConfirmationRow struct {
+	Bookmark            string
+	Issuer              string
+	CertificateHostname string
+	ValidUntil          pgtype.Timestamptz
+}
+
+// confirm only ordinary canonical scopes without time-dependent parents.
+// every check, including the change bookmark, uses one statement snapshot.
+func (q *Queries) ReadPublisherPolicyConfirmation(ctx context.Context, arg ReadPublisherPolicyConfirmationParams) (ReadPublisherPolicyConfirmationRow, error) {
+	row := q.db.QueryRow(ctx, readPublisherPolicyConfirmation,
+		arg.MaxUntil,
+		arg.RunID,
+		arg.ServiceID,
+		arg.RunNumber,
+	)
+	var i ReadPublisherPolicyConfirmationRow
+	err := row.Scan(
+		&i.Bookmark,
+		&i.Issuer,
+		&i.CertificateHostname,
+		&i.ValidUntil,
+	)
+	return i, err
+}
+
 const readRegisteredKeyWatchVersion = `-- name: ReadRegisteredKeyWatchVersion :one
 SELECT COALESCE(service.revision,0)::bigint AS binding_revision,
        COALESCE(project.revision,0)::bigint AS project_revision,

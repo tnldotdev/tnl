@@ -385,6 +385,8 @@ components:
       $ref: "./schemas/visitor-policy.yaml#/schemas/PublisherVisitorPolicyRequest"
     VisitorPolicyUpdate:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicyUpdate"
+    PublisherPolicyConfirmation:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/PublisherPolicyConfirmation"
     VisitorPolicySnapshot:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicySnapshot"
     VisitorPolicyIP:

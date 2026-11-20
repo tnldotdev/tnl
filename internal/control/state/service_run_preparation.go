@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type ServiceRunPreparation struct {
@@ -47,6 +48,7 @@ type ServiceRunAssignment struct {
 }
 
 type ServiceRunState struct {
+	PolicyConfirmation              *controlv1.PublisherPolicyConfirmation
 	ServiceID, RunID, Token, State  string
 	RunNumber                       int64
 	EndpointRevision                int64
@@ -833,6 +835,10 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if !previousExpiration.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) {
 		return result, ErrServiceAccess
 	}
+	confirmation, err := d.policyConfirmation(ctx, q, run, run.ServingObservedAt.Time)
+	if err != nil {
+		return result, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
 	}
@@ -854,7 +860,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		}
 	}
 	return ServiceRunState{ServiceID: serviceID, RunID: runID, RunNumber: run.RunNumber,
-		EndpointRevision: endpoint.revision, PublicEndpointReady: endpointReady,
+		PolicyConfirmation: confirmation, EndpointRevision: endpoint.revision, PublicEndpointReady: endpointReady,
 		RunHostname: run.RunHostname, RunAliasReady: aliasReady,
 		Healthy: run.Healthy, StreamCapacity: run.StreamCapacity, ReportedStreams: run.ReportedStreams,
 		State: run.State, ExpiresAt: run.PublisherExpiresAt.Time, ObservedAt: run.ServingObservedAt.Time, ServingUntil: run.ServingUntil.Time,

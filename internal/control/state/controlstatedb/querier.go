@@ -455,6 +455,9 @@ type Querier interface {
 	ReadConnectorPeerObservationRelayBounds(ctx context.Context, arg ReadConnectorPeerObservationRelayBoundsParams) ([]ReadConnectorPeerObservationRelayBoundsRow, error)
 	ReadPublisherGrant(ctx context.Context, arg ReadPublisherGrantParams) (ControlPublisherGrant, error)
 	ReadPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
+	// confirm only ordinary canonical scopes without time-dependent parents.
+	// every check, including the change bookmark, uses one statement snapshot.
+	ReadPublisherPolicyConfirmation(ctx context.Context, arg ReadPublisherPolicyConfirmationParams) (ReadPublisherPolicyConfirmationRow, error)
 	// an unbound service cannot gain a registered key from a change to another
 	// service's project. the binding counter survives removal and recreation.
 	ReadRegisteredKeyWatchVersion(ctx context.Context, serviceID string) (ReadRegisteredKeyWatchVersionRow, error)
