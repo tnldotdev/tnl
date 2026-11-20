@@ -159,7 +159,7 @@ type Config struct {
 	RelayStreamCapacity              int64    `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"-1" help:"Maximum concurrent visitor streams held by one relay process (default: automatic)."`
 	RequireProxyHeader               bool     `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on ingress TCP traffic."`
 	IngressTrustedProxies            []string `name:"ingress-trusted-proxies" env:"TNLD_INGRESS_TRUSTED_PROXIES" help:"Exact trusted peers supplying ingress PROXY v2 source and destination metadata."`
-	// Deprecated: use PublisherConnectionStreamLimit; first deprecated in unreleased.
+	// Deprecated: use PublisherConnectionStreamLimit; first deprecated in tnl v0.1.0-rc.45.
 	QUICMaxIncomingStreams         int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"-1" help:"Deprecated: use --publisher-connection-stream-limit (applies to QUIC and WSS)."`
 	PublisherConnectionStreamLimit int64         `name:"publisher-connection-stream-limit" env:"TNLD_PUBLISHER_CONNECTION_STREAM_LIMIT" default:"-1" help:"Maximum incoming streams per publisher connection, for both QUIC and WSS (default: relay stream capacity, up to 4096)."`
 	QUICIdleTimeout                time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
