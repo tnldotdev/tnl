@@ -26,7 +26,7 @@ func (p *ownedQUICClosePacket) Close() error {
 
 func ownedQUICTransport(t *testing.T, closeErr error) (*QUICTransport, *ownedQUICClosePacket) {
 	t.Helper()
-	transport, err := ListenQUICTransport("udp", ":0")
+	transport, err := ListenQUICTransport("udp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

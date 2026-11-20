@@ -108,7 +108,6 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
     throw new ActionError("TNL_ACTION_TIMEOUT_INVALID");
   const services = core.getMultilineInput("services");
   if (
-    services.length > 32 ||
     services.some((key) => !serviceNameSchema.safeParse(key).success) ||
     new Set(services).size !== services.length
   )

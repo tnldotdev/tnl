@@ -38,12 +38,14 @@ func (r Role) RunsRelay() bool   { return r == RoleStandalone || r == RoleRelay 
 // Config configures one tnld process. migration configuration is intentionally
 // absent: tnld migrate reads only TNLD_DATABASE_DIRECT_URL.
 type Config struct {
-	Role Role `name:"role" env:"TNLD_ROLE" default:"standalone" enum:"standalone,control,ingress,relay" help:"Process role: ${enum}."`
+	Role               Role   `name:"role" env:"TNLD_ROLE" default:"standalone" enum:"standalone,control,ingress,relay" help:"Process role: ${enum}."`
+	FlyMachineIdentity bool   `name:"fly-machine-identity" env:"TNLD_FLY_MACHINE_IDENTITY" help:"Derive ingress or relay process identity and exact private forwarding address from Fly Machine metadata."`
+	RelayIDPrefix      string `name:"relay-id-prefix" env:"TNLD_RELAY_ID_PREFIX" help:"Relay process identity prefix used with --fly-machine-identity."`
 
 	DatabaseURL   string `name:"database-url" env:"TNLD_DATABASE_URL" help:"Pooled PostgreSQL URL used by control and standalone."`
 	MetricsListen string `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
 
-	ProjectPublisherLimits map[string]int `name:"project-publisher-limit" env:"TNLD_PROJECT_PUBLISHER_LIMITS" help:"Override the publisher identity limit for a project (TEAM_ID/PROJECT_KEY=LIMIT). Defaults to 256 per project."`
+	ProjectPublisherLimits map[string]int `name:"project-publisher-limit" env:"TNLD_PROJECT_PUBLISHER_LIMITS" help:"Set a publisher identity quota for a project (TEAM_ID/PROJECT_KEY=LIMIT). Omit to use no project quota."`
 
 	ControlListen         string   `name:"control-listen" env:"TNLD_CONTROL_LISTEN" help:"Private HTTP backend for the deployment's control HTTPS proxy."`
 	ControlTrustedProxies []string `name:"control-trusted-proxies" env:"TNLD_CONTROL_TRUSTED_PROXIES" default:"127.0.0.1/32,::1/128" help:"Exact trusted control HTTPS proxy peer CIDRs."`
@@ -96,74 +98,76 @@ type Config struct {
 	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
 	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed domain; enables DNS automation."`
 	Route53ServerZoneID  string   `name:"route53-server-zone-id" env:"TNLD_ROUTE53_SERVER_ZONE_ID" help:"Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."`
-	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"Stable ingress IPv4 address published for public service endpoints; repeat for each address."`
-	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"Stable ingress IPv6 address published for public service endpoints; repeat for each address."`
+	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"One stable public IPv4 address for the primary ingress pool."`
+	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"One stable public IPv6 address for the primary ingress pool."`
 
 	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
 	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
 	StorageKeyPrevious    string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
 
-	TrafficDefaultConnections        int           `name:"traffic-default-connections" env:"TNLD_TRAFFIC_DEFAULT_CONNECTIONS" default:"32" help:"Default concurrent visitor connections per service run on each ingress process."`
-	TrafficDefaultRate               int           `name:"traffic-default-rate" env:"TNLD_TRAFFIC_DEFAULT_RATE" default:"20" help:"Default new visitor connections per traffic rate period."`
+	TrafficDefaultConnections        int           `name:"traffic-default-connections" env:"TNLD_TRAFFIC_DEFAULT_CONNECTIONS" default:"1024" help:"Default concurrent visitor connections per service run on each ingress process."`
+	TrafficDefaultRate               int           `name:"traffic-default-rate" env:"TNLD_TRAFFIC_DEFAULT_RATE" default:"1000" help:"Default new visitor connections per traffic rate period."`
 	TrafficDefaultRatePer            time.Duration `name:"traffic-default-rate-per" env:"TNLD_TRAFFIC_DEFAULT_RATE_PER" default:"1s" help:"Default visitor connection rate period."`
-	TrafficDefaultBurst              int           `name:"traffic-default-burst" env:"TNLD_TRAFFIC_DEFAULT_BURST" default:"40" help:"Default new visitor connection burst."`
-	TrafficDefaultUploadBytes        int64         `name:"traffic-default-upload-bytes" env:"TNLD_TRAFFIC_DEFAULT_UPLOAD_BYTES" default:"8388608" help:"Default encrypted visitor upload bytes per second."`
-	TrafficDefaultDownloadBytes      int64         `name:"traffic-default-download-bytes" env:"TNLD_TRAFFIC_DEFAULT_DOWNLOAD_BYTES" default:"16777216" help:"Default encrypted visitor download bytes per second."`
+	TrafficDefaultBurst              int           `name:"traffic-default-burst" env:"TNLD_TRAFFIC_DEFAULT_BURST" default:"2000" help:"Default new visitor connection burst."`
+	TrafficDefaultUploadBytes        int64         `name:"traffic-default-upload-bytes" env:"TNLD_TRAFFIC_DEFAULT_UPLOAD_BYTES" default:"134217728" help:"Default encrypted visitor upload bytes per second."`
+	TrafficDefaultDownloadBytes      int64         `name:"traffic-default-download-bytes" env:"TNLD_TRAFFIC_DEFAULT_DOWNLOAD_BYTES" default:"268435456" help:"Default encrypted visitor download bytes per second."`
 	TrafficDefaultTotalConnections   int64         `name:"traffic-default-total-connections" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_CONNECTIONS" default:"0" help:"Default total visitor connections per service run and ingress process; 0 is unlimited."`
 	TrafficDefaultTotalUploadBytes   int64         `name:"traffic-default-total-upload-bytes" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_UPLOAD_BYTES" default:"0" help:"Default total encrypted upload bytes per service run and ingress process; 0 is unlimited."`
 	TrafficDefaultTotalDownloadBytes int64         `name:"traffic-default-total-download-bytes" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_DOWNLOAD_BYTES" default:"0" help:"Default total encrypted download bytes per service run and ingress process; 0 is unlimited."`
-	TrafficMaxConnections            int           `name:"traffic-max-connections" env:"TNLD_TRAFFIC_MAX_CONNECTIONS" default:"128" help:"Maximum selected concurrent visitor connections per service run."`
-	TrafficMaxRate                   int           `name:"traffic-max-rate" env:"TNLD_TRAFFIC_MAX_RATE" default:"100" help:"Maximum selected new visitor connections per maximum traffic rate period."`
+	TrafficMaxConnections            int           `name:"traffic-max-connections" env:"TNLD_TRAFFIC_MAX_CONNECTIONS" default:"4096" help:"Maximum selected concurrent visitor connections per service run."`
+	TrafficMaxRate                   int           `name:"traffic-max-rate" env:"TNLD_TRAFFIC_MAX_RATE" default:"10000" help:"Maximum selected new visitor connections per maximum traffic rate period."`
 	TrafficMaxRatePer                time.Duration `name:"traffic-max-rate-per" env:"TNLD_TRAFFIC_MAX_RATE_PER" default:"1s" help:"Rate period used by the operator connection rate ceiling."`
-	TrafficMaxBurst                  int           `name:"traffic-max-burst" env:"TNLD_TRAFFIC_MAX_BURST" default:"200" help:"Maximum selected visitor connection burst."`
-	TrafficMaxUploadBytes            int64         `name:"traffic-max-upload-bytes" env:"TNLD_TRAFFIC_MAX_UPLOAD_BYTES" default:"67108864" help:"Maximum selected encrypted visitor upload bytes per second."`
-	TrafficMaxDownloadBytes          int64         `name:"traffic-max-download-bytes" env:"TNLD_TRAFFIC_MAX_DOWNLOAD_BYTES" default:"134217728" help:"Maximum selected encrypted visitor download bytes per second."`
+	TrafficMaxBurst                  int           `name:"traffic-max-burst" env:"TNLD_TRAFFIC_MAX_BURST" default:"20000" help:"Maximum selected visitor connection burst."`
+	TrafficMaxUploadBytes            int64         `name:"traffic-max-upload-bytes" env:"TNLD_TRAFFIC_MAX_UPLOAD_BYTES" default:"1073741824" help:"Maximum selected encrypted visitor upload bytes per second."`
+	TrafficMaxDownloadBytes          int64         `name:"traffic-max-download-bytes" env:"TNLD_TRAFFIC_MAX_DOWNLOAD_BYTES" default:"2147483648" help:"Maximum selected encrypted visitor download bytes per second."`
 	TrafficMaxTotalConnections       int64         `name:"traffic-max-total-connections" env:"TNLD_TRAFFIC_MAX_TOTAL_CONNECTIONS" default:"0" help:"Maximum selected total connections per service run and ingress process; 0 is unlimited."`
 	TrafficMaxTotalUploadBytes       int64         `name:"traffic-max-total-upload-bytes" env:"TNLD_TRAFFIC_MAX_TOTAL_UPLOAD_BYTES" default:"0" help:"Maximum selected total encrypted upload bytes per service run and ingress process; 0 is unlimited."`
 	TrafficMaxTotalDownloadBytes     int64         `name:"traffic-max-total-download-bytes" env:"TNLD_TRAFFIC_MAX_TOTAL_DOWNLOAD_BYTES" default:"0" help:"Maximum selected total encrypted download bytes per service run and ingress process; 0 is unlimited."`
-	TrafficSourceConnections         int           `name:"traffic-source-connections" env:"TNLD_TRAFFIC_SOURCE_CONNECTIONS" default:"64" help:"Concurrent visitor connections per IPv4 address or IPv6 /64 on each ingress process."`
-	TrafficSourceRate                int           `name:"traffic-source-rate" env:"TNLD_TRAFFIC_SOURCE_RATE" default:"30" help:"Visitor connection attempts per source per second."`
-	TrafficSourceBurst               int           `name:"traffic-source-burst" env:"TNLD_TRAFFIC_SOURCE_BURST" default:"60" help:"Visitor connection attempt burst per source."`
-	TrafficProcessRate               int           `name:"traffic-process-rate" env:"TNLD_TRAFFIC_PROCESS_RATE" default:"200" help:"Visitor connection attempts per ingress process per second."`
-	TrafficProcessBurst              int           `name:"traffic-process-burst" env:"TNLD_TRAFFIC_PROCESS_BURST" default:"400" help:"Visitor connection attempt burst per ingress process."`
-	TrafficProcessUploadBytes        int64         `name:"traffic-process-upload-bytes" env:"TNLD_TRAFFIC_PROCESS_UPLOAD_BYTES" default:"268435456" help:"Encrypted visitor upload bytes per second per ingress process."`
-	TrafficProcessDownloadBytes      int64         `name:"traffic-process-download-bytes" env:"TNLD_TRAFFIC_PROCESS_DOWNLOAD_BYTES" default:"268435456" help:"Encrypted visitor download bytes per second per ingress process."`
-	PendingConnectionLimit           int           `name:"pending-connection-limit" env:"TNLD_PENDING_CONNECTION_LIMIT" default:"64" help:"Concurrent visitors awaiting authorization per ingress process."`
-	PendingServiceConnectionLimit    int           `name:"pending-service-connection-limit" env:"TNLD_PENDING_SERVICE_CONNECTION_LIMIT" default:"8" help:"Concurrent visitors awaiting authorization per service run."`
-	PendingSourceConnectionLimit     int           `name:"pending-source-connection-limit" env:"TNLD_PENDING_SOURCE_CONNECTION_LIMIT" default:"4" help:"Concurrent visitors awaiting authorization per source."`
+	TrafficSourceConnections         int           `name:"traffic-source-connections" env:"TNLD_TRAFFIC_SOURCE_CONNECTIONS" default:"4096" help:"Concurrent visitor connections per IPv4 address or IPv6 /64 on each ingress process."`
+	TrafficSourceRate                int           `name:"traffic-source-rate" env:"TNLD_TRAFFIC_SOURCE_RATE" default:"2000" help:"Visitor connection attempts per source per second."`
+	TrafficSourceBurst               int           `name:"traffic-source-burst" env:"TNLD_TRAFFIC_SOURCE_BURST" default:"4000" help:"Visitor connection attempt burst per source."`
+	TrafficProcessRate               int           `name:"traffic-process-rate" env:"TNLD_TRAFFIC_PROCESS_RATE" default:"10000" help:"Visitor connection attempts per ingress process per second."`
+	TrafficProcessBurst              int           `name:"traffic-process-burst" env:"TNLD_TRAFFIC_PROCESS_BURST" default:"20000" help:"Visitor connection attempt burst per ingress process."`
+	TrafficProcessUploadBytes        int64         `name:"traffic-process-upload-bytes" env:"TNLD_TRAFFIC_PROCESS_UPLOAD_BYTES" default:"2147483648" help:"Encrypted visitor upload bytes per second per ingress process."`
+	TrafficProcessDownloadBytes      int64         `name:"traffic-process-download-bytes" env:"TNLD_TRAFFIC_PROCESS_DOWNLOAD_BYTES" default:"2147483648" help:"Encrypted visitor download bytes per second per ingress process."`
+	PendingConnectionLimit           int           `name:"pending-connection-limit" env:"TNLD_PENDING_CONNECTION_LIMIT" default:"4096" help:"Concurrent visitors awaiting authorization per ingress process."`
+	PendingServiceConnectionLimit    int           `name:"pending-service-connection-limit" env:"TNLD_PENDING_SERVICE_CONNECTION_LIMIT" default:"256" help:"Concurrent visitors awaiting authorization per service run."`
+	PendingSourceConnectionLimit     int           `name:"pending-source-connection-limit" env:"TNLD_PENDING_SOURCE_CONNECTION_LIMIT" default:"128" help:"Concurrent visitors awaiting authorization per source."`
 	PendingTimeout                   time.Duration `name:"pending-timeout" env:"TNLD_PENDING_TIMEOUT" default:"10s" help:"Maximum time a visitor may await authorization."`
 	PendingUploadBytes               int64         `name:"pending-upload-bytes" env:"TNLD_PENDING_UPLOAD_BYTES" default:"65536" help:"Encrypted upload byte budget while awaiting authorization."`
 	PendingDownloadBytes             int64         `name:"pending-download-bytes" env:"TNLD_PENDING_DOWNLOAD_BYTES" default:"131072" help:"Encrypted download byte budget while awaiting authorization."`
-	PendingServiceRate               int           `name:"pending-service-rate" env:"TNLD_PENDING_SERVICE_RATE" default:"5" help:"Pending visitor attempts per service run per second."`
-	PendingServiceBurst              int           `name:"pending-service-burst" env:"TNLD_PENDING_SERVICE_BURST" default:"10" help:"Pending visitor attempt burst per service run."`
-	PendingSourceRate                int           `name:"pending-source-rate" env:"TNLD_PENDING_SOURCE_RATE" default:"3" help:"Pending visitor attempts per source per second."`
-	PendingSourceBurst               int           `name:"pending-source-burst" env:"TNLD_PENDING_SOURCE_BURST" default:"6" help:"Pending visitor attempt burst per source."`
+	PendingServiceRate               int           `name:"pending-service-rate" env:"TNLD_PENDING_SERVICE_RATE" default:"1000" help:"Pending visitor attempts per service run per second."`
+	PendingServiceBurst              int           `name:"pending-service-burst" env:"TNLD_PENDING_SERVICE_BURST" default:"2000" help:"Pending visitor attempt burst per service run."`
+	PendingSourceRate                int           `name:"pending-source-rate" env:"TNLD_PENDING_SOURCE_RATE" default:"2000" help:"Pending visitor attempts per source per second."`
+	PendingSourceBurst               int           `name:"pending-source-burst" env:"TNLD_PENDING_SOURCE_BURST" default:"4000" help:"Pending visitor attempt burst per source."`
 
 	IngressID            string         `name:"ingress-id" env:"TNLD_INGRESS_ID" help:"Stable ingress process identity."`
 	Region               region.ID      `name:"region" env:"TNLD_REGION" default:"local" help:"Provider-qualified region, such as fly:sjc or aws:us-west-2; local makes no geographic claim."`
 	IngressPoolID        ingresspool.ID `name:"ingress-pool-id" env:"TNLD_INGRESS_POOL_ID" default:"ingress-a" help:"Ingress pool served by this ingress process."`
-	ServicePortRanges    []string       `name:"service-port-ranges" env:"TNLD_SERVICE_PORT_RANGES" default:"20000-20015" help:"Non-overlapping managed TCP ports or ranges from 1024 to 65535. Direct ingress binds every port; proxied ingress requires destination metadata."`
+	ServicePortRanges    []string       `name:"service-port-ranges" env:"TNLD_SERVICE_PORT_RANGES" help:"Primary pool allocation ranges on control (default: 20000-20015). Ingress learns them from control; an explicit ingress value asserts equality."`
 	RelayServiceID       string         `name:"relay-service-id" env:"TNLD_RELAY_SERVICE_ID" help:"Stable relay service identity for this relay process."`
 	RelayID              string         `name:"relay-id" env:"TNLD_RELAY_ID" help:"Stable relay process identity."`
 	RelayAddress         string         `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Relay address advertised by this relay service."`
 	InternalRelayAddress string         `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
 
-	ClientHelloConnectionLimit       int           `name:"client-hello-connection-limit" env:"TNLD_CLIENT_HELLO_CONNECTION_LIMIT" default:"-1" help:"Maximum simultaneous public connection metadata and TLS ClientHello inspections (default: automatic)."`
-	StandaloneControlConnectionLimit int           `name:"standalone-control-connection-limit" env:"TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT" default:"-1" help:"Maximum control connections handed off by standalone, held until close (default: automatic)."`
-	StandaloneRelayConnectionLimit   int           `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"-1" help:"Maximum relay TCP connections handed off by standalone, held until close (default: automatic)."`
-	VisitorConnectionLimit           int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"-1" help:"Maximum concurrent visitor connections (default: automatic)."`
-	PublisherConnectionLimit         int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"-1" help:"Maximum publisher connections held by one relay process (default: automatic)."`
-	RelayStreamCapacity              int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"-1" help:"Maximum concurrent visitor streams held by one relay process (default: automatic)."`
-	RequireProxyHeader               bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on ingress TCP traffic."`
-	IngressTrustedProxies            []string      `name:"ingress-trusted-proxies" env:"TNLD_INGRESS_TRUSTED_PROXIES" help:"Exact trusted peers supplying ingress PROXY v2 source and destination metadata."`
-	QUICMaxIncomingStreams           int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"-1" help:"Maximum incoming QUIC streams per publisher connection (default: relay stream capacity)."`
-	QUICIdleTimeout                  time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
-	IngressLeaseDuration             time.Duration `name:"ingress-lease-duration" env:"TNLD_INGRESS_LEASE_DURATION" default:"30s" help:"Control-owned ingress lease duration."`
-	RelayLeaseDuration               time.Duration `name:"relay-lease-duration" env:"TNLD_RELAY_LEASE_DURATION" default:"30s" help:"Control-owned relay lease duration."`
-	LeaseRenewalInterval             time.Duration `name:"lease-renewal-interval" env:"TNLD_LEASE_RENEWAL_INTERVAL" default:"10s" help:"Ingress and relay lease renewal interval."`
-	ControlRetryInterval             time.Duration `name:"control-retry-interval" env:"TNLD_CONTROL_RETRY_INTERVAL" default:"1s" help:"Delay before retrying a transient control failure."`
-	DrainTimeout                     time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful connection drain deadline."`
+	ClientHelloConnectionLimit       int      `name:"client-hello-connection-limit" env:"TNLD_CLIENT_HELLO_CONNECTION_LIMIT" default:"-1" help:"Maximum simultaneous public connection metadata and TLS ClientHello inspections (default: automatic)."`
+	StandaloneControlConnectionLimit int      `name:"standalone-control-connection-limit" env:"TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT" default:"-1" help:"Maximum control connections handed off by standalone, held until close (default: automatic)."`
+	StandaloneRelayConnectionLimit   int      `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"-1" help:"Maximum relay TCP connections handed off by standalone, held until close (default: automatic)."`
+	VisitorConnectionLimit           int64    `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"-1" help:"Maximum concurrent visitor connections (default: automatic)."`
+	PublisherConnectionLimit         int64    `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"-1" help:"Maximum publisher connections held by one relay process (default: automatic)."`
+	RelayStreamCapacity              int64    `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"-1" help:"Maximum concurrent visitor streams held by one relay process (default: automatic)."`
+	RequireProxyHeader               bool     `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on ingress TCP traffic."`
+	IngressTrustedProxies            []string `name:"ingress-trusted-proxies" env:"TNLD_INGRESS_TRUSTED_PROXIES" help:"Exact trusted peers supplying ingress PROXY v2 source and destination metadata."`
+	// Deprecated: use PublisherConnectionStreamLimit; first deprecated in unreleased.
+	QUICMaxIncomingStreams         int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"-1" help:"Deprecated: use --publisher-connection-stream-limit (applies to QUIC and WSS)."`
+	PublisherConnectionStreamLimit int64         `name:"publisher-connection-stream-limit" env:"TNLD_PUBLISHER_CONNECTION_STREAM_LIMIT" default:"-1" help:"Maximum incoming streams per publisher connection, for both QUIC and WSS (default: relay stream capacity, up to 4096)."`
+	QUICIdleTimeout                time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
+	IngressLeaseDuration           time.Duration `name:"ingress-lease-duration" env:"TNLD_INGRESS_LEASE_DURATION" default:"30s" help:"Control-owned ingress lease duration."`
+	RelayLeaseDuration             time.Duration `name:"relay-lease-duration" env:"TNLD_RELAY_LEASE_DURATION" default:"30s" help:"Control-owned relay lease duration."`
+	LeaseRenewalInterval           time.Duration `name:"lease-renewal-interval" env:"TNLD_LEASE_RENEWAL_INTERVAL" default:"10s" help:"Ingress and relay lease renewal interval."`
+	ControlRetryInterval           time.Duration `name:"control-retry-interval" env:"TNLD_CONTROL_RETRY_INTERVAL" default:"1s" help:"Delay before retrying a transient control failure."`
+	DrainTimeout                   time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful connection drain deadline."`
 }
 
 func (c Config) Validate() (retErr error) {
@@ -184,8 +188,10 @@ func (c Config) Validate() (retErr error) {
 		return failure.WrapSetting("validate relay QUIC profile", failure.ServerConfigInvalid,
 			failure.SettingRelayQUICProfile, errors.New("relay QUIC profile must be standard or fly"))
 	}
-	if _, err := c.ServicePortInventory(); err != nil {
-		return err
+	if c.Role.RunsControl() || c.Role.RunsIngress() {
+		if _, err := c.ServicePortInventory(); err != nil {
+			return err
+		}
 	}
 	if c.RequireProxyHeader {
 		if !c.Role.RunsIngress() {
@@ -195,11 +201,15 @@ func (c Config) Validate() (retErr error) {
 			return err
 		}
 	}
-	if err := trafficlimits.ValidateDefaults(c.TrafficDefaults(), c.TrafficCeiling()); err != nil {
-		return err
+	if c.Role.RunsControl() {
+		if err := trafficlimits.ValidateDefaults(c.TrafficDefaults(), c.TrafficCeiling()); err != nil {
+			return err
+		}
 	}
-	if _, _, err := ValidateIngressTraffic(c.IngressTraffic(), c.IngressPending()); err != nil {
-		return err
+	if c.Role.RunsIngress() {
+		if _, _, err := ValidateIngressTraffic(c.IngressTraffic(), c.IngressPending()); err != nil {
+			return err
+		}
 	}
 	if c.Role.RunsControl() {
 		if c.ControlOutageTolerance <= 0 {
@@ -285,21 +295,20 @@ func (c Config) Validate() (retErr error) {
 	if err := c.validateRelayQUICListen(); err != nil {
 		return err
 	}
-	if c.ClientHelloConnectionLimit <= 0 ||
-		c.StandaloneControlConnectionLimit <= 0 || c.StandaloneRelayConnectionLimit <= 0 {
+	if c.Role.RunsIngress() && c.ClientHelloConnectionLimit <= 0 ||
+		c.Role == RoleStandalone && (c.StandaloneControlConnectionLimit <= 0 || c.StandaloneRelayConnectionLimit <= 0) {
 		return errors.New("ingress admission capacities must be positive")
 	}
-	if c.ServiceCertificateWorkers < 1 || c.ServiceCertificateWorkers > 8 {
+	if c.Role.RunsControl() && (c.ServiceCertificateWorkers < 1 || c.ServiceCertificateWorkers > 8) {
 		return errors.New("service certificate workers must be between 1 and 8")
 	}
-	if c.VisitorConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
-		c.RelayStreamCapacity <= 0 || c.QUICMaxIncomingStreams <= 0 {
+	if c.Role.RunsIngress() && c.VisitorConnectionLimit <= 0 ||
+		c.Role.RunsRelay() && (c.PublisherConnectionLimit <= 0 || c.RelayStreamCapacity <= 0 || c.PublisherStreamLimit() <= 0) {
 		return errors.New("connection and stream capacities must be positive")
 	}
-	if c.IngressLeaseDuration <= 0 || c.RelayLeaseDuration <= 0 || c.LeaseRenewalInterval <= 0 ||
-		c.LeaseRenewalInterval >= c.IngressLeaseDuration || c.LeaseRenewalInterval >= c.RelayLeaseDuration ||
-		c.ControlRetryInterval <= 0 || c.DrainTimeout <= 0 ||
-		c.QUICIdleTimeout <= 0 {
+	if c.Role.RunsControl() && (c.IngressLeaseDuration <= 0 || c.RelayLeaseDuration <= 0) ||
+		(c.Role.RunsIngress() || c.Role.RunsRelay()) && (c.LeaseRenewalInterval <= 0 || c.ControlRetryInterval <= 0) ||
+		c.DrainTimeout <= 0 || c.Role.RunsRelay() && c.QUICIdleTimeout <= 0 {
 		return errors.New("lease, transport, or drain timing is invalid")
 	}
 	return nil

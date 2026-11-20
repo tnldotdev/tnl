@@ -21,7 +21,6 @@ schemas:
     properties:
       services:
         type: array
-        maxItems: 32
         items:
           type: object
           additionalProperties: false

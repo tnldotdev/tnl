@@ -550,7 +550,7 @@ type ControlIngressLease struct {
 	ConnectionCapacity   int64
 	IngressPoolID        string
 	Https                bool
-	ServicePorts         []int32
+	ServicePortRanges    pgtype.Multirange[pgtype.Range[pgtype.Int4]]
 	ReportedConnections  int64
 	Draining             bool
 	DrainDeadline        pgtype.Timestamptz
@@ -561,12 +561,13 @@ type ControlIngressLease struct {
 }
 
 type ControlIngressPool struct {
-	ID          string
-	Ipv4Address *netip.Addr
-	Ipv6Address *netip.Addr
-	State       string
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	ID              string
+	PortsConfigured bool
+	Ipv4Address     *netip.Addr
+	Ipv6Address     *netip.Addr
+	State           string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type ControlIngressRunFence struct {

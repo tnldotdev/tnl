@@ -95,13 +95,47 @@ func newClaimedTestPair(t *testing.T, bound *Bound, slot uint8, wrap func(muxses
 		t.Fatal(relay.err)
 	}
 	t.Cleanup(func() { _ = relay.session.Close() })
-	dispatcher, err := tunnel.NewServiceStreamDispatcher(t.Context(), session, nil)
+	// the caller joins its workers during cleanup, after t.Context is canceled.
+	// keep the dispatcher alive until the claimed owner explicitly closes it.
+	dispatcher, err := tunnel.NewServiceStreamDispatcher(context.WithoutCancel(t.Context()), session, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	claimed := &Claimed{bound: bound, ref: ref, session: session, dispatcher: dispatcher, transport: tunnel.TransportWSS}
 	t.Cleanup(func() { _ = claimed.Close() })
 	return claimed, relay.session
+}
+
+type claimedAcceptContext struct {
+	muxsession.Session
+	accepted chan context.Context
+}
+
+func (s *claimedAcceptContext) AcceptStream(ctx context.Context) (muxsession.Stream, error) {
+	s.accepted <- ctx
+	return s.Session.AcceptStream(ctx)
+}
+
+func TestClaimedTestPairKeepsDispatcherAliveUntilCleanup(t *testing.T) {
+	_, bound, _, _ := privateFixture(t, "127.0.0.1:1")
+	accepted := make(chan context.Context, 1)
+	claimed, _ := newClaimedTestPair(t, bound, 0, func(outer muxsession.Session) muxsession.Session {
+		return &claimedAcceptContext{Session: outer, accepted: accepted}
+	})
+	ctx := claimedAwait(t, accepted)
+	t.Cleanup(func() {
+		// testing cancels t.Context before running any cleanup callbacks.
+		// the fixture owner still needs its dispatcher until its workers join.
+		if t.Context().Err() == nil || ctx.Err() != nil {
+			t.Error("test completion canceled the dispatcher before owned cleanup", ctx.Err())
+		}
+		if err := claimed.Close(); err != nil {
+			t.Error("close claimed fixture", err)
+		}
+		if ctx.Err() == nil {
+			t.Error("claimed fixture close did not cancel its dispatcher")
+		}
+	})
 }
 
 type claimedTerminalTransport struct {

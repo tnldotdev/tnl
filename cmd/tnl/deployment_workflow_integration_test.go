@@ -1047,11 +1047,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	if err != nil {
 		t.Fatal(err)
 	}
-	ports := make([]int, 16)
-	for index := range ports {
-		ports[index] = 20000 + index
-	}
-	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, Registration: ingressv1.IngressRegistration{Region: "local", ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", Https: true, ServicePorts: ports, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond})
+	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, Registration: ingressv1.IngressRegistration{Region: "local", ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", Https: true, ServicePortRanges: []ingressv1.ServicePortRange{{First: 20000, Last: 20015}}, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

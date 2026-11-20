@@ -8,7 +8,7 @@ INSERT INTO control.ingress_leases (
     connection_capacity,
     ingress_pool_id,
     https,
-    service_ports,
+    service_port_ranges,
     registered_at,
     renewed_at,
     lease_expires_at,
@@ -22,7 +22,7 @@ INSERT INTO control.ingress_leases (
     sqlc.arg(connection_capacity),
     sqlc.arg(ingress_pool_id),
     sqlc.arg(https),
-    sqlc.arg(service_ports),
+    sqlc.arg(service_port_ranges),
     sqlc.arg(registered_at),
     sqlc.arg(renewed_at),
     sqlc.arg(lease_expires_at),
@@ -41,7 +41,7 @@ ON CONFLICT (ingress_id) DO UPDATE SET
     connection_capacity = EXCLUDED.connection_capacity,
     ingress_pool_id = EXCLUDED.ingress_pool_id,
     https = EXCLUDED.https,
-    service_ports = EXCLUDED.service_ports,
+    service_port_ranges = EXCLUDED.service_port_ranges,
     reported_connections = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
           AND control.ingress_leases.serving_until > EXCLUDED.registered_at
@@ -80,7 +80,7 @@ WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
     AND control.ingress_leases.region=EXCLUDED.region
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
     AND control.ingress_leases.https=EXCLUDED.https
-    AND control.ingress_leases.service_ports=EXCLUDED.service_ports
+    AND control.ingress_leases.service_port_ranges=EXCLUDED.service_port_ranges
     AND (NOT control.ingress_leases.draining
         OR (control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
             AND control.ingress_leases.drain_deadline > EXCLUDED.registered_at)))
@@ -95,7 +95,7 @@ SELECT EXISTS (
     SELECT 1 FROM control.ingress_leases
     WHERE ingress_id=sqlc.arg(ingress_id) AND ingress_run_id=sqlc.arg(ingress_run_id)
         AND region=sqlc.arg(region) AND ingress_pool_id=sqlc.arg(ingress_pool_id)
-        AND https=sqlc.arg(https) AND service_ports=sqlc.arg(service_ports)
+        AND https=sqlc.arg(https) AND service_port_ranges=sqlc.arg(service_port_ranges)
         AND draining AND (lease_expires_at<=sqlc.arg(now) OR drain_deadline<=sqlc.arg(now))
 );
 

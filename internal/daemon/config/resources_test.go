@@ -77,3 +77,13 @@ func TestCPULimitedDefaults(t *testing.T) {
 		t.Fatalf("capacity must scale with CPU where memory is not the ceiling: one=%+v two=%+v", one, two)
 	}
 }
+
+func TestThousandHostQualificationBudgetLeavesReplacementAndStreamHeadroom(t *testing.T) {
+	c := Config{Role: RoleRelay, PublisherConnectionLimit: -1, RelayStreamCapacity: -1}
+	c.resolveCapacities(resourceBudget{CPUs: 4, MemoryBytes: 4 << 30})
+	// one connection per host on each relay, plus startup overlap. the stream
+	// workload is separate: these are configured budgets, not throughput proof.
+	if c.PublisherConnectionLimit < 2*(1000+384) || c.RelayStreamCapacity < 8000 {
+		t.Fatal("candidate relay budget lacks qualification headroom", c.PublisherConnectionLimit, c.RelayStreamCapacity)
+	}
+}

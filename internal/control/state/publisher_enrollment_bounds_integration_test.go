@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-func TestIntegrationPublisherEnrollmentFixedBounds(t *testing.T) {
+func TestIntegrationPublisherEnrollmentUsesExplicitAllowances(t *testing.T) {
 	d, now, _, _ := newPublishRunPrerequisites(t)
 	_, request := deploymentPublisherRequest(t, d, now)
-	request.MaxMembers, request.Lifetime = 256, 24*time.Hour
+	request.MaxMembers, request.Lifetime = 257, 24*time.Hour
 	for _, invalid := range []CreateDeploymentPublisherEnrollmentRequest{
-		func() CreateDeploymentPublisherEnrollmentRequest { r := request; r.MaxMembers++; return r }(),
+		func() CreateDeploymentPublisherEnrollmentRequest { r := request; r.MaxMembers = 1 << 31; return r }(),
 		func() CreateDeploymentPublisherEnrollmentRequest { r := request; r.Lifetime += time.Second; return r }(),
 	} {
 		if _, err := d.CreateDeploymentPublisherEnrollment(t.Context(), invalid); !errors.Is(err, ErrProjectConfigurationInvalid) {
@@ -22,8 +22,8 @@ func TestIntegrationPublisherEnrollmentFixedBounds(t *testing.T) {
 		}
 	}
 	enrollment, err := d.CreateDeploymentPublisherEnrollment(t.Context(), request)
-	if err != nil || enrollment.MaxMembers != 256 || !enrollment.ExpiresAt.Equal(request.Now.Add(24*time.Hour).Truncate(time.Microsecond)) {
-		t.Fatal("maximum enrollment changed its bounds", err)
+	if err != nil || enrollment.MaxMembers != 257 || !enrollment.ExpiresAt.Equal(request.Now.Add(24*time.Hour).Truncate(time.Microsecond)) {
+		t.Fatal("enrollment did not preserve its requested allowance and deadline", err)
 	}
 	siblingRequest := request
 	siblingRequest.Selector, siblingRequest.IdempotencyKey, siblingRequest.Services = "staging", "sibling", []string{"stage"}
@@ -52,7 +52,7 @@ func TestIntegrationPublisherEnrollmentFixedBounds(t *testing.T) {
 		}
 		a.member, a.err = d.RedeemDeploymentPublisherEnrollment(t.Context(), enrollment.Key, a.public, request.Now)
 		if a.err != nil {
-			t.Fatal("rejected a member below both fixed bounds", index, a.err)
+			t.Fatal("rejected a member before the enrollment allowance was reached", index, a.err)
 		}
 		if index == 0 {
 			first = a
@@ -77,11 +77,24 @@ func TestIntegrationPublisherEnrollmentFixedBounds(t *testing.T) {
 			t.Fatal("unexpected concurrent admission failure", a.err)
 		}
 	}
-	if accepted != 1 {
-		t.Fatalf("concurrent enrollments shared one project slot, accepted %d", accepted)
+	if accepted != 2 {
+		t.Fatalf("concurrent enrollments hit an implicit project quota, accepted %d", accepted)
+	}
+	final := makeAttempt()
+	if _, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), enrollment.Key, final.public, request.Now); err != nil {
+		t.Fatal("the enrollment did not allow its 257th member", err)
+	}
+	overEnrollment := makeAttempt()
+	if _, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), enrollment.Key, overEnrollment.public, request.Now); !errors.Is(err, ErrDeploymentPublisher) {
+		t.Fatalf("accepted a publisher beyond the enrollment allowance: %v", err)
 	}
 	if recovered, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), enrollment.Key, first.public, request.Now); err != nil || recovered != first.member {
-		t.Fatal("an exhausted project must still recover the same member", err)
+		t.Fatal("an exhausted enrollment must still recover the same member", err)
+	}
+	d.ConfigureProjectPublisherLimits(map[string]int{request.TeamID + "/" + request.ProjectKey: 258})
+	overLimit := makeAttempt()
+	if _, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), sibling.Key, overLimit.public, request.Now); !errors.Is(err, ErrDeploymentPublisher) {
+		t.Fatalf("accepted a publisher beyond the explicit project quota: %v", err)
 	}
 	if err := d.RevokeDeploymentPublisher(t.Context(), request.DeploymentScope, request.Selector, first.member.PublisherIdentityID, request.Now); err != nil {
 		t.Fatal(err)
@@ -90,13 +103,9 @@ func TestIntegrationPublisherEnrollmentFixedBounds(t *testing.T) {
 	if _, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), sibling.Key, next.public, request.Now); err != nil {
 		t.Fatal("revocation did not free project capacity for another enrollment key", err)
 	}
-	d.ConfigureProjectPublisherLimits(map[string]int{request.TeamID + "/" + request.ProjectKey: 257})
+	d.ConfigureProjectPublisherLimits(map[string]int{request.TeamID + "/" + request.ProjectKey: 259})
 	extra := makeAttempt()
 	if _, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), sibling.Key, extra.public, request.Now); err != nil {
-		t.Fatal("the project override did not allow a 257th publisher", err)
-	}
-	overLimit := makeAttempt()
-	if _, err := d.RedeemDeploymentPublisherEnrollment(t.Context(), sibling.Key, overLimit.public, request.Now); !errors.Is(err, ErrDeploymentPublisher) {
-		t.Fatalf("accepted a publisher beyond the project override: %v", err)
+		t.Fatal("raising the explicit quota did not make room for another publisher", err)
 	}
 }

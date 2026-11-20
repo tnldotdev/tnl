@@ -147,7 +147,7 @@ func newAppliedEndpointFixture(t *testing.T, protocol string, registered, public
 	}
 	ingress, err := d.RegisterIngress(t.Context(), IngressRegistration{
 		IngressID: "apply-endpoint", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
-		ProtocolVersion: 1, HTTPS: true, ServicePorts: []int32{25443},
+		ProtocolVersion: 1, HTTPS: true, ServicePortRanges: []tcpport.Range{{First: 25443, Last: 25443}},
 		ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
 	}, now, time.Hour)
 	if err != nil {

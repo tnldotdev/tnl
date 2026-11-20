@@ -2,7 +2,11 @@
 
 package config
 
-import "github.com/alecthomas/kong"
+import (
+	"strings"
+
+	"github.com/alecthomas/kong"
+)
 
 func Parse(args []string) (Config, error) {
 	type arguments Config
@@ -11,8 +15,15 @@ func Parse(args []string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if _, err := parser.Parse(args); err != nil {
+	parsed, err := parser.Parse(args)
+	if err != nil {
 		return Config{}, err
 	}
-	return Resolve(Config(flags))
+	supplied := map[string]bool{}
+	for _, element := range parsed.Path {
+		if element.Flag != nil && !element.Resolved {
+			supplied[strings.ReplaceAll(element.Flag.Name, "-", "_")] = true
+		}
+	}
+	return ResolveExplicit(Config(flags), supplied)
 }

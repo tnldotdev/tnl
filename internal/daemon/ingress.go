@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"time"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
@@ -61,23 +62,39 @@ type ingressProcessSettings struct {
 	listen          string
 	listener        net.Listener
 	runtime         ingressSettings
+	expectedPorts   []tcpport.Range
 }
 
 func ingressProcessSettingsFrom(cfg daemonconfig.Config) ingressProcessSettings {
-	return ingressProcessSettings{
+	result := ingressProcessSettings{
 		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
 		clusterSecret: cfg.ClusterSecret,
 		ingressID:     cfg.IngressID, listen: cfg.IngressListen, runtime: ingressSettingsFrom(cfg),
 	}
+	if cfg.ServicePortRanges != nil {
+		inventory, _ := cfg.ServicePortInventory()
+		result.expectedPorts = inventory.Ranges()
+	}
+	return result
 }
 
-func (d *daemon) startIngress(ctx context.Context, settings ingressProcessSettings, metrics *observability.Metrics) error {
+func (d *daemon) startIngress(startup, ctx context.Context, settings ingressProcessSettings, metrics *observability.Metrics) error {
 	privateClient, err := newIngressControlClient(
 		settings.controlEndpoint, settings.clusterSecret, d.serviceHTTP, settings.controlAddress,
 	)
 	if err != nil {
 		return err
 	}
+	startup, cancelStartup := context.WithTimeout(startup, 30*time.Second)
+	defer cancelStartup()
+	ports, err := privateClient.ReadIngressPoolPorts(startup, string(settings.runtime.ingressPoolID), settings.runtime.controlRetryInterval)
+	if err != nil {
+		return fmt.Errorf("read ingress pool ports: %w", err)
+	}
+	if settings.expectedPorts != nil && !slices.Equal(settings.expectedPorts, ports.Ranges()) {
+		return errors.New("explicit ingress service port ranges differ from control's saved pool")
+	}
+	settings.runtime.servicePortRanges = ports
 	listener := settings.listener
 	if listener == nil {
 		listener, err = listenIngress(settings.listen, settings.runtime.servicePortRanges.Ranges(), settings.runtime.requireProxyHeader)
@@ -180,7 +197,12 @@ func (d *daemon) startIngressRuntime(
 	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.ingressID, runID
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit, Https: true}
 	registration.Region = settings.region
-	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), settings.servicePortRanges.Ports()
+	registration.IngressPoolId = string(settings.ingressPoolID)
+	ranges := settings.servicePortRanges.Ranges()
+	registration.ServicePortRanges = make([]ingressv1.ServicePortRange, len(ranges))
+	for index, r := range ranges {
+		registration.ServicePortRanges[index] = ingressv1.ServicePortRange{First: r.First, Last: r.Last}
+	}
 	controller, err := ingress.NewController(ingress.ControllerConfig{
 		Report: func(err error) {
 			logOperationalError(ctx, "renew ingress lease", failure.ServerControlConnectionFailed, err)
@@ -271,7 +293,6 @@ func (d *daemon) startIngressRuntime(
 	metrics.RegisterIngressServiceRouting(server.RoutingObservedAt)
 	if metrics != nil {
 		for resource, limit := range map[string]int64{
-			"service_connections":         int64(ingressConfig.Traffic.Default.Connections),
 			"source_connections":          int64(ingressConfig.Traffic.SourceConnections),
 			"source_connection_rate":      int64(ingressConfig.Traffic.SourceRate),
 			"process_connection_rate":     int64(ingressConfig.Traffic.ProcessRate),
@@ -291,7 +312,7 @@ func (d *daemon) startIngressRuntime(
 	return nil
 }
 
-func newIngressControlClient(endpoint, clusterSecret string, base *http.Client, dialAddress string) (ingressRuntimeControl, error) {
+func newIngressControlClient(endpoint, clusterSecret string, base *http.Client, dialAddress string) (*ingressRuntimeClient, error) {
 	client, err := newServiceHTTPClient(base, clusterSecret, dialAddress)
 	if err != nil {
 		return nil, err

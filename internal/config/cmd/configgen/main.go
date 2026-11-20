@@ -96,7 +96,7 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 	case reflect.TypeOf(config.DeploymentBinding{}):
 		return deploymentBindingSchema()
 	case reflect.TypeOf(map[string]config.DeploymentBinding{}):
-		return &jsonschema.Schema{Type: "object", MaxProperties: integerPointer(128), PropertyNames: serviceNameSchema(), AdditionalProperties: deploymentBindingSchema()}
+		return &jsonschema.Schema{Type: "object", PropertyNames: serviceNameSchema(), AdditionalProperties: deploymentBindingSchema()}
 	case reflect.TypeOf(config.Workload{}):
 		type declaration config.Workload
 		base := (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, DoNotReference: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}).Reflect(declaration{})
@@ -167,7 +167,7 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		properties.Set("targets", schemaForType(reflect.TypeOf(map[string]config.DeploymentBinding{})))
 		// preserve rejection through TypeScript's structural assignment of inferred objects.
 		properties.Set("aws", jsonschema.FalseSchema)
-		return &jsonschema.Schema{Type: "object", MaxProperties: integerPointer(32),
+		return &jsonschema.Schema{Type: "object",
 			PropertyNames:        serviceNameSchema(),
 			AdditionalProperties: &jsonschema.Schema{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema}}
 	case reflect.TypeOf(config.Webhook{}):
@@ -175,11 +175,11 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 	case reflect.TypeOf(config.Alias{}):
 		return aliasSchema()
 	case reflect.TypeOf(map[string]config.Alias{}):
-		return &jsonschema.Schema{Type: "object", MaxProperties: integerPointer(32),
+		return &jsonschema.Schema{Type: "object",
 			PropertyNames: &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`}, AdditionalProperties: aliasSchema()}
 	case reflect.TypeOf(map[string]config.Webhook{}):
 		return &jsonschema.Schema{
-			Type: "object", MaxProperties: integerPointer(32),
+			Type:                 "object",
 			PropertyNames:        &jsonschema.Schema{Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
 			AdditionalProperties: webhookSchema(),
 		}
@@ -217,7 +217,7 @@ func servicesSchema() *jsonschema.Schema {
 	properties := jsonschema.NewProperties()
 	properties.Set("protocol", &jsonschema.Schema{Type: "string", Enum: []any{"http", "tcp", "mysql", "postgres", "kubernetes"}, Default: "http"})
 	return &jsonschema.Schema{
-		Type: "object", MaxProperties: integerPointer(128), PropertyNames: serviceNameSchema(),
+		Type: "object", PropertyNames: serviceNameSchema(),
 		AdditionalProperties: &jsonschema.Schema{Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema},
 	}
 }
@@ -258,7 +258,7 @@ func deploymentBindingSchema() *jsonschema.Schema {
 	mountProperties.Set("service", &jsonschema.Schema{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`})
 	mountProperties.Set("strip_prefix", &jsonschema.Schema{Type: "boolean"})
 	httpProperties.Set("paths", &jsonschema.Schema{
-		Type: "object", MaxProperties: integerPointer(32),
+		Type: "object",
 		AdditionalProperties: &jsonschema.Schema{OneOf: []*jsonschema.Schema{
 			{Type: "string", Pattern: `^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$`},
 			{Type: "object", Required: []string{"service"}, Properties: mountProperties, AdditionalProperties: jsonschema.FalseSchema},
@@ -445,7 +445,6 @@ func tnldSchema() *jsonschema.Schema {
 		}
 		if name == "service_port_ranges" {
 			fieldSchema.Items.MinLength = integerPointer(1)
-			fieldSchema.Default = strings.Split(field.Tag.Get("default"), ",")
 		}
 		properties.Set(name, fieldSchema)
 	}

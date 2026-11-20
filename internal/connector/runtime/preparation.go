@@ -30,7 +30,7 @@ func PrepareSnapshot(ctx context.Context, backend PreparationBackend, request Re
 func ValidatePrepared(p Prepared, service string) error {
 	c, m := p.Connection, p.ProjectRuntime
 	metadata := meta.Metadata{Version: meta.Version, Namespace: m.Namespace, Worktree: m.Worktree, Services: m.Services, OAuth: m.OAuth, Webhooks: m.Webhooks, Aliases: m.Aliases}
-	if p.Schema != Schema || c.Schema != Schema || len(m.Services) > 32 || metadata.Validate() != nil || c.Host != "127.0.0.1" || c.Port < 1 || c.Port > 65535 {
+	if p.Schema != Schema || c.Schema != Schema || metadata.Validate() != nil || c.Host != "127.0.0.1" || c.Port < 1 || c.Port > 65535 {
 		return ErrInvalid
 	}
 	endpoint, found := m.Services[service]

@@ -87,7 +87,7 @@ func TestIntegrationServiceEndpointChangesRetainConnectorAuthority(t *testing.T)
 	}
 	assertRetained()
 	lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "endpoint-lifetime", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
-		IngressPoolID: PrimaryIngressPoolID, ServicePorts: []int32{25443, 25444}, ProtocolVersion: 1, ConnectionCapacity: 8}, now, time.Minute)
+		IngressPoolID: PrimaryIngressPoolID, ServicePortRanges: []tcpport.Range{{First: 25443, Last: 25444}}, ProtocolVersion: 1, ConnectionCapacity: 8}, now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

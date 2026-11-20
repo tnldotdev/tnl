@@ -21,7 +21,7 @@ func TestRelayQUICProfiles(t *testing.T) {
 			if cfg.RelayQUICProfile != wantProfile {
 				t.Fatalf("profile = %q; want %q", cfg.RelayQUICProfile, wantProfile)
 			}
-			cfg.QUICIdleTimeout, cfg.QUICMaxIncomingStreams = 17*time.Second, 123
+			cfg.QUICIdleTimeout, cfg.PublisherConnectionStreamLimit = 17*time.Second, 123
 			// neither the bind hostname nor the advertised relay address selects policy.
 			for _, address := range []string{"127.0.0.1:443", "fly-global-services:443"} {
 				cfg.RelayUDPListen = address

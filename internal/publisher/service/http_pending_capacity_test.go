@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	pendingHTTPRelayAllowance  = 16
-	pendingHTTPSourceAllowance = 8
+	pendingHTTPRelayAllowance  = 256
+	pendingHTTPSourceAllowance = 128
 )
 
 // the observer changes no bytes or admission decisions. a held close first
@@ -98,6 +98,7 @@ type pendingHTTPSlot struct {
 	cancelCapacity context.CancelFunc
 	served         <-chan error
 	capacityDone   <-chan error
+	capacityJoined chan struct{}
 	capacityOnce   sync.Once
 	once           sync.Once
 }
@@ -109,6 +110,7 @@ func (s *pendingHTTPSlot) stopCapacity(t *testing.T) {
 		// close returns. retain both transports until that worker joins.
 		s.cancelCapacity()
 		s.join(t, s.capacityDone)
+		close(s.capacityJoined)
 	})
 }
 
@@ -186,7 +188,7 @@ func newPendingHTTPFixture(t *testing.T, capacity int, handler http.Handler, wra
 
 func (f *pendingHTTPFixture) connect(t *testing.T, index uint8) *pendingHTTPSlot {
 	t.Helper()
-	s := &pendingHTTPSlot{}
+	s := &pendingHTTPSlot{capacityJoined: make(chan struct{})}
 	s.claimed, s.relay = newClaimedTestPair(t, f.source.bound, index, func(outer muxsession.Session) muxsession.Session {
 		s.wire = &pendingHTTPTransport{Session: outer, accepted: make(chan *pendingHTTPWire, 128)}
 		return s.wire
@@ -202,6 +204,9 @@ func (f *pendingHTTPFixture) connect(t *testing.T, index uint8) *pendingHTTPSlot
 	s.cancelCapacity = cancelCapacity
 	go func() { capacity <- s.relay.ServeServiceCapacity(capacityContext) }()
 	f.slots = append(f.slots, s)
+	// replacements are created after the fixture cleanup was registered.
+	// join this slot's workers before its pair helper closes either transport.
+	t.Cleanup(func() { s.stop(t) })
 	return s
 }
 
@@ -411,6 +416,46 @@ func pendingHTTPSource(index int) netip.Addr {
 	return netip.AddrFrom4([4]byte{192, 0, 2, byte(index + 1)})
 }
 
+type pendingHTTPObservedClose struct {
+	muxsession.Session
+	beforeClose func()
+}
+
+func (s *pendingHTTPObservedClose) Close() error {
+	s.beforeClose()
+	return s.Session.Close()
+}
+
+func TestServiceHTTPPendingLateSlotJoinsCapacityBeforeTransportCleanup(t *testing.T) {
+	var premature atomic.Bool
+	var closes atomic.Int32
+	t.Run("late-slot", func(t *testing.T) {
+		f := newPendingHTTPFixture(t, 1, http.NotFoundHandler())
+		var late atomic.Pointer[pendingHTTPSlot]
+		f.wrapRelay = []func(muxsession.Session) muxsession.Session{func(outer muxsession.Session) muxsession.Session {
+			return &pendingHTTPObservedClose{Session: outer, beforeClose: func() {
+				closes.Add(1)
+				slot := late.Load()
+				if slot == nil {
+					premature.Store(true)
+					return
+				}
+				select {
+				case <-slot.capacityJoined:
+				default:
+					premature.Store(true)
+				}
+			}}
+		}}
+		// this pair's cleanup is newer than the fixture's original cleanup.
+		// the slot must register its own worker join above the pair's cleanup.
+		late.Store(f.connect(t, 0))
+	})
+	if closes.Load() == 0 || premature.Load() {
+		t.Fatal("late slot closed its relay transport before joining capacity workers", closes.Load(), premature.Load())
+	}
+}
+
 func TestServiceHTTPPendingMetadataDoesNotConsumeFinalVisitorCapacity(t *testing.T) {
 	f := newPendingHTTPFixture(t, 1, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -585,14 +630,14 @@ func TestServiceHTTPPendingSourceAllowanceSpansRelaysAndReleasesOnAuthorization(
 		{"2001:db8::1", "2001:db8::ffff"},
 	} {
 		t.Run(addresses[0], func(t *testing.T) {
-			f := newPendingHTTPFixture(t, 32, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			f := newPendingHTTPFixture(t, pendingHTTPSourceAllowance+1, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNoContent)
 			}))
 			var held []*pendingHTTPVisitor
 			for index := range pendingHTTPSourceAllowance {
 				v := f.mustOpen(t, uint8(index%2), netip.MustParseAddr(addresses[index%2]))
 				if err := v.handshake(t, false); err != nil {
-					t.Fatal("original eight-connection browser burst was rejected", err)
+					t.Fatal("pending browser burst was rejected", err)
 				}
 				held = append(held, v)
 			}
@@ -746,7 +791,7 @@ func TestServiceHTTPPendingSourceChargeSurvivesBlockedCleanupAndRelayReplacement
 	}
 	release()
 	// only this predecessor carried one setup. joining it is the actual
-	// retirement barrier; the other seven stay pending on the healthy slot.
+	// retirement barrier; the other source setups stay on the healthy slot.
 	old.stop(t)
 	if held.wire.physical.Load() != 1 {
 		t.Fatal("joined retirement physically closed the predecessor more than once", held.wire.physical.Load())

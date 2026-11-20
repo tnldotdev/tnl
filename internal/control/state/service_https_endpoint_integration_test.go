@@ -101,7 +101,7 @@ func TestIntegrationServiceHTTPSRequiresIngressCapabilityForDNSAndVisitors(t *te
 	registration := IngressRegistration{
 		IngressID: "https-capability", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
 		ProtocolVersion: 1, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
-		ServicePorts: []int32{25443},
+		ServicePortRanges: []tcpport.Range{{First: 25443, Last: 25443}},
 	}
 	withoutHTTPS, err := d.RegisterIngress(ctx, registration, now, time.Second)
 	if err != nil {
@@ -133,7 +133,7 @@ func TestIntegrationServiceHTTPSRequiresIngressCapabilityForDNSAndVisitors(t *te
 		t.Fatal(err)
 	}
 	registration.IngressRunID = mustOpaqueID(t, opaqueid.IngressRunPrefix)
-	registration.ServicePorts = nil
+	registration.ServicePortRanges = nil
 	withHTTPS, err := d.RegisterIngress(ctx, registration, now, time.Minute)
 	if err != nil || withHTTPS.IngressLeaseRevision <= withoutHTTPS.IngressLeaseRevision {
 		t.Fatal("restart did not fence the previous process", err)

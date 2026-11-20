@@ -363,7 +363,7 @@ func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig
 		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		VisitorConnectionLimit: 100, PublisherConnectionLimit: 10,
-		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
+		RelayStreamCapacity: 100, PublisherConnectionStreamLimit: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 2 * time.Second,
 		RelayLeaseDuration:   2 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond,
 		ControlOutageTolerance: controloutage.DefaultTolerance,

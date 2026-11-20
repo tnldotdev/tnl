@@ -23,15 +23,6 @@ func (r Range) Valid() bool {
 	return r.First >= FirstServicePort && r.First <= r.Last && r.Last <= LastServicePort
 }
 
-func ValidServicePorts[T int | int32](ports []T) bool {
-	for index, port := range ports {
-		if port < FirstServicePort || port > LastServicePort || index > 0 && port <= ports[index-1] {
-			return false
-		}
-	}
-	return true
-}
-
 // Inventory is a validated, immutable set of service ports. its zero value has
 // no ports, for callers that do not serve managed TCP services.
 type Inventory struct {
@@ -69,7 +60,7 @@ func ParseInventory(values []string) (Inventory, error) {
 	return NewInventory(ranges)
 }
 
-// NewInventory copies and validates in-memory ranges. empty inventories serve
+// NewInventory copies, validates, sorts, and merges adjacent ranges. empty inventories serve
 // shared HTTPS without allocated non-HTTP ports.
 func NewInventory(ranges []Range) (Inventory, error) {
 	ranges = slices.Clone(ranges)
@@ -84,7 +75,15 @@ func NewInventory(ranges []Range) (Inventory, error) {
 			return Inventory{}, ErrInventory
 		}
 	}
-	return Inventory{ranges: ranges}, nil
+	merged := ranges[:0]
+	for _, r := range ranges {
+		if len(merged) > 0 && merged[len(merged)-1].Last+1 == r.First {
+			merged[len(merged)-1].Last = r.Last
+		} else {
+			merged = append(merged, r)
+		}
+	}
+	return Inventory{ranges: merged}, nil
 }
 
 // Ranges returns a copy in ascending port order.

@@ -94,7 +94,6 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		"TNLD_DATABASE_URL":                         databaseURL,
 		"TNLD_DRAIN_TIMEOUT":                        "3s",
 		"TNLD_INGRESS_LEASE_DURATION":               "5s",
-		"TNLD_LEASE_RENEWAL_INTERVAL":               "500ms",
 		"TNLD_OIDC_ISSUER":                          oidcIssuer, "TNLD_OIDC_CLIENT_ID": "server", "TNLD_OIDC_CLIENT_SECRET": "fixture-secret", "TNLD_INITIAL_ADMINISTRATORS": "developer",
 		"TNLD_MANAGED_DOMAIN":         "routes.127.0.0.1.nip.io",
 		"TNLD_MANAGED_URL_MODE":       "simple",
@@ -118,12 +117,10 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		"TNLD_CONTROL_RETRY_INTERVAL": "50ms",
 		"TNLD_DRAIN_TIMEOUT":          "3s",
 		"TNLD_INGRESS_ID":             "ingress-binary",
-		"TNLD_INGRESS_LEASE_DURATION": "5s",
 		"TNLD_INGRESS_LISTEN":         "127.0.0.1:443",
 		"TNLD_LEASE_RENEWAL_INTERVAL": "500ms",
 		"TNLD_METRICS_LISTEN":         ingressMetrics,
 		"TNLD_ROLE":                   "ingress",
-		"TNLD_RELAY_LEASE_DURATION":   "5s",
 	})
 	ingress := owner.start(t, daemonconfig.RoleIngress, repositoryRoot, ingressEnvironment, tnldPath, "serve")
 	waitForIntegrationBinaryReady(t, ingress, ingressMetrics, databaseURL)
@@ -165,7 +162,6 @@ func startIntegrationBinaryRelay(
 		"TNLD_CONTROL_HOSTNAME":           controlHost,
 		"TNLD_CONTROL_RETRY_INTERVAL":     "50ms",
 		"TNLD_DRAIN_TIMEOUT":              "3s",
-		"TNLD_INGRESS_LEASE_DURATION":     "5s",
 		"TNLD_INTERNAL_RELAY_ADDRESS":     internalAddress,
 		"TNLD_INTERNAL_RELAY_LISTEN":      internalAddress,
 		"TNLD_LEASE_RENEWAL_INTERVAL":     "500ms",
@@ -173,7 +169,6 @@ func startIntegrationBinaryRelay(
 		"TNLD_ROLE":                       "relay",
 		"TNLD_RELAY_ADDRESS":              net.JoinHostPort(relayHost, relayPort),
 		"TNLD_RELAY_ID":                   relayID,
-		"TNLD_RELAY_LEASE_DURATION":       "5s",
 		"TNLD_RELAY_SERVICE_ID":           serviceID,
 		"TNLD_RELAY_TCP_LISTEN":           net.JoinHostPort("127.0.0.2", relayPort),
 		"TNLD_RELAY_TLS_CERTIFICATE_FILE": certificate.certificateFile,

@@ -11,7 +11,9 @@ import (
 
 func testQUICTransport(t testing.TB) *QUICTransport {
 	t.Helper()
-	transport, err := ListenQUICTransport("udp", ":0")
+	// use the listener's family and address scope; a dual-stack wildcard can
+	// reuse an IPv4 listener's port on macOS and route replies back to it.
+	transport, err := ListenQUICTransport("udp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

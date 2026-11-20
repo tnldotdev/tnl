@@ -60,6 +60,7 @@ type Fixture struct {
 	Closes           atomic.Int32
 	Block            atomic.Bool
 	HoldPublication  atomic.Bool
+	HoldCertificate  atomic.Bool
 	mu               sync.Mutex
 	assignment       controlv1.DeploymentPublisherAssignments
 	service          controlv1.Service
@@ -290,7 +291,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		serverhttp.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture heartbeat boundary", "")
 	default:
 		if strings.HasSuffix(r.URL.Path, "/certificate-issuances") {
-			if f.HoldPublication.Load() {
+			if f.HoldPublication.Load() || f.HoldCertificate.Load() {
 				hold = true
 				return
 			}

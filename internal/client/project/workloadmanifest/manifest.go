@@ -86,7 +86,7 @@ func Generate(c config.Project, source clientproject.SourceIdentity) ([]byte, er
 
 func (m Manifest) Validate() error {
 	server, err := clientstate.CanonicalServer(m.Server)
-	if err != nil || server != m.Server || !config.WorkloadHTTPS(m.Server) || m.Schema != 1 || !config.ExactWorkloadValue(m.Team) || !config.ExactWorkloadValue(m.ProjectKey) || !fingerprint.MatchString(m.SourceFingerprint) || !naming.ValidAuthorityLabel(m.ProjectLabel) || len(m.Workloads) == 0 || len(m.Workloads) > 32 || len(m.Services) > 128 {
+	if err != nil || server != m.Server || !config.WorkloadHTTPS(m.Server) || m.Schema != 1 || !config.ExactWorkloadValue(m.Team) || !config.ExactWorkloadValue(m.ProjectKey) || !fingerprint.MatchString(m.SourceFingerprint) || !naming.ValidAuthorityLabel(m.ProjectLabel) || len(m.Workloads) == 0 {
 		return ErrInvalid
 	}
 	for name, protocol := range m.Services {
@@ -95,7 +95,7 @@ func (m Manifest) Validate() error {
 		}
 	}
 	for name, w := range m.Workloads {
-		if !naming.ValidServiceName(name) || !naming.ValidServiceName(w.Deployment) || w.Deployment == "local" || w.MaxDurationSeconds < 0 || int64(w.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(w.Services) == 0 || len(w.Services) > 32 {
+		if !naming.ValidServiceName(name) || !naming.ValidServiceName(w.Deployment) || w.Deployment == "local" || w.MaxDurationSeconds < 0 || int64(w.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(w.Services) == 0 {
 			return ErrInvalid
 		}
 		seen := map[string]bool{}

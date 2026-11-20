@@ -11,6 +11,8 @@ servers:
 security:
   - clusterAuth: []
 paths:
+  /internal/v1/ingress-pools/{pool_id}/ports:
+    $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1ingress-pools~1{pool_id}~1ports"
   /internal/v1/ingresses/{ingress_id}/services:
     $ref: "./paths/services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services"
   /internal/v1/ingresses/{ingress_id}/public-services/admit:
@@ -80,6 +82,8 @@ components:
       $ref: "./schemas/common.yaml#/schemas/Identifier"
     IngressRegistration:
       $ref: "./schemas/leases.yaml#/schemas/IngressRegistration"
+    ServicePortRange:
+      $ref: "./schemas/leases.yaml#/schemas/ServicePortRange"
     IngressLeaseIdentity:
       $ref: "./schemas/leases.yaml#/schemas/IngressLeaseIdentity"
     IngressRenewal:

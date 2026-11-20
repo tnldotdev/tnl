@@ -8,16 +8,45 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
 const testIngressClusterSecret = "test-ingress-cluster-secret-0123456789"
+
+func (s *ingressStoreStub) ReadIngressServicePorts(context.Context, string) ([]tcpport.Range, error) {
+	return []tcpport.Range{{First: 20000, Last: 20015}}, nil
+}
+
+func TestPoolPortsRequireClusterAuthenticationAndReturnRanges(t *testing.T) {
+	h := testIngressHandler(t, &ingressStoreStub{}, time.Now(), nil)
+	for _, authenticated := range []bool{false, true} {
+		request := httptest.NewRequest(http.MethodGet, "/internal/v1/ingress-pools/ingress-a/ports", nil)
+		if authenticated {
+			request = authenticatedIngressRequest(http.MethodGet, request.URL.Path, nil)
+		}
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		if !authenticated {
+			if response.Code != http.StatusUnauthorized {
+				t.Fatal("inventory bypassed cluster authentication", response.Code)
+			}
+			continue
+		}
+		var ranges []ingressv1.ServicePortRange
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &ranges) != nil ||
+			len(ranges) != 1 || ranges[0].First != 20000 || ranges[0].Last != 20015 {
+			t.Fatal("inventory response", response.Code, response.Body.String())
+		}
+	}
+}
 
 func TestHandlerRequiresClusterSecret(t *testing.T) {
 	h := testIngressHandler(t, &ingressStoreStub{}, time.Now(), nil)
@@ -86,7 +115,7 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	body := ingressv1.IngressRegistration{
 		Region:    "aws:us-west-1",
 		IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100,
-		IngressPoolId: "ingress-a", ServicePorts: []int{20000, 20001},
+		IngressPoolId: "ingress-a", ServicePortRanges: []ingressv1.ServicePortRange{{First: 20001, Last: 20001}, {First: 20000, Last: 20000}},
 	}
 	response := serveIngressJSON(
 		t, testIngressHandler(t, store, now, nil), http.MethodPost,
@@ -96,7 +125,8 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
 	if string(got.Region) != body.Region || got.IngressID != body.IngressId || got.IngressRunID != body.IngressRunId ||
-		got.ProtocolVersion != 1 || got.ConnectionCapacity != 100 || got.IngressPoolID != "ingress-a" || len(got.ServicePorts) != 2 || got.ServicePorts[1] != 20001 {
+		got.ProtocolVersion != 1 || got.ConnectionCapacity != 100 || got.IngressPoolID != "ingress-a" ||
+		!slices.Equal(got.ServicePortRanges, []tcpport.Range{{First: 20000, Last: 20001}}) {
 		t.Fatalf("registration = %#v", got)
 	}
 	if !gotNow.Equal(now) || gotDuration != 30*time.Second {
@@ -109,45 +139,74 @@ func TestRegisterIngressAuthorizesAndConvertsRequest(t *testing.T) {
 	}
 }
 
-func TestIngressRegistrationAcceptsFullPortInventory(t *testing.T) {
-	ports := make([]int, 65535-1024+1)
-	for i := range ports {
-		ports[i] = i + 1024
+func TestIngressRegistrationAcceptsEveryPortInventory(t *testing.T) {
+	full := []ingressv1.ServicePortRange{{First: 1024, Last: 65535}}
+	singletons := make([]ingressv1.ServicePortRange, 65535-1024+1)
+	sparse := make([]ingressv1.ServicePortRange, 0, len(singletons)/2)
+	for i := range singletons {
+		port := 1024 + i
+		singletons[i] = ingressv1.ServicePortRange{First: port, Last: port}
+		if i%2 == 0 {
+			sparse = append(sparse, singletons[i])
+		}
 	}
-	called := false
-	store := &ingressStoreStub{registerIngress: func(_ context.Context, got controlstate.IngressRegistration, _ time.Time, _ time.Duration) (controlstate.IngressLease, error) {
-		called = true
-		if len(got.ServicePorts) != len(ports) {
-			t.Fatalf("received %d ports, want %d", len(got.ServicePorts), len(ports))
-		}
-		for i, port := range got.ServicePorts {
-			if int(port) != ports[i] {
-				t.Fatalf("port %d = %d, want %d", i, port, ports[i])
+	for _, test := range []struct {
+		name         string
+		ranges, want []ingressv1.ServicePortRange
+	}{
+		{"empty", []ingressv1.ServicePortRange{}, nil},
+		{"full", full, full},
+		{"singletons", singletons, full},
+		{"sparse", sparse, sparse},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			store := &ingressStoreStub{registerIngress: func(_ context.Context, got controlstate.IngressRegistration, _ time.Time, _ time.Duration) (controlstate.IngressLease, error) {
+				called = true
+				if len(got.ServicePortRanges) != len(test.want) {
+					t.Fatalf("received %d ranges, want %d", len(got.ServicePortRanges), len(test.want))
+				}
+				for i, r := range got.ServicePortRanges {
+					if r.First != test.want[i].First || r.Last != test.want[i].Last {
+						t.Fatalf("range %d = %v, want %v", i, r, test.want[i])
+					}
+				}
+				return controlstate.IngressLease{}, nil
+			}}
+			body := ingressv1.IngressRegistration{Region: "local", IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100, IngressPoolId: "ingress-a", ServicePortRanges: test.ranges}
+			encoded, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		return controlstate.IngressLease{}, nil
-	}}
-	body := ingressv1.IngressRegistration{Region: "local", IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100, IngressPoolId: "ingress-a", ServicePorts: ports}
-	response := serveIngressJSON(t, testIngressHandler(t, store, time.Now(), nil), http.MethodPost, "/internal/v1/ingresses/register", body)
-	if response.Code != http.StatusOK || !called {
-		t.Fatalf("registration status = %d: %s", response.Code, response.Body.String())
+			if test.name == "full" && len(encoded) > 512 {
+				t.Fatalf("full inventory expanded to %d bytes", len(encoded))
+			}
+			response := serveIngressJSON(t, testIngressHandler(t, store, time.Now(), nil), http.MethodPost, "/internal/v1/ingresses/register", body)
+			if response.Code != http.StatusOK || !called {
+				t.Fatalf("registration status = %d: %s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 
 func TestIngressRegistrationRequiresExplicitValidPortInventory(t *testing.T) {
 	for _, test := range []struct {
-		name  string
-		ports []int
-		pool  string
+		name   string
+		ranges []ingressv1.ServicePortRange
+		pool   string
 	}{
-		{"missing ports", nil, "ingress-a"},
-		{"missing pool", []int{20000}, ""},
-		{"duplicate", []int{20000, 20000}, "ingress-a"},
-		{"unsorted", []int{20001, 20000}, "ingress-a"},
-		{"out of range", []int{65536}, "ingress-a"},
+		{"missing ranges", nil, "ingress-a"},
+		{"missing pool", []ingressv1.ServicePortRange{{First: 20000, Last: 20000}}, ""},
+		{"duplicate", []ingressv1.ServicePortRange{{First: 20000, Last: 20000}, {First: 20000, Last: 20000}}, "ingress-a"},
+		{"overlap", []ingressv1.ServicePortRange{{First: 20000, Last: 20010}, {First: 20010, Last: 20020}}, "ingress-a"},
+		{"reversed", []ingressv1.ServicePortRange{{First: 20001, Last: 20000}}, "ingress-a"},
+		{"below minimum", []ingressv1.ServicePortRange{{First: 1023, Last: 20000}}, "ingress-a"},
+		{"above maximum", []ingressv1.ServicePortRange{{First: 20000, Last: 65536}}, "ingress-a"},
+		{"missing first", []ingressv1.ServicePortRange{{Last: 20000}}, "ingress-a"},
+		{"missing last", []ingressv1.ServicePortRange{{First: 20000}}, "ingress-a"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			body := ingressv1.IngressRegistration{Region: "local", IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100, IngressPoolId: test.pool, ServicePorts: test.ports}
+			body := ingressv1.IngressRegistration{Region: "local", IngressId: "ingress-1", IngressRunId: "run-1", ProtocolVersion: 1, ConnectionCapacity: 100, IngressPoolId: test.pool, ServicePortRanges: test.ranges}
 			response := serveIngressJSON(t, testIngressHandler(t, &ingressStoreStub{}, time.Now(), nil), http.MethodPost, "/internal/v1/ingresses/register", body)
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("inventory status = %d", response.Code)

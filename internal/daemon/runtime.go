@@ -187,7 +187,7 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 	case daemonconfig.RoleIngress:
 		settings := ingressProcessSettingsFrom(cfg)
 		settings.listener = options.listeners.ingress
-		if err := d.startIngress(lifetime, settings, metrics); err != nil {
+		if err := d.startIngress(ctx, lifetime, settings, metrics); err != nil {
 			return err
 		}
 	case daemonconfig.RoleStandalone:

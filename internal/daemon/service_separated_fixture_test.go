@@ -112,7 +112,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	config := daemonconfig.Config{Role: daemonconfig.RoleControl, ServerDomain: "private.integration.test", ManagedDomain: "apps.private.integration.test", ManagedURLMode: naming.ManagedURLModeSimple, ControlOutageTolerance: controloutage.DefaultTolerance,
 		OIDCIssuer: testOIDCIssuer, OIDCClientID: "server", StorageKey: serviceRuntimeStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,
 		IngressLeaseDuration: 5 * time.Second, RelayLeaseDuration: 5 * time.Second, LeaseRenewalInterval: 500 * time.Millisecond, ControlRetryInterval: 50 * time.Millisecond,
-		VisitorConnectionLimit: 128, PublisherConnectionLimit: 64, RelayStreamCapacity: 128, QUICMaxIncomingStreams: 128, QUICIdleTimeout: time.Minute, DrainTimeout: time.Second,
+		VisitorConnectionLimit: 128, PublisherConnectionLimit: 64, RelayStreamCapacity: 128, PublisherConnectionStreamLimit: 128, QUICIdleTimeout: time.Minute, DrainTimeout: time.Second,
 		ClientHelloConnectionLimit: 128}
 	controlListener, privateControlListener := serviceRuntimeListener(t, owner), serviceRuntimeListener(t, owner)
 	config.ControlListen, config.PrivateControlListen = controlListener.Addr().String(), privateControlListener.Addr().String()

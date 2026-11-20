@@ -66,6 +66,8 @@ func TestDeploymentPublisherDiscoveryForegroundUsesNativeTLS(t *testing.T) {
 
 func TestDeploymentPublisherDiscoveryRetainsHeartbeatFailureBeforeCancellation(t *testing.T) {
 	fixture := deploymentdiscovery.New(t)
+	// only the heartbeat fails; certificate setup stays pending until cleanup.
+	fixture.HoldCertificate.Store(true)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	var result error

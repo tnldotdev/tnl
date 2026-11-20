@@ -12,7 +12,7 @@ func TestRelayQUICProfileRoleWiring(t *testing.T) {
 	for _, profile := range []string{"standard", "fly"} {
 		t.Run(profile, func(t *testing.T) {
 			cfg := daemonconfig.Config{RelayQUICProfile: profile, RelayUDPListen: "127.0.0.1:443",
-				QUICIdleTimeout: 17 * time.Second, QUICMaxIncomingStreams: 123}
+				QUICIdleTimeout: 17 * time.Second, PublisherConnectionStreamLimit: 123}
 			want := cfg.RelayQUICConfig()
 			relay, standalone := relayProcessSettingsFrom(cfg), standaloneSettingsFrom(cfg)
 			if !reflect.DeepEqual(relay.quic, want) || !reflect.DeepEqual(standalone.quic, want) {

@@ -39,7 +39,7 @@ func (DeploymentInstall) GoString() string { return "deployment installation" }
 // it is available only to an identity-only standalone registry. an omitted job
 // cannot accidentally resume from a previous invocation's list.
 func (r *Registry) ReplaceDeployments(ctx context.Context, inputs []DeploymentInstall) error {
-	if !r.deployments || r.user || len(inputs) == 0 || len(inputs) > 256 {
+	if !r.deployments || r.user || len(inputs) == 0 {
 		return ErrScope
 	}
 	jobs := make([]Job, 0, len(inputs))
@@ -121,9 +121,6 @@ func (r *Registry) InstallDeployment(ctx context.Context, job Job, member contro
 			job.Enabled, job.Revision, job.Status = true, existing.Revision+1, Status{State: JobStarting}
 			(*jobs)[i] = job
 			return nil
-		}
-		if len(*jobs) >= 1024 {
-			return ErrScope
 		}
 		if err := r.retainDeployment(ctx, job, member, private); err != nil {
 			return err

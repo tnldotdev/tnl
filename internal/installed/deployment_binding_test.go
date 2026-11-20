@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -256,5 +257,49 @@ func TestScopedDeploymentBindingRejectsConflictingAccountConstraints(t *testing.
 	b := DeploymentBinding{Version: 1, Scope: ScopeForDeployment(value), AWS: &AWSBinding{CredentialsFile: "/run/secrets/aws.json"}, Discovery: []DiscoveryBinding{{Type: "eks", Region: "us-east-1", Cluster: "production", Protocol: "kubernetes", Account: "123456789012"}, {Type: "eks", Region: "us-east-1", Cluster: "production", Protocol: "kubernetes", Account: "210987654321"}}}
 	if err := b.Validate(); !errors.Is(err, ErrScope) {
 		t.Fatal("same selector admitted ambiguous accounts", err)
+	}
+}
+
+func TestScopedDeploymentBindingRetainsMoreThan128DiscoveryPermissions(t *testing.T) {
+	job, _, key := kindFixture(t, KindDeployment)
+	value, err := credentialfile.NewDeployment(job.Server, job.DeploymentInstance, *job.DeploymentMember, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := DeploymentBinding{Version: 1, Scope: ScopeForDeployment(value),
+		AWS: &AWSBinding{CredentialsFile: "/run/secrets/aws.json"}}
+	for i := range 129 {
+		binding.Discovery = append(binding.Discovery, DiscoveryBinding{
+			Type: "eks", Region: "us-east-1", Cluster: fmt.Sprintf("cluster-%d", i), Protocol: "kubernetes",
+		})
+	}
+	data, err := json.Marshal(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "binding.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := ReadDeploymentBinding(path)
+	if err != nil || len(reopened.Discovery) != len(binding.Discovery) {
+		t.Fatal("discovery inventory was rejected or truncated", err)
+	}
+	runner, _, err := ScopedDeploymentRunner(value, &reopened, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(runner.Discovery.(*scopedDeploymentDiscovery).allowed); got != 129 {
+		t.Fatal("runner lost discovery permissions", got)
+	}
+	binding.Discovery = append(binding.Discovery, binding.Discovery[0])
+	if err := binding.Validate(); !errors.Is(err, ErrScope) {
+		t.Fatal("large inventory accepted a duplicate selector", err)
+	}
+	if err := os.WriteFile(path, append(data, make([]byte, 256<<10)...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDeploymentBinding(path); !errors.Is(err, ErrScope) {
+		t.Fatal("large inventory bypassed the file byte budget", err)
 	}
 }

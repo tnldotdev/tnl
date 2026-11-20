@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { streamText } from "hono/streaming";
 import * as z from "zod";
 import { NETWORK_CHECK_PATH, networkProof } from "../network.ts";
 import {
@@ -41,7 +40,7 @@ const CHECK_PATH = "/__keepalive/check";
 const WAIT_PATH = "/__keepalive/wait";
 const UPLOAD_PATH = "/__keepalive/upload";
 const MAX_WAITING = 16;
-const WAIT_MS = 20_000;
+const WAIT_MS = 5_000;
 const READY_HEADER = "X-Keepalive-Ready";
 const checkSchema = z.strictObject({ target: hostSchema, message: z.unknown() });
 const certificateRequest = z.strictObject({ requester: hostSchema, nonce: z.uuid() });
@@ -121,12 +120,11 @@ export function peerServer(
   allowedOrigins: readonly string[],
   serve: (request: Request) => Promise<Response>,
   signal: AbortSignal,
-  network: { proxyOrigin: string; proof: string },
+  network: { proxyOrigin: string; proof: string; hostTarget?: number },
   exportCertificate?: (signal: AbortSignal) => Promise<ExportedCertificate | undefined>,
 ) {
   const app = new Hono();
   const allowed = (origin: string) => (allowedOrigins.includes(origin) ? origin : undefined);
-  const waiting = new Set<(invitation: string) => void>();
   const leases = new TabLeases();
   let gossip: Gossip | undefined;
   let promotion:
@@ -148,6 +146,7 @@ export function peerServer(
   let networkChecks = 0;
   let pendingCertificateProof: { donor: Host; nonce: string; answered: boolean } | undefined;
   let checkingCertificate = false;
+  let isReplacing = () => false;
 
   function reportMessage(now: number, requesterMessage?: GossipMessage) {
     if (gossip === undefined) throw new Error("No peer view yet.");
@@ -196,6 +195,9 @@ export function peerServer(
   app.use("*", async (c, next) => {
     await next();
     c.header("Cache-Control", "no-store");
+    // Go closes HTTP/1 or sends HTTP/2 GOAWAY after these finite responses.
+    // random probes and visitor presence must not retain one stream per peer.
+    c.header("Connection", "close");
   });
 
   app.get(PEERS_PATH, (c) => {
@@ -426,7 +428,7 @@ export function peerServer(
     }
   });
   app.post(WAIT_PATH, async (c) => {
-    if (gossip === undefined || waiting.size + networkChecks >= MAX_WAITING) {
+    if (gossip === undefined || networkChecks >= MAX_WAITING) {
       return c.body(null, 503);
     }
     networkChecks++;
@@ -447,25 +449,23 @@ export function peerServer(
       .catch(() => false);
     networkChecks--;
     if (!allowed) return c.body(null, 403);
-    if (waiting.size >= MAX_WAITING) return c.body(null, 503);
-    return streamText(c, async (stream) => {
-      const selected = await new Promise<string | null>((resolve) => {
-        const start = (invitation: string) => finish(invitation);
-        const stop = () => finish(null);
-        const timeout = setTimeout(stop, WAIT_MS);
-        function finish(value: string | null) {
-          clearTimeout(timeout);
-          waiting.delete(start);
-          signal.removeEventListener("abort", stop);
-          resolve(value);
-        }
-        stream.onAbort(stop);
-        signal.addEventListener("abort", stop, { once: true });
-        waiting.add(start);
-        if (signal.aborted || stream.aborted) stop();
+    const now = Date.now();
+    let selected: string | null = null;
+    if (promotion !== undefined && promotion.endsAt <= now) promotion = undefined;
+    if (promotion === undefined)
+      gossip.maybeStart(now, hostTarget(gossip.tabs(now), network.hostTarget), () => {
+        selected = crypto.randomUUID();
+        promotion = {
+          invitation: selected,
+          endsAt: now + STARTUP_MS,
+          replacing: isReplacing(),
+          uploadPassed: false,
+          uploads: 0,
+          reading: false,
+        };
+        return true;
       });
-      await stream.write(JSON.stringify(selected));
-    });
+    return c.json(selected);
   });
   app.get("*", (c) => serve(c.req.raw));
 
@@ -530,6 +530,7 @@ export function peerServer(
     ) {
       const peers = new Gossip(releaseID, host, startedAt, details);
       gossip = peers;
+      isReplacing = replacing;
       acceptedInvitation = invitation;
       if (firstHostToContact !== undefined) {
         // a report from before startup doesn't tell us whether a host stayed up.
@@ -552,22 +553,6 @@ export function peerServer(
         peers.update({ departing });
         peers.observeTabs(leases.count(now), now);
         if (promotion !== undefined && promotion.endsAt <= now) promotion = undefined;
-        if (promotion === undefined)
-          peers.maybeStart(now, hostTarget(peers.tabs(now)), () => {
-            const next = waiting.values().next().value;
-            if (next === undefined) return false;
-            const invitation = crypto.randomUUID();
-            promotion = {
-              invitation,
-              endsAt: now + STARTUP_MS,
-              replacing: departing,
-              uploadPassed: false,
-              uploads: 0,
-              reading: false,
-            };
-            next(invitation);
-            return true;
-          });
         if (probe === undefined) {
           const operation = AbortSignal.any([signal, probing.signal]);
           probe = peers

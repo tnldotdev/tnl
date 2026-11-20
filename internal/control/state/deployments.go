@@ -22,7 +22,6 @@ var (
 )
 
 // local desired input and deleted history do not consume saved deployment slots.
-const maxProjectDeployments = 32
 
 type DeploymentService struct {
 	ID            string           `json:"id"`
@@ -96,7 +95,7 @@ func commitDeployment(ctx context.Context, tx pgx.Tx, scope DeploymentScope) err
 }
 
 func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentRequest) (result Deployment, retErr error) {
-	if !naming.ValidServiceName(r.Name) || r.Name == "local" || !validIdempotencyKey(r.IdempotencyKey) || len(r.Targets) == 0 || len(r.Targets) > 128 {
+	if !naming.ValidServiceName(r.Name) || r.Name == "local" || !validIdempotencyKey(r.IdempotencyKey) || len(r.Targets) == 0 {
 		return result, ErrProjectConfigurationInvalid
 	}
 	data, err := json.Marshal(struct {
@@ -150,13 +149,6 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	deployments, err := q.ListProjectDeployments(ctx, controlstatedb.ListProjectDeploymentsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
-	if err != nil {
-		return result, err
-	}
-	if len(deployments) >= maxProjectDeployments {
-		return result, ErrProjectConfigurationInvalid
-	}
 	snapshot, err := deploymentTargets(ctx, q, r.DeploymentScope, r.Targets)
 	if err != nil {
 		return result, err
@@ -239,7 +231,7 @@ func deploymentTargets(ctx context.Context, q *controlstatedb.Queries, scope Dep
 // updates replace only addresses and target trust for selected saved bindings.
 // omitted services, hostname ownership, access, and HTTP policy stay unchanged.
 func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentRequest) (result Deployment, retErr error) {
-	if r.ExpectedRevision < 1 || r.ExpectedRevision == 1<<63-1 || len(r.Targets) == 0 || len(r.Targets) > 128 {
+	if r.ExpectedRevision < 1 || r.ExpectedRevision == 1<<63-1 || len(r.Targets) == 0 {
 		return result, ErrProjectConfigurationInvalid
 	}
 	tx, err := d.pool.Begin(ctx)

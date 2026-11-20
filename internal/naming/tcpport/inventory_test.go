@@ -30,8 +30,30 @@ func TestFullInventory(t *testing.T) {
 		declarations[len(ports)-1-i] = strconv.Itoa(port)
 	}
 	inventory, err = ParseInventory(declarations)
-	if err != nil || !slices.Equal(inventory.Ports(), ports) || !inventory.Contains(65535) || inventory.Contains(1023) {
+	if err != nil || !slices.Equal(inventory.Ranges(), []Range{{1024, 65535}}) || !slices.Equal(inventory.Ports(), ports) || !inventory.Contains(65535) || inventory.Contains(1023) {
 		t.Fatalf("full singleton inventory: %v", err)
+	}
+}
+
+func TestInventoryMergesAdjacencyWithoutFillingGaps(t *testing.T) {
+	inventory, err := NewInventory([]Range{{20003, 20004}, {65535, 65535}, {20000, 20000}, {1024, 1024}, {20001, 20001}})
+	want := []Range{{1024, 1024}, {20000, 20001}, {20003, 20004}, {65535, 65535}}
+	if err != nil || !slices.Equal(inventory.Ranges(), want) {
+		t.Fatal(inventory, err)
+	}
+	for _, port := range []int{1024, 20000, 20001, 20003, 20004, 65535} {
+		if !inventory.Contains(port) {
+			t.Fatal("lost declared port", port)
+		}
+	}
+	for _, port := range []int{443, 1023, 1025, 19999, 20002, 20005, 65536} {
+		if inventory.Contains(port) {
+			t.Fatal("admitted undeclared port", port)
+		}
+	}
+	again, err := NewInventory(inventory.Ranges())
+	if err != nil || !slices.Equal(again.Ranges(), want) {
+		t.Fatal("canonicalization changed inventory", again, err)
 	}
 }
 

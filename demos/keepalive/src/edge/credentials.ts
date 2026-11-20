@@ -2,19 +2,23 @@ import { control, createPublisherEnrollment } from "@tnldotdev/tnl/control";
 import { credentialRequest, enrollmentKey } from "../enrollment.ts";
 import { httpsOriginSchema } from "../peers/gossip.ts";
 import { readJSON } from "../release.ts";
+import { admissionRequest, type CoordinatorBinding } from "./admission.ts";
 
 export type CredentialBindings = {
   CONTROL_URL: string;
   PROJECT_KEY?: string;
   TEAM_ID?: string;
   MANAGEMENT_TOKEN?: string;
+  COORDINATOR?: CoordinatorBinding;
 };
 
 export function enrollmentConfigured(
   env: CredentialBindings,
 ): env is CredentialBindings &
-  Required<Pick<CredentialBindings, "MANAGEMENT_TOKEN" | "PROJECT_KEY" | "TEAM_ID">> {
-  return Boolean(env.MANAGEMENT_TOKEN && env.PROJECT_KEY && env.TEAM_ID);
+  Required<
+    Pick<CredentialBindings, "MANAGEMENT_TOKEN" | "PROJECT_KEY" | "TEAM_ID" | "COORDINATOR">
+  > {
+  return Boolean(env.MANAGEMENT_TOKEN && env.PROJECT_KEY && env.TEAM_ID && env.COORDINATOR);
 }
 
 export async function credentials(request: Request, releaseID: string, env: CredentialBindings) {
@@ -38,6 +42,17 @@ export async function credentials(request: Request, releaseID: string, env: Cred
     return new Response(null, { status: 503, headers });
   }
   try {
+    const reserved = await admissionRequest(
+      env.COORDINATOR,
+      {
+        state: "reserve",
+        requestID: body.data.requestID,
+        bootstrap: body.data.bootstrap ?? false,
+      },
+      signal,
+    );
+    if (!reserved.ok)
+      return new Response(null, { status: reserved.status, headers: reserved.headers });
     const result = await createPublisherEnrollment({
       client: control({
         baseUrl: httpsOriginSchema.parse(env.CONTROL_URL),
@@ -46,7 +61,7 @@ export async function credentials(request: Request, releaseID: string, env: Cred
       path: { project_key: env.PROJECT_KEY, deployment: "keepalive" },
       query: { team_id: env.TEAM_ID },
       headers: { "Idempotency-Key": body.data.requestID },
-      body: { services: ["production"], max_members: 1, expires_in: 120 },
+      body: { services: ["production"], max_members: 1, expires_in: 180 },
       cache: "no-store",
       redirect: "manual",
       signal,

@@ -3,80 +3,13 @@ package state
 import (
 	"context"
 	"errors"
-	"io/fs"
-	"slices"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
-
-func TestIntegrationIngressPortInventoryMigration(t *testing.T) {
-	url := newDisposableControlStateDatabaseURL(t, "ingress_port_inventory")
-	ctx := t.Context()
-	config, err := parseDirectConfig(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB := stdlib.OpenDB(*config)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := ensureMigrationLock(ctx, sqlDB); err != nil {
-		t.Fatal(err)
-	}
-	source, err := fs.Sub(migrationFiles, "migrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, source, goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.UpTo(ctx, 1); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	d := &Database{}
-	d.pool, err = pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(d.Close)
-	old := IngressRegistration{IngressID: "old", IngressRunID: "old-run", ProtocolVersion: 1, ConnectionCapacity: 1, IngressPoolID: "ingress-a", HTTPS: true, ServicePorts: []int32{20000, 20001}}
-	lease, err := d.RegisterIngress(ctx, old, now, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	full := old
-	full.IngressID, full.IngressRunID = "full", "full-run"
-	full.ServicePorts = make([]int32, 65535-1024+1)
-	for i := range full.ServicePorts {
-		full.ServicePorts[i] = int32(i + 1024)
-	}
-	if _, err := d.RegisterIngress(ctx, full, now, time.Minute); err == nil {
-		t.Fatal("schema 1 accepted the full inventory")
-	}
-	if err := Migrate(ctx, url); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.RegisterIngress(ctx, full, now, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	for _, registration := range []IngressRegistration{old, full} {
-		var ports []int32
-		var revision uint64
-		if err := d.pool.QueryRow(ctx, `SELECT service_ports, ingress_lease_revision FROM control.ingress_leases WHERE ingress_id=$1`, registration.IngressID).Scan(&ports, &revision); err != nil {
-			t.Fatal(err)
-		}
-		if !slices.Equal(ports, registration.ServicePorts) || registration.IngressID == old.IngressID && revision != lease.IngressLeaseRevision {
-			t.Fatalf("%s: stored %d ports and revision %d", registration.IngressID, len(ports), revision)
-		}
-	}
-}
 
 func TestIntegrationWorkloadRenewalMigration(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "workload_renewal_migration")

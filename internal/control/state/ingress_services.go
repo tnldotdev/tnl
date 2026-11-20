@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/netip"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -62,6 +61,10 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 	if err != nil {
 		return result, err
 	}
+	ports, err := ingressPortInventory(lease.ServicePortRanges)
+	if err != nil {
+		return result, err
+	}
 	rows, err := q.ListIngressServiceRuns(ctx, controlstatedb.ListIngressServiceRunsParams{
 		IngressPoolID: lease.IngressPoolID, Now: timestamptz(now),
 	})
@@ -102,7 +105,7 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 	for _, row := range rows {
 		service, run := row.ControlService, row.ControlServiceRun
 		if service.Protocol == "http" && !lease.Https ||
-			service.Protocol != "http" && !slices.Contains(lease.ServicePorts, service.ServicePort.Int32) {
+			service.Protocol != "http" && !ports.Contains(int(service.ServicePort.Int32)) {
 			continue
 		}
 		connected := relays[run.ID]

@@ -22,6 +22,8 @@ type deploymentPin struct {
 	Reference deploymentReference `json:"reference"`
 }
 
+const maxDeploymentCatalogBytes = 256 << 10
+
 func deploymentStateName(ref deploymentReference) string {
 	digest := sha256.Sum256([]byte(DeploymentSelection(ref.Member.ProjectKey, ref.Member.DeploymentId, ref.Instance) + ":" + ref.Member.PublisherIdentityId))
 	return "deployment-" + hex.EncodeToString(digest[:]) + ".json"
@@ -62,12 +64,12 @@ func deploymentStateDirectory(profile *clientstate.Store, server string) (*clien
 }
 
 func deploymentReferences(directory *clientstate.PrivateDirectory) ([]deploymentReference, error) {
-	data, found, err := directory.Read("deployments.json", 262144)
+	data, found, err := directory.Read("deployments.json", maxDeploymentCatalogBytes)
 	if err != nil || !found {
 		return nil, err
 	}
 	var refs []deploymentReference
-	if json.Unmarshal(data, &refs, json.RejectUnknownMembers(true)) != nil || refs == nil || len(refs) > 256 {
+	if json.Unmarshal(data, &refs, json.RejectUnknownMembers(true)) != nil || refs == nil {
 		return nil, ErrInvalid
 	}
 	for _, ref := range refs {
@@ -196,9 +198,6 @@ func RetainDeployment(ctx context.Context, profile *clientstate.Store, value Dep
 		refs[i], found = ref, true
 	}
 	if !found {
-		if len(refs) >= 256 {
-			return ErrInvalid
-		}
 		data, fileExists, err := directory.Read(deploymentStateName(ref), maxDeploymentIdentityBytes)
 		defer clear(data)
 		if err != nil {
@@ -215,6 +214,13 @@ func RetainDeployment(ctx context.Context, profile *clientstate.Store, value Dep
 		}
 		refs = append(refs, ref)
 	}
+	catalog, err := json.Marshal(refs)
+	if err != nil {
+		return err
+	}
+	if len(catalog) > maxDeploymentCatalogBytes {
+		return ErrInvalid
+	}
 	data, err := json.Marshal(value)
 	defer clear(data)
 	if err != nil {
@@ -228,10 +234,6 @@ func RetainDeployment(ctx context.Context, profile *clientstate.Store, value Dep
 		return err
 	}
 	if err := directory.Write(deploymentPinName(value.Member.ProjectKey, value.Member.DeploymentId, value.Instance), pin); err != nil {
-		return err
-	}
-	catalog, err := json.Marshal(refs)
-	if err != nil {
 		return err
 	}
 	return directory.Write("deployments.json", catalog)

@@ -2,10 +2,51 @@ package config
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestProjectConfigurationAcceptsLargeCollections(t *testing.T) {
+	project := Project{
+		Services: map[string]ServiceDeclaration{}, Deployments: map[string]Deployment{},
+		Workloads: map[string]DeploymentWorkload{}, Aliases: map[string]Alias{}, Webhooks: map[string]Webhook{},
+	}
+	targets := map[string]DeploymentBinding{}
+	names := make([]string, 129)
+	for i := range names {
+		name := fmt.Sprintf("app-%03d", i)
+		names[i] = name
+		project.Services[name] = ServiceDeclaration{}
+		targets[name] = DeploymentBinding{ServiceTarget: ServiceTarget{Address: new(Target("localhost:3000"))}, Public: new(true)}
+	}
+	project.Deployments["production"] = Deployment{Targets: targets}
+	localTargets := map[string]DeploymentBinding{}
+	for name, binding := range targets {
+		localTargets[name] = binding
+	}
+	paths := map[string]PathMount{}
+	for i, name := range names[1:34] {
+		project.Deployments[fmt.Sprintf("region-%02d", i)] = Deployment{Targets: map[string]DeploymentBinding{name: targets[name]}}
+		project.Workloads[name] = DeploymentWorkload{Deployment: "production", Workload: Workload{
+			Fly: &WorkloadFly{App: name}, Services: names,
+		}}
+		project.Aliases[name] = Alias{Service: names[0]}
+		project.Webhooks[name] = Webhook{Service: names[0], Path: "/hooks/" + name, Provider: "github"}
+		paths["/mount/"+name] = PathMount{Service: name}
+	}
+	entry := localTargets[names[0]]
+	entry.HTTP = &HTTPService{Paths: paths}
+	localTargets[names[0]] = entry
+	project.Deployments["local"] = Deployment{Targets: localTargets}
+	for _, deployment := range []string{"local", "production"} {
+		resolved, err := ResolveDeployment(project, deployment)
+		if err != nil || len(resolved.Services) != len(names) {
+			t.Fatalf("%s: got %d services, %v", deployment, len(resolved.Services), err)
+		}
+	}
+}
 
 func deploymentProjectFixture() Project {
 	return Project{

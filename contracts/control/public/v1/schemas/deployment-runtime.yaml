@@ -108,7 +108,6 @@ schemas:
     properties:
       certificate_state_plans:
         type: array
-        maxItems: 1024
         description: Every certificate plan submitted by this publisher identity. Restore each plan's private material; unrelated or older plans cannot satisfy this list.
         items: { $ref: "../openapi.yaml#/components/schemas/CertificatePlan" }
       member: { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherIdentity" }
@@ -123,7 +122,6 @@ schemas:
       services:
         {
           type: array,
-          maxItems: 128,
           items:
             { $ref: "../openapi.yaml#/components/schemas/DeploymentPublisherServiceAssignment" },
         }

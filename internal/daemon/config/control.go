@@ -165,6 +165,9 @@ func (c Config) validateDNSAutomation() (retErr error) {
 			retErr = failure.Wrap("validate DNS automation", failure.ServerDNSConfigInvalid, retErr)
 		}
 	}()
+	if len(c.IngressIPv4Addresses) > 1 || len(c.IngressIPv6Addresses) > 1 {
+		return errors.New("primary ingress pool accepts at most one IPv4 and one IPv6 address")
+	}
 	configured := c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
 		len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0
 	if !configured {

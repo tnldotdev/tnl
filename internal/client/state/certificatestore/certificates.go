@@ -484,7 +484,7 @@ func MaterialExists(ctx context.Context, files Storage, scope Scope, entries []s
 // RequirePlans checks control's monotonic plan inventory, so
 // restoring an entire older local checkpoint cannot hide a newer missing plan.
 func RequirePlans(ctx context.Context, files Storage, scope Scope, plans []controlv1.CertificatePlan) error {
-	if len(plans) == 0 || len(plans) > 1024 {
+	if len(plans) == 0 {
 		return identityFileError(ErrPublisherStateConflict)
 	}
 	for _, plan := range plans {
@@ -516,13 +516,15 @@ type certificateCheckpoints struct {
 	Plans     []controlv1.CertificatePlan `json:"plans"`
 }
 
+const maxCheckpointBytes = 16 << 20
+
 func (r *CertificateCache) checkpoints(ctx context.Context) ([]controlv1.CertificatePlan, error) {
-	data, found, err := r.files.Read(ctx, "certificate-plans-v1.json", maxCertificateFileBytes)
+	data, found, err := r.files.Read(ctx, "certificate-plans-v1.json", maxCheckpointBytes)
 	if err != nil || !found {
 		return nil, err
 	}
 	var checkpoint certificateCheckpoints
-	if json.Unmarshal(data, &checkpoint, json.RejectUnknownMembers(true)) != nil || checkpoint.Version != 1 || checkpoint.Server != r.server || checkpoint.Team != r.teamID || checkpoint.Publisher != r.publisherIdentityID || len(checkpoint.Plans) == 0 || len(checkpoint.Plans) > 1024 {
+	if json.Unmarshal(data, &checkpoint, json.RejectUnknownMembers(true)) != nil || checkpoint.Version != 1 || checkpoint.Server != r.server || checkpoint.Team != r.teamID || checkpoint.Publisher != r.publisherIdentityID || len(checkpoint.Plans) == 0 {
 		return nil, identityFileError(ErrPublisherStateConflict)
 	}
 	seen := map[string]bool{}
@@ -548,12 +550,9 @@ func (r *CertificateCache) checkpoint(ctx context.Context) error {
 			return r.files.Sync(ctx, "certificate-plans-v1.json")
 		}
 	}
-	if len(plans) >= 1024 {
-		return identityFileError(ErrPublisherStateConflict)
-	}
 	plans = append(plans, r.plan)
 	data, err := json.Marshal(certificateCheckpoints{Version: 1, Server: r.server, Team: r.teamID, Publisher: r.publisherIdentityID, Plans: plans})
-	if err != nil || len(data) > maxCertificateFileBytes {
+	if err != nil || len(data) > maxCheckpointBytes {
 		return identityFileError(ErrPublisherStateConflict)
 	}
 	return r.files.Write(ctx, "certificate-plans-v1.json", data)

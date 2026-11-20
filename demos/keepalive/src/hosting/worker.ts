@@ -3,6 +3,7 @@ import { WASM_PATH, parseRelease, readJSON } from "../release.ts";
 import { serveRelease } from "./serving.ts";
 import { RequestActivity } from "./activity.ts";
 import { CREDENTIALS_PATH, enrollmentKey } from "../enrollment.ts";
+import { updateAdmission } from "./admission.ts";
 import { REPLACE_BEFORE_MS, hostTarget, turnLength } from "../policy.ts";
 import { hostCommand, type HostStart, type HostUpdate } from "./messages.ts";
 import { peerServer, readPeers } from "../peers/http.ts";
@@ -37,6 +38,16 @@ async function host(command: HostStart) {
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
   let activityTimer: ReturnType<typeof setInterval> | undefined;
   let checkingCertificate = false;
+  const requestID = command.requestID;
+  const admission = async (state: "ready" | "stop") => {
+    const response = await updateAdmission(
+      command.pageOrigin,
+      requestID,
+      state,
+      AbortSignal.timeout(5_000),
+    );
+    if (!response.ok) throw new Error("Could not update hosting admission.");
+  };
   const activity = new RequestActivity();
   function endTurn() {
     expired = true;
@@ -68,13 +79,16 @@ async function host(command: HostStart) {
         return response;
       },
       signal,
-      { proxyOrigin: command.pageOrigin, proof: command.config.networkProof },
+      {
+        proxyOrigin: command.pageOrigin,
+        proof: command.config.networkProof,
+        hostTarget: command.config.hostTarget,
+      },
       async (request) => {
         request.throwIfAborted();
         return running?.exportCertificate();
       },
     );
-    const requestID = crypto.randomUUID();
     const supplied = chooseCertificate(command.inherited, command.bootstrap, Date.now());
     running = await startPublisher(
       command.config,
@@ -82,7 +96,7 @@ async function host(command: HostStart) {
         const response = await fetch(new URL(CREDENTIALS_PATH, command.pageOrigin), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ releaseID: release.id, requestID }),
+          body: JSON.stringify({ releaseID: release.id, requestID, bootstrap: command.bootstrap }),
           redirect: "error",
           signal,
         });
@@ -100,6 +114,7 @@ async function host(command: HostStart) {
           },
     );
     const { host } = running;
+    await admission("ready");
     const certificate = await describeCertificate(await running.exportCertificate());
     const since = Date.now();
     if (since >= command.startupEndsAt) throw new Error("The hosting invitation expired.");
@@ -145,7 +160,8 @@ async function host(command: HostStart) {
         const tabs = gossip.tabSnapshot(now, hosts);
         if (
           departing() &&
-          (peers?.replacementReady || gossip.canRetire(now, hostTarget(tabs.total), hosts))
+          (peers?.replacementReady ||
+            gossip.canRetire(now, hostTarget(tabs.total, command.config.hostTarget), hosts))
         ) {
           endTurn();
           return;
@@ -185,7 +201,12 @@ async function host(command: HostStart) {
     try {
       // closing the publisher ends HTTP streams even after abrupt tab closure.
       await peers?.stop();
+    } catch {
+      failed = true;
+    }
+    try {
       await running?.close();
+      await admission("stop");
     } catch {
       failed = true;
     }

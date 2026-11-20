@@ -29,6 +29,7 @@ CREATE UNIQUE INDEX identities_oidc_subject
 -- select the ingress pool before creating a team; saved URLs pin its choice.
 CREATE TABLE control.ingress_pools (
     id text PRIMARY KEY CHECK (id <> ''),
+    ports_configured boolean NOT NULL DEFAULT false,
     ipv4_address inet CHECK (family(ipv4_address) = 4),
     ipv6_address inet CHECK (family(ipv6_address) = 6),
     state text NOT NULL CHECK (state IN ('disabled', 'enabled', 'draining')),
@@ -544,7 +545,8 @@ CREATE TABLE control.ingress_leases (
     connection_capacity bigint NOT NULL CHECK (connection_capacity >= 0),
     ingress_pool_id text NOT NULL DEFAULT '',
     https boolean NOT NULL DEFAULT false,
-    service_ports integer[] NOT NULL DEFAULT '{}' CHECK (cardinality(service_ports)<=256),
+    service_port_ranges int4multirange NOT NULL DEFAULT '{}'
+        CHECK (service_port_ranges <@ '{[1024,65536)}'::int4multirange),
     reported_connections bigint NOT NULL DEFAULT 0 CHECK (reported_connections >= 0),
     draining boolean NOT NULL DEFAULT false,
     drain_deadline timestamptz,
@@ -1128,7 +1130,7 @@ CREATE TABLE control.share_handoffs (
     token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest) = 32),
     share_id text NOT NULL, service_id text NOT NULL,
     hostname text NOT NULL CHECK (hostname<>''),
-    run_ids text[] NOT NULL CHECK (cardinality(run_ids) BETWEEN 1 AND 256),
+    run_ids text[] NOT NULL CHECK (cardinality(run_ids) >= 1),
     redirect_url text NOT NULL CHECK (redirect_url LIKE 'https://%'), bridge boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL CHECK (expires_at > created_at), consumed_at timestamptz,
     FOREIGN KEY (share_id,service_id) REFERENCES control.share_services(share_id,service_id) ON DELETE CASCADE
@@ -1767,7 +1769,7 @@ CREATE TABLE control.service_http_browser_logins (
     state_digest bytea PRIMARY KEY CHECK (octet_length(state_digest)=32),
     binding_digest bytea NOT NULL CHECK (octet_length(binding_digest)=32),
     service_id text NOT NULL REFERENCES control.services(id),
-    run_ids text[] NOT NULL CHECK (cardinality(run_ids) BETWEEN 1 AND 256),
+    run_ids text[] NOT NULL CHECK (cardinality(run_ids) >= 1),
     return_path text NOT NULL,
     nonce text NOT NULL,
     verifier_ciphertext bytea NOT NULL,
@@ -1790,7 +1792,7 @@ CREATE TABLE control.service_http_browser_handoffs (
     session_digest bytea NOT NULL REFERENCES control.service_http_browser_sessions(token_digest) ON DELETE CASCADE,
     service_id text NOT NULL REFERENCES control.services(id),
     hostname text NOT NULL CHECK (hostname<>''),
-    run_ids text[] NOT NULL CHECK (cardinality(run_ids) BETWEEN 1 AND 256),
+    run_ids text[] NOT NULL CHECK (cardinality(run_ids) >= 1),
     cookie_ciphertext bytea NOT NULL,
     storage_key_id text NOT NULL,
     return_path text NOT NULL CHECK (return_path LIKE '/%'),
@@ -2234,7 +2236,7 @@ CREATE TABLE control.deployment_publisher_enrollments (
     id text PRIMARY KEY,
     deployment_id text NOT NULL REFERENCES control.deployments(id) ON DELETE RESTRICT,
     secret_digest bytea NOT NULL CHECK (octet_length(secret_digest)=32),
-    max_members integer NOT NULL CHECK (max_members BETWEEN 1 AND 256),
+    max_members integer NOT NULL CHECK (max_members >= 1),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
@@ -2507,8 +2509,6 @@ DECLARE publisher text; plan jsonb; digest text;
 BEGIN
     SELECT publisher_identity_id INTO publisher FROM control.service_runs WHERE id=NEW.service_run_id;
     IF publisher IS NOT NULL THEN
-        -- serialize the per-identity checkpoint capacity check with its owner.
-        PERFORM id FROM control.publisher_identities WHERE id=publisher FOR UPDATE;
         IF TG_TABLE_NAME='service_supplied_certificates' THEN
             SELECT jsonb_build_object('cache_key',certificate_cache_key,'scope',certificate_scope,
                 'identifiers',certificate_identifiers,'challenge_method','dns-01') INTO plan
@@ -2518,12 +2518,8 @@ BEGIN
                 'identifiers',NEW.certificate_identifiers,'challenge_method',NEW.challenge_method);
         END IF;
         digest := encode(sha256(convert_to(plan::text,'UTF8')),'hex');
-        IF NOT EXISTS (SELECT 1 FROM control.publisher_certificate_checkpoints WHERE publisher_identity_id=publisher AND plan_digest=digest) THEN
-            IF (SELECT count(*) FROM control.publisher_certificate_checkpoints WHERE publisher_identity_id=publisher)>=1024 THEN
-                RAISE EXCEPTION 'publisher certificate checkpoint capacity exceeded' USING ERRCODE='23514';
-            END IF;
-            INSERT INTO control.publisher_certificate_checkpoints VALUES(publisher,digest,plan);
-        END IF;
+        INSERT INTO control.publisher_certificate_checkpoints VALUES(publisher,digest,plan)
+            ON CONFLICT (publisher_identity_id,plan_digest) DO NOTHING;
     END IF;
     RETURN NEW;
 END;

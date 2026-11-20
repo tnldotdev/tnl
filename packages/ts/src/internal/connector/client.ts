@@ -226,7 +226,6 @@ export function createClient<const Services extends ServiceFacts = Record<never,
         .exactOptional(),
       services: z
         .record(serviceNameSchema, z.strictObject({ protocol: protocolSchema }))
-        .refine((value) => Object.keys(value).length <= 32)
         .exactOptional(),
     })
     .refine((value) => value.services !== undefined || value.project !== undefined)

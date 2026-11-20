@@ -43,7 +43,7 @@ func (d *Database) SetPreviewTeamAccess(ctx context.Context, request SetPreviewT
 	if err != nil {
 		return result, err
 	}
-	if request.Enabled && (len(ids) == 0 || len(ids) > 32) {
+	if request.Enabled && len(ids) == 0 {
 		return result, ErrPreviewAccess
 	}
 	// sql supplies sorted IDs, so every multi-service mutation takes service

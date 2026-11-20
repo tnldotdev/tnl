@@ -43,7 +43,12 @@ func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressReg
 	if !region.ID(body.Region).Valid() {
 		return ingressv1.IngressLease{}, serverhttp.NewProblemError(http.StatusBadRequest, "invalid_request", "ingress region must be an exact catalog provider:region ID or local")
 	}
-	if !serverhttp.ValidIdentifiers(body.IngressPoolId) || body.ServicePorts == nil || !tcpport.ValidServicePorts(body.ServicePorts) {
+	ranges := make([]tcpport.Range, len(body.ServicePortRanges))
+	for index, r := range body.ServicePortRanges {
+		ranges[index] = tcpport.Range{First: r.First, Last: r.Last}
+	}
+	inventory, err := tcpport.NewInventory(ranges)
+	if !serverhttp.ValidIdentifiers(body.IngressPoolId) || body.ServicePortRanges == nil || err != nil {
 		return ingressv1.IngressLease{}, serverhttp.NewProblemError(http.StatusBadRequest, "invalid_request", "ingress service port inventory is invalid")
 	}
 	if !serverhttp.ValidIdentifiers(body.IngressId, body.IngressRunId) {
@@ -62,20 +67,12 @@ func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressReg
 		Region:    region.ID(body.Region),
 		IngressID: body.IngressId, IngressRunID: body.IngressRunId,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
-		IngressPoolID: body.IngressPoolId, HTTPS: body.Https, ServicePorts: servicePorts(body.ServicePorts),
+		IngressPoolID: body.IngressPoolId, HTTPS: body.Https, ServicePortRanges: inventory.Ranges(),
 	}, s.now(), s.leaseDuration)
 	if err != nil {
 		return ingressv1.IngressLease{}, s.storeError(ctx, err)
 	}
 	return ingressLease(lease), nil
-}
-
-func servicePorts(values []int) []int32 {
-	result := make([]int32, len(values))
-	for index, port := range values {
-		result[index] = int32(port)
-	}
-	return result
 }
 
 func (s *service) RenewIngress(

@@ -1,4 +1,27 @@
 paths:
+  /internal/v1/ingress-pools/{pool_id}/ports:
+    get:
+      operationId: getIngressPoolPorts
+      summary: Read the saved ingress pool inventory before binding listeners
+      parameters:
+        - name: pool_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        "200":
+          description: Inclusive port ranges approved for allocation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "../openapi.yaml#/components/schemas/ServicePortRange"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
   /internal/v1/ingresses/register:
     post:
       operationId: registerIngress

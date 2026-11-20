@@ -78,6 +78,7 @@ func NewDispatchedSharedStreams(parent context.Context, session muxsession.Sessi
 				carriers = append(carriers, carrier)
 			}
 		}
+		s.lastGeneration = nil
 		s.mu.Unlock()
 		for _, carrier := range carriers {
 			_ = carrier.Close()
@@ -111,8 +112,7 @@ func (s *SharedStreams) register(b PairBinding, destination *CarrierSlot) (*Stre
 		return nil, net.ErrClosed
 	}
 	id := b.Delivery.Pair
-	if (len(s.pairs) >= sharedMaxPeers && s.pairs[id] == nil) || b.Delivery.Generation <= s.lastGeneration[id] ||
-		(s.lastGeneration[id] == 0 && len(s.lastGeneration) >= sharedMaxAdmissions) {
+	if (len(s.pairs) >= sharedMaxPeers && s.pairs[id] == nil) || b.Delivery.Generation <= s.lastGeneration[id] {
 		s.mu.Unlock()
 		return nil, ErrConfiguration
 	}

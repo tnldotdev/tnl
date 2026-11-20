@@ -17,10 +17,10 @@ SELECT EXISTS(
         WHERE slot.service_run_id=sqlc.arg(service_run_id)::text AND slot.state='ready' AND slot.session_open
           AND NOT relay.draining AND relay.lease_expires_at>sqlc.arg(now)::timestamptz)
       AND EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=sqlc.arg(ingress_pool_id)::text
-        AND (CASE WHEN sqlc.arg(protocol)::text='http' THEN ingress.https ELSE sqlc.arg(service_port)::integer=ANY(ingress.service_ports) END)
+        AND (CASE WHEN sqlc.arg(protocol)::text='http' THEN ingress.https ELSE sqlc.arg(service_port)::integer <@ ingress.service_port_ranges END)
         AND NOT ingress.draining AND ingress.lease_expires_at>sqlc.arg(now)::timestamptz)
       AND NOT EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=sqlc.arg(ingress_pool_id)::text
-        AND NOT (CASE WHEN sqlc.arg(protocol)::text='http' THEN ingress.https ELSE sqlc.arg(service_port)::integer=ANY(ingress.service_ports) END)
+        AND NOT (CASE WHEN sqlc.arg(protocol)::text='http' THEN ingress.https ELSE sqlc.arg(service_port)::integer <@ ingress.service_port_ranges END)
         AND NOT ingress.draining AND ingress.lease_expires_at>sqlc.arg(now)::timestamptz)
 ) AS ready;
 

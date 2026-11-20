@@ -139,8 +139,8 @@ type IngressRegistration struct {
 	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
 	Region string `json:"region"`
 
-	// ServicePorts Sorted allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Shared HTTPS 443 is advertised separately.
-	ServicePorts []int `json:"service_ports"`
+	// ServicePortRanges Non-overlapping inclusive ranges of allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Ranges are sorted and adjacent ranges merged on admission. An empty array serves no allocated ports; shared HTTPS 443 is advertised separately.
+	ServicePortRanges []ServicePortRange `json:"service_port_ranges"`
 }
 
 // IngressRenewal defines model for IngressRenewal.
@@ -250,6 +250,12 @@ type PublicServiceVisitorStatusState string
 
 // ServiceID defines model for ServiceID.
 type ServiceID = string
+
+// ServicePortRange Inclusive bounds; first must not exceed last.
+type ServicePortRange struct {
+	First int `json:"first"`
+	Last  int `json:"last"`
+}
 
 // ServiceRecoveryObservation defines model for ServiceRecoveryObservation.
 type ServiceRecoveryObservation struct {
@@ -452,6 +458,11 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// GetIngressPoolPorts Read the saved ingress pool inventory before binding listeners
+	//
+	// Corresponds with GET /internal/v1/ingress-pools/{pool_id}/ports (the `GetIngressPoolPorts` operationId).
+	GetIngressPoolPorts(ctx context.Context, poolId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RegisterIngressWithBody Register one ingress process run
 	//
 	// Takes any type of body and a specified content type.
@@ -569,6 +580,21 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/services (the `ReadIngressServices` operationId).
 	ReadIngressServices(ctx context.Context, ingressId IngressID, body ReadIngressServicesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// GetIngressPoolPorts Read the saved ingress pool inventory before binding listeners
+//
+// Corresponds with GET /internal/v1/ingress-pools/{pool_id}/ports (the `GetIngressPoolPorts` operationId).
+func (c *Client) GetIngressPoolPorts(ctx context.Context, poolId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetIngressPoolPortsRequest(c.Server, poolId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // RegisterIngressWithBody Register one ingress process run
@@ -907,6 +933,40 @@ func (c *Client) ReadIngressServices(ctx context.Context, ingressId IngressID, b
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewGetIngressPoolPortsRequest constructs an http.Request for the GetIngressPoolPorts method
+func NewGetIngressPoolPortsRequest(server string, poolId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "pool_id", poolId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingress-pools/%s/ports", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewRegisterIngressRequest calls the generic RegisterIngress builder with application/json body
@@ -1501,6 +1561,13 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// GetIngressPoolPortsWithResponse Read the saved ingress pool inventory before binding listeners
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /internal/v1/ingress-pools/{pool_id}/ports (the `GetIngressPoolPorts` operationId).
+	GetIngressPoolPortsWithResponse(ctx context.Context, poolId string, reqEditors ...RequestEditorFn) (*GetIngressPoolPortsResponse, error)
+
 	// RegisterIngressWithBodyWithResponse Register one ingress process run
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1630,6 +1697,54 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/services (the `ReadIngressServices` operationId).
 	ReadIngressServicesWithResponse(ctx context.Context, ingressId IngressID, body ReadIngressServicesJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadIngressServicesResponse, error)
+}
+
+type GetIngressPoolPortsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]ServicePortRange
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetIngressPoolPortsResponse) GetJSON200() *[]ServicePortRange {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetIngressPoolPortsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetIngressPoolPortsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetIngressPoolPortsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetIngressPoolPortsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetIngressPoolPortsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type RegisterIngressResponse struct {
@@ -2146,6 +2261,19 @@ func (r ReadIngressServicesResponse) ContentType() string {
 	return ""
 }
 
+// GetIngressPoolPortsWithResponse Read the saved ingress pool inventory before binding listeners
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /internal/v1/ingress-pools/{pool_id}/ports (the `GetIngressPoolPorts` operationId).
+func (c *ClientWithResponses) GetIngressPoolPortsWithResponse(ctx context.Context, poolId string, reqEditors ...RequestEditorFn) (*GetIngressPoolPortsResponse, error) {
+	rsp, err := c.GetIngressPoolPorts(ctx, poolId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetIngressPoolPortsResponse(rsp)
+}
+
 // RegisterIngressWithBodyWithResponse Register one ingress process run
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -2406,6 +2534,39 @@ func (c *ClientWithResponses) ReadIngressServicesWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseReadIngressServicesResponse(rsp)
+}
+
+// ParseGetIngressPoolPortsResponse parses an HTTP response from a GetIngressPoolPortsWithResponse call
+func ParseGetIngressPoolPortsResponse(rsp *http.Response) (*GetIngressPoolPortsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetIngressPoolPortsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []ServicePortRange
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseRegisterIngressResponse parses an HTTP response from a RegisterIngressWithResponse call
@@ -2765,6 +2926,9 @@ func ParseReadIngressServicesResponse(rsp *http.Response) (*ReadIngressServicesR
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetIngressPoolPorts Read the saved ingress pool inventory before binding listeners
+	// (GET /internal/v1/ingress-pools/{pool_id}/ports)
+	GetIngressPoolPorts(w http.ResponseWriter, r *http.Request, poolId string)
 	// RegisterIngress Register one ingress process run
 	// (POST /internal/v1/ingresses/register)
 	RegisterIngress(w http.ResponseWriter, r *http.Request)
@@ -2808,6 +2972,32 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetIngressPoolPorts operation middleware
+func (siw *ServerInterfaceWrapper) GetIngressPoolPorts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "pool_id" -------------
+	var poolId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pool_id", r.PathValue("pool_id"), &poolId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pool_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetIngressPoolPorts(w, r, poolId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // RegisterIngress operation middleware
 func (siw *ServerInterfaceWrapper) RegisterIngress(w http.ResponseWriter, r *http.Request) {
@@ -3241,6 +3431,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingress-pools/{pool_id}/ports", wrapper.GetIngressPoolPorts)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/services", wrapper.ReadIngressServices)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/admit", wrapper.AdmitPublicServiceVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/status", wrapper.PublicServiceVisitorStatus)

@@ -49,7 +49,7 @@ func (limits separatedAdmissionLimits) apply(cfg *daemonconfig.Config) {
 	cfg.ClientHelloConnectionLimit = limits.ClientHelloConnectionLimit
 	cfg.VisitorConnectionLimit = limits.VisitorConnectionLimit
 	cfg.PublisherConnectionLimit, cfg.RelayStreamCapacity = limits.PublisherConnectionLimit, limits.RelayStreamCapacity
-	cfg.QUICMaxIncomingStreams = limits.QUICMaxIncomingStreams
+	cfg.PublisherConnectionStreamLimit = limits.QUICMaxIncomingStreams
 }
 
 func separatedAdmissionFrom(cfg daemonconfig.Config) separatedAdmissionLimits {
@@ -57,7 +57,7 @@ func separatedAdmissionFrom(cfg daemonconfig.Config) separatedAdmissionLimits {
 		ClientHelloConnectionLimit: cfg.ClientHelloConnectionLimit,
 		VisitorConnectionLimit:     cfg.VisitorConnectionLimit,
 		PublisherConnectionLimit:   cfg.PublisherConnectionLimit, RelayStreamCapacity: cfg.RelayStreamCapacity,
-		QUICMaxIncomingStreams: cfg.QUICMaxIncomingStreams,
+		QUICMaxIncomingStreams: cfg.PublisherStreamLimit(),
 	}
 }
 

@@ -12,6 +12,40 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
+func TestIntegrationShareAndTeamAccessIncludeMoreThan32Services(t *testing.T) {
+	f := newServiceHTTPFixture(t)
+	services := []ServiceRecord{f.service}
+	// cross both former boundaries: 32 preview hosts and 256 eligible runs.
+	for i := range 256 {
+		services = append(services, f.local(t, fmt.Sprintf("app-%02d", i), nil))
+	}
+	preview := f.preview(t, "many-services", services...)
+	share := f.share(t, preview.ID, "all-services", []byte("0123456789abcdefghijklmnopqrstuv"), services...)
+	if !slices.Equal(share.ServiceIDs, preview.ServiceIDs) || len(share.ServiceIDs) != 257 {
+		t.Fatalf("share has %d of %d preview services", len(share.ServiceIDs), len(preview.ServiceIDs))
+	}
+	enabled, err := f.database.SetPreviewTeamAccess(t.Context(), SetPreviewTeamAccessRequest{
+		PreviewID: preview.ID, TeamID: preview.TeamID, IdentityID: f.project.ActorID, Enabled: true,
+	}, f.now)
+	if err != nil || !enabled.TeamAccessEnabled || !slices.Equal(enabled.ServiceIDs, preview.ServiceIDs) {
+		t.Fatal("team access did not retain the preview's complete service set", err)
+	}
+	if _, err := f.database.pool.Exec(t.Context(), `UPDATE control.relay_leases SET connection_capacity=$1`, len(services)); err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range services {
+		run := f.publish(t, service)
+		if service.ID == f.service.ID {
+			f.run = run
+		}
+	}
+	f.browser(t, preview.ID, f.project.ActorID)
+	var hostCount int
+	if err := f.database.pool.QueryRow(t.Context(), `SELECT count(DISTINCT service_id) FROM control.service_http_browser_handoffs`).Scan(&hostCount); err != nil || hostCount != len(services) {
+		t.Fatalf("browser handoff has %d of %d preview hosts: %v", hostCount, len(services), err)
+	}
+}
+
 func TestIntegrationSharesSnapshotAndRevoke(t *testing.T) {
 	f := newServiceHTTPFixture(t)
 	database, now, service := f.database, f.now, f.service

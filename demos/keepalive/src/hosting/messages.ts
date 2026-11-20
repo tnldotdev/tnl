@@ -12,6 +12,7 @@ export const hostCommand = z.discriminatedUnion("type", [
     release: releaseSchema,
     files: z.map(z.string(), z.instanceof(ArrayBuffer)),
     config: hostingConfig,
+    requestID: z.uuid(),
     inherited: inheritedCertificate.optional(),
     bootstrap: z.boolean(),
     startupEndsAt: z.int(),

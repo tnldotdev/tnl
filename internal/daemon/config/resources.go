@@ -24,6 +24,9 @@ func processResources() resourceBudget {
 }
 
 func (c *Config) resolveCapacities(resources resourceBudget) {
+	if c.PublisherConnectionStreamLimit == -1 && c.QUICMaxIncomingStreams == 0 {
+		c.QUICMaxIncomingStreams = -1
+	}
 	// reserve 35% of available memory and another 64 MiB for the runtime,
 	// certificates, buffers, and transient work. the remaining memory is split
 	// between simultaneous admitted classes, rather than independently
@@ -57,5 +60,8 @@ func (c *Config) resolveCapacities(resources resourceBudget) {
 	}
 	if c.QUICMaxIncomingStreams == -1 {
 		c.QUICMaxIncomingStreams = min(4096, c.RelayStreamCapacity)
+	}
+	if c.PublisherConnectionStreamLimit <= 0 {
+		c.PublisherConnectionStreamLimit = c.QUICMaxIncomingStreams
 	}
 }

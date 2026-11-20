@@ -911,7 +911,6 @@ export interface TnlConfig {
            * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
-           * @maxItems 32
            */
           services: [string, ...string[]];
           token?:
@@ -1052,7 +1051,6 @@ export interface TnlConfig {
            * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
-           * @maxItems 32
            */
           services: [string, ...string[]];
           token?:
@@ -1092,7 +1090,6 @@ export interface TnlConfig {
            * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
-           * @maxItems 32
            */
           services: [string, ...string[]];
           token?:
@@ -1132,7 +1129,6 @@ export interface TnlConfig {
            * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
-           * @maxItems 32
            */
           services: [string, ...string[]];
           token?:
@@ -1175,7 +1171,6 @@ export interface TnlConfig {
            * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
-           * @maxItems 32
            */
           services: [string, ...string[]];
           token?:
@@ -1214,7 +1209,6 @@ export interface TnlConfig {
            * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
-           * @maxItems 32
            */
           services: [string, ...string[]];
           token?:
@@ -1258,7 +1252,6 @@ export interface TnlConfig {
            * Exact bound service keys in the selected remote deployment; local services cannot be workload targets.
            *
            * @minItems 1
-           * @maxItems 32
            */
           services: [string, ...string[]];
           token?:

@@ -11,7 +11,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestKnownProjectServicesSurviveTunnelStopAndStayBounded(t *testing.T) {
+func TestKnownProjectServicesSurviveTunnelStopUntilExpiry(t *testing.T) {
 	db, err := OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), OpenOptions{Protection: ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestKnownProjectServicesSurviveTunnelStopAndStayBounded(t *testing.T) {
 			t.Fatalf("locally known services crossed projects or servers: %v, %v", foreign, err)
 		}
 	}
-	// repeated temporary publications cannot make local status grow without bound.
+	// older entries stay discoverable until they expire.
 	var ticks atomic.Int64
 	ticks.Store(time.Now().UnixNano())
 	db.now = func() time.Time { return time.Unix(0, ticks.Add(1)) }
@@ -56,8 +56,8 @@ func TestKnownProjectServicesSurviveTunnelStopAndStayBounded(t *testing.T) {
 		}
 	}
 	ids, err = db.KnownProjectServices(t.Context(), project, server)
-	if err != nil || len(ids) != 256 {
-		t.Fatalf("unbounded project service inventory: %d, err=%v", len(ids), err)
+	if err != nil || len(ids) != 261 || ids[len(ids)-1] != first {
+		t.Fatalf("incomplete project service inventory: %d, err=%v", len(ids), err)
 	}
 	if ids[0] != "svc_0000000000000000000259" {
 		t.Fatalf("latest project service is %q", ids[0])

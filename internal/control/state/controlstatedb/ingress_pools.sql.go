@@ -17,7 +17,7 @@ UPDATE control.ingress_pools SET ipv4_address = $1::inet,
     ipv6_address = $2::inet,
     state = 'enabled', updated_at = GREATEST(updated_at, $3)
 WHERE id = $4 AND state = 'disabled'
-RETURNING id, ipv4_address, ipv6_address, state, created_at, updated_at
+RETURNING id, ports_configured, ipv4_address, ipv6_address, state, created_at, updated_at
 `
 
 type EnableIngressPoolParams struct {
@@ -37,6 +37,7 @@ func (q *Queries) EnableIngressPool(ctx context.Context, arg EnableIngressPoolPa
 	var i ControlIngressPool
 	err := row.Scan(
 		&i.ID,
+		&i.PortsConfigured,
 		&i.Ipv4Address,
 		&i.Ipv6Address,
 		&i.State,
@@ -47,7 +48,7 @@ func (q *Queries) EnableIngressPool(ctx context.Context, arg EnableIngressPoolPa
 }
 
 const getIngressPool = `-- name: GetIngressPool :one
-SELECT id, ipv4_address, ipv6_address, state, created_at, updated_at FROM control.ingress_pools WHERE id = $1
+SELECT id, ports_configured, ipv4_address, ipv6_address, state, created_at, updated_at FROM control.ingress_pools WHERE id = $1
 `
 
 func (q *Queries) GetIngressPool(ctx context.Context, id string) (ControlIngressPool, error) {
@@ -55,6 +56,7 @@ func (q *Queries) GetIngressPool(ctx context.Context, id string) (ControlIngress
 	var i ControlIngressPool
 	err := row.Scan(
 		&i.ID,
+		&i.PortsConfigured,
 		&i.Ipv4Address,
 		&i.Ipv6Address,
 		&i.State,
@@ -65,7 +67,7 @@ func (q *Queries) GetIngressPool(ctx context.Context, id string) (ControlIngress
 }
 
 const lockIngressPoolForProvision = `-- name: LockIngressPoolForProvision :one
-SELECT id, ipv4_address, ipv6_address, state, created_at, updated_at FROM control.ingress_pools WHERE id = $1 FOR UPDATE
+SELECT id, ports_configured, ipv4_address, ipv6_address, state, created_at, updated_at FROM control.ingress_pools WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockIngressPoolForProvision(ctx context.Context, id string) (ControlIngressPool, error) {
@@ -73,6 +75,7 @@ func (q *Queries) LockIngressPoolForProvision(ctx context.Context, id string) (C
 	var i ControlIngressPool
 	err := row.Scan(
 		&i.ID,
+		&i.PortsConfigured,
 		&i.Ipv4Address,
 		&i.Ipv6Address,
 		&i.State,

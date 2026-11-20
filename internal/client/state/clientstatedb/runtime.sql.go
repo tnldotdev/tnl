@@ -93,7 +93,7 @@ func (q *Queries) InsertRuntimeEvent(ctx context.Context, arg InsertRuntimeEvent
 const listKnownProjectServices = `-- name: ListKnownProjectServices :many
 SELECT service_id FROM project_service_inventory
 WHERE project_root = ?1 AND server_origin = ?2
-ORDER BY last_seen_at DESC, service_id LIMIT 256
+ORDER BY last_seen_at DESC, service_id
 `
 
 type ListKnownProjectServicesParams struct {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -109,6 +110,29 @@ func run(ctx context.Context, args []string, stdout io.Writer) (result error) {
 		}
 		_, err = resolveConfigFile(flags.Config.Check.ConfigPath, base, nil)
 		return err
+	case "config show":
+		reason = failure.ServerConfigInvalid
+		base := daemonconfig.Config(flags.Config.Show.Values)
+		sources := explicitSources(parsed)
+		var cfg daemonconfig.Config
+		if flags.Config.Show.ConfigPath != "" {
+			cfg, err = resolveConfigWithSources(flags.Config.Show.ConfigPath, base, sources)
+		} else {
+			cfg, err = daemonconfig.ResolveExplicit(base, suppliedSettings(sources))
+		}
+		if err != nil {
+			return err
+		}
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(daemonconfig.Inspect(cfg, sources))
+	case "ingress-pool apply":
+		reason = failure.ServerConfigInvalid
+		cfg, err := resolveServeCommand(flags.IngressPool.Apply.ConfigPath, daemonconfig.Config(flags.IngressPool.Apply.Values), parsed)
+		if err != nil {
+			return err
+		}
+		return daemon.ApplyIngressPool(ctx, cfg)
 	case "version":
 		reason = failure.ServerOutputUnavailable
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnld"))
@@ -119,7 +143,36 @@ func run(ctx context.Context, args []string, stdout io.Writer) (result error) {
 }
 
 func newTNLDParser(flags *tnldCLI, output io.Writer) (*kong.Kong, error) {
-	return kong.New(flags, kong.Name("tnld"), kong.Description("tnld process."), kong.Writers(output, output))
+	return kong.New(flags, kong.Name("tnld"), kong.Description("tnld process."), kong.Writers(output, output), kong.Help(func(options kong.HelpOptions, ctx *kong.Context) error {
+		role := daemonconfig.Role(flags.Serve.Values.Role)
+		if role == "" {
+			role = daemonconfig.Role(os.Getenv("TNLD_ROLE"))
+		}
+		if role == "" {
+			role = daemonconfig.RoleStandalone
+		}
+		for _, element := range ctx.Path {
+			if element.Flag != nil && element.Flag.Name == "role" {
+				if value, ok := ctx.FlagValue(element.Flag).(daemonconfig.Role); ok {
+					role = value
+				}
+			}
+		}
+		var visit func(*kong.Node)
+		visit = func(node *kong.Node) {
+			for _, flag := range node.Flags {
+				name := strings.ReplaceAll(flag.Name, "-", "_")
+				if flag.Name != "help" && flag.Name != "config" && !daemonconfig.SettingApplies(name, role) {
+					flag.Hidden = true
+				}
+			}
+			for _, child := range node.Children {
+				visit(child)
+			}
+		}
+		visit(ctx.Model.Node)
+		return kong.DefaultHelpPrinter(options, ctx)
+	}))
 }
 
 type tnldServeCommand struct {
@@ -135,29 +188,56 @@ type tnldConfigCheckCommand struct {
 
 type tnldConfigCommand struct {
 	Check tnldConfigCheckCommand `cmd:"" help:"Validate process configuration without starting services."`
+	Show  tnldServeCommand       `cmd:"" help:"Print resolved settings and sources as JSON, with credentials redacted."`
+}
+
+type tnldIngressPoolCommand struct {
+	Apply tnldServeCommand `cmd:"" help:"Explicitly apply the primary pool allocation inventory without starting services."`
 }
 
 type tnldCLI struct {
-	Migrate struct{}          `cmd:"" help:"Apply control-state database migrations."`
-	Serve   tnldServeCommand  `cmd:"" default:"withargs" help:"Run the configured tnld process."`
-	Config  tnldConfigCommand `cmd:"" help:"Inspect process configuration."`
-	Version struct{}          `cmd:"" help:"Print release version information."`
+	Migrate     struct{}               `cmd:"" help:"Apply control-state database migrations."`
+	Serve       tnldServeCommand       `cmd:"" default:"withargs" help:"Run the configured tnld process."`
+	Config      tnldConfigCommand      `cmd:"" help:"Inspect process configuration."`
+	IngressPool tnldIngressPoolCommand `cmd:"" help:"Manage durable ingress pool allocation policy."`
+	Version     struct{}               `cmd:"" help:"Print release version information."`
 }
 
 func resolveServeCommand(path string, base daemonconfig.Config, parsed *kong.Context) (daemonconfig.Config, error) {
+	sources := explicitSources(parsed)
 	if path == "" {
-		return daemonconfig.Resolve(base)
+		return daemonconfig.ResolveExplicit(base, suppliedSettings(sources))
 	}
-	commandLine := make(map[string]bool)
+	return resolveConfigWithSources(path, base, sources)
+}
+
+func explicitSources(parsed *kong.Context) map[string]string {
+	result := map[string]string{}
 	for _, element := range parsed.Path {
 		if element.Flag != nil && !element.Resolved {
-			commandLine[strings.ReplaceAll(element.Flag.Name, "-", "_")] = true
+			result[strings.ReplaceAll(element.Flag.Name, "-", "_")] = "flag"
 		}
 	}
-	return resolveConfigFile(path, base, commandLine)
+	return result
+}
+
+func suppliedSettings(sources map[string]string) map[string]bool {
+	result := map[string]bool{}
+	for name := range sources {
+		result[name] = true
+	}
+	return result
 }
 
 func resolveConfigFile(path string, base daemonconfig.Config, commandLine map[string]bool) (daemonconfig.Config, error) {
+	sources := map[string]string{}
+	for name := range commandLine {
+		sources[name] = "flag"
+	}
+	return resolveConfigWithSources(path, base, sources)
+}
+
+func resolveConfigWithSources(path string, base daemonconfig.Config, sources map[string]string) (daemonconfig.Config, error) {
 	if strings.EqualFold(filepath.Ext(path), ".ts") {
 		return daemonconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid,
 			errors.New("tnld configuration must use .yml, .yaml, or .json"))
@@ -170,7 +250,10 @@ func resolveConfigFile(path string, base daemonconfig.Config, commandLine map[st
 		return daemonconfig.Config{}, failure.Wrap("load configuration", failure.ServerConfigFileInvalid,
 			errors.New("tnld configuration section is required"))
 	}
-	applied := document.TNLD.ApplyLowerPrecedence(&base, commandLine)
+	applied := document.TNLD.ApplyLowerPrecedence(&base, suppliedSettings(sources))
+	for name := range applied {
+		sources[name] = "file"
+	}
 	directory := filepath.Dir(path)
 	for name, target := range map[string]*string{
 		"oidc_admission_file":                  &base.OIDCAdmissionFile,
@@ -183,7 +266,7 @@ func resolveConfigFile(path string, base daemonconfig.Config, commandLine map[st
 			*target = filepath.Join(directory, *target)
 		}
 	}
-	return daemonconfig.Resolve(base)
+	return daemonconfig.ResolveExplicit(base, suppliedSettings(sources))
 }
 
 func parseDefaultsAndEnvironment() (daemonconfig.Config, error) {

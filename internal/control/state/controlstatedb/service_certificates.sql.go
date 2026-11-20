@@ -260,7 +260,7 @@ func (q *Queries) InsertServiceCertificateRequest(ctx context.Context, arg Inser
 const listPublisherCertificateCheckpoints = `-- name: ListPublisherCertificateCheckpoints :many
 SELECT certificate_plan FROM control.publisher_certificate_checkpoints
 WHERE publisher_identity_id=$1
-ORDER BY plan_digest LIMIT 1025
+ORDER BY plan_digest
 `
 
 func (q *Queries) ListPublisherCertificateCheckpoints(ctx context.Context, publisherIdentityID string) ([][]byte, error) {

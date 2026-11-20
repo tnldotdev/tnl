@@ -171,8 +171,8 @@ CREATE INDEX local_tunnels_integration_scope_idx ON local_tunnels (server_origin
     WHERE stopped_at IS NULL;
 
 -- locally observed service IDs let status read server state after a tunnel
--- stops. the cache contains no credentials or targets and is bounded per
--- project/server, including projects that create many temporary services.
+-- stops. the cache contains no credentials or targets and expires entries
+-- after thirty days without a new observation.
 CREATE TABLE project_service_inventory (
     project_root TEXT NOT NULL,
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
@@ -191,12 +191,6 @@ WHEN NEW.service_id IS NOT NULL BEGIN
     DELETE FROM project_service_inventory
     WHERE project_root = NEW.project_root AND server_origin = NEW.server_origin
       AND last_seen_at < NEW.updated_at - 2592000000000000;
-    DELETE FROM project_service_inventory
-    WHERE rowid IN (
-        SELECT rowid FROM project_service_inventory
-        WHERE project_root = NEW.project_root AND server_origin = NEW.server_origin
-        ORDER BY last_seen_at DESC, service_id LIMIT -1 OFFSET 256
-    );
 END;
 -- +goose StatementEnd
 

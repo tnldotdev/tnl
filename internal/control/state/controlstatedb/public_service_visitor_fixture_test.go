@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -50,7 +52,7 @@ func directIngressLease(t *testing.T, ctx context.Context, d *controlstate.Datab
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: name, IngressRunID: run, ProtocolVersion: 1, ConnectionCapacity: 8, IngressPoolID: controlstate.PrimaryIngressPoolID, ServicePorts: []int32{int32(port)}}, now, time.Hour)
+	lease, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: name, IngressRunID: run, ProtocolVersion: 1, ConnectionCapacity: 8, IngressPoolID: controlstate.PrimaryIngressPoolID, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}}, now, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

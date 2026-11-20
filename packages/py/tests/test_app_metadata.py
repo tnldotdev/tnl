@@ -584,7 +584,7 @@ def test_rejects_missing_native_service_fields(
 
 
 @pytest.mark.parametrize(
-    "case", ["invalid-name", "too-many", "wrong-scope", "non-http-app", "missing-own", "hidden-own"]
+    "case", ["invalid-name", "wrong-scope", "non-http-app", "missing-own", "hidden-own"]
 )
 def test_rejects_invalid_service_set_or_scope(
     native_app_assignment: dict[str, object], case: str
@@ -593,8 +593,6 @@ def test_rejects_invalid_service_set_or_scope(
     services = cast(dict[str, dict[str, object]], project["services"])
     if case == "invalid-name":
         services["invalid name"] = services.pop("database")
-    elif case == "too-many":
-        services.update({f"service-{index}": services["database"] for index in range(33)})
     elif case == "non-http-app":
         native_app_assignment["service"] = "cluster"
         native_app_assignment["hostname"] = services["cluster"]["hostname"]
@@ -614,6 +612,16 @@ def test_rejects_invalid_service_set_or_scope(
         assert native.operations == ["prepare"]
 
     asyncio.run(scenario())
+
+
+def test_accepts_large_native_service_set(native_app_assignment: dict[str, object]) -> None:
+    project = cast(dict[str, object], native_app_assignment["project"])
+    services = cast(dict[str, dict[str, object]], project["services"])
+    services.update({f"service-{index}": services["database"] for index in range(33)})
+    endpoint = Endpoint("http://127.0.0.1:1234", "b" * 64, "a" * 32, "app", "web")
+    assignment = _protocol.parse_assignment(native_app_assignment, endpoint)
+    assert assignment.service == "web"
+    assert assignment.hostname == "web.member.example"
 
 
 @pytest.mark.parametrize(

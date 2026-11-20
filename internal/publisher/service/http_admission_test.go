@@ -55,6 +55,37 @@ func newHTTPAdmissionTestRun(t *testing.T, capacity int) *Bound {
 	return bound
 }
 
+func TestDefaultPublisherStreamCapacityExceedsIngressDefault(t *testing.T) {
+	bound := newHTTPAdmissionTestRun(t, 0)
+	ref := bound.prepared.connectionRef(bound.connections[0])
+	var releases []func()
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+		if bound.reservedStreams != 0 {
+			t.Error("final stream cleanup retained capacity", bound.reservedStreams)
+		}
+	}()
+	for range 4096 {
+		release, ok := bound.reserveStream(ref)
+		if !ok {
+			t.Fatal("publisher default stopped below its advertised capacity")
+		}
+		releases = append(releases, release)
+	}
+	if _, ok := bound.reserveStream(ref); ok {
+		t.Fatal("publisher default failed to enforce active stream capacity")
+	}
+	releases[0]()
+	releases[0]()
+	release, ok := bound.reserveStream(ref)
+	if !ok {
+		t.Fatal("joined cleanup did not release its stream slot")
+	}
+	releases = append(releases, release)
+}
+
 func openHTTPAdmissionTest(t *testing.T, bound *Bound, slot uint8, wire *httpAdmissionTestConn) (*httpAdmission, net.Conn) {
 	t.Helper()
 	client, server := net.Pipe()

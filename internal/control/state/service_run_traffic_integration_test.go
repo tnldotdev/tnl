@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
@@ -50,6 +52,7 @@ func TestIntegrationServiceRunTrafficStoredRetryAndProjection(t *testing.T) {
 			}
 			request.TrafficDefaults, request.TrafficCeiling = trafficlimits.Default(), trafficlimits.Ceiling()
 			request.TrafficDefaults.UploadBytes = 4 << 20
+			request.TrafficDefaults.Connections = 32
 			request.TrafficCeiling.Connections = 32
 			period = "2000ms"
 			retry, err := d.PrepareServiceRun(ctx, service.ID, publisher, "traffic", now.Add(time.Second), request)
@@ -98,7 +101,7 @@ func TestIntegrationServiceRunTrafficStoredRetryAndProjection(t *testing.T) {
 				HTTPS: protocol == "http",
 			}
 			if protocol != "http" {
-				registration.ServicePorts = []int32{int32(service.Endpoint.Port)}
+				registration.ServicePortRanges = []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}
 			}
 			ingress, err := d.RegisterIngress(ctx, registration, now, time.Minute)
 			if err != nil {
@@ -170,7 +173,7 @@ func TestIntegrationServiceRunTrafficStoredRetryAndProjection(t *testing.T) {
 			}
 			request.TrafficSelection = nil
 			next, err := d.PrepareServiceRun(ctx, service.ID, publisher, "next-traffic", now.Add(time.Second), request)
-			if err != nil || next.RunNumber <= run.RunNumber || next.Traffic.UploadBytes != 4<<20 || next.Traffic.TotalConnections != 0 {
+			if err != nil || next.RunNumber <= run.RunNumber || next.Traffic.Connections != 32 || next.Traffic.UploadBytes != 4<<20 || next.Traffic.TotalConnections != 0 {
 				t.Fatal("new run did not resolve new defaults independently", next, err)
 			}
 			request.TrafficSelection = &trafficlimits.Selection{}

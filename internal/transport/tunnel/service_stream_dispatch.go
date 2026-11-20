@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	serviceDispatchReaders  = 8
+	serviceDispatchReaders  = 64
 	serviceDispatchPeers    = 8
-	serviceDispatchForwards = 8
-	serviceDispatchQueue    = 32
+	serviceDispatchForwards = 128
+	serviceDispatchQueue    = 1024
 	serviceDispatchTimeout  = time.Second
 )
 

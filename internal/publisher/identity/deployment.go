@@ -124,7 +124,7 @@ func (g *Deployment) poll(ctx context.Context, read func(context.Context, string
 	}
 	member := assignments.Member
 	member.DeploymentName = g.member.DeploymentName
-	if member != g.member || assignments.Revision < 1 || len(assignments.ConfigurationHash) != 64 || len(assignments.Services) > 128 {
+	if member != g.member || assignments.Revision < 1 || len(assignments.ConfigurationHash) != 64 {
 		return controlv1.DeploymentPublisherAssignments{}, ErrScope
 	}
 	g.member.DeploymentName = assignments.Member.DeploymentName

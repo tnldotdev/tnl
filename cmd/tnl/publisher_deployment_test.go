@@ -80,7 +80,7 @@ func TestDeploymentPublisherSetupBounds(t *testing.T) {
 	for _, mutate := range []func(*publisherSetupCommand){
 		func(f *publisherSetupCommand) { f.Services = nil }, func(f *publisherSetupCommand) { f.Services = []string{"db", "db"} },
 		func(f *publisherSetupCommand) { f.Services = []string{"db\nsecret"} }, func(f *publisherSetupCommand) { f.Namespace = true },
-		func(f *publisherSetupCommand) { f.URL = "url_selected" }, func(f *publisherSetupCommand) { f.Members = 257 },
+		func(f *publisherSetupCommand) { f.URL = "url_selected" }, func(f *publisherSetupCommand) { f.Members = 1 << 31 },
 		func(f *publisherSetupCommand) { f.ExpiresIn = time.Second }, func(f *publisherSetupCommand) { f.ExpiresIn = time.Minute + time.Nanosecond },
 		func(f *publisherSetupCommand) { f.IdempotencyKey = "private\nsecret" },
 	} {
@@ -92,7 +92,7 @@ func TestDeploymentPublisherSetupBounds(t *testing.T) {
 		}
 	}
 	for _, duration := range []time.Duration{time.Minute, 24 * time.Hour} {
-		valid.ExpiresIn, valid.Members = duration, 256
+		valid.ExpiresIn, valid.Members = duration, 257
 		if _, err := deploymentPublisherSetupBody(valid); err != nil {
 			t.Fatal("valid setup bound rejected", err)
 		}

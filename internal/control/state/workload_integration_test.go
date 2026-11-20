@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -356,7 +358,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	}
 	var ingresses []IngressLease
 	for _, name := range []string{"workload-a", "workload-b"} {
-		lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID, ServicePorts: []int32{int32(port)}}, now, time.Minute)
+		lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: name, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}}, now, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}

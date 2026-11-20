@@ -31,14 +31,22 @@ var publicationPaths = []string{
 }
 
 func TestHeldPublicationCannotRaceCancellationWithFixtureFailure(t *testing.T) {
-	for _, path := range publicationPaths {
-		t.Run(path, func(t *testing.T) {
+	for _, test := range []struct {
+		name, path      string
+		certificateOnly bool
+	}{
+		{name: "heartbeat", path: publicationPaths[0]},
+		{name: "certificate", path: publicationPaths[1]},
+		{name: "certificate-with-failed-heartbeat", path: publicationPaths[1], certificateOnly: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := publicationFixture()
-				f.HoldPublication.Store(true)
+				f.HoldPublication.Store(!test.certificateOnly)
+				f.HoldCertificate.Store(test.certificateOnly)
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				request := httptest.NewRequest(http.MethodPost, "https://control.fixture"+path, strings.NewReader(`{"healthy":true}`)).WithContext(ctx)
+				request := httptest.NewRequest(http.MethodPost, "https://control.fixture"+test.path, strings.NewReader(`{"healthy":true}`)).WithContext(ctx)
 				response := httptest.NewRecorder()
 				done := make(chan struct{})
 				var aborted any
@@ -57,6 +65,14 @@ func TestHeldPublicationCannotRaceCancellationWithFixtureFailure(t *testing.T) {
 					t.Fatal("held publication prevents concurrent control cleanup")
 				}
 				f.mu.Unlock()
+				if test.certificateOnly {
+					heartbeat := httptest.NewRequest(http.MethodPost, "https://control.fixture"+publicationPaths[0], strings.NewReader(`{"healthy":true}`))
+					result := httptest.NewRecorder()
+					f.serve(t, result, heartbeat)
+					if result.Code != http.StatusServiceUnavailable {
+						t.Fatal("held certificate hid the independent heartbeat failure", result.Code)
+					}
+				}
 				cancel()
 				<-done
 				if aborted != http.ErrAbortHandler {

@@ -44,3 +44,29 @@ mise exec -- task js:keepalive:test
 
 `task js:keepalive:handoff` uses Chrome and an empty test deployment to check
 browser handoffs, certificate reuse, final-host outage, and restart.
+
+## scale qualification
+
+The qualification target is 1,000 simultaneous browser hosts, not 1,000 lifetime
+enrollments. Set the Worker's `HOST_TARGET` to the fixed pool size for an opt-in
+run; ordinary demand-driven recruitment still starts at three.
+
+The admission Durable Object permits at most 384 startups and 1,384 total
+reservations, including bundle transfers and replacement overlap above the
+1,000-host target. This covers roughly 334 simultaneous replacements at the
+three-minute startup bound. Retries
+reuse their reservation; failed starts and lost tabs expire. Successful cleanup
+releases the reservation only after the publisher closes. It stores no site
+assets and does not serve as a backup.
+
+Volunteer selection uses finite requests with 5–15 second retry jitter. Peer
+responses request connection closure, including HTTP/2 GOAWAY, so random probes
+and 20-second presence reports do not retain idle relay streams. Startup allows
+three minutes; replacement begins four minutes before the turn ends.
+
+Qualify 3, 10, 30, 100, 300, then 1,000 hosts. At each stage measure open visitor
+connections, gossip bytes, startup time, bundle transfer and verification,
+browser memory, relay load, and capacity rejections. Run multiple replacement
+cycles, a volunteer surge, slow transfers, and loss of either relay service.
+Count visitors separately from hosts. Configuration ceilings and simulations
+are not proof of real-browser throughput.
