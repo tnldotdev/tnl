@@ -29,6 +29,8 @@ func runGenerate(ctx context.Context, flags cli, output io.Writer) error {
 	state := "generated"
 	if flags.Generate.Check {
 		state = "current"
+	} else if err := meta.WriteCompletion(ctx, project); err != nil {
+		return err
 	}
 	return writeHumanFrame(output, "tnl generate", state, "commit generated artifacts with project configuration", clioutput.Fields(clioutput.Field{Label: "services", Value: strconv.Itoa(len(project.Config.Services))}, clioutput.Field{Label: "output", Value: flags.Generate.OutputDir}))
 }

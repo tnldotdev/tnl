@@ -157,6 +157,9 @@ jobs:
       matrix:
         suite: [owner-lifecycle, binary, "cli:contract"]
     steps:
+      - name: Install completion shells
+        if: matrix.suite == 'cli:contract'
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends bash-completion zsh fish
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

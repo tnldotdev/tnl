@@ -40,12 +40,19 @@ func Write(ctx context.Context, projectRoot string, metadata Metadata) error {
 	if err := context.Cause(ctx); err != nil {
 		return err
 	}
-	if !filepath.IsAbs(projectRoot) {
-		return errors.New("project metadata root must be absolute")
-	}
 	data, err := Render(metadata)
 	if err != nil {
 		return err
+	}
+	return writeLocalJSON(ctx, projectRoot, JSONName, data)
+}
+
+func writeLocalJSON(ctx context.Context, projectRoot, name string, data []byte) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(projectRoot) {
+		return errors.New("project metadata root must be absolute")
 	}
 	root, err := os.OpenRoot(projectRoot)
 	if err != nil {
@@ -74,15 +81,18 @@ func Write(ctx context.Context, projectRoot string, metadata Metadata) error {
 		return err
 	}
 	defer lock.Close()
-	info, err := local.Lstat(JSONName)
+	info, err := local.Lstat(name)
 	if err == nil && !info.Mode().IsRegular() {
 		return errors.New("project metadata must be a regular file")
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if previous, err := local.ReadFile(JSONName); err == nil && bytes.Equal(previous, data) {
-		return nil
+	if info != nil && info.Size() == int64(len(data)) {
+		previous, err := local.ReadFile(name)
+		if err == nil && bytes.Equal(previous, data) {
+			return nil
+		}
 	}
 	temporary := ".project-" + rand.Text()
 	file, err := local.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
@@ -94,5 +104,5 @@ func Write(ctx context.Context, projectRoot string, metadata Metadata) error {
 	if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
 		return err
 	}
-	return local.Rename(temporary, JSONName)
+	return local.Rename(temporary, name)
 }
