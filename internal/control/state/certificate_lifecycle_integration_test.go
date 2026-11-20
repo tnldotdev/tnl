@@ -15,7 +15,6 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 func TestIntegrationCertificateLifecycle(t *testing.T) {
@@ -23,7 +22,7 @@ func TestIntegrationCertificateLifecycle(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			f := newServicePublicationFixture(t)
 			database, now := f.database, f.now
-			keyring.MockInit()
+			clientstate.UseMemoryKeychainForTesting()
 			plan, hostname, authentication := f.prepared.CertificatePlan, f.service.Endpoint.Hostname, f.run
 			root := filepath.Join(t.TempDir(), "client")
 			local, cache := openLifecycleCache(t, root, f.service.TeamID, f.publisher.ID, plan)

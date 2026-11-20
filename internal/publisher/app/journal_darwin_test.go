@@ -4,10 +4,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/zalando/go-keyring"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 )
 
 func TestMain(m *testing.M) {
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	os.Exit(m.Run())
 }

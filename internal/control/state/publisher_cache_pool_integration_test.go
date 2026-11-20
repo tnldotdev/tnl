@@ -10,7 +10,6 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 // the controlled CA fixture exercises real publisher CSRs, persistent private
@@ -23,7 +22,7 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	root := filepath.Join(t.TempDir(), "client-state")
 	local, err := clientstate.Open(t.Context(), root)
 	if err != nil {

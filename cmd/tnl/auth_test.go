@@ -13,7 +13,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	"github.com/zalando/go-keyring"
 )
 
 func TestAuthCommandParsing(t *testing.T) {
@@ -69,7 +68,7 @@ func TestAuthLoginWorksWithoutTerminalInput(t *testing.T) {
 }
 
 func TestAuthStatusLocalJSONDoesNotExposeSavedCredentials(t *testing.T) {
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	root := filepath.Join(t.TempDir(), "state")
 	db, err := clientstate.Open(t.Context(), root)
 	if err != nil {
@@ -111,7 +110,7 @@ func TestAuthStatusLocalJSONDoesNotExposeSavedCredentials(t *testing.T) {
 }
 
 func TestAuthLogoutCancelsPendingOperationsOffline(t *testing.T) {
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	root := filepath.Join(t.TempDir(), "state")
 	db, err := clientstate.Open(t.Context(), root)
 	if err != nil {

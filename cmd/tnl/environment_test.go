@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zalando/go-keyring"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 )
 
 func TestMain(m *testing.M) {
 	// routine tests must not read or create credentials in the user's Keychain.
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	// CLI tests opt into each setting explicitly.
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")

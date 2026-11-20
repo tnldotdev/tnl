@@ -28,7 +28,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
-	"github.com/zalando/go-keyring"
 )
 
 // hold the same lock across actual HTTP decisions and the outage transition.
@@ -442,7 +441,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	// independently enrolled sibling device: its current revocation must close
 	// that owner without extending or prematurely closing the unavailable owner.
 	if runtime.GOOS == "darwin" {
-		keyring.MockInit()
+		clientstate.UseMemoryKeychainForTesting()
 	}
 	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "sibling-state"))
 	if err != nil {

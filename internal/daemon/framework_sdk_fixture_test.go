@@ -24,7 +24,6 @@ import (
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/zalando/go-keyring"
 )
 
 type frameworkNativeSetup struct {
@@ -48,7 +47,7 @@ type frameworkNativeOwner struct {
 func startFrameworkNativeOwner(t *testing.T, directory string, services config.Services, setup frameworkNativeSetup) frameworkNativeOwner {
 	t.Helper()
 	if runtime.GOOS == "darwin" {
-		keyring.MockInit()
+		clientstate.UseMemoryKeychainForTesting()
 	}
 	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {

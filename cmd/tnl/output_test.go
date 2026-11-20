@@ -297,6 +297,29 @@ func TestNDJSONErrorMessageUsesTypedFailure(t *testing.T) {
 	}
 }
 
+func TestNDJSONKeychainFailureKeepsContractAndPrivateCause(t *testing.T) {
+	var stdout bytes.Buffer
+	output, err := newPublishOutput("ndjson", "tnl publish", &stdout, io.Discard, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("secret command echo")
+	failed := failure.Wrap("open client state", failure.ClientStateUnavailable, &failure.ClientKeychainError{Kind: failure.KeychainAccess, Cause: cause})
+	if err := output.failed(failed); err != nil {
+		t.Fatal(err)
+	}
+	var event publishEvent
+	if err := json.NewDecoder(&stdout).Decode(&event); err != nil {
+		t.Fatal(err)
+	}
+	if event.SchemaVersion != 1 || event.Type != publishEventError || event.Code != string(failure.ClientStateUnavailable) ||
+		event.HelpURL != failure.HelpURL(failure.ClientStateUnavailable, "keychain-access") ||
+		event.Message != "tnl could not use the client state" || event.Retryable == nil || *event.Retryable ||
+		strings.Contains(stdout.String(), `"action"`) || strings.Contains(stdout.String(), cause.Error()) || !errors.Is(failed, cause) {
+		t.Fatalf("unsafe or incompatible Keychain event = %s", stdout.String())
+	}
+}
+
 func TestPublishOutputNDJSONRetainsFailedErrorEventWrite(t *testing.T) {
 	writeErr := errors.New("output closed")
 	output, err := newPublishOutput("ndjson", "tnl publish", errorWriter{writeErr}, io.Discard, nil)

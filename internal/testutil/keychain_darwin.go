@@ -17,11 +17,19 @@ import (
 // tests. register it before starting workers so their cleanup runs first.
 func UseClientKeychain(t testing.TB) string {
 	t.Helper()
+	path, _, _ := UseLockableClientKeychain(t)
+	return path
+}
+
+// UseLockableClientKeychain also supplies lock/unlock operations for only the
+// disposable keychain. its password stays in private stdin, never process args.
+func UseLockableClientKeychain(t testing.TB) (path string, lock, unlock func()) {
+	t.Helper()
 	RequireTestTier(t, TestTierIntegration)
 	preferences := keychainPreferences(t)
 	// a private keychain outside Library/Keychains is not added to the search
 	// list. never set the user's default keychain or replace their search list.
-	path := filepath.Join(t.TempDir(), `tnl test's "private".keychain`)
+	path = filepath.Join(t.TempDir(), `tnl test's "private".keychain`)
 	password := make([]byte, 32)
 	if _, err := rand.Read(password); err != nil {
 		t.Fatal("generate disposable Keychain password", err)
@@ -50,7 +58,11 @@ func UseClientKeychain(t testing.TB) string {
 		t.Fatal("disposable Keychain setup changed Keychain preferences")
 	}
 	t.Setenv("TNL_STATE_KEYCHAIN", path)
-	return path
+	return path, func() {
+			securityFixtureCommand(t, "lock-keychain", path)
+		}, func() {
+			securityFixtureCommand(t, "unlock-keychain", "-p", hex.EncodeToString(password), path)
+		}
 }
 
 func securityFixtureCommand(t testing.TB, arguments ...string) {

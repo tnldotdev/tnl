@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
@@ -23,12 +24,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 func TestIntegrationShareTokenPreparesExactPermission(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	ctx := t.Context()
 	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "share_token_cli")
 	if err := controlstate.Migrate(ctx, databaseURL); err != nil {

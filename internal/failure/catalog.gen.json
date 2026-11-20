@@ -811,6 +811,36 @@
           "description": "tnl cannot access the local client state directory.",
           "action": "check permissions on the state directory, then retry",
           "diagram_detail": "state directory access denied"
+        },
+        {
+          "id": "keychain-access",
+          "description": "macOS refused Keychain access. The Keychain may be locked or require interactive approval, even after browser sign-in succeeds.",
+          "action": "unlock the selected Keychain in your own terminal; approve access in a macOS desktop session if needed, then retry",
+          "diagram_detail": "Keychain access needs approval or unlock"
+        },
+        {
+          "id": "keychain-timeout",
+          "description": "the client-state Keychain operation exceeded its deadline.",
+          "action": "check the selected Keychain in a macOS desktop session, unlock it and approve access if needed, then retry",
+          "diagram_detail": "Keychain operation timed out"
+        },
+        {
+          "id": "keychain-canceled",
+          "description": "the client-state Keychain operation was canceled.",
+          "action": "retry when ready; unlock the selected Keychain and approve access if needed",
+          "diagram_detail": "Keychain operation canceled"
+        },
+        {
+          "id": "keychain-missing",
+          "description": "the selected Keychain does not contain the wrapping key for this client state. Existing encrypted state was not changed.",
+          "action": "select the original Keychain for this state directory or restore its wrapping key; do not reset the state",
+          "diagram_detail": "client-state Keychain wrapping key missing"
+        },
+        {
+          "id": "keychain-unavailable",
+          "description": "tnl could not run the macOS Keychain operation.",
+          "action": "check macOS security and the selected Keychain; if set, TNL_STATE_KEYCHAIN must name an existing absolute Keychain file, then retry",
+          "diagram_detail": "Keychain operation unavailable"
         }
       ]
     },

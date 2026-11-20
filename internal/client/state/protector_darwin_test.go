@@ -11,7 +11,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	keyring.MockInit()
+	UseMemoryKeychainForTesting()
 	os.Exit(m.Run())
 }
 
@@ -27,14 +27,15 @@ func TestKeychainMissingKeyNeverRegeneratedForExistingDatabase(t *testing.T) {
 	}
 	digest := sha256.Sum256([]byte(root))
 	account := hex.EncodeToString(digest[:])
-	if err := keyring.Delete(keychainService, account); err != nil {
-		t.Fatal(err)
-	}
+	mock := memoryKeychain.Load()
+	mock.mu.Lock()
+	delete(mock.values, keychainService+"\x00"+account)
+	mock.mu.Unlock()
 	if database, err := Open(t.Context(), root); err == nil {
 		database.Close()
 		t.Fatal("missing Keychain key accepted")
 	}
-	if _, err := keyring.Get(keychainService, account); err != keyring.ErrNotFound {
+	if _, err := mock.get(keychainService, account); err != keyring.ErrNotFound {
 		t.Fatalf("missing key was regenerated: %v", err)
 	}
 }

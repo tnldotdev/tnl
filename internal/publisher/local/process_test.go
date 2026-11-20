@@ -24,12 +24,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 func processFixture(t *testing.T) (clientproject.Project, *clientstate.Database, []byte, string) {
 	t.Helper()
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

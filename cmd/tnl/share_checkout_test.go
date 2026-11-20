@@ -23,7 +23,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 func TestShareCheckoutCommandParsing(t *testing.T) {
@@ -163,7 +162,7 @@ func TestShareCheckoutUsesProjectServerAndTeam(t *testing.T) {
 }
 
 func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *testing.T) {
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	const teamID = "tm_0123456789abcdefghijkl"
 	const previewID = "pv_0123456789abcdefghijkl"
 	const webID = "svc_0123456789abcdefghijkl"
