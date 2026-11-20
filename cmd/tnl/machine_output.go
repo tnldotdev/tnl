@@ -59,6 +59,12 @@ func commandDiagnosticFor(err error) commandDiagnostic {
 		result.Action = "run tnl auth login explicitly, then retry this command"
 		result.Command = []string{"tnl", "auth", "login", "start", "--output", "json"}
 	}
+	switch failure.Reason(result.Reason) {
+	case failure.AppCursorExpired:
+		result.Command = []string{"tnl", "watch", "--output", "ndjson"}
+	case failure.AppReadinessTimeout:
+		result.Command = []string{"tnl", "status", "--scope", "local", "--output", "json"}
+	}
 	var limited *clientcontrol.RateLimitError
 	var authorityLimited *clientauthority.RateLimitError
 	delay := time.Duration(0)
