@@ -25,9 +25,10 @@ const (
 	loadTimeout       = 10 * time.Second
 	maxResultBytes    = config.MaxDocumentBytes
 	maxDiagnosticByte = 16 << 10
+	unsupportedNode   = "Node.js 22.18 or newer is required to load tnl.config.ts"
 )
 
-//go:embed loader.mjs
+//go:embed loader.ts
 var loaderSource string
 
 // loadTypeScript evaluates trusted project-local TypeScript configuration. the
@@ -62,7 +63,7 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 		return config.Project{}, err
 	}
 	defer cleanup()
-	command := exec.CommandContext(loadCtx, node, "--input-type=module", "--eval", loaderSource, bundledPath, absoluteCWD)
+	command := exec.CommandContext(loadCtx, node, "--experimental-strip-types", "--input-type=module-typescript", "--eval", loaderSource, bundledPath, absoluteCWD)
 	command.Dir = filepath.Dir(absolutePath)
 	environment, contextEnvironment := sanitizedEnvironment(os.Environ())
 	command.Env = environment
@@ -84,6 +85,11 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 	command.Stdout = output
 	command.Stderr = io.Discard
 	waitErr := command.Run()
+	// older Node releases can reject the flags (exit 9) before the loader can
+	// report its version. check only that startup failure, not every load.
+	exitErr, exited := waitErr.(*exec.ExitError)
+	rejectedFlags := exited && exitErr.ExitCode() == 9 && len(output.Bytes()) == 0 &&
+		nodeVersionUnsupported(loadCtx, node, command.Dir, environment)
 	if contextErr := ctx.Err(); contextErr != nil {
 		return config.Project{}, fmt.Errorf("load TypeScript config: %w", contextErr)
 	}
@@ -91,8 +97,11 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 		return config.Project{}, errors.New("load TypeScript config: evaluation timed out")
 	}
 	if waitErr != nil {
-		if _, ok := waitErr.(*exec.ExitError); !ok {
+		if !exited {
 			return config.Project{}, fmt.Errorf("load TypeScript config: start Node.js: %w", waitErr)
+		}
+		if rejectedFlags {
+			return config.Project{}, fmt.Errorf("load TypeScript config: %s", unsupportedNode)
 		}
 		return config.Project{}, fmt.Errorf("load TypeScript config: %s", loaderErrorMessage(output))
 	}
@@ -111,6 +120,19 @@ func loadTypeScript(ctx context.Context, path, cwd string, worktree Worktree) (c
 		return config.Project{}, fmt.Errorf("load TypeScript config: %w", err)
 	}
 	return value, nil
+}
+
+func nodeVersionUnsupported(ctx context.Context, node, directory string, environment []string) bool {
+	command := exec.CommandContext(ctx, node, "--version")
+	command.Dir, command.Env = directory, environment
+	output := &boundedOutput{limit: 128}
+	command.Stdout = output
+	if err := command.Run(); err != nil || output.overflow {
+		return false
+	}
+	var major, minor int
+	_, err := fmt.Fscanf(bytes.NewReader(output.Bytes()), "v%d.%d.", &major, &minor)
+	return err == nil && (major < 22 || major == 22 && minor < 18)
 }
 
 func bundleTypeScript(ctx context.Context, path string) (string, func(), error) {
@@ -237,7 +259,7 @@ func loaderErrorMessage(output *boundedOutput) string {
 		"invalid_arguments":      "the TypeScript loader received invalid arguments",
 		"invalid_export":         "tnl.config.ts must export a configuration object or factory",
 		"missing_default_export": "tnl.config.ts must have a default export",
-		"unsupported_node":       "Node.js 22.18 or newer is required to load tnl.config.ts",
+		"unsupported_node":       unsupportedNode,
 	}
 	if message, ok := messages[value.Error]; ok {
 		return message

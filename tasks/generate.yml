@@ -12,7 +12,6 @@ vars:
     internal/publisher/toolbar/toolbar.js
     internal/publisher/browserapi/model.gen.ts
     internal/client/project/keys.gen.json
-    internal/client/project/loader.mjs
     packages/ts/src/config.gen.ts
     schema/v1.json
     scripts/install.sh
@@ -33,7 +32,6 @@ tasks:
       - go run ./internal/config/cmd/configgen
       - node scripts/generate/config-types.ts
       - pnpm exec oxfmt --write schema/v1.json internal/client/project/keys.gen.json packages/ts/src/config.gen.ts
-      - node scripts/generate/project-config-loader.ts
       - node scripts/generate/diagnostic-codes.ts
       - go -C internal/failure run ./cmd/cataloggen
       - go run ./internal/observability/cmd/vocabulary contracts/observability/v1/vocabulary.json

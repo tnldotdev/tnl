@@ -75,6 +75,8 @@ internal/config            -> configuration schema and SDK types
 
 Generated file headers name their source. [Generation tasks](tasks/generate.yml)
 list the full pipeline. `pkg/protocol/tunnelv1` is handwritten.
+Go embeds `internal/client/project/loader.ts` directly, so edits to the loader
+do not need generation.
 
 Add numbered SQL migrations and test supported upgrades with existing data.
 Rewriting an initial migration and its pinned hash requires an explicitly
