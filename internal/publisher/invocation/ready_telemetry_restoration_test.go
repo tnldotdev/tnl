@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -217,8 +218,9 @@ func TestReadyTelemetryRestorationFollowsActualPublicationObservation(t *testing
 		if server == clientserver.DefaultURL {
 			kind = api.Hosted
 		}
-		for _, mode := range []string{"success", "rejected", "rejected_during_cancellation"} {
+		for _, mode := range []string{"success", "retried", "rejected", "rejected_during_cancellation"} {
 			t.Run(string(kind)+"/"+mode, func(t *testing.T) {
+				succeeds := mode == "success" || mode == "retried"
 				database, _, saved, cfg, base, remoteClosed := cliFallbackObservationFixture(t)
 				saved.Protocol, saved.Endpoint.Port = controlv1.ServiceProtocolHTTP, 443
 				base.saved = saved
@@ -255,6 +257,15 @@ func TestReadyTelemetryRestorationFollowsActualPublicationObservation(t *testing
 						}
 					}
 				}}
+				var retried atomic.Bool
+				if mode == "retried" {
+					capture.transport = func(*http.Request) error {
+						if len(capture.ready(t)) > 0 && retried.CompareAndSwap(false, true) {
+							return errors.New("ready telemetry receiver lost its acknowledgement")
+						}
+						return nil
+					}
+				}
 				collector := newReadyTelemetryCollector(t, database.Root(), capture)
 				cfg.Telemetry = collector
 				cfg.ObserveReadiness = func(status publisherservice.RunStatus) {
@@ -268,7 +279,7 @@ func TestReadyTelemetryRestorationFollowsActualPublicationObservation(t *testing
 					}
 					close(entered)
 					<-release
-					if mode != "success" {
+					if !succeeds {
 						return reportErr
 					}
 					accepted.Store(true)
@@ -295,7 +306,7 @@ func TestReadyTelemetryRestorationFollowsActualPublicationObservation(t *testing
 					}
 				}
 				unblock()
-				if mode == "success" {
+				if succeeds {
 					readyTelemetryAwait(t, repeated)
 					readyTelemetryBarrier(t, collector, capture)
 				}
@@ -304,7 +315,7 @@ func TestReadyTelemetryRestorationFollowsActualPublicationObservation(t *testing
 				if control.discoveries.Load() != 1 {
 					t.Error("ready telemetry publication did not capture discovery exactly once")
 				}
-				if mode == "success" && result != nil || mode != "success" && !errors.Is(result, reportErr) {
+				if succeeds && result != nil || !succeeds && !errors.Is(result, reportErr) {
 					t.Error("actual publication lost its readiness observation result", result)
 				}
 				for range 2 {
@@ -313,13 +324,25 @@ func TestReadyTelemetryRestorationFollowsActualPublicationObservation(t *testing
 				closeReadyTelemetryCollector(t, collector, capture)
 				events := capture.ready(t)
 				want := 0
-				if mode == "success" {
+				if succeeds {
 					want = 1
 				}
-				if observed.Load() != 1 || len(events) != want {
-					t.Error("actual publication lost or duplicated delivered Ready telemetry", observed.Load(), len(events), want)
+				// delivery may retry when its acknowledgement or the no-wait
+				// outbox deletion fails. count immutable event IDs, not requests.
+				distinct := map[string]struct{}{}
+				for _, event := range events {
+					distinct[string(event.EventId)] = struct{}{}
+				}
+				if observed.Load() != 1 || len(distinct) != want {
+					t.Error("actual publication lost or duplicated its Ready event", observed.Load(), len(distinct), want, "attempts", len(events))
+				}
+				if mode == "retried" && (!retried.Load() || len(events) < 2) {
+					t.Error("fixture did not retry the retained Ready event")
 				}
 				for _, event := range events {
+					if !reflect.DeepEqual(event, events[0]) {
+						t.Error("Ready telemetry retry changed its event ID or payload")
+					}
 					if event.Name != api.TunnelReady || event.EventVersion != 1 || !opaqueid.Valid(string(event.EventId), opaqueid.TelemetryEventPrefix) ||
 						event.Payload.ServerKind != kind || event.Payload.PublishMode != api.Demo {
 						t.Error("actual publication Ready payload lost current server kind or demo mode", event)
