@@ -34,6 +34,17 @@ func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {
 	}
 }
 
+func TestServerSchemaExposesOnlyPublisherConnectionStreamLimit(t *testing.T) {
+	properties := tnldSchema().Properties
+	if _, found := properties.Get("quic_max_incoming_streams"); found {
+		t.Fatal("removed QUIC-named stream setting is still exposed")
+	}
+	streams, found := properties.Get("publisher_connection_stream_limit")
+	if !found || streams.Default != int64(-1) {
+		t.Fatal("publisher connection stream limit lost its automatic default", streams)
+	}
+}
+
 func TestAccessSchemaDescribesNormalizedNotRawPrefixLimit(t *testing.T) {
 	ip, found := accessSchema("restricted", "anonymous").OneOf[1].Properties.Get("ip")
 	if !found || ip.MinItems == nil || *ip.MinItems != 1 || ip.MaxItems != nil || ip.UniqueItems ||

@@ -285,7 +285,7 @@ func TestConfigControlHostnameRejectsURLAndPort(t *testing.T) {
 		VisitorConnectionLimit: 1, PublisherConnectionLimit: 1,
 		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
-		RelayStreamCapacity: 1, QUICMaxIncomingStreams: 1,
+		RelayStreamCapacity: 1, PublisherConnectionStreamLimit: 1,
 		ControlOutageTolerance: 5 * time.Minute,
 		IngressLeaseDuration:   30 * time.Second, RelayLeaseDuration: 30 * time.Second,
 		LeaseRenewalInterval: 10 * time.Second, ControlRetryInterval: time.Second,

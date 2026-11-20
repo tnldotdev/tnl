@@ -3469,11 +3469,6 @@
           "type": "array",
           "description": "Exact trusted peers supplying ingress PROXY v2 source and destination metadata."
         },
-        "quic_max_incoming_streams": {
-          "type": "integer",
-          "description": "Deprecated: use --publisher-connection-stream-limit (applies to QUIC and WSS).",
-          "default": -1
-        },
         "publisher_connection_stream_limit": {
           "type": "integer",
           "description": "Maximum incoming streams per publisher connection, for both QUIC and WSS (default: relay stream capacity, up to 4096).",

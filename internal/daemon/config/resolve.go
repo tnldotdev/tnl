@@ -12,12 +12,6 @@ func Resolve(config Config) (Config, error) {
 	if err := config.resolveFlyIdentity(); err != nil {
 		return Config{}, err
 	}
-	if config.PublisherConnectionStreamLimit > 0 {
-		if config.QUICMaxIncomingStreams > 0 && config.QUICMaxIncomingStreams != config.PublisherConnectionStreamLimit {
-			return Config{}, errors.New("publisher connection stream limit conflicts with deprecated quic-max-incoming-streams")
-		}
-		config.QUICMaxIncomingStreams = config.PublisherConnectionStreamLimit
-	}
 	config.resolveCapacities(processResources())
 	if config.RelayQUICProfile == "" {
 		config.RelayQUICProfile = "standard"

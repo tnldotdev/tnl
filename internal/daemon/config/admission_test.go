@@ -47,7 +47,7 @@ func TestAutomaticAndExplicitConnectionCapacities(t *testing.T) {
 		{"visitor-connection-limit", func(c Config) int64 { return c.VisitorConnectionLimit }},
 		{"publisher-connection-limit", func(c Config) int64 { return c.PublisherConnectionLimit }},
 		{"relay-stream-capacity", func(c Config) int64 { return c.RelayStreamCapacity }},
-		{"quic-max-incoming-streams", func(c Config) int64 { return c.QUICMaxIncomingStreams }},
+		{"publisher-connection-stream-limit", func(c Config) int64 { return c.PublisherConnectionStreamLimit }},
 	} {
 		t.Run(test.flag, func(t *testing.T) {
 			automatic, err := Parse(base)

@@ -10,13 +10,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
-func (c Config) PublisherStreamLimit() int64 {
-	if c.PublisherConnectionStreamLimit > 0 {
-		return c.PublisherConnectionStreamLimit
-	}
-	return c.QUICMaxIncomingStreams
-}
-
 func (c Config) validateRelayQUICListen() error {
 	if !c.Role.RunsRelay() || c.RelayQUICProfile != "fly" {
 		return nil
@@ -36,7 +29,7 @@ func (c Config) RelayQUICConfig() muxsession.QUICConfig {
 	config := muxsession.QUICConfig{
 		UDPNetwork: "udp",
 		Config: &quic.Config{
-			MaxIdleTimeout: c.QUICIdleTimeout, MaxIncomingStreams: c.PublisherStreamLimit(),
+			MaxIdleTimeout: c.QUICIdleTimeout, MaxIncomingStreams: c.PublisherConnectionStreamLimit,
 			EnableDatagrams: true,
 		},
 	}
