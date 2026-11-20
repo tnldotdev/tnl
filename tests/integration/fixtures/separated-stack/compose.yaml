@@ -56,7 +56,7 @@ x-runtime: &runtime
         -tnl-runtime-load-publisher-connection-limit='${PUBLISHER_CONNECTION_LIMIT:--1}' \
         -tnl-runtime-load-publisher-concurrency='${PUBLISHER_CONCURRENCY:-500}' \
         -tnl-runtime-load-relay-stream-capacity='${RELAY_STREAM_CAPACITY:--1}' \
-        -tnl-runtime-load-quic-max-incoming-streams='${QUIC_MAX_INCOMING_STREAMS:--1}' \
+        -tnl-runtime-load-publisher-connection-stream-limit='${PUBLISHER_CONNECTION_STREAM_LIMIT:--1}' \
         -tnl-runtime-load-scenario='${SCENARIO:-relay-restart}' \
         -tnl-runtime-load-network-path='${NETWORK_PATH:-forwarding}' \
         -tnl-runtime-load-rtt='${RTT:-20ms}' \

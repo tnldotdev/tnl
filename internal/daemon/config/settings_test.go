@@ -61,21 +61,34 @@ func TestFlyMachineIdentityUsesExactMachineAndApp(t *testing.T) {
 	}
 }
 
-func TestPublisherStreamLimitAppliesToBothTransportsAndKeepsLegacyOverride(t *testing.T) {
+func TestPublisherConnectionStreamLimit(t *testing.T) {
 	base := []string{"--role=relay", "--control-hostname=control.example.test", "--cluster-secret=" + testClusterSecret,
 		"--relay-service-id=relay-a", "--relay-id=relay-a-1", "--relay-address=relay.example.test:443", "--internal-relay-address=relay.internal:9445"}
-	for _, flag := range []string{"publisher-connection-stream-limit", "quic-max-incoming-streams"} {
-		c, err := Parse(append(append([]string{}, base...), "--"+flag+"=123"))
-		if err != nil || c.RelayQUICConfig().Config.MaxIncomingStreams != 123 {
-			t.Fatal("transport limit", flag, err)
-		}
+	c, err := Parse(append(append([]string{}, base...), "--publisher-connection-stream-limit=123"))
+	if err != nil || c.PublisherConnectionStreamLimit != 123 || c.RelayQUICConfig().Config.MaxIncomingStreams != 123 {
+		t.Fatal("transport limit", c.PublisherConnectionStreamLimit, err)
 	}
-	if _, err := Parse(append(base, "--publisher-connection-stream-limit=123", "--quic-max-incoming-streams=456")); err == nil {
-		t.Fatal("accepted conflicting transport limits")
+	if _, err := Parse(append(append([]string{}, base...), "--quic-max-incoming-streams=123")); err == nil {
+		t.Fatal("accepted the removed QUIC-named stream setting")
 	}
 	for _, value := range []string{"0", "-2"} {
 		if _, err := Parse(append(append([]string{}, base...), "--publisher-connection-stream-limit="+value)); err == nil {
 			t.Fatal("accepted an invalid stream limit", value)
 		}
+	}
+	t.Setenv("TNLD_PUBLISHER_CONNECTION_STREAM_LIMIT", "321")
+	fromEnvironment, err := Parse(base)
+	if err != nil || fromEnvironment.PublisherConnectionStreamLimit != 321 {
+		t.Fatal("stream limit environment override", fromEnvironment.PublisherConnectionStreamLimit, err)
+	}
+	if inspected := Inspect(fromEnvironment, nil)["publisher_connection_stream_limit"]; inspected.Value != int64(321) || inspected.Source != "environment" {
+		t.Fatal("stream limit inspection lost its environment source", inspected)
+	}
+	fromFlag, err := Parse(append(append([]string{}, base...), "--publisher-connection-stream-limit=456"))
+	if err != nil || fromFlag.PublisherConnectionStreamLimit != 456 {
+		t.Fatal("stream limit flag precedence", fromFlag.PublisherConnectionStreamLimit, err)
+	}
+	if inspected := Inspect(fromFlag, map[string]string{"publisher_connection_stream_limit": "flag"})["publisher_connection_stream_limit"]; inspected.Value != int64(456) || inspected.Source != "flag" {
+		t.Fatal("stream limit inspection lost its flag source", inspected)
 	}
 }

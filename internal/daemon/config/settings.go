@@ -47,12 +47,6 @@ func SettingApplies(name string, role Role) bool {
 // ResolveExplicit rejects ineffective settings, including file and environment
 // values explicitly equal to a default. defaults for unused roles are harmless.
 func ResolveExplicit(c Config, supplied map[string]bool) (Config, error) {
-	_, legacyStreamEnvironment := os.LookupEnv("TNLD_QUIC_MAX_INCOMING_STREAMS")
-	if (supplied["quic_max_incoming_streams"] || legacyStreamEnvironment) &&
-		c.QUICMaxIncomingStreams != -1 && c.QUICMaxIncomingStreams <= 0 {
-		return Config{}, failure.Wrap("validate legacy publisher connection stream limit", failure.ServerConfigInvalid,
-			fmt.Errorf("publisher connection stream limit must be positive or -1"))
-	}
 	_, streamEnvironment := os.LookupEnv("TNLD_PUBLISHER_CONNECTION_STREAM_LIMIT")
 	if (supplied["publisher_connection_stream_limit"] || streamEnvironment) &&
 		c.PublisherConnectionStreamLimit != -1 && c.PublisherConnectionStreamLimit <= 0 {
@@ -115,17 +109,6 @@ func Inspect(c Config, sources map[string]string) map[string]SettingValue {
 				source = "control"
 			} else {
 				v, source = []string{"20000-20015"}, "default"
-			}
-		}
-		if name == "publisher_connection_stream_limit" {
-			v = c.PublisherStreamLimit()
-			if source == "automatic" {
-				if legacy, ok := sources["quic_max_incoming_streams"]; ok {
-					source = legacy
-				}
-				if _, ok := os.LookupEnv("TNLD_QUIC_MAX_INCOMING_STREAMS"); ok && source != "flag" {
-					source = "environment"
-				}
 			}
 		}
 		if slices.Contains(private, name) {

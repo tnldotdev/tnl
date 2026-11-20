@@ -11,12 +11,12 @@ func TestAutomaticCapacitiesShareMemory(t *testing.T) {
 					Role: role, ClientHelloConnectionLimit: -1,
 					VisitorConnectionLimit: -1, PublisherConnectionLimit: -1, RelayStreamCapacity: -1,
 					StandaloneControlConnectionLimit: -1, StandaloneRelayConnectionLimit: -1,
-					QUICMaxIncomingStreams: -1,
+					PublisherConnectionStreamLimit: -1,
 				}
 				cfg.resolveCapacities(resourceBudget{CPUs: cpu, MemoryBytes: memoryMiB * mebibyte})
 				if cfg.ClientHelloConnectionLimit <= 0 || cfg.VisitorConnectionLimit <= 0 ||
 					cfg.PublisherConnectionLimit <= 0 || cfg.RelayStreamCapacity <= 0 || cfg.StandaloneControlConnectionLimit <= 0 ||
-					cfg.StandaloneRelayConnectionLimit <= 0 || cfg.QUICMaxIncomingStreams <= 0 {
+					cfg.StandaloneRelayConnectionLimit <= 0 || cfg.PublisherConnectionStreamLimit <= 0 {
 					t.Fatalf("%s %.1f CPU %d MiB: invalid limits: %+v", role, cpu, memoryMiB, cfg)
 				}
 				if cfg.PublisherConnectionLimit < previous.PublisherConnectionLimit || cfg.RelayStreamCapacity < previous.RelayStreamCapacity ||
@@ -37,7 +37,7 @@ func TestAutomaticCapacitiesShareMemory(t *testing.T) {
 				if cfg.PublisherConnectionLimit*96*1024+cfg.RelayStreamCapacity*128*1024 > relayBudget {
 					t.Fatalf("%s %.1f CPU %d MiB: simultaneous relay limits exceed memory budget", role, cpu, memoryMiB)
 				}
-				if cfg.QUICMaxIncomingStreams > cfg.RelayStreamCapacity || int64(cfg.StandaloneRelayConnectionLimit) > cfg.PublisherConnectionLimit {
+				if cfg.PublisherConnectionStreamLimit > cfg.RelayStreamCapacity || int64(cfg.StandaloneRelayConnectionLimit) > cfg.PublisherConnectionLimit {
 					t.Fatalf("%s %.1f CPU %d MiB: derived handoff/transport exceeds relay capacity", role, cpu, memoryMiB)
 				}
 				previous = cfg
@@ -51,12 +51,12 @@ func TestExplicitCapacitiesSurviveResolution(t *testing.T) {
 		Role: RoleRelay, ClientHelloConnectionLimit: 9,
 		VisitorConnectionLimit: 7, PublisherConnectionLimit: 6, RelayStreamCapacity: 5,
 		StandaloneControlConnectionLimit: 4, StandaloneRelayConnectionLimit: 3,
-		QUICMaxIncomingStreams: 2,
+		PublisherConnectionStreamLimit: 2,
 	}
 	cfg.resolveCapacities(resourceBudget{CPUs: 1, MemoryBytes: 512 * mebibyte})
 	if cfg.ClientHelloConnectionLimit != 9 || cfg.VisitorConnectionLimit != 7 ||
 		cfg.PublisherConnectionLimit != 6 || cfg.RelayStreamCapacity != 5 || cfg.StandaloneControlConnectionLimit != 4 ||
-		cfg.StandaloneRelayConnectionLimit != 3 || cfg.QUICMaxIncomingStreams != 2 {
+		cfg.StandaloneRelayConnectionLimit != 3 || cfg.PublisherConnectionStreamLimit != 2 {
 		t.Fatalf("explicit overrides changed: %+v", cfg)
 	}
 }
@@ -65,7 +65,7 @@ func TestCPULimitedDefaults(t *testing.T) {
 	limits := func(cpu float64) Config {
 		cfg := Config{Role: RoleIngress, ClientHelloConnectionLimit: -1,
 			VisitorConnectionLimit: -1, PublisherConnectionLimit: -1, RelayStreamCapacity: -1,
-			StandaloneControlConnectionLimit: -1, StandaloneRelayConnectionLimit: -1, QUICMaxIncomingStreams: -1}
+			StandaloneControlConnectionLimit: -1, StandaloneRelayConnectionLimit: -1, PublisherConnectionStreamLimit: -1}
 		cfg.resolveCapacities(resourceBudget{CPUs: cpu, MemoryBytes: 8 << 30})
 		return cfg
 	}
