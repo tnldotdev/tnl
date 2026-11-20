@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestQUICTransportReservesDistinctIPv4Loopback(t *testing.T) {
+func TestQUICTransportReservesDistinctIPv4Wildcard(t *testing.T) {
 	listener, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -13,8 +13,8 @@ func TestQUICTransportReservesDistinctIPv4Loopback(t *testing.T) {
 	defer listener.Close()
 	transport := QUICTransport(t)
 	address, ok := transport.LocalAddr().(*net.UDPAddr)
-	if !ok || !address.IP.Equal(net.IPv4(127, 0, 0, 1)) {
-		t.Fatal("local QUIC fixture must reserve IPv4 loopback, not a wildcard", transport.LocalAddr())
+	if !ok || address.IP.To4() == nil || !address.IP.IsUnspecified() {
+		t.Fatal("QUIC fixture needs an IPv4 wildcard for local and separated peers", transport.LocalAddr())
 	}
 	if address.Port == listener.LocalAddr().(*net.UDPAddr).Port {
 		t.Fatal("fixture reused its peer's reserved UDP port")
