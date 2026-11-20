@@ -2,46 +2,14 @@ package state
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
-
-func TestProjectServiceInventoryMigrationPreservesExistingRows(t *testing.T) {
-	ctx := t.Context()
-	path := filepath.Join(t.TempDir(), "migration.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	source := clientMigrationFixture(t)
-	v1 := fstest.MapFS{"00001_schema.sql": source["00001_schema.sql"]}
-	if err := migrateClientSQLite(ctx, db, v1, 1); err != nil {
-		t.Fatal(err)
-	}
-	const server = "https://control.example.test"
-	const original = "svc_0123456789abcdefghijkl"
-	if _, err := db.ExecContext(ctx, `INSERT INTO server_profiles(origin, created_at, last_used_at) VALUES (?, 1, 1)`, server); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO project_service_inventory VALUES ('/project', ?, ?, 1)`, server, original); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrateClientSQLite(ctx, db, source, schemaVersion); err != nil {
-		t.Fatal(err)
-	}
-	var got string
-	if err := db.QueryRowContext(ctx, `SELECT service_id FROM project_service_inventory WHERE project_root='/project' AND server_origin=?`, server).Scan(&got); err != nil || got != original {
-		t.Fatalf("existing service not preserved: %q, %v", got, err)
-	}
-}
 
 func TestKnownProjectServicesSurviveTunnelStopUntilExpiry(t *testing.T) {
 	db, err := OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), OpenOptions{Protection: ProtectionFile})

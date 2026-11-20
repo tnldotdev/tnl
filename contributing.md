@@ -66,8 +66,9 @@ internal/config            -> configuration schema and SDK types
 Generated file headers name their source. [Generation tasks](tasks/generate.yml)
 list the full pipeline. `pkg/protocol/tunnelv1` is handwritten.
 
-Add new numbered SQL migrations. Existing migrations are frozen, including
-migration 1 in both state packages. Test upgrades with existing data.
+Add numbered SQL migrations and test supported upgrades with existing data.
+Rewriting an initial migration and its pinned hash requires an explicitly
+approved schema reset under [AGENTS.md](AGENTS.md#stability).
 
 `task format-check` is read-only. `task generate-check` regenerates and compares
 with `HEAD`; commit intended generated changes first.

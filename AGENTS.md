@@ -30,29 +30,21 @@ THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
 
 # stability
 
-- Preserve released public APIs and documented behavior, including SDKs, CLI
-  commands, configuration, wire formats, and saved state. Internal refactoring
-  can change implementation details while preserving those contracts.
-- Add replacements alongside existing APIs. Mark deprecations with the first
-  released version and the replacement using the language or contract's normal
-  marker. Before release, use `unreleased`; the release skill replaces it with
-  the actual release version. Keep deprecated behavior working and tested.
-  Deprecation does not schedule removal.
-- Mark experimental features as opt-in before releasing them. Do not relabel a
-  released stable feature as experimental to bypass compatibility.
-- A breaking change, including removal of a deprecated API or upgrade path,
-  requires explicit user approval for that specific break. Explain the impact
-  and migration path first, then record the approval and reason in the PR and
-  release notes. A version bump or a general request to release is not approval.
-- Published migrations are immutable. Both migration-1 files are pinned by
-  `TestMigrationOneIsImmutable` in their state packages. Add numbered migrations;
-  do not rewrite old SQL or update the pinned hashes to make a change pass.
-  Numbered migrations are the schema authority; do not add separate baseline
-  identities or rename client state files to ship a feature.
-- Test schema changes against populated older databases, including skipped
-  releases within the supported upgrade path. Preserve data and credentials;
-  migrate data before retiring storage. Document required upgrade order and
-  recovery steps. Never use a fresh database or state reset as a routine upgrade.
+- Preserve released APIs, documented behavior, data, and credentials by default.
+- The user can explicitly override compatibility and migration preservation.
+  Warn once about the impact, including data loss or required state recreation,
+  then follow their decision. An approved reset may consolidate migrations,
+  rewrite initial schemas and pinned hashes, and remove upgrade paths.
+  Record the approval in the PR and release notes; do not ask again.
+- Otherwise, keep published migrations immutable. Add numbered migrations and
+  test upgrades from populated older databases, including skipped releases.
+  Document required upgrade order and recovery steps. Migration files remain
+  the schema authority.
+- Keep deprecated APIs working and tested until removal is explicitly approved.
+  Name the replacement and first deprecated version using the normal marker;
+  use `unreleased` until the release skill assigns the version.
+- Make experimental features opt-in. Do not relabel released stable features
+  as experimental to bypass compatibility.
 - Load the [release skill](.opencode/skills/release/SKILL.md) when preparing,
   reviewing, tagging, or publishing a release.
 

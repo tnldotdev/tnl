@@ -24,6 +24,7 @@ import (
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
@@ -471,6 +472,11 @@ func (f *Fixture) forward(w http.ResponseWriter, r *http.Request, owner bool) {
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
+		// a canceled proxy request has no independent control response.
+		// returning 502 can race the client's cancellation and invent a failure.
+		if cause := context.Cause(r.Context()); cause != nil && failure.Only(err, cause) {
+			panic(http.ErrAbortHandler)
+		}
 		w.WriteHeader(502)
 		return
 	}

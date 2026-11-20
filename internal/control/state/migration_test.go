@@ -11,9 +11,9 @@ func TestMigrationOneIsImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// frozen migration: add a numbered migration instead of updating this digest.
-	const want = "5b85863076237723b53a4db8e1c30f3f3cd21affc54395f72baf9e3477e37139"
+	// pinned schema after the explicitly approved prerelease reset in #791.
+	const want = "a89a822363b26a4ab695d7daac894ebe6ce07972be17b49decd5164098a7b81f"
 	if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != want {
-		t.Fatalf("migration 1 changed: SHA-256 = %s, want %s; restore it and add a numbered migration instead", got, want)
+		t.Fatalf("migration 1 changed: SHA-256 = %s, want %s; add a numbered migration unless a schema reset is explicitly approved", got, want)
 	}
 }
