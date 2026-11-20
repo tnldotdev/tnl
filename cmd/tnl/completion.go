@@ -52,17 +52,33 @@ func registerProjectCompletions(root *cobra.Command) {
 	deployments := func(cmd *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
 		return completeNames(completionFacts(cmd).Deployments, prefix)
 	}
+	deploymentServices := func(cmd *cobra.Command, args []string, prefix string) ([]string, cobra.ShellCompDirective) {
+		deployment, _ := cmd.Flags().GetString("deployment")
+		key, _ := cmd.Flags().GetString("project-key")
+		if deployment == "" || key != "" {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		return services(cmd, args, prefix)
+	}
+	register := func(cmd *cobra.Command, name string, complete cobra.CompletionFunc) {
+		if _, ok := cmd.GetFlagCompletionFunc(name); ok {
+			return
+		}
+		if err := cmd.RegisterFlagCompletionFunc(name, complete); err != nil {
+			panic(err)
+		}
+	}
 	var visit func(*cobra.Command)
 	visit = func(cmd *cobra.Command) {
-		for name, complete := range map[string]cobra.CompletionFunc{"service": services, "deployment": deployments} {
-			if cmd.Flags().Lookup(name) != nil {
-				if _, ok := cmd.GetFlagCompletionFunc(name); ok {
-					continue
-				}
-				if err := cmd.RegisterFlagCompletionFunc(name, complete); err != nil {
-					panic(err)
-				}
-			}
+		if cmd.Flags().Lookup("deployment") != nil {
+			register(cmd, "deployment", deployments)
+		}
+		// a flag named --service can select a project name or an exact saved ID.
+		switch selectedPath(cmd) {
+		case "wait", "inspect list", "share create", "audit list":
+			register(cmd, "service", services)
+		case "publisher setup", "publisher provision":
+			register(cmd, "service", deploymentServices)
 		}
 		switch cmd.CommandPath() {
 		case "tnl connect", "tnl connect start":
