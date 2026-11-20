@@ -23,6 +23,12 @@ func TestIndependentAdmissionLimits(t *testing.T) {
 			}
 			for _, value := range []int{-2, 0, 7} {
 				cfg, err := Parse(append(append([]string{}, base...), "--"+test.flag+"="+strconv.Itoa(value)))
+				if test.flag != "client-hello-connection-limit" {
+					if err == nil {
+						t.Fatal("accepted standalone-only setting on ingress")
+					}
+					continue
+				}
 				if value <= 0 && err == nil || value > 0 && (err != nil || test.value(cfg) != value) {
 					t.Fatalf("input=%d parsed=%d error=%v", value, test.value(cfg), err)
 				}
@@ -50,6 +56,12 @@ func TestAutomaticAndExplicitConnectionCapacities(t *testing.T) {
 			}
 			for _, value := range []int{-2, 0, 7} {
 				cfg, err := Parse(append(append([]string{}, base...), "--"+test.flag+"="+strconv.Itoa(value)))
+				if test.flag != "visitor-connection-limit" {
+					if err == nil {
+						t.Fatal("accepted relay-only setting on ingress")
+					}
+					continue
+				}
 				if value <= 0 && err == nil || value > 0 && (err != nil || test.value(cfg) != int64(value)) {
 					t.Fatalf("input=%d parsed=%d error=%v", value, test.value(cfg), err)
 				}
@@ -57,11 +69,13 @@ func TestAutomaticAndExplicitConnectionCapacities(t *testing.T) {
 		})
 	}
 	t.Setenv("TNLD_PUBLISHER_CONNECTION_LIMIT", "91")
-	fromEnvironment, err := Parse(base)
+	relay := []string{"--role=relay", "--control-hostname=control.example.test", "--cluster-secret=" + testClusterSecret,
+		"--relay-service-id=relay-a", "--relay-id=relay-a-1", "--relay-address=relay.example.test:443", "--internal-relay-address=relay.internal:9445"}
+	fromEnvironment, err := Parse(relay)
 	if err != nil || fromEnvironment.PublisherConnectionLimit != 91 {
 		t.Fatalf("environment override = %d, err = %v", fromEnvironment.PublisherConnectionLimit, err)
 	}
-	fromFlag, err := Parse(append(append([]string{}, base...), "--publisher-connection-limit=17"))
+	fromFlag, err := Parse(append(append([]string{}, relay...), "--publisher-connection-limit=17"))
 	if err != nil || fromFlag.PublisherConnectionLimit != 17 {
 		t.Fatalf("flag override = %d, err = %v", fromFlag.PublisherConnectionLimit, err)
 	}

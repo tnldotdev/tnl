@@ -13,7 +13,7 @@ import (
 
 func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {
 	ports, ok := tnldSchema().Properties.Get("service_port_ranges")
-	if !ok || ports.MinItems != nil || ports.MaxItems != nil || !reflect.DeepEqual(ports.Default, []string{"20000-20015"}) {
+	if !ok || ports.MinItems != nil || ports.MaxItems != nil || ports.Default != nil {
 		t.Fatal("inventory metadata", ports)
 	}
 	for _, protocol := range []string{"postgres", "mysql", "kubernetes"} {

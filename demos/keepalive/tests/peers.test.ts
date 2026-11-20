@@ -88,6 +88,19 @@ it("bounds membership and reclaims expired records before admitting new hosts", 
   expect(view.size).toBe(1);
 });
 
+it("keeps a thousand-host roster while sending only bounded peer samples", () => {
+  const view = new Gossip(release, report(1), now);
+  fill(view, 999);
+  expect(view.hosts(now)).toHaveLength(999);
+  for (let i = 0; i < 100; i++) {
+    const batch = view.message(now + i);
+    expect(batch.changes.length).toBeLessThanOrEqual(MAX_CHANGES);
+    expect(new TextEncoder().encode(JSON.stringify(batch)).byteLength).toBeLessThanOrEqual(
+      MAX_MESSAGE_BYTES,
+    );
+  }
+});
+
 it("uses an indirect probe and recovers a suspended host without losing other hosts", async () => {
   const view = new Gossip(release, report(1), now);
   const remote = new Gossip(release, report(2), now);

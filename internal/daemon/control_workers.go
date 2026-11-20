@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/maintenance"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
@@ -64,7 +65,10 @@ func (d *daemon) startControlWorkers(
 	if err != nil {
 		return err
 	}
-	if err = database.ConfigureIngressServicePorts(ctx, controlstate.PrimaryIngressPoolID, ports.Ranges()); err != nil {
+	if err = database.EnsureIngressServicePorts(ctx, controlstate.PrimaryIngressPoolID, ports.Ranges()); err != nil {
+		if errors.Is(err, controlstate.ErrServicePortInventoryMismatch) {
+			return failure.Wrap("verify ingress pool (apply intentional changes with tnld ingress-pool apply)", failure.ServerConfigInvalid, err)
+		}
 		return fmt.Errorf("configure service port inventory: %w", err)
 	}
 	database.Instrument(metrics)

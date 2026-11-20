@@ -200,7 +200,11 @@ func (c *Controller) runOnce(ctx context.Context) error {
 			return err
 		}
 	}
-	ticker := time.NewTicker(c.renewalInterval)
+	delay := func() time.Duration {
+		lease := c.Lease()
+		return controloutage.RenewalDelay(c.renewalInterval, lease.RenewedAt, lease.LeaseExpiresAt)
+	}
+	ticker := time.NewTimer(delay())
 	defer ticker.Stop()
 	for {
 		select {
@@ -216,6 +220,7 @@ func (c *Controller) runOnce(ctx context.Context) error {
 				return err
 			}
 		}
+		ticker.Reset(delay())
 	}
 }
 

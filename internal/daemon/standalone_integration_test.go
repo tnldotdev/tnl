@@ -51,7 +51,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		VisitorConnectionLimit: 100, PublisherConnectionLimit: 10,
 		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
-		RelayStreamCapacity: 100, QUICMaxIncomingStreams: 100, QUICIdleTimeout: time.Minute,
+		RelayStreamCapacity: 100, PublisherConnectionStreamLimit: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 3 * time.Second,
 		RelayLeaseDuration:   3 * time.Second, LeaseRenewalInterval: time.Second,
 		ControlOutageTolerance: controloutage.DefaultTolerance,

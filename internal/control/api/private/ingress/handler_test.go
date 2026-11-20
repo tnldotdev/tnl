@@ -21,6 +21,33 @@ import (
 
 const testIngressClusterSecret = "test-ingress-cluster-secret-0123456789"
 
+func (s *ingressStoreStub) ReadIngressServicePorts(context.Context, string) ([]tcpport.Range, error) {
+	return []tcpport.Range{{First: 20000, Last: 20015}}, nil
+}
+
+func TestPoolPortsRequireClusterAuthenticationAndReturnRanges(t *testing.T) {
+	h := testIngressHandler(t, &ingressStoreStub{}, time.Now(), nil)
+	for _, authenticated := range []bool{false, true} {
+		request := httptest.NewRequest(http.MethodGet, "/internal/v1/ingress-pools/ingress-a/ports", nil)
+		if authenticated {
+			request = authenticatedIngressRequest(http.MethodGet, request.URL.Path, nil)
+		}
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		if !authenticated {
+			if response.Code != http.StatusUnauthorized {
+				t.Fatal("inventory bypassed cluster authentication", response.Code)
+			}
+			continue
+		}
+		var ranges []ingressv1.ServicePortRange
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &ranges) != nil ||
+			len(ranges) != 1 || ranges[0].First != 20000 || ranges[0].Last != 20015 {
+			t.Fatal("inventory response", response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestHandlerRequiresClusterSecret(t *testing.T) {
 	h := testIngressHandler(t, &ingressStoreStub{}, time.Now(), nil)
 	tests := []struct {

@@ -322,7 +322,14 @@ func publisherResponseHeaders(destination http.Header, source js.Value) error {
 		}
 		name := args[1].String()
 		switch strings.ToLower(name) {
-		case "connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "trailer", "set-cookie":
+		case "connection":
+			// only the close instruction crosses the Fetch boundary. Go uses it
+			// for HTTP/1 close or HTTP/2 GOAWAY; other hop headers stay filtered.
+			if strings.EqualFold(strings.TrimSpace(args[0].String()), "close") {
+				add("Connection", "close")
+			}
+			return nil
+		case "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "trailer", "set-cookie":
 			return nil
 		}
 		add(name, args[0].String())

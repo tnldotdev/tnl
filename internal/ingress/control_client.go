@@ -3,10 +3,53 @@ package ingress
 import (
 	"context"
 	"errors"
+	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
+
+func (c *HTTPControlClient) ReadIngressPoolPorts(ctx context.Context, pool string, retry time.Duration) (tcpport.Inventory, error) {
+	if retry <= 0 {
+		return tcpport.Inventory{}, errors.New("ingress pool retry interval must be positive")
+	}
+	for {
+		inventory, err := c.readIngressPoolPorts(ctx, pool)
+		if err == nil || errors.Is(err, tcpport.ErrInventory) {
+			return inventory, err
+		}
+		err = ingressControlError("read ingress pool ports", err)
+		if !isRetryableIngressControlError(err) {
+			return tcpport.Inventory{}, err
+		}
+		timer := time.NewTimer(retry)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return tcpport.Inventory{}, context.Cause(ctx)
+		case <-timer.C:
+		}
+	}
+}
+
+func (c *HTTPControlClient) readIngressPoolPorts(ctx context.Context, pool string) (tcpport.Inventory, error) {
+	response, err := c.client.GetIngressPoolPortsWithResponse(ctx, pool)
+	if err != nil {
+		return tcpport.Inventory{}, err
+	}
+	if response == nil {
+		return tcpport.Inventory{}, ingressHTTPProblem(0, nil)
+	}
+	if response.JSON200 == nil {
+		return tcpport.Inventory{}, ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
+	}
+	ranges := make([]tcpport.Range, len(*response.JSON200))
+	for i, value := range *response.JSON200 {
+		ranges[i] = tcpport.Range{First: value.First, Last: value.Last}
+	}
+	return tcpport.NewInventory(ranges)
+}
 
 // HTTPControlClient adapts the generated private API client to ingress control operations.
 type HTTPControlClient struct {

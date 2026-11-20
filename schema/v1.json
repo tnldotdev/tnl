@@ -2949,6 +2949,14 @@
           "description": "Process role: ${enum}.",
           "default": "standalone"
         },
+        "fly_machine_identity": {
+          "type": "boolean",
+          "description": "Derive ingress or relay process identity and exact private forwarding address from Fly Machine metadata."
+        },
+        "relay_id_prefix": {
+          "type": "string",
+          "description": "Relay process identity prefix used with --fly-machine-identity."
+        },
         "database_url": {
           "type": "string",
           "description": "Pooled PostgreSQL URL used by control and standalone."
@@ -3182,14 +3190,14 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Stable ingress IPv4 address published for public service endpoints; repeat for each address."
+          "description": "One stable public IPv4 address for the primary ingress pool."
         },
         "ingress_ipv6_address": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "Stable ingress IPv6 address published for public service endpoints; repeat for each address."
+          "description": "One stable public IPv6 address for the primary ingress pool."
         },
         "cluster_secret": {
           "type": "string",
@@ -3402,8 +3410,7 @@
             "minLength": 1
           },
           "type": "array",
-          "description": "Non-overlapping managed TCP ports or ranges from 1024 to 65535. Direct ingress binds every port; proxied ingress requires destination metadata.",
-          "default": ["20000-20015"]
+          "description": "Primary pool allocation ranges on control (default: 20000-20015). Ingress learns them from control; an explicit ingress value asserts equality."
         },
         "relay_service_id": {
           "type": "string",
@@ -3464,7 +3471,12 @@
         },
         "quic_max_incoming_streams": {
           "type": "integer",
-          "description": "Maximum incoming QUIC streams per publisher connection (default: relay stream capacity).",
+          "description": "Deprecated: use --publisher-connection-stream-limit (applies to QUIC and WSS).",
+          "default": -1
+        },
+        "publisher_connection_stream_limit": {
+          "type": "integer",
+          "description": "Maximum incoming streams per publisher connection, for both QUIC and WSS (default: relay stream capacity, up to 4096).",
           "default": -1
         },
         "quic_idle_timeout": {

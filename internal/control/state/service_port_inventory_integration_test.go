@@ -102,3 +102,35 @@ func TestIntegrationServicePortInventory(t *testing.T) {
 		t.Fatal("inventory freshness or disappeared pool incorrect", w.Body.String())
 	}
 }
+
+func TestIntegrationIngressPortPolicyStartupDoesNotReplaceSavedInventory(t *testing.T) {
+	d, _ := newControlStateIntegrationDatabase(t, "port_policy")
+	ctx := t.Context()
+	if _, err := d.ReadIngressServicePorts(ctx, PrimaryIngressPoolID); !errors.Is(err, ErrIngressPoolUnavailable) {
+		t.Fatal("ingress read uninitialized defaults as saved policy", err)
+	}
+	if _, err := d.ReadIngressServicePorts(ctx, "missing"); !errors.Is(err, ErrIngressPoolInvalid) {
+		t.Fatal("unknown ingress pool looked like HTTPS-only policy", err)
+	}
+	first := []tcpport.Range{{First: 25000, Last: 25010}}
+	second := []tcpport.Range{{First: 30000, Last: 30010}}
+	if err := d.EnsureIngressServicePorts(ctx, PrimaryIngressPoolID, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.EnsureIngressServicePorts(ctx, PrimaryIngressPoolID, first); err != nil {
+		t.Fatal("identical replica startup failed", err)
+	}
+	if err := d.EnsureIngressServicePorts(ctx, PrimaryIngressPoolID, second); !errors.Is(err, ErrServicePortInventoryMismatch) {
+		t.Fatal("replica startup replaced shared policy", err)
+	}
+	saved, err := d.ReadIngressServicePorts(ctx, PrimaryIngressPoolID)
+	if err != nil || len(saved) != 1 || saved[0] != first[0] {
+		t.Fatal("rejected startup changed inventory", saved, err)
+	}
+	if err := d.ConfigureIngressServicePorts(ctx, PrimaryIngressPoolID, second); err != nil {
+		t.Fatal("explicit pool apply failed", err)
+	}
+	if err := d.EnsureIngressServicePorts(ctx, PrimaryIngressPoolID, first); !errors.Is(err, ErrServicePortInventoryMismatch) {
+		t.Fatal("old replica configuration undid an explicit change", err)
+	}
+}

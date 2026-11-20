@@ -29,6 +29,7 @@ CREATE UNIQUE INDEX identities_oidc_subject
 -- select the ingress pool before creating a team; saved URLs pin its choice.
 CREATE TABLE control.ingress_pools (
     id text PRIMARY KEY CHECK (id <> ''),
+    ports_configured boolean NOT NULL DEFAULT false,
     ipv4_address inet CHECK (family(ipv4_address) = 4),
     ipv6_address inet CHECK (family(ipv6_address) = 6),
     state text NOT NULL CHECK (state IN ('disabled', 'enabled', 'draining')),

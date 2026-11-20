@@ -13,6 +13,7 @@ import (
 )
 
 type Store interface {
+	portInventoryStore
 	publicServiceStore
 	serviceAuditStore
 	RegisterIngress(context.Context, controlstate.IngressRegistration, time.Time, time.Duration) (controlstate.IngressLease, error)
@@ -149,6 +150,10 @@ func (h *handler) writeServiceError(response http.ResponseWriter, request *http.
 // API problems, never controlstate error identities.
 func storeProblem(err error, report func(error)) (status int, kind, detail string) {
 	switch {
+	case errors.Is(err, controlstate.ErrIngressPoolInvalid):
+		return http.StatusNotFound, "not_found", "Ingress pool does not exist"
+	case errors.Is(err, controlstate.ErrIngressPoolUnavailable):
+		return http.StatusServiceUnavailable, "internal", "Ingress pool port policy is not initialized"
 	case errors.Is(err, controlstate.ErrIngressAlreadyRunning):
 		return http.StatusConflict, "ingress_already_running", "Another process run holds the ingress lease"
 	case errors.Is(err, controlstate.ErrIngressLeaseStale):

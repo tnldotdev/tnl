@@ -40,7 +40,7 @@ func TestOperatorTrafficDefaultsAndEnvironment(t *testing.T) {
 	t.Setenv("TNLD_TRAFFIC_MAX_UPLOAD_BYTES", "536870912")
 	t.Setenv("TNLD_TRAFFIC_PROCESS_UPLOAD_BYTES", "134217728")
 	t.Setenv("TNLD_PENDING_SERVICE_RATE", "7")
-	c = validCertificateConfig(t, RoleControl)
+	c = validCertificateConfig(t, RoleStandalone)
 	if c.TrafficDefaults().Rate != 40 || c.TrafficDefaults().RatePer != 2*time.Second || c.TrafficCeiling().UploadBytes != 512<<20 || c.IngressTraffic().ProcessUpload != 128<<20 || c.IngressPending().ServiceRate != 7 {
 		t.Fatalf("environment mapping: %+v", c)
 	}
@@ -61,7 +61,7 @@ func TestOperatorTrafficValidation(t *testing.T) {
 		"pending rate":        func(c *Config) { c.PendingSourceRate = -1 },
 	} {
 		t.Run(name, func(t *testing.T) {
-			c := validCertificateConfig(t, RoleControl)
+			c := validCertificateConfig(t, RoleStandalone)
 			change(&c)
 			if err := c.Validate(); err == nil {
 				t.Fatal("accepted unsafe traffic settings")

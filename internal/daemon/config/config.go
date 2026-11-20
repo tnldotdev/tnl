@@ -38,7 +38,9 @@ func (r Role) RunsRelay() bool   { return r == RoleStandalone || r == RoleRelay 
 // Config configures one tnld process. migration configuration is intentionally
 // absent: tnld migrate reads only TNLD_DATABASE_DIRECT_URL.
 type Config struct {
-	Role Role `name:"role" env:"TNLD_ROLE" default:"standalone" enum:"standalone,control,ingress,relay" help:"Process role: ${enum}."`
+	Role               Role   `name:"role" env:"TNLD_ROLE" default:"standalone" enum:"standalone,control,ingress,relay" help:"Process role: ${enum}."`
+	FlyMachineIdentity bool   `name:"fly-machine-identity" env:"TNLD_FLY_MACHINE_IDENTITY" help:"Derive ingress or relay process identity and exact private forwarding address from Fly Machine metadata."`
+	RelayIDPrefix      string `name:"relay-id-prefix" env:"TNLD_RELAY_ID_PREFIX" help:"Relay process identity prefix used with --fly-machine-identity."`
 
 	DatabaseURL   string `name:"database-url" env:"TNLD_DATABASE_URL" help:"Pooled PostgreSQL URL used by control and standalone."`
 	MetricsListen string `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
@@ -96,8 +98,8 @@ type Config struct {
 	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
 	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed domain; enables DNS automation."`
 	Route53ServerZoneID  string   `name:"route53-server-zone-id" env:"TNLD_ROUTE53_SERVER_ZONE_ID" help:"Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."`
-	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"Stable ingress IPv4 address published for public service endpoints; repeat for each address."`
-	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"Stable ingress IPv6 address published for public service endpoints; repeat for each address."`
+	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"One stable public IPv4 address for the primary ingress pool."`
+	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"One stable public IPv6 address for the primary ingress pool."`
 
 	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
@@ -143,27 +145,29 @@ type Config struct {
 	IngressID            string         `name:"ingress-id" env:"TNLD_INGRESS_ID" help:"Stable ingress process identity."`
 	Region               region.ID      `name:"region" env:"TNLD_REGION" default:"local" help:"Provider-qualified region, such as fly:sjc or aws:us-west-2; local makes no geographic claim."`
 	IngressPoolID        ingresspool.ID `name:"ingress-pool-id" env:"TNLD_INGRESS_POOL_ID" default:"ingress-a" help:"Ingress pool served by this ingress process."`
-	ServicePortRanges    []string       `name:"service-port-ranges" env:"TNLD_SERVICE_PORT_RANGES" default:"20000-20015" help:"Non-overlapping managed TCP ports or ranges from 1024 to 65535. Direct ingress binds every port; proxied ingress requires destination metadata."`
+	ServicePortRanges    []string       `name:"service-port-ranges" env:"TNLD_SERVICE_PORT_RANGES" help:"Primary pool allocation ranges on control (default: 20000-20015). Ingress learns them from control; an explicit ingress value asserts equality."`
 	RelayServiceID       string         `name:"relay-service-id" env:"TNLD_RELAY_SERVICE_ID" help:"Stable relay service identity for this relay process."`
 	RelayID              string         `name:"relay-id" env:"TNLD_RELAY_ID" help:"Stable relay process identity."`
 	RelayAddress         string         `name:"relay-address" env:"TNLD_RELAY_ADDRESS" help:"Relay address advertised by this relay service."`
 	InternalRelayAddress string         `name:"internal-relay-address" env:"TNLD_INTERNAL_RELAY_ADDRESS" help:"Internal hostname and port advertised by this relay process."`
 
-	ClientHelloConnectionLimit       int           `name:"client-hello-connection-limit" env:"TNLD_CLIENT_HELLO_CONNECTION_LIMIT" default:"-1" help:"Maximum simultaneous public connection metadata and TLS ClientHello inspections (default: automatic)."`
-	StandaloneControlConnectionLimit int           `name:"standalone-control-connection-limit" env:"TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT" default:"-1" help:"Maximum control connections handed off by standalone, held until close (default: automatic)."`
-	StandaloneRelayConnectionLimit   int           `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"-1" help:"Maximum relay TCP connections handed off by standalone, held until close (default: automatic)."`
-	VisitorConnectionLimit           int64         `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"-1" help:"Maximum concurrent visitor connections (default: automatic)."`
-	PublisherConnectionLimit         int64         `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"-1" help:"Maximum publisher connections held by one relay process (default: automatic)."`
-	RelayStreamCapacity              int64         `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"-1" help:"Maximum concurrent visitor streams held by one relay process (default: automatic)."`
-	RequireProxyHeader               bool          `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on ingress TCP traffic."`
-	IngressTrustedProxies            []string      `name:"ingress-trusted-proxies" env:"TNLD_INGRESS_TRUSTED_PROXIES" help:"Exact trusted peers supplying ingress PROXY v2 source and destination metadata."`
-	QUICMaxIncomingStreams           int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"-1" help:"Maximum incoming QUIC streams per publisher connection (default: relay stream capacity)."`
-	QUICIdleTimeout                  time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
-	IngressLeaseDuration             time.Duration `name:"ingress-lease-duration" env:"TNLD_INGRESS_LEASE_DURATION" default:"30s" help:"Control-owned ingress lease duration."`
-	RelayLeaseDuration               time.Duration `name:"relay-lease-duration" env:"TNLD_RELAY_LEASE_DURATION" default:"30s" help:"Control-owned relay lease duration."`
-	LeaseRenewalInterval             time.Duration `name:"lease-renewal-interval" env:"TNLD_LEASE_RENEWAL_INTERVAL" default:"10s" help:"Ingress and relay lease renewal interval."`
-	ControlRetryInterval             time.Duration `name:"control-retry-interval" env:"TNLD_CONTROL_RETRY_INTERVAL" default:"1s" help:"Delay before retrying a transient control failure."`
-	DrainTimeout                     time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful connection drain deadline."`
+	ClientHelloConnectionLimit       int      `name:"client-hello-connection-limit" env:"TNLD_CLIENT_HELLO_CONNECTION_LIMIT" default:"-1" help:"Maximum simultaneous public connection metadata and TLS ClientHello inspections (default: automatic)."`
+	StandaloneControlConnectionLimit int      `name:"standalone-control-connection-limit" env:"TNLD_STANDALONE_CONTROL_CONNECTION_LIMIT" default:"-1" help:"Maximum control connections handed off by standalone, held until close (default: automatic)."`
+	StandaloneRelayConnectionLimit   int      `name:"standalone-relay-connection-limit" env:"TNLD_STANDALONE_RELAY_CONNECTION_LIMIT" default:"-1" help:"Maximum relay TCP connections handed off by standalone, held until close (default: automatic)."`
+	VisitorConnectionLimit           int64    `name:"visitor-connection-limit" env:"TNLD_VISITOR_CONNECTION_LIMIT" default:"-1" help:"Maximum concurrent visitor connections (default: automatic)."`
+	PublisherConnectionLimit         int64    `name:"publisher-connection-limit" env:"TNLD_PUBLISHER_CONNECTION_LIMIT" default:"-1" help:"Maximum publisher connections held by one relay process (default: automatic)."`
+	RelayStreamCapacity              int64    `name:"relay-stream-capacity" env:"TNLD_RELAY_STREAM_CAPACITY" default:"-1" help:"Maximum concurrent visitor streams held by one relay process (default: automatic)."`
+	RequireProxyHeader               bool     `name:"require-proxy-header" env:"TNLD_REQUIRE_PROXY_HEADER" help:"Require one trusted outer PROXY v2 header on ingress TCP traffic."`
+	IngressTrustedProxies            []string `name:"ingress-trusted-proxies" env:"TNLD_INGRESS_TRUSTED_PROXIES" help:"Exact trusted peers supplying ingress PROXY v2 source and destination metadata."`
+	// Deprecated: use PublisherConnectionStreamLimit; first deprecated in unreleased.
+	QUICMaxIncomingStreams         int64         `name:"quic-max-incoming-streams" env:"TNLD_QUIC_MAX_INCOMING_STREAMS" default:"-1" help:"Deprecated: use --publisher-connection-stream-limit (applies to QUIC and WSS)."`
+	PublisherConnectionStreamLimit int64         `name:"publisher-connection-stream-limit" env:"TNLD_PUBLISHER_CONNECTION_STREAM_LIMIT" default:"-1" help:"Maximum incoming streams per publisher connection, for both QUIC and WSS (default: relay stream capacity, up to 4096)."`
+	QUICIdleTimeout                time.Duration `name:"quic-idle-timeout" env:"TNLD_QUIC_IDLE_TIMEOUT" default:"45s" help:"Publisher connection QUIC idle timeout."`
+	IngressLeaseDuration           time.Duration `name:"ingress-lease-duration" env:"TNLD_INGRESS_LEASE_DURATION" default:"30s" help:"Control-owned ingress lease duration."`
+	RelayLeaseDuration             time.Duration `name:"relay-lease-duration" env:"TNLD_RELAY_LEASE_DURATION" default:"30s" help:"Control-owned relay lease duration."`
+	LeaseRenewalInterval           time.Duration `name:"lease-renewal-interval" env:"TNLD_LEASE_RENEWAL_INTERVAL" default:"10s" help:"Ingress and relay lease renewal interval."`
+	ControlRetryInterval           time.Duration `name:"control-retry-interval" env:"TNLD_CONTROL_RETRY_INTERVAL" default:"1s" help:"Delay before retrying a transient control failure."`
+	DrainTimeout                   time.Duration `name:"drain-timeout" env:"TNLD_DRAIN_TIMEOUT" default:"30s" help:"Graceful connection drain deadline."`
 }
 
 func (c Config) Validate() (retErr error) {
@@ -184,8 +188,10 @@ func (c Config) Validate() (retErr error) {
 		return failure.WrapSetting("validate relay QUIC profile", failure.ServerConfigInvalid,
 			failure.SettingRelayQUICProfile, errors.New("relay QUIC profile must be standard or fly"))
 	}
-	if _, err := c.ServicePortInventory(); err != nil {
-		return err
+	if c.Role.RunsControl() || c.Role.RunsIngress() {
+		if _, err := c.ServicePortInventory(); err != nil {
+			return err
+		}
 	}
 	if c.RequireProxyHeader {
 		if !c.Role.RunsIngress() {
@@ -195,11 +201,15 @@ func (c Config) Validate() (retErr error) {
 			return err
 		}
 	}
-	if err := trafficlimits.ValidateDefaults(c.TrafficDefaults(), c.TrafficCeiling()); err != nil {
-		return err
+	if c.Role.RunsControl() {
+		if err := trafficlimits.ValidateDefaults(c.TrafficDefaults(), c.TrafficCeiling()); err != nil {
+			return err
+		}
 	}
-	if _, _, err := ValidateIngressTraffic(c.IngressTraffic(), c.IngressPending()); err != nil {
-		return err
+	if c.Role.RunsIngress() {
+		if _, _, err := ValidateIngressTraffic(c.IngressTraffic(), c.IngressPending()); err != nil {
+			return err
+		}
 	}
 	if c.Role.RunsControl() {
 		if c.ControlOutageTolerance <= 0 {
@@ -285,21 +295,20 @@ func (c Config) Validate() (retErr error) {
 	if err := c.validateRelayQUICListen(); err != nil {
 		return err
 	}
-	if c.ClientHelloConnectionLimit <= 0 ||
-		c.StandaloneControlConnectionLimit <= 0 || c.StandaloneRelayConnectionLimit <= 0 {
+	if c.Role.RunsIngress() && c.ClientHelloConnectionLimit <= 0 ||
+		c.Role == RoleStandalone && (c.StandaloneControlConnectionLimit <= 0 || c.StandaloneRelayConnectionLimit <= 0) {
 		return errors.New("ingress admission capacities must be positive")
 	}
-	if c.ServiceCertificateWorkers < 1 || c.ServiceCertificateWorkers > 8 {
+	if c.Role.RunsControl() && (c.ServiceCertificateWorkers < 1 || c.ServiceCertificateWorkers > 8) {
 		return errors.New("service certificate workers must be between 1 and 8")
 	}
-	if c.VisitorConnectionLimit <= 0 || c.PublisherConnectionLimit <= 0 ||
-		c.RelayStreamCapacity <= 0 || c.QUICMaxIncomingStreams <= 0 {
+	if c.Role.RunsIngress() && c.VisitorConnectionLimit <= 0 ||
+		c.Role.RunsRelay() && (c.PublisherConnectionLimit <= 0 || c.RelayStreamCapacity <= 0 || c.PublisherStreamLimit() <= 0) {
 		return errors.New("connection and stream capacities must be positive")
 	}
-	if c.IngressLeaseDuration <= 0 || c.RelayLeaseDuration <= 0 || c.LeaseRenewalInterval <= 0 ||
-		c.LeaseRenewalInterval >= c.IngressLeaseDuration || c.LeaseRenewalInterval >= c.RelayLeaseDuration ||
-		c.ControlRetryInterval <= 0 || c.DrainTimeout <= 0 ||
-		c.QUICIdleTimeout <= 0 {
+	if c.Role.RunsControl() && (c.IngressLeaseDuration <= 0 || c.RelayLeaseDuration <= 0) ||
+		(c.Role.RunsIngress() || c.Role.RunsRelay()) && (c.LeaseRenewalInterval <= 0 || c.ControlRetryInterval <= 0) ||
+		c.DrainTimeout <= 0 || c.Role.RunsRelay() && c.QUICIdleTimeout <= 0 {
 		return errors.New("lease, transport, or drain timing is invalid")
 	}
 	return nil

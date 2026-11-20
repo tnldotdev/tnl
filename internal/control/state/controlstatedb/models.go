@@ -561,12 +561,13 @@ type ControlIngressLease struct {
 }
 
 type ControlIngressPool struct {
-	ID          string
-	Ipv4Address *netip.Addr
-	Ipv6Address *netip.Addr
-	State       string
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	ID              string
+	PortsConfigured bool
+	Ipv4Address     *netip.Addr
+	Ipv6Address     *netip.Addr
+	State           string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type ControlIngressRunFence struct {

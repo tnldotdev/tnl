@@ -37,6 +37,16 @@ mise exec -- task go:test:focused PACKAGES=./internal/publisher/target RUN=Test
 For a race-sensitive test, add `FLAGS='-race -shuffle=on' COUNT=10`.
 Keep tests beside the code they check.
 
+Inspect server configuration without starting it:
+
+```sh
+mise exec -- go run ./cmd/tnld config show --config path/to/tnl.yml
+```
+
+The JSON shows resolved values and their source, with credentials redacted.
+Explicit settings for another server role are rejected. Split ingress reads its
+port inventory from control; it does not need a second copy of those ranges.
+
 Find other checks with `mise exec -- task --list-all`. Integration tasks create
 and clean up their own services; they need Docker. Some CLI suites require Linux.
 Browser tests need Chrome. Hosted Worker tests also need a Wrangler login:

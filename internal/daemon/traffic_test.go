@@ -5,6 +5,7 @@ import (
 	"time"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
 func TestTrafficRuntimePlumbing(t *testing.T) {
@@ -14,7 +15,7 @@ func TestTrafficRuntimePlumbing(t *testing.T) {
 		TrafficSourceConnections: 12, TrafficProcessRate: 123, PendingConnectionLimit: 50, PendingServiceConnectionLimit: 7,
 		PendingTimeout: 8 * time.Second, PendingUploadBytes: 32 << 10}
 	s := ingressSettingsFrom(c)
-	if s.traffic.Default != c.TrafficDefaults() || s.traffic.Ceiling != c.TrafficCeiling() || s.traffic.SourceConnections != 12 || s.traffic.ProcessRate != 123 || s.pending.Connections != 50 || s.pending.ServiceConnections != 7 || s.pending.Timeout != 8*time.Second || s.pending.UploadBytes != 32<<10 {
+	if s.traffic.Default != trafficlimits.Default() || s.traffic.Ceiling != trafficlimits.Ceiling() || s.traffic.SourceConnections != 12 || s.traffic.ProcessRate != 123 || s.pending.Connections != 50 || s.pending.ServiceConnections != 7 || s.pending.Timeout != 8*time.Second || s.pending.UploadBytes != 32<<10 {
 		t.Fatal("ingress settings lost configured traffic budgets")
 	}
 	api := controlAPIConfigFrom(c, nil)

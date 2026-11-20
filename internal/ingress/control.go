@@ -201,7 +201,11 @@ func (c *Controller) register(ctx context.Context) (retErr error) {
 }
 
 func (c *Controller) renewLoop(ctx context.Context) error {
-	periodic := time.NewTimer(c.renewalInterval)
+	delay := func() time.Duration {
+		lease := c.Lease()
+		return controloutage.RenewalDelay(c.renewalInterval, lease.RenewedAt, lease.LeaseExpiresAt)
+	}
+	periodic := time.NewTimer(delay())
 	defer periodic.Stop()
 	for {
 		select {
@@ -230,7 +234,7 @@ func (c *Controller) renewLoop(ctx context.Context) error {
 		if err := c.confirmLease(requestStarted, lease); err != nil {
 			return err
 		}
-		periodic.Reset(c.renewalInterval)
+		periodic.Reset(delay())
 	}
 }
 

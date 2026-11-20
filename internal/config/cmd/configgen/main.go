@@ -445,7 +445,6 @@ func tnldSchema() *jsonschema.Schema {
 		}
 		if name == "service_port_ranges" {
 			fieldSchema.Items.MinLength = integerPointer(1)
-			fieldSchema.Default = strings.Split(field.Tag.Get("default"), ",")
 		}
 		properties.Set(name, fieldSchema)
 	}

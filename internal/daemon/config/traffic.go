@@ -29,7 +29,8 @@ func (c Config) TrafficCeiling() trafficlimits.Limits {
 }
 
 func (c Config) IngressTraffic() trafficlimits.IngressConfig {
-	return trafficlimits.IngressConfig{Default: c.TrafficDefaults(), Ceiling: c.TrafficCeiling(),
+	// per-run approvals come from control; ingress owns only machine budgets.
+	return trafficlimits.IngressConfig{Default: trafficlimits.Default(), Ceiling: trafficlimits.Ceiling(),
 		SourceConnections: c.TrafficSourceConnections, SourceRate: c.TrafficSourceRate, SourceBurst: c.TrafficSourceBurst,
 		ProcessRate: c.TrafficProcessRate, ProcessBurst: c.TrafficProcessBurst,
 		ProcessUpload: c.TrafficProcessUploadBytes, ProcessDownload: c.TrafficProcessDownloadBytes}

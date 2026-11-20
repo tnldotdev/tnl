@@ -110,7 +110,7 @@ func TestPublicServiceSelectionDoesNotSearchOnNonRunRejection(t *testing.T) {
 					}
 					defer release()
 				case "invalid traffic":
-					control.runs[0].Traffic.Connections = server.config.Traffic.Ceiling.Connections + 1
+					control.runs[0].Traffic.Connections = 0
 				case "changed traffic":
 					limits := server.config.Traffic.Default
 					limits.Connections--
@@ -119,6 +119,19 @@ func TestPublicServiceSelectionDoesNotSearchOnNonRunRejection(t *testing.T) {
 					source.connections = 1
 				case "expired lease":
 				}
+				if mode == "invalid traffic" {
+					lease := server.config.CurrentLease()
+					snapshot, err := server.config.Control.ReadIngressServices(t.Context(), lease.IngressId, ingressv1.IngressLeaseIdentity{
+						IngressId: lease.IngressId, IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := server.services.apply(time.Now(), lease, snapshot); err == nil || len(control.claims) != 0 || len(forwarder.observed) != 0 {
+						t.Fatal("invalid control projection was accepted", err)
+					}
+					return
+				}
 				applyServiceRoutingFixture(t, server)
 				if err := rejectServiceSelection(t, t.Context(), server); err == nil || len(control.claims) != 0 || len(forwarder.observed) != 0 ||
 					server.Load() != 0 || len(control.live) != 0 {
@@ -126,6 +139,18 @@ func TestPublicServiceSelectionDoesNotSearchOnNonRunRejection(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func TestControlApprovedTrafficDoesNotNeedAnIngressPolicyCopy(t *testing.T) {
+	config, _, _ := serviceSelectionConfig(t, 1, true)
+	server := serviceSelectionServer(t, config)
+	approved := trafficlimits.Ceiling()
+	approved.Connections++
+	admission := server.newServiceAdmission()
+	defer admission.close()
+	if reason := admission.selectRun(trafficKey{service: "approved", id: "run", run: 1}, approved, netip.MustParseAddr("192.0.2.4"), true); reason != "" {
+		t.Fatal("ingress rejected control policy against its own copy", reason)
 	}
 }
 

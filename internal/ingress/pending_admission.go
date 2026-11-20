@@ -72,7 +72,7 @@ func (v *visitorAdmission) selectRun(key trafficKey, limits TrafficLimits, sourc
 	if v.state != pendingCapacity || v.key.service != "" {
 		return "service_already_selected"
 	}
-	if !limits.Within(v.server.config.Traffic.Ceiling) {
+	if !limits.Valid() {
 		return "invalid_traffic_projection"
 	}
 	if !v.deadline.After(time.Now()) {

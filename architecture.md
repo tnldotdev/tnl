@@ -86,6 +86,11 @@ transaction that changes state. Ingress and relays use control-issued permission
 and leases. `standalone` runs control, ingress, and two logical relay services in
 one `tnld` process, still backed by PostgreSQL.
 
+Control stores each ingress pool's allocation inventory. Split ingress reads it
+before binding listeners, then reports its live HTTPS and port capabilities.
+Startup verifies saved pool policy; explicit pool operations change it. Per-run
+traffic policy belongs to control, while ingress and relays own process budgets.
+
 Client state uses SQLite and private files for sessions, keys, certificates,
 project records, feedback, and locks. Feedback content stays with the local
 publisher; control checks access and authorship. A cached credential is not

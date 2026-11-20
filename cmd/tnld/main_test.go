@@ -24,6 +24,52 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
+func TestConfigShowUsesFileAndRedactsCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay.yml")
+	if err := os.WriteFile(path, []byte(`version: 1
+tnld:
+  role: relay
+  control_hostname: control.example.com
+  cluster_secret: 0123456789abcdef0123456789abcdef
+  relay_service_id: relay-a
+  relay_id: relay-a-1
+  relay_address: relay.example.com:443
+  internal_relay_address: relay.internal:9445
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := run(t.Context(), []string{"config", "show", "--config", path}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "0123456789abcdef") || !strings.Contains(output.String(), "[redacted]") || !strings.Contains(output.String(), `"source": "file"`) {
+		t.Fatal("unsafe or unexplained inspection", output.String())
+	}
+}
+
+func TestHelpShowsOnlyTheSelectedRolesSettings(t *testing.T) {
+	var flags tnldCLI
+	var output bytes.Buffer
+	parser, err := newTNLDParser(&flags, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parser.Exit = func(int) {}
+	if _, err := parser.Parse([]string{"serve", "--role=ingress", "--help"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, flag := range []string{"--ingress-id", "--control-hostname", "--visitor-connection-limit"} {
+		if !strings.Contains(output.String(), flag) {
+			t.Fatal("help omitted an ingress setting", flag)
+		}
+	}
+	for _, flag := range []string{"--database-url", "--relay-stream-capacity", "--traffic-default-connections", "--standalone-control-connection-limit"} {
+		if strings.Contains(output.String(), flag) {
+			t.Fatal("help included an unused setting", flag)
+		}
+	}
+}
+
 func TestWriteTerminalErrorRendersJoinedErrorsOnOneSafeLine(t *testing.T) {
 	var output bytes.Buffer
 	writeTerminalError(&output, errors.Join(errors.New("first"), errors.New("second\x1b")))
@@ -137,7 +183,7 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 		ControlHostname: "control.example.com", ClusterSecret: "0123456789abcdef0123456789abcdef",
 		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
-		VisitorConnectionLimit: 1, PublisherConnectionLimit: 1, QUICMaxIncomingStreams: 1,
+		VisitorConnectionLimit: 1, PublisherConnectionLimit: 1, PublisherConnectionStreamLimit: 1,
 		ClientHelloConnectionLimit:       1024,
 		StandaloneControlConnectionLimit: 1024, StandaloneRelayConnectionLimit: 4096,
 		QUICIdleTimeout: time.Second, IngressLeaseDuration: 3 * time.Second,

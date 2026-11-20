@@ -16,6 +16,7 @@ import { CONFIG_PATH, hostingConfig } from "../enrollment.ts";
 import { hostUpdate, type HostStart, type HostUpdate } from "./messages.ts";
 import { checkUpload, readInviterCertificate, readPeers, waitForWork } from "../peers/http.ts";
 import { STARTUP_MS } from "../policy.ts";
+import { reserveTurn, updateAdmission, waitForRetry } from "./admission.ts";
 
 export type HostState =
   | { type: "waiting" | "checking" | "starting" | "stopping" }
@@ -45,7 +46,7 @@ async function waitForInvitation(releaseID: string, signal: AbortSignal) {
         }
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await waitForRetry(signal);
   }
 }
 
@@ -136,41 +137,51 @@ export async function hostTab(
     if (!(await checkUpload(firstHostToContact, invitation, preparing))) throw new UploadTooSlow();
   }
   const config = await getHostingConfig(preparing);
-  const [files, inherited] = await Promise.all([
-    copySite(release, source, bootstrap, preparing, update),
-    invitation === undefined || firstHostToContact === undefined
-      ? undefined
-      : readInviterCertificate(firstHostToContact, invitation, preparing).catch(() => undefined),
-  ]);
-  const code = files.get(WORKER_PATH);
-  if (code === undefined) throw new Error("The copy is missing the hosting code.");
-  preparing.throwIfAborted();
-  update({ type: "starting" });
-  const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
-  const worker = new Worker(url, { type: "module", name: "keepalive" });
+  const requestID = crypto.randomUUID();
   try {
-    return await runWorker(
-      worker,
-      {
-        type: "start",
-        release,
-        files,
-        config,
-        inherited,
-        bootstrap,
-        startupEndsAt,
-        name: browserHostName(),
-        firstHostToContact,
-        invitation,
-        pageOrigin: location.origin,
-      },
-      signal,
-      update,
-      activity,
-    );
+    await reserveTurn(location.origin, requestID, bootstrap, preparing);
+    const [files, inherited] = await Promise.all([
+      copySite(release, source, bootstrap, preparing, update),
+      invitation === undefined || firstHostToContact === undefined
+        ? undefined
+        : readInviterCertificate(firstHostToContact, invitation, preparing).catch(() => undefined),
+    ]);
+    const code = files.get(WORKER_PATH);
+    if (code === undefined) throw new Error("The copy is missing the hosting code.");
+    preparing.throwIfAborted();
+    update({ type: "starting" });
+    const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+    const worker = new Worker(url, { type: "module", name: "keepalive" });
+    try {
+      return await runWorker(
+        worker,
+        {
+          type: "start",
+          release,
+          files,
+          config,
+          requestID,
+          inherited,
+          bootstrap,
+          startupEndsAt,
+          name: browserHostName(),
+          firstHostToContact,
+          invitation,
+          pageOrigin: location.origin,
+        },
+        signal,
+        update,
+        activity,
+      );
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
   } finally {
-    worker.terminate();
-    URL.revokeObjectURL(url);
+    // the worker has stopped or preparation never reached publication.
+    await updateAdmission(location.origin, requestID, "stop", AbortSignal.timeout(5_000)).catch(
+      () => {},
+    );
   }
 }
 
