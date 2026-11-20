@@ -191,17 +191,18 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	sign(&request)
 	watchClient, comparing := newConnectorPeerWatchFixture(t, url)
 	subscription := controlv1.PublisherWatchRun{ServiceId: run.ServiceID, ServiceRunId: run.RunID, RunNumber: run.RunNumber, RunToken: run.Token}
-	watchCall := func(subscription controlv1.PublisherWatchRun, want int64) {
+	watchCall := func(subscription controlv1.PublisherWatchRun, want int64) string {
 		t.Helper()
 		call, cancel := context.WithTimeout(t.Context(), 4*time.Second)
 		defer cancel()
 		changes, err := watchClient.WatchPublisherRuns(call, []controlv1.PublisherWatchRun{subscription})
-		expected := []controlv1.PublisherWatchChange{{ServiceRunId: run.RunID, ConnectorRevision: want}}
-		if err != nil || !slices.Equal(changes, expected) {
-			t.Fatalf("publisher watch = %v, %v; want %v", changes, err, expected)
+		if err != nil || len(changes) != 1 || changes[0].ServiceRunId != run.RunID || changes[0].ConnectorRevision != want || want >= 0 && !controlv1.ValidPublisherPolicyBookmark(changes[0].PolicyBookmark) || want < 0 && changes[0].PolicyBookmark != "" {
+			t.Fatalf("publisher watch = %v, %v; want connector revision %d", changes, err, want)
 		}
+		return changes[0].PolicyBookmark
 	}
-	watchCall(subscription, 0)
+	bookmark := watchCall(subscription, 0)
+	subscription.PolicyBookmark = &bookmark
 	subscription.ConnectorRevision = new(int64)
 	wait, cancelWait := context.WithTimeout(t.Context(), 4*time.Second)
 	defer cancelWait()
@@ -225,7 +226,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	for observed := false; !observed; {
 		select {
 		case check := <-comparing:
-			observed = slices.Contains(check.scopes, controlstate.ConnectorPeerWatchVersion{RunID: run.RunID, Revision: 0})
+			observed = slices.Contains(check.scopes, controlstate.ConnectorPeerWatchVersion{RunID: run.RunID, Revision: 0, PolicyBookmark: bookmark})
 			if observed && check.borrowed != 0 {
 				t.Fatalf("quiet watch held %d database connections", check.borrowed)
 			}
@@ -242,7 +243,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 		t.Fatal("missing pair", err)
 	}
 	firstNotice := <-reply
-	if firstNotice.err != nil || !slices.Equal(firstNotice.changes, []controlv1.PublisherWatchChange{{ServiceRunId: run.RunID, ConnectorRevision: 1}}) {
+	if firstNotice.err != nil || !slices.Equal(firstNotice.changes, []controlv1.PublisherWatchChange{{ServiceRunId: run.RunID, ConnectorRevision: 1, PolicyBookmark: bookmark}}) {
 		t.Fatalf("waiting publisher did not see the other control's commit: %v, %v", firstNotice.changes, firstNotice.err)
 	}
 	watchCall(subscription, 1) // the first notice was not acknowledged.
@@ -254,6 +255,20 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close(ctx) })
+	// a policy commit need not touch any connector row. reconnecting with the
+	// unacknowledged bookmark must reproduce that notice on another control.
+	subscription.ConnectorRevision = new(int64(1))
+	if _, err := conn.Exec(ctx, `SELECT control.touch_visitor_policy($1)`, service.ID); err != nil {
+		t.Fatal(err)
+	}
+	changedPolicy := watchCall(subscription, 1)
+	if changedPolicy == bookmark {
+		t.Fatal("policy-only commit was lost")
+	}
+	watchClient, _ = newConnectorPeerWatchFixture(t, url)
+	if watchCall(subscription, 1) != changedPolicy {
+		t.Fatal("a restarted watch did not recover the unacknowledged policy")
+	}
 	var saved []byte
 	if err := conn.QueryRow(ctx, `SELECT delivery_id FROM control.connector_peer_pairs WHERE id=$1`, pair.PairId).Scan(&saved); err != nil {
 		t.Fatal(err)

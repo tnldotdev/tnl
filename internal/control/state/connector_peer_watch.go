@@ -15,8 +15,9 @@ const MaxConnectorPeerWatchBatch = 512
 // ConnectorPeerWatchVersion is a hint for an exact service run. -1 means there
 // is no bookmark (in a request) or no current run (in a response).
 type ConnectorPeerWatchVersion struct {
-	RunID    string
-	Revision int64
+	RunID          string
+	Revision       int64
+	PolicyBookmark string
 }
 
 // AuthorizeConnectorPeerWatch verifies subscription authority. the version
@@ -67,7 +68,7 @@ func (d *Database) CompareConnectorPeerWatchVersions(ctx context.Context, watche
 		return nil, nil
 	}
 	params := controlstatedb.CompareConnectorPeerWatchVersionsParams{
-		RunIds: make([]string, len(watched)), Revisions: make([]int64, len(watched)),
+		RunIds: make([]string, len(watched)), Revisions: make([]int64, len(watched)), PolicyBookmarks: make([]string, len(watched)),
 	}
 	seen := make(map[string]struct{}, len(watched))
 	for i, scope := range watched {
@@ -76,6 +77,7 @@ func (d *Database) CompareConnectorPeerWatchVersions(ctx context.Context, watche
 		}
 		seen[scope.RunID] = struct{}{}
 		params.RunIds[i], params.Revisions[i] = scope.RunID, scope.Revision
+		params.PolicyBookmarks[i] = scope.PolicyBookmark
 	}
 	rows, err := controlstatedb.New(d.pool).CompareConnectorPeerWatchVersions(ctx, params)
 	if err != nil {
@@ -83,7 +85,7 @@ func (d *Database) CompareConnectorPeerWatchVersions(ctx context.Context, watche
 	}
 	changed := make([]ConnectorPeerWatchVersion, len(rows))
 	for i, row := range rows {
-		changed[i] = ConnectorPeerWatchVersion{RunID: row.RunID, Revision: row.Revision}
+		changed[i] = ConnectorPeerWatchVersion{RunID: row.RunID, Revision: row.Revision, PolicyBookmark: row.PolicyBookmark}
 	}
 	return changed, nil
 }

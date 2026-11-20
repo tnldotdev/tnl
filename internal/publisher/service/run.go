@@ -73,6 +73,7 @@ type Prepared struct {
 	httpResponseHooks      httpstream.ResponseHooks
 	connectorHTTP          servicestream.ConnectorHTTPFrontend
 	policy                 *visitorlease.Lease
+	refreshPolicies        []func(context.Context) error
 	metadataRevision       int64
 
 	certificateInstalled <-chan struct{}

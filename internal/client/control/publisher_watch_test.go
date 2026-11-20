@@ -14,10 +14,11 @@ import (
 func TestPublisherWatchValidatesChangesAgainstSubscriptions(t *testing.T) {
 	const run = "srun_1234567890123456789012"
 	const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	bookmark := strings.Repeat("a", 64)
 	var revision int64 = 4
 	scope := controlv1.PublisherWatchRun{
 		ServiceId: "svc_1234567890123456789012", ServiceRunId: run,
-		RunNumber: 2, RunToken: token, ConnectorRevision: &revision,
+		RunNumber: 2, RunToken: token, ConnectorRevision: &revision, PolicyBookmark: &bookmark,
 	}
 	for _, tc := range []struct {
 		name, response string
@@ -25,11 +26,11 @@ func TestPublisherWatchValidatesChangesAgainstSubscriptions(t *testing.T) {
 		valid          bool
 	}{
 		{"quiet", `{"changes":[]}`, []controlv1.PublisherWatchChange{}, true},
-		{"changed", `{"changes":[{"service_run_id":"` + run + `","connector_revision":"5"}]}`, []controlv1.PublisherWatchChange{{ServiceRunId: run, ConnectorRevision: 5}}, true},
-		{"unavailable", `{"changes":[{"service_run_id":"` + run + `","connector_revision":"-1"}]}`, []controlv1.PublisherWatchChange{{ServiceRunId: run, ConnectorRevision: -1}}, true},
+		{"changed", `{"changes":[{"service_run_id":"` + run + `","connector_revision":"5","policy_bookmark":"` + bookmark + `"}]}`, []controlv1.PublisherWatchChange{{ServiceRunId: run, ConnectorRevision: 5, PolicyBookmark: bookmark}}, true},
+		{"unavailable", `{"changes":[{"service_run_id":"` + run + `","connector_revision":"-1","policy_bookmark":""}]}`, []controlv1.PublisherWatchChange{{ServiceRunId: run, ConnectorRevision: -1}}, true},
 		{"null", `{"changes":null}`, nil, false},
 		{"unknown scope", `{"changes":[{"service_run_id":"srun_0000000000000000000000","connector_revision":"5"}]}`, nil, false},
-		{"not changed", `{"changes":[{"service_run_id":"` + run + `","connector_revision":"4"}]}`, nil, false},
+		{"not changed", `{"changes":[{"service_run_id":"` + run + `","connector_revision":"4","policy_bookmark":"` + bookmark + `"}]}`, nil, false},
 		{"invalid version", `{"changes":[{"service_run_id":"` + run + `","connector_revision":"-2"}]}`, nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

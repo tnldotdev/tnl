@@ -24,6 +24,10 @@ schemas:
           x-oapi-codegen-extra-tags: { json: "run_number,string" },
         }
       run_token: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+      policy_bookmark:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: Last applied policy change hint. Omit to reconcile initially.
       connector_revision:
         {
           type: string,
@@ -44,9 +48,13 @@ schemas:
   PublisherWatchChange:
     type: object
     additionalProperties: false
-    required: [service_run_id, connector_revision]
+    required: [service_run_id, connector_revision, policy_bookmark]
     properties:
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      policy_bookmark:
+        type: string
+        pattern: "^([0-9a-f]{64})?$"
+        description: An opaque change hint, empty for an unavailable scope. It never confirms access or renews a lease.
       connector_revision:
         {
           type: string,

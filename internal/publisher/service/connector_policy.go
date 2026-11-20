@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
@@ -24,12 +25,14 @@ func (b *Bound) PrepareConnectorPolicy(ctx context.Context, control connectorPol
 	}
 	lease := b.prepared.policy
 	closePolicy := func() {}
+	var refresh func(context.Context) error
 	if lease == nil {
 		owner, err := httpaccess.PreparePolicy(ctx, control, visitorscope.Scope{Kind: visitorscope.Service, ID: b.prepared.Preparation.ServiceId}, b.prepared.Preparation.ServiceRunId, b.prepared.Preparation.RunNumber, token.String(), nil)
 		if err != nil {
 			return err
 		}
 		lease, closePolicy = owner.Lease(), owner.Close
+		refresh = owner.Refresh
 	}
 	view, enabled, _ := lease.Current()
 	b.mu.Lock()
@@ -39,9 +42,22 @@ func (b *Bound) PrepareConnectorPolicy(ctx context.Context, control connectorPol
 		return ErrPrivateStream
 	}
 	b.prepared.policy = lease
+	if refresh != nil {
+		b.prepared.refreshPolicies = append(b.prepared.refreshPolicies, refresh)
+	}
 	if b.closePolicy == nil {
 		b.closePolicy = sync.OnceFunc(closePolicy)
 	}
 	b.mu.Unlock()
 	return nil
+}
+
+// all owners are installed before the watch starts. each fetch checks its
+// own hostname and applies the authenticated snapshot before returning.
+func (b *Bound) refreshWatchedPolicies(ctx context.Context) error {
+	var result error
+	for _, refresh := range b.prepared.refreshPolicies {
+		result = errors.Join(result, refresh(ctx))
+	}
+	return result
 }

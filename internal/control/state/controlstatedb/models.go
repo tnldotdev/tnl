@@ -777,6 +777,11 @@ type ControlPublisherNamespaceAllocation struct {
 	RequestedExpiresAt        pgtype.Timestamptz
 }
 
+type ControlPublisherPolicyWatchBookmark struct {
+	ServiceID string
+	Bookmark  string
+}
+
 type ControlPublisherRuntime struct {
 	PublisherIdentityID       string
 	TeamID                    string
@@ -1378,6 +1383,11 @@ type ControlVisitorPolicyEvent struct {
 	ResourceID string
 	Revision   int64
 	ChangedAt  pgtype.Timestamptz
+}
+
+type ControlVisitorPolicyWatchVersion struct {
+	ServiceID string
+	Revision  int64
 }
 
 type ControlVisitorTokenIssuer struct {

@@ -27,13 +27,16 @@ func (c *Client) WatchPublisherRuns(ctx context.Context, runs []controlv1.Publis
 	if response.Changes == nil || len(response.Changes) > len(runs) {
 		return nil, invalid
 	}
-	awaiting := make(map[string]*int64, len(runs))
+	awaiting := make(map[string]controlv1.PublisherWatchRun, len(runs))
 	for _, run := range runs {
-		awaiting[run.ServiceRunId] = run.ConnectorRevision
+		awaiting[run.ServiceRunId] = run
 	}
 	for _, change := range response.Changes {
 		seen, found := awaiting[change.ServiceRunId]
-		if !found || change.ConnectorRevision < -1 || seen != nil && *seen == change.ConnectorRevision {
+		if !found || change.ConnectorRevision < -1 || change.ConnectorRevision == -1 && change.PolicyBookmark != "" ||
+			change.ConnectorRevision >= 0 && !controlv1.ValidPublisherPolicyBookmark(change.PolicyBookmark) ||
+			seen.ConnectorRevision != nil && *seen.ConnectorRevision == change.ConnectorRevision &&
+				seen.PolicyBookmark != nil && *seen.PolicyBookmark == change.PolicyBookmark {
 			return nil, invalid
 		}
 		delete(awaiting, change.ServiceRunId)

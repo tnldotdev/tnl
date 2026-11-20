@@ -95,23 +95,23 @@ func (watch *PublisherWatch) compare(ctx context.Context) {
 	if len(waiters) == 0 {
 		return
 	}
-	seen := make(map[string]int64)
+	seen := make(map[string]controlstate.ConnectorPeerWatchVersion)
 	for _, waiter := range waiters {
 		for _, scope := range waiter.seen {
-			if revision, exists := seen[scope.RunID]; exists && revision != scope.Revision {
+			if previous, exists := seen[scope.RunID]; exists && previous != scope {
 				// if two callers saw different states, request the current
 				// revision once and compare it separately for each caller.
-				seen[scope.RunID] = -1
+				seen[scope.RunID] = controlstate.ConnectorPeerWatchVersion{RunID: scope.RunID, Revision: -1}
 			} else {
-				seen[scope.RunID] = scope.Revision
+				seen[scope.RunID] = scope
 			}
 		}
 	}
 	batch := make([]controlstate.ConnectorPeerWatchVersion, 0, len(seen))
-	for run, revision := range seen {
-		batch = append(batch, controlstate.ConnectorPeerWatchVersion{RunID: run, Revision: revision})
+	for _, scope := range seen {
+		batch = append(batch, scope)
 	}
-	current := make(map[string]int64)
+	current := make(map[string]controlstate.ConnectorPeerWatchVersion)
 	query, cancel := context.WithTimeout(ctx, publisherWatchQuery)
 	defer cancel()
 	var err error
@@ -123,7 +123,7 @@ func (watch *PublisherWatch) compare(ctx context.Context) {
 			break
 		}
 		for _, row := range rows {
-			current[row.RunID] = row.Revision
+			current[row.RunID] = row
 		}
 		batch = batch[count:]
 	}
@@ -136,8 +136,8 @@ func (watch *PublisherWatch) compare(ctx context.Context) {
 		result := publisherWatchResult{err: err}
 		if err == nil {
 			for _, scope := range waiter.seen {
-				if revision, found := current[scope.RunID]; found && (revision != scope.Revision || revision == -1) {
-					result.changes = append(result.changes, controlstate.ConnectorPeerWatchVersion{RunID: scope.RunID, Revision: revision})
+				if latest, found := current[scope.RunID]; found && (latest != scope || latest.Revision == -1) {
+					result.changes = append(result.changes, latest)
 				}
 			}
 		}
@@ -201,7 +201,8 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 		_, duplicate := index[run.ServiceRunId]
 		if duplicate || !opaqueid.Valid(run.ServiceId, opaqueid.ServicePrefix) ||
 			!opaqueid.Valid(run.ServiceRunId, opaqueid.ServiceRunPrefix) || run.RunNumber < 1 ||
-			run.ConnectorRevision != nil && *run.ConnectorRevision < 0 {
+			run.ConnectorRevision != nil && *run.ConnectorRevision < 0 ||
+			run.PolicyBookmark != nil && !controlv1.ValidPublisherPolicyBookmark(*run.PolicyBookmark) {
 			writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publisher watch subscriptions")
 			return
 		}
@@ -236,7 +237,11 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 		if run.ConnectorRevision != nil {
 			revision = *run.ConnectorRevision
 		}
-		seen = append(seen, controlstate.ConnectorPeerWatchVersion{RunID: run.ServiceRunId, Revision: revision})
+		scope := controlstate.ConnectorPeerWatchVersion{RunID: run.ServiceRunId, Revision: revision}
+		if run.PolicyBookmark != nil {
+			scope.PolicyBookmark = *run.PolicyBookmark
+		}
+		seen = append(seen, scope)
 	}
 	stop()
 	if len(changes) == 0 {
@@ -255,6 +260,7 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 				err := watch.store.AuthorizeConnectorPeerWatch(auth, run.ServiceId, run.ServiceRunId, run.RunNumber, run.RunToken, time.Now())
 				if watchAuthorityDenied(err) {
 					change.Revision = -1
+					change.PolicyBookmark = ""
 				} else if err != nil {
 					serviceRunProblem(r.Context(), w, "recheck publisher watch", err)
 					return
@@ -266,7 +272,7 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 	response := controlv1.PublisherWatchResponse{Changes: make([]controlv1.PublisherWatchChange, 0, len(changes))}
 	for _, change := range changes {
 		response.Changes = append(response.Changes, controlv1.PublisherWatchChange{
-			ConnectorRevision: change.Revision, ServiceRunId: change.RunID,
+			ConnectorRevision: change.Revision, ServiceRunId: change.RunID, PolicyBookmark: change.PolicyBookmark,
 		})
 	}
 	writeJSON(w, http.StatusOK, response)

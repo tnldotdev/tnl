@@ -29,9 +29,9 @@ type appWatchControl struct {
 	watches *appPublisherWatches
 }
 
-func (c appWatchControl) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (int64, error) {
+func (c appWatchControl) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (controlv1.PublisherWatchChange, error) {
 	if scope.ServiceId != c.service {
-		return 0, publisheridentity.ErrScope
+		return controlv1.PublisherWatchChange{}, publisheridentity.ErrScope
 	}
 	url := c.ControlURL()
 	w := c.watches
@@ -41,7 +41,7 @@ func (c appWatchControl) WaitPublisherRun(ctx context.Context, scope controlv1.P
 		client, err := clientcontrol.New(url, nil, "")
 		if err != nil {
 			w.mu.Unlock()
-			return 0, err
+			return controlv1.PublisherWatchChange{}, err
 		}
 		origin = &appWatchOrigin{client: client}
 		if w.origins == nil {

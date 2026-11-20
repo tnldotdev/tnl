@@ -60,8 +60,8 @@ func TestPublisherWaitsShareOneRequestAndJoinCancellation(t *testing.T) {
 		if len(second.runs) != 2 || !(second.runs[0] == a && second.runs[1] == b || second.runs[0] == b && second.runs[1] == a) {
 			t.Fatal("two scopes did not share the same HTTP wait with their own credentials")
 		}
-		second.send <- `{"changes":[{"service_run_id":"` + b.ServiceRunId + `","connector_revision":"3"}]}`
-		if got := <-readyB; got.err != nil || got.revision != 3 {
+		second.send <- `{"changes":[{"service_run_id":"` + b.ServiceRunId + `","connector_revision":"3","policy_bookmark":"` + strings.Repeat("1", 64) + `"}]}`
+		if got := <-readyB; got.err != nil || got.change.ConnectorRevision != 3 {
 			t.Fatal("notice did not reach its owner", got)
 		}
 		third := <-requests

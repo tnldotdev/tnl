@@ -30,15 +30,15 @@ type publisherWait struct {
 }
 
 type publisherNotice struct {
-	revision int64
-	err      error
+	change controlv1.PublisherWatchChange
+	err    error
 }
 
 // WaitPublisherRun waits for one change. quiet HTTP responses renew only the
 // wait. the caller supplies a new bookmark only after applying the fetched state.
-func (c *Client) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (int64, error) {
+func (c *Client) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (controlv1.PublisherWatchChange, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return controlv1.PublisherWatchChange{}, err
 	}
 	w := &publisherWait{scope: scope, result: make(chan publisherNotice, 1)}
 	owner := &c.publisherWaits
@@ -47,7 +47,7 @@ func (c *Client) WaitPublisherRun(ctx context.Context, scope controlv1.Publisher
 	for _, candidate := range owner.groups {
 		if candidate.pending[scope.ServiceRunId] != nil {
 			owner.mu.Unlock()
-			return 0, failure.Wrap("watch service run", failure.ServerRequestInvalid, errors.New("duplicate service run subscription"))
+			return controlv1.PublisherWatchChange{}, failure.Wrap("watch service run", failure.ServerRequestInvalid, errors.New("duplicate service run subscription"))
 		}
 		if g == nil && len(candidate.pending) != 0 && len(candidate.pending) < 64 {
 			g = candidate
@@ -67,7 +67,7 @@ func (c *Client) WaitPublisherRun(ctx context.Context, scope controlv1.Publisher
 	owner.mu.Unlock()
 	select {
 	case result := <-w.result:
-		return result.revision, result.err
+		return result.change, result.err
 	case <-ctx.Done():
 		owner.mu.Lock()
 		var joined chan struct{}
@@ -87,9 +87,9 @@ func (c *Client) WaitPublisherRun(ctx context.Context, scope controlv1.Publisher
 		}
 		select {
 		case result := <-w.result:
-			return 0, errors.Join(context.Cause(ctx), result.err)
+			return controlv1.PublisherWatchChange{}, errors.Join(context.Cause(ctx), result.err)
 		default:
-			return 0, context.Cause(ctx)
+			return controlv1.PublisherWatchChange{}, context.Cause(ctx)
 		}
 	}
 }
@@ -125,7 +125,7 @@ func (c *Client) runPublisherWaits(g *publisherWaitGroup) {
 		for _, change := range changes {
 			w := g.pending[change.ServiceRunId]
 			delete(g.pending, change.ServiceRunId)
-			w.result <- publisherNotice{revision: change.ConnectorRevision}
+			w.result <- publisherNotice{change: change}
 		}
 	}
 	i := slices.Index(owner.groups, g)

@@ -13,6 +13,7 @@ import (
 	"github.com/pressly/goose/v3"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationConnectorPeerWatchCommittedChanges(t *testing.T) {
@@ -56,10 +57,31 @@ func TestIntegrationConnectorPeerWatchCommittedChanges(t *testing.T) {
 	}
 	seenA := ConnectorPeerWatchVersion{RunID: a.run.RunID, Revision: 0}
 	seenB := ConnectorPeerWatchVersion{RunID: b.run.RunID, Revision: 0}
+	initial, err := reader.CompareConnectorPeerWatchVersions(ctx, []ConnectorPeerWatchVersion{seenA, seenB})
+	if err != nil || len(initial) != 2 {
+		t.Fatal("missing initial inventory", err)
+	}
+	for _, current := range initial {
+		if current.Revision != 0 || !controlv1.ValidPublisherPolicyBookmark(current.PolicyBookmark) {
+			t.Fatal("invalid initial bookmark", current)
+		}
+		switch current.RunID {
+		case seenA.RunID:
+			seenA = current
+		case seenB.RunID:
+			seenB = current
+		default:
+			t.Fatal("unsubscribed run")
+		}
+	}
+	atRevision := func(scope ConnectorPeerWatchVersion, revision int64) ConnectorPeerWatchVersion {
+		scope.Revision = revision
+		return scope
+	}
 	compare([]ConnectorPeerWatchVersion{seenA, seenB})
 	compare([]ConnectorPeerWatchVersion{{RunID: a.run.RunID, Revision: -1}}, seenA)
 	pair := a.create(t)
-	compare([]ConnectorPeerWatchVersion{seenA, seenB}, ConnectorPeerWatchVersion{a.run.RunID, 1})
+	compare([]ConnectorPeerWatchVersion{seenA, seenB}, atRevision(seenA, 1))
 	seenA.Revision = 1
 
 	// hold a real pair mutation on A while B commits on a different connection.
@@ -72,12 +94,12 @@ func TestIntegrationConnectorPeerWatchCommittedChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.create(t)
-	compare([]ConnectorPeerWatchVersion{seenA, seenB}, ConnectorPeerWatchVersion{b.run.RunID, 1})
+	compare([]ConnectorPeerWatchVersion{seenA, seenB}, atRevision(seenB, 1))
 	seenB.Revision = 1
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	compare([]ConnectorPeerWatchVersion{seenA, seenB}, ConnectorPeerWatchVersion{a.run.RunID, 2})
+	compare([]ConnectorPeerWatchVersion{seenA, seenB}, atRevision(seenA, 2))
 	seenA.Revision = 2
 
 	rolledBack, err := d.pool.Begin(ctx)
@@ -96,7 +118,7 @@ func TestIntegrationConnectorPeerWatchCommittedChanges(t *testing.T) {
 	for slot := range 2 {
 		a.claim(t, pair, slot, now.Add(time.Second))
 	}
-	compare([]ConnectorPeerWatchVersion{seenA, seenB}, ConnectorPeerWatchVersion{a.run.RunID, 4})
+	compare([]ConnectorPeerWatchVersion{seenA, seenB}, atRevision(seenA, 4))
 	seenA.Revision = 4
 	page, err := reader.ListConnectorPeerPairs(ctx, pair.ServiceID, pair.ServiceRunID, "", a.run.Token, now.Add(2*time.Second))
 	if err != nil || len(page.Items) != 1 || page.Items[0].PairID != pair.ID || page.Items[0].Retired {
@@ -113,14 +135,14 @@ func TestIntegrationConnectorPeerWatchCommittedChanges(t *testing.T) {
 	if err != nil || pending.Pending == nil {
 		t.Fatal("prepare rebind:", err)
 	}
-	compare([]ConnectorPeerWatchVersion{seenA, seenB}, ConnectorPeerWatchVersion{a.run.RunID, 5})
+	compare([]ConnectorPeerWatchVersion{seenA, seenB}, atRevision(seenA, 5))
 
 	// this reader stays on revision 4, as if it disconnected before rebind.
 	retire := connectorRetireRequest(t, a, pair, now.Add(4*time.Second))
 	if _, err := d.RetireConnectorPeerPair(ctx, pair.ServiceID, pair.ID, retire, retire.Proof.RequestedAt); err != nil {
 		t.Fatal(err)
 	}
-	compare([]ConnectorPeerWatchVersion{seenA, seenB}, ConnectorPeerWatchVersion{a.run.RunID, 6})
+	compare([]ConnectorPeerWatchVersion{seenA, seenB}, atRevision(seenA, 6))
 	page, err = reader.ListConnectorPeerPairs(ctx, pair.ServiceID, pair.ServiceRunID, "", a.run.Token, now.Add(5*time.Second))
 	if err != nil || len(page.Items) != 1 || page.Items[0].PairID != pair.ID || !page.Items[0].Retired {
 		t.Fatalf("authorized catch-up lost the retirement: %v, %v", page, err)
@@ -129,7 +151,7 @@ func TestIntegrationConnectorPeerWatchCommittedChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	missing := ConnectorPeerWatchVersion{RunID: mustOpaqueID(t, opaqueid.ServiceRunPrefix), Revision: -1}
-	compare([]ConnectorPeerWatchVersion{seenA, seenB, missing}, ConnectorPeerWatchVersion{a.run.RunID, -1}, missing)
+	compare([]ConnectorPeerWatchVersion{seenA, seenB, missing}, ConnectorPeerWatchVersion{RunID: a.run.RunID, Revision: -1}, missing)
 }
 
 func watchMigrationFixture(t *testing.T, d *Database) (string, *goose.Provider) {
@@ -188,8 +210,8 @@ func TestIntegrationConnectorPeerWatchMigrationPreservesExistingRun(t *testing.T
 	if after := connectorPairSavedAuthority(t, reader, pair.ID); !bytes.Equal(before, after) {
 		t.Fatal("upgrade modified existing run or connector authority")
 	}
-	changes, err := reader.CompareConnectorPeerWatchVersions(ctx, []ConnectorPeerWatchVersion{{f.run.RunID, -1}})
-	if err != nil || !slices.Equal(changes, []ConnectorPeerWatchVersion{{f.run.RunID, 0}}) {
+	changes, err := reader.CompareConnectorPeerWatchVersions(ctx, []ConnectorPeerWatchVersion{{RunID: f.run.RunID, Revision: -1}})
+	if err != nil || len(changes) != 1 || changes[0].RunID != f.run.RunID || changes[0].Revision != 0 || !controlv1.ValidPublisherPolicyBookmark(changes[0].PolicyBookmark) {
 		t.Fatalf("existing run did not request an initial snapshot: %v, %v", changes, err)
 	}
 	page, err := reader.ListConnectorPeerPairs(ctx, f.run.ServiceID, f.run.RunID, "", f.run.Token, f.now.Add(2*time.Second))

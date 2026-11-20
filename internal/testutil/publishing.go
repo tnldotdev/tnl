@@ -370,11 +370,13 @@ func (f *PublishingFixture) serve(w http.ResponseWriter, r *http.Request) {
 		for _, scope := range body.Runs {
 			run, ok := f.Run(scope.ServiceRunId)
 			revision := int64(0)
+			bookmark := strings.Repeat("a", 64)
 			if !ok || run.Setup.ServiceId != scope.ServiceId || run.Setup.RunNumber != scope.RunNumber || run.Setup.RunToken != scope.RunToken {
 				revision = -1
+				bookmark = ""
 			}
-			if scope.ConnectorRevision == nil || *scope.ConnectorRevision != revision {
-				changes = append(changes, controlv1.PublisherWatchChange{ServiceRunId: scope.ServiceRunId, ConnectorRevision: revision})
+			if scope.ConnectorRevision == nil || *scope.ConnectorRevision != revision || scope.PolicyBookmark == nil || *scope.PolicyBookmark != bookmark {
+				changes = append(changes, controlv1.PublisherWatchChange{ServiceRunId: scope.ServiceRunId, ConnectorRevision: revision, PolicyBookmark: bookmark})
 			}
 		}
 		// this fixture has no connector pairs. after the initial inventory

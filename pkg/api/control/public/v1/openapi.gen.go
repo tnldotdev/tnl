@@ -3619,8 +3619,11 @@ type PublisherVisitorPolicyRequest struct {
 // PublisherWatchChange defines model for PublisherWatchChange.
 type PublisherWatchChange struct {
 	// ConnectorRevision Current connector revision, or -1 if the scope is unavailable. Never confirms access or retirement.
-	ConnectorRevision int64        `json:"connector_revision,string"`
-	ServiceRunId      ServiceRunID `json:"service_run_id"`
+	ConnectorRevision int64 `json:"connector_revision,string"`
+
+	// PolicyBookmark An opaque change hint, empty for an unavailable scope. It never confirms access or renews a lease.
+	PolicyBookmark string       `json:"policy_bookmark"`
+	ServiceRunId   ServiceRunID `json:"service_run_id"`
 }
 
 // PublisherWatchRequest defines model for PublisherWatchRequest.
@@ -3636,11 +3639,14 @@ type PublisherWatchResponse struct {
 // PublisherWatchRun defines model for PublisherWatchRun.
 type PublisherWatchRun struct {
 	// ConnectorRevision Last applied revision. Omit it to request an initial reconciliation.
-	ConnectorRevision *int64       `json:"connector_revision,string,omitempty"`
-	RunNumber         int64        `json:"run_number,string"`
-	RunToken          string       `json:"run_token"`
-	ServiceId         ServiceID    `json:"service_id"`
-	ServiceRunId      ServiceRunID `json:"service_run_id"`
+	ConnectorRevision *int64 `json:"connector_revision,string,omitempty"`
+
+	// PolicyBookmark Last applied policy change hint. Omit to reconcile initially.
+	PolicyBookmark *string      `json:"policy_bookmark,omitempty"`
+	RunNumber      int64        `json:"run_number,string"`
+	RunToken       string       `json:"run_token"`
+	ServiceId      ServiceID    `json:"service_id"`
+	ServiceRunId   ServiceRunID `json:"service_run_id"`
 }
 
 // ReadinessResponse defines model for ReadinessResponse.

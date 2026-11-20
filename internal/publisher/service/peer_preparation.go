@@ -18,7 +18,7 @@ import (
 
 type ConnectorPeerControl interface {
 	peerDeliveryControl
-	WaitPublisherRun(context.Context, controlv1.PublisherWatchRun) (int64, error)
+	WaitPublisherRun(context.Context, controlv1.PublisherWatchRun) (controlv1.PublisherWatchChange, error)
 	ListConnectorPeerPairs(context.Context, string, string, string, credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error)
 	ConfirmConnectorPeerPairPrepared(context.Context, string, string, string, controlv1.ConnectorPeerPairPrepared, credentials.ServiceRunToken) error
 }
@@ -74,7 +74,7 @@ func (b *Bound) ServeConnectorPeers(ctx context.Context, control ConnectorPeerCo
 	applied := make(chan struct{})
 	watchDone := make(chan error, 1)
 	go func() {
-		watchDone <- watchConnectorPeers(life, control, controlv1.PublisherWatchRun{
+		watchDone <- b.watchConnectorPeers(life, control, controlv1.PublisherWatchRun{
 			ServiceId: b.prepared.Preparation.ServiceId, ServiceRunId: b.prepared.Preparation.ServiceRunId,
 			RunNumber: b.prepared.Preparation.RunNumber, RunToken: token.String(),
 		}, hints, applied)
@@ -159,9 +159,9 @@ func (b *Bound) ServeConnectorPeers(ctx context.Context, control ConnectorPeerCo
 	}
 }
 
-func watchConnectorPeers(ctx context.Context, control ConnectorPeerControl, scope controlv1.PublisherWatchRun, hints chan<- int64, applied <-chan struct{}) error {
+func (b *Bound) watchConnectorPeers(ctx context.Context, control ConnectorPeerControl, scope controlv1.PublisherWatchRun, hints chan<- int64, applied <-chan struct{}) error {
 	for ctx.Err() == nil {
-		revision, err := control.WaitPublisherRun(ctx, scope)
+		notice, err := control.WaitPublisherRun(ctx, scope)
 		if ctx.Err() != nil {
 			return serviceWorkerError(err, ctx.Err())
 		}
@@ -169,21 +169,33 @@ func watchConnectorPeers(ctx context.Context, control ConnectorPeerControl, scop
 			return err
 		}
 		if err == nil {
-			select {
-			case hints <- revision:
-			case <-ctx.Done():
-				return nil
+			revision := notice.ConnectorRevision
+			if revision >= 0 && (scope.PolicyBookmark == nil || *scope.PolicyBookmark != notice.PolicyBookmark) {
+				if err = b.refreshWatchedPolicies(ctx); err == nil {
+					scope.PolicyBookmark = &notice.PolicyBookmark
+				}
 			}
-			select {
-			case <-applied:
-			case <-ctx.Done():
-				return nil
+			if revision < 0 || scope.ConnectorRevision == nil || *scope.ConnectorRevision != revision {
+				select {
+				case hints <- revision:
+				case <-ctx.Done():
+					return nil
+				}
+				select {
+				case <-applied:
+				case <-ctx.Done():
+					return nil
+				}
+				if revision >= 0 {
+					scope.ConnectorRevision = &revision
+				} else {
+					scope.ConnectorRevision = nil
+					scope.PolicyBookmark = nil
+				}
 			}
-			if revision >= 0 {
-				scope.ConnectorRevision = &revision
+			if err == nil && revision >= 0 {
 				continue
 			}
-			scope.ConnectorRevision = nil
 		}
 		// unavailable scopes can still fetch retained, negative-only facts.
 		// a failed wait or missing scope must not spin or renew authority.
