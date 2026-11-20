@@ -71,7 +71,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 		return err
 	}
 	if flags.Diff {
-		diff, err := compareApply(current.Team().Id, project.Deployment, existing, declaration, declarations)
+		diff, err := compareApply(current.Team(), project.Deployment, existing, declaration, declarations)
 		if err != nil {
 			return err
 		}

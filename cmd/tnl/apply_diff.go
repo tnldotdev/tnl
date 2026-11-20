@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -34,13 +35,24 @@ type applyDiff struct {
 type applyField struct{ resource, name, field string }
 type applyFacts map[applyField]json.RawMessage
 
-func compareApply(team, deployment string, saved controlv1.AppliedProjectConfiguration, desired controlv1.ProjectConfiguration, services controlv1.ProjectServiceDeclarations) (applyDiff, error) {
-	result := applyDiff{team, deployment, saved.Revision, []applyChange{}}
-	before, err := declarationFacts(saved.Configuration, saved.ServiceDeclarations)
+func compareApply(team authorityv1.Team, deployment string, saved controlv1.AppliedProjectConfiguration, desired controlv1.ProjectConfiguration, services controlv1.ProjectServiceDeclarations) (applyDiff, error) {
+	result := applyDiff{team.Id, deployment, saved.Revision, []applyChange{}}
+	before, err := declarationFacts(saved.Configuration, saved.ServiceDeclarations, "")
 	if err != nil {
 		return result, err
 	}
-	after, err := declarationFacts(desired, services)
+	// control captures the deployment domain on first apply. an omitted
+	// selector reuses that domain even if the team's default has since changed.
+	domain := team.DefaultDomainId
+	if saved.Deployments != nil {
+		for _, d := range *saved.Deployments {
+			if d.Name == deployment && d.DomainId != "" {
+				domain = d.DomainId
+				break
+			}
+		}
+	}
+	after, err := declarationFacts(desired, services, domain)
 	if err != nil {
 		return result, err
 	}
@@ -71,7 +83,7 @@ func compareApply(team, deployment string, saved controlv1.AppliedProjectConfigu
 
 // compare the declared fields, never the allocated endpoints or live publisher
 // status. use the saved wire representation for fields without special display.
-func declarationFacts(c controlv1.ProjectConfiguration, declarations controlv1.ProjectServiceDeclarations) (applyFacts, error) {
+func declarationFacts(c controlv1.ProjectConfiguration, declarations controlv1.ProjectServiceDeclarations, fallbackDomain string) (applyFacts, error) {
 	facts := applyFacts{}
 	fields := func(resource, name string, v any) error {
 		data, err := json.Marshal(v)
@@ -92,7 +104,21 @@ func declarationFacts(c controlv1.ProjectConfiguration, declarations controlv1.P
 			return nil, err
 		}
 	}
+	var domain *string
+	if c.Settings != nil {
+		settings := *c.Settings
+		if settings.DomainId == nil && fallbackDomain != "" {
+			settings.DomainId = &fallbackDomain
+		}
+		domain = settings.DomainId
+		if err := fields("deployment", "", settings); err != nil {
+			return nil, err
+		}
+	}
 	for name, s := range c.Services {
+		if s.DomainId == nil {
+			s.DomainId = domain
+		}
 		reachability := "connector-only"
 		if s.Public != nil && *s.Public {
 			reachability = "public endpoint requested"
@@ -137,11 +163,6 @@ func declarationFacts(c controlv1.ProjectConfiguration, declarations controlv1.P
 			if err := fields("workload", name, w); err != nil {
 				return nil, err
 			}
-		}
-	}
-	if c.Settings != nil {
-		if err := fields("deployment", "", c.Settings); err != nil {
-			return nil, err
 		}
 	}
 	return facts, nil
