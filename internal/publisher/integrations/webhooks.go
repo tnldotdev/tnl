@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/webhooksource"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -355,40 +357,37 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		return
 	}
 	results := make([]webhookResponse, len(receivers))
-	failures := make([]error, len(receivers))
-	var wg sync.WaitGroup
+	var deliveries errgroup.Group
 	for index, receiver := range receivers {
-		wg.Go(func() {
+		deliveries.Go(func() error {
 			current, currentErr := h.state.WebhookReceiverCurrent(request.Context(), receiver)
 			if currentErr != nil || !current {
-				failures[index] = currentErr
 				reason := "local state unavailable"
 				if currentErr == nil {
-					failures[index] = errors.New("receiver stopped")
+					currentErr = errors.New("receiver stopped")
 					reason = "tunnel stopped"
 				}
 				h.failure(endpoint.name, receiver.ID, reason)
-				return
+				return currentErr
 			}
-			results[index], failures[index] = deliverWebhook(request, receiver, body, returnsWebhookResponse(request.Method))
+			result, err := deliverWebhook(request, receiver, body, returnsWebhookResponse(request.Method))
+			results[index] = result
 			if results[index].status != 0 && h.OnReceiverResponse != nil {
 				h.OnReceiverResponse("fanout")
 			}
-			if failures[index] != nil {
+			if err != nil {
 				reason := "local service unavailable"
 				if results[index].status != 0 {
 					reason = fmt.Sprintf("HTTP %d", results[index].status)
 				}
 				h.failure(endpoint.name, receiver.ID, reason)
 			}
+			return err
 		})
 	}
-	wg.Wait()
-	for _, err := range failures {
-		if err != nil {
-			diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed, "")
-			return
-		}
+	if deliveries.Wait() != nil {
+		diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed, "")
+		return
 	}
 	if returnsWebhookResponse(request.Method) {
 		for _, result := range results[1:] {

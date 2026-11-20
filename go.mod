@@ -16,6 +16,7 @@ require (
 	github.com/evanw/esbuild v0.28.2
 	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/go-sql-driver/mysql v1.10.1
+	github.com/google/go-cmp v0.7.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/libp2p/go-yamux/v5 v5.1.0
@@ -56,6 +57,7 @@ require (
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20261115193255-739070949446
 	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.37.0
+	golang.org/x/sync v0.25.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
@@ -122,7 +124,6 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.5 // indirect
-	golang.org/x/sync v0.25.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261026165753-2ffab32bce7e // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b // indirect
 	google.golang.org/grpc v1.85.0 // indirect

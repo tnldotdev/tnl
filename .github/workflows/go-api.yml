@@ -1,0 +1,30 @@
+name: Go API report
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
+        with:
+          tools: go
+      - name: Compare the public Go API with the last release tag
+        run: |
+          base=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^1 || true)
+          if [[ -z "$base" ]]; then
+            echo 'No release tag to compare.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          go install golang.org/x/exp/cmd/gorelease@v0.0.0-20261014143641-f0251eb4aa3e
+          echo "### Public Go API compared with $base" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          if ! "$(go env GOPATH)/bin/gorelease" -base="$base" >> "$GITHUB_STEP_SUMMARY" 2>&1; then
+            echo '::notice::Review the advisory Go API report.'
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

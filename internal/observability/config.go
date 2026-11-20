@@ -14,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	"go.opentelemetry.io/otel/attribute"
+	"golang.org/x/net/http/httpguts"
 )
 
 // Config contains only export settings. no endpoint means no network export.
@@ -261,7 +262,7 @@ func parseExporterSettings(getenv func(string) string, prefix string) (exporterS
 			key, value, ok := strings.Cut(pair, "=")
 			key = strings.TrimSpace(key)
 			value, err = url.PathUnescape(strings.TrimSpace(value))
-			if !ok || err != nil || !validHeaderName(key) || strings.ContainsAny(value, "\r\n\x00") {
+			if !ok || err != nil || !httpguts.ValidHeaderFieldName(key) || strings.ContainsAny(value, "\r\n\x00") {
 				return c, settingError(prefix + "HEADERS")
 			}
 			c.headers[key] = value
@@ -352,19 +353,6 @@ func signalConfig(getenv func(string) string, signal string, generic, specific e
 		c.TLS.Certificates = []tls.Certificate{*client}
 	}
 	return c, nil
-}
-
-func validHeaderName(value string) bool {
-	if value == "" {
-		return false
-	}
-	for _, c := range value {
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", c) {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 func milliseconds(raw string, fallback, maximum time.Duration) (time.Duration, error) {
