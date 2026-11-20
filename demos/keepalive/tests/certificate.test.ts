@@ -36,7 +36,6 @@ it("shares a newer certificate only with a peer answering at its own service run
   const current = await describeCertificate(bundle(now + minute, "old"));
   const newer = bundle(now + 60 * minute, "new");
   const advertised = await describeCertificate(newer);
-  const network = { proxyOrigin: page, proof: `${"a".repeat(64)}.${now}.${"b".repeat(64)}` };
   const host = (label: string, run: string): Host => ({
     origin: `https://p-${label.repeat(26)}.${HOST_PARENT}`,
     publisherID: `pub_${label.repeat(22)}`,
@@ -46,8 +45,8 @@ it("shares a newer certificate only with a peer answering at its own service run
   const a = host("a", "1");
   const b = host("b", "2");
   const server = () => Promise.resolve(new Response(null, { status: 404 }));
-  const A = peerServer(release, [page], server, lifetime.signal, network);
-  const B = peerServer(release, [page], server, lifetime.signal, network, async () => newer);
+  const A = peerServer(release, [page], server, lifetime.signal);
+  const B = peerServer(release, [page], server, lifetime.signal, async () => newer);
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     const request = new Request(input, init);
     request.headers.set("Origin", page);

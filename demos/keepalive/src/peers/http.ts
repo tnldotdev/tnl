@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import * as z from "zod";
-import { NETWORK_CHECK_PATH, networkProof } from "../network.ts";
 import {
   Gossip,
   HOST_PARENT,
@@ -22,7 +21,7 @@ import {
 import { heartbeatSchema, PRESENCE_PATH, TabLeases } from "./presence.ts";
 import { MAX_FALLBACK_HOSTS, TREE_PATH, treeSample } from "./view.ts";
 import { readBytes, readJSON } from "../release.ts";
-import { invitationSchema } from "../enrollment.ts";
+import { INVITATION_PATH, READY_HEADER, invitationSchema } from "../enrollment.ts";
 import { hostTarget, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "../policy.ts";
 import type { ExportedCertificate } from "@tnldotdev/tnl";
 import {
@@ -39,9 +38,7 @@ import {
 const CHECK_PATH = "/__keepalive/check";
 const WAIT_PATH = "/__keepalive/wait";
 const UPLOAD_PATH = "/__keepalive/upload";
-const MAX_WAITING = 16;
 const WAIT_MS = 5_000;
-const READY_HEADER = "X-Keepalive-Ready";
 const checkSchema = z.strictObject({ target: hostSchema, message: z.unknown() });
 const certificateRequest = z.strictObject({ requester: hostSchema, nonce: z.uuid() });
 const certificateProof = z.strictObject({ donor: hostSchema, run: runIDSchema, nonce: z.uuid() });
@@ -65,12 +62,10 @@ export async function readPeers(
 }
 
 /** waits for the host to pick this tab and returns its private invitation. */
-export async function waitForWork(host: Host, proof: string, signal: AbortSignal) {
+export async function waitForWork(host: Host, signal: AbortSignal) {
   const response = await fetch(new URL(WAIT_PATH, host.origin), {
     ...options(signal, WAIT_MS + 5_000),
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(proof),
   });
   if (!response.ok) throw new Error("Could not wait on this host.");
   return invitationSchema.nullable().parse(await readJSON(response, 64));
@@ -120,7 +115,6 @@ export function peerServer(
   allowedOrigins: readonly string[],
   serve: (request: Request) => Promise<Response>,
   signal: AbortSignal,
-  network: { proxyOrigin: string; proof: string; hostTarget?: number },
   exportCertificate?: (signal: AbortSignal) => Promise<ExportedCertificate | undefined>,
 ) {
   const app = new Hono();
@@ -143,7 +137,6 @@ export function peerServer(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const probing = new AbortController();
   let probe: Promise<void> | undefined;
-  let networkChecks = 0;
   let pendingCertificateProof: { donor: Host; nonce: string; answered: boolean } | undefined;
   let checkingCertificate = false;
   let isReplacing = () => false;
@@ -427,33 +420,23 @@ export function peerServer(
       checking = false;
     }
   });
-  app.post(WAIT_PATH, async (c) => {
-    if (gossip === undefined || networkChecks >= MAX_WAITING) {
-      return c.body(null, 503);
-    }
-    networkChecks++;
-    const parsed = networkProof.safeParse(
-      await readJSON(new Response(c.req.raw.body), 192, c.req.raw.signal).catch(() => undefined),
-    );
-    if (!parsed.success) {
-      networkChecks--;
-      return c.body(null, 400);
-    }
-    const allowed = await fetch(new URL(NETWORK_CHECK_PATH, network.proxyOrigin), {
-      ...options(AbortSignal.any([signal, c.req.raw.signal]), 5_000),
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ host: network.proof, volunteer: parsed.data }),
-    })
-      .then((reply) => reply.status === 204)
-      .catch(() => false);
-    networkChecks--;
-    if (!allowed) return c.body(null, 403);
+  app.get(INVITATION_PATH, (c) => {
+    const valid =
+      !signal.aborted &&
+      promotion?.uploadPassed &&
+      promotion.endsAt > Date.now() &&
+      promotion.invitation === c.req.header(READY_HEADER) &&
+      c.req.header("X-Keepalive-Release") === releaseID;
+    return c.body(null, valid ? 204 : 403);
+  });
+  app.post(WAIT_PATH, (c) => {
+    if (!allowed(c.req.header("Origin") ?? "")) return c.body(null, 403);
+    if (gossip === undefined || signal.aborted) return c.body(null, 503);
     const now = Date.now();
     let selected: string | null = null;
     if (promotion !== undefined && promotion.endsAt <= now) promotion = undefined;
     if (promotion === undefined)
-      gossip.maybeStart(now, hostTarget(gossip.tabs(now), network.hostTarget), () => {
+      gossip.maybeStart(now, hostTarget(gossip.tabs(now)), () => {
         selected = crypto.randomUUID();
         promotion = {
           invitation: selected,
