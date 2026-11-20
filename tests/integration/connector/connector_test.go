@@ -1398,7 +1398,8 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol, startup string) map
 		qualifyActionBackgroundRefresh(t, actionRefreshFixture{
 			root: root, state: state, prepared: prepared, roots: roots, expiry: initialProofExpiry, mode: startup,
 			providerCalls: &providerCalls, redirectedCalls: &redirectedProviderCalls, streams: &refreshStreams,
-			refreshed: refreshedProof, release: refreshAfter, providerCanceled: providerCanceled,
+			signedRetirements: &retirements,
+			refreshed:         refreshedProof, release: refreshAfter, providerCanceled: providerCanceled,
 			call: call, privateProofs: privateActionProofs,
 			inspect: func() (map[string]int, authorityv1.WorkloadSession, int) {
 				authorityMu.Lock()

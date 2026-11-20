@@ -320,6 +320,21 @@ func TestActionExpiryRetirementDoesNotStartUnauthorizedTerminalExchange(t *testi
 }
 
 func TestActionExpiryRetirementKeepsWatchStopOutOfIdleCleanup(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		delay time.Duration
+	}{
+		{name: "same deadline"},
+		{name: "visitor permission outlasts pair authority", delay: time.Minute},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testActionExpiryWatchStop(t, test.delay)
+		})
+	}
+}
+
+func testActionExpiryWatchStop(t *testing.T, permissionDelay time.Duration) {
+	t.Helper()
 	synctest.Test(t, func(t *testing.T) {
 		life, cancel := context.WithCancelCause(t.Context())
 		cleanup := newConnectorCleanup(t.Context(), nil)
@@ -333,7 +348,7 @@ func TestActionExpiryRetirementKeepsWatchStopOutOfIdleCleanup(t *testing.T) {
 		p.watch()
 		conn := &actionExpiryConn{}
 		prepared := &PreparedConnector{ctx: life, conn: conn, stream: streamPrepared{}, permission: permissionUsable{},
-			permissionUntil: until, stop: func() bool { return true }}
+			permissionUntil: until.Add(permissionDelay), stop: func() bool { return true }}
 		prepared.mu.Lock()
 		prepared.startPermissionWorkerLocked()
 		prepared.mu.Unlock()
