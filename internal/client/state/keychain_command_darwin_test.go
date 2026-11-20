@@ -101,8 +101,9 @@ func TestKeychainCommandClassifiesStatusWithoutRetainingOutput(t *testing.T) {
 		status int
 		kind   failure.KeychainFailure
 	}{
-		{21, failure.KeychainAccess}, {36, failure.KeychainAccess},
+		{29, failure.KeychainAccess}, {36, failure.KeychainAccess},
 		{51, failure.KeychainAccess}, {128, failure.KeychainAccess},
+		{21, failure.KeychainUnavailable},
 		{53, failure.KeychainUnavailable}, {1, failure.KeychainUnavailable},
 		{44, failure.KeychainMissing},
 	} {
@@ -128,6 +129,9 @@ func TestKeychainCommandClassifiesStatusWithoutRetainingOutput(t *testing.T) {
 					typed, ok := errors.AsType[*failure.ClientKeychainError](err)
 					if !ok || typed.Kind != kind || errors.Is(err, keyring.ErrNotFound) {
 						t.Fatalf("incorrect Keychain status classification: %#v", err)
+					}
+					if kind == failure.KeychainAccess && failure.KnownCase(failure.Wrap("open client state", failure.ClientStateUnavailable, err)) != "keychain-access" {
+						t.Fatal("Keychain access status did not select access guidance", err)
 					}
 					var exit *exec.ExitError
 					if !errors.As(err, &exit) || exit.ExitCode() != test.status || len(exit.Stderr) != 0 {

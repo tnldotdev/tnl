@@ -15,6 +15,15 @@ import (
 
 type keychainRunner func(context.Context, []string, string) ([]byte, error)
 
+// security returns only the low byte of the signed OSStatus.
+const (
+	securityExitItemNotFound          = -25300 & 0xff // errSecItemNotFound
+	securityExitInteractionRequired   = -25315 & 0xff // errSecInteractionRequired
+	securityExitInteractionNotAllowed = -25308 & 0xff // errSecInteractionNotAllowed
+	securityExitAuthFailed            = -25293 & 0xff // errSecAuthFailed
+	securityExitUserCanceled          = -128 & 0xff   // errSecUserCanceled
+)
+
 func runKeychainCommand(ctx context.Context, arguments []string, input string) ([]byte, error) {
 	return executeKeychainCommand(ctx, arguments, input, exec.CommandContext, 10*time.Second)
 }
@@ -51,12 +60,12 @@ func executeKeychainCommand(ctx context.Context, arguments []string, input strin
 		// security exposes only the low byte of OSStatus. these statuses do
 		// not distinguish a locked keychain from missing interactive approval.
 		switch exit.ExitCode() {
-		case 44: // errSecItemNotFound (-25300)
+		case securityExitItemNotFound:
 			// a write failure must never authorize another key creation.
 			if input == "" {
 				return nil, keyring.ErrNotFound
 			}
-		case 21, 36, 51, 128: // interaction required/not allowed, auth failed, user canceled
+		case securityExitInteractionRequired, securityExitInteractionNotAllowed, securityExitAuthFailed, securityExitUserCanceled:
 			kind = failure.KeychainAccess
 		}
 	}
