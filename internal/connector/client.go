@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"slices"
 	"sync"
@@ -78,25 +79,14 @@ func foregroundClient(parent context.Context, client string, args []string, stdi
 			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 			cmd.Env = append(cmd.Environ(), "TNL_CONNECTION_PROFILE="+string(profile))
 			cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-			cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-			cmd.WaitDelay = 2 * time.Second
-			if startErr = cmd.Start(); startErr != nil {
+			wait, err := startClientProcess(cmd)
+			if err != nil {
+				startErr = err
 				return
 			}
 			child.Go(func() {
-				err := cmd.Wait()
-				if ctx.Err() == nil {
-					var exit *exec.ExitError
-					if errors.As(err, &exit) {
-						code := exit.ExitCode()
-						if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-							code = 128 + int(status.Signal())
-						}
-						err = &ClientExit{Code: code}
-					}
-					childErr = err
-					stop(childDone)
-				}
+				childErr = wait()
+				stop(childDone)
 			})
 		})
 		return startErr
@@ -108,4 +98,57 @@ func foregroundClient(parent context.Context, client string, args []string, stdi
 		serveErr = nil
 	}
 	return errors.Join(serveErr, childErr)
+}
+
+const clientStopGrace = 2 * time.Second
+
+type clientStop struct {
+	terminated, killed bool
+	err                error
+}
+
+func startClientProcess(cmd *exec.Cmd) (func() error, error) {
+	restore := prepareClientProcess(cmd)
+	var stopped *clientStop
+	cmd.Cancel = func() error {
+		result := stopClientProcess(cmd.Process)
+		stopped = &result
+		// cmd.Wait must report the actual process status, not inject ctx.Err().
+		// the connector reports its own cancellation, and we join cleanup errors.
+		return os.ErrProcessDone
+	}
+	cmd.WaitDelay = clientStopGrace
+	if err := cmd.Start(); err != nil {
+		return nil, errors.Join(err, restore())
+	}
+	return func() error {
+		err := cmd.Wait()
+		// Wait joins Cmd.Cancel. if the process exited first, stop any remaining
+		// workers before releasing the connector or handing the terminal back.
+		if stopped == nil {
+			return errors.Join(clientResult(err, clientStop{}), stopClientProcess(cmd.Process).err, restore())
+		}
+		return errors.Join(clientResult(err, *stopped), stopped.err, restore())
+	}, nil
+}
+
+func clientResult(err error, stopped clientStop) error {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		return err
+	}
+	if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		switch status.Signal() {
+		case syscall.SIGTERM:
+			if stopped.terminated {
+				return nil
+			}
+		case syscall.SIGKILL:
+			if stopped.killed {
+				return nil
+			}
+		}
+		return &ClientExit{Code: 128 + int(status.Signal())}
+	}
+	return &ClientExit{Code: exit.ExitCode()}
 }

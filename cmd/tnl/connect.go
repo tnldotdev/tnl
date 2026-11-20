@@ -217,7 +217,8 @@ func (a *commandApp) newConnectCommand() *cobra.Command {
 	cConnect.AddCommand(cConnectStart)
 	bind := cConnectStart.Args
 	cConnectStart.Args = func(cmd *cobra.Command, args []string) error {
-		if n := cmd.ArgsLenAtDash(); n >= 0 {
+		// before the service selector, -- is still the flag terminator.
+		if n := cmd.ArgsLenAtDash(); n > 0 {
 			if n == len(args) && f.Connect.Start.Client == "" {
 				return publisherCLIError("pass an executable after --")
 			}

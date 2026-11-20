@@ -62,3 +62,22 @@ func TestConnectShorthandAndExplicitModes(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectDistinguishesFlagTerminatorFromClientArgs(t *testing.T) {
+	for _, test := range []struct {
+		args   []string
+		client []string
+	}{
+		{[]string{"connect", "start", "--", "orders"}, nil},
+		{[]string{"connect", "--", "orders"}, nil},
+		{[]string{"connect", "orders", "--", "custom", "--arg"}, []string{"custom", "--arg"}},
+		{[]string{"connect", "start", "--client", "psql", "orders", "--", "-c", "SELECT 1"}, []string{"-c", "SELECT 1"}},
+		{[]string{"connect", "start", "--client", "psql", "--", "orders"}, nil},
+	} {
+		var flags cli
+		_, err := commandForTest(&flags, io.Discard)(test.args)
+		if err != nil || flags.Connect.Start.Name != "orders" || !slices.Equal(flags.Connect.Start.clientArgs, test.client) {
+			t.Errorf("%v: selector %q, client args %v, error %v", test.args, flags.Connect.Start.Name, flags.Connect.Start.clientArgs, err)
+		}
+	}
+}
