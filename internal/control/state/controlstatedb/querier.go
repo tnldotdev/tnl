@@ -234,6 +234,7 @@ type Querier interface {
 	// the exact run token grants negative reads only while an existing window remains.
 	HasRetainedConnectorPeerPair(ctx context.Context, arg HasRetainedConnectorPeerPairParams) (bool, error)
 	HasTeamMembershipHistory(ctx context.Context, arg HasTeamMembershipHistoryParams) (bool, error)
+	HasVisitorPolicyRegisteredKeyCandidates(ctx context.Context, serviceID string) (bool, error)
 	// a refused upsert retains the lease row lock. distinguish only its expired
 	// same-run drain from configuration conflicts and another live process.
 	IngressRegistrationDrainExpired(ctx context.Context, arg IngressRegistrationDrainExpiredParams) (bool, error)
@@ -455,6 +456,7 @@ type Querier interface {
 	ReadServiceHTTPBrowserSession(ctx context.Context, arg ReadServiceHTTPBrowserSessionParams) (ReadServiceHTTPBrowserSessionRow, error)
 	ReadServiceIPKey(ctx context.Context, arg ReadServiceIPKeyParams) (ReadServiceIPKeyRow, error)
 	ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error)
+	ReadVisitorPolicyRegisteredKeys(ctx context.Context, arg ReadVisitorPolicyRegisteredKeysParams) ([]ReadVisitorPolicyRegisteredKeysRow, error)
 	ReadVisitorPolicyRevision(ctx context.Context, resourceID string) (int64, error)
 	ReadVisitorPolicyService(ctx context.Context, id string) (ControlService, error)
 	ReadVisitorTokenIssuer(ctx context.Context) (string, error)

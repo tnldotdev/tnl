@@ -160,38 +160,9 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		if len(policy.WorkloadLeases) > 4096 {
 			return result, ErrVisitorPolicy
 		}
-		rows, err = tx.Query(ctx, `SELECT approval.grant_id,signing.id,current.public_key,current.expires_at
-		    FROM control.applied_project_services binding
-		    JOIN control.deployment_management_services selected ON selected.team_id=binding.team_id AND selected.project_key=binding.project_key AND selected.service=binding.service AND selected.capability='connect' AND selected.revoked_at IS NULL
-		    JOIN control.deployment_management_grants approval ON approval.grant_id=selected.grant_id
-		    JOIN control.publisher_grants grant_record ON grant_record.id=approval.grant_id
-		    JOIN control.publisher_identity_keys signing ON signing.publisher_identity_id=grant_record.publisher_identity_id AND signing.retired_at IS NULL
-		    CROSS JOIN LATERAL control.deployment_connect_authority(approval.grant_id,signing.id,$1,$2) current
-		    WHERE binding.service_id=$1 ORDER BY approval.grant_id,signing.id LIMIT 4097`, scope.ID, now)
+		policy.RegisteredKeyLeases, err = readVisitorPolicyRegisteredKeys(ctx, q, scope.ID, now)
 		if err != nil {
 			return result, err
-		}
-		for rows.Next() {
-			var lease controlv1.VisitorRegisteredKeyLease
-			var public []byte
-			if err = rows.Scan(&lease.GrantId, &lease.KeyId, &public, &lease.ExpiresAt); err != nil {
-				rows.Close()
-				return result, err
-			}
-			lease.KeySha256, err = visitortoken.KeyDigest(ed25519.PublicKey(public))
-			if err != nil {
-				rows.Close()
-				return result, err
-			}
-			policy.RegisteredKeyLeases = append(policy.RegisteredKeyLeases, lease)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return result, err
-		}
-		if len(policy.RegisteredKeyLeases) > 4096 {
-			return result, ErrVisitorPolicy
 		}
 	}
 	events, err := q.ReadVisitorPolicyEvents(ctx, controlstatedb.ReadVisitorPolicyEventsParams{ResourceID: scope.ID, AfterRevision: after})
@@ -214,6 +185,42 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		result.Revisions = []int64{}
 	}
 	return result, nil
+}
+
+func readVisitorPolicyRegisteredKeys(ctx context.Context, q *controlstatedb.Queries, serviceID string, now time.Time) ([]controlv1.VisitorRegisteredKeyLease, error) {
+	leases := []controlv1.VisitorRegisteredKeyLease{}
+	// the candidate check is a subset of the joins in the full lookup.
+	// only a negative answer matters, and both reads use the same snapshot.
+	possible, err := q.HasVisitorPolicyRegisteredKeyCandidates(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	if !possible {
+		return leases, nil
+	}
+	keys, err := q.ReadVisitorPolicyRegisteredKeys(ctx, controlstatedb.ReadVisitorPolicyRegisteredKeysParams{
+		ServiceID: serviceID, AtTime: timestamptz(now),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) > 4096 {
+		return nil, ErrVisitorPolicy
+	}
+	leases = make([]controlv1.VisitorRegisteredKeyLease, 0, len(keys))
+	for _, key := range keys {
+		if !key.ExpiresAt.Valid {
+			return nil, ErrVisitorPolicy
+		}
+		digest, err := visitortoken.KeyDigest(ed25519.PublicKey(key.PublicKey))
+		if err != nil {
+			return nil, err
+		}
+		leases = append(leases, controlv1.VisitorRegisteredKeyLease{
+			GrantId: key.GrantID, KeyId: key.KeyID, KeySha256: digest, ExpiresAt: key.ExpiresAt.Time,
+		})
+	}
+	return leases, nil
 }
 
 func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time, hostnames ...string) (result controlv1.VisitorPolicyUpdate, retErr error) {
