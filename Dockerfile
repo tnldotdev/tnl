@@ -1,4 +1,4 @@
-# syntax=docker.io/docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker.io/docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
 
 ARG VERSION=devel
 ARG COMMIT=
@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     setcap cap_net_bind_service=+ep /out/tnld
 RUN install -d -m 0700 /out/client-state
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 
 ARG VERSION
 ARG COMMIT

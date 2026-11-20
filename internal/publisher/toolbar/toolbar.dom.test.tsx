@@ -65,14 +65,14 @@ async function openDraft(
   user: ReturnType<typeof userEvent.setup>,
   element: Element,
 ): Promise<void> {
-  await user.click(screen.getByRole("button", { name: "Comment", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Comment" }));
   await user.click(element);
-  await screen.findByRole("textbox", { name: "Feedback", exact: true });
+  await screen.findByRole("textbox", { name: "Feedback" });
 }
 async function openThread(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Feedback" }));
   await user.click(await screen.findByRole("button", { name: `View ${report.report.text}` }));
-  await screen.findByRole("button", { name: "Resolve", exact: true });
+  await screen.findByRole("button", { name: "Resolve" });
 }
 beforeEach(() => {
   vi.stubGlobal(
@@ -99,14 +99,14 @@ test("sign-in failures preserve the report and evidence until a manual retry wit
   vi.mocked(api.report).mockRejectedValueOnce(new FeedbackError("sign_in_required"));
   const { user } = mount(api);
   await openDraft(user, appButton());
-  const text = screen.getByRole("textbox", { name: "Feedback", exact: true });
+  const text = screen.getByRole("textbox", { name: "Feedback" });
   await user.type(text, "keep this draft");
-  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
   const signIn = await screen.findByRole("link", { name: "sign in in another tab" });
   expect(signIn.getAttribute("target")).toBe("_blank");
   expect((text as HTMLTextAreaElement).value).toBe("keep this draft");
   expect(api.report).toHaveBeenCalledTimes(1);
-  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(2));
   const calls = vi.mocked(api.report).mock.calls;
   expect(calls[1]?.[0]).toEqual(calls[0]?.[0]);
@@ -120,11 +120,11 @@ test("a rejected reply keeps its text and requires an explicit retry", async () 
   await openThread(user);
   const text = screen.getByRole("textbox", { name: "Reply" });
   await user.type(text, "reply draft");
-  await user.click(screen.getByRole("button", { name: "Send reply", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Send reply" }));
   await screen.findByRole("link", { name: "sign in in another tab" });
   expect((text as HTMLTextAreaElement).value).toBe("reply draft");
   expect(api.append).toHaveBeenCalledTimes(1);
-  await user.click(screen.getByRole("button", { name: "Send reply", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Send reply" }));
   await waitFor(() => expect(api.append).toHaveBeenCalledTimes(2));
   expect(vi.mocked(api.append).mock.calls[1]?.slice(0, 4)).toEqual(
     vi.mocked(api.append).mock.calls[0]?.slice(0, 4),
@@ -146,10 +146,7 @@ test("a signed-in visitor sends feedback under the account name instead of an un
   await screen.findByText("signed in as Sam");
   await openDraft(user, appButton());
   expect(screen.queryByRole("textbox", { name: /name \(optional/i })).toBeNull();
-  await user.type(
-    screen.getByRole("textbox", { name: "Feedback", exact: true }),
-    "Suggestion from Sam",
-  );
+  await user.type(screen.getByRole("textbox", { name: "Feedback" }), "Suggestion from Sam");
   await user.click(screen.getByRole("button", { name: "send feedback" }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(1));
   expect(vi.mocked(api.report).mock.calls[0]?.[0]).not.toHaveProperty("display_name");
@@ -162,26 +159,22 @@ test("signed-out visitors can draft and read historical feedback but cannot subm
   );
   const api = fixture([{ ...report }]);
   const { user } = mount(api);
-  await screen.findByRole("link", { name: "[ sign in ]", exact: true });
+  await screen.findByRole("link", { name: "[ sign in ]" });
   await openDraft(user, appButton());
   expect(screen.queryByRole("textbox", { name: /name \(optional/i })).toBeNull();
-  await user.type(
-    screen.getByRole("textbox", { name: "Feedback", exact: true }),
-    "keep this draft",
-  );
+  await user.type(screen.getByRole("textbox", { name: "Feedback" }), "keep this draft");
   const signIn = screen.getByRole("link", { name: "sign in in another tab" });
   expect(signIn.getAttribute("target")).toBe("_blank");
   expect(
-    (screen.getByRole("button", { name: "send feedback", exact: true }) as HTMLButtonElement)
-      .disabled,
+    (screen.getByRole("button", { name: "send feedback" }) as HTMLButtonElement).disabled,
   ).toBe(true);
   expect(api.report).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "cancel", exact: true }));
+  await user.click(screen.getByRole("button", { name: "cancel" }));
   await openThread(user);
   expect(screen.getByText("anonymous")).toBeTruthy();
-  expect(
-    (screen.getByRole("button", { name: "Resolve", exact: true }) as HTMLButtonElement).disabled,
-  ).toBe(true);
+  expect((screen.getByRole("button", { name: "Resolve" }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
   expect((screen.getByRole("textbox", { name: "Reply" }) as HTMLTextAreaElement).disabled).toBe(
     true,
   );
@@ -196,16 +189,13 @@ test("placement creates only a local draft, prevents app activation, and sends s
   await openDraft(user, app);
   expect(clicked).not.toHaveBeenCalled();
   expect(api.report).not.toHaveBeenCalled();
-  await user.type(
-    screen.getByRole("textbox", { name: "Feedback", exact: true }),
-    "Improve this label",
-  );
+  await user.type(screen.getByRole("textbox", { name: "Feedback" }), "Improve this label");
   await user.click(screen.getByRole("checkbox", { name: "Include activity" }));
   await user.click(screen.getByText(/^context/));
   await screen.findByText(/POST \/api/);
   expect(screen.queryByText(/"selectors"/)).toBeNull();
   await user.click(screen.getByRole("checkbox", { name: "Include activity" }));
-  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(1));
   expect(vi.mocked(api.report).mock.calls[0]?.[0]).toMatchObject({
     schema_version: 1,
@@ -225,11 +215,8 @@ test("activity is omitted by default and draft creation does not fetch request c
   ).toBe(false);
   expect(api.evidence).not.toHaveBeenCalled();
   expect(api.report).not.toHaveBeenCalled();
-  await user.type(
-    screen.getByRole("textbox", { name: "Feedback", exact: true }),
-    "Only this report",
-  );
-  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await user.type(screen.getByRole("textbox", { name: "Feedback" }), "Only this report");
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(1));
   expect(vi.mocked(api.report).mock.calls[0]?.[0].evidence).toMatchObject({
     element: { label: "Save" },
@@ -251,15 +238,12 @@ test("activity is explicitly selected, reviewable, bounded, and frozen across a 
   expect(screen.getByText("recent activity")).toBeTruthy();
   expect(screen.getByText(/labels and paths may contain sensitive text/i)).toBeTruthy();
   expect(api.report).not.toHaveBeenCalled();
-  await user.type(
-    screen.getByRole("textbox", { name: "Feedback", exact: true }),
-    "Reviewed context",
-  );
+  await user.type(screen.getByRole("textbox", { name: "Feedback" }), "Reviewed context");
   vi.mocked(api.report).mockRejectedValueOnce(new Error("lost reply"));
-  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
   await screen.findByRole("alert");
   await user.click(app);
-  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(2));
   const [first, second] = vi.mocked(api.report).mock.calls;
   expect(first?.[0].evidence.actions).toHaveLength(20);
@@ -273,23 +257,20 @@ test("activity is explicitly selected, reviewable, bounded, and frozen across a 
 test("cancel discards an unsent draft without creating a server thread", async () => {
   const { api, user } = mount();
   await openDraft(user, appButton());
-  await user.type(screen.getByRole("textbox", { name: "Feedback", exact: true }), "Unsent");
-  await user.click(screen.getByRole("button", { name: "cancel", exact: true }));
+  await user.type(screen.getByRole("textbox", { name: "Feedback" }), "Unsent");
+  await user.click(screen.getByRole("button", { name: "cancel" }));
   expect(api.report).not.toHaveBeenCalled();
-  expect(screen.queryByRole("textbox", { name: "Feedback", exact: true })).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Feedback" })).toBeNull();
 });
 
 test("a lost response retries the frozen report with its original idempotency key", async () => {
   const { api, user } = mount();
   vi.mocked(api.report).mockRejectedValueOnce(new Error("try again"));
   await openDraft(user, appButton());
-  await user.type(
-    screen.getByRole("textbox", { name: "Feedback", exact: true }),
-    "Copy suggestion",
-  );
-  await user.click(await screen.findByRole("button", { name: "send feedback", exact: true }));
+  await user.type(screen.getByRole("textbox", { name: "Feedback" }), "Copy suggestion");
+  await user.click(await screen.findByRole("button", { name: "send feedback" }));
   await screen.findByRole("alert");
-  await user.click(screen.getByRole("button", { name: "send feedback", exact: true }));
+  await user.click(screen.getByRole("button", { name: "send feedback" }));
   await waitFor(() => expect(api.report).toHaveBeenCalledTimes(2));
   const [first, second] = vi.mocked(api.report).mock.calls;
   expect(first?.slice(0, 2)).toEqual(second?.slice(0, 2));
@@ -298,7 +279,7 @@ test("a lost response retries the frozen report with its original idempotency ke
 test("reply, resolve, and reopen share the same conversation and preserve history", async () => {
   const { api, user } = mount(fixture([report]));
   await openThread(user);
-  await user.type(screen.getByRole("textbox", { name: "Reply", exact: true }), "Thanks");
+  await user.type(screen.getByRole("textbox", { name: "Reply" }), "Thanks");
   await user.click(screen.getByRole("button", { name: "Send reply" }));
   await waitFor(() =>
     expect(api.append).toHaveBeenCalledWith(
@@ -313,9 +294,9 @@ test("reply, resolve, and reopen share the same conversation and preserve histor
     vi.mocked(api.inspect).mockResolvedValue({ ...report, state: "resolved" });
     return { ...created, cursor: "3", type: "thread.resolved" };
   });
-  await user.click(screen.getByRole("button", { name: "Resolve", exact: true }));
-  await screen.findByRole("button", { name: "Reopen", exact: true });
-  await user.type(screen.getByRole("textbox", { name: "Reply", exact: true }), "A clarification");
+  await user.click(screen.getByRole("button", { name: "Resolve" }));
+  await screen.findByRole("button", { name: "Reopen" });
+  await user.type(screen.getByRole("textbox", { name: "Reply" }), "A clarification");
   vi.mocked(api.append).mockResolvedValueOnce({
     ...created,
     cursor: "4",
@@ -329,12 +310,12 @@ test("reply, resolve, and reopen share the same conversation and preserve histor
     "reply",
     "A clarification",
   ]);
-  expect(screen.getByRole("button", { name: "Reopen", exact: true })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Reopen" })).toBeTruthy();
   vi.mocked(api.append).mockImplementationOnce(async () => {
     vi.mocked(api.inspect).mockResolvedValue(report);
     return { ...created, cursor: "5", type: "thread.reopened" };
   });
-  await user.click(screen.getByRole("button", { name: "Reopen", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Reopen" }));
   await screen.findByRole("button", { name: "Send reply" });
   expect(
     within(screen.getByRole("list", { name: "History" })).getAllByRole("listitem"),
@@ -343,7 +324,7 @@ test("reply, resolve, and reopen share the same conversation and preserve histor
 
 test("page and status filters are sent to the hostname-scoped API", async () => {
   const { api, user } = mount(fixture([report]));
-  await user.click(screen.getByRole("button", { name: "Feedback", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Feedback" }));
   await user.selectOptions(screen.getByRole("combobox", { name: "pages" }), "all");
   await waitFor(() =>
     expect(api.list).toHaveBeenCalledWith(undefined, undefined, expect.any(AbortSignal), "open"),
@@ -394,7 +375,7 @@ test("a missing anchor keeps its conversation readable without a reattachment ac
 test("polling updates replies and status without a refresh control or lost draft", async () => {
   const { api, user } = mount(fixture([report]));
   await openThread(user);
-  const textarea = screen.getByRole("textbox", { name: "Reply", exact: true });
+  const textarea = screen.getByRole("textbox", { name: "Reply" });
   await user.type(textarea, "Draft");
   vi.mocked(api.events).mockResolvedValueOnce({
     schema_version: 1,
@@ -403,7 +384,7 @@ test("polling updates replies and status without a refresh control or lost draft
   });
   vi.mocked(api.inspect).mockResolvedValueOnce({ ...report, state: "resolved" });
   await waitFor(() => expect(screen.getByText("Remote reply")).toBeTruthy(), { timeout: 4000 });
-  await screen.findByRole("button", { name: "Reopen", exact: true });
+  await screen.findByRole("button", { name: "Reopen" });
   expect((textarea as HTMLTextAreaElement).value).toBe("Draft");
   expect(document.activeElement).toBe(textarea);
   expect(screen.queryByRole("button", { name: /refresh/i })).toBeNull();
@@ -418,5 +399,5 @@ test("there are no comment or hide keyboard shortcuts", async () => {
   fireEvent.keyDown(document, { key: "c" });
   fireEvent.keyDown(document, { key: ".", metaKey: true });
   expect(screen.queryByRole("complementary", { name: "new feedback" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Feedback", exact: true })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Feedback" })).toBeTruthy();
 });

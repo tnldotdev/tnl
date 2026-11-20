@@ -64,6 +64,7 @@ type actionRefreshFixture struct {
 	roots                                   *x509.CertPool
 	expiry                                  time.Time
 	providerCalls, redirectedCalls, streams *atomic.Int32
+	signedRetirements                       *atomic.Int32
 	refreshed, providerCanceled             <-chan struct{}
 	release                                 chan struct{}
 	call                                    func([]byte, ...string) []byte
@@ -84,7 +85,8 @@ func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 		}
 		decodeErr := json.Unmarshal(data, &stopped)
 		calls, _, _ := f.inspect()
-		t.Logf("expired-owner cleanup: record=%t decoded=%t schema=%d clean=%t revoke_calls=%d", readErr == nil, decodeErr == nil, stopped.Schema, stopped.Clean, calls["DELETE /v1/workload-sessions/{session}"])
+		t.Logf("expired-owner cleanup: record=%t decoded=%t schema=%d clean=%t signed_retirements=%d revoke_calls=%d",
+			readErr == nil, decodeErr == nil, stopped.Schema, stopped.Clean, f.signedRetirements.Load(), calls["DELETE /v1/workload-sessions/{session}"])
 	})
 	_, original, _ := f.inspect()
 	first := f.prepared.Connection
@@ -234,9 +236,9 @@ func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 			Clean  bool `json:"clean"`
 		}
 		if err != nil || json.Unmarshal(data, &stopped) != nil || stopped.Schema != 1 || !stopped.Clean ||
-			retirements != 1 || calls["DELETE /v1/workload-sessions/{session}"] != 1 {
+			retirements != 1 || f.signedRetirements.Load() != 1 || calls["DELETE /v1/workload-sessions/{session}"] != 1 {
 			t.Fatal("expired owner did not join one signed retirement and revocation within its original stop budget",
-				err, stopped.Schema, stopped.Clean, retirements, calls["DELETE /v1/workload-sessions/{session}"])
+				err, stopped.Schema, stopped.Clean, retirements, f.signedRetirements.Load(), calls["DELETE /v1/workload-sessions/{session}"])
 		}
 		t.Log("expired Action owner joined one signed pair retirement and one workload revocation; stopped cleanly")
 	}

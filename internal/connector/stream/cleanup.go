@@ -305,12 +305,14 @@ func (p *connectorConnection) preparedRetirementResult(prepared *PreparedConnect
 	// retirement distinguishes this exact idle stop from failed cleanup.
 	// never inspect the physical error tree or an entered renewal's result.
 	if cause, ok := prepared.permissionErr.(*preparedPermissionExpiry); ok &&
-		cause.owner == prepared && cause.until.Equal(prepared.permissionUntil) && !cause.until.After(now) {
-		if cause.cause == nil {
+		cause.owner == prepared && cause.until.Equal(prepared.permissionUntil) {
+		if cause.cause == nil && !cause.until.After(now) {
 			return errors.Join(prepared.closeErr, prepared.physicalErr)
 		}
+		// a refreshed pair can expire before this visitor's last acknowledged
+		// permission. the idle worker stopped on the pair's fence, not its timer.
 		if authority, ok := cause.cause.(*connectorAuthorityExpiry); ok &&
-			authority.owner == p && authority == context.Cause(p.ctx) && !authority.until.After(now) {
+			prepared.ctx == p.ctx && authority.owner == p && authority == context.Cause(p.ctx) && !authority.until.After(now) {
 			return errors.Join(prepared.closeErr, prepared.physicalErr)
 		}
 	}

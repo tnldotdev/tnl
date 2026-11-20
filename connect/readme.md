@@ -19,7 +19,7 @@ GitHub workload named `deploy`. Before running it:
   checkout. For a private repository, the first apply also needs `gh` authenticated
   with read access to that repository. The action uses the saved policy.
 - Pin pnpm 11 or newer in `package.json`, for example
-  `"packageManager": "pnpm@11.28.7"`, with a matching committed `pnpm-lock.yaml`.
+  `"packageManager": "pnpm@12.18.0"`, with a matching committed `pnpm-lock.yaml`.
 - Use an existing PostgreSQL Drizzle migration setup with `@tnldotdev/tnl`,
   `drizzle-kit`, `drizzle-orm`, and `pg` in the committed manifest and lockfile.
   Keep the native platform optional dependency enabled.
@@ -46,9 +46,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+      - uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
         with:
-          runtime: node@22.23.2
+          runtime: node@22.23.4
           require-lockfile: true
       - run: pnpm install --frozen-lockfile
       - uses: tnldotdev/tnl/connect@7b95306b02aadc34f77c7db3ac116c4030adf8c6

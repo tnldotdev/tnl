@@ -6,6 +6,8 @@ packages:
 
 overrides:
   "@esbuild-kit/core-utils>esbuild": "0.25.12"
+  # the hey api parser pins a version with known denial-of-service issues.
+  "@hey-api/json-schema-ref-parser>js-yaml": "4.3.2"
   # hey api needs the compiler API; application checks still use TypeScript 7.
   "@hey-api/openapi-ts>typescript": 6.0.3
   "oxfmt@0.59.0>tinypool": "2.2.0"

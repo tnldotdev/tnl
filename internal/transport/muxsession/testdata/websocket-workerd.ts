@@ -19,8 +19,11 @@ const input = z
   })
   .parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
 const require = createRequire(import.meta.url);
+const manifest = z
+  .object({ devDependencies: z.object({ workerd: z.string() }) })
+  .parse(JSON.parse(await readFile(new URL("../../../../package.json", import.meta.url), "utf8")));
 const workerd = z
-  .object({ default: z.string(), version: z.literal("1.20261031.1") })
+  .object({ default: z.string(), version: z.literal(manifest.devDependencies.workerd) })
   .parse(require("workerd"));
 const directory = await mkdtemp(join(dirname(input.wasm), "workerd-wss-"));
 try {
