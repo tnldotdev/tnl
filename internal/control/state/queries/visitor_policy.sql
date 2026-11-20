@@ -23,6 +23,18 @@ SELECT EXISTS (
     WHERE binding.service_id=sqlc.arg(service_id)::text
 );
 
+-- name: ReadRegisteredKeyWatchVersion :one
+-- an unbound service cannot gain a registered key from a change to another
+-- service's project. the binding counter survives removal and recreation.
+SELECT COALESCE(service.revision,0)::bigint AS binding_revision,
+       COALESCE(project.revision,0)::bigint AS project_revision,
+       COALESCE(team.revision,0)::bigint AS team_revision
+FROM (SELECT sqlc.arg(service_id)::text AS id) request
+LEFT JOIN control.applied_project_services binding ON binding.service_id=request.id
+LEFT JOIN control.registered_key_watch_versions service ON (service.team_id,service.project_key,service.service_id)=('','',request.id)
+LEFT JOIN control.registered_key_watch_versions project ON (project.team_id,project.project_key,project.service_id)=(binding.team_id,binding.project_key,'')
+LEFT JOIN control.registered_key_watch_versions team ON (team.team_id,team.project_key,team.service_id)=(binding.team_id,'','');
+
 -- name: ReadVisitorPolicyRegisteredKeys :many
 SELECT approval.grant_id,signing.id AS key_id,current.public_key::bytea AS public_key,current.expires_at::timestamptz AS expires_at
 FROM control.applied_project_services binding

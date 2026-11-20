@@ -27,6 +27,32 @@ func (q *Queries) HasVisitorPolicyRegisteredKeyCandidates(ctx context.Context, s
 	return exists, err
 }
 
+const readRegisteredKeyWatchVersion = `-- name: ReadRegisteredKeyWatchVersion :one
+SELECT COALESCE(service.revision,0)::bigint AS binding_revision,
+       COALESCE(project.revision,0)::bigint AS project_revision,
+       COALESCE(team.revision,0)::bigint AS team_revision
+FROM (SELECT $1::text AS id) request
+LEFT JOIN control.applied_project_services binding ON binding.service_id=request.id
+LEFT JOIN control.registered_key_watch_versions service ON (service.team_id,service.project_key,service.service_id)=('','',request.id)
+LEFT JOIN control.registered_key_watch_versions project ON (project.team_id,project.project_key,project.service_id)=(binding.team_id,binding.project_key,'')
+LEFT JOIN control.registered_key_watch_versions team ON (team.team_id,team.project_key,team.service_id)=(binding.team_id,'','')
+`
+
+type ReadRegisteredKeyWatchVersionRow struct {
+	BindingRevision int64
+	ProjectRevision int64
+	TeamRevision    int64
+}
+
+// an unbound service cannot gain a registered key from a change to another
+// service's project. the binding counter survives removal and recreation.
+func (q *Queries) ReadRegisteredKeyWatchVersion(ctx context.Context, serviceID string) (ReadRegisteredKeyWatchVersionRow, error) {
+	row := q.db.QueryRow(ctx, readRegisteredKeyWatchVersion, serviceID)
+	var i ReadRegisteredKeyWatchVersionRow
+	err := row.Scan(&i.BindingRevision, &i.ProjectRevision, &i.TeamRevision)
+	return i, err
+}
+
 const readVisitorPolicyEvents = `-- name: ReadVisitorPolicyEvents :many
 SELECT revision,changed_at FROM control.visitor_policy_events
 WHERE resource_id=$1 AND revision>$2

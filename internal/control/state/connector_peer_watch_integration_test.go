@@ -132,10 +132,9 @@ func TestIntegrationConnectorPeerWatchCommittedChanges(t *testing.T) {
 	compare([]ConnectorPeerWatchVersion{seenA, seenB, missing}, ConnectorPeerWatchVersion{a.run.RunID, -1}, missing)
 }
 
-func TestIntegrationConnectorPeerWatchMigrationPreservesExistingRun(t *testing.T) {
-	f := newConnectorPairFixture(t)
-	ctx := t.Context()
-	pooledURL := f.d.pool.Config().ConnString()
+func watchMigrationFixture(t *testing.T, d *Database) (string, *goose.Provider) {
+	t.Helper()
+	pooledURL := d.pool.Config().ConnString()
 	directURL, err := url.Parse(pooledURL)
 	if err != nil {
 		t.Fatal(err)
@@ -158,6 +157,14 @@ func TestIntegrationConnectorPeerWatchMigrationPreservesExistingRun(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	return directURL.String(), provider
+}
+
+func TestIntegrationConnectorPeerWatchMigrationPreservesExistingRun(t *testing.T) {
+	f := newConnectorPairFixture(t)
+	ctx := t.Context()
+	pooledURL := f.d.pool.Config().ConnString()
+	directURL, provider := watchMigrationFixture(t, f.d)
 	if _, err := provider.DownTo(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +177,7 @@ func TestIntegrationConnectorPeerWatchMigrationPreservesExistingRun(t *testing.T
 	pair := f.create(t)
 	f.claim(t, pair, 0, f.now.Add(time.Second))
 	before := connectorPairSavedAuthority(t, f.d, pair.ID)
-	if err := Migrate(ctx, directURL.String()); err != nil {
+	if err := Migrate(ctx, directURL); err != nil {
 		t.Fatal(err)
 	}
 	reader, err := Open(ctx, pooledURL, testStorageKey, "", naming.ManagedURLModeGenerated)

@@ -796,6 +796,13 @@ type ControlPublisherRuntime struct {
 	DeploymentFirstObservedAt pgtype.Timestamptz
 }
 
+type ControlRegisteredKeyWatchVersion struct {
+	TeamID     string
+	ProjectKey string
+	ServiceID  string
+	Revision   int64
+}
+
 type ControlRelayCertificateOrder struct {
 	ID                     string
 	AccountID              string
