@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
@@ -27,15 +29,15 @@ const (
 )
 
 type statusCommand struct {
-	Deployment    string               `name:"deployment" help:"Read this configured deployment's applied targets and publishers; defaults to local."`
-	Output        statusOutputMode     `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
-	Scope         string               `name:"scope" enum:"local,server,both" default:"both" help:"Read local snapshots, fresh server state, or both (default)."`
-	ServerURL     string               `name:"server" env:"TNL_SERVER" help:"Control URL to read; independent of --scope."`
-	AccessToken   string               `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token for server status; defaults to saved session."`
-	StateDir      string               `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	All           bool                 `name:"all" help:"Show tunnels from every local project."`
-	Project       string               `kong:"-"`
-	Configuration projectConfiguration `kong:"-"`
+	Deployment    string           `name:"deployment" help:"Read this configured deployment's applied targets and publishers; defaults to local."`
+	Output        statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	Scope         string           `name:"scope" enum:"local,server,both" default:"both" help:"Read local snapshots, fresh server state, or both (default)."`
+	ServerURL     string           `name:"server" env:"TNL_SERVER" help:"Control URL to read; independent of --scope."`
+	AccessToken   string           `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token for server status; defaults to saved session."`
+	StateDir      string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	All           bool             `name:"all" help:"Show tunnels from every local project."`
+	Project       string
+	Configuration projectConfiguration
 }
 
 type statusLocal struct {
@@ -468,4 +470,28 @@ func currentProjectRoot(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return worktree.Root, nil
+}
+
+func (a *commandApp) newStatusCommand() *cobra.Command {
+	f := a.flags
+	cStatus := &cobra.Command{Use: "status", Short: "Show local snapshots and fresh signed-in server facts; --all includes other projects.", GroupID: "start"}
+	a.leaf(cStatus, &f.Status, func(call commandCall) error {
+		if !f.Status.All {
+			var err error
+			f.Status.Project, err = projectRoot(call.ctx, *f)
+			if err != nil {
+				return err
+			}
+			stateRoot, err := clientStateRoot(f.Status.StateDir)
+			if err != nil {
+				return err
+			}
+			f.Status.Configuration, err = loadProjectConfiguration(call.ctx, *f, stateRoot)
+			if err != nil {
+				return err
+			}
+		}
+		return runStatus(call.ctx, f.Status, a.out)
+	})
+	return cStatus
 }

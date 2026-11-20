@@ -1,19 +1,15 @@
 package main
 
 import (
+	"io"
 	"testing"
 	"time"
-
-	"github.com/alecthomas/kong"
 )
 
 func TestDeploymentPublisherEnrollmentHasBoundedIndependentTaskBudget(t *testing.T) {
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"publisher", "setup", "--deployment", "cluster", "--service", "db", "--members", "20", "--expires-in", "1h"}); err != nil {
+	parser := commandForTest(&flags, io.Discard)
+	if _, err := parser([]string{"publisher", "setup", "--deployment", "cluster", "--service", "db", "--members", "20", "--expires-in", "1h"}); err != nil {
 		t.Fatal(err)
 	}
 	body, err := deploymentPublisherSetupBody(flags.Publisher.Setup)
@@ -44,12 +40,9 @@ func TestPublisherProvisionKeepsSavedServiceIDSeparateFromDeploymentNames(t *tes
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var flags cli
-			parser, err := kong.New(&flags)
-			if err != nil {
-				t.Fatal(err)
-			}
+			parser := commandForTest(&flags, io.Discard)
 			args := append([]string{"publisher", "provision", "--output-file", "unused.json"}, test.args...)
-			if _, err := parser.Parse(args); err != nil {
+			if _, err := parser(args); err != nil {
 				t.Fatal(err)
 			}
 			selection := flags.Publisher.Provision

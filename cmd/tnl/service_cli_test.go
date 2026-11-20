@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -20,19 +19,14 @@ import (
 func TestSystemServiceCommandWiring(t *testing.T) {
 	for _, command := range []string{"install", "start", "stop", "remove", "list", "serve"} {
 		t.Run(command, func(t *testing.T) {
-			var root struct {
-				Service serviceCommand `cmd:""`
-			}
-			parser, err := kong.New(&root, kong.Name("tnl"), kong.Writers(io.Discard, io.Discard))
-			if err != nil {
-				t.Fatal(err)
-			}
+			var root cli
+			parser := commandForTest(&root, io.Discard)
 			args := []string{"service", command}
 			if command == "start" || command == "stop" || command == "remove" {
 				args = append(args, "database")
 			}
 			args = append(args, "--system-state-dir", "/private/system-publisher")
-			parsed, err := parser.Parse(args)
+			parsed, err := parser(args)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -40,8 +34,8 @@ func TestSystemServiceCommandWiring(t *testing.T) {
 			if command == "start" || command == "stop" || command == "remove" {
 				want += " <job>"
 			}
-			if parsed.Command() != want {
-				t.Fatalf("parent dispatch path: %s, want %s", parsed.Command(), want)
+			if commandID(parsed) != want {
+				t.Fatalf("parent dispatch path: %s, want %s", commandID(parsed), want)
 			}
 			if command == "start" && root.Service.Start.Job != "database" || command == "stop" && root.Service.Stop.Job != "database" {
 				t.Fatal("job selection was lost")
@@ -82,14 +76,9 @@ func TestInstalledServiceArgumentsSelectMatchingStateOwner(t *testing.T) {
 		arg    string
 		system bool
 	}{{"--user", false}, {"--system", true}} {
-		var root struct {
-			Service serviceCommand `cmd:""`
-		}
-		parser, err := kong.New(&root, kong.Name("tnl"), kong.Writers(io.Discard, io.Discard))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse([]string{"service", "serve", "--system-state-dir", "/private/tnl-service", mode.arg}); err != nil {
+		var root cli
+		parser := commandForTest(&root, io.Discard)
+		if _, err := parser([]string{"service", "serve", "--system-state-dir", "/private/tnl-service", mode.arg}); err != nil {
 			t.Fatal(err)
 		}
 		options, err := root.Service.Serve.options()

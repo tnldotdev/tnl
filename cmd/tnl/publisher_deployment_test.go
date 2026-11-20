@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -41,21 +40,18 @@ func TestDeploymentPublisherCommandSelection(t *testing.T) {
 		{"publisher", "revoke", "pub_aaaaaaaaaaaaaaaaaaaaaa", "--deployment", "customer"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags, kong.Writers(io.Discard, io.Discard))
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := parser.Parse(append(args, "--project-key", "shop", "--team", "acme", "--output", "json"))
+		parser := commandForTest(&flags, io.Discard)
+		parsed, err := parser(append(args, "--project-key", "shop", "--team", "acme", "--output", "json"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		team := "project-team"
 		project := projectConfiguration{}
 		project.Config.Team = &team
-		if err = applyProjectCommandContext(parsed.Command(), project, &flags); err != nil {
+		if err = applyProjectCommandContext(commandID(parsed), project, &flags); err != nil {
 			t.Fatal(err)
 		}
-		switch parsed.Command() {
+		switch commandID(parsed) {
 		case "publisher setup":
 			body, err := deploymentPublisherSetupBody(flags.Publisher.Setup)
 			if err != nil || len(body.Services) != 2 || *body.MaxMembers != 2 || *body.ExpiresIn != 300 || flags.Publisher.Setup.ProjectTeam != team || flags.Publisher.Setup.Team != "acme" {
@@ -70,7 +66,7 @@ func TestDeploymentPublisherCommandSelection(t *testing.T) {
 				t.Fatal("revoke lost deployment selection")
 			}
 		default:
-			t.Fatal("unexpected command", parsed.Command())
+			t.Fatal("unexpected command", commandID(parsed))
 		}
 	}
 }

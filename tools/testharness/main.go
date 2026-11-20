@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alecthomas/kong"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
+	"github.com/spf13/cobra"
 	"github.com/testcontainers/testcontainers-go"
 	tclog "github.com/testcontainers/testcontainers-go/log"
 	"github.com/testcontainers/testcontainers-go/modules/compose"
@@ -30,35 +30,38 @@ const (
 )
 
 type harnessArguments struct {
-	TestShard string   `name:"tnl-test-shard" help:"Run one stable test-name shard, numbered 1/N through N/N."`
-	Service   string   `arg:"" enum:"postgres,mysql,postgres-tls,mysql-tls,deployment-database,connector-wasm,redis,connections,dns,runtime,publisher-install" help:"Disposable service or connections suite for the test command."`
-	Command   []string `arg:"" optional:"" passthrough:"" sep:"none" help:"Test command and arguments after --."`
+	TestShard string
+	Service   string
+	Command   []string
 }
 
 func parseHarnessArguments(arguments []string) (harnessArguments, error) {
 	var parsed harnessArguments
-	parser, err := kong.New(&parsed, kong.Name("testharness"), kong.Writers(os.Stdout, os.Stderr))
-	if err != nil {
-		return parsed, err
+	root := &cobra.Command{Use: "testharness", SilenceErrors: true, SilenceUsage: true, Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error { return errors.New("suite is required") }}
+	root.CompletionOptions.DisableDefaultCmd = true
+	root.PersistentFlags().StringVar(&parsed.TestShard, "tnl-test-shard", "", "Run one stable test-name shard, numbered 1/N through N/N.")
+	for _, suite := range []string{"postgres", "postgres-tls", "mysql", "mysql-tls", "redis", "deployment-database", "connector-wasm", "connections", "dns", "runtime", "publisher-install"} {
+		root.AddCommand(&cobra.Command{Use: suite, RunE: func(cmd *cobra.Command, args []string) error {
+			parsed.Service = suite
+			switch suite {
+			case "dns", "runtime", "publisher-install":
+				if len(args) != 0 || cmd.ArgsLenAtDash() >= 0 || parsed.TestShard != "" {
+					return errors.New("dns, runtime, and publisher-install do not take a test command or shard")
+				}
+			default:
+				if cmd.ArgsLenAtDash() != 0 || len(args) == 0 {
+					return errors.New("usage: testharness postgres|postgres-tls|mysql|mysql-tls|redis|connections -- go test [arguments...]")
+				}
+				parsed.Command = args
+			}
+			_, err := parseTestShard(parsed.TestShard)
+			return err
+		}})
 	}
-	if _, err := parser.Parse(arguments); err != nil {
-		return parsed, err
-	}
-	if parsed.Service == "dns" || parsed.Service == "runtime" || parsed.Service == "publisher-install" {
-		if len(parsed.Command) != 0 || parsed.TestShard != "" {
-			return parsed, errors.New("dns, runtime, and publisher-install do not take a test command or shard")
-		}
-	} else if len(parsed.Command) < 2 || parsed.Command[0] != "--" {
-		return parsed, errors.New("usage: testharness postgres|postgres-tls|mysql|mysql-tls|redis|connections -- go test [arguments...], or testharness dns|runtime|publisher-install")
-	} else {
-		// kong's passthrough includes the separator; only the child command
-		// and its arguments belong in the process we launch.
-		parsed.Command = parsed.Command[1:]
-	}
-	if _, err := parseTestShard(parsed.TestShard); err != nil {
-		return parsed, err
-	}
-	return parsed, nil
+	root.SetArgs(arguments)
+	err := root.Execute()
+	return parsed, err
 }
 
 func main() {
@@ -75,6 +78,9 @@ func run() error {
 	arguments, err := parseHarnessArguments(os.Args[1:])
 	if err != nil {
 		return err
+	}
+	if arguments.Service == "" {
+		return nil
 	}
 	root, err := repositoryRoot()
 	if err != nil {

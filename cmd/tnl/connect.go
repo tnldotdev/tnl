@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
@@ -18,12 +20,12 @@ import (
 )
 
 type connectCommand struct {
-	Start          connectStartCommand     `cmd:"" default:"withargs" help:"Make an approved service available locally until stopped; start is optional and disambiguates command names."`
-	Available      connectAvailableCommand `cmd:"" help:"List services this identity can visit."`
-	List           connectListCommand      `cmd:"" help:"List installed local connectors."`
-	Stop           connectJobCommand       `cmd:"" help:"Stop an installed connector without revoking access."`
-	Remove         connectJobCommand       `cmd:"" help:"Remove an installed connector and its remembered port."`
-	KubeCredential kubeCredentialCommand   `cmd:"" hidden:""`
+	Start          connectStartCommand
+	Available      connectAvailableCommand
+	List           connectListCommand
+	Stop           connectJobCommand
+	Remove         connectJobCommand
+	KubeCredential kubeCredentialCommand
 }
 
 type connectStartCommand struct {
@@ -201,4 +203,83 @@ func runConnectAvailable(ctx context.Context, command connectAvailableCommand, o
 		blocks = append(blocks, clioutput.Section(service.Name, clioutput.Fields(clioutput.Field{Label: "service ID", Value: service.Id}, clioutput.Field{Label: "team ID", Value: service.TeamId}, clioutput.Field{Label: "state", Value: state})))
 	}
 	return writeHumanFrame(output, "tnl connect available", countState(len(services), "service", "services"), "", blocks...)
+}
+
+func (a *commandApp) newConnectCommand() *cobra.Command {
+	f := a.flags
+	cConnect := &cobra.Command{Use: "connect", Short: "Make an approved service available locally using the current identity.", GroupID: "start"}
+	cConnectStart := &cobra.Command{Use: "start", Short: "Make an approved service available locally until stopped; start is optional and disambiguates command names."}
+	a.leaf(cConnectStart, &f.Connect.Start, func(call commandCall) error {
+		return a.startConnector(call)
+	})
+	cConnect.AddCommand(cConnectStart)
+	a.useDefault(cConnect, cConnectStart)
+	cConnectAvailable := &cobra.Command{Use: "available", Short: "List services this identity can visit."}
+	a.leaf(cConnectAvailable, &f.Connect.Available, func(call commandCall) error {
+		return runConnectAvailable(call.ctx, f.Connect.Available, a.out, a.errOut)
+	})
+	cConnect.AddCommand(cConnectAvailable)
+	cConnectList := &cobra.Command{Use: "list", Short: "List installed local connectors."}
+	a.leaf(cConnectList, &f.Connect.List, func(call commandCall) error {
+		return runConnectJobs(call.ctx, f.Connect.List, "", "list", a.out)
+	})
+	cConnect.AddCommand(cConnectList)
+	cConnectStop := &cobra.Command{Use: "stop", Short: "Stop an installed connector without revoking access."}
+	a.leaf(cConnectStop, &f.Connect.Stop, func(call commandCall) error {
+		return runConnectJobs(call.ctx, f.Connect.Stop.connectListCommand, f.Connect.Stop.Name, "stop", a.out)
+	})
+	cConnect.AddCommand(cConnectStop)
+	cConnectRemove := &cobra.Command{Use: "remove", Short: "Remove an installed connector and its remembered port."}
+	a.leaf(cConnectRemove, &f.Connect.Remove, func(call commandCall) error {
+		return runConnectJobs(call.ctx, f.Connect.Remove.connectListCommand, f.Connect.Remove.Name, "remove", a.out)
+	})
+	cConnect.AddCommand(cConnectRemove)
+	cConnectKubeCredential := &cobra.Command{Use: "kube-credential", Short: "", Hidden: true}
+	a.leaf(cConnectKubeCredential, &f.Connect.KubeCredential, func(call commandCall) error {
+		return runKubeCredential(call.ctx, f.Connect.KubeCredential, a.out)
+	})
+	cConnect.AddCommand(cConnectKubeCredential)
+	return cConnect
+}
+
+func (a *commandApp) startConnector(call commandCall) error {
+	ctx, flags := call.ctx, a.flags
+	connect := &flags.Connect.Start
+	if err := validateConnectMode(*connect); err != nil {
+		return err
+	}
+	if connect.Install {
+		options, err := (systemStateFlags{SystemStateDir: connect.SystemStateDir}).options()
+		if err != nil {
+			return err
+		}
+		if err := requireInstalledService(ctx, options, nil); err != nil {
+			return err
+		}
+	}
+	if connect.Detach {
+		// resolve and validate the service mode before creating a child.
+		connect.detach = func() error { return detachPublish(ctx, a.argv, connect.StateDir, a.out, "tnl connect") }
+	}
+	root, err := clientStateRoot(connect.StateDir)
+	if err != nil {
+		return err
+	}
+	if connect.DetachedChild != "" {
+		var cleanup func()
+		ctx, cleanup, err = detached.Serve(ctx, root, connect.DetachedChild)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+	}
+	project, err := loadProjectConfiguration(ctx, *flags, root)
+	if err != nil {
+		return err
+	}
+	if err := project.applyConnect(connect); err != nil {
+		return err
+	}
+	call.started()
+	return runConnectStart(ctx, *connect, a.out, a.errOut)
 }

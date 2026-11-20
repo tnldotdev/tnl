@@ -12,8 +12,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/alecthomas/kong"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/tnldotdev/tnl/internal/buildinfo"
+	"github.com/tnldotdev/tnl/internal/cliflags"
 	"github.com/tnldotdev/tnl/internal/config"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/daemon"
@@ -62,61 +64,88 @@ func writeTerminalError(output io.Writer, err error) {
 }
 
 func run(ctx context.Context, args []string, stdout io.Writer) (result error) {
-	operation := failure.Operation("parse command")
-	reason := failure.ServerCommandInvalid
-	defer func() {
-		if result != nil {
-			if _, typed := failure.Of(result); !typed {
-				result = failure.Wrap(operation, reason, result)
-			}
-		}
-	}()
 	var flags tnldCLI
-	parser, err := newTNLDParser(&flags, stdout)
+	root := newServerCommand(&flags, stdout)
+	root.SetArgs(args)
+	_, err := root.ExecuteContextC(ctx)
 	if err != nil {
-		return err
+		if _, typed := failure.Of(err); !typed {
+			return failure.Wrap("parse command", failure.ServerCommandInvalid, err)
+		}
 	}
-	parsed, err := parser.Parse(args)
-	if err != nil {
-		return err
+	return err
+}
+
+type serveOptions struct {
+	ConfigPath string              `name:"config" env:"TNLD_CONFIG" type:"path" help:"Load YAML or JSON process configuration."`
+	Values     daemonconfig.Config `embed:""`
+}
+type tnldCLI struct {
+	Serve, Show, Apply serveOptions
+	Check              struct {
+		ConfigPath string `name:"config" env:"TNLD_CONFIG" type:"path" help:"Validate YAML or JSON process configuration."`
 	}
-	if parsed.Command() != "" {
-		operation = failure.Operation(parsed.Command())
+}
+
+func newServerCommand(flags *tnldCLI, stdout io.Writer) *cobra.Command {
+	root := &cobra.Command{Use: "tnld", Short: "tnl server.", SilenceErrors: true, SilenceUsage: true}
+	root.SetOut(stdout)
+	root.SetErr(stdout)
+	add := func(parent *cobra.Command, name, help string, options any, reason failure.Reason, run func(*cobra.Command) error) *cobra.Command {
+		cmd := &cobra.Command{Use: name, Short: help, Args: cobra.NoArgs}
+		cliflags.Bind(cmd, options, false)
+		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+			err := run(cmd)
+			if err != nil {
+				if _, typed := failure.Of(err); !typed {
+					return failure.Wrap(failure.Operation(strings.TrimPrefix(cmd.CommandPath(), "tnld ")), reason, err)
+				}
+			}
+			return err
+		}
+		parent.AddCommand(cmd)
+		return cmd
 	}
-	switch parsed.Command() {
-	case "migrate":
-		reason = failure.ServerMigrationFailed
+	group := func(name, help string) *cobra.Command {
+		cmd := &cobra.Command{Use: name, Short: help, Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error { return errors.New("subcommand required") }}
+		root.AddCommand(cmd)
+		return cmd
+	}
+	configGroup := group("config", "Inspect process configuration.")
+	pool := group("ingress-pool", "Manage durable ingress pool allocation policy.")
+	add(root, "migrate", "Apply control-state database migrations.", nil, failure.ServerMigrationFailed, func(cmd *cobra.Command) error {
 		directURL := os.Getenv("TNLD_DATABASE_DIRECT_URL")
 		if directURL == "" {
-			return failure.WrapSetting(operation, failure.DirectDatabaseURLMissing, failure.SettingDatabaseDirectURL,
+			return failure.WrapSetting(failure.Operation("migrate"), failure.DirectDatabaseURLMissing, failure.SettingDatabaseDirectURL,
 				errors.New("TNLD_DATABASE_DIRECT_URL is required"))
 		}
-		return controlstate.Migrate(ctx, directURL)
-	case "serve":
-		reason = failure.ServerStartupFailed
-		cfg, err := resolveServeCommand(flags.Serve.ConfigPath, daemonconfig.Config(flags.Serve.Values), parsed)
+		return controlstate.Migrate(cmd.Context(), directURL)
+	})
+	serve := add(root, "serve", "Run the configured tnld process.", &flags.Serve, failure.ServerStartupFailed, func(cmd *cobra.Command) error {
+		cfg, err := resolveServeCommand(flags.Serve.ConfigPath, daemonconfig.Config(flags.Serve.Values), cmd)
 		if err != nil {
 			return err
 		}
-		return daemon.Serve(ctx, cfg)
-	case "config check":
-		reason = failure.ServerConfigInvalid
-		if flags.Config.Check.ConfigPath == "" {
-			return failure.Wrap(operation, failure.ServerConfigFileInvalid, errors.New("--config or TNLD_CONFIG is required"))
+		return daemon.Serve(cmd.Context(), cfg)
+	})
+	add(configGroup, "check", "Validate process configuration without starting services.", &flags.Check, failure.ServerConfigInvalid, func(cmd *cobra.Command) error {
+		if flags.Check.ConfigPath == "" {
+			return failure.Wrap(failure.Operation("config check"), failure.ServerConfigFileInvalid, errors.New("--config or TNLD_CONFIG is required"))
 		}
 		base, err := parseDefaultsAndEnvironment()
 		if err != nil {
 			return err
 		}
-		_, err = resolveConfigFile(flags.Config.Check.ConfigPath, base, nil)
+		_, err = resolveConfigFile(flags.Check.ConfigPath, base, nil)
 		return err
-	case "config show":
-		reason = failure.ServerConfigInvalid
-		base := daemonconfig.Config(flags.Config.Show.Values)
-		sources := explicitSources(parsed)
+	})
+	add(configGroup, "show", "Print resolved settings and sources as JSON, with credentials redacted.", &flags.Show, failure.ServerConfigInvalid, func(cmd *cobra.Command) error {
+		base := daemonconfig.Config(flags.Show.Values)
+		sources := explicitSources(cmd)
+		var err error
 		var cfg daemonconfig.Config
-		if flags.Config.Show.ConfigPath != "" {
-			cfg, err = resolveConfigWithSources(flags.Config.Show.ConfigPath, base, sources)
+		if flags.Show.ConfigPath != "" {
+			cfg, err = resolveConfigWithSources(flags.Show.ConfigPath, base, sources)
 		} else {
 			cfg, err = daemonconfig.ResolveExplicit(base, suppliedSettings(sources))
 		}
@@ -126,98 +155,49 @@ func run(ctx context.Context, args []string, stdout io.Writer) (result error) {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(daemonconfig.Inspect(cfg, sources))
-	case "ingress-pool apply":
-		reason = failure.ServerConfigInvalid
-		cfg, err := resolveServeCommand(flags.IngressPool.Apply.ConfigPath, daemonconfig.Config(flags.IngressPool.Apply.Values), parsed)
+	})
+	add(pool, "apply", "Apply the primary pool allocation inventory.", &flags.Apply, failure.ServerConfigInvalid, func(cmd *cobra.Command) error {
+		cfg, err := resolveServeCommand(flags.Apply.ConfigPath, daemonconfig.Config(flags.Apply.Values), cmd)
 		if err != nil {
 			return err
 		}
-		return daemon.ApplyIngressPool(ctx, cfg)
-	case "version":
-		reason = failure.ServerOutputUnavailable
+		return daemon.ApplyIngressPool(cmd.Context(), cfg)
+	})
+	add(root, "version", "Print release version information.", nil, failure.ServerOutputUnavailable, func(cmd *cobra.Command) error {
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnld"))
 		return err
-	default:
-		return errors.New("command is required")
-	}
-}
-
-func newTNLDParser(flags *tnldCLI, output io.Writer) (*kong.Kong, error) {
-	return kong.New(flags, kong.Name("tnld"), kong.Description("tnld process."), kong.Writers(output, output), kong.Help(func(options kong.HelpOptions, ctx *kong.Context) error {
-		role := daemonconfig.Role(flags.Serve.Values.Role)
-		if role == "" {
-			role = daemonconfig.Role(os.Getenv("TNLD_ROLE"))
-		}
-		if role == "" {
-			role = daemonconfig.RoleStandalone
-		}
-		for _, element := range ctx.Path {
-			if element.Flag != nil && element.Flag.Name == "role" {
-				if value, ok := ctx.FlagValue(element.Flag).(daemonconfig.Role); ok {
-					role = value
+	})
+	root.RunE = func(cmd *cobra.Command, args []string) error { return serve.RunE(cmd, args) }
+	root.Args = serve.Args
+	root.Flags().AddFlagSet(serve.Flags())
+	normalHelp := root.HelpFunc()
+	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		if flag := cmd.Flags().Lookup("role"); flag != nil {
+			role := daemonconfig.Role(flag.Value.String())
+			if env := os.Getenv("TNLD_ROLE"); !flag.Changed && env != "" {
+				role = daemonconfig.Role(env)
+			}
+			cmd.Flags().VisitAll(func(f *pflag.Flag) {
+				if f.Name != "help" && f.Name != "config" && !daemonconfig.SettingApplies(strings.ReplaceAll(f.Name, "-", "_"), role) {
+					f.Hidden = true
 				}
-			}
+			})
 		}
-		var visit func(*kong.Node)
-		visit = func(node *kong.Node) {
-			for _, flag := range node.Flags {
-				name := strings.ReplaceAll(flag.Name, "-", "_")
-				if flag.Name != "help" && flag.Name != "config" && !daemonconfig.SettingApplies(name, role) {
-					flag.Hidden = true
-				}
-			}
-			for _, child := range node.Children {
-				visit(child)
-			}
-		}
-		visit(ctx.Model.Node)
-		return kong.DefaultHelpPrinter(options, ctx)
-	}))
+		normalHelp(cmd, args)
+	})
+	return root
 }
 
-type tnldServeCommand struct {
-	ConfigPath string     `name:"config" env:"TNLD_CONFIG" type:"path" help:"Load YAML or JSON process configuration."`
-	Values     tnldValues `embed:""`
-}
-
-type tnldValues daemonconfig.Config
-
-type tnldConfigCheckCommand struct {
-	ConfigPath string `name:"config" env:"TNLD_CONFIG" type:"path" help:"Validate YAML or JSON process configuration."`
-}
-
-type tnldConfigCommand struct {
-	Check tnldConfigCheckCommand `cmd:"" help:"Validate process configuration without starting services."`
-	Show  tnldServeCommand       `cmd:"" help:"Print resolved settings and sources as JSON, with credentials redacted."`
-}
-
-type tnldIngressPoolCommand struct {
-	Apply tnldServeCommand `cmd:"" help:"Explicitly apply the primary pool allocation inventory without starting services."`
-}
-
-type tnldCLI struct {
-	Migrate     struct{}               `cmd:"" help:"Apply control-state database migrations."`
-	Serve       tnldServeCommand       `cmd:"" default:"withargs" help:"Run the configured tnld process."`
-	Config      tnldConfigCommand      `cmd:"" help:"Inspect process configuration."`
-	IngressPool tnldIngressPoolCommand `cmd:"" help:"Manage durable ingress pool allocation policy."`
-	Version     struct{}               `cmd:"" help:"Print release version information."`
-}
-
-func resolveServeCommand(path string, base daemonconfig.Config, parsed *kong.Context) (daemonconfig.Config, error) {
-	sources := explicitSources(parsed)
+func resolveServeCommand(path string, base daemonconfig.Config, cmd *cobra.Command) (daemonconfig.Config, error) {
+	sources := explicitSources(cmd)
 	if path == "" {
 		return daemonconfig.ResolveExplicit(base, suppliedSettings(sources))
 	}
 	return resolveConfigWithSources(path, base, sources)
 }
-
-func explicitSources(parsed *kong.Context) map[string]string {
+func explicitSources(cmd *cobra.Command) map[string]string {
 	result := map[string]string{}
-	for _, element := range parsed.Path {
-		if element.Flag != nil && !element.Resolved {
-			result[strings.ReplaceAll(element.Flag.Name, "-", "_")] = "flag"
-		}
-	}
+	cmd.Flags().Visit(func(f *pflag.Flag) { result[strings.ReplaceAll(f.Name, "-", "_")] = "flag" })
 	return result
 }
 
@@ -270,13 +250,9 @@ func resolveConfigWithSources(path string, base daemonconfig.Config, sources map
 }
 
 func parseDefaultsAndEnvironment() (daemonconfig.Config, error) {
-	var value tnldValues
-	parser, err := kong.New(&value, kong.Name("tnld"))
-	if err != nil {
-		return daemonconfig.Config{}, err
-	}
-	if _, err := parser.Parse(nil); err != nil {
-		return daemonconfig.Config{}, err
-	}
-	return daemonconfig.Config(value), nil
+	var value daemonconfig.Config
+	cmd := &cobra.Command{Use: "tnld"}
+	cliflags.Bind(cmd, &value, false)
+	err := cmd.ValidateArgs(nil)
+	return value, err
 }

@@ -7,6 +7,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -15,15 +17,15 @@ import (
 )
 
 type teamCommand struct {
-	Feedback teamFeedbackCommand `cmd:"" help:"Manage who may write team feedback."`
-	Current  teamCurrentCommand  `cmd:"" help:"Show the selected team."`
-	List     teamListCommand     `cmd:"" help:"List current memberships."`
-	Use      teamUseCommand      `cmd:"" help:"Save a team for commands without a project team."`
-	Create   teamCreateCommand   `cmd:"" help:"Create an organization team."`
-	Members  teamMembersCommand  `cmd:"" help:"List team memberships."`
-	Invite   teamInviteCommand   `cmd:"" help:"Manage team invitations."`
-	Join     teamJoinCommand     `cmd:"" help:"Accept a team invitation."`
-	Member   teamMemberCommand   `cmd:"" help:"Manage one team membership."`
+	Feedback teamFeedbackCommand
+	Current  teamCurrentCommand
+	List     teamListCommand
+	Use      teamUseCommand
+	Create   teamCreateCommand
+	Members  teamMembersCommand
+	Invite   teamInviteCommand
+	Join     teamJoinCommand
+	Member   teamMemberCommand
 }
 
 type teamCurrentCommand struct {
@@ -49,9 +51,9 @@ type teamMembersCommand struct {
 }
 
 type teamInviteCommand struct {
-	Create teamInviteCreateCommand `cmd:"" help:"Create an invitation."`
-	List   teamInviteListCommand   `cmd:"" help:"List invitations."`
-	Revoke teamInviteRevokeCommand `cmd:"" help:"Revoke an invitation."`
+	Create teamInviteCreateCommand
+	List   teamInviteListCommand
+	Revoke teamInviteRevokeCommand
 }
 
 type teamInviteCreateCommand struct {
@@ -77,8 +79,8 @@ type teamJoinCommand struct {
 }
 
 type teamMemberCommand struct {
-	SetRole teamMemberSetRoleCommand `cmd:"" help:"Change a membership role."`
-	Remove  teamMemberRemoveCommand  `cmd:"" help:"Remove a membership."`
+	SetRole teamMemberSetRoleCommand
+	Remove  teamMemberRemoveCommand
 }
 
 type teamMemberSetRoleCommand struct {
@@ -399,4 +401,81 @@ func savedTeamFooter(projectTeam, selectedID, selectedName string) string {
 		return "saved; project team still takes precedence here"
 	}
 	return "saved for commands without a project team"
+}
+
+func (a *commandApp) newTeamCommand() *cobra.Command {
+	f := a.flags
+	cTeam := &cobra.Command{Use: "team", Short: "Manage teams and memberships.", GroupID: "manage"}
+	cTeamFeedback := &cobra.Command{Use: "feedback", Short: "Manage who may write team feedback."}
+	cTeamFeedbackGet := &cobra.Command{Use: "get", Short: "Read the feedback author policy."}
+	a.leaf(cTeamFeedbackGet, &f.Team.Feedback.Get, func(call commandCall) error {
+		return runTeamFeedbackGet(call.ctx, f.Team.Feedback.Get, a.out, a.errOut)
+	})
+	cTeamFeedback.AddCommand(cTeamFeedbackGet)
+	cTeamFeedbackSet := &cobra.Command{Use: "set", Short: "Change who may write feedback."}
+	a.leaf(cTeamFeedbackSet, &f.Team.Feedback.Set, func(call commandCall) error {
+		return runTeamFeedbackSet(call.ctx, f.Team.Feedback.Set, a.out, a.errOut)
+	})
+	cTeamFeedback.AddCommand(cTeamFeedbackSet)
+	cTeam.AddCommand(cTeamFeedback)
+	cTeamCurrent := &cobra.Command{Use: "current", Short: "Show the selected team."}
+	a.leaf(cTeamCurrent, &f.Team.Current, func(call commandCall) error {
+		return runTeamCurrent(call.ctx, f.Team.Current, a.out, a.errOut)
+	})
+	cTeam.AddCommand(cTeamCurrent)
+	cTeamList := &cobra.Command{Use: "list", Short: "List current memberships."}
+	a.leaf(cTeamList, &f.Team.List, func(call commandCall) error {
+		return runTeamList(call.ctx, f.Team.List, a.out, a.errOut)
+	})
+	cTeam.AddCommand(cTeamList)
+	cTeamUse := &cobra.Command{Use: "use", Short: "Save a team for commands without a project team."}
+	a.leaf(cTeamUse, &f.Team.Use, func(call commandCall) error {
+		return runTeamUse(call.ctx, f.Team.Use, a.out, a.errOut)
+	})
+	cTeam.AddCommand(cTeamUse)
+	cTeamCreate := &cobra.Command{Use: "create", Short: "Create an organization team."}
+	a.leaf(cTeamCreate, &f.Team.Create, func(call commandCall) error {
+		return runTeamCreate(call.ctx, f.Team.Create, a.out, a.errOut)
+	})
+	cTeam.AddCommand(cTeamCreate)
+	cTeamMembers := &cobra.Command{Use: "members", Short: "List team memberships."}
+	a.leaf(cTeamMembers, &f.Team.Members, func(call commandCall) error {
+		return runTeamMembers(call.ctx, f.Team.Members, a.out, a.errOut)
+	})
+	cTeam.AddCommand(cTeamMembers)
+	cTeamInvite := &cobra.Command{Use: "invite", Short: "Manage team invitations."}
+	cTeamInviteCreate := &cobra.Command{Use: "create", Short: "Create an invitation."}
+	a.leaf(cTeamInviteCreate, &f.Team.Invite.Create, func(call commandCall) error {
+		return runTeamInviteCreate(call.ctx, f.Team.Invite.Create, a.out, a.errOut)
+	})
+	cTeamInvite.AddCommand(cTeamInviteCreate)
+	cTeamInviteList := &cobra.Command{Use: "list", Short: "List invitations."}
+	a.leaf(cTeamInviteList, &f.Team.Invite.List, func(call commandCall) error {
+		return runTeamInviteList(call.ctx, f.Team.Invite.List, a.out, a.errOut)
+	})
+	cTeamInvite.AddCommand(cTeamInviteList)
+	cTeamInviteRevoke := &cobra.Command{Use: "revoke", Short: "Revoke an invitation."}
+	a.leaf(cTeamInviteRevoke, &f.Team.Invite.Revoke, func(call commandCall) error {
+		return runTeamInviteRevoke(call.ctx, f.Team.Invite.Revoke, a.out, a.errOut)
+	})
+	cTeamInvite.AddCommand(cTeamInviteRevoke)
+	cTeam.AddCommand(cTeamInvite)
+	cTeamJoin := &cobra.Command{Use: "join", Short: "Accept a team invitation."}
+	a.leaf(cTeamJoin, &f.Team.Join, func(call commandCall) error {
+		return runTeamJoin(call.ctx, f.Team.Join, a.out, a.errOut)
+	})
+	cTeam.AddCommand(cTeamJoin)
+	cTeamMember := &cobra.Command{Use: "member", Short: "Manage one team membership."}
+	cTeamMemberSetRole := &cobra.Command{Use: "set-role", Short: "Change a membership role."}
+	a.leaf(cTeamMemberSetRole, &f.Team.Member.SetRole, func(call commandCall) error {
+		return runTeamMemberSetRole(call.ctx, f.Team.Member.SetRole, a.out, a.errOut)
+	})
+	cTeamMember.AddCommand(cTeamMemberSetRole)
+	cTeamMemberRemove := &cobra.Command{Use: "remove", Short: "Remove a membership."}
+	a.leaf(cTeamMemberRemove, &f.Team.Member.Remove, func(call commandCall) error {
+		return runTeamMemberRemove(call.ctx, f.Team.Member.Remove, a.out, a.errOut)
+	})
+	cTeamMember.AddCommand(cTeamMemberRemove)
+	cTeam.AddCommand(cTeamMember)
+	return cTeam
 }

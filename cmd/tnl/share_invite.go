@@ -16,10 +16,10 @@ import (
 )
 
 type shareInviteCommand struct {
-	Create shareInviteCreateCommand `cmd:""`
-	Accept shareInviteAcceptCommand `cmd:""`
-	List   shareInviteListCommand   `cmd:""`
-	Revoke shareInviteRevokeCommand `cmd:""`
+	Create shareInviteCreateCommand
+	Accept shareInviteAcceptCommand
+	List   shareInviteListCommand
+	Revoke shareInviteRevokeCommand
 }
 type shareInviteCreateCommand struct {
 	remoteFlags `embed:""`

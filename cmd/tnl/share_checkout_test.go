@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alecthomas/kong"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -45,15 +44,12 @@ func TestShareCheckoutCommandParsing(t *testing.T) {
 	} {
 		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
 			var flags cli
-			parser, err := kong.New(&flags)
+			parser := commandForTest(&flags, io.Discard)
+			parsed, err := parser(test.args)
 			if err != nil {
 				t.Fatal(err)
 			}
-			parsed, err := parser.Parse(test.args)
-			if err != nil {
-				t.Fatal(err)
-			}
-			command := canonicalParsedCommand(parsed.Command())
+			command := commandID(parsed)
 			if command != test.command || flags.Share.Create.Service != test.service || !projectSensitiveCommand(command) {
 				t.Fatalf("command=%q service=%q", command, flags.Share.Create.Service)
 			}
@@ -68,11 +64,8 @@ func TestShareCheckoutCommandParsing(t *testing.T) {
 		{"share", "link", "create", "--service", "web"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(args); err == nil {
+		parser := commandForTest(&flags, io.Discard)
+		if _, err := parser(args); err == nil {
 			t.Fatalf("unexpected share flags accepted: %v", args)
 		}
 	}
@@ -110,11 +103,8 @@ func TestShareCheckoutEntryIsDeterministic(t *testing.T) {
 func TestShareCheckoutHelpDescribesScopeAndLifetime(t *testing.T) {
 	var flags cli
 	var output bytes.Buffer
-	parser, err := kong.New(&flags, kong.Name("tnl"), kong.Writers(&output, io.Discard), kong.Exit(func(int) {}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"share", "--help"}); err != nil && output.Len() == 0 {
+	parser := commandForTest(&flags, &output)
+	if _, err := parser([]string{"share", "--help"}); err != nil && output.Len() == 0 {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"--service", "--expires-in", "checkout", "link", "revoke"} {

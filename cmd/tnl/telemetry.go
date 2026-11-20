@@ -4,8 +4,11 @@ import (
 	"context"
 	"os"
 
-	"github.com/alecthomas/kong"
+	"strings"
+
+	"github.com/spf13/cobra"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+	"github.com/tnldotdev/tnl/internal/cliflags"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
@@ -43,13 +46,8 @@ func commandOutcome(command api.CommandOutcomeCommand, action api.CommandOutcome
 	return payload
 }
 
-func selectedTelemetryCommand(parsed *kong.Context) (api.CommandOutcomeCommand, api.CommandOutcomeAction, bool) {
-	var command []string
-	for _, element := range parsed.Path {
-		if element.Command != nil && element.Command.Type == kong.CommandNode {
-			command = append(command, element.Command.Name)
-		}
-	}
+func selectedTelemetryCommand(parsed *cobra.Command) (api.CommandOutcomeCommand, api.CommandOutcomeAction, bool) {
+	command := strings.Fields(selectedPath(parsed))
 	if len(command) == 0 {
 		return "", "", false
 	}
@@ -76,29 +74,12 @@ func selectedTelemetryCommand(parsed *kong.Context) (api.CommandOutcomeCommand, 
 	return name, action, true
 }
 
-func commandStateRoot(parsed *kong.Context) (string, error) {
+func commandStateRoot(parsed *cobra.Command) (string, error) {
 	stateDir := os.Getenv("TNL_STATE_DIR")
-	if stateDir != "" {
-		stateDir = kong.ExpandPath(stateDir)
+	if f := parsed.Flags().Lookup("state-dir"); f != nil && len(f.Annotations["env"]) != 0 {
+		stateDir = f.Value.String()
 	}
-	for _, flag := range parsed.Flags() {
-		if flag.Name != "state-dir" || !hasEnvironment(flag.Envs, "TNL_STATE_DIR") {
-			continue
-		}
-		if value, ok := parsed.FlagValue(flag).(string); ok {
-			stateDir = value
-		}
-	}
-	return clientStateRoot(stateDir)
-}
-
-func hasEnvironment(environments []string, name string) bool {
-	for _, environment := range environments {
-		if environment == name {
-			return true
-		}
-	}
-	return false
+	return clientStateRoot(cliflags.ExpandPath(stateDir))
 }
 
 func closeTelemetry(ctx context.Context, close func(context.Context)) {

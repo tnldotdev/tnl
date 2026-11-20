@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -16,7 +18,7 @@ import (
 )
 
 type auditCommand struct {
-	List auditListCommand `cmd:"" help:"Read service audit events with team-manager access."`
+	List auditListCommand
 }
 
 type auditListCommand struct {
@@ -181,4 +183,15 @@ func renderServiceAudit(output io.Writer, page controlv1.ServiceAuditPage) error
 		footer = "continue with --after " + *page.NextCursor
 	}
 	return writeHumanFrame(output, "tnl audit list", countState(len(page.Events), "event", "events"), footer, blocks...)
+}
+
+func (a *commandApp) newAuditCommand() *cobra.Command {
+	f := a.flags
+	cAudit := &cobra.Command{Use: "audit", Short: "Read team service audit history.", GroupID: "manage"}
+	cAuditList := &cobra.Command{Use: "list", Short: "Read service audit events with team-manager access."}
+	a.leaf(cAuditList, &f.Audit.List, func(call commandCall) error {
+		return runAuditList(call.ctx, f.Audit.List, a.out, a.errOut)
+	})
+	cAudit.AddCommand(cAuditList)
+	return cAudit
 }

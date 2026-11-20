@@ -3,11 +3,11 @@ module github.com/tnldotdev/tnl/tools/testharness
 go 1.27.4
 
 require (
-	github.com/alecthomas/kong v1.17.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/cpuguy83/dockercfg v0.3.2
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
+	github.com/spf13/cobra v1.10.2
 	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/compose v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.45.0
@@ -92,7 +92,6 @@ require (
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.10 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
-	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.1.0 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/tilt-dev/fsnotify v1.4.8-0.20220602155310-fff9c274a375 // indirect

@@ -1,10 +1,10 @@
 package main
 
 import (
+	"io"
 	"testing"
 	"time"
 
-	"github.com/alecthomas/kong"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 )
@@ -12,11 +12,8 @@ import (
 func TestPublisherHTTPLimitsAndFlagPrecedence(t *testing.T) {
 	t.Setenv("TNL_CONCURRENCY", "4")
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"publish", "web", "--rate-requests=3"}); err != nil {
+	parser := commandForTest(&flags, io.Discard)
+	if _, err := parser([]string{"publish", "web", "--rate-requests=3"}); err != nil {
 		t.Fatal(err)
 	}
 	requests, rateRequests, concurrency := 20, 2, 7
@@ -43,11 +40,8 @@ func TestPublisherLimitsRequirePositivePairedRate(t *testing.T) {
 		{"publish", "3000", "--rate-requests=1", "--rate-per=0s"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(args); err != nil {
+		parser := commandForTest(&flags, io.Discard)
+		if _, err := parser(args); err != nil {
 			t.Fatal(err)
 		}
 		if err := (projectConfiguration{}).applyPublish(&flags.Publish); err == nil {
@@ -58,11 +52,8 @@ func TestPublisherLimitsRequirePositivePairedRate(t *testing.T) {
 
 func TestRetiredRequestLimitFlagIsNotAccepted(t *testing.T) {
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"publish", "3000", "--request-limit=5"}); err == nil {
+	parser := commandForTest(&flags, io.Discard)
+	if _, err := parser([]string{"publish", "3000", "--request-limit=5"}); err == nil {
 		t.Fatal("retired request-limit flag was accepted")
 	}
 }

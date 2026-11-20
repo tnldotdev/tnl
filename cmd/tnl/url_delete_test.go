@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -13,15 +13,12 @@ import (
 func TestURLDeleteFlagDefaultsToProtectedDeletion(t *testing.T) {
 	for _, unconditional := range []bool{false, true} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
+		parser := commandForTest(&flags, io.Discard)
 		args := []string{"url", "delete", "svc_selected"}
 		if unconditional {
 			args = append(args, "--unconditional")
 		}
-		if _, err := parser.Parse(args); err != nil || flags.URL.Delete.Unconditional != unconditional {
+		if _, err := parser(args); err != nil || flags.URL.Delete.Unconditional != unconditional {
 			t.Fatal("URL deletion lost its explicit unconditional choice", err)
 		}
 	}

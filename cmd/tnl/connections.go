@@ -19,25 +19,25 @@ import (
 type connectionsCommand struct {
 	telemetry      *clienttelemetry.Collector
 	disabled       bool
-	Capabilities   connectionsCapabilities       `cmd:""`
-	Context        connectionsContextOptions     `cmd:""`
-	Local          connectionsLocalOptions       `cmd:"" hidden:""`
-	Credential     struct{}                      `cmd:"" hidden:""`
-	Management     struct{}                      `cmd:"" hidden:""`
-	Start          connectionsStartOptions       `cmd:""`
-	Identity       connectionsContextOptions     `cmd:"" hidden:""`
-	Attach         connectionsHandleOptions      `cmd:"" hidden:""`
-	Recover        connectionsHandleOptions      `cmd:"" hidden:""`
-	Serve          connectionsServeOptions       `cmd:"" hidden:""`
-	Status         connectionsHandleOptions      `cmd:""`
-	Read           connectionsReadOptions        `cmd:"" help:"Read one prepared connection from its existing owner without starting or authenticating."`
-	Prepare        connectionsReadOptions        `cmd:"" hidden:""`
-	SDKPrepare     connectionsSDKOptions         `cmd:"" hidden:""`
-	SDKWorkload    connectionsSDKWorkloadOptions `cmd:"" hidden:""`
-	SDKStop        connectionsSDKStopOptions     `cmd:"" hidden:""`
-	SDKClose       connectionsSDKCloseOptions    `cmd:"" hidden:""`
-	Stop           connectionsHandleOptions      `cmd:""`
-	KubeCredential connectionsKubeOptions        `cmd:"" hidden:""`
+	Capabilities   connectionsCapabilities
+	Context        connectionsContextOptions
+	Local          connectionsLocalOptions
+	Credential     struct{}
+	Management     struct{}
+	Start          connectionsStartOptions
+	Identity       connectionsContextOptions
+	Attach         connectionsHandleOptions
+	Recover        connectionsHandleOptions
+	Serve          connectionsServeOptions
+	Status         connectionsHandleOptions
+	Read           connectionsReadOptions
+	Prepare        connectionsReadOptions
+	SDKPrepare     connectionsSDKOptions
+	SDKWorkload    connectionsSDKWorkloadOptions
+	SDKStop        connectionsSDKStopOptions
+	SDKClose       connectionsSDKCloseOptions
+	Stop           connectionsHandleOptions
+	KubeCredential connectionsKubeOptions
 }
 type connectionsCapabilities struct {
 	Output string `name:"output" enum:"json" default:"json"`

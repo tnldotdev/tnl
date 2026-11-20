@@ -1,9 +1,9 @@
 package main
 
 import (
+	"io"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/config"
 )
 
@@ -21,11 +21,8 @@ func TestPublishPostQuantumFlagOverridesProjectDefault(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var flags cli
-			parser, err := kong.New(&flags)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := parser.Parse(append([]string{"publish", "3000"}, test.args...)); err != nil {
+			parser := commandForTest(&flags, io.Discard)
+			if _, err := parser(append([]string{"publish", "3000"}, test.args...)); err != nil {
 				t.Fatal(err)
 			}
 			applyServiceConfiguration(&flags.Publish.tunnelFlags, config.Service{RequirePostQuantum: test.configured})

@@ -26,7 +26,7 @@ async function buildModule(file: string, tag: string) {
     .trim()
     .split("\n")
     .filter((name) =>
-      /^(go\.opentelemetry\.io\/otel\/(?:exporters|sdk)(?:\/|$)|google\.golang\.org\/(?:grpc|protobuf)(?:\/|$)|github\.com\/(?:prometheus|pion)\/|github\.com\/(?:alecthomas\/kong|santhosh-tekuri\/jsonschema)(?:\/|$)|go\.yaml\.in\/yaml\/|(?:html|text)\/template(?:\/|$)|net\/http\/pprof$)/.test(
+      /^(go\.opentelemetry\.io\/otel\/(?:exporters|sdk)(?:\/|$)|google\.golang\.org\/(?:grpc|protobuf)(?:\/|$)|github\.com\/(?:prometheus|pion)\/|github\.com\/(?:spf13\/cobra|santhosh-tekuri\/jsonschema)(?:\/|$)|go\.yaml\.in\/yaml\/|(?:html|text)\/template(?:\/|$)|net\/http\/pprof$)/.test(
         name,
       ),
     );

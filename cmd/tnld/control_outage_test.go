@@ -43,11 +43,8 @@ tnld:
 				t.Setenv("TNLD_CONTROL_OUTAGE_TOLERANCE", test.environment)
 			}
 			var flags tnldCLI
-			parser, err := newTNLDParser(&flags, new(bytes.Buffer))
-			if err != nil {
-				t.Fatal(err)
-			}
-			parsed, err := parser.Parse(append([]string{"serve", "--config", path}, test.flags...))
+			parser := parseServerForTest(&flags, new(bytes.Buffer))
+			parsed, err := parser(append([]string{"serve", "--config", path}, test.flags...))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -6,6 +6,8 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/spf13/cobra"
+
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -14,7 +16,7 @@ import (
 
 // endpoint capacity belongs to control, not the installed publication supervisor.
 type endpointCommand struct {
-	Release endpointReleaseCommand `cmd:"" help:"Retire a disabled service's public port reservation without deleting the service."`
+	Release endpointReleaseCommand
 }
 
 type endpointReleaseCommand struct {
@@ -64,4 +66,15 @@ func runEndpointRelease(ctx context.Context, flags endpointReleaseCommand, outpu
 		clioutput.Field{Label: "capacity", Value: "quarantined until old authority expires and cleanup finishes"},
 		clioutput.Field{Label: "local connector port", Value: "saved assignment unchanged"},
 	))
+}
+
+func (a *commandApp) newEndpointCommand() *cobra.Command {
+	f := a.flags
+	cEndpoint := &cobra.Command{Use: "endpoint", Short: "Manage saved services' public endpoint reservations.", GroupID: "manage"}
+	cEndpointRelease := &cobra.Command{Use: "release", Short: "Retire a disabled service's public port reservation without deleting the service."}
+	a.leaf(cEndpointRelease, &f.Endpoint.Release, func(call commandCall) error {
+		return runEndpointRelease(call.ctx, f.Endpoint.Release, a.out, a.errOut)
+	})
+	cEndpoint.AddCommand(cEndpointRelease)
+	return cEndpoint
 }

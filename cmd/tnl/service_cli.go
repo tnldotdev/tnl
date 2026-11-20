@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -16,14 +18,14 @@ import (
 )
 
 type serviceCommand struct {
-	Install  serviceInstallCommand  `cmd:"" help:"Install or refresh the user-login publisher supervisor (or system publisher supervisor with --system)."`
-	Start    serviceJobCommand      `cmd:"" help:"Start one installed publication."`
-	Stop     serviceJobCommand      `cmd:"" help:"Stop one local job without revoking its grant."`
-	Remove   serviceJobCommand      `cmd:"" help:"Remove a stopped publication and its local job identity."`
-	List     serviceListCommand     `cmd:"" help:"List installed publications and their run state."`
-	Status   serviceJobCommand      `cmd:"" help:"Show one installed publication and its run state."`
-	Serve    serviceServeCommand    `cmd:"" hidden:"" help:"Run the enrolled system publisher service."`
-	Register serviceRegisterCommand `cmd:"" hidden:"" help:"Receive a private publication installation on stdin."`
+	Install  serviceInstallCommand
+	Start    serviceJobCommand
+	Stop     serviceJobCommand
+	Remove   serviceJobCommand
+	List     serviceListCommand
+	Status   serviceJobCommand
+	Serve    serviceServeCommand
+	Register serviceRegisterCommand
 }
 
 type systemStateFlags struct {
@@ -340,4 +342,50 @@ func displayJobName(job installedjobs.Job) string {
 		return job.Name
 	}
 	return job.ID
+}
+
+func (a *commandApp) newServiceCommand() *cobra.Command {
+	f := a.flags
+	cService := &cobra.Command{Use: "service", Short: "Manage installed publications.", GroupID: "operate"}
+	cServiceInstall := &cobra.Command{Use: "install", Short: "Install or refresh the user-login publisher supervisor (or system publisher supervisor with --system)."}
+	a.leaf(cServiceInstall, &f.Service.Install, func(call commandCall) error {
+		return runServiceInstall(call.ctx, f.Service.Install, a.out, nil)
+	})
+	cService.AddCommand(cServiceInstall)
+	cServiceStart := &cobra.Command{Use: "start", Short: "Start one installed publication."}
+	a.leaf(cServiceStart, &f.Service.Start, func(call commandCall) error {
+		return runServiceStart(call.ctx, f.Service.Start, a.out, nil)
+	})
+	cService.AddCommand(cServiceStart)
+	cServiceStop := &cobra.Command{Use: "stop", Short: "Stop one local job without revoking its grant."}
+	a.leaf(cServiceStop, &f.Service.Stop, func(call commandCall) error {
+		return runServiceStop(call.ctx, f.Service.Stop, a.out)
+	})
+	cService.AddCommand(cServiceStop)
+	cServiceRemove := &cobra.Command{Use: "remove", Short: "Remove a stopped publication and its local job identity."}
+	a.leaf(cServiceRemove, &f.Service.Remove, func(call commandCall) error {
+		return runServiceRemove(call.ctx, f.Service.Remove, a.out)
+	})
+	cService.AddCommand(cServiceRemove)
+	cServiceList := &cobra.Command{Use: "list", Short: "List installed publications and their run state."}
+	a.leaf(cServiceList, &f.Service.List, func(call commandCall) error {
+		return runServiceList(call.ctx, f.Service.List, a.out)
+	})
+	cService.AddCommand(cServiceList)
+	cServiceStatus := &cobra.Command{Use: "status", Short: "Show one installed publication and its run state."}
+	a.leaf(cServiceStatus, &f.Service.Status, func(call commandCall) error {
+		return runServiceStatus(call.ctx, f.Service.Status, a.out)
+	})
+	cService.AddCommand(cServiceStatus)
+	cServiceServe := &cobra.Command{Use: "serve", Short: "Run the enrolled system publisher service.", Hidden: true}
+	a.leaf(cServiceServe, &f.Service.Serve, func(call commandCall) error {
+		return runServiceServe(call.ctx, f.Service.Serve)
+	})
+	cService.AddCommand(cServiceServe)
+	cServiceRegister := &cobra.Command{Use: "register", Short: "Receive a private publication installation on stdin.", Hidden: true}
+	a.leaf(cServiceRegister, &f.Service.Register, func(call commandCall) error {
+		return runPublicationRegister(call.ctx, f.Service.Register, os.Stdin, a.out, nil)
+	})
+	cService.AddCommand(cServiceRegister)
+	return cService
 }

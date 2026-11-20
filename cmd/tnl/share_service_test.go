@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
@@ -73,12 +72,9 @@ func TestServiceShareSyntaxAndEarlyValidation(t *testing.T) {
 		{[]string{"token", "create", shareTestService, "--expires-in=1h"}, "token create <name>"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := parser.Parse(append([]string{"share", "service"}, test.args...))
-		if err != nil || parsed.Command() != "share service "+test.want || !projectSensitiveCommand(parsed.Command()) {
+		parser := commandForTest(&flags, io.Discard)
+		parsed, err := parser(append([]string{"share", "service"}, test.args...))
+		if err != nil || commandID(parsed) != "share service "+test.want || !projectSensitiveCommand(commandID(parsed)) {
 			t.Fatalf("service command %v: %v, %v", test.args, parsed, err)
 		}
 	}
@@ -316,13 +312,10 @@ func TestServiceShareCommandsSelectTheirExactDeployment(t *testing.T) {
 		{"token", "create", "db", "--expires-in=1h"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
+		parser := commandForTest(&flags, io.Discard)
 		command := append([]string{"share", "service"}, args...)
 		command = append(command, "--deployment", "staging")
-		if _, err := parser.Parse(command); err != nil {
+		if _, err := parser(command); err != nil {
 			t.Fatal(err)
 		}
 		if projectOptions(flags).Deployment != "staging" {

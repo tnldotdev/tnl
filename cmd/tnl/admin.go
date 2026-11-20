@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -17,13 +19,13 @@ import (
 )
 
 type adminCommand struct {
-	Server      adminServerCommands      `cmd:"" help:"Inspect a tnl server."`
-	Relays      adminRelayCommands       `cmd:"" help:"Inspect and drain relay leases."`
-	Maintenance adminMaintenanceCommands `cmd:"" help:"Manage maintenance controls."`
+	Server      adminServerCommands
+	Relays      adminRelayCommands
+	Maintenance adminMaintenanceCommands
 }
 
 type adminServerCommands struct {
-	Status adminServerStatusCommand `cmd:"" help:"Show control, ingress, and relay status."`
+	Status adminServerStatusCommand
 }
 
 type adminServerStatusCommand struct {
@@ -31,8 +33,8 @@ type adminServerStatusCommand struct {
 }
 
 type adminRelayCommands struct {
-	List  adminRelaysListCommand `cmd:"" help:"List relay leases."`
-	Drain adminRelayDrainCommand `cmd:"" help:"Drain one relay lease; use tnl admin relays list for its run ID and revision."`
+	List  adminRelaysListCommand
+	Drain adminRelayDrainCommand
 }
 
 type adminRelaysListCommand struct {
@@ -48,9 +50,9 @@ type adminRelayDrainCommand struct {
 }
 
 type adminMaintenanceCommands struct {
-	List  adminMaintenanceListCommand `cmd:"" help:"List maintenance controls."`
-	Allow adminMaintenanceSetCommand  `cmd:"" help:"Allow the selected operation."`
-	Block adminMaintenanceSetCommand  `cmd:"" help:"Block the selected operation."`
+	List  adminMaintenanceListCommand
+	Allow adminMaintenanceSetCommand
+	Block adminMaintenanceSetCommand
 }
 
 type adminMaintenanceListCommand struct {
@@ -198,3 +200,45 @@ func withRemoteAdminClient(ctx context.Context, flags remoteFlags, command strin
 }
 
 func adminTime(value time.Time) string { return value.UTC().Format(time.RFC3339) }
+
+func (a *commandApp) newAdminCommand() *cobra.Command {
+	f := a.flags
+	cAdmin := &cobra.Command{Use: "admin", Short: "Administer a self-hosted tnl server.", GroupID: "operate"}
+	cAdminServer := &cobra.Command{Use: "server", Short: "Inspect a tnl server."}
+	cAdminServerStatus := &cobra.Command{Use: "status", Short: "Show control, ingress, and relay status."}
+	a.leaf(cAdminServerStatus, &f.Admin.Server.Status, func(call commandCall) error {
+		return runAdminServerStatus(call.ctx, f.Admin.Server.Status, a.out, a.errOut)
+	})
+	cAdminServer.AddCommand(cAdminServerStatus)
+	cAdmin.AddCommand(cAdminServer)
+	cAdminRelays := &cobra.Command{Use: "relays", Short: "Inspect and drain relay leases."}
+	cAdminRelaysList := &cobra.Command{Use: "list", Short: "List relay leases."}
+	a.leaf(cAdminRelaysList, &f.Admin.Relays.List, func(call commandCall) error {
+		return runAdminRelaysList(call.ctx, f.Admin.Relays.List, a.out, a.errOut)
+	})
+	cAdminRelays.AddCommand(cAdminRelaysList)
+	cAdminRelaysDrain := &cobra.Command{Use: "drain", Short: "Drain one relay lease; use tnl admin relays list for its run ID and revision."}
+	a.leaf(cAdminRelaysDrain, &f.Admin.Relays.Drain, func(call commandCall) error {
+		return runAdminRelayDrain(call.ctx, f.Admin.Relays.Drain, a.out, a.errOut)
+	})
+	cAdminRelays.AddCommand(cAdminRelaysDrain)
+	cAdmin.AddCommand(cAdminRelays)
+	cAdminMaintenance := &cobra.Command{Use: "maintenance", Short: "Manage maintenance controls."}
+	cAdminMaintenanceList := &cobra.Command{Use: "list", Short: "List maintenance controls."}
+	a.leaf(cAdminMaintenanceList, &f.Admin.Maintenance.List, func(call commandCall) error {
+		return runAdminMaintenanceList(call.ctx, f.Admin.Maintenance.List, a.out, a.errOut)
+	})
+	cAdminMaintenance.AddCommand(cAdminMaintenanceList)
+	cAdminMaintenanceAllow := &cobra.Command{Use: "allow", Short: "Allow the selected operation."}
+	a.leaf(cAdminMaintenanceAllow, &f.Admin.Maintenance.Allow, func(call commandCall) error {
+		return runAdminMaintenanceSet(call.ctx, f.Admin.Maintenance.Allow, true, a.out, a.errOut)
+	})
+	cAdminMaintenance.AddCommand(cAdminMaintenanceAllow)
+	cAdminMaintenanceBlock := &cobra.Command{Use: "block", Short: "Block the selected operation."}
+	a.leaf(cAdminMaintenanceBlock, &f.Admin.Maintenance.Block, func(call commandCall) error {
+		return runAdminMaintenanceSet(call.ctx, f.Admin.Maintenance.Block, false, a.out, a.errOut)
+	})
+	cAdminMaintenance.AddCommand(cAdminMaintenanceBlock)
+	cAdmin.AddCommand(cAdminMaintenance)
+	return cAdmin
+}

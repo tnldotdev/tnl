@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -197,15 +196,12 @@ func TestDeploymentIdentityDefaultInstanceStillRequiresAnExactMatch(t *testing.T
 		}
 		for _, explicit := range []bool{false, true} {
 			var flags cli
-			parser, err := kong.New(&flags)
-			if err != nil {
-				t.Fatal(err)
-			}
+			parser := commandForTest(&flags, io.Discard)
 			args := []string{"publisher", "serve", "--deployment", "production", "--identity-file", path}
 			if explicit {
 				args = append(args, "--instance", "default")
 			}
-			if _, err := parser.Parse(args); err != nil {
+			if _, err := parser(args); err != nil {
 				t.Fatal(err)
 			}
 			if err := prepareDeploymentIdentity(&flags.Publisher.Serve); (err == nil) != (instance == "default") {
@@ -256,17 +252,14 @@ func TestDeploymentIdentityFlagsAppearInGeneratedHelp(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			var flags cli
 			var output bytes.Buffer
-			parser, err := kong.New(&flags, kong.Name("tnl"), kong.Writers(&output, io.Discard), kong.Exit(func(int) {}))
-			if err != nil {
-				t.Fatal(err)
-			}
+			parser := commandForTest(&flags, &output)
 			args := []string{"publisher", command, "--help"}
 			if command == "provision" {
 				args = append(args, "--output-file", filepath.Join(t.TempDir(), "identity.json"))
 			} else {
 				args = append(args, "--deployment", "production")
 			}
-			if _, err := parser.Parse(args); err != nil {
+			if _, err := parser(args); err != nil {
 				t.Fatal(err)
 			}
 			for _, want := range wanted {

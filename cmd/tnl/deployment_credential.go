@@ -11,7 +11,7 @@ import (
 )
 
 type authCredentialCommand struct {
-	Create authCredentialCreateCommand `cmd:"" help:"Approve independent deployment management, connection, and publication capabilities."`
+	Create authCredentialCreateCommand
 }
 type authCredentialCreateCommand struct {
 	scopedTeamFlags `embed:""`

@@ -7,6 +7,8 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/spf13/cobra"
+
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -108,4 +110,13 @@ func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []cliou
 		blocks = append(blocks, clioutput.Section(member.DeploymentName, clioutput.Fields(fields...)))
 	}
 	return blocks
+}
+
+func (a *commandApp) newApplyCommand() *cobra.Command {
+	f := a.flags
+	cApply := &cobra.Command{Use: "apply", Short: "Reconcile this project's declared services and deployments with control.", GroupID: "manage"}
+	a.leaf(cApply, &f.Apply, func(call commandCall) error {
+		return runApply(call.ctx, f.Apply, call.project, a.out, a.errOut)
+	})
+	return cApply
 }

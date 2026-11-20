@@ -23,16 +23,16 @@ import (
 )
 
 type serviceShareCommand struct {
-	Invite serviceShareInviteCommand `cmd:"" help:"Invite a verified-email identity to exactly one service."`
-	List   serviceShareListCommand   `cmd:"" help:"List service grants, invitations, and shares, including expired and revoked entries."`
-	Revoke serviceShareRevokeCommand `cmd:"" help:"Revoke one invitation, identity grant, HTTP credential, or exact service share."`
-	Link   serviceShareLinkCommand   `cmd:"" help:"Create a bounded share link for a publicly reachable service HTTP service."`
-	Token  serviceShareTokenCommand  `cmd:"" help:"Create a bounded token for a publicly reachable service HTTP service."`
+	Invite serviceShareInviteCommand
+	List   serviceShareListCommand
+	Revoke serviceShareRevokeCommand
+	Link   serviceShareLinkCommand
+	Token  serviceShareTokenCommand
 }
 
 type serviceShareInviteCommand struct {
-	Create serviceShareInviteCreateCommand `cmd:"" help:"Print a one-use invitation secret or retry recovery details; requires --expires-at or --expires-in (at most 30d)."`
-	Accept serviceShareInviteAcceptCommand `cmd:"" help:"Accept using the matching signed-in verified email; does not join a team."`
+	Create serviceShareInviteCreateCommand
+	Accept serviceShareInviteAcceptCommand
 }
 
 type serviceShareSelection struct {
@@ -72,11 +72,11 @@ type serviceShareRevokeCommand struct {
 }
 
 type serviceShareLinkCommand struct {
-	Create serviceShareHTTPCreateCommand `cmd:"" help:"Print a one-time share URL; requires --expires-at or --expires-in (at most 7d)."`
+	Create serviceShareHTTPCreateCommand
 }
 
 type serviceShareTokenCommand struct {
-	Create serviceShareHTTPCreateCommand `cmd:"" help:"Print a one-time Tnl-Visitor-Token value; requires --expires-at or --expires-in (at most 7d)."`
+	Create serviceShareHTTPCreateCommand
 }
 
 type serviceShareHTTPCreateCommand struct {

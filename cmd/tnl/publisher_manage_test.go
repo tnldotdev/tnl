@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -35,15 +34,12 @@ func TestPortablePublisherCommandFlags(t *testing.T) {
 		{[]string{"publish", "3000", "--publisher-credential-file", "/tmp/publisher.json"}, "publish <service-or-target>"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags, kong.Name("tnl"), kong.Writers(io.Discard, io.Discard))
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := parser.Parse(tc.args)
+		parser := commandForTest(&flags, io.Discard)
+		parsed, err := parser(tc.args)
 		if err != nil {
 			t.Fatalf("%v: %v", tc.args, err)
 		}
-		if command := canonicalParsedCommand(parsed.Command()); command != tc.command {
+		if command := commandID(parsed); command != tc.command {
 			t.Fatalf("%v: command %s, want %s", tc.args, command, tc.command)
 		}
 		if tc.command == "publish <service-or-target>" && flags.Publish.PublisherCredentialFile != "/tmp/publisher.json" {
@@ -54,11 +50,8 @@ func TestPortablePublisherCommandFlags(t *testing.T) {
 
 func TestPublisherGrantRejectsRetiredPublicURLIDFlag(t *testing.T) {
 	var flags cli
-	parser, err := kong.New(&flags, kong.Writers(io.Discard, io.Discard))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--public-url-id", "url_0123456789abcdefghijkl"}); err == nil {
+	parser := commandForTest(&flags, io.Discard)
+	if _, err := parser([]string{"publisher", "grant", "add", "pub_0123456789abcdefghijkl", "--public-url-id", "url_0123456789abcdefghijkl"}); err == nil {
 		t.Fatal("retired public URL grant option was accepted")
 	}
 }

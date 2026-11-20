@@ -7,6 +7,8 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/spf13/cobra"
+
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -50,4 +52,13 @@ func pingStatus(status int) string {
 		return ""
 	}
 	return strconv.Itoa(status)
+}
+
+func (a *commandApp) newPingCommand() *cobra.Command {
+	f := a.flags
+	cPing := &cobra.Command{Use: "ping", Short: "Check a public URL from this machine as an unauthenticated visitor.", GroupID: "start"}
+	a.leaf(cPing, &f.Ping, func(call commandCall) error {
+		return runPing(call.ctx, f.Ping, a.out)
+	})
+	return cPing
 }

@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
@@ -28,11 +28,8 @@ func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
 		{[]string{"telemetry", "on"}, "", "", false},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := parser.Parse(test.args)
+		parser := commandForTest(&flags, io.Discard)
+		parsed, err := parser(test.args)
 		if err != nil {
 			t.Fatalf("%v: %v", test.args, err)
 		}
