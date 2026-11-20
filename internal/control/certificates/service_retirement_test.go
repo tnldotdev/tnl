@@ -73,7 +73,7 @@ func TestServiceWorkerRetiredCleanupJoinsProviderBeforeReturning(t *testing.T) {
 					t.Fatal(err)
 				}
 				worker.client = func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }
-				go func() { joined <- worker.Run(ctx) }()
+				go func() { joined <- worker.Run(ctx, NewServiceClaimQueue()) }()
 				<-entered
 				if stop == "cancel" {
 					cancel()
@@ -141,7 +141,7 @@ func TestServiceWorkerInFlightFinalizationJoinsOriginalDeadline(t *testing.T) {
 			t.Fatal(err)
 		}
 		worker.client = func(controlstate.ACMEAccount) (acmeAPI, error) { return client, nil }
-		go func() { joined <- worker.Run(ctx) }()
+		go func() { joined <- worker.Run(ctx, NewServiceClaimQueue()) }()
 		<-entered
 		time.Sleep(10 * time.Second)
 		<-stopped

@@ -31,6 +31,14 @@ func LifetimeEnded(ctx context.Context) bool {
 	return errors.Is(ctx.Err(), context.Canceled)
 }
 
+// Attempt gives one operation its own deadline without changing the context
+// used to distinguish worker shutdown from an operation timeout.
+func Attempt(ctx context.Context, timeout time.Duration, process Process) (bool, error) {
+	operationCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return process(context.WithValue(operationCtx, lifetimeKey{}, ctx))
+}
+
 // Run starts immediately and repeats without waiting while an iteration finds
 // more work and succeeds. empty or failed iterations wait for IdleInterval.
 // each iteration has its own deadline; OnError decides how to report failures,
@@ -52,9 +60,7 @@ func Run(ctx context.Context, config Config) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		operationCtx, cancel := context.WithTimeout(ctx, config.OperationTimeout)
-		more, err := config.Process(context.WithValue(operationCtx, lifetimeKey{}, ctx))
-		cancel()
+		more, err := Attempt(ctx, config.OperationTimeout, config.Process)
 		if err != nil && config.OnError != nil {
 			config.OnError(err)
 		}

@@ -87,13 +87,26 @@ func NewServiceWorker(store ServiceStore, config ServiceConfig) (*ServiceWorker,
 	return worker, nil
 }
 
-func (w *ServiceWorker) Run(ctx context.Context) error {
-	return runWorkerLoop(
-		ctx, w, w.config.OperationTimeout, w.config.IdleInterval,
-	)
+func (w *ServiceWorker) Run(ctx context.Context, queue *ServiceClaimQueue) error {
+	if queue == nil || queue.turn == nil {
+		return errors.New("certificates: service certificate worker requires a claim queue")
+	}
+	for queue.take(ctx) {
+		found, err := workerloop.Attempt(ctx, w.config.OperationTimeout, func(ctx context.Context) (bool, error) {
+			return w.attempt(ctx, func(claimed bool) {
+				queue.release(claimed, w.config.IdleInterval)
+			})
+		})
+		// an empty or failed claim already delayed the whole queue. a
+		// failure after a claim backs off only this worker.
+		if found && err != nil && !waitForServiceClaim(ctx, w.config.IdleInterval) {
+			break
+		}
+	}
+	return nil
 }
 
-func (w *ServiceWorker) processOne(ctx context.Context) (_ bool, retErr error) {
+func (w *ServiceWorker) attempt(ctx context.Context, claimFinished func(bool)) (_ bool, retErr error) {
 	ctx, finish := observability.WorkerAttempt(ctx, "certificate.service.attempt")
 	var attemptErr error
 	defer func() {
@@ -101,6 +114,7 @@ func (w *ServiceWorker) processOne(ctx context.Context) (_ bool, retErr error) {
 	}()
 	now := w.now()
 	work, found, err := w.store.ClaimACMEOrderWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
+	claimFinished(err == nil && found)
 	if w.config.Observer != nil && !workerloop.LifetimeEnded(ctx) {
 		outcome := observability.CertificateClaimed
 		kind := "service_queue"
@@ -114,7 +128,7 @@ func (w *ServiceWorker) processOne(ctx context.Context) (_ bool, retErr error) {
 		w.config.Observer.ObserveCertificateClaim(kind, outcome)
 	}
 	if err != nil || !found {
-		return found, err
+		return false, err
 	}
 	ctx = observability.WithCertificateKind(ctx, "service")
 	stage := work.State

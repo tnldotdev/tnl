@@ -138,7 +138,7 @@ func TestServiceWorkerUnconfiguredDNSDefersEveryOrder(t *testing.T) {
 			}
 			worker.now = func() time.Time { return now }
 			worker.client = func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }
-			if err := worker.Run(ctx); err != nil {
+			if err := worker.Run(ctx, NewServiceClaimQueue()); err != nil {
 				t.Fatalf("DNS failure stopped the worker: %v", err)
 			}
 			if ctx.Err() != context.Canceled || store.saves != 2 || store.saved.ID != tlsWork.ID || store.saved.State != "failed" || api.newOrderCalls != 0 {

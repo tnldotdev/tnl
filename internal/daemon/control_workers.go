@@ -155,6 +155,7 @@ func (d *daemon) startControlWorkers(
 		if err != nil {
 			return err
 		}
+		serviceClaims := certificates.NewServiceClaimQueue()
 		for index := range cfg.ServiceCertificateWorkers {
 			serviceWorkerID, err := opaqueid.New(opaqueid.ServiceCertificateWorkerPrefix)
 			if err != nil {
@@ -168,7 +169,7 @@ func (d *daemon) startControlWorkers(
 				return err
 			}
 			d.start(fmt.Sprintf("run service certificate worker %d", index+1), func() error {
-				return serviceWorker.Run(lifetime)
+				return serviceWorker.Run(lifetime, serviceClaims)
 			})
 		}
 		if relayDNSChallenges != nil {
