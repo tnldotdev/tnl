@@ -20,7 +20,7 @@ tasks:
       - goreleaser release --snapshot --clean --skip=sign
 
   release:npm-package:
-    desc: Build and check npm release tarballs in installed npm and pnpm consumers
+    desc: Lint the packed npm launcher and check installed npm and pnpm consumers
     preconditions:
       - sh: test -s dist/artifacts.json && test -s dist/metadata.json
         msg: Run task release:snapshot before packaging npm release artifacts
