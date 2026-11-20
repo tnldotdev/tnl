@@ -32,6 +32,11 @@ func commandDiagnosticFor(err error) commandDiagnostic {
 	err = classifyCommandError(err)
 	presented := presentFailure(err)
 	result := commandDiagnostic{Reason: string(presented.reason), Message: presented.message, Action: presented.action}
+	if _, keychain := errors.AsType[*failure.ClientKeychainError](err); keychain {
+		if variant := failure.CaseFor(presented.reason, failure.KnownCase(err)); variant != nil {
+			result.Action = variant.Action
+		}
+	}
 	var retained interface{ RetainSDKFailure() bool }
 	if errors.As(err, &retained) {
 		result.SDKRetainedStartFailure = retained.RetainSDKFailure()

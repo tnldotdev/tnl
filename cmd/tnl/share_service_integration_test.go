@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
@@ -31,12 +32,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	ctx := t.Context()
 	url := testutil.NewDisposablePostgresDatabaseURL(t, "share_manager_lookup")
 	if err := controlstate.Migrate(ctx, url); err != nil {

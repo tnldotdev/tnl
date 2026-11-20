@@ -31,7 +31,6 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 // the handler, registration manager, worker and SQLite journal are real. only
@@ -696,7 +695,7 @@ func TestInvocationExplicitServerSelection(t *testing.T) {
 	}
 	a, endpoint, body, f := invocationRuntime(t)
 	t.Setenv("TNL_SERVER", "")
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	options := Options{Directory: a.project.Root, StateDir: filepath.Join(t.TempDir(), "selection")}
 	project, _, err := ResolveProject(t.Context(), options)
 	if err != nil {

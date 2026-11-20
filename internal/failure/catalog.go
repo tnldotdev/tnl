@@ -71,6 +71,20 @@ func KnownCase(err error) string {
 	}
 	switch reason {
 	case ClientStateUnavailable:
+		if keychain, ok := errors.AsType[*ClientKeychainError](err); ok {
+			switch keychain.Kind {
+			case KeychainAccess:
+				return "keychain-access"
+			case KeychainTimeout:
+				return "keychain-timeout"
+			case KeychainCanceled:
+				return "keychain-canceled"
+			case KeychainMissing:
+				return "keychain-missing"
+			default:
+				return "keychain-unavailable"
+			}
+		}
 		if errors.Is(err, fs.ErrPermission) {
 			return "permission-denied"
 		}

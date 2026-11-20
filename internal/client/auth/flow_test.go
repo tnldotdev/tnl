@@ -19,14 +19,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 const testControlOrigin = "https://control.example"
-
-// MockInit replaces a process-global keyring. hold this for the entire fixture,
-// including database cleanup and all joined refresh goroutines.
-var keyringTestMu sync.Mutex
 
 type recordedRequest struct {
 	method, url, body string
@@ -109,9 +104,7 @@ type authFixture struct {
 
 func newAuthFixture(t *testing.T, respond func(*http.Request) (*http.Response, error)) *authFixture {
 	t.Helper()
-	keyringTestMu.Lock()
-	t.Cleanup(keyringTestMu.Unlock)
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	root := filepath.Join(t.TempDir(), "state")
 	db, err := clientstate.Open(t.Context(), root)
 	if err != nil {

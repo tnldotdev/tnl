@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/zalando/go-keyring"
 )
@@ -81,6 +82,56 @@ func TestIntegrationKeychainStateAcrossProcesses(t *testing.T) {
 	}
 	if _, err := namedKeychainGet(t.Context(), keychain, keychainService, account); !errors.Is(err, keyring.ErrNotFound) {
 		t.Fatal("missing wrapping key was recreated or its lookup failed", err)
+	}
+}
+
+func TestIntegrationKeychainLockedStateRecovers(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	_, lock, unlock := testutil.UseLockableClientKeychain(t)
+	root := filepath.Join(t.TempDir(), "state")
+	database, err := Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SavePublisherJobRegistry(t.Context(), []byte("recoverable credential")); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(DatabasePath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	reopened, err := Open(ctx, root)
+	if reopened != nil {
+		reopened.Close()
+		t.Fatal("locked Keychain reopened")
+	}
+	typed, ok := errors.AsType[*failure.ClientKeychainError](err)
+	if !ok || (typed.Kind != failure.KeychainAccess && typed.Kind != failure.KeychainTimeout) || errors.Is(err, keyring.ErrNotFound) {
+		t.Fatal("locked Keychain did not fail as access or bounded timeout", err)
+	}
+	after, err := os.ReadFile(DatabasePath(root))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("failed Keychain access changed encrypted state", err)
+	}
+	if _, err := os.Stat(WrappingKeyPath(root)); !os.IsNotExist(err) {
+		t.Fatal("locked Keychain fell back to file protection", err)
+	}
+	unlock()
+	database, err = Open(t.Context(), root)
+	if err != nil {
+		t.Fatal("reopen after restoring Keychain access", err)
+	}
+	defer database.Close()
+	value, found, err := database.PublisherJobRegistry(t.Context())
+	if err != nil || !found || string(value) != "recoverable credential" {
+		t.Fatal("encrypted credential did not survive locked Keychain", err)
 	}
 }
 

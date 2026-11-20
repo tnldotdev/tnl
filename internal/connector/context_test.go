@@ -8,15 +8,15 @@ import (
 	"slices"
 	"testing"
 
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 func TestConnectionContextLocalIdentityAndPortableWorkload(t *testing.T) {
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	t.Setenv("TNL_SERVER", "")
 	t.Setenv("TNL_CONFIG", "")
 	root, err := filepath.EvalSymlinks(t.TempDir())

@@ -16,11 +16,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
-	"github.com/zalando/go-keyring"
 )
 
 func TestProjectSnapshotMustMatchCurrentLocalIdentity(t *testing.T) {
-	keyring.MockInit()
+	clientstate.UseMemoryKeychainForTesting()
 	t.Setenv("TNL_SERVER", "")
 	t.Setenv("TNL_CONFIG", "")
 	directory := t.TempDir()

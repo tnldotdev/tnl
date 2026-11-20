@@ -385,8 +385,20 @@ var definitions = map[Reason]Definition{
 	ClientStateUnavailable: {
 		Class: Unavailable, Message: "tnl could not use the client state",
 		Action: "check the state directory and its permissions, then retry", Retry: RetryAfterChange,
-		Cases: []Case{{ID: "permission-denied", Description: "tnl cannot access the local client state directory.",
-			Action: "check permissions on the state directory, then retry", DiagramDetail: "state directory access denied"}},
+		Cases: []Case{
+			{ID: "permission-denied", Description: "tnl cannot access the local client state directory.",
+				Action: "check permissions on the state directory, then retry", DiagramDetail: "state directory access denied"},
+			{ID: "keychain-access", Description: "macOS refused Keychain access. The Keychain may be locked or require interactive approval, even after browser sign-in succeeds.",
+				Action: "unlock the selected Keychain in your own terminal; approve access in a macOS desktop session if needed, then retry", DiagramDetail: "Keychain access needs approval or unlock"},
+			{ID: "keychain-timeout", Description: "the client-state Keychain operation exceeded its deadline.",
+				Action: "check the selected Keychain in a macOS desktop session, unlock it and approve access if needed, then retry", DiagramDetail: "Keychain operation timed out"},
+			{ID: "keychain-canceled", Description: "the client-state Keychain operation was canceled.",
+				Action: "retry when ready; unlock the selected Keychain and approve access if needed", DiagramDetail: "Keychain operation canceled"},
+			{ID: "keychain-missing", Description: "the selected Keychain does not contain the wrapping key for this client state. Existing encrypted state was not changed.",
+				Action: "select the original Keychain for this state directory or restore its wrapping key; do not reset the state", DiagramDetail: "client-state Keychain wrapping key missing"},
+			{ID: "keychain-unavailable", Description: "tnl could not run the macOS Keychain operation.",
+				Action: "check macOS security and the selected Keychain; if set, TNL_STATE_KEYCHAIN must name an existing absolute Keychain file, then retry", DiagramDetail: "Keychain operation unavailable"},
+		},
 	},
 	PublisherIdentityStateUnavailable: {
 		Class: Unavailable, Message: "tnl could not use the durable publisher identity files",

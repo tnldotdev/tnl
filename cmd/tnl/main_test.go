@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -438,6 +439,39 @@ func TestCLIErrorPresentationUsesTypedCopyWithoutChangingCause(t *testing.T) {
 		if strings.Contains(output.String(), "clientstate: ") ||
 			!errors.Is(err, cause) {
 			t.Fatalf("CLI error = %q, cause = %v", output.String(), err)
+		}
+	}
+}
+
+func TestCLIKeychainGuidanceKeepsCausePrivate(t *testing.T) {
+	cause := errors.New("private command echo: -w stored-credential")
+	for _, kind := range []failure.KeychainFailure{
+		failure.KeychainAccess, failure.KeychainTimeout, failure.KeychainCanceled,
+		failure.KeychainMissing, failure.KeychainUnavailable,
+	} {
+		err := failure.Wrap("open client state", failure.ClientStateUnavailable, &failure.ClientKeychainError{Kind: kind, Cause: cause})
+		var output bytes.Buffer
+		writeCommandError(&output, clioutput.WrapCommand("tnl auth login start", err))
+		text := output.String()
+		if !strings.Contains(text, "Keychain") || !strings.Contains(text, "TNL_CLIENT_STATE_UNAVAILABLE") ||
+			!strings.Contains(text, "https://tnl.dev/c/state-unavailable?case=") ||
+			strings.Contains(text, cause.Error()) || strings.Contains(text, "stored-credential") || !errors.Is(err, cause) {
+			t.Fatalf("unsafe or generic Keychain diagnostic = %q", text)
+		}
+		output.Reset()
+		writeMachineCommandError(&output, err)
+		var machine struct {
+			SchemaVersion int    `json:"schema_version"`
+			Type          string `json:"type"`
+			commandDiagnostic
+		}
+		if decodeErr := json.Unmarshal(output.Bytes(), &machine); decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		variant := failure.CaseFor(failure.ClientStateUnavailable, failure.KnownCase(err))
+		if machine.SchemaVersion != 1 || machine.Type != "error" || machine.Code != string(failure.ClientStateUnavailable) ||
+			machine.Action != variant.Action || machine.Retryable || strings.Contains(output.String(), "stored-credential") {
+			t.Fatalf("machine Keychain guidance or contract = %s", output.String())
 		}
 	}
 }
