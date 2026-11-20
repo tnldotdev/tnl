@@ -1,24 +1,23 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
+import { buildGoWasm, goWasmEnv, sdkWasmPackage } from "./go-wasm.ts";
 
 const exec = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "../..");
 const output = path.join(root, "packages/ts/dist/wasm");
 await mkdir(output, { recursive: true });
 const { stdout: goroot } = await exec("go", ["env", "GOROOT"], { cwd: root });
-const goEnv = { ...process.env, GOOS: "js", GOARCH: "wasm", CGO_ENABLED: "0" };
-const wasmPackage = "./packages/ts/wasm";
 async function buildModule(file: string, tag: string) {
   // tnlsdk excludes telemetry schema validation. the second tag selects the
   // connector or publisher bridge so browser consumers can load them separately.
-  const tags = `-tags=tnlsdk,${tag}`;
-  const { stdout: deps } = await exec("go", ["list", "-deps", tags, wasmPackage], {
+  const tags = `tnlsdk,${tag}`;
+  const { stdout: deps } = await exec("go", ["list", "-deps", `-tags=${tags}`, sdkWasmPackage], {
     cwd: root,
-    env: goEnv,
+    env: { ...process.env, ...goWasmEnv },
   });
   // check dependencies before linking. runtime template lookup can keep unused
   // methods on unrelated types, so the SDK uses fixed markup instead.
@@ -32,35 +31,8 @@ async function buildModule(file: string, tag: string) {
     );
   if (nativeDependencies.length > 0)
     throw new Error(`${file} imports native-only dependencies: ${nativeDependencies.join(", ")}`);
-  const unoptimized = path.join(output, `.${file}.unoptimized`);
   const artifact = path.join(output, file);
-  try {
-    await exec(
-      "go",
-      ["build", tags, "-trimpath", "-ldflags=-s -w", "-o", unoptimized, wasmPackage],
-      {
-        cwd: root,
-        env: goEnv,
-        maxBuffer: 4 * 1024 * 1024,
-      },
-    );
-    await exec(
-      "wasm-opt",
-      [
-        unoptimized,
-        "-Oz",
-        "--enable-bulk-memory",
-        "--enable-nontrapping-float-to-int",
-        "-o",
-        artifact,
-      ],
-      { cwd: root, maxBuffer: 4 * 1024 * 1024 },
-    );
-  } finally {
-    await unlink(unoptimized).catch((error: unknown) => {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    });
-  }
+  await buildGoWasm({ cwd: root, tags, output: artifact });
   const bytes = await readFile(artifact);
   // the portable publisher needs the shared control client, not its demo and
   // feedback methods. go list cannot distinguish them; check function names in

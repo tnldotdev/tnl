@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -6,7 +6,7 @@ import { createRequire, isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { build } from "esbuild";
 import { chromium } from "playwright";
 import * as z from "zod";
@@ -15,6 +15,7 @@ import {
   type PortableFixture,
 } from "../../packages/ts/test/portable-integration/fixture.ts";
 import { portableDiagnosticsSchema } from "../../packages/ts/test/portable-integration/errors.ts";
+import { buildGoWasm } from "../build/go-wasm.ts";
 import { chromeArguments, workerdConfiguration } from "./portable-sdk-config.ts";
 
 interface BrowserFixture {
@@ -44,7 +45,6 @@ const temporary = process.platform === "darwin" ? path.join(tmpdir(), "opencode"
 await mkdir(temporary, { recursive: true, mode: 0o700 });
 const directory = await mkdtemp(path.join(temporary, "tnl-portable-sdk-"));
 const wasm = path.join(directory, "tnl-fixture.wasm");
-const unoptimizedWasm = path.join(directory, ".tnl-fixture.unoptimized.wasm");
 const lifetime = new AbortController();
 const stop = () => lifetime.abort(new Error("portable SDK runner interrupted"));
 process.once("SIGINT", stop);
@@ -384,37 +384,12 @@ async function workerdSmoke(configuration: PortableFixture) {
 try {
   // compile the same connector with its private test-host root bootstrap. never
   // overwrite the shipped artifact or add a public trust override.
-  await promisify(execFile)(
-    "go",
-    [
-      "build",
-      "-tags=tnlwasmtest,tnlsdk,tnlconnector",
-      "-trimpath",
-      "-ldflags=-s -w",
-      "-o",
-      unoptimizedWasm,
-      "./packages/ts/wasm",
-    ],
-    {
-      cwd: root,
-      env: { ...process.env, GOOS: "js", GOARCH: "wasm", CGO_ENABLED: "0" },
-      signal: lifetime.signal,
-      maxBuffer: 4 << 20,
-    },
-  );
-  await promisify(execFile)(
-    "wasm-opt",
-    [
-      unoptimizedWasm,
-      "-Oz",
-      "--enable-bulk-memory",
-      "--enable-nontrapping-float-to-int",
-      "-o",
-      wasm,
-    ],
-    { cwd: root, signal: lifetime.signal, maxBuffer: 4 << 20 },
-  );
-  await rm(unoptimizedWasm);
+  await buildGoWasm({
+    cwd: root,
+    tags: "tnlwasmtest,tnlsdk,tnlconnector",
+    output: wasm,
+    signal: lifetime.signal,
+  });
   const failures: unknown[] = [];
   if (runtime !== "workerd") {
     try {

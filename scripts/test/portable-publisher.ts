@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, request as httpsRequest } from "node:https";
@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as pause } from "node:timers/promises";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { build } from "esbuild";
 import { chromium } from "playwright";
 import * as z from "zod";
@@ -17,6 +17,7 @@ import {
   fixtureSchema,
   type PublisherFixture,
 } from "../../packages/ts/test/portable-publisher-integration/fixture.ts";
+import { buildGoWasm } from "../build/go-wasm.ts";
 import {
   publisherChromeArguments,
   publisherWorkerdConfiguration,
@@ -483,47 +484,21 @@ function packagedGoRuntime() {
   };
 }
 
-async function buildFixtureWasm(output: string, tags: string) {
-  const unoptimizedWasm = `${output}.unoptimized`;
+try {
   // the fixture variant changes only the connector's trusted service issuer.
   // production artifacts reject that private host field. publication, signing,
   // visitor TLS and both service/connector engines remain the actual Go owners.
-  await promisify(execFile)(
-    "go",
-    [
-      "build",
-      `-tags=${tags}`,
-      "-trimpath",
-      "-ldflags=-s -w",
-      "-o",
-      unoptimizedWasm,
-      "./packages/ts/wasm",
-    ],
-    {
+  for (const [output, tag] of [
+    [wasm, "tnlpublisher"],
+    [connectorWasm, "tnlconnector"],
+  ] as const) {
+    await buildGoWasm({
       cwd: root,
-      env: { ...process.env, GOOS: "js", GOARCH: "wasm", CGO_ENABLED: "0" },
-      maxBuffer: 4 << 20,
-      signal: lifetime.signal,
-    },
-  );
-  await promisify(execFile)(
-    "wasm-opt",
-    [
-      unoptimizedWasm,
-      "-Oz",
-      "--enable-bulk-memory",
-      "--enable-nontrapping-float-to-int",
-      "-o",
+      tags: `tnlwasmtest,tnlsdk,${tag}`,
       output,
-    ],
-    { cwd: root, signal: lifetime.signal, maxBuffer: 4 << 20 },
-  );
-  await rm(unoptimizedWasm);
-}
-
-try {
-  await buildFixtureWasm(wasm, "tnlwasmtest,tnlsdk,tnlpublisher");
-  await buildFixtureWasm(connectorWasm, "tnlwasmtest,tnlsdk,tnlconnector");
+      signal: lifetime.signal,
+    });
+  }
   if (runtime !== "workerd") {
     console.log(JSON.stringify({ runtime: "chrome", proof: await chromeSmoke(fixture) }));
   }
