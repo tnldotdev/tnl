@@ -112,6 +112,15 @@ tasks:
         vars:
           RUN: ^TestIntegrationConnectorSourceRebindingRetainsApplicationAndTarget$
 
+  cli:contract:
+    desc: Check the installed command syntax, exit status and output streams without a running server
+    cmds:
+      - |
+        dir=$(mktemp -d)
+        trap 'rm -rf "$dir"' EXIT
+        go build -o "$dir/tnl" ./cmd/tnl
+        go test ./tests/integration/cli -count=1 -args -tnl-test-tier=integration -tnl-cli-binary="$dir/tnl"
+
   cli:
     desc: Check Linux CLI workflows with disposable PostgreSQL and an existing OpenSSH daemon
     vars:
