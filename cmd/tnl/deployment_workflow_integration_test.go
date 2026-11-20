@@ -123,9 +123,17 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		t.Fatal("publisher-only OAuth/webhook handlers reached control")
 	}
 	for _, deployment := range []string{"external", "cluster"} {
+		args := []string{"--config", configuration, "apply", "--deployment", deployment, "--state-dir", person, "--output", "json", "--diff"}
+		var plan applyDiff
+		if err := json.Unmarshal(cliCall(t, t.Context(), args), &plan); err != nil || len(plan.Changes) == 0 {
+			t.Fatalf("initial diff: %+v (%v)", plan, err)
+		}
 		result := cliCall(t, t.Context(), []string{"--config", configuration, "apply", "--deployment", deployment, "--state-dir", person, "--output", "json"})
 		if err := json.Unmarshal(result, &applied); err != nil {
 			t.Fatal(err)
+		}
+		if err := json.Unmarshal(cliCall(t, t.Context(), args), &plan); err != nil || plan.Base != applied.Revision || len(plan.Changes) != 0 {
+			t.Fatalf("diff after apply: %+v (%v)", plan, err)
 		}
 	}
 	var serviceID string

@@ -22,6 +22,7 @@ import (
 type applyCommand struct {
 	scopedTeamFlags `embed:""`
 	Deployment      string           `name:"deployment" default:"local" help:"Apply only this configured deployment's targets and workloads."`
+	Diff            bool             `name:"diff" help:"Compare the resolved declaration with the saved revision without applying it."`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human"`
 }
 
@@ -68,6 +69,13 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	}
 	if err = bindProjectWorkloads(ctx, project, session.Authenticated().ServerEndpoint, &declaration, existing.Configuration); err != nil {
 		return err
+	}
+	if flags.Diff {
+		diff, err := compareApply(current.Team().Id, project.Deployment, existing, declaration, declarations)
+		if err != nil {
+			return err
+		}
+		return diff.write(output, flags.Output)
 	}
 	applied, err := session.Authenticated().Control.ApplyProjectConfiguration(ctx, source.Key, controlv1.ApplyProjectConfigurationRequest{
 		TeamId: current.Team().Id, Source: &controlv1.GitProjectSource{GitOrigin: source.Source.GitOrigin, ConfigurationPath: source.Source.ConfigurationPath}, ExpectedRevision: revision, Configuration: declaration,
