@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -50,8 +51,27 @@ func TestGenerateTypesWithoutGitOriginOrRuntimeValues(t *testing.T) {
 					t.Fatal(args, err)
 				}
 			}
-			if _, err := os.Stat(filepath.Join(root, ".tnl/local")); !os.IsNotExist(err) {
-				t.Fatal("generation wrote runtime values")
+			// generation can save declared names for shell completion, but only
+			// app preparation may write runtime endpoints or worktree identity.
+			local := filepath.Join(root, meta.DirectoryName)
+			files, err := os.ReadDir(local)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, file := range files {
+				if file.Name() != "completion.json" && file.Name() != "project.lock" {
+					t.Fatalf("generation wrote unexpected local file %q", file.Name())
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(local, "completion.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var facts meta.Completion
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&facts); err != nil || !reflect.DeepEqual(facts.Services, map[string]string{"api": "http"}) || len(facts.Deployments) != 0 {
+				t.Fatalf("unexpected completion facts: %s (%v)", data, err)
 			}
 			if _, err := os.Stat(filepath.Join(root, "unused-state")); !os.IsNotExist(err) {
 				t.Fatal("offline command opened client state")
