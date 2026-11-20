@@ -78,8 +78,9 @@ func (h *handler) MatchedPattern(request *http.Request) string {
 	return pattern
 }
 
-// the full sorted port inventory takes about 370 KiB in compact JSON.
-const registrationRequestBytes = 512 << 10
+// even 64,512 singleton ranges fit in compact JSON; canonical full coverage
+// uses one range. the budget also admits every sparse inventory.
+const registrationRequestBytes = 2 << 20
 
 func (h *handler) registerIngress(response http.ResponseWriter, request *http.Request) {
 	var body ingressv1.IngressRegistration

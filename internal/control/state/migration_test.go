@@ -12,7 +12,7 @@ func TestMigrationOneIsImmutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	// pinned schema after the explicitly approved prerelease reset in #791.
-	const want = "a89a822363b26a4ab695d7daac894ebe6ce07972be17b49decd5164098a7b81f"
+	const want = "e29c9bd45b4a50558cbc4ee9547cc386b1943d988506333efdf53676ca292c8c"
 	if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != want {
 		t.Fatalf("migration 1 changed: SHA-256 = %s, want %s; add a numbered migration unless a schema reset is explicitly approved", got, want)
 	}

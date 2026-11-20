@@ -11,7 +11,7 @@ schemas:
         connection_capacity,
         ingress_pool_id,
         https,
-        service_ports,
+        service_port_ranges,
       ]
     properties:
       region:
@@ -21,14 +21,12 @@ schemas:
       https:
         type: boolean
         description: This process serves the shared HTTPS listener on public port 443, independently of allocated non-HTTP service ports.
-      service_ports:
+      service_port_ranges:
         type: array
         uniqueItems: true
-        description: Sorted allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Shared HTTPS 443 is advertised separately.
+        description: Non-overlapping inclusive ranges of allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Ranges are sorted and adjacent ranges merged on admission. An empty array serves no allocated ports; shared HTTPS 443 is advertised separately.
         items:
-          type: integer
-          minimum: 1024
-          maximum: 65535
+          $ref: "../openapi.yaml#/components/schemas/ServicePortRange"
       ingress_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       ingress_run_id:
@@ -41,6 +39,20 @@ schemas:
         type: integer
         format: int64
         minimum: 1
+  ServicePortRange:
+    type: object
+    additionalProperties: false
+    required: [first, last]
+    description: Inclusive bounds; first must not exceed last.
+    properties:
+      first:
+        type: integer
+        minimum: 1024
+        maximum: 65535
+      last:
+        type: integer
+        minimum: 1024
+        maximum: 65535
   IngressLeaseIdentity:
     type: object
     additionalProperties: false

@@ -73,7 +73,7 @@ func TestIngressServingDeadlineSurvivesLivenessButExpiresWithoutConfirmation(t *
 		controller, err := NewController(ControllerConfig{
 			Client: outageIngressControl{lease: lease},
 			Registration: ingressv1.IngressRegistration{Region: lease.Region, IngressId: lease.IngressId, IngressRunId: lease.IngressRunId,
-				ProtocolVersion: 1, ConnectionCapacity: 10, IngressPoolId: "ingress-a", ServicePorts: []int{}},
+				ProtocolVersion: 1, ConnectionCapacity: 10, IngressPoolId: "ingress-a", ServicePortRanges: []ingressv1.ServicePortRange{}},
 			RenewalInterval: 500 * time.Millisecond, RetryInterval: 100 * time.Millisecond, Report: func(error) {},
 		})
 		if err != nil {
@@ -110,7 +110,7 @@ func TestIngressServingDeadlineWatcherAcceptsShorterConfirmation(t *testing.T) {
 		}}
 		controller, err := NewController(ControllerConfig{Client: control,
 			Registration: ingressv1.IngressRegistration{Region: lease.Region, IngressId: lease.IngressId, IngressRunId: lease.IngressRunId,
-				ProtocolVersion: 1, ConnectionCapacity: 10, IngressPoolId: "ingress-a", ServicePorts: []int{}},
+				ProtocolVersion: 1, ConnectionCapacity: 10, IngressPoolId: "ingress-a", ServicePortRanges: []ingressv1.ServicePortRange{}},
 			RenewalInterval: time.Second, RetryInterval: 100 * time.Millisecond, Report: func(error) {}})
 		if err != nil {
 			t.Fatal(err)

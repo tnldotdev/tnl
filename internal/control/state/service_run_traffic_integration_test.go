@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
@@ -99,7 +101,7 @@ func TestIntegrationServiceRunTrafficStoredRetryAndProjection(t *testing.T) {
 				HTTPS: protocol == "http",
 			}
 			if protocol != "http" {
-				registration.ServicePorts = []int32{int32(service.Endpoint.Port)}
+				registration.ServicePortRanges = []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}
 			}
 			ingress, err := d.RegisterIngress(ctx, registration, now, time.Minute)
 			if err != nil {

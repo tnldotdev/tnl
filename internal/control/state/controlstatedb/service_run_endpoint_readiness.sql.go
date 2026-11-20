@@ -56,10 +56,10 @@ SELECT EXISTS(
         WHERE slot.service_run_id=$5::text AND slot.state='ready' AND slot.session_open
           AND NOT relay.draining AND relay.lease_expires_at>$7::timestamptz)
       AND EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=$4::text
-        AND (CASE WHEN $8::text='http' THEN ingress.https ELSE $9::integer=ANY(ingress.service_ports) END)
+        AND (CASE WHEN $8::text='http' THEN ingress.https ELSE $9::integer <@ ingress.service_port_ranges END)
         AND NOT ingress.draining AND ingress.lease_expires_at>$7::timestamptz)
       AND NOT EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=$4::text
-        AND NOT (CASE WHEN $8::text='http' THEN ingress.https ELSE $9::integer=ANY(ingress.service_ports) END)
+        AND NOT (CASE WHEN $8::text='http' THEN ingress.https ELSE $9::integer <@ ingress.service_port_ranges END)
         AND NOT ingress.draining AND ingress.lease_expires_at>$7::timestamptz)
 ) AS ready
 `

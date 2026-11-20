@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -459,7 +461,7 @@ func registerNativeServiceAdmissionIngress(t *testing.T, ctx context.Context, f 
 	t.Helper()
 	lease, err := f.database.RegisterIngress(ctx, IngressRegistration{
 		IngressID: id, IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
-		ProtocolVersion: 1, ServicePorts: []int32{int32(f.service.Endpoint.Port)},
+		ProtocolVersion: 1, ServicePortRanges: []tcpport.Range{{First: f.service.Endpoint.Port, Last: f.service.Endpoint.Port}},
 		ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
 	}, f.now, time.Minute)
 	if err != nil {

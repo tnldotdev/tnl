@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"errors"
-	"slices"
 	"testing"
 	"time"
 
@@ -11,35 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
-
-func TestIntegrationIngressPortInventory(t *testing.T) {
-	d, now := newControlStateIntegrationDatabase(t, "ingress_port_inventory")
-	ctx := t.Context()
-	small := IngressRegistration{IngressID: "small", IngressRunID: "small-run", ProtocolVersion: 1, ConnectionCapacity: 1, IngressPoolID: "ingress-a", HTTPS: true, ServicePorts: []int32{20000, 20001}}
-	lease, err := d.RegisterIngress(ctx, small, now, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	full := small
-	full.IngressID, full.IngressRunID = "full", "full-run"
-	full.ServicePorts = make([]int32, 65535-1024+1)
-	for i := range full.ServicePorts {
-		full.ServicePorts[i] = int32(i + 1024)
-	}
-	if _, err := d.RegisterIngress(ctx, full, now, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	for _, registration := range []IngressRegistration{small, full} {
-		var ports []int32
-		var revision uint64
-		if err := d.pool.QueryRow(ctx, `SELECT service_ports, ingress_lease_revision FROM control.ingress_leases WHERE ingress_id=$1`, registration.IngressID).Scan(&ports, &revision); err != nil {
-			t.Fatal(err)
-		}
-		if !slices.Equal(ports, registration.ServicePorts) || registration.IngressID == small.IngressID && revision != lease.IngressLeaseRevision {
-			t.Fatalf("%s: stored %d ports and revision %d", registration.IngressID, len(ports), revision)
-		}
-	}
-}
 
 func TestIntegrationWorkloadRenewalMigration(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "workload_renewal_migration")

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
@@ -227,7 +229,7 @@ func TestIntegrationServiceRunEndpointReadinessPreservesConnectorAuthorityDuring
 	}
 	if _, err := f.d.RegisterIngress(t.Context(), IngressRegistration{
 		IngressID: "connector-dns", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1,
-		ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID, ServicePorts: []int32{int32(service.Endpoint.Port)},
+		ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}},
 	}, f.now, time.Minute); err != nil {
 		t.Fatal(err)
 	}

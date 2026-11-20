@@ -84,7 +84,7 @@ func (d *Database) AdmitPublicServiceVisitor(ctx context.Context, lease IngressL
 		return result, errors.Join(ErrServiceAccess, err)
 	}
 	var supported bool
-	if err = tx.QueryRow(ctx, `SELECT ingress_pool_id=$2 AND $3=ANY(service_ports)
+	if err = tx.QueryRow(ctx, `SELECT ingress_pool_id=$2 AND $3::integer <@ service_port_ranges
 	    FROM control.ingress_leases WHERE ingress_id=$1`, lease.IngressID, pool, port).Scan(&supported); err != nil || !supported {
 		return result, errors.Join(ErrServiceAccess, err)
 	}

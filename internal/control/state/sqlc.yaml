@@ -13,3 +13,8 @@ sql:
           ssh_user: SSHUser
           last_http_status: LastHTTPStatus
         emit_interface: true
+        overrides:
+          - column: "control.ingress_leases.service_port_ranges"
+            go_type:
+              import: "github.com/jackc/pgx/v5/pgtype"
+              type: "Multirange[pgtype.Range[pgtype.Int4]]"

@@ -34,10 +34,10 @@ WITH candidate AS (
               WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
                 AND NOT relay.draining AND relay.lease_expires_at>sqlc.arg(now))
             AND EXISTS (SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=work.ingress_pool_id
-              AND (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
+              AND (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port <@ ingress.service_port_ranges END)
               AND NOT ingress.draining AND ingress.lease_expires_at>sqlc.arg(now))
             AND NOT EXISTS (SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=work.ingress_pool_id
-              AND NOT (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
+              AND NOT (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port <@ ingress.service_port_ranges END)
               AND NOT ingress.draining AND ingress.lease_expires_at>sqlc.arg(now))
       ))
     ORDER BY work.dns_available_at,work.hostname FOR UPDATE SKIP LOCKED LIMIT 1
@@ -93,10 +93,10 @@ SELECT EXISTS(
                WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
                  AND NOT relay.draining AND relay.lease_expires_at>sqlc.arg(now))
              AND EXISTS (SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=work.ingress_pool_id
-               AND (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
+               AND (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port <@ ingress.service_port_ranges END)
                AND NOT ingress.draining AND ingress.lease_expires_at>sqlc.arg(now))
              AND NOT EXISTS (SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=work.ingress_pool_id
-               AND NOT (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port=ANY(ingress.service_ports) END)
+               AND NOT (CASE WHEN service.protocol='http' THEN ingress.https ELSE service.service_port <@ ingress.service_port_ranges END)
                AND NOT ingress.draining AND ingress.lease_expires_at>sqlc.arg(now))
       ))
 ) AS valid;

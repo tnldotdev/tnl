@@ -28,7 +28,7 @@ type IngressRegistration struct {
 	ConnectionCapacity uint64
 	IngressPoolID      string
 	HTTPS              bool
-	ServicePorts       []int32
+	ServicePortRanges  []tcpport.Range
 }
 
 // IngressLeaseIdentity identifies one exact ingress process lease.
@@ -75,6 +75,10 @@ func (d *Database) RegisterIngress(
 	if err := validateIngressRegistration(registration, leaseDuration); err != nil {
 		return IngressLease{}, err
 	}
+	portRanges, err := ingressPortRanges(registration.ServicePortRanges)
+	if err != nil {
+		return IngressLease{}, err
+	}
 	if err := d.requireOpen(); err != nil {
 		return IngressLease{}, err
 	}
@@ -93,7 +97,7 @@ func (d *Database) RegisterIngress(
 		Region:    string(registration.Region),
 		IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
-		IngressPoolID: registration.IngressPoolID, Https: registration.HTTPS, ServicePorts: append([]int32{}, registration.ServicePorts...),
+		IngressPoolID: registration.IngressPoolID, Https: registration.HTTPS, ServicePortRanges: portRanges,
 		RegisteredAt: timestamptz(now), RenewedAt: timestamptz(now),
 		LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
 		ServingUntil:   timestamptz(now.Add(d.servingTolerance())),
@@ -102,7 +106,7 @@ func (d *Database) RegisterIngress(
 		expired, lookupErr := queries.IngressRegistrationDrainExpired(ctx, controlstatedb.IngressRegistrationDrainExpiredParams{
 			IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
 			Region: string(registration.Region), IngressPoolID: registration.IngressPoolID,
-			Https: registration.HTTPS, ServicePorts: append([]int32{}, registration.ServicePorts...), Now: timestamptz(now),
+			Https: registration.HTTPS, ServicePortRanges: portRanges, Now: timestamptz(now),
 		})
 		if lookupErr != nil {
 			return IngressLease{}, fmt.Errorf("controlstate: classify refused ingress registration: %w", lookupErr)
@@ -219,11 +223,8 @@ func (d *Database) BeginIngressDrain(
 }
 
 func validateIngressRegistration(registration IngressRegistration, leaseDuration time.Duration) error {
-	if len(registration.ServicePorts) > 0 && !validStateText(registration.IngressPoolID) {
+	if len(registration.ServicePortRanges) > 0 && !validStateText(registration.IngressPoolID) {
 		return errors.New("ingress service port inventory is invalid")
-	}
-	if !tcpport.ValidServicePorts(registration.ServicePorts) {
-		return errors.New("ingress service ports must be sorted, distinct network ports")
 	}
 	if !validStateText(registration.IngressID) || !validStateText(registration.IngressRunID) {
 		return errors.New("controlstate: ingress registration is invalid")

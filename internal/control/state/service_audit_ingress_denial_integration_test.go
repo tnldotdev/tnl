@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 )
@@ -41,7 +43,7 @@ func TestIntegrationIngressSelectionDenialAuditRequiresItsAdmissionReceipt(t *te
 	}
 	ingress, err := d.RegisterIngress(ctx, IngressRegistration{
 		IngressID: "selection-denial-audit", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
-		ProtocolVersion: 1, ServicePorts: []int32{int32(service.Endpoint.Port)}, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
+		ProtocolVersion: 1, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
 	}, now, 10*time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +120,7 @@ func TestIntegrationIngressSelectionDenialAuditRequiresItsAdmissionReceipt(t *te
 	}
 	other, err := d.RegisterIngress(ctx, IngressRegistration{
 		IngressID: "another-selection-denial-audit", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
-		ProtocolVersion: 1, ServicePorts: []int32{int32(service.Endpoint.Port)}, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
+		ProtocolVersion: 1, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
 	}, now, 10*time.Minute)
 	if err != nil {
 		t.Fatal(err)

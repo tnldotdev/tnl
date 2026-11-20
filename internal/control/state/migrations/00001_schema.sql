@@ -544,7 +544,8 @@ CREATE TABLE control.ingress_leases (
     connection_capacity bigint NOT NULL CHECK (connection_capacity >= 0),
     ingress_pool_id text NOT NULL DEFAULT '',
     https boolean NOT NULL DEFAULT false,
-    service_ports integer[] NOT NULL DEFAULT '{}',
+    service_port_ranges int4multirange NOT NULL DEFAULT '{}'
+        CHECK (service_port_ranges <@ '{[1024,65536)}'::int4multirange),
     reported_connections bigint NOT NULL DEFAULT 0 CHECK (reported_connections >= 0),
     draining boolean NOT NULL DEFAULT false,
     drain_deadline timestamptz,

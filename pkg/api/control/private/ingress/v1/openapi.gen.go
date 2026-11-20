@@ -139,8 +139,8 @@ type IngressRegistration struct {
 	// Region Exact catalog provider:region identity, such as aws:us-west-2 or fly:sjc. local makes no geographic claim.
 	Region string `json:"region"`
 
-	// ServicePorts Sorted allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Shared HTTPS 443 is advertised separately.
-	ServicePorts []int `json:"service_ports"`
+	// ServicePortRanges Non-overlapping inclusive ranges of allocated non-HTTP ports bound before registration or exposed by the trusted destination-metadata proxy. Ranges are sorted and adjacent ranges merged on admission. An empty array serves no allocated ports; shared HTTPS 443 is advertised separately.
+	ServicePortRanges []ServicePortRange `json:"service_port_ranges"`
 }
 
 // IngressRenewal defines model for IngressRenewal.
@@ -250,6 +250,12 @@ type PublicServiceVisitorStatusState string
 
 // ServiceID defines model for ServiceID.
 type ServiceID = string
+
+// ServicePortRange Inclusive bounds; first must not exceed last.
+type ServicePortRange struct {
+	First int `json:"first"`
+	Last  int `json:"last"`
+}
 
 // ServiceRecoveryObservation defines model for ServiceRecoveryObservation.
 type ServiceRecoveryObservation struct {

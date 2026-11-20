@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
@@ -40,7 +42,7 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 	if err := d.pool.QueryRow(ctx, `UPDATE control.services SET public=true WHERE id=$1 RETURNING service_port`, pair.ServiceID).Scan(&port); err != nil {
 		t.Fatal(err)
 	}
-	lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "certificate", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 8, IngressPoolID: PrimaryIngressPoolID, ServicePorts: []int32{int32(port)}}, now, time.Minute)
+	lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "certificate", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix), ProtocolVersion: 1, ConnectionCapacity: 8, IngressPoolID: PrimaryIngressPoolID, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}}, now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

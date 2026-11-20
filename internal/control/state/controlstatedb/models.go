@@ -550,7 +550,7 @@ type ControlIngressLease struct {
 	ConnectionCapacity   int64
 	IngressPoolID        string
 	Https                bool
-	ServicePorts         []int32
+	ServicePortRanges    pgtype.Multirange[pgtype.Range[pgtype.Int4]]
 	ReportedConnections  int64
 	Draining             bool
 	DrainDeadline        pgtype.Timestamptz

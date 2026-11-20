@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -36,7 +38,7 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 			port = service.Port
 		}
 	}
-	lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "managed-direct-ingress", IngressRunID: id(opaqueid.IngressRunPrefix), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID, ServicePorts: []int32{int32(port)}}, now, 30*time.Second)
+	lease, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "managed-direct-ingress", IngressRunID: id(opaqueid.IngressRunPrefix), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}}, now, 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,13 +64,13 @@ func testDirectManagedAdmission(t *testing.T, d *Database, r ApplyProjectConfigu
 		}
 	}
 	setPublic(true)
-	if _, err := d.pool.Exec(ctx, `UPDATE control.ingress_leases SET service_ports='{}' WHERE ingress_id=$1`, lease.IngressID); err != nil {
+	if _, err := d.pool.Exec(ctx, `UPDATE control.ingress_leases SET service_port_ranges='{}' WHERE ingress_id=$1`, lease.IngressID); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "before-exposure", now, time.Minute); err != nil || found {
 		t.Fatalf("public DNS preceded an exposed port: found=%t error=%v", found, err)
 	}
-	if _, err := d.pool.Exec(ctx, `UPDATE control.ingress_leases SET service_ports=ARRAY[$2::int] WHERE ingress_id=$1`, lease.IngressID, port); err != nil {
+	if _, err := d.pool.Exec(ctx, `UPDATE control.ingress_leases SET service_port_ranges=int4multirange(int4range($2::int,$2::int,'[]')) WHERE ingress_id=$1`, lease.IngressID, port); err != nil {
 		t.Fatal(err)
 	}
 	other, err := d.RegisterIngress(ctx, IngressRegistration{IngressID: "managed-direct-not-exposed", IngressRunID: id(opaqueid.IngressRunPrefix), ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID}, now, 30*time.Second)
@@ -268,7 +270,7 @@ func publicServiceSelectionFixture(t *testing.T, count int) (*Database, time.Tim
 	}
 	ingress, err := d.RegisterIngress(ctx, IngressRegistration{
 		IngressID: "service-run-exclusions", IngressRunID: mustOpaqueID(t, opaqueid.IngressRunPrefix),
-		ProtocolVersion: tunnelv1.Version, ServicePorts: []int32{int32(service.Endpoint.Port)}, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
+		ProtocolVersion: tunnelv1.Version, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, ConnectionCapacity: 64, IngressPoolID: PrimaryIngressPoolID,
 	}, now, time.Minute)
 	if err != nil {
 		t.Fatal(err)

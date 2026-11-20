@@ -80,6 +80,8 @@ components:
       $ref: "./schemas/common.yaml#/schemas/Identifier"
     IngressRegistration:
       $ref: "./schemas/leases.yaml#/schemas/IngressRegistration"
+    ServicePortRange:
+      $ref: "./schemas/leases.yaml#/schemas/ServicePortRange"
     IngressLeaseIdentity:
       $ref: "./schemas/leases.yaml#/schemas/IngressLeaseIdentity"
     IngressRenewal:

@@ -96,7 +96,7 @@ func TestIntegrationServiceEndpointDNSRevisions(t *testing.T) {
 	}
 	if _, err := d.RegisterIngress(ctx, IngressRegistration{
 		IngressID: "endpoint-dns-ingress", IngressRunID: "endpoint-dns-ingress-run", ProtocolVersion: 1,
-		ConnectionCapacity: 100, IngressPoolID: PrimaryIngressPoolID, ServicePorts: []int32{int32(service.Endpoint.Port)},
+		ConnectionCapacity: 100, IngressPoolID: PrimaryIngressPoolID, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}},
 	}, r.Now, time.Hour); err != nil {
 		t.Fatal(err)
 	}

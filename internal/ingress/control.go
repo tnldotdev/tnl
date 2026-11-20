@@ -90,7 +90,7 @@ func NewController(config ControllerConfig) (*Controller, error) {
 			operatorlog.Report("renew ingress lease", failure.ServerControlConnectionFailed, "", err)
 		}
 	}
-	config.Registration.ServicePorts = slices.Clone(config.Registration.ServicePorts)
+	config.Registration.ServicePortRanges = slices.Clone(config.Registration.ServicePortRanges)
 	c := &Controller{
 		client: config.Client, registration: config.Registration,
 		renewalInterval: config.RenewalInterval, retryInterval: config.RetryInterval,

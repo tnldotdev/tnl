@@ -180,7 +180,12 @@ func (d *daemon) startIngressRuntime(
 	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.ingressID, runID
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit, Https: true}
 	registration.Region = settings.region
-	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), settings.servicePortRanges.Ports()
+	registration.IngressPoolId = string(settings.ingressPoolID)
+	ranges := settings.servicePortRanges.Ranges()
+	registration.ServicePortRanges = make([]ingressv1.ServicePortRange, len(ranges))
+	for index, r := range ranges {
+		registration.ServicePortRanges[index] = ingressv1.ServicePortRange{First: r.First, Last: r.Last}
+	}
 	controller, err := ingress.NewController(ingress.ControllerConfig{
 		Report: func(err error) {
 			logOperationalError(ctx, "renew ingress lease", failure.ServerControlConnectionFailed, err)
