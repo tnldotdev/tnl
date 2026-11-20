@@ -377,7 +377,28 @@ func TestIntegrationDeploymentConnectRetainedOwnerAndRevocation(t *testing.T) {
 	if after := connectorPairSavedAuthority(t, d, pair.ID); !bytes.Equal(before, after) {
 		t.Fatal("denied recovery mutated retained owner")
 	}
+	// the publisher is disconnected throughout both commits. use the same
+	// signing bytes for the new grant: recovering on key digest alone would
+	// silently preserve the original stream.
+	replacement := request
+	replacement.Name, replacement.IdempotencyKey = "replacement", "replacement"
+	next, err := d.RegisterDeploymentCredential(ctx, replacement)
+	if err != nil || next.GrantID == credential.GrantID {
+		t.Fatal("regrant did not create independent permission", err)
+	}
+	nextAccess := managementAccess(t, d, next, private, at)
+	nextIssued, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, RegisteredKeyTokenSource{Credential: nextAccess.Token}, at)
+	if err != nil {
+		t.Fatal("regranted subject could not obtain permission", err)
+	}
 	applyPolicy()
+	view, _, _ = lease.Current()
+	nextSubject, ok := nextIssued.Permission.Subject.(visitortoken.RegisteredKey)
+	nextParent, present := view.RegisteredKey(nextSubject.AuthorityID())
+	originalDigest, err := visitortoken.KeyDigest(private.Public())
+	if err != nil || !ok || !present || nextParent.KeySHA256 != originalDigest || nextSubject.GrantID != next.GrantID {
+		t.Fatal("recovery lost the replacement grant or changed its signing key")
+	}
 	if _, err = guard.Current(); err == nil || stopped.Load() != 1 {
 		t.Fatal("policy refresh did not close retained registered-key stream", err)
 	}
