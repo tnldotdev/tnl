@@ -360,6 +360,37 @@ func publishingDecode(r *http.Request, value any) bool {
 }
 
 func (f *PublishingFixture) serve(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && r.URL.Path == "/v1/publisher/watch" {
+		var body controlv1.PublisherWatchRequest
+		if !publishingDecode(r, &body) || len(body.Runs) == 0 || len(body.Runs) > 64 || r.Header.Get("Authorization") != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		changes := []controlv1.PublisherWatchChange{}
+		for _, scope := range body.Runs {
+			run, ok := f.Run(scope.ServiceRunId)
+			revision := int64(0)
+			if !ok || run.Setup.ServiceId != scope.ServiceId || run.Setup.RunNumber != scope.RunNumber || run.Setup.RunToken != scope.RunToken {
+				revision = -1
+			}
+			if scope.ConnectorRevision == nil || *scope.ConnectorRevision != revision {
+				changes = append(changes, controlv1.PublisherWatchChange{ServiceRunId: scope.ServiceRunId, ConnectorRevision: revision})
+			}
+		}
+		// this fixture has no connector pairs. after the initial inventory
+		// it can wait without holding the mutex used by run operations.
+		if len(changes) == 0 {
+			timer := time.NewTimer(15 * time.Second)
+			defer timer.Stop()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-timer.C:
+			}
+		}
+		publishingWrite(w, 200, controlv1.PublisherWatchResponse{Changes: changes})
+		return
+	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/discovery" {
 		publishingWrite(w, 200, controlv1.ControlDiscovery{ManagedDomain: "services.example", Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.Oidc}}})
 		return

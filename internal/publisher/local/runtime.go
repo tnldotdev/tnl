@@ -358,7 +358,15 @@ func Serve(ctx context.Context, options Options) (result error) {
 		return err
 	}
 	defer state.Close()
-	a := &appRuntime{Telemetry: options.Telemetry, project: project, state: state, sdkPublisher: options.sdkPublisher, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication}
+	a := &appRuntime{Telemetry: options.Telemetry, project: project, state: state, sdkPublisher: options.sdkPublisher, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver}
+	watches := new(appPublisherWatches)
+	a.AttachPublication = func(ctx context.Context, service publisherapp.Service, cfg *publisherservice.RunConfig) error {
+		cfg.Control = appWatchControl{RunControl: cfg.Control, service: cfg.ServiceID, watches: watches}
+		if options.AttachPublication != nil {
+			return options.AttachPublication(ctx, service, cfg)
+		}
+		return nil
+	}
 	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration, AutomaticReadiness: true}
 	a.manager, err = publisherapp.New(observability.Independent(ctx), project.Root, state, publisherapp.ConfiguredServices(project), a.workers.Run)
 	if err != nil {

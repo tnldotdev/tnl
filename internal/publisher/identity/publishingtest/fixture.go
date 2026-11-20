@@ -266,6 +266,10 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.policy(w, r)
 		return
 	}
+	if r.Method == http.MethodPost && r.URL.Path == "/v1/publisher/watch" {
+		f.forward(w, r, false)
+		return
+	}
 	if r.Method == http.MethodPost && r.URL.Path == "/v1/visitor-tokens" {
 		f.visitorToken(w, r)
 		return

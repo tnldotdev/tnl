@@ -35,7 +35,7 @@ func TestPublisherWatchValidatesChangesAgainstSubscriptions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client, err := New("https://control.example", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 				defer request.Body.Close()
-				if request.Method != http.MethodPost || request.URL.Path != "/v1/publisher/watch" || request.URL.RawQuery != "" || request.Header.Get("Authorization") != "" {
+				if request.Method != http.MethodPost || request.URL.Path != "/v1/publisher/watch" || request.URL.RawQuery != "" || request.Header.Get("Authorization") != "" || !VisitorSourceAuthenticates(request.Context()) {
 					t.Error("watch should put exact run credentials only in the request body")
 				}
 				var body controlv1.PublisherWatchRequest

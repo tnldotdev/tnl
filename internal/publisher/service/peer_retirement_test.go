@@ -31,6 +31,75 @@ type retirementPeerControl struct {
 	confirm func(context.Context) error
 }
 
+type quietPeerControl struct {
+	*retirementPeerControl
+	wait   chan controlv1.PublisherWatchRun
+	change chan int64
+}
+
+func (c quietPeerControl) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (int64, error) {
+	select {
+	case c.wait <- scope:
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	select {
+	case revision := <-c.change:
+		return revision, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+func TestQuietConnectorDiscoveryListsOnlyAfterNotice(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b, _, _, _, _ := connectorPeerFixture(t, "127.0.0.1:1")
+		control := quietPeerControl{&retirementPeerControl{list: make(chan retirementListCall, 1)}, make(chan controlv1.PublisherWatchRun, 1), make(chan int64)}
+		ctx, stop := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- b.ServeConnectorPeers(ctx, control, "run-token") }()
+		defer func() {
+			stop()
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+		}()
+		if scope := <-control.wait; scope.ConnectorRevision != nil {
+			t.Fatal("initial wait supplied a bookmark")
+		}
+		control.change <- 7
+		list := <-control.list
+		select {
+		case <-control.wait:
+			t.Fatal("acknowledged before applying authorized state")
+		default:
+		}
+		list.page <- controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{}}
+		if scope := <-control.wait; scope.ConnectorRevision == nil || *scope.ConnectorRevision != 7 {
+			t.Fatal("missing applied bookmark")
+		}
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		select {
+		case <-control.list:
+			t.Fatal("quiet run issued an empty discovery poll")
+		default:
+		}
+	})
+}
+
+func (c *retirementPeerControl) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (int64, error) {
+	if scope.ConnectorRevision == nil {
+		return 0, nil
+	}
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-time.After(time.Second):
+		return *scope.ConnectorRevision + 1, nil
+	}
+}
+
 func (c *retirementPeerControl) ListConnectorPeerPairs(ctx context.Context, _, _, _ string, _ credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error) {
 	call := retirementListCall{page: make(chan controlv1.ConnectorPeerPairCandidates)}
 	select {

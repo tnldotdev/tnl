@@ -13,6 +13,9 @@ import (
 // WatchPublisherRuns waits on the caller's last applied connector bookmarks.
 // the returned hints do not acknowledge a revision or authorize any work.
 func (c *Client) WatchPublisherRuns(ctx context.Context, runs []controlv1.PublisherWatchRun) ([]controlv1.PublisherWatchChange, error) {
+	// each run authenticates in the body. a session transport must not add a
+	// person's bearer token or refresh that person's session for this wait.
+	ctx = context.WithValue(ctx, visitorSourceAuthenticationKey{}, true)
 	body := controlv1.PublisherWatchRequest{Runs: runs}
 	response, err := requestWithTimeout[controlv1.PublisherWatchResponse](ctx, c, 25*time.Second, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.WatchPublisherRuns(ctx, body, editors...)

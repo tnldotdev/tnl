@@ -81,6 +81,13 @@ func (*cliFallbackObservationControl) ReadPublisherVisitorPolicy(_ context.Conte
 func (*cliFallbackObservationControl) ListConnectorPeerPairs(context.Context, string, string, string, credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error) {
 	return controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{}}, nil
 }
+func (*cliFallbackObservationControl) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (int64, error) {
+	if scope.ConnectorRevision == nil {
+		return 0, nil
+	}
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
 func (c *cliFallbackObservationControl) CreateServiceCertificateIssuance(_ context.Context, service, run string, number int64, _ credentials.ServiceRunToken, der []byte, _ string) (controlv1.ServiceCertificateIssuance, error) {
 	csr, err := x509.ParseCertificateRequest(der)
 	if err != nil {
