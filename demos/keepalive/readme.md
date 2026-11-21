@@ -46,6 +46,67 @@ mise exec -- task js:keepalive:test
 `task js:keepalive:handoff` uses Chrome and an empty test deployment to check
 browser handoffs, certificate reuse, final-host outage, and restart.
 
+### measure a handoff
+
+To check just the instruments, run `mise exec -- task js:keepalive:measurement-check`.
+It uses Chrome, compressed fixture files and a loopback server. No publisher or
+provider account is needed.
+
+The separate `js:keepalive:handoff` task requires an empty test deployment and
+actually starts browser publishers. For an approved run, pass `SITE`, `START`,
+and `REPORT=/path/to/new-report.ndjson`. `PEER_PROXY` optionally places the
+second browser on a different network. Both site origins must serve the same
+instrumented build. Without `REPORT`, events go to stdout.
+
+Each line has a run-local ID, epoch milliseconds and a scenario phase:
+
+- `turn`: times for volunteering, invitation, copy, hash verification and
+  publication; the first independent response from the exact publisher URL
+  with the expected service run ID, file size and SHA-256. A seed has no
+  invitation. Incomplete turns retain available milestones. Count encoded HTTP
+  bytes from Chrome network completion events separately from decoded manifest
+  bytes; use only `completeWireSample: true` for whole-copy comparisons. This
+  is not socket overhead, provider egress or a billing measurement.
+- `hosts`: every 20 seconds, probe the harness's current participants. Count
+  distinct publisher identities that supplied a verified file for their current
+  run during that round. This is neither a gossip estimate nor an enrollment count.
+- `visitor`: a separate Chrome context fetches fresh HTML and JavaScript from
+  the public proxy and verifies both. `VISITOR_INTERVAL_MS` defaults to 2,000;
+  slow samples skip slots instead of catching up in a burst. Deliberate final-host
+  outage is recorded separately. The summary includes failures, skipped slots
+  and p50/p95/p99 for successful page-plus-script loads. It also summarizes
+  invitation-to-verified latency and complete HTTP copy sizes for successful
+  volunteer handoffs, excluding seed turns.
+- `infrastructure` (optional): `METRICS=/path/to/queries.json` samples a
+  Prometheus-compatible instant-query endpoint every 15 seconds. Provide
+  one aggregate query per measurement for the **test** deployment. Missing,
+  ambiguous or non-finite results are `null`, not zero. Example for an isolated
+  metrics store:
+
+  ```json
+  {
+    "endpoint": "http://127.0.0.1:9090/api/v1/query",
+    "queries": {
+      "ingress_connections": "sum(tnl_ingress_connections)",
+      "relay_a_publishers": "sum(tnl_relay_publisher_connections_ready{job=\"relay-a\"})",
+      "relay_b_publishers": "sum(tnl_relay_publisher_connections_ready{job=\"relay-b\"})",
+      "relay_streams": "sum(tnl_relay_visitor_stream_slots_occupied)",
+      "capacity_rejections_per_s": "sum(rate(tnl_admission_rejections_total[2m]))",
+      "forwarded_bytes_per_s": "sum(rate(tnl_ingress_forwarded_bytes_total[2m]))",
+      "oldest_routing_snapshot_age_s": "time() - min(tnl_ingress_service_routing_observed_timestamp_seconds)",
+      "pool_wait_s_per_s": "sum(rate(tnl_database_pool_acquire_wait_seconds_total[2m]))"
+    }
+  }
+  ```
+
+  Match the job labels to the deployment. Add queries for machine CPU/memory,
+  routing-refresh duration, database lock waits and Worker requests when those
+  series are available from the deployment's monitoring. Snapshot age and
+  pool acquisition time are not substitutes for refresh duration or lock waits.
+  For a remote endpoint use HTTPS; supply an optional read-only bearer token
+  through `KEEPALIVE_METRICS_TOKEN`. Reports contain query names and numeric
+  values, not upstream labels, URLs, tokens, IPs, invitations or raw errors.
+
 ## scale qualification
 
 Each host offers one invitation at a time. It aims for at least three hosts,

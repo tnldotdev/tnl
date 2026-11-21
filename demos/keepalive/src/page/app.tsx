@@ -241,6 +241,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
     )
       .then(
         ({ expired, requests }) => {
+          performance.mark("keepalive ended", { detail: expired ? "completed" : "stopped" });
           if (hosted) setFinished(requests);
           setMessage(
             expired
@@ -251,6 +252,13 @@ function App({ bootstrap }: { bootstrap: boolean }) {
           );
         },
         (error: unknown) => {
+          performance.mark("keepalive ended", {
+            detail: stop.signal.aborted
+              ? "stopped"
+              : error instanceof DOMException && error.name === "TimeoutError"
+                ? "expired"
+                : "failed",
+          });
           if (error instanceof AlreadyHosting) {
             setAlreadyHosting(true);
             return;

@@ -26,6 +26,10 @@ export const hostCommand = z.discriminatedUnion("type", [
 export type HostStart = Extract<z.infer<typeof hostCommand>, { type: "start" }>;
 
 export const hostUpdate = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("published"),
+    host: hostSchema.refine(({ origin }) => hostOrigin(origin)),
+  }),
   z
     .strictObject({
       type: z.literal("hosting"),

@@ -65,6 +65,8 @@ async function host(command: HostStart) {
           return new Response(null, { status: 503 });
         }
         const response = await serve(request);
+        if (running !== undefined && response.ok)
+          response.headers.set("X-Keepalive-Run", running.host.runID);
         if (endsAt !== Infinity) activity.record(response, Date.now());
         return response;
       },
@@ -104,6 +106,7 @@ async function host(command: HostStart) {
           },
     );
     const { host } = running;
+    emit({ type: "published", host });
     const certificate = await describeCertificate(await running.exportCertificate());
     const since = Date.now();
     if (since >= command.startupEndsAt) throw new Error("The hosting invitation expired.");

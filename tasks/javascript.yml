@@ -74,7 +74,12 @@ tasks:
     requires:
       vars: [SITE, START]
     cmds:
-      - node demos/keepalive/tests/handoff.ts --site "{{.SITE}}" --start "{{.START}}" {{if .PEER_PROXY}}--peer-proxy "{{.PEER_PROXY}}"{{end}}
+      - node demos/keepalive/tests/handoff.ts --site "{{.SITE}}" --start "{{.START}}" {{if .PEER_PROXY}}--peer-proxy "{{.PEER_PROXY}}"{{end}} {{if .REPORT}}--report "{{.REPORT}}"{{end}} {{if .METRICS}}--metrics "{{.METRICS}}"{{end}} {{if .VISITOR_INTERVAL_MS}}--visitor-interval-ms "{{.VISITOR_INTERVAL_MS}}"{{end}}
+
+  keepalive:measurement-check:
+    desc: Check the Keepalive observers with Chrome and a loopback fixture
+    cmds:
+      - node demos/keepalive/tests/measurement-browser.ts
 
   wasm:build:
     desc: Build the SDK's Go/WASM module and matching Go runtime

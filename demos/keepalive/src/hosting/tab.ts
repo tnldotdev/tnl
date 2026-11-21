@@ -73,6 +73,7 @@ async function copySite(
   let received = 0;
   let lastUpdate = 0;
   const started = performance.now();
+  performance.mark("keepalive copying");
   let verification = 0;
   update({ type: "copying", received, total, bootstrap });
   for (const asset of release.assets) {
@@ -96,6 +97,7 @@ async function copySite(
   const finished = performance.now();
   performance.measure("keepalive copy", { start: started, end: finished });
   performance.measure("keepalive verify", { start: started, duration: verification });
+  performance.mark("keepalive copied");
   return files;
 }
 
@@ -121,6 +123,11 @@ export async function hostTab(
   update: (state: HostState) => void,
   activity: (state: Extract<HostUpdate, { type: "activity" }>) => void,
 ) {
+  // keep only the current turn on this page's local performance timeline.
+  for (const name of ["volunteered", "invited", "copying", "copied", "published", "ended"])
+    performance.clearMarks(`keepalive ${name}`);
+  for (const name of ["copy", "verify", "startup"]) performance.clearMeasures(`keepalive ${name}`);
+  performance.mark("keepalive volunteered");
   const release = await parseRelease(await getJSON(RELEASE_PATH, MAX_MANIFEST_BYTES, signal));
   // the startup page provides the seed copy only if no host answers the proxy.
   const report = startupPage
@@ -142,6 +149,7 @@ export async function hostTab(
     source = selected.host.origin;
   }
   const startupEndsAt = Date.now() + STARTUP_MS - 2_000;
+  if (!bootstrap) performance.mark("keepalive invited");
   const preparing = AbortSignal.any([signal, AbortSignal.timeout(startupEndsAt - Date.now())]);
   if (invitation !== undefined && firstHostToContact !== undefined) {
     update({ type: "checking" });
@@ -199,7 +207,7 @@ function runWorker(
     let startupMeasured = false;
     let stopTimer: ReturnType<typeof setTimeout> | undefined;
     let startupExpired = false;
-    const startupError = new Error("This tab took too long to start.");
+    const startupError = new DOMException("This tab took too long to start.", "TimeoutError");
     const startup = setTimeout(
       () => {
         startupExpired = true;
@@ -225,6 +233,8 @@ function runWorker(
     worker.onmessage = ({ data }: MessageEvent<unknown>) => {
       const message = hostUpdate.safeParse(data);
       if (!message.success) return;
+      if (message.data.type === "published")
+        performance.mark("keepalive published", { detail: message.data.host });
       if (message.data.type === "failed") finish(new Error("This tab could not host the site."));
       if (message.data.type === "stopped")
         finish(
