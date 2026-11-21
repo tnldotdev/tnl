@@ -94,9 +94,13 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 			entry.Target = "app"
 		} else if cloud {
 			t := service.Target
-			entry.TargetDiscovery = &controlv1.ProjectTargetDiscovery{Type: controlv1.ProjectTargetDiscoveryType(t.Type), Region: *t.Region, Cluster: t.Cluster, Instance: t.Instance}
-			if t.Endpoint != nil {
-				endpoint := controlv1.ProjectTargetDiscoveryEndpoint(*t.Endpoint)
+			selector, err := config.NormalizeCloudTarget(string(protocol), *t)
+			if err != nil {
+				return declaration, err
+			}
+			entry.TargetDiscovery = &controlv1.ProjectTargetDiscovery{Type: controlv1.ProjectTargetDiscoveryType(selector.Type), Region: selector.Region, Cluster: t.Cluster, Instance: t.Instance}
+			if selector.Endpoint != "" {
+				endpoint := controlv1.ProjectTargetDiscoveryEndpoint(selector.Endpoint)
 				entry.TargetDiscovery.Endpoint = &endpoint
 			}
 		} else if config.TargetType(service) == "app" {
