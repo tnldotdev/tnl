@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -100,7 +101,8 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	}))
 	t.Cleanup(target.Close)
 	configuration := filepath.Join(root, "tnl.json")
-	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "oauth": true, "webhooks": map[string]any{"review": map[string]any{"service": "web", "path": "/hooks/review", "provider": "custom", "source_ips": []string{"127.0.0.1"}}}, "services": map[string]any{"api": map[string]any{}, "publicapi": map[string]any{}, "internal": map[string]any{}, "web": map[string]any{}}, "deployments": map[string]any{
+	data, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{"server": f.url, "team": team, "oauth": true, "webhooks": map[string]any{"review": map[string]any{"service": "web", "path": "/hooks/review", "provider": "custom", "source_ips": []string{"127.0.0.1"}}}, "services": map[string]any{"api": map[string]any{}, "publicapi": map[string]any{}, "internal": map[string]any{}, "web": map[string]any{}, "db": map[string]any{"protocol": "postgres"}}, "deployments": map[string]any{
+		"rds":      map[string]any{"targets": map[string]any{"db": map[string]any{"target": map[string]any{"type": "rds", "region": "eu-west-1", "cluster": "orders"}}}},
 		"cluster":  map[string]any{"description": "CLI workflow", "targets": map[string]any{"api": map[string]any{"address": target.URL, "access": map[string]any{"team": true}}}},
 		"external": map[string]any{"targets": map[string]any{"publicapi": map[string]any{"address": target.URL, "public": true, "http": map[string]any{}, "access": map[string]any{"team": true}}}},
 		"local": map[string]any{"targets": map[string]any{
@@ -122,7 +124,7 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	if applied.Configuration.Oauth || len(applied.Configuration.Webhooks) != 0 {
 		t.Fatal("publisher-only OAuth/webhook handlers reached control")
 	}
-	for _, deployment := range []string{"external", "cluster"} {
+	for _, deployment := range []string{"rds", "external", "cluster"} {
 		args := []string{"--config", configuration, "apply", "--deployment", deployment, "--state-dir", person, "--output", "json", "--diff"}
 		var plan applyDiff
 		if err := json.Unmarshal(cliCall(t, t.Context(), args), &plan); err != nil || len(plan.Changes) == 0 {
@@ -135,6 +137,37 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 		if err := json.Unmarshal(cliCall(t, t.Context(), args), &plan); err != nil || plan.Base != applied.Revision || len(plan.Changes) != 0 {
 			t.Fatalf("diff after apply: %+v (%v)", plan, err)
 		}
+	}
+	live, err := control.GetDeployment(t.Context(), team, applied.ProjectKey, "cluster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const replacement = "new-target.example.test:9443"
+	ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.issuer.Raw}))
+	if _, err := control.UpdateDeployment(t.Context(), team, applied.ProjectKey, live.Id, live.Revision, controlv1.UpdateDeploymentRequest{
+		Targets: controlv1.DeploymentTargets{"api": {Address: replacement, Tls: &controlv1.DeploymentTargetTLS{Ca: &ca}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	apply := []string{"--config", configuration, "apply", "--deployment", "cluster", "--state-dir", person, "--output", "json"}
+	diffArgs := append(slices.Clone(apply), "--diff")
+	rawDiff := cliCall(t, t.Context(), diffArgs)
+	var plan applyDiff
+	if err := json.Unmarshal(rawDiff, &plan); err != nil || plan.Base != applied.Revision ||
+		len(plan.Changes) != 2 || plan.Changes[0].Field != "target" || string(plan.Changes[0].Before) != `"`+replacement+`"` ||
+		plan.Changes[1].Field != "target_tls" || !bytes.Contains(plan.Changes[1].Before, []byte("sha256:")) || string(plan.Changes[1].After) != "null" ||
+		bytes.Contains(rawDiff, []byte("BEGIN CERTIFICATE")) {
+		t.Fatalf("diff after runtime target change did not report redacted drift: %+v (%v)", plan, err)
+	}
+	liveAfterDiff, err := control.GetDeployment(t.Context(), team, applied.ProjectKey, live.Id)
+	if err != nil || liveAfterDiff.Targets["api"].Address == nil || *liveAfterDiff.Targets["api"].Address != replacement {
+		t.Fatal("diff changed the saved deployment target", err)
+	}
+	if err := json.Unmarshal(cliCall(t, t.Context(), apply), &applied); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(cliCall(t, t.Context(), diffArgs), &plan); err != nil || plan.Base != applied.Revision || len(plan.Changes) != 0 {
+		t.Fatalf("diff after restoring declared target and trust: %+v (%v)", plan, err)
 	}
 	var serviceID string
 	for _, s := range applied.Services {

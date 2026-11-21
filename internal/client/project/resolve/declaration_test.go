@@ -134,6 +134,23 @@ func TestRemoteDeclarationKeepsExposureOnEachService(t *testing.T) {
 	}
 }
 
+func TestDeclarationNormalizesCloudEndpointWithoutChangingSource(t *testing.T) {
+	for _, test := range []struct {
+		source *string
+		want   string
+	}{{nil, "writer"}, {new("writer"), "writer"}, {new("reader"), "reader"}} {
+		target := &config.ServiceTarget{Type: "rds", Region: new("eu-west-1"), Cluster: new("orders"), Endpoint: test.source}
+		project := clientproject.Project{Config: config.TNL{Deployment: "production", Services: config.Services{
+			"db": {Protocol: new("postgres"), Target: target},
+		}}}
+		declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+		discovery := declaration.Services["db"].TargetDiscovery
+		if err != nil || discovery == nil || discovery.Endpoint == nil || string(*discovery.Endpoint) != test.want || target.Endpoint != test.source {
+			t.Fatalf("endpoint wire=%+v source=%v want=%q err=%v", discovery, target.Endpoint, test.want, err)
+		}
+	}
+}
+
 func TestDeclarationPreservesDefaultAndExplicitTargetTLSHostname(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		for _, deployment := range []string{"local", "production"} {

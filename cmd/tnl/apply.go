@@ -71,6 +71,9 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 		return err
 	}
 	if flags.Diff {
+		if err := readApplyTargets(ctx, session.Authenticated().Control, current.Team().Id, source.Key, project.Deployment, &existing); err != nil {
+			return err
+		}
 		diff, err := compareApply(current.Team(), project.Deployment, existing, declaration, declarations)
 		if err != nil {
 			return err
@@ -101,6 +104,28 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 		return json.NewEncoder(output).Encode(applied)
 	}
 	return writeHumanFrame(output, "tnl apply", "applied", "start publishers with tnl publisher serve --deployment NAME", appliedProjectBlocks(applied)...)
+}
+
+// saved configuration records what was last applied. deployment management can
+// replace a target without changing that record or its project revision.
+func readApplyTargets(ctx context.Context, client *clientcontrol.Client, team, project, selection string, saved *controlv1.AppliedProjectConfiguration) error {
+	if selection == "local" || saved.Deployments == nil {
+		return nil
+	}
+	for _, entry := range *saved.Deployments {
+		if entry.Name != selection {
+			continue
+		}
+		live, err := client.GetDeployment(ctx, team, project, entry.Id)
+		if err != nil {
+			return err
+		}
+		if live.Id != entry.Id || live.TeamId != team || live.ProjectKey != project || live.Name != selection {
+			return failure.Wrap("read deployment targets", failure.ServerResponseInvalid, errors.New("control returned another deployment"))
+		}
+		return replaceApplyTargets(ctx, &saved.Configuration, live)
+	}
+	return nil
 }
 
 func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []clioutput.Block {
