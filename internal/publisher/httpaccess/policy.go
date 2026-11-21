@@ -79,14 +79,13 @@ func (p *Policy) maintain(ctx context.Context, report func(error)) {
 		now := time.Now()
 		due := now.Add(freshReadInterval)
 		if !until.IsZero() {
-			lead := min(freshReadInterval, until.Sub(observed)/2)
 			if confirmable {
 				// healthy exact-run renewals move this deadline without reading.
 				// only fetch here when a deadline is about to run out.
-				due = until.Add(-lead)
+				due = until.Add(-min(freshReadInterval, until.Sub(observed)/2))
 			} else {
 				// aliases and time-dependent parents still need fresh facts.
-				due = observed.Add(lead)
+				due = observed.Add(freshReadInterval)
 			}
 		}
 		if nextAttempt.After(due) {

@@ -99,8 +99,20 @@ func (r *runPreparation) close(ctx context.Context) (result error) {
 	}
 	// the exact run token can confirm an already-committed close, but cannot
 	// change a replacement run. keep retries within the original cleanup budget.
-	return recoverControlResponse(finish, time.Time{}, func(call context.Context) error {
+	closeRun := func(call context.Context) error {
 		return r.config.Control.CloseServiceRun(call, r.config.ServiceID, r.preparation.ServiceRunId,
 			credentials.ServiceRunToken(r.preparation.RunToken))
-	})
+	}
+	first := closeRun(finish)
+	if first == nil || finish.Err() != nil || !transientControlError(first) {
+		return first
+	}
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-finish.Done():
+		return errors.Join(context.Cause(finish), first)
+	case <-timer.C:
+		return recoverControlResponse(finish, time.Time{}, closeRun)
+	}
 }
