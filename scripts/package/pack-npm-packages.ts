@@ -6,12 +6,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import * as z from "zod";
 import { nativeTargets } from "../../packages/ts/src/internal/native/native-targets.ts";
-import {
-  assertExportTargets,
-  assertWasmAssets,
-  packageManifestSchema,
-  type PackedPackage,
-} from "./npm-artifacts.ts";
+import { lintNpmLauncher } from "./lint-npm-launcher.ts";
+import { assertWasmAssets, packageManifestSchema, type PackedPackage } from "./npm-artifacts.ts";
 import { legalFiles, releaseArtifacts, root } from "./release-artifacts.ts";
 import { parseJSON } from "../validation.ts";
 
@@ -107,7 +103,7 @@ async function pack(stage: string, kind: PackedPackage["kind"], manifest: Record
   const files = new Set(result.files.map((f) => f.path));
   for (const file of legalFiles) assert(files.has(file), `${result.name} is missing ${file}`);
   if (kind === "launcher") {
-    assertExportTargets(packageManifestSchema.parse(value), files);
+    await lintNpmLauncher(path.join(output, result.filename), files);
     assertWasmAssets(files);
   }
   packages.push({ name: result.name, kind, tarball: result.filename, integrity: result.integrity });

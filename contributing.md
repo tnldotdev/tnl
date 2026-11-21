@@ -114,6 +114,8 @@ mise exec -- task package
 ```
 
 This builds and checks native archives, npm packages, and Python wheels.
+The npm step lints the packed launcher with `publint`, then installs the tarballs
+with npm and pnpm to check the CLI and SDK.
 All include `LICENSE`, `NOTICE`, and `THIRD_PARTY_LICENSES.txt`. Add dependency
 licenses only to `THIRD_PARTY_LICENSES.txt`.
 
