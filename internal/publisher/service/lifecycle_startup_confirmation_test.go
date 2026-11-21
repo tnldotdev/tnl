@@ -43,6 +43,7 @@ type startupConfirmationControl struct {
 	confirmationEntered     chan struct{}
 	confirmationError       error
 	blockConfirmation       bool
+	policyKey               string
 }
 
 func (c *startupConfirmationControl) MarkServiceCertificateInstalled(ctx context.Context, service, run string, number int64, issuance string, expires time.Time, token credentials.ServiceRunToken) error {
@@ -69,8 +70,14 @@ func (c *startupConfirmationControl) MarkServiceCertificateInstalled(ctx context
 func (c *startupConfirmationControl) ReadPublisherVisitorPolicy(ctx context.Context, request controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
 	c.recordMu.Lock()
 	c.policyCalls = append(c.policyCalls, time.Now())
+	key := c.policyKey
 	c.recordMu.Unlock()
-	return c.lifecycleControl.ReadPublisherVisitorPolicy(ctx, request, token)
+	update, err := c.lifecycleControl.ReadPublisherVisitorPolicy(ctx, request, token)
+	if key != "" && err == nil {
+		update.ConfirmationKey = &key
+		update.Policy.ValidUntil = update.Policy.ObservedAt.Add(40 * time.Second)
+	}
+	return update, err
 }
 
 func (c *startupConfirmationControl) HeartbeatServiceRun(ctx context.Context, service, run string, token credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
@@ -95,6 +102,12 @@ func (c *startupConfirmationControl) HeartbeatServiceRun(ctx context.Context, se
 		c.leaseUntil = call.at.Add(45 * time.Second)
 	}
 	state.PublisherExpiresAt = c.leaseUntil
+	if c.policyKey != "" {
+		state.PublisherExpiresAt = state.ObservedAt.Add(45 * time.Second)
+		state.PolicyConfirmation = &controlv1.PublisherPolicyConfirmation{
+			ConfirmationKey: c.policyKey, Hostname: c.prep.Hostname, ObservedAt: state.ObservedAt, ValidUntil: state.ObservedAt.Add(40 * time.Second),
+		}
+	}
 	state.PublicEndpointReady, state.EndpointRevision = c.endpointReady, c.endpointRevision
 	if !c.acknowledged {
 		state.State = "starting"
@@ -256,9 +269,13 @@ func newStartupConfirmationFixture(t *testing.T, protocol controlv1.ServiceProto
 }
 
 func (f *startupConfirmationFixture) start() {
+	f.startWithTimeout(30 * time.Second)
+}
+
+func (f *startupConfirmationFixture) startWithTimeout(timeout time.Duration) {
 	f.t.Helper()
 	f.startedAt = time.Now()
-	f.ctx, f.cancel = context.WithTimeout(f.t.Context(), 30*time.Second)
+	f.ctx, f.cancel = context.WithTimeout(f.t.Context(), timeout)
 	go func() {
 		defer close(f.joined)
 		f.result = Publish(f.ctx, f.config)
@@ -415,6 +432,45 @@ func TestServiceRunStartupConfirmationCertificateLast(t *testing.T) {
 				}
 				if !slices.Equal(gotPolicyCalls, wantPolicyCalls) {
 					t.Errorf("policy reads after startup = %v, want %v", gotPolicyCalls, wantPolicyCalls)
+				}
+			})
+		})
+	}
+}
+
+func TestServiceRunQuietPolicyUsesHeartbeatAndReadsOnChange(t *testing.T) {
+	for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Tcp} {
+		t.Run(string(protocol), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newStartupConfirmationFixture(t, protocol, false)
+				defer f.stop()
+				f.control.policyKey = strings.Repeat("a", 64)
+				f.releaseSlot()
+				f.startWithTimeout(2 * time.Minute)
+				f.releaseACK()
+				synctest.Wait()
+				f.assertReadiness(true, 1)
+				first := time.Now()
+				f.advance(first.Add(45 * time.Second))
+				f.control.recordMu.Lock()
+				reads := len(f.control.policyCalls)
+				owner := f.control.bound.prepared.policyOwner
+				f.control.recordMu.Unlock()
+				if reads != 2 {
+					t.Fatalf("quiet run made %d full reads, want startup plus first watch observation only", reads)
+				}
+				view, enabled, _ := owner.Lease().Current()
+				if !enabled || !view.ValidUntil.After(first.Add(70*time.Second)) {
+					t.Fatal("heartbeat did not renew the local policy deadline")
+				}
+				f.control.recordMu.Lock()
+				f.control.policyKey = strings.Repeat("b", 64)
+				f.control.recordMu.Unlock()
+				f.advance(first.Add(51 * time.Second))
+				f.control.recordMu.Lock()
+				defer f.control.recordMu.Unlock()
+				if len(f.control.policyCalls) != 3 {
+					t.Fatalf("changed heartbeat key did not request exactly one fresh snapshot: %v", f.control.policyCalls)
 				}
 			})
 		})

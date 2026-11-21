@@ -250,7 +250,8 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		}
 		prepared.connectorHTTP = httpFrontend
 		prepared.policy = httpFrontend.Policy
-		prepared.refreshPolicies = append(prepared.refreshPolicies, httpFrontend.browser.Policy.Refresh)
+		prepared.policyOwner = httpFrontend.browser.Policy
+		prepared.refreshPolicies = append(prepared.refreshPolicies, prepared.policyOwner.Refresh)
 		if httpFrontend.alias != nil {
 			prepared.refreshPolicies = append(prepared.refreshPolicies, httpFrontend.alias.browser.Policy.Refresh)
 		}

@@ -36,12 +36,15 @@ type Update struct {
 
 type Request struct {
 	confirmationKey string
+	confirmable     bool
 	AfterRevision   int64
 	Snapshot        bool
 	StartedAt       time.Time
 	Deadline        time.Time
 	sequence, epoch uint64
 }
+
+func (r Request) Confirmable() bool { return r.confirmable }
 
 // Confirm applies a fresh control observation to the same still-current
 // snapshot. a missing or different key, elapsed lease or intervening full
@@ -100,10 +103,22 @@ func (l *Lease) Begin() Request {
 	l.mu.Lock()
 	stopped := l.expireLocked(l.now())
 	l.sequence++
-	r := Request{AfterRevision: l.revision, Snapshot: l.phase != leaseCurrent, StartedAt: l.now(), sequence: l.sequence, epoch: l.epoch}
+	r := Request{AfterRevision: l.revision, Snapshot: l.phase != leaseCurrent, StartedAt: l.now(), sequence: l.sequence, epoch: l.epoch,
+		confirmable: l.phase == leaseCurrent && l.update.ConfirmationKey != ""}
 	l.mu.Unlock()
 	stopGuards(stopped)
 	return r
+}
+
+// RefreshTiming returns the last accepted local clock bounds and a signal that
+// changes on a new observation, expiry, or close. reading it grants nothing.
+func (l *Lease) RefreshTiming() (observed, until time.Time, confirmable bool, changed <-chan struct{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.phase != leaseCurrent {
+		return time.Time{}, time.Time{}, false, l.changed
+	}
+	return l.update.View.ObservedAt, l.update.View.ValidUntil, l.update.ConfirmationKey != "", l.changed
 }
 
 func (l *Lease) Apply(request Request, update Update) error {

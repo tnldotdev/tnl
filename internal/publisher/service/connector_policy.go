@@ -33,6 +33,7 @@ func (b *Bound) PrepareConnectorPolicy(ctx context.Context, control connectorPol
 		}
 		lease, closePolicy = owner.Lease(), owner.Close
 		refresh = owner.Refresh
+		b.prepared.policyOwner = owner
 	}
 	view, enabled, _ := lease.Current()
 	b.mu.Lock()

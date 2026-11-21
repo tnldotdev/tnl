@@ -29,7 +29,13 @@ WHERE run.id=sqlc.arg(run_id) AND run.service_id=sqlc.arg(service_id)
     AND run.run_number=sqlc.arg(run_number) AND run.closed_at IS NULL AND run.started_at IS NOT NULL
     AND service.enabled AND service.deleted_at IS NULL AND service.guest_id IS NULL
     AND NOT EXISTS (SELECT 1 FROM control.workload_session_services w WHERE w.service_id=service.id)
-    AND NOT EXISTS (SELECT 1 FROM control.applied_project_services b WHERE b.service_id=service.id)
+    AND NOT EXISTS (
+        SELECT 1 FROM control.applied_project_services binding
+        JOIN control.deployment_management_services selected
+            ON selected.team_id=binding.team_id AND selected.project_key=binding.project_key
+            AND selected.service=binding.service AND selected.capability='connect' AND selected.revoked_at IS NULL
+        WHERE binding.service_id=service.id
+    )
     AND EXISTS (SELECT 1 FROM control.visitor_token_keys k WHERE k.retired_at IS NULL AND k.revoked_at IS NULL)
     AND NOT EXISTS (SELECT 1 FROM control.visitor_token_keys k WHERE k.retired_at IS NOT NULL AND k.revoked_at IS NULL);
 

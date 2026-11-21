@@ -16,13 +16,14 @@ type PolicyClient interface {
 }
 
 type Policy struct {
-	lease   *visitorlease.Lease
-	client  PolicyClient
-	request controlv1.PublisherVisitorPolicyRequest
-	token   string
-	cancel  context.CancelFunc
-	done    chan struct{}
-	gate    chan struct{}
+	lease     *visitorlease.Lease
+	client    PolicyClient
+	request   controlv1.PublisherVisitorPolicyRequest
+	token     string
+	cancel    context.CancelFunc
+	done      chan struct{}
+	gate      chan struct{}
+	reconcile chan struct{}
 }
 
 // PreparePolicy starts one run-bound policy owner. close joins refresh before
@@ -35,7 +36,7 @@ func PreparePolicy(ctx context.Context, client PolicyClient, scope visitorscope.
 	if err != nil {
 		return nil, err
 	}
-	p := &Policy{lease: lease, client: client, token: token, done: make(chan struct{}), gate: make(chan struct{}, 1), request: controlv1.PublisherVisitorPolicyRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, RunId: run, RunNumber: number}}
+	p := &Policy{lease: lease, client: client, token: token, done: make(chan struct{}), gate: make(chan struct{}, 1), reconcile: make(chan struct{}, 1), request: controlv1.PublisherVisitorPolicyRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, RunId: run, RunNumber: number}}
 	if len(hostnames) == 1 {
 		p.request.Hostname = hostnames[0]
 	}
@@ -45,25 +46,75 @@ func PreparePolicy(ctx context.Context, client PolicyClient, scope visitorscope.
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	p.cancel = cancel
-	go func() {
-		defer close(p.done)
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-lifetime.Done():
-				return
-			case <-ticker.C:
-				if err := p.Refresh(lifetime); err != nil && lifetime.Err() == nil && report != nil {
-					report(err)
-				}
-			}
-		}
-	}()
+	go p.maintain(lifetime, report)
 	return p, nil
 }
 
 func (p *Policy) Lease() *visitorlease.Lease { return p.lease }
+
+// ObserveRenewal runs only after the service owner has accepted the exact run's
+// heartbeat. mismatched evidence requests a full observation; it never moves
+// the local deadline. the alias has its own independent policy owner.
+func (p *Policy) ObserveRenewal(request visitorlease.Request, evidence *controlv1.PublisherPolicyConfirmation, observed, until time.Time) {
+	if evidence != nil && evidence.ObservedAt.Equal(observed) && !evidence.ValidUntil.After(until) && p.lease.Confirm(request, *evidence) == nil {
+		return
+	}
+	if evidence != nil || request.Confirmable() {
+		select {
+		case p.reconcile <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (p *Policy) maintain(ctx context.Context, report func(error)) {
+	defer close(p.done)
+	timer := time.NewTimer(0)
+	timer.Stop()
+	defer timer.Stop()
+	const freshReadInterval = 2 * time.Second
+	var nextAttempt time.Time
+	for {
+		observed, until, confirmable, changed := p.lease.RefreshTiming()
+		now := time.Now()
+		due := now.Add(freshReadInterval)
+		if !until.IsZero() {
+			lead := min(freshReadInterval, until.Sub(observed)/2)
+			if confirmable {
+				// healthy exact-run renewals move this deadline without reading.
+				// only fetch here when a deadline is about to run out.
+				due = until.Add(-lead)
+			} else {
+				// aliases and time-dependent parents still need fresh facts.
+				due = observed.Add(lead)
+			}
+		}
+		if nextAttempt.After(due) {
+			due = nextAttempt
+		}
+		timer.Reset(max(0, time.Until(due)))
+		select {
+		case <-ctx.Done():
+			return
+		case <-changed:
+			timer.Stop()
+			continue
+		case <-p.reconcile:
+			timer.Stop()
+		case <-timer.C:
+			// a confirmation might have won at the same instant as the timer.
+			select {
+			case <-changed:
+				continue
+			default:
+			}
+		}
+		nextAttempt = time.Now().Add(freshReadInterval)
+		if err := p.Refresh(ctx); err != nil && ctx.Err() == nil && report != nil {
+			report(err)
+		}
+	}
+}
 
 // Refresh shares the same bounded fetch-through-apply operation between explicit
 // credential preparation and the background owner; ordinary requests never call it.
