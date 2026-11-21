@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -404,10 +405,16 @@ func TestServiceRunStartupConfirmationCertificateLast(t *testing.T) {
 				f.assertReadiness(true, 1)
 				f.control.recordMu.Lock()
 				defer f.control.recordMu.Unlock()
-				for i, at := range f.control.policyCalls {
-					if !at.Equal(initial.Add(time.Duration(i) * 2 * time.Second)) {
-						t.Error("startup confirmation changed visitor-policy refresh cadence")
-					}
+				// the first policy notice reconciles once against the startup
+				// snapshot. the readiness heartbeat does not start another read
+				// or move the independent policy timer.
+				wantPolicyCalls := []time.Duration{0, 0, 2 * time.Second, 4 * time.Second, 6 * time.Second, 8 * time.Second, 10 * time.Second}
+				var gotPolicyCalls []time.Duration
+				for _, at := range f.control.policyCalls {
+					gotPolicyCalls = append(gotPolicyCalls, at.Sub(initial))
+				}
+				if !slices.Equal(gotPolicyCalls, wantPolicyCalls) {
+					t.Errorf("policy reads after startup = %v, want %v", gotPolicyCalls, wantPolicyCalls)
 				}
 			})
 		})
