@@ -16,7 +16,7 @@ func (a *commandApp) newAgentGuideCommand() *cobra.Command {
 		version := buildinfo.Line("tnl")
 		sections := []struct{ command, use string }{
 			{"tnl status --scope local --output json", "Read the recorded local snapshot. A saved ready state is not a fresh readiness check."},
-			{"tnl wait --service NAME --output json", "Check readiness now. Replace NAME with the configured service or invocation ID."},
+			{"tnl wait --service NAME --output json", "Check readiness now. Replace NAME with a configured service name."},
 			{"tnl watch --output ndjson --after CURSOR", "Resume after the last processed local event. Keep the cursor with its worktree and state directory. Omit --after on the first watch or if the cursor expired."},
 			{"tnl feedback list --output json", "Read feedback from the publishing worktree. Feedback watch has its own numeric cursor."},
 			{"tnl auth login start --output json", "Start login only when asked to sign in. Keep session credentials and one-time secrets out of logs."},
