@@ -43,6 +43,8 @@ func TestIntegrationCLIContract(t *testing.T) {
 		{"connect --install --foreground orders --output=json", "", "", "TNL_CLIENT_CONNECT_MODE_INVALID", 1},
 		{"connect start orders --install --foreground --output=json", "", "", "TNL_CLIENT_CONNECT_MODE_INVALID", 1},
 		{"connect start list --install --foreground", "", "[ tnl connect start ]", "", 1},
+		{"connect orders --install --client psql --output json", "", "", "TNL_CLIENT_CONNECT_MODE_INVALID", 1},
+		{"connect orders --detach -- sh --output json", "", "[ tnl connect start ]", "", 1},
 		{"share --service web --output json", "", "", "TNL_CLIENT_STATE_UNAVAILABLE", 1},
 		{"share create --service web --output json", "", "", "TNL_CLIENT_STATE_UNAVAILABLE", 1},
 		{"runtime connections read --help", "--handle", "", "", 0},

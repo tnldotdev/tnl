@@ -32,16 +32,18 @@ type connectStartCommand struct {
 	telemetry         *clienttelemetry.Collector
 	telemetryDisabled bool
 	scopedTeamFlags   `embed:""`
-	Name              string           `arg:"" name:"name" help:"Configured service name or exact service ID."`
-	Deployment        string           `name:"deployment" help:"Select this configured deployment; defaults to local."`
-	Listen            string           `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
-	Protocol          string           `name:"protocol" help:"Require an exact match: http, tcp, mysql, postgres, or kubernetes."`
-	Kubeconfig        string           `name:"kubeconfig" type:"path" help:"Kubeconfig to register the owned Kubernetes context; defaults to KUBECONFIG or ~/.kube/config."`
-	Namespace         string           `name:"namespace" help:"Default Kubernetes namespace for this context."`
-	KubeUserConfig    string           `name:"kube-user-config" type:"path" help:"Existing kubeconfig containing the explicitly selected bearer-token user."`
-	KubeUser          string           `name:"kube-user" help:"Exact existing Kubernetes user; explicitly permits that user's noninteractive exec plugin."`
-	KubeTokenFile     string           `name:"kube-token-file" type:"path" help:"Private file containing the cluster bearer token."`
-	Foreground        bool             `name:"foreground" help:"Run in this terminal (the default)."`
+	Name              string `arg:"" name:"name" help:"Configured service name or exact service ID."`
+	Deployment        string `name:"deployment" help:"Select this configured deployment; defaults to local."`
+	Listen            string `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
+	Protocol          string `name:"protocol" help:"Require an exact match: http, tcp, mysql, postgres, or kubernetes."`
+	Kubeconfig        string `name:"kubeconfig" type:"path" help:"Kubeconfig to register the owned Kubernetes context; defaults to KUBECONFIG or ~/.kube/config."`
+	Namespace         string `name:"namespace" help:"Default Kubernetes namespace for this context."`
+	KubeUserConfig    string `name:"kube-user-config" type:"path" help:"Existing kubeconfig containing the explicitly selected bearer-token user."`
+	KubeUser          string `name:"kube-user" help:"Exact existing Kubernetes user; explicitly permits that user's noninteractive exec plugin."`
+	KubeTokenFile     string `name:"kube-token-file" type:"path" help:"Private file containing the cluster bearer token."`
+	Foreground        bool   `name:"foreground" help:"Run in this terminal (the default)."`
+	Client            string `name:"client" help:"Launch a compatible client once the foreground connector is ready. Pass its arguments after --."`
+	clientArgs        []string
 	Detach            bool             `name:"detach" help:"Run independently of this terminal without automatic restart."`
 	Install           bool             `name:"install" help:"Keep this connector running with the installed user supervisor."`
 	System            bool             `name:"system" hidden:""`
@@ -82,7 +84,7 @@ func connectorOperations() connector.Operations {
 func (flags connectStartCommand) options() connector.StartOptions {
 	remote := flags.selection()
 	return connector.StartOptions{SessionOptions: connector.SessionOptions{ServerURL: remote.ServerURL, StateDir: remote.StateDir, AccessToken: remote.AccessToken, ProjectTeam: remote.ProjectTeam, SelectedTeam: remote.SelectedTeam}, Team: flags.Team, Project: flags.project.Project,
-		Name: flags.Name, Listen: flags.Listen, Protocol: flags.Protocol, Kubeconfig: flags.Kubeconfig, Namespace: flags.Namespace, KubeUserConfig: flags.KubeUserConfig, KubeUser: flags.KubeUser, KubeTokenFile: flags.KubeTokenFile,
+		Name: flags.Name, Client: flags.Client, ClientArgs: flags.clientArgs, Listen: flags.Listen, Protocol: flags.Protocol, Kubeconfig: flags.Kubeconfig, Namespace: flags.Namespace, KubeUserConfig: flags.KubeUserConfig, KubeUser: flags.KubeUser, KubeTokenFile: flags.KubeTokenFile,
 		Foreground: flags.Foreground, Detach: flags.Detach, Install: flags.Install, System: flags.System, SystemStateDir: flags.SystemStateDir, DetachedChild: flags.DetachedChild, Stdio: flags.Stdio, Output: string(flags.Output), DetachLaunch: flags.detach,
 		Ready: func(destination io.Writer, profile connector.Profile, listen string) error {
 			return writeNativeConnection(destination, profile, flags.Output, listen)
@@ -213,6 +215,26 @@ func (a *commandApp) newConnectCommand() *cobra.Command {
 		return a.startConnector(call)
 	})
 	cConnect.AddCommand(cConnectStart)
+	bind := cConnectStart.Args
+	cConnectStart.Args = func(cmd *cobra.Command, args []string) error {
+		// before the service selector, -- is still the flag terminator.
+		if n := cmd.ArgsLenAtDash(); n > 0 {
+			if n == len(args) && f.Connect.Start.Client == "" {
+				return publisherCLIError("pass an executable after --")
+			}
+			f.Connect.Start.clientArgs = args[n:]
+			args = args[:n]
+		}
+		return bind(cmd, args)
+	}
+	if err := cConnectStart.RegisterFlagCompletionFunc("client", func(cmd *cobra.Command, args []string, prefix string) ([]string, cobra.ShellCompDirective) {
+		if len(args) != 1 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		return completeNames(connector.ClientNames(completionFacts(cmd).Services[args[0]]), prefix)
+	}); err != nil {
+		panic(err)
+	}
 	a.useDefault(cConnect, cConnectStart)
 	cConnectAvailable := &cobra.Command{Use: "available", Short: "List services this identity can visit."}
 	a.leaf(cConnectAvailable, &f.Connect.Available, func(call commandCall) error {

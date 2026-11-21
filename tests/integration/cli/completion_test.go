@@ -61,6 +61,7 @@ source "$1"; COMP_WORDS=(tnl connect ""); COMP_CWORD=2; COMP_LINE="tnl connect "
 				}{
 					{[]string{"connect", "start", "li"}, "list", "ledger"},
 					{[]string{"connect", service, "--deployment", "pro"}, "production", "--foreground"},
+					{[]string{"connect", service, "--client", ""}, "pg_dump", "kubectl"},
 					{[]string{"wait", "--service", ""}, service, other},
 					{[]string{"connect", service, "--", "--fore"}, "", "--foreground"},
 				} {

@@ -19,6 +19,7 @@ import (
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/connector"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -291,9 +292,14 @@ func processSignalContext(parent context.Context, received <-chan os.Signal, unr
 
 func terminalResult(err error) (int, error) {
 	failures, unowned := 0, 0
+	var child *connector.ClientExit
 	var visit func(error, bool)
 	visit = func(err error, owned bool) {
 		if err == nil {
+			return
+		}
+		if exit, ok := err.(*connector.ClientExit); ok {
+			child = exit
 			return
 		}
 		if reported, ok := err.(*reportedError); ok {
@@ -325,6 +331,12 @@ func terminalResult(err error) (int, error) {
 		}
 	}
 	visit(err, false)
+	if child != nil {
+		if failures == 0 {
+			return child.Code, nil
+		}
+		return child.Code, err
+	}
 	if failures != 0 {
 		if unowned != 0 {
 			return 1, err

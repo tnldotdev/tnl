@@ -26,6 +26,8 @@ type StartOptions struct {
 	SessionOptions
 	Team                                                           string
 	Name, Listen, Protocol                                         string
+	Client                                                         string
+	ClientArgs                                                     []string
 	Kubeconfig, Namespace, KubeUserConfig, KubeUser, KubeTokenFile string
 	Foreground, Detach, Install, System, Stdio                     bool
 	SystemStateDir, DetachedChild, Output                          string
@@ -40,6 +42,11 @@ type StartOptions struct {
 }
 
 func ValidateMode(flags StartOptions) error {
+	if flags.Client != "" || len(flags.ClientArgs) > 0 {
+		if flags.Install || flags.Detach || flags.DetachedChild != "" || flags.Stdio || flags.Output == "json" {
+			return connectModeError(failure.ConnectModeInvalid)
+		}
+	}
 	if flags.Stdio && (flags.Listen != "" || flags.Install || flags.Detach || flags.Foreground || flags.DetachedChild != "" || flags.Output == "json") {
 		return connectModeError(failure.ConnectModeInvalid)
 	}
@@ -103,6 +110,19 @@ func connectListen(value string) (string, error) {
 }
 
 func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.File, output, diagnostics io.Writer) (result error) {
+	if err := ValidateMode(flags); err != nil {
+		return err
+	}
+	if flags.Client != "" || len(flags.ClientArgs) > 0 {
+		return foregroundClient(ctx, flags.Client, flags.ClientArgs, input, output, diagnostics, func(ctx context.Context, ready func(Profile) error) error {
+			flags.Ready = func(_ io.Writer, p Profile, _ string) error { return ready(p) }
+			return o.start(ctx, flags, input, output, diagnostics)
+		})
+	}
+	return o.start(ctx, flags, input, output, diagnostics)
+}
+
+func (o Operations) start(ctx context.Context, flags StartOptions, input *os.File, output, diagnostics io.Writer) (result error) {
 	flags.project = projectConfiguration{Project: flags.Project}
 	ctx, finishStartup := observability.ClientOperation(ctx, "client.connect.startup")
 	defer func() { finishStartup(result) }()
@@ -112,9 +132,6 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 		}
 	}()
 	requestedProtocol := flags.Protocol
-	if err := ValidateMode(flags); err != nil {
-		return err
-	}
 	options := flags.ServiceOptions
 	var err error
 	if flags.Listen != "" {
