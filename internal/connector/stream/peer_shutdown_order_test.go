@@ -87,19 +87,30 @@ func (s *peerShutdownControlStream) Reset(code uint32) error {
 	return errors.Join(err, s.owner.resetErr)
 }
 
-type peerShutdownFixture struct {
-	ctx          context.Context
-	owner        *connectorConnection
-	session      *peerShutdownSession
-	server       muxsession.Session
-	control      muxsession.Stream
-	controlDone  <-chan error
-	retired      <-chan struct{}
-	retirements  atomic.Int32
-	releaseReset func()
+type peerShutdownServerStream struct {
+	muxsession.Stream
+	releaseCleanup <-chan struct{}
 }
 
-func newPeerShutdownFixture(t *testing.T, closeErr, resetErr error) *peerShutdownFixture {
+func (s peerShutdownServerStream) Reset(code uint32) error {
+	<-s.releaseCleanup
+	return s.Stream.Reset(code)
+}
+
+type peerShutdownFixture struct {
+	ctx                  context.Context
+	owner                *connectorConnection
+	session              *peerShutdownSession
+	server               muxsession.Session
+	control              muxsession.Stream
+	controlDone          <-chan error
+	retired              <-chan struct{}
+	retirements          atomic.Int32
+	releaseReset         func()
+	releaseServerCleanup func()
+}
+
+func newPeerShutdownFixture(t *testing.T, closeErr, resetErr error, holdServerCleanup bool) *peerShutdownFixture {
 	t.Helper()
 	client, server := stdioTransportSessions(t, "quic")
 	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
@@ -107,17 +118,22 @@ func newPeerShutdownFixture(t *testing.T, closeErr, resetErr error) *peerShutdow
 	packets, stopPackets := context.WithCancelCause(context.WithoutCancel(ctx))
 	serverLife, stopServer := context.WithCancel(context.WithoutCancel(ctx))
 	retired := make(chan struct{})
+	serverCleanup := make(chan struct{})
 	session := &peerShutdownSession{Session: client, retired: retired,
 		closeEntered: make(chan bool, 1), resetEntered: make(chan peerShutdownReset, 1),
 		resetRelease: make(chan struct{}), closeErr: closeErr, resetErr: resetErr}
 	f := &peerShutdownFixture{ctx: ctx, session: session, server: server, retired: retired,
-		releaseReset: sync.OnceFunc(func() { close(session.resetRelease) })}
+		releaseReset: sync.OnceFunc(func() { close(session.resetRelease) }), releaseServerCleanup: sync.OnceFunc(func() { close(serverCleanup) })}
+	if !holdServerCleanup {
+		f.releaseServerCleanup()
+	}
 	f.owner = &connectorConnection{ctx: serving, packetCtx: packets, packetCancel: stopPackets,
 		cleanup: newConnectorCleanup(ctx, nil), session: session, owner: "ik_aaaaaaaaaaaaaaaaaaaaaa"}
 	f.owner.cancel = func(cause error) { f.owner.cleanup.begin(); stopServing(cause) }
 	var workers sync.WaitGroup
 	t.Cleanup(func() {
 		f.releaseReset()
+		f.releaseServerCleanup()
 		_ = f.owner.Close(context.WithoutCancel(ctx))
 		stopPackets(context.Canceled)
 		_ = server.Close()
@@ -175,7 +191,7 @@ func newPeerShutdownFixture(t *testing.T, closeErr, resetErr error) *peerShutdow
 				return nil
 			})
 			var gate tunnel.ConnectorPermissionGate
-			err = joined.Serve(stream, &gate)
+			err = joined.Serve(peerShutdownServerStream{Stream: stream, releaseCleanup: serverCleanup}, &gate)
 		}
 		done <- err
 	})
@@ -203,7 +219,7 @@ func TestConnectorPeerShutdownClosesSessionBeforePermissionResetAndJoins(t *test
 				sessionErr = &muxsession.QUICTransportCloseError{Err: errors.Join(context.Canceled, sessionFailure)}
 				resetErr = &muxsession.QUICTransportCloseError{Err: errors.Join(context.Canceled, resetFailure)}
 			}
-			f := newPeerShutdownFixture(t, sessionErr, resetErr)
+			f := newPeerShutdownFixture(t, sessionErr, resetErr, false)
 			useEntered, useRelease := make(chan struct{}), make(chan struct{})
 			releaseUse := sync.OnceFunc(func() { close(useRelease) })
 			f.owner.uses.Go(func() { close(useEntered); <-useRelease })
@@ -258,7 +274,10 @@ func TestConnectorPeerShutdownClosesSessionBeforePermissionResetAndJoins(t *test
 func TestConnectorPeerShutdownKeepsLiveControlResetFailures(t *testing.T) {
 	for _, code := range []uint32{0, 7} {
 		t.Run(map[uint32]string{0: "remote zero reset", 7: "remote nonzero reset"}[code], func(t *testing.T) {
-			f := newPeerShutdownFixture(t, nil, nil)
+			// the explicit reset cancels both directions. the server reader may
+			// observe the first direction and try its cleanup reset before the
+			// second direction carries the explicit code. hold only cleanup.
+			f := newPeerShutdownFixture(t, nil, nil, true)
 			if err := f.control.Reset(code); err != nil {
 				t.Fatal(err)
 			}
@@ -276,6 +295,7 @@ func TestConnectorPeerShutdownKeepsLiveControlResetFailures(t *testing.T) {
 				reset.StreamID != 0 || !reset.Remote || reset.ErrorCode != quic.StreamErrorCode(code) {
 				t.Fatal("real control reset lost its stream identity or code", err)
 			}
+			f.releaseServerCleanup()
 			f.releaseReset()
 			err := f.owner.Close(f.owner.cleanup.context())
 			var retained *quic.StreamError

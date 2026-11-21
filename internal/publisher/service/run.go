@@ -26,6 +26,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/requestlimit"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -73,6 +74,8 @@ type Prepared struct {
 	httpResponseHooks      httpstream.ResponseHooks
 	connectorHTTP          servicestream.ConnectorHTTPFrontend
 	policy                 *visitorlease.Lease
+	refreshPolicies        []func(context.Context) error
+	policyOwner            *httpaccess.Policy
 	metadataRevision       int64
 
 	certificateInstalled <-chan struct{}

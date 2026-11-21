@@ -24,7 +24,7 @@ import (
 
 const (
 	// schema versions advance with numbered migrations.
-	schemaVersion       int64 = 1
+	schemaVersion       int64 = 5
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond
 )

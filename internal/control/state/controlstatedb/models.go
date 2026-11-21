@@ -286,6 +286,11 @@ type ControlConnectorPeerPendingBinding struct {
 	PublisherProofDigest   []byte
 }
 
+type ControlConnectorPeerWatchVersion struct {
+	ServiceRunID string
+	Revision     int64
+}
+
 type ControlControlSession struct {
 	ID                      string
 	IdentityID              string
@@ -772,6 +777,11 @@ type ControlPublisherNamespaceAllocation struct {
 	RequestedExpiresAt        pgtype.Timestamptz
 }
 
+type ControlPublisherPolicyWatchBookmark struct {
+	ServiceID string
+	Bookmark  string
+}
+
 type ControlPublisherRuntime struct {
 	PublisherIdentityID       string
 	TeamID                    string
@@ -789,6 +799,13 @@ type ControlPublisherRuntime struct {
 	DeploymentReport          []byte
 	DeploymentID              pgtype.Text
 	DeploymentFirstObservedAt pgtype.Timestamptz
+}
+
+type ControlRegisteredKeyWatchVersion struct {
+	TeamID     string
+	ProjectKey string
+	ServiceID  string
+	Revision   int64
 }
 
 type ControlRelayCertificateOrder struct {
@@ -1366,6 +1383,11 @@ type ControlVisitorPolicyEvent struct {
 	ResourceID string
 	Revision   int64
 	ChangedAt  pgtype.Timestamptz
+}
+
+type ControlVisitorPolicyWatchVersion struct {
+	ServiceID string
+	Revision  int64
 }
 
 type ControlVisitorTokenIssuer struct {

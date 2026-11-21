@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher/httpaccess"
 	"github.com/tnldotdev/tnl/internal/publisher/proxy"
 	servicestream "github.com/tnldotdev/tnl/internal/publisher/service/stream"
@@ -487,9 +488,16 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		active := bound.reservedStreams
 		bound.mu.Unlock()
 		status.TargetHealthy = config.Healthy(ctx)
+		owner := prepared.policyOwner
+		var observation visitorlease.Request
+		if owner != nil {
+			observation = owner.Lease().Begin()
+			observation.Deadline, _ = ctx.Deadline()
+		}
 		state, err = config.Control.HeartbeatServiceRun(ctx, config.ServiceID, setup.ServiceRunId, runToken,
 			controlv1.ServiceRunHeartbeat{Healthy: status.TargetHealthy, StreamCapacity: config.StreamCapacity, ActiveStreams: int32(active)})
 		if err == nil {
+			controlUntil := state.PublisherExpiresAt
 			var next controloutage.Confirmation
 			next, state, err = acceptServingConfirmation(servingConfirmation, started, state, time.Now())
 			if err == nil {
@@ -500,6 +508,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 			if err == nil {
 				servingConfirmation = next
+				if owner != nil {
+					owner.ObserveRenewal(observation, state.PolicyConfirmation, state.ObservedAt, controlUntil)
+				}
 			}
 			if err != nil {
 				status.ConfigurationCurrent = false

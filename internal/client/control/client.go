@@ -53,6 +53,7 @@ var (
 )
 
 type Client struct {
+	publisherWaits         publisherWaits
 	api                    *controlv1.Client
 	access                 credentials.AccessToken
 	externalAuthentication bool

@@ -31,6 +31,91 @@ type retirementPeerControl struct {
 	confirm func(context.Context) error
 }
 
+type quietPeerControl struct {
+	*retirementPeerControl
+	wait   chan controlv1.PublisherWatchRun
+	change chan controlv1.PublisherWatchChange
+}
+
+func (c quietPeerControl) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (controlv1.PublisherWatchChange, error) {
+	select {
+	case c.wait <- scope:
+	case <-ctx.Done():
+		return controlv1.PublisherWatchChange{}, ctx.Err()
+	}
+	select {
+	case revision := <-c.change:
+		return revision, nil
+	case <-ctx.Done():
+		return controlv1.PublisherWatchChange{}, ctx.Err()
+	}
+}
+
+func TestQuietConnectorDiscoveryListsOnlyAfterNotice(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b, _, _, _, _ := connectorPeerFixture(t, "127.0.0.1:1")
+		var attempts int
+		b.prepared.refreshPolicies = []func(context.Context) error{func(context.Context) error {
+			attempts++
+			if attempts == 2 {
+				return context.DeadlineExceeded
+			}
+			return nil
+		}}
+		control := quietPeerControl{&retirementPeerControl{list: make(chan retirementListCall, 1)}, make(chan controlv1.PublisherWatchRun, 1), make(chan controlv1.PublisherWatchChange)}
+		ctx, stop := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- b.ServeConnectorPeers(ctx, control, "run-token") }()
+		defer func() {
+			stop()
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+		}()
+		if scope := <-control.wait; scope.ConnectorRevision != nil {
+			t.Fatal("initial wait supplied a bookmark")
+		}
+		control.change <- controlv1.PublisherWatchChange{ConnectorRevision: 7, PolicyBookmark: "first"}
+		list := <-control.list
+		select {
+		case <-control.wait:
+			t.Fatal("acknowledged before applying authorized state")
+		default:
+		}
+		list.page <- controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{}}
+		if scope := <-control.wait; scope.ConnectorRevision == nil || *scope.ConnectorRevision != 7 {
+			t.Fatal("missing applied bookmark")
+		}
+		control.change <- controlv1.PublisherWatchChange{ConnectorRevision: 7, PolicyBookmark: "second"}
+		if scope := <-control.wait; scope.PolicyBookmark == nil || *scope.PolicyBookmark != "first" || scope.ConnectorRevision == nil || *scope.ConnectorRevision != 7 {
+			t.Fatal("failed policy fetch advanced its bookmark or lost the connector revision")
+		}
+		control.change <- controlv1.PublisherWatchChange{ConnectorRevision: 7, PolicyBookmark: "second"}
+		if scope := <-control.wait; scope.PolicyBookmark == nil || *scope.PolicyBookmark != "second" {
+			t.Fatal("policy-only change restarted connector listing")
+		}
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		select {
+		case <-control.list:
+			t.Fatal("quiet run issued an empty discovery poll")
+		default:
+		}
+	})
+}
+
+func (c *retirementPeerControl) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (controlv1.PublisherWatchChange, error) {
+	if scope.ConnectorRevision == nil {
+		return controlv1.PublisherWatchChange{PolicyBookmark: "fixture"}, nil
+	}
+	select {
+	case <-ctx.Done():
+		return controlv1.PublisherWatchChange{}, ctx.Err()
+	case <-time.After(time.Second):
+		return controlv1.PublisherWatchChange{ConnectorRevision: *scope.ConnectorRevision + 1, PolicyBookmark: "fixture"}, nil
+	}
+}
+
 func (c *retirementPeerControl) ListConnectorPeerPairs(ctx context.Context, _, _, _ string, _ credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error) {
 	call := retirementListCall{page: make(chan controlv1.ConnectorPeerPairCandidates)}
 	select {

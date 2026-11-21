@@ -8,9 +8,18 @@ import (
 )
 
 type connectorPeerControl interface {
+	WaitPublisherRun(context.Context, controlv1.PublisherWatchRun) (controlv1.PublisherWatchChange, error)
 	DeliverConnectorPeerPair(context.Context, string, string, string, int64, credentials.ServiceRunToken) (controlv1.ConnectorPeerPairDelivery, error)
 	ListConnectorPeerPairs(context.Context, string, string, string, credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error)
 	ConfirmConnectorPeerPairPrepared(context.Context, string, string, string, controlv1.ConnectorPeerPairPrepared, credentials.ServiceRunToken) error
+}
+
+func (n *Native) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (controlv1.PublisherWatchChange, error) {
+	control, err := n.connectorPeerControl(scope.ServiceId)
+	if err != nil {
+		return controlv1.PublisherWatchChange{}, err
+	}
+	return control.WaitPublisherRun(ctx, scope)
 }
 
 func (n *Native) connectorPeerControl(service string) (connectorPeerControl, error) {

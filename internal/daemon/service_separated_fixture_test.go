@@ -162,7 +162,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		ctx = observability.WithMetrics(ctx, observability.FromContext(processContext("control")))
 		metrics = observability.FromContext(ctx)
 	}
-	handler, err := newPublicAPIHandler(config, time.Now(), serviceHTTP, database, metrics, control, nil)
+	handler, err := newPublicAPIHandler(ctx, config, time.Now(), serviceHTTP, database, metrics, control, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

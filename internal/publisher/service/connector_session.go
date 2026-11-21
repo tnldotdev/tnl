@@ -740,8 +740,29 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 	if !enabled || entry.MetadataRevision != uint64(b.prepared.metadataRevision) {
 		return ErrPrivateStream
 	}
-	permission, err := visitortoken.VerifyConnectorPeerSession(entry, initial, binding.expected(), view, time.Now())
+	permission, err := visitortoken.VerifyConnectorPeerRenewalProof(entry, initial, binding.expected(), view, time.Now())
 	if err != nil {
+		if err == visitortoken.ErrToken || err == visitortoken.ErrBinding {
+			return &connectorOpeningProofRefusal{err: err}
+		}
+		return err
+	}
+	// control can issue an opening against the just-committed grant before its
+	// notice reaches this publisher. only a verified proof can wait for the
+	// background owner, using the original setup budget and no on-demand read.
+	if revision := permission.Facts().VisitorPolicyRevision; revision > view.VisitorPolicyRevision {
+		wait, cancel := context.WithDeadline(a.ctx, a.setupUntil)
+		err := b.prepared.policy.WaitRevision(wait, revision)
+		cancel()
+		if err != nil {
+			return err
+		}
+		view, enabled, _ = b.prepared.policy.Current()
+		if !enabled {
+			return visitortoken.ErrPolicy
+		}
+	}
+	if err := visitortoken.CheckCurrent(permission, view, time.Now()); err != nil {
 		if err == visitortoken.ErrToken || err == visitortoken.ErrBinding {
 			return &connectorOpeningProofRefusal{err: err}
 		}

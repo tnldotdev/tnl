@@ -185,6 +185,113 @@ func TestServiceHTTPLiveRenewalAndHTTP2Isolation(t *testing.T) {
 	})
 }
 
+func TestServiceHTTP2DisconnectedBrowserRegrant(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const siblingCookie = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA"
+		oldGrant := "sgr_" + strings.Repeat("A", 22)
+		newGrant := "sgr_" + strings.Repeat("B", 22)
+		offline, grant := false, oldGrant // accessed under the fixture's mutex
+		control := &visitorfixture.HTTPControl{Check: func(input visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
+			if offline {
+				return visitorfixture.HTTPDecision{}, clientcontrol.ErrUnavailable
+			}
+			decision := visitorfixture.HTTPDecision{VisitAllowed: true, ValidUntil: new(time.Now().Add(2 * time.Minute))}
+			if input.BrowserCookieSecret != nil && *input.BrowserCookieSecret == visitorfixture.BrowserCookie {
+				decision.BrowserGrantID = grant
+			}
+			return decision, nil
+		}}
+		ended, continueSibling := make(chan struct{}), make(chan struct{})
+		client, frontend, dials := serviceHTTPSessionFixture(t, control, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, "prefix")
+			w.(http.Flusher).Flush()
+			switch r.URL.Path {
+			case "/original":
+				<-r.Context().Done()
+				close(ended)
+			case "/sibling":
+				select {
+				case <-r.Context().Done():
+				case <-continueSibling:
+					_, _ = io.WriteString(w, "still streaming")
+				}
+			}
+		}), true)
+		request := func(path, token string) *http.Response {
+			t.Helper()
+			r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://route.example/"+path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.AddCookie(&http.Cookie{Name: httpaccess.VisitorTokenCookie, Value: token})
+			response, err := client.Do(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = response.Body.Close() })
+			return response
+		}
+		read := func(body io.Reader, want string) {
+			t.Helper()
+			got := make([]byte, len(want))
+			if _, err := io.ReadFull(body, got); err != nil || string(got) != want {
+				t.Fatalf("stream read = %q, %v; want %q", got, err, want)
+			}
+		}
+		oldToken := control.Credential(t, visitorfixture.BrowserCookie, false)
+		first := request("original", oldToken)
+		sibling := request("sibling", control.Credential(t, siblingCookie, false))
+		for _, response := range []*http.Response{first, sibling} {
+			if response.StatusCode != http.StatusOK || response.ProtoMajor != 2 {
+				t.Fatal("expected a live HTTP/2 response", response.StatusCode, response.Proto)
+			}
+			read(response.Body, "prefix")
+		}
+		control.Mu.Lock()
+		offline = true
+		control.Mu.Unlock()
+		time.Sleep(3 * time.Second)
+		synctest.Wait()
+		select {
+		case <-ended:
+			t.Fatal("brief outage ended the original response before policy recovery")
+		default:
+		}
+		control.Mu.Lock()
+		// control committed revoke and regrant while the publisher was offline.
+		control.Revision += 2
+		grant, offline = newGrant, false
+		control.Mu.Unlock()
+		if err := frontend.browser.Policy.Refresh(t.Context()); err != nil {
+			t.Fatal("recover policy after the outage", err)
+		}
+		time.Sleep(3 * time.Second)
+		synctest.Wait()
+		select {
+		case <-ended:
+		default:
+			t.Fatal("the replacement grant kept the original response alive")
+		}
+		if _, err := io.Copy(io.Discard, first.Body); err == nil {
+			t.Fatal("revoked HTTP/2 stream ended as success")
+		}
+		close(continueSibling)
+		read(sibling.Body, "still streaming")
+		if response := request("retired", oldToken); response.StatusCode == http.StatusOK {
+			t.Fatal("the old cookie still admitted new requests")
+		}
+		control.Mu.Lock()
+		replacement := control.Issued["browser_session::"+visitorfixture.BrowserCookie].Reveal()
+		control.Mu.Unlock()
+		if response := request("new", replacement); response.StatusCode != http.StatusOK || response.ProtoMajor != 2 {
+			t.Fatal("the replacement grant did not admit a new request", response.StatusCode, response.Proto)
+		}
+		if dials.Load() != 1 {
+			t.Fatal("browser grant change replaced the HTTP/2 connection")
+		}
+	})
+}
+
 func TestServiceHTTPStreamingKeepsOriginalPermissionDeadline(t *testing.T) {
 	for _, mode := range []string{"browser expiry", "share expiry", "share revoked"} {
 		t.Run(mode, func(t *testing.T) {
@@ -391,19 +498,29 @@ func TestServiceHTTPStreamingRetainsPreparedPolicyAgeDuringOutage(t *testing.T) 
 }
 
 func TestServiceHTTPWebSocketRenewsAndClosesOnRevocation(t *testing.T) {
+	t.Run("revoked", func(t *testing.T) { checkServiceWebSocketGrantLoss(t, false) })
+	t.Run("disconnected regrant", func(t *testing.T) { checkServiceWebSocketGrantLoss(t, true) })
+}
+
+func checkServiceWebSocketGrantLoss(t *testing.T, regrant bool) {
+	t.Helper()
 	synctest.Test(t, func(t *testing.T) {
-		var revoked atomic.Bool
+		offline, revoked := false, false // accessed under the fixture's mutex
+		grant := "sgr_" + strings.Repeat("A", 22)
 		control := &visitorfixture.HTTPControl{Check: func(input visitorfixture.HTTPSource) (visitorfixture.HTTPDecision, error) {
 			if input.BrowserCookieSecret == nil || *input.BrowserCookieSecret != visitorfixture.BrowserCookie {
 				t.Error("service upgrade lost its original browser session")
 			}
-			if revoked.Load() {
+			if offline {
+				return visitorfixture.HTTPDecision{}, clientcontrol.ErrUnavailable
+			}
+			if revoked {
 				return visitorfixture.HTTPDecision{}, &clientcontrol.ProblemError{Status: http.StatusForbidden}
 			}
-			return visitorfixture.HTTPDecision{VisitAllowed: true, ValidUntil: new(time.Now().Add(2 * time.Minute))}, nil
+			return visitorfixture.HTTPDecision{VisitAllowed: true, ValidUntil: new(time.Now().Add(2 * time.Minute)), BrowserGrantID: grant}, nil
 		}}
 		var upgrades atomic.Int32
-		client, _, dials := serviceHTTPSessionFixture(t, control, websocket.Handler(func(ws *websocket.Conn) {
+		client, frontend, dials := serviceHTTPSessionFixture(t, control, websocket.Handler(func(ws *websocket.Conn) {
 			upgrades.Add(1)
 			defer ws.Close()
 			for {
@@ -437,10 +554,26 @@ func TestServiceHTTPWebSocketRenewsAndClosesOnRevocation(t *testing.T) {
 		if err := websocket.Message.Receive(ws, &text); err != nil || text != "still live" {
 			t.Fatal("renewed service WebSocket changed its bytes or expired", text, err)
 		}
-		revoked.Store(true)
+		if regrant {
+			control.Mu.Lock()
+			offline = true
+			control.Mu.Unlock()
+			time.Sleep(3 * time.Second)
+			control.Mu.Lock()
+			control.Revision += 2
+			grant, offline = "sgr_"+strings.Repeat("B", 22), false
+			control.Mu.Unlock()
+			if err := frontend.browser.Policy.Refresh(t.Context()); err != nil {
+				t.Fatal("recover policy after the outage", err)
+			}
+		} else {
+			control.Mu.Lock()
+			revoked = true
+			control.Mu.Unlock()
+		}
 		closed := make(chan error, 1)
 		go func() { closed <- websocket.Message.Receive(ws, &text) }()
-		time.Sleep(30 * time.Second)
+		time.Sleep(6 * time.Second)
 		synctest.Wait()
 		select {
 		case err := <-closed:

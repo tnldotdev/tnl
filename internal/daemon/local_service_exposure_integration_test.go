@@ -383,6 +383,12 @@ func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(
 				}
 			}))
 			t.Cleanup(target.Close)
+			// this test measures the request budget, not propagation of a new
+			// credential. put the grant in the publisher's initial snapshot.
+			token, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
+			if err != nil {
+				t.Fatal(err)
+			}
 			var runID string
 			stopPublisher := startPrivateHTTPPublisher(t, f, service, target.Listener.Addr().String(), func(cfg *publisherservice.RunConfig) {
 				cfg.Prepared = func(preparation controlv1.ServiceRunPreparation) error {
@@ -403,10 +409,6 @@ func TestIntegrationLocalHTTPServiceRequestLimitsAcrossPublicAndConnectorAccess(
 			publicBase := "https://" + service.Endpoint.Hostname
 			// unauthorized readiness probes must not consume application budget.
 			awaitServiceHTTPStatus(t, publicClient, publicBase, "", "", http.StatusForbidden)
-			token, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), service.Id, controlv1.CreateVisitorCredentialRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
-			if err != nil {
-				t.Fatal(err)
-			}
 			listener, err := f.identity.state.ListenService(t.Context(), person.Identity.Id, service.Id, "tcp")
 			if err != nil {
 				t.Fatal(err)

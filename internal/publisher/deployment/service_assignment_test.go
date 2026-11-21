@@ -171,6 +171,17 @@ func (f *assignmentServiceControl) ListConnectorPeerPairs(_ context.Context, ser
 	return controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{}}, nil
 }
 
+func (f *assignmentServiceControl) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (controlv1.PublisherWatchChange, error) {
+	if scope.ServiceId != f.service.Id || scope.ServiceRunId != f.setup.ServiceRunId || scope.RunToken != f.setup.RunToken {
+		return controlv1.PublisherWatchChange{}, errAssignmentFixture
+	}
+	if scope.ConnectorRevision == nil {
+		return controlv1.PublisherWatchChange{ServiceRunId: scope.ServiceRunId, PolicyBookmark: "fixture"}, nil
+	}
+	<-ctx.Done()
+	return controlv1.PublisherWatchChange{}, ctx.Err()
+}
+
 func (*assignmentServiceControl) ReportServiceRunObservations(context.Context, string, string, int64, credentials.ServiceRunToken, serviceaudit.Batch) error {
 	return nil
 }

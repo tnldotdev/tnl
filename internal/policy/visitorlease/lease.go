@@ -22,6 +22,7 @@ var ErrUpdate = errors.New("visitor policy update is stale or incomplete")
 // Update is a decoded, authenticated control observation. View timestamps use
 // control's clock until Apply converts them to a conservative local deadline.
 type Update struct {
+	ConfirmationKey    string
 	View               visitortoken.View
 	KeyRevision        int64
 	Enabled, Anonymous bool
@@ -34,11 +35,34 @@ type Update struct {
 }
 
 type Request struct {
+	confirmationKey string
+	confirmable     bool
 	AfterRevision   int64
 	Snapshot        bool
 	StartedAt       time.Time
 	Deadline        time.Time
 	sequence, epoch uint64
+}
+
+func (r Request) Confirmable() bool { return r.confirmable }
+
+// Confirm applies a fresh control observation to the same still-current
+// snapshot. a missing or different key, elapsed lease or intervening full
+// update needs a full observation. watch notices never enter this path.
+func (l *Lease) Confirm(request Request, evidence controlv1.PublisherPolicyConfirmation) error {
+	l.mu.Lock()
+	update := l.update
+	current := l.phase == leaseCurrent && !request.Snapshot && update.Enabled && !update.BoundConnections &&
+		controlv1.ValidPublisherPolicyBookmark(evidence.ConfirmationKey) && update.ConfirmationKey == evidence.ConfirmationKey &&
+		update.View.Hostname == evidence.Hostname && update.View.VisitorPolicyRevision == request.AfterRevision
+	l.mu.Unlock()
+	if !current {
+		return ErrUpdate
+	}
+	request.confirmationKey = evidence.ConfirmationKey
+	update.View.ObservedAt, update.View.ValidUntil = evidence.ObservedAt, evidence.ValidUntil
+	update.Snapshot, update.AfterRevision, update.Events = false, request.AfterRevision, nil
+	return l.Apply(request, update)
 }
 
 type Lease struct {
@@ -79,10 +103,22 @@ func (l *Lease) Begin() Request {
 	l.mu.Lock()
 	stopped := l.expireLocked(l.now())
 	l.sequence++
-	r := Request{AfterRevision: l.revision, Snapshot: l.phase != leaseCurrent, StartedAt: l.now(), sequence: l.sequence, epoch: l.epoch}
+	r := Request{AfterRevision: l.revision, Snapshot: l.phase != leaseCurrent, StartedAt: l.now(), sequence: l.sequence, epoch: l.epoch,
+		confirmable: l.phase == leaseCurrent && l.update.ConfirmationKey != ""}
 	l.mu.Unlock()
 	stopGuards(stopped)
 	return r
+}
+
+// RefreshTiming returns the last accepted local clock bounds and a signal that
+// changes on a new observation, expiry, or close. reading it grants nothing.
+func (l *Lease) RefreshTiming() (observed, until time.Time, confirmable bool, changed <-chan struct{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.phase != leaseCurrent {
+		return time.Time{}, time.Time{}, false, l.changed
+	}
+	return l.update.View.ObservedAt, l.update.View.ValidUntil, l.update.ConfirmationKey != "", l.changed
 }
 
 func (l *Lease) Apply(request Request, update Update) error {
@@ -131,6 +167,9 @@ func (l *Lease) Apply(request Request, update Update) error {
 }
 
 func (l *Lease) applyLocked(request Request, update Update, now time.Time) error {
+	if request.confirmationKey != "" && (l.phase != leaseCurrent || l.update.ConfirmationKey != request.confirmationKey) {
+		return ErrUpdate
+	}
 	view := update.View
 	duration := view.ValidUntil.Sub(view.ObservedAt)
 	deadline, deadlineErr := controloutage.LocalDeadline(request.StartedAt, view.ObservedAt, view.ValidUntil, now)
@@ -459,7 +498,7 @@ func (g *Guard) Renew(permission visitortoken.VerifiedPermission) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	if _, active := l.guards[g]; !active || g.anonymous || !permission.SameIdentity(g.permission) || !g.allowedLocked(now) || !l.allowedLocked(permission, g.source, now) {
+	if _, active := l.guards[g]; !active || g.anonymous || !permission.SameAdmission(g.permission) || !g.allowedLocked(now) || !l.allowedLocked(permission, g.source, now) {
 		return visitortoken.ErrPolicy
 	}
 	g.permission = permission

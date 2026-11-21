@@ -1,5 +1,5 @@
 -- name: VisitorPermission :one
-SELECT reason::text, expires_at::timestamptz FROM control.visitor_identity_permission(
+SELECT reason::text, expires_at::timestamptz, COALESCE(grant_id,'')::text AS grant_id FROM control.visitor_identity_permission(
     sqlc.arg(resource_kind)::text,sqlc.arg(resource_id)::text,sqlc.arg(identity_id)::text,
     sqlc.arg(control_session_id)::text,sqlc.arg(preview_id)::text,sqlc.arg(now)::timestamptz);
 

@@ -23,8 +23,9 @@ import (
 
 type HTTPSource struct{ BrowserCookieSecret, ShareId, ShareCookieSecret *string }
 type HTTPDecision struct {
-	VisitAllowed bool
-	ValidUntil   *time.Time
+	VisitAllowed   bool
+	ValidUntil     *time.Time
+	BrowserGrantID string
 }
 type HTTPControl struct {
 	Mu       sync.Mutex
@@ -113,7 +114,7 @@ func (c *HTTPControl) IssueVisitorToken(_ context.Context, body controlv1.Visito
 		subject = visitortoken.Share{ShareID: source.ShareID}
 	}
 	permission := visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Kind(body.Resource.Kind), ID: body.Resource.Id}, Hostname: "route.example", Port: 443,
-		VisitorPolicyRevision: c.Revision, Subject: subject, ExpiresAt: decision.ValidUntil.Truncate(time.Second)}
+		VisitorPolicyRevision: c.Revision, Subject: subject, BrowserGrantID: decision.BrowserGrantID, ExpiresAt: decision.ValidUntil.Truncate(time.Second)}
 	private := ed25519.NewKeyFromSeed([]byte(strings.Repeat("l", 32)))
 	token, err := visitortoken.Sign("https://control.example.test", "live", private, permission, time.Now())
 	if err != nil {

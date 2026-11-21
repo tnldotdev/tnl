@@ -161,7 +161,7 @@ func (q *Queries) VisitorFeedbackPolicy(ctx context.Context, id string) (string,
 }
 
 const visitorPermission = `-- name: VisitorPermission :one
-SELECT reason::text, expires_at::timestamptz FROM control.visitor_identity_permission(
+SELECT reason::text, expires_at::timestamptz, COALESCE(grant_id,'')::text AS grant_id FROM control.visitor_identity_permission(
     $1::text,$2::text,$3::text,
     $4::text,$5::text,$6::timestamptz)
 `
@@ -178,6 +178,7 @@ type VisitorPermissionParams struct {
 type VisitorPermissionRow struct {
 	Reason    string
 	ExpiresAt pgtype.Timestamptz
+	GrantID   string
 }
 
 func (q *Queries) VisitorPermission(ctx context.Context, arg VisitorPermissionParams) (VisitorPermissionRow, error) {
@@ -190,6 +191,6 @@ func (q *Queries) VisitorPermission(ctx context.Context, arg VisitorPermissionPa
 		arg.Now,
 	)
 	var i VisitorPermissionRow
-	err := row.Scan(&i.Reason, &i.ExpiresAt)
+	err := row.Scan(&i.Reason, &i.ExpiresAt, &i.GrantID)
 	return i, err
 }

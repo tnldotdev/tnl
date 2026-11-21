@@ -1,4 +1,23 @@
 paths:
+  /v1/publisher/watch:
+    post:
+      operationId: watchPublisherRuns
+      tags: [service-runs]
+      summary: Wait for changes to exact, authenticated service runs
+      description: Each subscription supplies its own run token and last applied connector revision. The response is a hint to fetch and apply authorized state, not a grant or a renewal. An empty response means the wait ended without a detected change; it does not confirm serving authority.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublisherWatchRequest" }
+      responses:
+        "200":
+          description: Changed runs, or an empty list after a bounded wait
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherWatchResponse" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared:
     post:
       operationId: confirmConnectorPeerPairPrepared

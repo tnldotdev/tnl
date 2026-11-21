@@ -250,6 +250,11 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		}
 		prepared.connectorHTTP = httpFrontend
 		prepared.policy = httpFrontend.Policy
+		prepared.policyOwner = httpFrontend.browser.Policy
+		prepared.refreshPolicies = append(prepared.refreshPolicies, prepared.policyOwner.Refresh)
+		if httpFrontend.alias != nil {
+			prepared.refreshPolicies = append(prepared.refreshPolicies, httpFrontend.alias.browser.Policy.Refresh)
+		}
 		prepared.httpResponseHooks = httpFrontend.ResponseHooks
 		if !servicestream.HandlerOnly && prepared.handler == nil && prepared.targetResolver == nil {
 			target := servicestream.HTTPTarget{Address: prepared.target, Mounts: prepared.mounts, ResolveTarget: prepared.resolveHTTPTarget,

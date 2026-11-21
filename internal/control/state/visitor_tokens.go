@@ -285,6 +285,7 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		resource.Hostname = selected
 	}
 	var subject visitortoken.Subject
+	var browserGrantID string
 	var until time.Time
 	explicitLifetime := false
 	switch supplied := source.(type) {
@@ -342,6 +343,9 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 			until = minTime(until, decision.ExpiresAt.Time)
 		}
 		subject = visitortoken.Browser{IdentityID: principal.IdentityID, SessionID: principal.SessionID}
+		if !deviceSource {
+			browserGrantID = decision.GrantID
+		}
 		if device, ok := supplied.(DeviceTokenSource); ok {
 			if scope.Kind != visitorscope.Service {
 				return result, ErrVisitorPermission
@@ -467,6 +471,7 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		return result, ErrVisitorPermission
 	}
 	result.Permission = resource.permission(subject, until, now)
+	result.Permission.BrowserGrantID = browserGrantID
 	if explicitLifetime {
 		result.Permission.ExpiresAt = until.Truncate(time.Second)
 	}

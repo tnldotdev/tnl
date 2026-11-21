@@ -38,6 +38,8 @@ type outageTrafficGate struct {
 	mu            sync.Mutex
 	blocked       bool
 	grants        map[string]controloutage.Confirmation
+	policyKey     string
+	policyRenewed time.Time
 	runID         string
 	runToken      credentials.ServiceRunToken
 	refusals      map[string]int
@@ -88,6 +90,11 @@ func (c outagePublisherControl) HeartbeatServiceRun(ctx context.Context, service
 	state, err := c.RunControl.HeartbeatServiceRun(ctx, service, run, token, body)
 	if err == nil {
 		c.gate.record("publisher", started, state.ObservedAt, state.PublisherExpiresAt)
+		if policy := state.PolicyConfirmation; policy != nil && c.gate.policyKey != "" && policy.ConfirmationKey == c.gate.policyKey &&
+			policy.ObservedAt.Equal(state.ObservedAt) && !policy.ValidUntil.After(state.PublisherExpiresAt) {
+			c.gate.record("policy", started, policy.ObservedAt, policy.ValidUntil)
+			c.gate.policyRenewed = policy.ObservedAt
+		}
 		c.gate.runID, c.gate.runToken = run, token
 	}
 	return state, err
@@ -98,12 +105,15 @@ func (c outagePublisherControl) ReadPublisherVisitorPolicy(ctx context.Context, 
 	c.gate.mu.Lock()
 	defer c.gate.mu.Unlock()
 	if c.gate.blocked {
-		c.gate.refusals["policy"]++
 		return controlv1.VisitorPolicyUpdate{}, clientcontrol.ErrUnavailable
 	}
 	state, err := c.RunControl.ReadPublisherVisitorPolicy(ctx, body, token)
 	if err == nil {
 		c.gate.record("policy", started, state.Policy.ObservedAt, state.Policy.ValidUntil)
+		c.gate.policyKey = ""
+		if state.ConfirmationKey != nil {
+			c.gate.policyKey = *state.ConfirmationKey
+		}
 	}
 	return state, err
 }
@@ -497,7 +507,9 @@ func TestIntegrationControlOutageTraffic(t *testing.T) {
 	privateWait(t, 4*time.Second, func(context.Context) (bool, error) {
 		gate.mu.Lock()
 		defer gate.mu.Unlock()
-		for _, key := range []string{"publisher", "policy", "connector", "private"} {
+		// an unchanged policy renews in the publisher heartbeat. a short
+		// outage need not reach the deadline-triggered full read.
+		for _, key := range []string{"publisher", "connector", "private"} {
 			if gate.refusals[key] == 0 {
 				return false, nil
 			}
@@ -510,6 +522,9 @@ func TestIntegrationControlOutageTraffic(t *testing.T) {
 	privateWait(t, 5*time.Second, func(context.Context) (bool, error) {
 		gate.mu.Lock()
 		defer gate.mu.Unlock()
+		if !gate.policyRenewed.After(firstOutage) {
+			return false, nil
+		}
 		for _, key := range []string{"publisher", "policy", "connector", "visitor-permission", "publisher-installation", "routing"} {
 			if !gate.grants[key].ObservedAt.After(firstOutage) || !gate.grants[key].Deadline.After(time.Now().Add(7*time.Second)) {
 				return false, nil

@@ -32,6 +32,10 @@ schemas:
     required: [policy, after_revision, revisions, snapshot_required]
     properties:
       policy: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicySnapshot" }
+      confirmation_key:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: Binds this full snapshot to later exact-run policy confirmations. Absent when fresh parent or hostname facts are required.
       after_revision:
         {
           type: string,
@@ -45,6 +49,15 @@ schemas:
         maxItems: 256
         items: { type: string, pattern: "^[0-9]+$" }
       snapshot_required: { type: boolean }
+  PublisherPolicyConfirmation:
+    type: object
+    additionalProperties: false
+    required: [confirmation_key, hostname, observed_at, valid_until]
+    properties:
+      confirmation_key: { type: string, pattern: "^[0-9a-f]{64}$" }
+      hostname: { type: string, minLength: 1, maxLength: 253 }
+      observed_at: { type: string, format: date-time }
+      valid_until: { type: string, format: date-time }
   VisitorPolicySnapshot:
     type: object
     additionalProperties: false

@@ -148,7 +148,7 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 		if d.route53Credentials != nil {
 			route53Readiness = d.checkRoute53Credentials
 		}
-		controlHandler, err = newPublicAPIHandler(cfg, d.startedAt, d.serviceHTTP, d.database, metrics, d, route53Readiness)
+		controlHandler, err = newPublicAPIHandler(lifetime, cfg, d.startedAt, d.serviceHTTP, d.database, metrics, d, route53Readiness)
 		if err != nil {
 			return err
 		}

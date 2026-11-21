@@ -18,6 +18,7 @@ import (
 
 type ConnectorPeerControl interface {
 	peerDeliveryControl
+	WaitPublisherRun(context.Context, controlv1.PublisherWatchRun) (controlv1.PublisherWatchChange, error)
 	ListConnectorPeerPairs(context.Context, string, string, string, credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error)
 	ConfirmConnectorPeerPairPrepared(context.Context, string, string, string, controlv1.ConnectorPeerPairPrepared, credentials.ServiceRunToken) error
 }
@@ -67,16 +68,44 @@ func (b *Bound) ServeConnectorPeers(ctx context.Context, control ConnectorPeerCo
 			}
 		}
 	}()
-	timer := time.NewTimer(0)
+	// a hint stays outstanding until every page has been applied. if the
+	// authorized fetch fails, retry it without advancing the bookmark.
+	hints := make(chan int64)
+	applied := make(chan struct{})
+	watchDone := make(chan error, 1)
+	go func() {
+		watchDone <- b.watchConnectorPeers(life, control, controlv1.PublisherWatchRun{
+			ServiceId: b.prepared.Preparation.ServiceId, ServiceRunId: b.prepared.Preparation.ServiceRunId,
+			RunNumber: b.prepared.Preparation.RunNumber, RunToken: token.String(),
+		}, hints, applied)
+	}()
+	defer func() {
+		cancel()
+		if watchDone != nil {
+			result = errors.Join(result, serviceWorkerError(<-watchDone, context.Canceled))
+		}
+	}()
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
 	defer timer.Stop()
-	after := ""
+	var awaiting bool
 	for {
 		select {
 		case <-life.Done():
 			return nil
 		case err := <-results:
 			return err
+		case err := <-watchDone:
+			watchDone = nil
+			return err
+		case <-hints:
+			awaiting = true
 		case <-timer.C:
+		}
+		timer.Stop()
+		after := ""
+		active := false
+		for {
 			call, stop := context.WithTimeout(life, 2*time.Second)
 			started := time.Now()
 			page, err := control.ListConnectorPeerPairs(call, b.prepared.Preparation.ServiceId, b.prepared.Preparation.ServiceRunId, after, token)
@@ -92,7 +121,7 @@ func (b *Bound) ServeConnectorPeers(ctx context.Context, control ConnectorPeerCo
 					return err
 				}
 				timer.Reset(time.Second)
-				continue
+				break
 			}
 			if !validPeerCandidates(page, after) {
 				return failure.Wrap("reconcile connector peer pairs", failure.ServerResponseInvalid, ErrPrivateStream)
@@ -101,19 +130,84 @@ func (b *Bound) ServeConnectorPeers(ctx context.Context, control ConnectorPeerCo
 				return err
 			}
 			for _, candidate := range page.Items {
+				active = active || candidate.Disposition == controlv1.ConnectorPeerPairDispositionCandidate
 				if job, ok := b.reservePeerPreparation(life, candidate); ok {
 					// at most one job per existing bounded owner node can
 					// be queued or entered, so this buffer cannot overflow.
 					jobs <- job
 				}
 			}
-			after = ""
 			if page.NextAfter != nil {
 				after = *page.NextAfter
+				continue
 			}
-			timer.Reset(time.Second)
+			if awaiting {
+				select {
+				case applied <- struct{}{}:
+				case <-life.Done():
+					return nil
+				}
+				awaiting = false
+			}
+			// known candidates need delivery retries and installed peers need
+			// current owner observations even without a new change notice.
+			if active {
+				timer.Reset(time.Second)
+			}
+			break
 		}
 	}
+}
+
+func (b *Bound) watchConnectorPeers(ctx context.Context, control ConnectorPeerControl, scope controlv1.PublisherWatchRun, hints chan<- int64, applied <-chan struct{}) error {
+	for ctx.Err() == nil {
+		notice, err := control.WaitPublisherRun(ctx, scope)
+		if ctx.Err() != nil {
+			return serviceWorkerError(err, ctx.Err())
+		}
+		if err != nil && !transientControlError(err) {
+			return err
+		}
+		if err == nil {
+			revision := notice.ConnectorRevision
+			if revision >= 0 && (scope.PolicyBookmark == nil || *scope.PolicyBookmark != notice.PolicyBookmark) {
+				if err = b.refreshWatchedPolicies(ctx); err == nil {
+					scope.PolicyBookmark = &notice.PolicyBookmark
+				}
+			}
+			if revision < 0 || scope.ConnectorRevision == nil || *scope.ConnectorRevision != revision {
+				select {
+				case hints <- revision:
+				case <-ctx.Done():
+					return nil
+				}
+				select {
+				case <-applied:
+				case <-ctx.Done():
+					return nil
+				}
+				if revision >= 0 {
+					scope.ConnectorRevision = &revision
+				} else {
+					scope.ConnectorRevision = nil
+					scope.PolicyBookmark = nil
+				}
+			}
+			if err == nil && revision >= 0 {
+				continue
+			}
+		}
+		// unavailable scopes can still fetch retained, negative-only facts.
+		// a failed wait or missing scope must not spin or renew authority.
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		}
+	}
+	return nil
 }
 
 func validPeerCandidates(page controlv1.ConnectorPeerPairCandidates, after string) bool {

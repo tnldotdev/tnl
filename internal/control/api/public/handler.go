@@ -48,6 +48,7 @@ type Config struct {
 	DNSAutomation                     bool
 	GuestDemoEnabled                  bool
 	Metrics                           *observability.Metrics
+	PublisherWatch                    *PublisherWatch
 	Route53CredentialsReadiness       func(context.Context) error
 	ControlReadiness                  func() error
 	AcceptingNewWork                  func() bool

@@ -89,6 +89,17 @@ func (f *lifecycleControl) ListConnectorPeerPairs(_ context.Context, service, ru
 	return controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{}}, nil
 }
 
+func (f *lifecycleControl) WaitPublisherRun(ctx context.Context, scope controlv1.PublisherWatchRun) (controlv1.PublisherWatchChange, error) {
+	if scope.ServiceId != f.prep.ServiceId || scope.ServiceRunId != f.prep.ServiceRunId || scope.RunToken != f.setup.RunToken {
+		return controlv1.PublisherWatchChange{}, ErrPrivateStream
+	}
+	if scope.ConnectorRevision == nil {
+		return controlv1.PublisherWatchChange{ServiceRunId: scope.ServiceRunId, PolicyBookmark: "fixture"}, nil
+	}
+	<-ctx.Done()
+	return controlv1.PublisherWatchChange{}, ctx.Err()
+}
+
 func (*lifecycleControl) DeliverConnectorPeerPair(context.Context, string, string, string, int64, credentials.ServiceRunToken) (controlv1.ConnectorPeerPairDelivery, error) {
 	return controlv1.ConnectorPeerPairDelivery{}, ErrPrivateStream
 }

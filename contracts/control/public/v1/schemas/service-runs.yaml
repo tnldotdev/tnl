@@ -1,4 +1,68 @@
 schemas:
+  PublisherWatchRequest:
+    type: object
+    additionalProperties: false
+    required: [runs]
+    properties:
+      runs:
+        type: array
+        minItems: 1
+        maxItems: 64
+        items: { $ref: "../openapi.yaml#/components/schemas/PublisherWatchRun" }
+  PublisherWatchRun:
+    type: object
+    additionalProperties: false
+    required: [service_id, service_run_id, run_number, run_token]
+    properties:
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number:
+        {
+          type: string,
+          pattern: "^[1-9][0-9]*$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "run_number,string" },
+        }
+      run_token: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+      policy_bookmark:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: Last applied policy change hint. Omit to reconcile initially.
+      connector_revision:
+        {
+          type: string,
+          description: "Last applied revision. Omit it to request an initial reconciliation.",
+          pattern: "^(0|[1-9][0-9]*)$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "connector_revision,string,omitempty" },
+        }
+  PublisherWatchResponse:
+    type: object
+    additionalProperties: false
+    required: [changes]
+    properties:
+      changes:
+        type: array
+        maxItems: 64
+        items: { $ref: "../openapi.yaml#/components/schemas/PublisherWatchChange" }
+  PublisherWatchChange:
+    type: object
+    additionalProperties: false
+    required: [service_run_id, connector_revision, policy_bookmark]
+    properties:
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      policy_bookmark:
+        type: string
+        pattern: "^([0-9a-f]{64})?$"
+        description: An opaque change hint, empty for an unavailable scope. It never confirms access or renews a lease.
+      connector_revision:
+        {
+          type: string,
+          description: "Current connector revision, or -1 if the scope is unavailable. Never confirms access or retirement.",
+          pattern: "^(-1|0|[1-9][0-9]*)$",
+          x-go-type: int64,
+          x-oapi-codegen-extra-tags: { json: "connector_revision,string" },
+        }
   ConnectorPeerPairDisposition:
     type: string
     description: Candidate is a preparation hint, not serving authority. Retired is an explicit durable terminal fact for this exact pair and outranks every delivery generation.

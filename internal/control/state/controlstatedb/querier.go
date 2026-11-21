@@ -70,6 +70,8 @@ type Querier interface {
 	CompanySessionRefreshValid(ctx context.Context, arg CompanySessionRefreshValidParams) (pgtype.Bool, error)
 	CompanySubjectDeadline(ctx context.Context, arg CompanySubjectDeadlineParams) (pgtype.Timestamptz, error)
 	CompanySubjectSessionAuthorized(ctx context.Context, arg CompanySubjectSessionAuthorizedParams) (bool, error)
+	// an untouched run starts at zero. a missing or closed run has no version.
+	CompareConnectorPeerWatchVersions(ctx context.Context, arg CompareConnectorPeerWatchVersionsParams) ([]CompareConnectorPeerWatchVersionsRow, error)
 	// only a checked publisher report can advance this startup barrier. a retry
 	// retains a newer report, capped by the currently checked delivery authority.
 	ConfirmConnectorPeerPairPrepared(ctx context.Context, arg ConfirmConnectorPeerPairPreparedParams) (int64, error)
@@ -453,6 +455,12 @@ type Querier interface {
 	ReadConnectorPeerObservationRelayBounds(ctx context.Context, arg ReadConnectorPeerObservationRelayBoundsParams) ([]ReadConnectorPeerObservationRelayBoundsRow, error)
 	ReadPublisherGrant(ctx context.Context, arg ReadPublisherGrantParams) (ControlPublisherGrant, error)
 	ReadPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
+	// confirm only ordinary canonical scopes without time-dependent parents.
+	// every check, including the change bookmark, uses one statement snapshot.
+	ReadPublisherPolicyConfirmation(ctx context.Context, arg ReadPublisherPolicyConfirmationParams) (ReadPublisherPolicyConfirmationRow, error)
+	// an unbound service cannot gain a registered key from a change to another
+	// service's project. the binding counter survives removal and recreation.
+	ReadRegisteredKeyWatchVersion(ctx context.Context, serviceID string) (ReadRegisteredKeyWatchVersionRow, error)
 	ReadServiceHTTPBrowserSession(ctx context.Context, arg ReadServiceHTTPBrowserSessionParams) (ReadServiceHTTPBrowserSessionRow, error)
 	ReadServiceIPKey(ctx context.Context, arg ReadServiceIPKeyParams) (ReadServiceIPKeyRow, error)
 	ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error)
