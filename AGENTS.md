@@ -44,11 +44,16 @@ THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
   requires explicit user approval for that specific break. Explain the impact
   and migration path first, then record the approval and reason in the PR and
   release notes. A version bump or a general request to release is not approval.
-- Published migrations are immutable. Both migration-1 files are pinned by
-  `TestMigrationOneIsImmutable` in their state packages. Add numbered migrations;
-  do not rewrite old SQL or update the pinned hashes to make a change pass.
+- Published migrations are immutable unless a schema replacement is explicitly
+  approved under the breaking-change rule above. Both migration-1 files are
+  pinned by `TestMigrationOneIsImmutable` in their state packages. Add numbered
+  migrations; do not rewrite old SQL or update the pinned hashes to make a change pass.
   Numbered migrations are the schema authority; do not add separate baseline
   identities or rename client state files to ship a feature.
+- The approved publisher-watch schema replacement is PostgreSQL-only. It folds
+  the watch and browser grant changes into v1 because no production deployments
+  use the previous schema. Earlier PostgreSQL schemas have no upgrade path to
+  this baseline, even if they report v1. The client SQLite schema is unchanged.
 - Test schema changes against populated older databases, including skipped
   releases within the supported upgrade path. Preserve data and credentials;
   migrate data before retiring storage. Document required upgrade order and

@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
-func TestIntegrationBrowserGrantContinuityAcrossMigration(t *testing.T) {
+func TestIntegrationBrowserGrantContinuityAfterDisconnectedReplacement(t *testing.T) {
 	f := newServiceHTTPFixture(t)
 	f.run = f.publish(t, f.service)
 	d, ctx := f.database, t.Context()
@@ -28,13 +28,6 @@ func TestIntegrationBrowserGrantContinuityAcrossMigration(t *testing.T) {
 	auth := f.auth()
 	cookie, err := d.RedeemServiceBrowserHandoff(ctx, auth, handoff.Token, f.now)
 	if err != nil {
-		t.Fatal(err)
-	}
-	direct, migrations := watchMigrationFixture(t, d)
-	if _, err := migrations.DownTo(ctx, 1); err != nil {
-		t.Fatal(err)
-	}
-	if err := Migrate(ctx, direct); err != nil {
 		t.Fatal(err)
 	}
 	source := BrowserSessionTokenSource{Secret: cookie.CookieSecret}

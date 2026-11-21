@@ -24,10 +24,22 @@ import (
 
 const (
 	// schema versions advance with numbered migrations.
-	schemaVersion       int64 = 5
+	schemaVersion       int64 = 1
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond
 )
+
+// check the objects that v1 needs, not a second schema identifier.
+const schemaLayoutQuery = `
+	SELECT to_regclass('control.connector_peer_watch_versions') IS NOT NULL
+		AND to_regclass('control.registered_key_watch_versions') IS NOT NULL
+		AND to_regclass('control.visitor_policy_watch_versions') IS NOT NULL
+		AND to_regclass('control.publisher_policy_watch_bookmarks') IS NOT NULL
+		AND EXISTS (
+			SELECT 1 FROM pg_catalog.pg_proc
+			WHERE oid = to_regprocedure('control.visitor_identity_permission(text,text,text,text,text,timestamptz)')
+				AND 'grant_id' = ANY(proargnames)
+		)`
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -46,8 +58,8 @@ type Database struct {
 	connections            *connectionActivity
 }
 
-// Migrate applies every embedded control-state migration through a direct
-// PostgreSQL URL. A persistent table lock allows only one migration at a time.
+// Migrate initializes the control schema through a direct PostgreSQL URL.
+// a persistent table lock allows only one initialization at a time.
 func Migrate(ctx context.Context, directURL string) (retErr error) {
 	config, err := parseDirectConfig(directURL)
 	if err != nil {
@@ -111,17 +123,22 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 		return fmt.Errorf("controlstate: migrate: embedded schema version %d does not match supported version %d", target, schemaVersion)
 	}
 	if current > target {
-		return fmt.Errorf("controlstate: migrate: database schema version %d is newer than supported version %d", current, target)
+		return fmt.Errorf("controlstate: migrate: database schema version %d is newer than supported version %d; use a fresh PostgreSQL database", current, target)
 	}
-	if _, err := provider.Up(ctx); err != nil {
-		return fmt.Errorf("controlstate: migrate database: %w", err)
-	}
-	current, target, err = provider.GetVersions(ctx)
-	if err != nil {
-		return fmt.Errorf("controlstate: migrate: verify schema version: %w", err)
+	if current == 0 {
+		if _, err := provider.Up(ctx); err != nil {
+			return fmt.Errorf("controlstate: migrate database: %w", err)
+		}
+		current, target, err = provider.GetVersions(ctx)
+		if err != nil {
+			return fmt.Errorf("controlstate: migrate: verify schema version: %w", err)
+		}
 	}
 	if current != target || current != schemaVersion {
 		return fmt.Errorf("controlstate: migrate: database schema version %d does not match supported version %d", current, schemaVersion)
+	}
+	if err := checkSchemaLayout(lockTx.QueryRowContext(ctx, schemaLayoutQuery)); err != nil {
+		return err
 	}
 	if err := lockTx.Commit(); err != nil {
 		return fmt.Errorf("controlstate: migrate: release lock: %w", err)
@@ -210,6 +227,17 @@ func checkSchemaVersion(ctx context.Context, database schemaVersionQuerier) erro
 	}
 	if version != schemaVersion {
 		return fmt.Errorf("controlstate: incompatible database schema version %d; required version is %d", version, schemaVersion)
+	}
+	return checkSchemaLayout(database.QueryRow(ctx, schemaLayoutQuery))
+}
+
+func checkSchemaLayout(row interface{ Scan(...any) error }) error {
+	var current bool
+	if err := row.Scan(&current); err != nil {
+		return fmt.Errorf("controlstate: check schema layout: %w", err)
+	}
+	if !current {
+		return errors.New("controlstate: incompatible version 1 database schema; use a fresh PostgreSQL database")
 	}
 	return nil
 }

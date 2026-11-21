@@ -1,7 +1,6 @@
 package state
 
 import (
-	"reflect"
 	"testing"
 	"time"
 
@@ -90,14 +89,10 @@ func TestIntegrationRegisteredKeyWatchTracksAuthorityInputs(t *testing.T) {
 	}
 }
 
-func TestIntegrationRegisteredKeyWatchMigratesPopulatedVersionTwo(t *testing.T) {
+func TestIntegrationRegisteredKeyWatchTracksRenewalAndRevocation(t *testing.T) {
 	f := newDeploymentConnectFixture(t)
 	ctx := t.Context()
 	service := f.deployment.Services["db"].ID
-	direct, migrations := watchMigrationFixture(t, f.d)
-	if _, err := migrations.DownTo(ctx, 2); err != nil {
-		t.Fatal(err)
-	}
 	r, private := managementRegistration(t, f.setup.DeploymentScope, f.now)
 	r.Permissions = map[string][]string{"connect": {"db"}}
 	cred, err := f.d.RegisterDeploymentCredential(ctx, r)
@@ -108,22 +103,12 @@ func TestIntegrationRegisteredKeyWatchMigratesPopulatedVersionTwo(t *testing.T) 
 	params := controlstatedb.ReadVisitorPolicyRegisteredKeysParams{ServiceID: service, AtTime: timestamptz(f.now)}
 	before, err := q.ReadVisitorPolicyRegisteredKeys(ctx, params)
 	if err != nil || len(before) != 1 {
-		t.Fatal("missing pre-upgrade registered key", err)
-	}
-	if err := Migrate(ctx, direct); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.d.Readiness(ctx); err != nil {
-		t.Fatal(err)
-	}
-	after, err := q.ReadVisitorPolicyRegisteredKeys(ctx, params)
-	if err != nil || !reflect.DeepEqual(before, after) {
-		t.Fatal("migration changed an existing registered key, grant, or expiry", err)
+		t.Fatal("missing registered key", err)
 	}
 	_ = managementAccess(t, f.d, cred, private, f.now)
 	v, err := q.ReadRegisteredKeyWatchVersion(ctx, service)
-	if err != nil || v != (controlstatedb.ReadRegisteredKeyWatchVersionRow{}) {
-		t.Fatal("migration invented a change for an existing binding", err)
+	if err != nil {
+		t.Fatal(err)
 	}
 	params.AtTime = timestamptz(f.now.Add(time.Second))
 	renewed, err := q.ReadVisitorPolicyRegisteredKeys(ctx, params)
@@ -134,6 +119,6 @@ func TestIntegrationRegisteredKeyWatchMigratesPopulatedVersionTwo(t *testing.T) 
 		t.Fatal(err)
 	}
 	if next, err := q.ReadRegisteredKeyWatchVersion(ctx, service); err != nil || next == v {
-		t.Fatal("first revocation after upgrade did not change the bookmark", err)
+		t.Fatal("revocation did not change the bookmark", err)
 	}
 }

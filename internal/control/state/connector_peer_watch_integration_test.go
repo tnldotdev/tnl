@@ -3,14 +3,11 @@ package state
 import (
 	"bytes"
 	"errors"
-	"io/fs"
 	"net/url"
 	"slices"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -154,8 +151,9 @@ func TestIntegrationConnectorPeerWatchCommittedChanges(t *testing.T) {
 	compare([]ConnectorPeerWatchVersion{seenA, seenB, missing}, ConnectorPeerWatchVersion{RunID: a.run.RunID, Revision: -1}, missing)
 }
 
-func watchMigrationFixture(t *testing.T, d *Database) (string, *goose.Provider) {
-	t.Helper()
+func TestIntegrationConnectorPeerWatchRejectsPreWatchV1(t *testing.T) {
+	f := newConnectorPairFixture(t)
+	d := f.d
 	pooledURL := d.pool.Config().ConnString()
 	directURL, err := url.Parse(pooledURL)
 	if err != nil {
@@ -164,59 +162,22 @@ func watchMigrationFixture(t *testing.T, d *Database) (string, *goose.Provider) 
 	params := directURL.Query()
 	params.Del("pool_max_conns")
 	directURL.RawQuery = params.Encode()
-	config, err := parseDirectConfig(directURL.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := stdlib.OpenDB(*config)
-	t.Cleanup(func() { _ = db.Close() })
-	migrations, err := fs.Sub(migrationFiles, "migrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations,
-		goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return directURL.String(), provider
-}
-
-func TestIntegrationConnectorPeerWatchMigrationPreservesExistingRun(t *testing.T) {
-	f := newConnectorPairFixture(t)
 	ctx := t.Context()
-	// populate the shared tables before removing the watch schema. the
-	// current connector code cannot write against an old permission function.
 	pair := f.create(t)
 	f.claim(t, pair, 0, f.now.Add(time.Second))
-	pooledURL := f.d.pool.Config().ConnString()
-	directURL, provider := watchMigrationFixture(t, f.d)
-	if _, err := provider.DownTo(ctx, 1); err != nil {
+	before := connectorPairSavedAuthority(t, d, pair.ID)
+	// the previous v1 lacked this view despite reporting the same version.
+	if _, err := d.pool.Exec(ctx, `DROP VIEW control.publisher_policy_watch_bookmarks`); err != nil {
 		t.Fatal(err)
 	}
 	if old, err := Open(ctx, pooledURL, testStorageKey, "", naming.ManagedURLModeGenerated); err == nil {
 		old.Close()
-		t.Fatal("control accepted the pre-watch schema without migrating")
+		t.Fatal("control accepted the pre-watch v1 schema")
 	}
-	// compare the saved v1 rows without opening control on the old schema.
-	before := connectorPairSavedAuthority(t, f.d, pair.ID)
-	if err := Migrate(ctx, directURL); err != nil {
-		t.Fatal(err)
+	if err := Migrate(ctx, directURL.String()); err == nil {
+		t.Fatal("initialization accepted the pre-watch v1 schema")
 	}
-	reader, err := Open(ctx, pooledURL, testStorageKey, "", naming.ManagedURLModeGenerated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(reader.Close)
-	if after := connectorPairSavedAuthority(t, reader, pair.ID); !bytes.Equal(before, after) {
-		t.Fatal("upgrade modified existing run or connector authority")
-	}
-	changes, err := reader.CompareConnectorPeerWatchVersions(ctx, []ConnectorPeerWatchVersion{{RunID: f.run.RunID, Revision: -1}})
-	if err != nil || len(changes) != 1 || changes[0].RunID != f.run.RunID || changes[0].Revision != 0 || !controlv1.ValidPublisherPolicyBookmark(changes[0].PolicyBookmark) {
-		t.Fatalf("existing run did not request an initial snapshot: %v, %v", changes, err)
-	}
-	page, err := reader.ListConnectorPeerPairs(ctx, f.run.ServiceID, f.run.RunID, "", f.run.Token, f.now.Add(2*time.Second))
-	if err != nil || len(page.Items) != 1 || page.Items[0].PairID != pair.ID {
-		t.Fatalf("could not recover pre-upgrade inventory with the original run token: %v, %v", page, err)
+	if after := connectorPairSavedAuthority(t, d, pair.ID); !bytes.Equal(before, after) {
+		t.Fatal("rejected initialization modified existing run or connector authority")
 	}
 }
