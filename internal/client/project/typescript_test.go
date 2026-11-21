@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -276,6 +277,37 @@ func TestLoadExitsWithActiveHandles(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Fatalf("configuration with active handle loaded in %s", elapsed)
+	}
+}
+
+func TestLoadDiagnosesNodeThatRejectsTypeScriptFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell executable fixture")
+	}
+	for _, test := range []struct{ name, version, want string }{
+		{"older Node", "v20.19.0", "Node.js 22.18 or newer is required to load tnl.config.ts"},
+		{"supported Node", "v22.18.0", "failed to evaluate tnl.config.ts"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			node := `#!/bin/sh
+case "$1" in
+  --version) printf '%s\n' '` + test.version + `' ;;
+  *) printf '%s\n' 'PROJECT_CONFIG_SECRET_SENTINEL' >&2; exit 9 ;;
+esac`
+			if err := os.WriteFile(filepath.Join(directory, "node"), []byte(node), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", directory)
+			path := filepath.Join(directory, "tnl.config.ts")
+			if err := os.WriteFile(path, []byte(`export default {};`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := loadTypeScript(t.Context(), path, directory, Worktree{})
+			if err == nil || err.Error() != "load TypeScript config: "+test.want {
+				t.Fatalf("load error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
