@@ -37,6 +37,7 @@ func (a *commandApp) root() *cobra.Command {
 	root.AddGroup(&cobra.Group{ID: "start", Title: "Start here:"}, &cobra.Group{ID: "manage", Title: "Manage:"}, &cobra.Group{ID: "operate", Title: "Operate:"})
 	cliflags.Bind(root, a.flags, true)
 	root.AddCommand(a.newInitCommand(), a.newApplyCommand(), a.newDeploymentCommand(), a.newGenerateCommand(), a.newCheckCommand(), a.newAuditCommand(), a.newRuntimeCommand(), a.newWaitCommand(), a.newWatchCommand(), a.newPublishCommand(), a.newConnectCommand(), a.newPublisherCommand(), a.newServiceCommand(), a.newEndpointCommand(), a.newDetachedCommand(), a.newStatusCommand(), a.newPingCommand(), a.newInspectCommand(), a.newTelemetryCommand(), a.newAuthCommand(), a.newTeamCommand(), a.newDomainCommand(), a.newURLCommand(), a.newShareCommand(), a.newFeedbackCommand(), a.newWebhookCommand(), a.newAliasCommand(), a.newAdminCommand(), a.newVersionCommand())
+	root.AddCommand(a.newAgentGuideCommand())
 	var requireCommand func(*cobra.Command)
 	requireCommand = func(cmd *cobra.Command) {
 		if cmd.RunE == nil {
