@@ -8,13 +8,9 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestIntegrationPolicyWatchFollowsWorkloadParentAcrossMigration(t *testing.T) {
+func TestIntegrationPolicyWatchFollowsWorkloadParent(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_watch")
 	ctx := t.Context()
-	direct, migrations := watchMigrationFixture(t, d)
-	if _, err := migrations.DownTo(ctx, 3); err != nil {
-		t.Fatal(err)
-	}
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
 	r = selectedProjectRequest(r, "production")
@@ -35,9 +31,6 @@ func TestIntegrationPolicyWatchFollowsWorkloadParentAcrossMigration(t *testing.T
 	before := policyObservation(t, d, scope, 0).Policy
 	if len(before.WorkloadLeases) != 1 || before.WorkloadLeases[0].SessionId != session.ID {
 		t.Fatal("missing original workload")
-	}
-	if err := Migrate(ctx, direct); err != nil {
-		t.Fatal(err)
 	}
 	bookmark := func() string {
 		t.Helper()

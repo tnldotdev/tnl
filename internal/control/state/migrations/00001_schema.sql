@@ -2086,13 +2086,14 @@ CREATE TRIGGER retire_service_run_alias AFTER UPDATE OF closed_at ON control.ser
 -- one resource-scoped identity permission rule reads current authentication and
 -- grant facts. allocation ownership comes from its original grant and actual
 -- namespace/deployment endpoint, never a creator or a presented publisher token.
--- ordinary services have no implicit ownership.
+-- ordinary services have no implicit ownership. a replacement grant can
+-- authorize a new admission but cannot renew one made by the old grant.
 -- +goose StatementBegin
 CREATE FUNCTION control.visitor_identity_permission(scope_kind text, scope_id text, person_id text,
     session_id text, preview_scope text, at_time timestamptz)
-RETURNS TABLE(reason text, expires_at timestamptz) LANGUAGE sql STABLE AS $$
+RETURNS TABLE(reason text, expires_at timestamptz, grant_id text) LANGUAGE sql STABLE AS $$
     WITH resources AS (
-        SELECT 'service'::text,s.id,s.team_id,ownership.membership_id,ownership.namespace_scope
+        SELECT s.id,s.team_id,ownership.membership_id,ownership.namespace_scope
         FROM control.services s
         LEFT JOIN LATERAL (
             SELECT root.membership_id,root.namespace_scope
@@ -2121,24 +2122,24 @@ RETURNS TABLE(reason text, expires_at timestamptz) LANGUAGE sql STABLE AS $$
         ) ownership ON true
         WHERE scope_kind='service' AND s.id=scope_id AND s.enabled AND s.deleted_at IS NULL
     )
-    SELECT permission.reason,LEAST(permission.expires_at,control.company_subject_deadline(r.team_id,i.id,session_id,at_time))
+    SELECT permission.reason,LEAST(permission.expires_at,control.company_subject_deadline(r.team_id,i.id,session_id,at_time)),permission.grant_id
     FROM resources r
     JOIN control.teams t ON t.id=r.team_id AND t.deleted_at IS NULL
     JOIN control.identities i ON i.id=person_id AND i.disabled_at IS NULL
     LEFT JOIN control.team_memberships m ON m.team_id=r.team_id AND m.identity_id=i.id AND control.active_membership(m.id,at_time)
     CROSS JOIN LATERAL (
-        SELECT 'owner'::text AS reason,NULL::timestamptz AS expires_at,0 AS priority
+        SELECT 'owner'::text AS reason,NULL::timestamptz AS expires_at,0 AS priority,NULL::text AS grant_id,NULL::timestamptz AS created_at
         WHERE (r.namespace_scope='member' AND m.id=r.membership_id)
             OR (r.namespace_scope='shared' AND m.role IN ('owner','admin'))
         UNION ALL
-        SELECT CASE g.kind WHEN 'team' THEN 'team_grant' ELSE 'identity_grant' END,g.expires_at,2
+        SELECT CASE g.kind WHEN 'team' THEN 'team_grant' ELSE 'identity_grant' END,g.expires_at,2,g.id,g.created_at
         FROM control.visitor_grants g WHERE g.service_id=r.id AND g.team_id=r.team_id
             AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>at_time)
             AND (NOT g.auto_owner OR m.role IN ('owner','admin'))
             AND ((g.kind='team' AND m.id IS NOT NULL) OR (g.kind='identity' AND g.identity_id=i.id))
     ) permission
     WHERE control.company_subject_session_authorized(r.team_id,i.id,session_id,at_time)
-    ORDER BY permission.priority,permission.expires_at DESC NULLS FIRST LIMIT 1;
+    ORDER BY permission.priority,permission.expires_at DESC NULLS FIRST,permission.created_at,permission.grant_id LIMIT 1;
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
@@ -3092,3 +3093,223 @@ CREATE TABLE control.relay_run_signing_keys (
 CREATE INDEX relay_run_signing_keys_superseded
     ON control.relay_run_signing_keys (superseded_at, relay_id, relay_run_id)
     WHERE superseded_at IS NOT NULL;
+
+CREATE TABLE control.connector_peer_watch_versions (
+    service_run_id text PRIMARY KEY REFERENCES control.service_runs(id) ON DELETE CASCADE,
+    revision bigint NOT NULL CHECK (revision > 0)
+);
+
+-- +goose StatementBegin
+CREATE FUNCTION control.record_connector_peer_watch_change(changed_run text)
+RETURNS void LANGUAGE sql AS $$
+    INSERT INTO control.connector_peer_watch_versions AS versions(service_run_id,revision)
+    VALUES (changed_run,1)
+    ON CONFLICT (service_run_id) DO UPDATE SET revision=versions.revision+1;
+$$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION control.connector_peer_pair_watch_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    -- a replacement inserts its successor in the same transaction. ordinary
+    -- cleanup deletes only after the pair and its local retention fence expire.
+    -- publisher installation reports must not wake the same publisher again.
+    IF TG_OP='INSERT' OR ROW(NEW.owner_revision,NEW.delivery_generation,NEW.rebind_status,
+        NEW.high_water_generation,NEW.expires_at) IS DISTINCT FROM
+        ROW(OLD.owner_revision,OLD.delivery_generation,OLD.rebind_status,OLD.high_water_generation,OLD.expires_at) THEN
+        PERFORM control.record_connector_peer_watch_change(NEW.service_run_id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER connector_peer_pair_watch_change
+    AFTER INSERT OR UPDATE OF owner_revision,delivery_generation,rebind_status,high_water_generation,expires_at
+    ON control.connector_peer_pairs
+    FOR EACH ROW EXECUTE FUNCTION control.connector_peer_pair_watch_change();
+
+-- +goose StatementBegin
+CREATE FUNCTION control.connector_peer_leg_watch_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    -- creation alone is not enough: a publisher may fetch before the relay legs
+    -- are claimed. a later claim can make that same candidate deliverable.
+    PERFORM control.record_connector_peer_watch_change(pair.service_run_id)
+    FROM control.connector_peer_pairs pair WHERE pair.id=NEW.pair_id;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER connector_peer_leg_watch_change
+    AFTER INSERT OR UPDATE OF checked_at,confirmed_until ON control.connector_peer_pair_leg_claims
+    FOR EACH ROW EXECUTE FUNCTION control.connector_peer_leg_watch_change();
+
+-- a deployment credential depends on its project, on team-owned signing
+-- identities, and on the particular service binding. keep separate counters:
+-- two transactions can commit in either order, including the first binding
+-- racing a change to a grant. no trigger has to find the subscribers.
+CREATE TABLE control.registered_key_watch_versions (
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    service_id text NOT NULL,
+    revision bigint NOT NULL CHECK (revision >= 1),
+    CHECK ((team_id <> '' AND service_id = '') OR
+           (team_id = '' AND project_key = '' AND service_id <> '')),
+    PRIMARY KEY(team_id,project_key,service_id)
+);
+
+-- +goose StatementBegin
+CREATE FUNCTION control.registered_key_watch_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    facts jsonb;
+    versions jsonb[];
+    team text;
+    project text;
+    service text;
+    previous text[];
+BEGIN
+    IF TG_OP='INSERT' THEN versions:=ARRAY[to_jsonb(NEW)];
+    ELSIF TG_OP='DELETE' THEN versions:=ARRAY[to_jsonb(OLD)];
+    ELSE versions:=ARRAY[to_jsonb(OLD),to_jsonb(NEW)]; END IF;
+    FOREACH facts IN ARRAY versions LOOP
+        team:=''; project:=''; service:='';
+        CASE TG_ARGV[0]
+        WHEN 'project' THEN team:=facts->>'team_id'; project:=facts->>'project_key';
+        WHEN 'binding' THEN service:=facts->>'service_id';
+        WHEN 'service' THEN service:=facts->>'id';
+        WHEN 'team' THEN team:=facts->>'id';
+        WHEN 'grant' THEN
+            IF facts->>'kind'<>'deployment_credential' THEN CONTINUE; END IF;
+            team:=facts->>'team_id';
+        WHEN 'identity' THEN
+            IF facts->>'ownership'<>'team' THEN CONTINUE; END IF;
+            team:=facts->>'team_id';
+        WHEN 'key' THEN
+            -- an identity must exist before a key can be attached. transferring
+            -- the identity itself also changes the old and new team counters.
+            SELECT p.team_id INTO team FROM control.publisher_identities p
+            WHERE p.id=facts->>'publisher_identity_id' AND p.ownership='team';
+        ELSE RAISE EXCEPTION 'unknown registered key watch scope';
+        END CASE;
+        IF team IS NULL OR service IS NULL OR ARRAY[team,project,service]=previous THEN CONTINUE; END IF;
+        INSERT INTO control.registered_key_watch_versions AS v(team_id,project_key,service_id,revision)
+        VALUES(team,project,service,1)
+        ON CONFLICT ON CONSTRAINT registered_key_watch_versions_pkey DO UPDATE SET revision=v.revision+1;
+        previous:=ARRAY[team,project,service];
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER registered_key_project_service AFTER INSERT OR DELETE OR UPDATE OF team_id,project_key,name,protocol ON control.project_services
+    FOR EACH ROW EXECUTE FUNCTION control.registered_key_watch_changed('project');
+CREATE TRIGGER registered_key_approval AFTER INSERT OR UPDATE OR DELETE ON control.deployment_management_grants
+    FOR EACH ROW EXECUTE FUNCTION control.registered_key_watch_changed('project');
+-- losing a manage or publish selection also fails deployment_credential_available.
+CREATE TRIGGER registered_key_selection AFTER INSERT OR UPDATE OR DELETE ON control.deployment_management_services
+    FOR EACH ROW EXECUTE FUNCTION control.registered_key_watch_changed('project');
+CREATE TRIGGER registered_key_deployment_selection AFTER INSERT OR UPDATE OR DELETE ON control.deployment_management_deployments
+    FOR EACH ROW EXECUTE FUNCTION control.registered_key_watch_changed('project');
+CREATE TRIGGER registered_key_deployment AFTER UPDATE OF deleted_at,team_id,project_key ON control.deployments
+    FOR EACH ROW EXECUTE FUNCTION control.registered_key_watch_changed('project');
+CREATE TRIGGER registered_key_binding AFTER INSERT OR DELETE OR UPDATE OF service_id,service,deployment_id,team_id,project_key ON control.applied_project_services
+    FOR EACH ROW EXECUTE FUNCTION control.registered_key_watch_changed('binding');
+CREATE TRIGGER registered_key_service AFTER UPDATE ON control.services FOR EACH ROW
+    WHEN ((OLD.team_id,OLD.protocol,OLD.enabled,OLD.deleted_at) IS DISTINCT FROM (NEW.team_id,NEW.protocol,NEW.enabled,NEW.deleted_at))
+    EXECUTE FUNCTION control.registered_key_watch_changed('service');
+CREATE TRIGGER registered_key_team AFTER UPDATE OF deleted_at ON control.teams
+    FOR EACH ROW EXECUTE FUNCTION control.registered_key_watch_changed('team');
+CREATE TRIGGER registered_key_grant AFTER INSERT OR UPDATE OR DELETE ON control.publisher_grants
+    FOR EACH ROW EXECUTE FUNCTION control.registered_key_watch_changed('grant');
+CREATE TRIGGER registered_key_identity AFTER UPDATE OF team_id,ownership,revoked_at ON control.publisher_identities
+    FOR EACH ROW EXECUTE FUNCTION control.registered_key_watch_changed('identity');
+CREATE TRIGGER registered_key_signing_key AFTER INSERT OR UPDATE OR DELETE ON control.publisher_identity_keys
+    FOR EACH ROW EXECUTE FUNCTION control.registered_key_watch_changed('key');
+
+-- a policy-read hint is independent of the revision signed into visitor
+-- tokens. a new workload or a longer workload lease needs a new snapshot;
+-- it must not invalidate an unrelated visitor's signed permission.
+CREATE TABLE control.visitor_policy_watch_versions (
+    service_id text PRIMARY KEY REFERENCES control.services(id) ON DELETE CASCADE,
+    revision bigint NOT NULL CHECK (revision >= 1)
+);
+
+-- +goose StatementBegin
+CREATE FUNCTION control.touch_visitor_policy_watch(resource text) RETURNS void LANGUAGE sql AS $$
+    INSERT INTO control.visitor_policy_watch_versions AS v(service_id,revision)
+    SELECT id,1 FROM control.services WHERE id=resource
+    ON CONFLICT (service_id) DO UPDATE SET revision=v.revision+1;
+$$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE FUNCTION control.watch_visitor_policy_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP<>'INSERT' THEN PERFORM control.touch_visitor_policy_watch(OLD.service_id); END IF;
+    IF TG_OP='INSERT' OR (TG_OP='UPDATE' AND NEW.service_id IS DISTINCT FROM OLD.service_id) THEN
+        PERFORM control.touch_visitor_policy_watch(NEW.service_id);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER watch_workload_binding AFTER INSERT OR UPDATE OR DELETE ON control.workload_session_services
+    FOR EACH ROW EXECUTE FUNCTION control.watch_visitor_policy_binding();
+CREATE TRIGGER watch_endpoint_binding AFTER INSERT OR DELETE OR UPDATE OF service_id,service_run_id,hostname,domain_id,retired_at,public ON control.service_endpoints
+    FOR EACH ROW EXECUTE FUNCTION control.watch_visitor_policy_binding();
+CREATE TRIGGER watch_local_binding AFTER INSERT OR DELETE OR UPDATE OF service_id,service ON control.local_project_services
+    FOR EACH ROW EXECUTE FUNCTION control.watch_visitor_policy_binding();
+CREATE TRIGGER watch_allocation_binding AFTER INSERT ON control.publisher_namespace_allocations
+    FOR EACH ROW EXECUTE FUNCTION control.watch_visitor_policy_binding();
+
+-- +goose StatementBegin
+CREATE FUNCTION control.watch_workload_lease() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE resource text;
+BEGIN
+    FOR resource IN SELECT service_id FROM control.workload_session_services WHERE workload_session_id=NEW.id ORDER BY service_id LOOP
+        PERFORM control.touch_visitor_policy_watch(resource);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER watch_workload_lease AFTER UPDATE ON control.workload_sessions FOR EACH ROW
+    WHEN ((OLD.public_key,OLD.revoked_at,OLD.created_at,OLD.lease_expires_at,OLD.identity_expires_at,OLD.expires_at) IS DISTINCT FROM
+          (NEW.public_key,NEW.revoked_at,NEW.created_at,NEW.lease_expires_at,NEW.identity_expires_at,NEW.expires_at))
+    EXECUTE FUNCTION control.watch_workload_lease();
+
+-- +goose StatementBegin
+CREATE FUNCTION control.watch_guest_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE resource text;
+BEGIN
+    FOR resource IN SELECT id FROM control.services WHERE guest_id=NEW.id ORDER BY id LOOP
+        PERFORM control.touch_visitor_policy_watch(resource);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER watch_guest_policy AFTER UPDATE ON control.guest_trials FOR EACH ROW
+    WHEN ((OLD.active_service_run_id,OLD.ready_deadline,OLD.used_ready_ns,OLD.ended_at,OLD.expires_at) IS DISTINCT FROM
+          (NEW.active_service_run_id,NEW.ready_deadline,NEW.used_ready_ns,NEW.ended_at,NEW.expires_at))
+    EXECUTE FUNCTION control.watch_guest_policy();
+
+CREATE TRIGGER watch_visitor_issuer AFTER INSERT OR UPDATE OR DELETE ON control.visitor_token_issuer
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_verification_keys_changed();
+
+CREATE VIEW control.publisher_policy_watch_bookmarks AS
+SELECT s.id AS service_id,
+    encode(sha256(convert_to(concat_ws(':',s.id,p.revision,k.revision,s.service_revision,COALESCE(v.revision,0),COALESCE(binding.revision,0),
+        COALESCE(project.revision,0),COALESCE(team.revision,0),COALESCE(deployment.revision,0)),'UTF8')),'hex') AS bookmark
+FROM control.services s
+JOIN control.visitor_policies p ON p.resource_id=s.id
+JOIN control.visitor_verification_key_revision k ON k.id=1
+LEFT JOIN control.visitor_policy_watch_versions v ON v.service_id=s.id
+LEFT JOIN control.applied_project_services b ON b.service_id=s.id
+LEFT JOIN control.deployments deployment ON deployment.id=b.deployment_id
+LEFT JOIN control.registered_key_watch_versions binding ON (binding.team_id,binding.project_key,binding.service_id)=('','',s.id)
+LEFT JOIN control.registered_key_watch_versions project ON (project.team_id,project.project_key,project.service_id)=(b.team_id,b.project_key,'')
+LEFT JOIN control.registered_key_watch_versions team ON (team.team_id,team.project_key,team.service_id)=(b.team_id,'','');
