@@ -738,7 +738,8 @@ func newCLIWorkflow(t *testing.T, additionalRoots ...[]byte) *cliWorkflow {
 	if _, err := database.UpdateACMEAccountRegistration(t.Context(), account.ID, account.ContactEmail, "https://ca.integration.test/account", "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := controlpublic.NewHandler(controlpublic.Config{Role: "control", ControlURL: f.url, ManagedDomain: "apps.integration.test", ManagedURLMode: naming.ManagedURLModeSimple, OIDCIssuer: provider.URL, OIDCClientID: "server", OIDCClientSecret: "fixture-secret", OIDCScopes: []string{"openid"}, AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour, CertificateIssuance: true, DNSAutomation: true, ACMEDirectoryURL: directory}, controlpublic.DatabaseStores(database), database, nil)
+	watch := controlpublic.NewPublisherWatch(database)
+	handler, err := controlpublic.NewHandler(controlpublic.Config{Role: "control", ControlURL: f.url, ManagedDomain: "apps.integration.test", ManagedURLMode: naming.ManagedURLModeSimple, OIDCIssuer: provider.URL, OIDCClientID: "server", OIDCClientSecret: "fixture-secret", OIDCScopes: []string{"openid"}, AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour, CertificateIssuance: true, DNSAutomation: true, ACMEDirectoryURL: directory, PublisherWatch: watch}, controlpublic.DatabaseStores(database), database, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -777,6 +778,11 @@ func newCLIWorkflow(t *testing.T, additionalRoots ...[]byte) *cliWorkflow {
 	}
 	f.workers.Go(func() { f.certificateWork(t, database) })
 	f.workers.Go(func() { f.dnsWork(t, database) })
+	f.workers.Go(func() {
+		if err := watch.Run(f.ctx); err != nil {
+			t.Error(err)
+		}
+	})
 	t.Cleanup(func() { cancel(); f.workers.Wait() })
 	return f
 }
