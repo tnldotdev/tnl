@@ -185,6 +185,10 @@ func watchMigrationFixture(t *testing.T, d *Database) (string, *goose.Provider) 
 func TestIntegrationConnectorPeerWatchMigrationPreservesExistingRun(t *testing.T) {
 	f := newConnectorPairFixture(t)
 	ctx := t.Context()
+	// populate the shared tables before removing the watch schema. the
+	// current connector code cannot write against an old permission function.
+	pair := f.create(t)
+	f.claim(t, pair, 0, f.now.Add(time.Second))
 	pooledURL := f.d.pool.Config().ConnString()
 	directURL, provider := watchMigrationFixture(t, f.d)
 	if _, err := provider.DownTo(ctx, 1); err != nil {
@@ -194,10 +198,7 @@ func TestIntegrationConnectorPeerWatchMigrationPreservesExistingRun(t *testing.T
 		old.Close()
 		t.Fatal("control accepted the pre-watch schema without migrating")
 	}
-	// use the existing fixture's connection to write v1 rows without any
-	// version triggers, then check the supported serving open after upgrade.
-	pair := f.create(t)
-	f.claim(t, pair, 0, f.now.Add(time.Second))
+	// compare the saved v1 rows without opening control on the old schema.
 	before := connectorPairSavedAuthority(t, f.d, pair.ID)
 	if err := Migrate(ctx, directURL); err != nil {
 		t.Fatal(err)
