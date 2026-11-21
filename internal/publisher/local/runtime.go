@@ -511,6 +511,9 @@ func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prep
 	if err := meta.Write(ctx, a.project.Root, metadata); err != nil {
 		return publisherprotocol.Assignment{}, err
 	}
+	if err := meta.WriteCompletion(ctx, a.project); err != nil {
+		return publisherprotocol.Assignment{}, err
+	}
 	selected, found := metadata.Services[name]
 	if !found || selected.Protocol != "http" {
 		return publisherprotocol.Assignment{}, errors.New("preparation requires its selected HTTP endpoint")

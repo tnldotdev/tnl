@@ -30,6 +30,9 @@ class Tnl < Formula
 
   def install
     bin.install "tnl", "tnld"
+    %w[tnl tnld].each do |name|
+      generate_completions_from_executable(bin/name, "completion", shells: [:bash, :zsh, :fish])
+    end
   end
 
   test do

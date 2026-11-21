@@ -48,6 +48,7 @@ func (a *commandApp) root() *cobra.Command {
 		}
 	}
 	requireCommand(root)
+	registerProjectCompletions(root)
 	return root
 }
 
