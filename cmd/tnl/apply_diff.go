@@ -2,10 +2,8 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -16,8 +14,6 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -38,61 +34,6 @@ type applyDiff struct {
 
 type applyField struct{ resource, name, field string }
 type applyFacts map[applyField]json.RawMessage
-
-func replaceApplyTargets(ctx context.Context, saved *controlv1.ProjectConfiguration, live controlv1.Deployment) error {
-	bindings := make(map[string]controlv1.ProjectServiceConfiguration, len(live.Targets))
-	for name, target := range live.Targets {
-		service, ok := live.Services[name]
-		if !ok {
-			return invalidApplyTarget()
-		}
-		binding, declared := saved.Services[name]
-		if !declared {
-			binding.Name, binding.Protocol = new(name), new(service.Protocol)
-		}
-		binding.Target, binding.TargetDiscovery, binding.TargetTls = "", target.Discovery, nil
-		if target.App != nil && *target.App {
-			binding.Target = "app"
-		} else if target.Address != nil {
-			binding.Target = *target.Address
-		}
-		if tls := target.Tls; tls != nil {
-			var hostname, ca string
-			if tls.Hostname != nil {
-				hostname = *tls.Hostname
-			}
-			if tls.Ca != nil {
-				ca = *tls.Ca
-			}
-			address := binding.Target
-			if address == "app" && hostname != "" {
-				address = net.JoinHostPort(hostname, "443")
-			}
-			snapshot, err := targettrust.CapturePortable(ctx, string(service.Protocol), address, ca, hostname)
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				return invalidApplyTarget()
-			}
-			trust, err := snapshot.Declaration()
-			if err != nil {
-				return invalidApplyTarget()
-			}
-			binding.TargetTls = &controlv1.ProjectTargetTLS{Hostname: trust.Hostname, Digest: trust.Digest, HostnameFromTarget: trust.HostnameFromTarget}
-			if len(trust.CAPEM) != 0 {
-				binding.TargetTls.CaPem = new(string(trust.CAPEM))
-			}
-		}
-		bindings[name] = binding
-	}
-	saved.Services = bindings
-	return nil
-}
-
-func invalidApplyTarget() error {
-	return failure.Wrap("read deployment targets", failure.ServerResponseInvalid, errors.New("control returned invalid deployment target facts"))
-}
 
 func compareApply(team authorityv1.Team, deployment string, saved controlv1.AppliedProjectConfiguration, desired controlv1.ProjectConfiguration, services controlv1.ProjectServiceDeclarations) (applyDiff, error) {
 	result := applyDiff{team.Id, deployment, saved.Revision, []applyChange{}}

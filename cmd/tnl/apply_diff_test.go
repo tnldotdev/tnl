@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	api "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -59,49 +58,5 @@ func TestApplyDiffUsesCapturedDomainForInheritedBindings(t *testing.T) {
 	diff, err = compareApply(team, name, old, next, nil)
 	if err != nil || len(diff.Changes) != 1 || diff.Changes[0].Resource != "binding" || string(diff.Changes[0].After) != `"selected"` {
 		t.Fatalf("missing explicit domain change: %+v (%v)", diff, err)
-	}
-}
-
-func TestApplyDiffUsesLiveTargetAndTLSHostnameMode(t *testing.T) {
-	const host = "target.example.test"
-	trust, err := targettrust.NewDeclaration(host, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		name        string
-		host        *string
-		address     string
-		wantChanges int
-	}{
-		{"unchanged automatic hostname", nil, host + ":443", 0},
-		{"same explicit hostname", new(host), host + ":443", 1},
-		{"changed address", nil, "other.example.test:443", 2},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			desired := api.ProjectConfiguration{
-				Services: map[string]api.ProjectServiceConfiguration{"web": {
-					Target: "https://" + host,
-					TargetTls: &api.ProjectTargetTLS{
-						Hostname: host, Digest: trust.Digest, HostnameFromTarget: true,
-					},
-				}},
-			}
-			saved := api.AppliedProjectConfiguration{Revision: 8, Configuration: desired}
-			live := api.Deployment{
-				Services: map[string]api.DeploymentService{"web": {Protocol: "http"}},
-				Targets: map[string]api.DeploymentTargetStatus{"web": {
-					Address: &test.address,
-					Tls:     &api.DeploymentTargetTLS{Ca: new("system"), Hostname: test.host},
-				}},
-			}
-			if err := replaceApplyTargets(t.Context(), &saved.Configuration, live); err != nil {
-				t.Fatal(err)
-			}
-			diff, err := compareApply(authorityv1.Team{}, "production", saved, desired, nil)
-			if err != nil || len(diff.Changes) != test.wantChanges {
-				t.Fatalf("changes: %+v (%v)", diff.Changes, err)
-			}
-		})
 	}
 }
