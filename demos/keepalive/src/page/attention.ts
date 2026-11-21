@@ -1,4 +1,16 @@
-export function invitationChirp() {
+import { TURN_WARNING_MS } from "../policy.ts";
+
+// consume the warning even when muted; enabling sound later must not replay it.
+export function turnWarning() {
+  let warnedRun: string | undefined;
+  return (run: string, endsAt: number, now: number) => {
+    if (run === warnedRun || now >= endsAt || endsAt - now > TURN_WARNING_MS) return false;
+    warnedRun = run;
+    return true;
+  };
+}
+
+export function turnSounds() {
   let audio: AudioContext;
   try {
     // create and resume on a click so playback later can use the same context.
@@ -8,15 +20,21 @@ export function invitationChirp() {
   }
   void audio.resume().catch(() => {});
   return {
-    play() {
-      if (!document.hidden || audio.state !== "running") return;
+    play(cue: "invitation" | "warning") {
+      if ((cue === "invitation" && !document.hidden) || audio.state !== "running") return;
       const at = audio.currentTime;
       // two soft, rising modem notes and a short warble.
-      const notes = [
-        [0, 0.16, 540, 790, "sine"],
-        [0.21, 0.18, 910, 1_260, "triangle"],
-        [0.43, 0.29, 1_420, 980, "triangle"],
-      ] as const;
+      const notes =
+        cue === "warning"
+          ? ([
+              [0, 0.25, 660, 660, "sine"],
+              [0.32, 0.35, 523, 523, "sine"],
+            ] as const)
+          : ([
+              [0, 0.16, 540, 790, "sine"],
+              [0.21, 0.18, 910, 1_260, "triangle"],
+              [0.43, 0.29, 1_420, 980, "triangle"],
+            ] as const);
       for (const [delay, duration, from, to, type] of notes) {
         const start = at + delay;
         const end = start + duration;

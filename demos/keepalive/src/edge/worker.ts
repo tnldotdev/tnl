@@ -1,18 +1,10 @@
 import "../validation.ts";
 import { Hono } from "hono";
 import { credentials, enrollmentConfigured, type CredentialBindings } from "./credentials.ts";
-import { ADMISSION_PATH, CONFIG_PATH, CREDENTIALS_PATH, hostingConfig } from "../enrollment.ts";
-import { admissionOperation, admissionRequest } from "./admission.ts";
-import {
-  NETWORK_CHECK_PATH,
-  NETWORK_PROOF_PATH,
-  compareNetworks,
-  proveNetwork,
-} from "../network.ts";
+import { CONFIG_PATH, CREDENTIALS_PATH, hostingConfig } from "../enrollment.ts";
 import { PEERS_PATH } from "../peers/gossip.ts";
 import { createProxy, siteHeaders } from "./proxy.ts";
-import { ARTIFACT_PREFIX, RELEASE_PATH, contentType, readJSON, releaseSchema } from "../release.ts";
-export { AdmissionCoordinator } from "./admission.ts";
+import { ARTIFACT_PREFIX, RELEASE_PATH, contentType, releaseSchema } from "../release.ts";
 
 declare const KEEPALIVE_RELEASE: unknown;
 const release = releaseSchema.parse(KEEPALIVE_RELEASE);
@@ -22,15 +14,7 @@ type Bindings = CredentialBindings & {
   SITE_ORIGIN: string;
   START_HOST: string;
   SHARED_HOST?: string;
-  NETWORK_SECRET?: string;
-  HOST_TARGET?: string;
 };
-
-async function requestNetworkProof(request: Request, secret?: string) {
-  const ip = request.headers.get("CF-Connecting-IP");
-  if (!ip || !secret || secret.length < 32) return undefined;
-  return proveNetwork(ip, secret).catch(() => undefined);
-}
 
 const app = new Hono<{ Bindings: Bindings }>();
 const proxy = createProxy(release);
@@ -42,42 +26,21 @@ app.get(RELEASE_PATH, (c) => {
 app.get(PEERS_PATH, (c) =>
   proxy.peers(c.req.raw, c.env.SHARED_HOST, (work) => c.executionCtx.waitUntil(work)),
 );
-app.post(CREDENTIALS_PATH, (c) => credentials(c.req.raw, release.id, c.env));
-app.post(ADMISSION_PATH, async (c) => {
-  if (c.req.header("Origin") !== new URL(c.req.url).origin) return c.body(null, 403);
-  if (c.env.COORDINATOR === undefined) return c.body(null, 503);
-  const body = admissionOperation.safeParse(
-    await readJSON(new Response(c.req.raw.body), 1_024, c.req.raw.signal).catch(() => undefined),
-  );
-  if (!body.success) return c.body(null, 400);
-  return admissionRequest(c.env.COORDINATOR, body.data, c.req.raw.signal);
-});
-app.post(NETWORK_PROOF_PATH, async (c) => {
-  if (c.req.header("Origin") !== new URL(c.req.url).origin) return c.body(null, 403);
-  const proof = await requestNetworkProof(c.req.raw, c.env.NETWORK_SECRET);
-  if (proof === undefined) return c.body(null, 503);
-  return c.json(proof, 200, siteHeaders("application/json"));
-});
-app.post(CONFIG_PATH, async (c) => {
+app.post(CREDENTIALS_PATH, (c) =>
+  credentials(c.req.raw, release.id, c.env, (signal) =>
+    proxy.peers(new Request(new URL(PEERS_PATH, c.req.url), { signal }), c.env.SHARED_HOST),
+  ),
+);
+app.post(CONFIG_PATH, (c) => {
   const origin = new URL(c.req.url).origin;
   if (c.req.header("Origin") !== origin) return c.body(null, 403);
   if (!enrollmentConfigured(c.env)) return c.body(null, 503, siteHeaders());
-  const { CONTROL_URL, NETWORK_SECRET } = c.env;
-  const proof = await requestNetworkProof(c.req.raw, NETWORK_SECRET);
-  if (proof === undefined) return c.body(null, 503, siteHeaders());
   const config = hostingConfig.parse({
-    controlURL: CONTROL_URL,
+    controlURL: c.env.CONTROL_URL,
     siteOrigin: c.env.SITE_ORIGIN,
     startHost: c.env.START_HOST,
-    networkProof: proof,
-    hostTarget: c.env.HOST_TARGET === undefined ? 3 : Number(c.env.HOST_TARGET),
   });
   return c.json(config, 200, siteHeaders("application/json"));
-});
-app.post(NETWORK_CHECK_PATH, async (c) => {
-  if (!c.env.NETWORK_SECRET || c.env.NETWORK_SECRET.length < 32) return c.body(null, 503);
-  const different = await compareNetworks(c.req.raw, c.env.NETWORK_SECRET).catch(() => false);
-  return c.body(null, different ? 204 : 403, siteHeaders());
 });
 app.get("*", async (c) => {
   const request = c.req.raw;

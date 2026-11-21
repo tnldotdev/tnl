@@ -74,6 +74,10 @@ button:disabled {
   font-size: 0.875rem;
 }
 
+.turn-countdown {
+  font-variant-numeric: tabular-nums;
+}
+
 .request-pulse {
   color: #595959;
   font-size: min(1em, 3.8vw);

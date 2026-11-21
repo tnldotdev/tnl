@@ -28,10 +28,7 @@ it("counts more hosts than fit in gossip without sending the roster to the visit
   const now = Date.now();
   const local = host(1);
   const remoteCount = MAX_TREE_HOSTS + 5;
-  const peer = peerServer(release, [pageOrigin], async () => new Response(), lifetime.signal, {
-    proxyOrigin: pageOrigin,
-    proof: `${"a".repeat(64)}.${now}.${"b".repeat(64)}`,
-  });
+  const peer = peerServer(release, [pageOrigin], async () => new Response(), lifetime.signal);
   vi.stubGlobal("fetch", async () => new Response(null, { status: 503 }));
   try {
     await peer.start(
@@ -88,10 +85,7 @@ it("carries a joined service run and its stop through two HTTP peers", async () 
   const peers = new Map(
     [observer, bridge, joining].map(({ origin }) => [
       origin,
-      peerServer(release, [pageOrigin], async () => new Response(), lifetime.signal, {
-        proxyOrigin: pageOrigin,
-        proof: `${"a".repeat(64)}.${now}.${"b".repeat(64)}`,
-      }),
+      peerServer(release, [pageOrigin], async () => new Response(), lifetime.signal),
     ]),
   );
   const send = async (to: Host, batch?: unknown) => {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { parseArgs } from "node:util";
 import { chromium, type Page } from "playwright";
 import { readPeers } from "../src/peers/http.ts";
-import { REPLACE_BEFORE_MS } from "../src/policy.ts";
+import { HOST_TURN_MS, REPLACE_BEFORE_MS } from "../src/policy.ts";
 import { hostOrigin } from "../src/peers/gossip.ts";
 import { RELEASE_PATH, WASM_PATH, releaseSchema } from "../src/release.ts";
 
@@ -13,10 +13,7 @@ const { values } = parseArgs({
     "peer-proxy": { type: "string" },
   },
 });
-assert(
-  values.site && values.start && values["peer-proxy"],
-  "Pass --site and --start for a site with no hosts, plus --peer-proxy for a different public IP.",
-);
+assert(values.site && values.start, "Pass --site and --start for a site with no hosts.");
 const site = new URL(values.site);
 const start = new URL(values.start);
 const browser = await chromium.launch({ channel: "chrome" });
@@ -97,7 +94,7 @@ try {
     "Use a fresh bootstrap certificate so a volunteer is expected to inherit it.",
   );
   console.log("visitor before copy", await visitorSample("/"));
-  const second = await join({ server: values["peer-proxy"] });
+  const second = await join(values["peer-proxy"] ? { server: values["peer-proxy"] } : undefined);
   const session = await second.page.context().newCDPSession(second.page);
   await session.send("Page.setWebLifecycleState", { state: "frozen" });
   try {
@@ -119,7 +116,7 @@ try {
   await second.page.waitForFunction(
     (at) => Date.now() >= at,
     secondHost.endsAt - REPLACE_BEFORE_MS + 7_000,
-    { timeout: 10 * 60_000, polling: 500 },
+    { timeout: HOST_TURN_MS, polling: 500 },
   );
   let copyingDone = false;
   let copyStarted!: () => void;

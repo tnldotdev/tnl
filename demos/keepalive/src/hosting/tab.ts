@@ -1,4 +1,3 @@
-import { NETWORK_PROOF_PATH, networkProof } from "../network.ts";
 import { browserHostName } from "../peers/host-names.ts";
 import type { Host } from "../peers/gossip.ts";
 import {
@@ -16,7 +15,6 @@ import { CONFIG_PATH, hostingConfig } from "../enrollment.ts";
 import { hostUpdate, type HostStart, type HostUpdate } from "./messages.ts";
 import { checkUpload, readInviterCertificate, readPeers, waitForWork } from "../peers/http.ts";
 import { STARTUP_MS } from "../policy.ts";
-import { reserveTurn, updateAdmission, waitForRetry } from "./admission.ts";
 
 export type HostState =
   | { type: "waiting" | "checking" | "starting" | "stopping" }
@@ -32,13 +30,12 @@ async function waitForInvitation(releaseID: string, signal: AbortSignal) {
     signal.throwIfAborted();
     const peers = await readPeers(location.origin, releaseID, signal).catch(() => undefined);
     if (peers !== undefined) {
-      const proof = networkProof.parse(await getJSON(NETWORK_PROOF_PATH, 192, signal, "POST"));
       // try the host reached through the shared service first.
       const candidates = [peers.from, ...peers.changes].filter((host) => !host.left).slice(0, 3);
       for (const host of candidates) {
         signal.throwIfAborted();
         try {
-          const invitation = await waitForWork(host, proof, signal);
+          const invitation = await waitForWork(host, signal);
           if (invitation === null) break;
           return { host, invitation };
         } catch {
@@ -46,7 +43,21 @@ async function waitForInvitation(releaseID: string, signal: AbortSignal) {
         }
       }
     }
-    await waitForRetry(signal);
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      };
+      const timer = setTimeout(
+        () => {
+          signal.removeEventListener("abort", abort);
+          resolve();
+        },
+        5_000 + Math.random() * 10_000,
+      );
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
   }
 }
 
@@ -137,51 +148,42 @@ export async function hostTab(
     if (!(await checkUpload(firstHostToContact, invitation, preparing))) throw new UploadTooSlow();
   }
   const config = await getHostingConfig(preparing);
-  const requestID = crypto.randomUUID();
+  const [files, inherited] = await Promise.all([
+    copySite(release, source, bootstrap, preparing, update),
+    invitation === undefined || firstHostToContact === undefined
+      ? undefined
+      : readInviterCertificate(firstHostToContact, invitation, preparing).catch(() => undefined),
+  ]);
+  const code = files.get(WORKER_PATH);
+  if (code === undefined) throw new Error("The copy is missing the hosting code.");
+  preparing.throwIfAborted();
+  update({ type: "starting" });
+  const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+  const worker = new Worker(url, { type: "module", name: "keepalive" });
   try {
-    await reserveTurn(location.origin, requestID, bootstrap, preparing);
-    const [files, inherited] = await Promise.all([
-      copySite(release, source, bootstrap, preparing, update),
-      invitation === undefined || firstHostToContact === undefined
-        ? undefined
-        : readInviterCertificate(firstHostToContact, invitation, preparing).catch(() => undefined),
-    ]);
-    const code = files.get(WORKER_PATH);
-    if (code === undefined) throw new Error("The copy is missing the hosting code.");
-    preparing.throwIfAborted();
-    update({ type: "starting" });
-    const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
-    const worker = new Worker(url, { type: "module", name: "keepalive" });
-    try {
-      return await runWorker(
-        worker,
-        {
-          type: "start",
-          release,
-          files,
-          config,
-          requestID,
-          inherited,
-          bootstrap,
-          startupEndsAt,
-          name: browserHostName(),
-          firstHostToContact,
-          invitation,
-          pageOrigin: location.origin,
-        },
-        signal,
-        update,
-        activity,
-      );
-    } finally {
-      worker.terminate();
-      URL.revokeObjectURL(url);
-    }
-  } finally {
-    // the worker has stopped or preparation never reached publication.
-    await updateAdmission(location.origin, requestID, "stop", AbortSignal.timeout(5_000)).catch(
-      () => {},
+    return await runWorker(
+      worker,
+      {
+        type: "start",
+        release,
+        files,
+        config,
+        requestID: invitation ?? crypto.randomUUID(),
+        inherited,
+        bootstrap,
+        startupEndsAt,
+        name: browserHostName(),
+        firstHostToContact,
+        invitation,
+        pageOrigin: location.origin,
+      },
+      signal,
+      update,
+      activity,
     );
+  } finally {
+    worker.terminate();
+    URL.revokeObjectURL(url);
   }
 }
 

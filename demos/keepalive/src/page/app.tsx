@@ -3,7 +3,7 @@ import { render } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { hostBranches, type TreeHost } from "./host-tree.ts";
 import { PULSE_SECONDS, requestPulse } from "../hosting/activity.ts";
-import { invitationChirp, protectHostingTab } from "./attention.ts";
+import { turnSounds, turnWarning, protectHostingTab } from "./attention.ts";
 import type { HostUpdate } from "../hosting/messages.ts";
 import { turnLabel } from "../policy.ts";
 import {
@@ -165,12 +165,21 @@ function App({ bootstrap }: { bootstrap: boolean }) {
   const [observed, setObserved] = useState<Observation>();
   const [lastStart, setLastStart] = useState<number>();
   const [sound, setSound] = useState(true);
-  const chirp = useRef<ReturnType<typeof invitationChirp>>(undefined);
+  const chirp = useRef<ReturnType<typeof turnSounds>>(undefined);
+  const shouldWarn = useMemo(turnWarning, []);
   const label = turnLabel(bootstrap);
   const hosting = host?.type === "hosting" ? host : undefined;
   const startedAt = hosting?.startedAt ?? observed?.startedAt ?? lastStart;
   const ticking = startedAt !== undefined || hosting !== undefined;
   const active = hosting !== undefined;
+  useEffect(() => {
+    if (
+      hosting &&
+      !lifetime?.signal.aborted &&
+      shouldWarn(hosting.runID, hosting.endsAt, Date.now())
+    )
+      chirp.current?.play("warning");
+  }, [hosting, now, shouldWarn, lifetime]);
   useEffect(() => {
     if (!ticking) return;
     const timer = setInterval(() => setNow(Date.now()), 1_000);
@@ -201,13 +210,13 @@ function App({ bootstrap }: { bootstrap: boolean }) {
     const enabled = !sound;
     setSound(enabled);
     if (!enabled) closeChirp();
-    else if (host?.type === "waiting") chirp.current = invitationChirp();
+    else if (lifetime !== undefined) chirp.current = turnSounds();
   }
 
   function start() {
     if (lifetime !== undefined) return;
     const stop = new AbortController();
-    if (sound && !bootstrap) chirp.current = invitationChirp();
+    if (sound) chirp.current = turnSounds();
     setLifetime(stop);
     setActivity(undefined);
     setFinished(undefined);
@@ -219,11 +228,10 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       bootstrap,
       stop.signal,
       (next) => {
-        if (next.type === "checking") chirp.current?.play();
+        if (next.type === "checking") chirp.current?.play("invitation");
         if (next.type === "hosting") {
           hosted = true;
           setLastStart(next.startedAt);
-          closeChirp();
         }
         document.title =
           next.type === "hosting" ? "hosting · keepalive" : "can we keep this alive?";
@@ -316,7 +324,9 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         {host?.type === "copying" && <CopyProgress received={host.received} total={host.total} />}
         {hosting && (
           <>
-            <p>{countdown(hosting.endsAt, Math.max(now, hosting.since))} left in your turn</p>
+            <p class="turn-countdown">
+              {countdown(hosting.endsAt, Math.max(now, hosting.since))} left in your turn
+            </p>
             <div class="host-activity">
               <div>
                 serving {hosting.localTabs.toLocaleString()} of ~{hosting.tabs.toLocaleString()}{" "}
@@ -375,12 +385,13 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             stop
           </button>
         )}
-        {host?.type === "waiting" && (
+        {lifetime !== undefined && (
           <button
             class="text-action"
             type="button"
             onClick={toggleSound}
-            title="Play a short sound if this tab is chosen in the background"
+            aria-pressed={sound}
+            title="Play a short invitation sound in the background and a warning with five minutes left"
           >
             sound: {sound ? "on" : "off"}
           </button>

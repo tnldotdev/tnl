@@ -23,8 +23,9 @@ against the release manifest. If it can't get a valid copy, it returns `503`.
 
 Hosts exchange reports and invite waiting volunteers when more copies are
 needed. A volunteer copies the files, can inherit the service certificate,
-and serves from memory for up to ten minutes. The first host gets up to an
-hour. Counts and peer lists are approximate.
+and serves from memory for up to 15 minutes. The first host gets up to an
+hour. The countdown starts when serving starts. A soft chime sounds with five
+minutes left unless you mute it; replacement can begin with four minutes left.
 
 ## read the code
 
@@ -47,17 +48,17 @@ browser handoffs, certificate reuse, final-host outage, and restart.
 
 ## scale qualification
 
-The qualification target is 1,000 simultaneous browser hosts, not 1,000 lifetime
-enrollments. Set the Worker's `HOST_TARGET` to the fixed pool size for an opt-in
-run; ordinary demand-driven recruitment still starts at three.
+Each host offers one invitation at a time. It aims for at least three hosts,
+then roughly one per 50 observed visitor tabs. Peer counts are approximate.
+Two browsers on the same network can hand off. If a volunteer disappears, the
+invitation expires. The donor checks the replacement at its exact publisher
+address before finishing a handoff. The Worker checks the donor's invitation
+before requesting a one-use enrollment key. Returning identities can reuse
+their existing grant.
 
-The admission Durable Object permits at most 384 startups and 1,384 total
-reservations, including bundle transfers and replacement overlap above the
-1,000-host target. This covers roughly 334 simultaneous replacements at the
-three-minute startup bound. Retries
-reuse their reservation; failed starts and lost tabs expire. Successful cleanup
-releases the reservation only after the publisher closes. It stores no site
-assets and does not serve as a backup.
+For an existing coordinator-backed deployment, stop new turns on the old
+release and let active turns drain (including the one-hour first host) before
+applying the Worker migration that retires its old reservations.
 
 Volunteer selection uses finite requests with 5–15 second retry jitter. Peer
 responses request connection closure, including HTTP/2 GOAWAY, so random probes
