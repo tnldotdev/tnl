@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/sourcestate"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -29,14 +31,14 @@ const (
 )
 
 type feedbackCommand struct {
-	List    feedbackListCommand    `cmd:"" help:"List feedback for this project's preview."`
-	Inspect feedbackInspectCommand `cmd:"" help:"Read a report, events, and compare with your current source."`
-	Watch   feedbackWatchCommand   `cmd:"" help:"Follow ordered feedback events; resume after a cursor."`
-	Reply   feedbackReplyCommand   `cmd:"" help:"Reply to a feedback thread."`
-	Update  feedbackUpdateCommand  `cmd:"" help:"Post an update with the current source state."`
-	Resolve feedbackResolveCommand `cmd:"" help:"Resolve an open feedback thread."`
-	Reopen  feedbackReopenCommand  `cmd:"" help:"Reopen a resolved feedback thread."`
-	Delete  feedbackDeleteCommand  `cmd:"" help:"Delete a local thread, report, evidence, source snapshots, and history."`
+	List    feedbackListCommand
+	Inspect feedbackInspectCommand
+	Watch   feedbackWatchCommand
+	Reply   feedbackReplyCommand
+	Update  feedbackUpdateCommand
+	Resolve feedbackResolveCommand
+	Reopen  feedbackReopenCommand
+	Delete  feedbackDeleteCommand
 }
 
 type feedbackListCommand struct {
@@ -535,4 +537,50 @@ func feedbackMutationName(kind string) string {
 	default:
 		return "reply"
 	}
+}
+
+func (a *commandApp) newFeedbackCommand() *cobra.Command {
+	f := a.flags
+	cFeedback := &cobra.Command{Use: "feedback", Short: "Read and follow up on preview feedback.", GroupID: "manage"}
+	cFeedbackList := &cobra.Command{Use: "list", Short: "List feedback for this project's preview."}
+	a.leaf(cFeedbackList, &f.Feedback.List, func(call commandCall) error {
+		return runFeedbackList(call.ctx, f.Feedback.List, call.project, a.out, a.errOut)
+	})
+	cFeedback.AddCommand(cFeedbackList)
+	cFeedbackInspect := &cobra.Command{Use: "inspect", Short: "Read a report, events, and compare with your current source."}
+	a.leaf(cFeedbackInspect, &f.Feedback.Inspect, func(call commandCall) error {
+		return runFeedbackInspect(call.ctx, f.Feedback.Inspect, call.project, a.out, a.errOut)
+	})
+	cFeedback.AddCommand(cFeedbackInspect)
+	cFeedbackWatch := &cobra.Command{Use: "watch", Short: "Follow ordered feedback events; resume after a cursor."}
+	a.leaf(cFeedbackWatch, &f.Feedback.Watch, func(call commandCall) error {
+		return runFeedbackWatch(call.ctx, f.Feedback.Watch, call.project, a.out, a.errOut)
+	})
+	cFeedback.AddCommand(cFeedbackWatch)
+	cFeedbackReply := &cobra.Command{Use: "reply", Short: "Reply to a feedback thread."}
+	a.leaf(cFeedbackReply, &f.Feedback.Reply, func(call commandCall) error {
+		return runFeedbackMutation(call.ctx, f.Feedback.Reply.feedbackMutationCommand, call.project, "reply", a.out, a.errOut)
+	})
+	cFeedback.AddCommand(cFeedbackReply)
+	cFeedbackUpdate := &cobra.Command{Use: "update", Short: "Post an update with the current source state."}
+	a.leaf(cFeedbackUpdate, &f.Feedback.Update, func(call commandCall) error {
+		return runFeedbackMutation(call.ctx, f.Feedback.Update.feedbackMutationCommand, call.project, "update", a.out, a.errOut)
+	})
+	cFeedback.AddCommand(cFeedbackUpdate)
+	cFeedbackResolve := &cobra.Command{Use: "resolve", Short: "Resolve an open feedback thread."}
+	a.leaf(cFeedbackResolve, &f.Feedback.Resolve, func(call commandCall) error {
+		return runFeedbackMutation(call.ctx, f.Feedback.Resolve.feedbackMutationCommand, call.project, "thread.resolved", a.out, a.errOut)
+	})
+	cFeedback.AddCommand(cFeedbackResolve)
+	cFeedbackReopen := &cobra.Command{Use: "reopen", Short: "Reopen a resolved feedback thread."}
+	a.leaf(cFeedbackReopen, &f.Feedback.Reopen, func(call commandCall) error {
+		return runFeedbackMutation(call.ctx, f.Feedback.Reopen.feedbackMutationCommand, call.project, "thread.reopened", a.out, a.errOut)
+	})
+	cFeedback.AddCommand(cFeedbackReopen)
+	cFeedbackDelete := &cobra.Command{Use: "delete", Short: "Delete a local thread, report, evidence, source snapshots, and history."}
+	a.leaf(cFeedbackDelete, &f.Feedback.Delete, func(call commandCall) error {
+		return runFeedbackDelete(call.ctx, f.Feedback.Delete, call.project, a.out, a.errOut)
+	})
+	cFeedback.AddCommand(cFeedbackDelete)
+	return cFeedback
 }

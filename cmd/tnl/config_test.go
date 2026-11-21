@@ -3,13 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -228,11 +228,8 @@ func TestProjectConfigurationAppliesPrecedenceUnits(t *testing.T) {
 	t.Setenv("TNL_NAME", "environment-name")
 	t.Setenv("TNL_TEAM", "environment-team")
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"publish", "--ip", "198.51.100.0/24"}); err != nil {
+	parser := commandForTest(&flags, io.Discard)
+	if _, err := parser([]string{"publish", "--ip", "198.51.100.0/24"}); err != nil {
 		t.Fatal(err)
 	}
 	projectServer := "https://project.example"
@@ -270,11 +267,8 @@ func TestInspectionServiceAndFlagPrecedence(t *testing.T) {
 		{[]string{"publish", "web", "--inspection-mode=none"}, "none"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := parser.Parse(tc.args)
+		parser := commandForTest(&flags, io.Discard)
+		parsed, err := parser(tc.args)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -408,11 +402,8 @@ func TestProjectOpenAndDomainUseSelectedServiceAndCLIExplicitFalse(t *testing.T)
 		}
 	}
 	var cliFlags cli
-	parser, err := kong.New(&cliFlags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := parser.Parse([]string{"publish", "web", "--open=false", "--domain=override.example.test"})
+	parser := commandForTest(&cliFlags, io.Discard)
+	parsed, err := parser([]string{"publish", "web", "--open=false", "--domain=override.example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,7 +8,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 )
@@ -45,16 +44,13 @@ func TestConnectShorthandAndExplicitModes(t *testing.T) {
 		{"connect", "start", "orders", "--install"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
+		parser := commandForTest(&flags, io.Discard)
+		parsed, err := parser(args)
 		if err != nil {
 			t.Fatal(err)
 		}
-		parsed, err := parser.Parse(args)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if parsed.Command() != "connect start <name>" || flags.Connect.Start.Name != "orders" {
-			t.Fatalf("connect dispatch = %q, %+v", parsed.Command(), flags.Connect.Start)
+		if commandID(parsed) != "connect start <name>" || flags.Connect.Start.Name != "orders" {
+			t.Fatalf("connect dispatch = %q, %+v", commandID(parsed), flags.Connect.Start)
 		}
 		if err := validateConnectMode(flags.Connect.Start); err != nil {
 			t.Fatal(err)

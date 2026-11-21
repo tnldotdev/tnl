@@ -4,14 +4,16 @@ import (
 	"context"
 	"io"
 
+	"github.com/spf13/cobra"
+
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 )
 
 type telemetryCommand struct {
-	On     telemetryPreferenceCommand `cmd:"" help:"Enable usage telemetry in this client state."`
-	Off    telemetryPreferenceCommand `cmd:"" help:"Disable usage telemetry in this client state."`
-	Status telemetryPreferenceCommand `cmd:"" help:"Show the saved usage telemetry choice."`
+	On     telemetryPreferenceCommand
+	Off    telemetryPreferenceCommand
+	Status telemetryPreferenceCommand
 }
 
 type telemetryPreferenceCommand struct {
@@ -50,4 +52,25 @@ func runTelemetryPreference(ctx context.Context, command telemetryPreferenceComm
 			clioutput.Field{Label: "usage telemetry", Value: value},
 		)},
 	})
+}
+
+func (a *commandApp) newTelemetryCommand() *cobra.Command {
+	f := a.flags
+	cTelemetry := &cobra.Command{Use: "telemetry", Short: "Manage the saved usage telemetry choice.", GroupID: "manage"}
+	cTelemetryOn := &cobra.Command{Use: "on", Short: "Enable usage telemetry in this client state."}
+	a.leaf(cTelemetryOn, &f.Telemetry.On, func(call commandCall) error {
+		return runTelemetryPreference(call.ctx, f.Telemetry.On, "on", a.out)
+	})
+	cTelemetry.AddCommand(cTelemetryOn)
+	cTelemetryOff := &cobra.Command{Use: "off", Short: "Disable usage telemetry in this client state."}
+	a.leaf(cTelemetryOff, &f.Telemetry.Off, func(call commandCall) error {
+		return runTelemetryPreference(call.ctx, f.Telemetry.Off, "off", a.out)
+	})
+	cTelemetry.AddCommand(cTelemetryOff)
+	cTelemetryStatus := &cobra.Command{Use: "status", Short: "Show the saved usage telemetry choice."}
+	a.leaf(cTelemetryStatus, &f.Telemetry.Status, func(call commandCall) error {
+		return runTelemetryPreference(call.ctx, f.Telemetry.Status, "status", a.out)
+	})
+	cTelemetry.AddCommand(cTelemetryStatus)
+	return cTelemetry
 }

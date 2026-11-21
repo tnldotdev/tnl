@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -12,12 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/buildinfo"
+	"github.com/spf13/cobra"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	"github.com/tnldotdev/tnl/internal/client/detached"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -26,44 +23,42 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
-	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
-	"golang.org/x/term"
 )
 
 type cli struct {
-	ConfigPath  string            `name:"config" help:"Use a project configuration file; put this flag before the command." type:"path"`
-	NoConfig    bool              `name:"no-config" help:"Skip project configuration; put this flag before the command."`
-	NoTelemetry bool              `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
-	Init        initCommand       `cmd:"" help:"Set up tnl for the current project." group:"start"`
-	Apply       applyCommand      `cmd:"" help:"Reconcile this project's declared services and deployments with control." group:"manage"`
-	Deployment  deploymentCommand `cmd:"" help:"Manage saved deployments and selected target bindings." group:"manage"`
-	Generate    generateCommand   `cmd:"" help:"Generate portable project types and declared publisher infrastructure offline." group:"manage"`
-	Check       struct{}          `cmd:"" help:"Validate project configuration and show its selected path." group:"manage"`
-	Audit       auditCommand      `cmd:"" help:"Read team service audit history." group:"manage"`
-	Runtime     runtimeCommand    `cmd:"" hidden:""`
-	Wait        waitCommand       `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
-	Watch       watchCommand      `cmd:"" help:"Follow local app and TCP publication events." group:"start"`
-	Publish     publishCommand    `cmd:"" help:"Publish a local service or try the built-in demo." group:"start"`
-	Connect     connectCommand    `cmd:"" help:"Make an approved service available locally using the current identity." group:"start"`
-	Publisher   publisherCommand  `cmd:"" help:"Enroll publishers and manage their scoped grants." group:"manage"`
-	Service     serviceCommand    `cmd:"" help:"Manage installed publications." group:"operate"`
-	Endpoint    endpointCommand   `cmd:"" help:"Manage saved services' public endpoint reservations." group:"manage"`
-	Detached    detachedCommand   `cmd:"" help:"Inspect and stop detached publications." group:"operate"`
-	Status      statusCommand     `cmd:"" help:"Show local snapshots and fresh signed-in server facts; --all includes other projects." group:"start"`
-	Ping        pingCommand       `cmd:"" help:"Check a public URL from this machine as an unauthenticated visitor." group:"start"`
-	Inspect     inspectCommand    `cmd:"" help:"Inspect recent local HTTP activity." group:"manage"`
-	Telemetry   telemetryCommand  `cmd:"" help:"Manage the saved usage telemetry choice." group:"manage"`
-	Auth        authCommand       `cmd:"" help:"Inspect credentials and explicitly log in or out." group:"manage"`
-	Team        teamCommand       `cmd:"" help:"Manage teams and memberships." group:"manage"`
-	Domain      domainCommand     `cmd:"" help:"Manage team domains." group:"manage"`
-	URL         publicURLCommand  `cmd:"" name:"url" help:"Manage public URLs." group:"manage"`
-	Share       shareCommand      `cmd:"" help:"Share this checkout's HTTP public URLs or manage existing access." group:"manage"`
-	Feedback    feedbackCommand   `cmd:"" help:"Read and follow up on preview feedback." group:"manage"`
-	Webhook     webhookCommand    `cmd:"" help:"Choose a receiver for a selected webhook." group:"manage"`
-	Alias       aliasCommand      `cmd:"" help:"Choose which worktree serves a project alias." group:"manage"`
-	Admin       adminCommand      `cmd:"" help:"Administer a self-hosted tnl server." group:"operate"`
-	Version     struct{}          `cmd:"" help:"Print release version information." group:"operate"`
+	ConfigPath  string `name:"config" help:"Use a project configuration file; put this flag before the command." type:"path"`
+	NoConfig    bool   `name:"no-config" help:"Skip project configuration; put this flag before the command."`
+	NoTelemetry bool   `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
+	Init        initCommand
+	Apply       applyCommand
+	Deployment  deploymentCommand
+	Generate    generateCommand
+	Check       struct{}
+	Audit       auditCommand
+	Runtime     runtimeCommand
+	Wait        waitCommand
+	Watch       watchCommand
+	Publish     publishCommand
+	Connect     connectCommand
+	Publisher   publisherCommand
+	Service     serviceCommand
+	Endpoint    endpointCommand
+	Detached    detachedCommand
+	Status      statusCommand
+	Ping        pingCommand
+	Inspect     inspectCommand
+	Telemetry   telemetryCommand
+	Auth        authCommand
+	Team        teamCommand
+	Domain      domainCommand
+	URL         publicURLCommand
+	Share       shareCommand
+	Feedback    feedbackCommand
+	Webhook     webhookCommand
+	Alias       aliasCommand
+	Admin       adminCommand
+	Version     struct{}
 }
 
 type openOptions struct {
@@ -102,8 +97,8 @@ type remoteFlags struct {
 	ServerURL    string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
 	AccessToken  string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved session."`
 	StateDir     string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	ProjectTeam  string `kong:"-"`
-	SelectedTeam string `kong:"-"`
+	ProjectTeam  string
+	SelectedTeam string
 }
 
 type teamSelectionFlags struct {
@@ -122,8 +117,8 @@ func (flags scopedTeamFlags) selection() remoteFlags {
 }
 
 type webhookCommand struct {
-	Use     webhookUseCommand    `cmd:"" help:"Send this webhook to the ready service in this worktree."`
-	Release webhookChoiceCommand `cmd:"" help:"Stop sending this webhook to this worktree."`
+	Use     webhookUseCommand
+	Release webhookChoiceCommand
 }
 
 type webhookUseCommand struct {
@@ -137,8 +132,8 @@ type webhookChoiceCommand struct {
 }
 
 type aliasCommand struct {
-	Use     aliasUseCommand    `cmd:"" help:"Use this worktree for an alias."`
-	Release aliasChoiceCommand `cmd:"" help:"Return the alias to the primary checkout."`
+	Use     aliasUseCommand
+	Release aliasChoiceCommand
 }
 
 type aliasUseCommand struct {
@@ -432,52 +427,35 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 			result = &machineCommandError{result}
 		}
 	}()
-	var flags cli
-	parser, err := kong.New(
-		&flags,
-		kong.Name("tnl"),
-		kong.Description("take a shortcut through the internet.\n\nPublish local services at stable public URLs. Start your app normally with its tnl integration, try tnl publish --demo, or run tnl publish 3000 for an already-running service. By default, visitors need a current sign-in, link, or token."),
-		kong.ExplicitGroups([]kong.Group{
-			{Key: "start", Title: "Start here:"},
-			{Key: "manage", Title: "Manage:"},
-			{Key: "operate", Title: "Operate:"},
-		}),
-		kong.HelpOptions{Compact: true, FlagsLast: true, WrapUpperBound: 72},
-	)
-	if err != nil {
-		return err
+	a := commandApp{flags: &cli{}, out: stdout, errOut: stderr, argv: args, factories: factories}
+	root := a.root()
+	root.SetArgs(args)
+	selected, err := root.ExecuteContextC(ctx)
+	if selected != nil && selected != root {
+		command = clioutput.CommandTitle("tnl", commandID(selected))
+		machineIntent = strings.HasPrefix(commandID(selected), "runtime connections ")
 	}
-	parsed, err := parser.Parse(args)
-	if err != nil {
-		var parseError *kong.ParseError
-		if errors.As(err, &parseError) && parseError.Context != nil && parseError.Context.Command() != "" {
-			command = clioutput.CommandTitle("tnl", canonicalParsedCommand(parseError.Context.Command()))
-		}
-		return err
+	return err
+}
+
+func (a *commandApp) execute(parsed *cobra.Command, handle func(commandCall) error) (result error) {
+	ctx, flags := parsed.Context(), a.flags
+	factories := a.factories
+	parsedCommand := commandID(parsed)
+	applyTunnelCLIUnits(parsed, flags)
+	if parsedCommand == "version" || parsedCommand == "generate" || parsedCommand == "check" {
+		return handle(commandCall{ctx: ctx})
 	}
-	parsedCommand := canonicalParsedCommand(parsed.Command())
-	machineIntent = strings.HasPrefix(parsedCommand, "runtime connections ")
-	applyTunnelCLIUnits(parsed, &flags)
-	command = clioutput.CommandTitle("tnl", parsedCommand)
-	if parsedCommand == "generate" {
-		return runGenerate(ctx, flags, stdout)
-	}
-	if parsedCommand == "check" {
-		project, err := loadProjectConfigurationWithSalt(ctx, flags, [32]byte{})
-		if err != nil {
-			return err
-		}
-		return runCheck(project, stdout)
-	}
+	var err error
 	process, native := ctx.Value(nativeProcessKey{}).(*nativeProcess)
-	if native && parsedCommand != "version" {
+	if native {
 		var metrics *observability.Metrics
-		ctx, metrics, err = observability.StartProcess(ctx, commandObservabilityRole(parsedCommand, flags).String())
+		ctx, metrics, err = observability.StartProcess(ctx, commandObservabilityRole(parsedCommand, *flags).String())
 		if err != nil {
 			return err
 		}
 		budget := observability.CLIShutdownTimeout
-		if persistentObservabilityOwner(parsedCommand, flags) {
+		if persistentObservabilityOwner(parsedCommand, *flags) {
 			budget = observability.ShutdownTimeout
 		}
 		process.shutdownMetrics, process.metricsTimeout = metrics.Shutdown, budget
@@ -526,454 +504,40 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 			collector.Report(clienttelemetry.Command(commandOutcome(telemetryCommand, telemetryAction, failureStage, classifyCommandError(outcome))))
 		}()
 	}
-	if strings.HasPrefix(parsedCommand, "runtime connections ") {
-		return runConnections(ctx, parsedCommand, flags.Runtime.Connections, stdout)
+	call := commandCall{ctx: ctx, command: parsed, started: func() { failureStage = telemetryv1.Command }}
+	if parsedCommand == "publisher serve" || parsedCommand == "connect start <name>" || parsedCommand == "publish <service-or-target>" {
+		return handle(call)
 	}
-	if parsedCommand == "connect kube-credential" {
-		return runKubeCredential(ctx, flags.Connect.KubeCredential, stdout)
-	}
-	if parsedCommand == "publisher serve" {
-		serve := &flags.Publisher.Serve
-		if serve.fixedList() {
-			return runFixedDeploymentRuntime(ctx, *serve, stderr)
-		}
-		if err := validatePublisherServe(*serve); err != nil {
-			return err
-		}
-		if serve.Install {
-			options, err := (systemStateFlags{SystemStateDir: serve.SystemStateDir}).options()
-			if err != nil {
-				return err
-			}
-			if err := requireInstalledService(ctx, options, nil); err != nil {
-				return err
-			}
-		}
-		if serve.Detach {
-			if serve.EnrollmentKey == "-" {
-				return publisherCLIError("--detach cannot read an enrollment key from stdin; enroll this instance in the foreground first")
-			}
-			// the owning child consumes the injected secret before loading project
-			// configuration; clear the launching process's copy after handoff too.
-			defer os.Unsetenv("TNL_DEPLOYMENT_IDENTITY")
-			return detachPublish(ctx, args, serve.StateDir, stdout, "tnl publisher serve")
-		}
-		if err := prepareDeploymentIdentity(serve); err != nil {
-			return err
-		}
-		if serve.DetachedChild != "" {
-			root, err := clientStateRoot(serve.StateDir)
-			if err != nil {
-				return err
-			}
-			var cleanup func()
-			ctx, cleanup, err = detached.Serve(ctx, root, serve.DetachedChild)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-		}
-	}
-	if parsedCommand == "connect start <name>" {
-		connect := &flags.Connect.Start
-		if err := validateConnectMode(*connect); err != nil {
-			return err
-		}
-		if connect.Install {
-			options, err := (systemStateFlags{SystemStateDir: connect.SystemStateDir}).options()
-			if err != nil {
-				return err
-			}
-			if err := requireInstalledService(ctx, options, nil); err != nil {
-				return err
-			}
-		}
-		if connect.Detach {
-			// resolve and validate the service mode before creating a child.
-			connect.detach = func() error { return detachPublish(ctx, args, connect.StateDir, stdout, "tnl connect") }
-		}
-		root, err := clientStateRoot(connect.StateDir)
+	if projectSensitiveCommand(parsedCommand) {
+		call.project, err = a.loadCommandProject(ctx, parsed)
 		if err != nil {
 			return err
 		}
-		if connect.DetachedChild != "" {
-			var cleanup func()
-			ctx, cleanup, err = detached.Serve(ctx, root, connect.DetachedChild)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-		}
-		project, err := loadProjectConfiguration(ctx, flags, root)
+	}
+	call.started()
+	return handle(call)
+}
+
+func (a *commandApp) loadCommandProject(ctx context.Context, parsed *cobra.Command) (projectConfiguration, error) {
+	flags, id := a.flags, commandID(parsed)
+	if strings.HasPrefix(id, "alias ") {
+		selection, _, err := selectProjectConfiguration(ctx, *flags)
 		if err != nil {
-			return err
+			return projectConfiguration{}, err
 		}
-		if err := project.applyConnect(connect); err != nil {
-			return err
+		if selection.Path == "" {
+			return projectConfiguration{}, failure.Wrap("select alias", failure.ProjectConfigMissing, errors.New("project configuration with an alias is required"))
 		}
 	}
-	if parsedCommand == "publish <service-or-target>" {
-		if flags.Publish.Foreground && (flags.Publish.Install || flags.Publish.Detach) {
-			return publisherCLIError("select only one of --foreground, --detach, or --install")
-		}
-		if flags.Publish.Detach && flags.Publish.Install {
-			return publisherCLIError("--install and --detach cannot be combined")
-		}
-		if flags.Publish.Detach {
-			if flags.Publish.EnrollmentKey == "-" {
-				return publisherCLIError("--detach cannot read an enrollment key from stdin; use --publisher-identity or --publisher-credential-file")
-			}
-			if flags.Publish.Output != "human" {
-				return publisherCLIError("--detach requires --output=human")
-			}
-			if flags.Publish.System || flags.Publish.ServiceName != "" || flags.Publish.SystemStateDir != "" || flags.Publish.ServerCAFile != "" {
-				return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
-			}
-			return detachPublish(ctx, args, flags.Publish.StateDir, stdout, "tnl publish")
-		}
-		if flags.Publish.DetachedChild != "" {
-			root, err := clientStateRoot(flags.Publish.StateDir)
-			if err != nil {
-				return err
-			}
-			var cleanup func()
-			ctx, cleanup, err = detached.Serve(ctx, root, flags.Publish.DetachedChild)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-		}
+	root, err := commandStateRoot(parsed)
+	if err != nil {
+		return projectConfiguration{}, err
 	}
-	if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
-		if err := prepareDemoPublish(&flags.Publish, flags.ConfigPath, term.IsTerminal(int(os.Stdin.Fd()))); err != nil {
-			return err
-		}
+	project, err := loadProjectConfiguration(ctx, *flags, root)
+	if err != nil {
+		return projectConfiguration{}, err
 	}
-	var project projectConfiguration
-	projectStateRoot := ""
-	switch parsedCommand {
-	case "runtime endpoint":
-		return runRuntimeEndpoint(ctx, flags.Runtime.Endpoint, stdout)
-	case "runtime owner-endpoint":
-		return runRuntimeOwnerEndpoint(ctx, flags.Runtime.OwnerEndpoint, stdout)
-	case "runtime serve":
-		return runRuntimeServe(ctx, flags.Runtime.Serve)
-	case "runtime publisher":
-		return runRuntimePublisher(ctx, flags.Runtime.Publisher, stdout)
-	case "wait", "watch":
-		return runAppObservation(ctx, flags, parsedCommand, stdout)
-	case "publish <service-or-target>":
-		if parsedCommand == "publish <service-or-target>" && flags.Publish.Install {
-			selection, _, selectErr := selectProjectConfiguration(ctx, flags)
-			if selectErr != nil {
-				return selectErr
-			}
-			if selection.Path == "" {
-				break
-			}
-			projectStateRoot, err = commandStateRoot(parsed)
-			if err != nil {
-				return err
-			}
-			project, err = loadProjectConfiguration(ctx, flags, projectStateRoot)
-			if err != nil {
-				return err
-			}
-			if err := project.applyInstalledService(&flags.Publish); err != nil {
-				return err
-			}
-			break
-		}
-		if parsedCommand == "publish <service-or-target>" && flags.Publish.Demo {
-			break
-		}
-		if parsedCommand == "publish <service-or-target>" && flags.Publish.PublisherCredentialFile != "" {
-			flags.Publish.ServerURL, err = invocation.PublisherCredentialFileServer(flags.Publish.ServerURL, flags.Publish.PublisherCredentialFile)
-			if err != nil {
-				return err
-			}
-		}
-		projectStateRoot, err = commandStateRoot(parsed)
-		if err != nil {
-			return err
-		}
-		project, err = loadProjectConfiguration(ctx, flags, projectStateRoot)
-		if err != nil {
-			return err
-		}
-		if parsedCommand == "publish <service-or-target>" {
-			err = project.applyPublish(&flags.Publish)
-		}
-		if err != nil {
-			return err
-		}
-	default:
-		if projectSensitiveCommand(parsedCommand) {
-			if strings.HasPrefix(parsedCommand, "alias ") {
-				selection, _, selectErr := selectProjectConfiguration(ctx, flags)
-				if selectErr != nil {
-					return selectErr
-				}
-				if selection.Path == "" {
-					return failure.Wrap("select alias", failure.ProjectConfigMissing, errors.New("project configuration with an alias is required"))
-				}
-			}
-			projectStateRoot, err = commandStateRoot(parsed)
-			if err != nil {
-				return err
-			}
-			project, err = loadProjectConfiguration(ctx, flags, projectStateRoot)
-			if err != nil {
-				return err
-			}
-			if err := applyProjectCommandContext(parsedCommand, project, &flags); err != nil {
-				return err
-			}
-		}
-	}
-	failureStage = telemetryv1.Command
-	switch parsedCommand {
-	case "init":
-		return runInit(ctx, flags.Init, stdout, stderr)
-	case "apply":
-		return runApply(ctx, flags.Apply, project, stdout, stderr)
-	case "deployment create <name>", "deployment list", "deployment show <deployment>", "deployment update <deployment>", "deployment delete <deployment>":
-		return runDeployment(ctx, parsedCommand, flags, project, stdout, stderr)
-	case "auth credential create <name>":
-		return runAuthCredentialCreate(ctx, flags.Auth.Credential.Create, project, stdout, stderr)
-	case "audit list":
-		return runAuditList(ctx, flags.Audit.List, stdout, stderr)
-	case "telemetry on":
-		return runTelemetryPreference(ctx, flags.Telemetry.On, "on", stdout)
-	case "telemetry off":
-		return runTelemetryPreference(ctx, flags.Telemetry.Off, "off", stdout)
-	case "telemetry status":
-		return runTelemetryPreference(ctx, flags.Telemetry.Status, "status", stdout)
-	case "auth status":
-		return runAuthStatus(ctx, flags.Auth.Status, stdout, stderr)
-	case "auth login", "auth login run":
-		return runLogin(ctx, flags.Auth.Login.loginCommand, os.Stdin, stdout, stderr)
-	case "auth login start":
-		return runAuthLoginStart(ctx, flags.Auth.Login.loginCommand, os.Stdin, stdout, stderr)
-	case "auth login wait <operation-id>":
-		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Wait.ID, "wait", stdout, stderr)
-	case "auth login inspect <operation-id>":
-		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Inspect.ID, "inspect", stdout, stderr)
-	case "auth login cancel <operation-id>":
-		return runAuthLoginOperation(ctx, flags.Auth.Login.loginCommand, flags.Auth.Login.Cancel.ID, "cancel", stdout, stderr)
-	case "auth logout":
-		return runLogout(ctx, flags.Auth.Logout, stdout, stderr)
-	case "auth browser <url>":
-		return runAuthBrowser(ctx, flags.Auth.Browser, stdout, stderr)
-	case "version":
-		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
-		return err
-	case "publish <service-or-target>":
-		return runPublish(ctx, flags.Publish, stdout, stderr)
-	case "connect available":
-		return runConnectAvailable(ctx, flags.Connect.Available, stdout, stderr)
-	case "connect start <name>":
-		return runConnectStart(ctx, flags.Connect.Start, stdout, stderr)
-	case "connect list":
-		return runConnectJobs(ctx, flags.Connect.List, "", "list", stdout)
-	case "connect stop <name>":
-		return runConnectJobs(ctx, flags.Connect.Stop.connectListCommand, flags.Connect.Stop.Name, "stop", stdout)
-	case "connect remove <name>":
-		return runConnectJobs(ctx, flags.Connect.Remove.connectListCommand, flags.Connect.Remove.Name, "remove", stdout)
-	case "publisher enroll <service-or-address>", "publisher enroll":
-		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
-	case "publisher current":
-		return runPublisherCurrent(ctx, flags.Publisher.Current, stdout)
-	case "publisher setup":
-		return runPublisherSetup(ctx, flags.Publisher.Setup, project, stdout, stderr)
-	case "publisher serve":
-		return runPublisherServe(ctx, flags.Publisher.Serve, project, stdout, stderr)
-	case "deployment rename <deployment> <name>":
-		return runDeploymentRename(ctx, flags.Deployment.Rename, project, stdout, stderr)
-	case "deployment namespace rename <deployment> <label>":
-		return runDeploymentNamespaceRename(ctx, flags.Deployment.Namespace.Rename, project, stdout, stderr)
-	case "publisher provision":
-		return runPublisherProvision(ctx, flags.Publisher.Provision, project, stdout, stderr)
-	case "publisher list":
-		return runPublisherList(ctx, flags.Publisher.List, project, stdout, stderr)
-	case "publisher revoke <publisher-identity-id>":
-		return runPublisherRevoke(ctx, flags.Publisher.Revoke, project, stdout, stderr)
-	case "publisher grant add <publisher-identity-id>":
-		return runPublisherGrantAdd(ctx, flags.Publisher.Grant.Add, stdout, stderr)
-	case "publisher grant revoke <publisher-identity-id> <grant-id>":
-		return runPublisherGrantRevoke(ctx, flags.Publisher.Grant.Revoke, stdout, stderr)
-	case "service install":
-		return runServiceInstall(ctx, flags.Service.Install, stdout, nil)
-	case "service register":
-		return runPublicationRegister(ctx, flags.Service.Register, os.Stdin, stdout, nil)
-	case "service start <job>":
-		return runServiceStart(ctx, flags.Service.Start, stdout, nil)
-	case "service stop <job>":
-		return runServiceStop(ctx, flags.Service.Stop, stdout)
-	case "service remove <job>":
-		return runServiceRemove(ctx, flags.Service.Remove, stdout)
-	case "service list":
-		return runServiceList(ctx, flags.Service.List, stdout)
-	case "service status <job>":
-		return runServiceStatus(ctx, flags.Service.Status, stdout)
-	case "service serve":
-		return runServiceServe(ctx, flags.Service.Serve)
-	case "detached list":
-		return runDetachedList(flags.Detached.List, stdout)
-	case "detached stop <id>":
-		return runDetachedStop(flags.Detached.Stop, stdout)
-	case "status":
-		if !flags.Status.All {
-			flags.Status.Project, err = projectRoot(ctx, flags)
-			if err != nil {
-				return err
-			}
-			stateRoot, err := clientStateRoot(flags.Status.StateDir)
-			if err != nil {
-				return err
-			}
-			flags.Status.Configuration, err = loadProjectConfiguration(ctx, flags, stateRoot)
-			if err != nil {
-				return err
-			}
-		}
-		return runStatus(ctx, flags.Status, stdout)
-	case "ping <url>":
-		return runPing(ctx, flags.Ping, stdout)
-	case "inspect list", "inspect show <inspection-number>":
-		root, err := projectRoot(ctx, flags)
-		if err != nil {
-			return err
-		}
-		if parsedCommand == "inspect list" {
-			return runInspectList(ctx, flags.Inspect.List, root, stdout)
-		}
-		return runInspectShow(ctx, flags.Inspect.Show, root, stdout)
-	case "webhook use <endpoint>":
-		return runWebhookChoice(ctx, flags.Webhook.Use.webhookChoiceCommand, project, true, flags.Webhook.Use.Force, stdout)
-	case "webhook release <endpoint>":
-		return runWebhookChoice(ctx, flags.Webhook.Release, project, false, false, stdout)
-	case "alias use <name>":
-		return runAliasChoice(ctx, flags.Alias.Use.aliasChoiceCommand, project, true, flags.Alias.Use.Force, stdout, stderr)
-	case "alias release <name>":
-		return runAliasChoice(ctx, flags.Alias.Release, project, false, false, stdout, stderr)
-	case "team current":
-		return runTeamCurrent(ctx, flags.Team.Current, stdout, stderr)
-	case "team list":
-		return runTeamList(ctx, flags.Team.List, stdout, stderr)
-	case "team use <team>":
-		return runTeamUse(ctx, flags.Team.Use, stdout, stderr)
-	case "team create <name>":
-		return runTeamCreate(ctx, flags.Team.Create, stdout, stderr)
-	case "team members":
-		return runTeamMembers(ctx, flags.Team.Members, stdout, stderr)
-	case "team invite create":
-		return runTeamInviteCreate(ctx, flags.Team.Invite.Create, stdout, stderr)
-	case "team invite list":
-		return runTeamInviteList(ctx, flags.Team.Invite.List, stdout, stderr)
-	case "team invite revoke <invitation-id>":
-		return runTeamInviteRevoke(ctx, flags.Team.Invite.Revoke, stdout, stderr)
-	case "team join <secret>":
-		return runTeamJoin(ctx, flags.Team.Join, stdout, stderr)
-	case "team member set-role <membership-id>":
-		return runTeamMemberSetRole(ctx, flags.Team.Member.SetRole, stdout, stderr)
-	case "team member remove <membership-id>":
-		return runTeamMemberRemove(ctx, flags.Team.Member.Remove, stdout, stderr)
-	case "team feedback get":
-		return runTeamFeedbackGet(ctx, flags.Team.Feedback.Get, stdout, stderr)
-	case "team feedback set <authors>":
-		return runTeamFeedbackSet(ctx, flags.Team.Feedback.Set, stdout, stderr)
-	case "domain claim <domain>":
-		return runDomainClaim(ctx, flags.Domain.Claim, stdout, stderr)
-	case "domain default <domain>":
-		return runDomainDefault(ctx, flags.Domain.Default, stdout, stderr)
-	case "domain list":
-		return runDomainList(ctx, flags.Domain.List, stdout, stderr)
-	case "domain status <domain>":
-		return runDomainStatus(ctx, flags.Domain.Status, stdout, stderr)
-	case "domain release <domain>":
-		return runDomainRelease(ctx, flags.Domain.Release, stdout, stderr)
-	case "url list":
-		return runURLList(ctx, flags.URL.List, stdout, stderr)
-	case "url inventory":
-		return runURLInventory(ctx, flags.URL.Inventory, stdout, stderr)
-	case "url available":
-		return runURLAvailable(ctx, flags.URL.Available, stdout, stderr)
-	case "url access show <url>":
-		return runURLAccessShow(ctx, flags.URL.Access.Show, stdout, stderr)
-	case "url access set <url> <mode>":
-		return runURLAccessSet(ctx, flags.URL.Access.Set, stdout, stderr)
-	case "url update <service-or-address>":
-		return runURLUpdate(ctx, flags.URL.Update, stdout, stderr)
-	case "url delete <service-or-address>":
-		return runURLDelete(ctx, flags.URL.Delete, stdout, stderr)
-	case "endpoint release <service-id>":
-		return runEndpointRelease(ctx, flags.Endpoint.Release, stdout, stderr)
-	case "share":
-		return runShareCheckout(ctx, flags.Share.Create, project, stdout, stderr)
-	case "share link create <url>":
-		return runShareCreate(ctx, flags.Share.Link.Create, project, stdout, stderr)
-	case "share token create <url>":
-		return runShareTokenCreate(ctx, flags.Share.Token.Create, project, stdout, stderr)
-	case "share list <url>":
-		return runShareList(ctx, flags.Share.List, project, stdout, stderr)
-	case "share revoke <share-id>":
-		return runShareRevoke(ctx, flags.Share.Revoke, stdout, stderr)
-	case "share team create <url>":
-		return runShareTeamCreate(ctx, flags.Share.Team.Create, project, stdout, stderr)
-	case "share team revoke", "share team revoke <url>":
-		return runShareTeamRevoke(ctx, flags.Share.Team.Revoke, project, stdout, stderr)
-	case "share invite create <url>":
-		return runShareInviteCreate(ctx, flags.Share.Invite.Create, stdout, stderr)
-	case "share invite accept <secret>":
-		return runShareInviteAccept(ctx, flags.Share.Invite.Accept, stdout, stderr)
-	case "share invite list <url>":
-		return runShareInviteList(ctx, flags.Share.Invite.List, stdout, stderr)
-	case "share invite revoke <url> <invitation-id>":
-		return runShareInviteRevoke(ctx, flags.Share.Invite.Revoke, stdout, stderr)
-	case "share service invite create <name>":
-		return runServiceShareInviteCreate(ctx, flags.Share.Service.Invite.Create, project, stdout, stderr)
-	case "share service invite accept <secret>":
-		return runServiceShareInviteAccept(ctx, flags.Share.Service.Invite.Accept, stdout, stderr)
-	case "share service list <name>":
-		return runServiceShareList(ctx, flags.Share.Service.List, project, stdout, stderr)
-	case "share service revoke <name> <access-id>":
-		return runServiceShareRevoke(ctx, flags.Share.Service.Revoke, project, stdout, stderr)
-	case "share service link create <name>":
-		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Link.Create, project, false, stdout, stderr)
-	case "share service token create <name>":
-		return runServiceShareHTTPCreate(ctx, flags.Share.Service.Token.Create, project, true, stdout, stderr)
-	case "feedback list":
-		return runFeedbackList(ctx, flags.Feedback.List, project, stdout, stderr)
-	case "feedback inspect <feedback-id>":
-		return runFeedbackInspect(ctx, flags.Feedback.Inspect, project, stdout, stderr)
-	case "feedback watch":
-		return runFeedbackWatch(ctx, flags.Feedback.Watch, project, stdout, stderr)
-	case "feedback reply <feedback-id>":
-		return runFeedbackMutation(ctx, flags.Feedback.Reply.feedbackMutationCommand, project, "reply", stdout, stderr)
-	case "feedback update <feedback-id>":
-		return runFeedbackMutation(ctx, flags.Feedback.Update.feedbackMutationCommand, project, "update", stdout, stderr)
-	case "feedback resolve <feedback-id>":
-		return runFeedbackMutation(ctx, flags.Feedback.Resolve.feedbackMutationCommand, project, "thread.resolved", stdout, stderr)
-	case "feedback reopen <feedback-id>":
-		return runFeedbackMutation(ctx, flags.Feedback.Reopen.feedbackMutationCommand, project, "thread.reopened", stdout, stderr)
-	case "feedback delete <feedback-id>":
-		return runFeedbackDelete(ctx, flags.Feedback.Delete, project, stdout, stderr)
-	case "admin server status":
-		return runAdminServerStatus(ctx, flags.Admin.Server.Status, stdout, stderr)
-	case "admin relays list":
-		return runAdminRelaysList(ctx, flags.Admin.Relays.List, stdout, stderr)
-	case "admin relays drain <relay-id>":
-		return runAdminRelayDrain(ctx, flags.Admin.Relays.Drain, stdout, stderr)
-	case "admin maintenance list":
-		return runAdminMaintenanceList(ctx, flags.Admin.Maintenance.List, stdout, stderr)
-	case "admin maintenance allow <name>":
-		return runAdminMaintenanceSet(ctx, flags.Admin.Maintenance.Allow, true, stdout, stderr)
-	case "admin maintenance block <name>":
-		return runAdminMaintenanceSet(ctx, flags.Admin.Maintenance.Block, false, stdout, stderr)
-	default:
-		return errors.New("command is required")
-	}
+	return project, applyProjectCommandContext(id, project, flags)
 }
 
 type nativeProcessKey struct{}
@@ -1061,28 +625,10 @@ func canonicalParsedCommand(command string) string {
 	}
 }
 
-func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
-	publicURL, name, domain, ephemeral, open := false, false, false, false, false
-	inspectionMode := false
-	for _, path := range parsed.Path {
-		if path.Flag == nil {
-			continue
-		}
-		switch path.Flag.Name {
-		case "public-url":
-			publicURL = true
-		case "name":
-			name = true
-		case "domain":
-			domain = true
-		case "open":
-			open = true
-		case "ephemeral":
-			ephemeral = true
-		case "inspection-mode":
-			inspectionMode = true
-		}
-	}
+func applyTunnelCLIUnits(parsed *cobra.Command, flags *cli) {
+	changed := parsed.Flags().Changed
+	publicURL, name, domain, ephemeral, open := changed("public-url"), changed("name"), changed("domain"), changed("ephemeral"), changed("open")
+	inspectionMode := changed("inspection-mode")
 	apply := func(tunnel *tunnelFlags) {
 		tunnel.ephemeralFromCLI = ephemeral
 		tunnel.domainFromCLI = domain
@@ -1094,7 +640,7 @@ func applyTunnelCLIUnits(parsed *kong.Context, flags *cli) {
 			tunnel.PublicURL = ""
 		}
 	}
-	switch canonicalParsedCommand(parsed.Command()) {
+	switch commandID(parsed) {
 	case "publish <service-or-target>":
 		apply(&flags.Publish.tunnelFlags)
 		flags.Publish.openFromCLI = open

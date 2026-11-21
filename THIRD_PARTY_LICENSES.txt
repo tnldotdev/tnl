@@ -177,18 +177,6 @@ Copyright (c) 2023, wlynxg
 License text: [BSD-3-Clause-5]
 
 --------------------------------------------------------------------------------
-Package: github.com/alecthomas/kong
-Version: v1.17.0
-License: MIT
-Source: https://pkg.go.dev/github.com/alecthomas/kong@v1.17.0?tab=licenses
-
-COPYING
-
-Copyright (C) 2018 Alec Thomas
-
-License text: [MIT-1]
-
---------------------------------------------------------------------------------
 Package: github.com/apapsch/go-jsonmerge/v2
 Version: v2.0.0
 License: MIT
@@ -1527,6 +1515,16 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+--------------------------------------------------------------------------------
+Package: github.com/spf13/cobra
+Version: v1.10.2
+License: Apache-2.0
+Source: https://pkg.go.dev/github.com/spf13/cobra@v1.10.2?tab=licenses
+
+LICENSE.txt
+
+License text: [Apache-2.0]
 
 --------------------------------------------------------------------------------
 Package: github.com/spf13/pflag

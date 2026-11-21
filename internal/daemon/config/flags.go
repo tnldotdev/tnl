@@ -5,25 +5,22 @@ package config
 import (
 	"strings"
 
-	"github.com/alecthomas/kong"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"github.com/tnldotdev/tnl/internal/cliflags"
 )
 
 func Parse(args []string) (Config, error) {
-	type arguments Config
-	var flags arguments
-	parser, err := kong.New(&flags, kong.Name("tnld"), kong.Description("tnl server."))
-	if err != nil {
+	var settings Config
+	cmd := &cobra.Command{Use: "tnld"}
+	cliflags.Bind(cmd, &settings, false)
+	if err := cmd.ParseFlags(args); err != nil {
 		return Config{}, err
 	}
-	parsed, err := parser.Parse(args)
-	if err != nil {
+	if err := cmd.ValidateArgs(cmd.Flags().Args()); err != nil {
 		return Config{}, err
 	}
 	supplied := map[string]bool{}
-	for _, element := range parsed.Path {
-		if element.Flag != nil && !element.Resolved {
-			supplied[strings.ReplaceAll(element.Flag.Name, "-", "_")] = true
-		}
-	}
-	return ResolveExplicit(Config(flags), supplied)
+	cmd.Flags().Visit(func(f *pflag.Flag) { supplied[strings.ReplaceAll(f.Name, "-", "_")] = true })
+	return ResolveExplicit(settings, supplied)
 }

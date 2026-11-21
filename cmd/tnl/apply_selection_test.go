@@ -1,11 +1,10 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/alecthomas/kong"
 )
 
 func TestDeploymentCommandsLoadOnlyTheSelectedProjectBindings(t *testing.T) {
@@ -22,11 +21,8 @@ func TestDeploymentCommandsLoadOnlyTheSelectedProjectBindings(t *testing.T) {
 		{"--config", path, "status", "--deployment", "production"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(args); err != nil {
+		parser := commandForTest(&flags, io.Discard)
+		if _, err := parser(args); err != nil {
 			t.Fatal(err)
 		}
 		project, err := loadProjectConfigurationWithSalt(t.Context(), flags, [32]byte{})

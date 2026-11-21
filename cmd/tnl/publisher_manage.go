@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+	"github.com/tnldotdev/tnl/internal/client/detached"
+
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -22,17 +25,14 @@ import (
 )
 
 type publisherCommand struct {
-	Serve     publisherServeCommand     `cmd:"" help:"Run this replica's assigned services with a saved or portable deployment identity."`
-	Current   publisherCurrentCommand   `cmd:"" help:"Show the selected local or file-backed publisher without exposing its key."`
-	Setup     publisherSetupCommand     `cmd:"" help:"Approve scoped deployment publisher enrollment or set up a local publisher."`
-	Provision publisherProvisionCommand `cmd:"" help:"Write a portable scoped publisher file for deployment."`
-	Enroll    publisherEnrollCommand    `cmd:"" help:"Issue one-use enrollment for an exact service or HTTP namespace."`
-	List      publisherListCommand      `cmd:"" help:"List publisher identities and grants."`
-	Revoke    publisherRevokeCommand    `cmd:"" help:"Revoke a publisher identity."`
-	Grant     struct {
-		Add    publisherGrantAddCommand    `cmd:"" help:"Add an exact service or HTTP namespace grant."`
-		Revoke publisherGrantRevokeCommand `cmd:"" help:"Revoke one publisher grant."`
-	} `cmd:"" help:"Manage publisher grants."`
+	Serve     publisherServeCommand
+	Current   publisherCurrentCommand
+	Setup     publisherSetupCommand
+	Provision publisherProvisionCommand
+	Enroll    publisherEnrollCommand
+	List      publisherListCommand
+	Revoke    publisherRevokeCommand
+	Grant     grantSubcommands
 }
 type publisherSetupCommand struct {
 	scopedTeamFlags `embed:""`
@@ -503,4 +503,119 @@ func runPublisherGrantRevoke(ctx context.Context, f publisherGrantRevokeCommand,
 		return err
 	}
 	return writeHumanFrame(output, "tnl publisher grant revoke", "revoked", "active runs stop on heartbeat", clioutput.Fields(clioutput.Field{Label: "publisher", Value: f.PublisherIdentityID}, clioutput.Field{Label: "grant", Value: f.GrantID}))
+}
+
+type grantSubcommands struct {
+	Add    publisherGrantAddCommand
+	Revoke publisherGrantRevokeCommand
+}
+
+func (a *commandApp) newPublisherCommand() *cobra.Command {
+	f := a.flags
+	cPublisher := &cobra.Command{Use: "publisher", Short: "Enroll publishers and manage their scoped grants.", GroupID: "manage"}
+	cPublisherServe := &cobra.Command{Use: "serve", Short: "Run this replica's assigned services with a saved or portable deployment identity."}
+	a.leaf(cPublisherServe, &f.Publisher.Serve, func(call commandCall) error {
+		return a.servePublisher(call)
+	})
+	cPublisher.AddCommand(cPublisherServe)
+	cPublisherCurrent := &cobra.Command{Use: "current", Short: "Show the selected local or file-backed publisher without exposing its key."}
+	a.leaf(cPublisherCurrent, &f.Publisher.Current, func(call commandCall) error {
+		return runPublisherCurrent(call.ctx, f.Publisher.Current, a.out)
+	})
+	cPublisher.AddCommand(cPublisherCurrent)
+	cPublisherSetup := &cobra.Command{Use: "setup", Short: "Approve scoped deployment publisher enrollment or set up a local publisher."}
+	a.leaf(cPublisherSetup, &f.Publisher.Setup, func(call commandCall) error {
+		return runPublisherSetup(call.ctx, f.Publisher.Setup, call.project, a.out, a.errOut)
+	})
+	cPublisher.AddCommand(cPublisherSetup)
+	cPublisherProvision := &cobra.Command{Use: "provision", Short: "Write a portable scoped publisher file for deployment."}
+	a.leaf(cPublisherProvision, &f.Publisher.Provision, func(call commandCall) error {
+		return runPublisherProvision(call.ctx, f.Publisher.Provision, call.project, a.out, a.errOut)
+	})
+	bind := cPublisherProvision.Args
+	cPublisherProvision.Args = func(cmd *cobra.Command, args []string) error {
+		if err := bind(cmd, args); err != nil {
+			return err
+		}
+		return f.Publisher.Provision.Validate()
+	}
+	cPublisher.AddCommand(cPublisherProvision)
+	cPublisherEnroll := &cobra.Command{Use: "enroll", Short: "Issue one-use enrollment for an exact service or HTTP namespace."}
+	a.leaf(cPublisherEnroll, &f.Publisher.Enroll, func(call commandCall) error {
+		return runPublisherEnroll(call.ctx, f.Publisher.Enroll, a.out, a.errOut)
+	})
+	cPublisher.AddCommand(cPublisherEnroll)
+	cPublisherList := &cobra.Command{Use: "list", Short: "List publisher identities and grants."}
+	a.leaf(cPublisherList, &f.Publisher.List, func(call commandCall) error {
+		return runPublisherList(call.ctx, f.Publisher.List, call.project, a.out, a.errOut)
+	})
+	cPublisher.AddCommand(cPublisherList)
+	cPublisherRevoke := &cobra.Command{Use: "revoke", Short: "Revoke a publisher identity."}
+	a.leaf(cPublisherRevoke, &f.Publisher.Revoke, func(call commandCall) error {
+		return runPublisherRevoke(call.ctx, f.Publisher.Revoke, call.project, a.out, a.errOut)
+	})
+	cPublisher.AddCommand(cPublisherRevoke)
+	cPublisherGrant := &cobra.Command{Use: "grant", Short: "Manage publisher grants."}
+	cPublisherGrantAdd := &cobra.Command{Use: "add", Short: "Add an exact service or HTTP namespace grant."}
+	a.leaf(cPublisherGrantAdd, &f.Publisher.Grant.Add, func(call commandCall) error {
+		return runPublisherGrantAdd(call.ctx, f.Publisher.Grant.Add, a.out, a.errOut)
+	})
+	cPublisherGrant.AddCommand(cPublisherGrantAdd)
+	cPublisherGrantRevoke := &cobra.Command{Use: "revoke", Short: "Revoke one publisher grant."}
+	a.leaf(cPublisherGrantRevoke, &f.Publisher.Grant.Revoke, func(call commandCall) error {
+		return runPublisherGrantRevoke(call.ctx, f.Publisher.Grant.Revoke, a.out, a.errOut)
+	})
+	cPublisherGrant.AddCommand(cPublisherGrantRevoke)
+	cPublisher.AddCommand(cPublisherGrant)
+	return cPublisher
+}
+
+func (a *commandApp) servePublisher(call commandCall) error {
+	ctx, flags := call.ctx, a.flags
+	serve := &flags.Publisher.Serve
+	if serve.fixedList() {
+		return runFixedDeploymentRuntime(ctx, *serve, a.errOut)
+	}
+	if err := validatePublisherServe(*serve); err != nil {
+		return err
+	}
+	if serve.Install {
+		options, err := (systemStateFlags{SystemStateDir: serve.SystemStateDir}).options()
+		if err != nil {
+			return err
+		}
+		if err := requireInstalledService(ctx, options, nil); err != nil {
+			return err
+		}
+	}
+	if serve.Detach {
+		if serve.EnrollmentKey == "-" {
+			return publisherCLIError("--detach cannot read an enrollment key from stdin; enroll this instance in the foreground first")
+		}
+		// the owning child consumes the injected secret before loading project
+		// configuration; clear the launching process's copy after handoff too.
+		defer os.Unsetenv("TNL_DEPLOYMENT_IDENTITY")
+		return detachPublish(ctx, a.argv, serve.StateDir, a.out, "tnl publisher serve")
+	}
+	if err := prepareDeploymentIdentity(serve); err != nil {
+		return err
+	}
+	if serve.DetachedChild != "" {
+		root, err := clientStateRoot(serve.StateDir)
+		if err != nil {
+			return err
+		}
+		var cleanup func()
+		ctx, cleanup, err = detached.Serve(ctx, root, serve.DetachedChild)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+	}
+	project, err := a.loadCommandProject(ctx, call.command)
+	if err != nil {
+		return err
+	}
+	call.started()
+	return runPublisherServe(ctx, *serve, project, a.out, a.errOut)
 }

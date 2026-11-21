@@ -1,9 +1,9 @@
 package main
 
 import (
+	"io"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -58,11 +58,8 @@ func TestRemovedSSHAndPublicDatabaseCommandsAreRejected(t *testing.T) {
 		{"url", "certificate", "db.example", "--directory", "/tmp/visitor"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(args); err == nil {
+		parser := commandForTest(&flags, io.Discard)
+		if _, err := parser(args); err == nil {
 			t.Fatalf("removed command accepted: %v", args)
 		}
 	}

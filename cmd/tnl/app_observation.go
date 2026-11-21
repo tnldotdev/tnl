@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -322,4 +324,22 @@ func writeAppWatchEvent(output io.Writer, mode string, event publisherapp.Event)
 		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "tunnel", Value: event.Publication.ID}, clioutput.Field{Label: "state", Value: string(event.Publication.State)}, clioutput.Field{Label: "public URL", Value: event.Publication.PublicURL}))
 	}
 	return writeHumanFrame(output, "tnl watch", event.Type, "", blocks...)
+}
+
+func (a *commandApp) newWaitCommand() *cobra.Command {
+	f := a.flags
+	cWait := &cobra.Command{Use: "wait", Short: "Wait for fresh public readiness checks of configured services.", GroupID: "start"}
+	a.leaf(cWait, &f.Wait, func(call commandCall) error {
+		return runAppObservation(call.ctx, *f, "wait", a.out)
+	})
+	return cWait
+}
+
+func (a *commandApp) newWatchCommand() *cobra.Command {
+	f := a.flags
+	cWatch := &cobra.Command{Use: "watch", Short: "Follow local app and TCP publication events.", GroupID: "start"}
+	a.leaf(cWatch, &f.Watch, func(call commandCall) error {
+		return runAppObservation(call.ctx, *f, "watch", a.out)
+	})
+	return cWatch
 }

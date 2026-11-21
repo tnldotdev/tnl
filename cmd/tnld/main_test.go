@@ -50,12 +50,8 @@ tnld:
 func TestHelpShowsOnlyTheSelectedRolesSettings(t *testing.T) {
 	var flags tnldCLI
 	var output bytes.Buffer
-	parser, err := newTNLDParser(&flags, &output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parser.Exit = func(int) {}
-	if _, err := parser.Parse([]string{"serve", "--role=ingress", "--help"}); err != nil {
+	parser := parseServerForTest(&flags, &output)
+	if _, err := parser([]string{"serve", "--role=ingress", "--help"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, flag := range []string{"--ingress-id", "--control-hostname", "--visitor-connection-limit"} {
@@ -205,11 +201,8 @@ func TestParserRejectsRemovedServeFlags(t *testing.T) {
 		"--reserved-route-name", "--tunnel-fallback-delay",
 	} {
 		var flags tnldCLI
-		parser, err := newTNLDParser(&flags, new(bytes.Buffer))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse([]string{"serve", flag, "value"}); err == nil {
+		parser := parseServerForTest(&flags, new(bytes.Buffer))
+		if _, err := parser([]string{"serve", flag, "value"}); err == nil {
 			t.Fatalf("removed flag %q was accepted", flag)
 		}
 	}
@@ -217,15 +210,12 @@ func TestParserRejectsRemovedServeFlags(t *testing.T) {
 
 func TestParserAcceptsServeValuesBeforeFileResolution(t *testing.T) {
 	var flags tnldCLI
-	parser, err := newTNLDParser(&flags, new(bytes.Buffer))
+	parser := parseServerForTest(&flags, new(bytes.Buffer))
+	parsed, err := parser([]string{"serve", "--role", "relay", "--control-hostname", "control.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parser.Parse([]string{"serve", "--role", "relay", "--control-hostname", "control.example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if parsed.Command() != "serve" || flags.Serve.Values.Role != daemonconfig.RoleRelay || flags.Serve.Values.ControlHostname != "control.example.com" {
+	if parsed.Name() != "serve" || flags.Serve.Values.Role != daemonconfig.RoleRelay || flags.Serve.Values.ControlHostname != "control.example.com" {
 		t.Fatalf("serve values = %#v", flags.Serve.Values)
 	}
 }

@@ -6,6 +6,10 @@ import (
 	"io"
 	"os"
 
+	"github.com/spf13/cobra"
+	"github.com/tnldotdev/tnl/internal/client/detached"
+	"golang.org/x/term"
+
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
@@ -39,8 +43,8 @@ type publishCommand struct {
 	selectedTeam      string
 	projectRoot       string
 	demoNameFromCLI   bool
-	Service           string `kong:"-"`
-	TelemetryDisabled bool   `kong:"-"`
+	Service           string
+	TelemetryDisabled bool
 	telemetry         *clienttelemetry.Collector
 	project           projectConfiguration
 	service           bool
@@ -174,4 +178,84 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 		ConfigureBrowser: func(automated bool) { output.openURL = browserOpener(ctx, flags.Open, automated) },
 		Demo:             output.setDemo, GuestDemo: output.setGuestDemo, GuestShare: output.setGuestShare, DemoPing: output.demoPing, Logf: output.logf,
 	}
+}
+
+func (a *commandApp) newPublishCommand() *cobra.Command {
+	f := a.flags
+	cPublish := &cobra.Command{Use: "publish", Short: "Publish a local service or try the built-in demo.", GroupID: "start"}
+	a.leaf(cPublish, &f.Publish, func(call commandCall) error {
+		return a.publish(call)
+	})
+	return cPublish
+}
+
+func (a *commandApp) publish(call commandCall) error {
+	ctx, flags := call.ctx, a.flags
+	if flags.Publish.Foreground && (flags.Publish.Install || flags.Publish.Detach) {
+		return publisherCLIError("select only one of --foreground, --detach, or --install")
+	}
+	if flags.Publish.Detach && flags.Publish.Install {
+		return publisherCLIError("--install and --detach cannot be combined")
+	}
+	if flags.Publish.Detach {
+		if flags.Publish.EnrollmentKey == "-" {
+			return publisherCLIError("--detach cannot read an enrollment key from stdin; use --publisher-identity or --publisher-credential-file")
+		}
+		if flags.Publish.Output != "human" {
+			return publisherCLIError("--detach requires --output=human")
+		}
+		if flags.Publish.System || flags.Publish.ServiceName != "" || flags.Publish.SystemStateDir != "" || flags.Publish.ServerCAFile != "" {
+			return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
+		}
+		return detachPublish(ctx, a.argv, flags.Publish.StateDir, a.out, "tnl publish")
+	}
+	if flags.Publish.DetachedChild != "" {
+		root, err := clientStateRoot(flags.Publish.StateDir)
+		if err != nil {
+			return err
+		}
+		var cleanup func()
+		ctx, cleanup, err = detached.Serve(ctx, root, flags.Publish.DetachedChild)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+	}
+	if flags.Publish.Demo {
+		if err := prepareDemoPublish(&flags.Publish, flags.ConfigPath, term.IsTerminal(int(os.Stdin.Fd()))); err != nil {
+			return err
+		}
+	} else if err := a.preparePublish(ctx, call.command); err != nil {
+		return err
+	}
+	call.started()
+	return runPublish(ctx, flags.Publish, a.out, a.errOut)
+}
+
+func (a *commandApp) preparePublish(ctx context.Context, cmd *cobra.Command) error {
+	flags := a.flags
+	if flags.Publish.Install {
+		selection, _, err := selectProjectConfiguration(ctx, *flags)
+		if err != nil || selection.Path == "" {
+			return err
+		}
+	} else if flags.Publish.PublisherCredentialFile != "" {
+		server, err := invocation.PublisherCredentialFileServer(flags.Publish.ServerURL, flags.Publish.PublisherCredentialFile)
+		if err != nil {
+			return err
+		}
+		flags.Publish.ServerURL = server
+	}
+	root, err := commandStateRoot(cmd)
+	if err != nil {
+		return err
+	}
+	project, err := loadProjectConfiguration(ctx, *flags, root)
+	if err != nil {
+		return err
+	}
+	if flags.Publish.Install {
+		return project.applyInstalledService(&flags.Publish)
+	}
+	return project.applyPublish(&flags.Publish)
 }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	projectinit "github.com/tnldotdev/tnl/internal/client/project/init"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"golang.org/x/term"
@@ -71,4 +73,13 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 		footer = "complete the actions above, then start your app normally"
 	}
 	return writeHumanFrame(stdout, "tnl init", state, footer, blocks...)
+}
+
+func (a *commandApp) newInitCommand() *cobra.Command {
+	f := a.flags
+	cInit := &cobra.Command{Use: "init", Short: "Set up tnl for the current project.", GroupID: "start"}
+	a.leaf(cInit, &f.Init, func(call commandCall) error {
+		return runInit(call.ctx, f.Init, a.out, a.errOut)
+	})
+	return cInit
 }

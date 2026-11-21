@@ -6,6 +6,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -15,11 +17,11 @@ import (
 )
 
 type domainCommand struct {
-	Claim   domainClaimCommand   `cmd:"" help:"Claim a team domain; use tnl domain status to check its DNS records."`
-	Default domainDefaultCommand `cmd:"" help:"Set the selected team's default domain."`
-	List    domainListCommand    `cmd:"" help:"List domains available to the selected team."`
-	Status  domainStatusCommand  `cmd:"" help:"Show DNS setup for one team domain by name or ID."`
-	Release domainReleaseCommand `cmd:"" help:"Release a custom domain."`
+	Claim   domainClaimCommand
+	Default domainDefaultCommand
+	List    domainListCommand
+	Status  domainStatusCommand
+	Release domainReleaseCommand
 }
 
 type domainClaimCommand struct {
@@ -299,4 +301,35 @@ func mutateDomain(ctx context.Context, flags remoteFlags, command, value string,
 		return err
 	}
 	return mutate(session, current, domain)
+}
+
+func (a *commandApp) newDomainCommand() *cobra.Command {
+	f := a.flags
+	cDomain := &cobra.Command{Use: "domain", Short: "Manage team domains.", GroupID: "manage"}
+	cDomainClaim := &cobra.Command{Use: "claim", Short: "Claim a team domain; use tnl domain status to check its DNS records."}
+	a.leaf(cDomainClaim, &f.Domain.Claim, func(call commandCall) error {
+		return runDomainClaim(call.ctx, f.Domain.Claim, a.out, a.errOut)
+	})
+	cDomain.AddCommand(cDomainClaim)
+	cDomainDefault := &cobra.Command{Use: "default", Short: "Set the selected team's default domain."}
+	a.leaf(cDomainDefault, &f.Domain.Default, func(call commandCall) error {
+		return runDomainDefault(call.ctx, f.Domain.Default, a.out, a.errOut)
+	})
+	cDomain.AddCommand(cDomainDefault)
+	cDomainList := &cobra.Command{Use: "list", Short: "List domains available to the selected team."}
+	a.leaf(cDomainList, &f.Domain.List, func(call commandCall) error {
+		return runDomainList(call.ctx, f.Domain.List, a.out, a.errOut)
+	})
+	cDomain.AddCommand(cDomainList)
+	cDomainStatus := &cobra.Command{Use: "status", Short: "Show DNS setup for one team domain by name or ID."}
+	a.leaf(cDomainStatus, &f.Domain.Status, func(call commandCall) error {
+		return runDomainStatus(call.ctx, f.Domain.Status, a.out, a.errOut)
+	})
+	cDomain.AddCommand(cDomainStatus)
+	cDomainRelease := &cobra.Command{Use: "release", Short: "Release a custom domain."}
+	a.leaf(cDomainRelease, &f.Domain.Release, func(call commandCall) error {
+		return runDomainRelease(call.ctx, f.Domain.Release, a.out, a.errOut)
+	})
+	cDomain.AddCommand(cDomainRelease)
+	return cDomain
 }

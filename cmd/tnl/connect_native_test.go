@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connector"
 )
@@ -13,12 +13,9 @@ import (
 func TestConnectNamesAndRemovedChoices(t *testing.T) {
 	for _, name := range []string{"orders", "inventory", "profile", "setup", "shell"} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := parser.Parse([]string{"connect", name, "--output=json"})
-		if err != nil || parsed.Command() != "connect start <name>" || flags.Connect.Start.Name != name {
+		parser := commandForTest(&flags, io.Discard)
+		parsed, err := parser([]string{"connect", name, "--output=json"})
+		if err != nil || commandID(parsed) != "connect start <name>" || flags.Connect.Start.Name != name {
 			t.Fatal("service name became a command", name, err)
 		}
 	}
@@ -28,11 +25,8 @@ func TestConnectNamesAndRemovedChoices(t *testing.T) {
 		{"connect", "stop", "--stdio"}, {"connect", "start", "--stdio"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(args); err == nil {
+		parser := commandForTest(&flags, io.Discard)
+		if _, err := parser(args); err == nil {
 			t.Fatal("obsolete choice or ambiguous command accepted", args)
 		}
 	}

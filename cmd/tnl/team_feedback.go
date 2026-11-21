@@ -10,8 +10,8 @@ import (
 )
 
 type teamFeedbackCommand struct {
-	Get teamFeedbackGetCommand `cmd:"" help:"Read the feedback author policy."`
-	Set teamFeedbackSetCommand `cmd:"" help:"Change who may write feedback."`
+	Get teamFeedbackGetCommand
+	Set teamFeedbackSetCommand
 }
 type teamFeedbackGetCommand struct {
 	scopedTeamFlags `embed:""`

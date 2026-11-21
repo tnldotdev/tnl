@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
@@ -16,8 +18,8 @@ import (
 )
 
 type inspectCommand struct {
-	List inspectListCommand `cmd:"" help:"List recent local HTTP activity for this project."`
-	Show inspectShowCommand `cmd:"" help:"Show one locally recorded inspection."`
+	List inspectListCommand
+	Show inspectShowCommand
 }
 
 type inspectListCommand struct {
@@ -288,4 +290,28 @@ func validInspectionMethod(method string) bool {
 		}
 	}
 	return true
+}
+
+func (a *commandApp) newInspectCommand() *cobra.Command {
+	f := a.flags
+	cInspect := &cobra.Command{Use: "inspect", Short: "Inspect recent local HTTP activity.", GroupID: "manage"}
+	cInspectList := &cobra.Command{Use: "list", Short: "List recent local HTTP activity for this project."}
+	a.leaf(cInspectList, &f.Inspect.List, func(call commandCall) error {
+		root, err := projectRoot(call.ctx, *f)
+		if err != nil {
+			return err
+		}
+		return runInspectList(call.ctx, f.Inspect.List, root, a.out)
+	})
+	cInspect.AddCommand(cInspectList)
+	cInspectShow := &cobra.Command{Use: "show", Short: "Show one locally recorded inspection."}
+	a.leaf(cInspectShow, &f.Inspect.Show, func(call commandCall) error {
+		root, err := projectRoot(call.ctx, *f)
+		if err != nil {
+			return err
+		}
+		return runInspectShow(call.ctx, f.Inspect.Show, root, a.out)
+	})
+	cInspect.AddCommand(cInspectShow)
+	return cInspect
 }

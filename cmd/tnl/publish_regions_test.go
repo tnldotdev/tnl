@@ -6,7 +6,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/region"
 )
@@ -18,11 +17,8 @@ func TestPublishProviderRegionFlags(t *testing.T) {
 	} {
 		t.Setenv("TNL_PREFERRED_REGIONS", "fly:sjc,aws:us-west-1")
 		var root cli
-		parser, err := kong.New(&root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(args); err != nil {
+		parser := commandForTest(&root, io.Discard)
+		if _, err := parser(args); err != nil {
 			t.Fatal(err)
 		}
 		options := publicOptions(root.Publish)

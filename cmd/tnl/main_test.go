@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alecthomas/kong"
+	"github.com/spf13/cobra"
+
 	"github.com/tnldotdev/tnl/internal/buildinfo"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
@@ -28,14 +29,16 @@ import (
 
 func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
+	parser := commandForTest(&flags, io.Discard)
 	commands := map[string]bool{}
-	for _, command := range parser.Model.Leaves(true) {
-		commands[command.Path()] = true
+	var visit func(*cobra.Command)
+	visit = func(cmd *cobra.Command) {
+		commands[strings.TrimPrefix(cmd.CommandPath(), "tnl ")] = true
+		for _, sub := range cmd.Commands() {
+			visit(sub)
+		}
 	}
+	visit((&commandApp{flags: &flags, out: io.Discard, errOut: io.Discard}).root())
 	for _, command := range []string{
 		"init", "publish", "status", "wait", "watch", "ping", "auth status", "auth login start", "auth login wait", "auth login inspect", "auth login cancel", "auth logout",
 		"check", "generate", "telemetry on", "telemetry off", "telemetry status",
@@ -55,20 +58,20 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	}
 	// service serve and runtime commands are implementation interfaces, not public help.
 	for _, args := range [][]string{{"service", "serve"}, {"runtime", "serve", "--directory", t.TempDir()}, {"runtime", "owner-endpoint", "--directory", t.TempDir()}} {
-		if _, err := parser.Parse(args); err != nil {
+		if _, err := parser(args); err != nil {
 			t.Fatalf("hidden %v command cannot be invoked: %v", args, err)
 		}
 	}
-	if _, err := parser.Parse([]string{"host", "list"}); err == nil {
+	if _, err := parser([]string{"host", "list"}); err == nil {
 		t.Fatal("obsolete host command was accepted")
 	}
-	if _, err := parser.Parse([]string{"route", "list"}); err == nil {
+	if _, err := parser([]string{"route", "list"}); err == nil {
 		t.Fatal("obsolete route command was accepted")
 	}
-	if _, err := parser.Parse([]string{"compose", "up"}); err == nil {
+	if _, err := parser([]string{"compose", "up"}); err == nil {
 		t.Fatal("compose lifecycle command was accepted")
 	}
-	if _, err := parser.Parse([]string{"publish", "3000", "--bg"}); err == nil {
+	if _, err := parser([]string{"publish", "3000", "--bg"}); err == nil {
 		t.Fatal("obsolete --bg flag was accepted")
 	}
 }
@@ -102,11 +105,8 @@ func TestTeamScopedCommandsAcceptExplicitTeam(t *testing.T) {
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var flags cli
-			parser, err := kong.New(&flags)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := parser.Parse(append(args, "--team=studio")); err != nil {
+			parser := commandForTest(&flags, io.Discard)
+			if _, err := parser(append(args, "--team=studio")); err != nil {
 				t.Fatal(err)
 			}
 			// parsing --team must also accept the value as a command-scoped flag;
@@ -118,11 +118,8 @@ func TestTeamScopedCommandsAcceptExplicitTeam(t *testing.T) {
 func TestTeamEnvironmentSelectsDomainCommand(t *testing.T) {
 	t.Setenv("TNL_TEAM", "studio")
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"domain", "list"}); err != nil {
+	parser := commandForTest(&flags, io.Discard)
+	if _, err := parser([]string{"domain", "list"}); err != nil {
 		t.Fatal(err)
 	}
 	if selected := flags.Domain.List.selection().SelectedTeam; selected != "studio" {
@@ -133,11 +130,8 @@ func TestTeamEnvironmentSelectsDomainCommand(t *testing.T) {
 func TestTunnelHelpExplainsIPPolicyAndTeamSelection(t *testing.T) {
 	var flags cli
 	var output bytes.Buffer
-	parser, err := kong.New(&flags, kong.Name("tnl"), kong.Writers(&output, io.Discard), kong.Exit(func(int) {}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"publish", "--help"}); err != nil {
+	parser := commandForTest(&flags, &output)
+	if _, err := parser([]string{"publish", "--help"}); err != nil {
 		t.Fatal(err)
 	}
 	text := strings.Join(strings.Fields(output.String()), " ")
@@ -161,11 +155,8 @@ func TestUnknownFlagUsesParsedCommand(t *testing.T) {
 
 func TestTeamCommandsUseMemberSlugFlag(t *testing.T) {
 	var create cli
-	createParser, err := kong.New(&create)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := createParser.Parse([]string{"team", "create", "studio"}); err != nil || create.Team.Create.Name != "studio" {
+	createParser := commandForTest(&create, io.Discard)
+	if _, err := createParser([]string{"team", "create", "studio"}); err != nil || create.Team.Create.Name != "studio" {
 		t.Fatalf("team create studio: %q, %v", create.Team.Create.Name, err)
 	}
 	for _, test := range []struct {
@@ -186,11 +177,8 @@ func TestTeamCommandsUseMemberSlugFlag(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var flags cli
-			parser, err := kong.New(&flags)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := parser.Parse(test.args); err != nil {
+			parser := commandForTest(&flags, io.Discard)
+			if _, err := parser(test.args); err != nil {
 				t.Fatal(err)
 			}
 			if got := test.get(flags); got != "alice" {
@@ -200,11 +188,8 @@ func TestTeamCommandsUseMemberSlugFlag(t *testing.T) {
 	}
 
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parser.Parse([]string{"team", "create", "studio", "--slug", "another"}); err == nil {
+	parser := commandForTest(&flags, io.Discard)
+	if _, err := parser([]string{"team", "create", "studio", "--slug", "another"}); err == nil {
 		t.Fatal("obsolete team --slug flag was accepted")
 	}
 }
@@ -212,15 +197,12 @@ func TestTeamCommandsUseMemberSlugFlag(t *testing.T) {
 func TestPublishHostnameOptions(t *testing.T) {
 	t.Setenv("TNL_NAME", "env-name")
 	var flags cli
-	parser, err := kong.New(&flags)
+	parser := commandForTest(&flags, io.Discard)
+	parsed, err := parser([]string{"publish", "3000", "--public-url", "https://flag.example", "--name", "api"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parser.Parse([]string{"publish", "3000", "--public-url", "https://flag.example", "--name", "api"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if parsed.Command() != "publish <service-or-target>" || flags.Publish.PublicURL != "https://flag.example" || flags.Publish.Name != "api" {
+	if commandID(parsed) != "publish <service-or-target>" || flags.Publish.PublicURL != "https://flag.example" || flags.Publish.Name != "api" {
 		t.Fatalf("publish flags = %#v", flags.Publish)
 	}
 }
@@ -230,17 +212,14 @@ func TestPublishFromEnrollmentEnvironmentWithoutProjectConfig(t *testing.T) {
 	t.Setenv("TNL_PUBLIC_URL", "")
 	t.Setenv("TNL_ENROLL_KEY", "pen_0123456789abcdefghijkl.example")
 	var flags cli
-	parser, err := kong.New(&flags)
+	parser := commandForTest(&flags, io.Discard)
+	parsed, err := parser([]string{"publish"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parser.Parse([]string{"publish"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if canonicalParsedCommand(parsed.Command()) != "publish <service-or-target>" || flags.Publish.Target != "" ||
+	if commandID(parsed) != "publish <service-or-target>" || flags.Publish.Target != "" ||
 		flags.Publish.PublicURL != "" || flags.Publish.EnrollmentKey != "pen_0123456789abcdefghijkl.example" {
-		t.Fatalf("environment publish command %q = %#v", parsed.Command(), flags.Publish)
+		t.Fatalf("environment publish command %q = %#v", commandID(parsed), flags.Publish)
 	}
 	if err := (projectConfiguration{}).applyPublish(&flags.Publish); err != nil || flags.Publish.Name != "" {
 		t.Fatalf("publish without project configuration = %#v, %v", flags.Publish, err)
@@ -272,15 +251,12 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 		{[]string{"runtime", "owner-endpoint", "--directory", "/tmp/project"}, "runtime owner-endpoint"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		parsed, err := parser.Parse(test.args)
+		parser := commandForTest(&flags, io.Discard)
+		parsed, err := parser(test.args)
 		if err != nil {
 			t.Fatalf("parse command %v: %v", test.args, err)
 		}
-		if got := canonicalParsedCommand(parsed.Command()); got != test.want {
+		if got := commandID(parsed); got != test.want {
 			t.Fatalf("command %v = %q, want %q", test.args, got, test.want)
 		}
 	}
@@ -289,12 +265,9 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 	t.Setenv("TNL_NAME", "environment-name")
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
+	parser := commandForTest(&flags, io.Discard)
 	args := []string{"publish", "3000", "--public-url", "https://api.example", "--ip", "current"}
-	parsed, err := parser.Parse(args)
+	parsed, err := parser(args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,12 +280,9 @@ func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 
 func TestExplicitFalseTunnelFlagsOverrideProjectConfiguration(t *testing.T) {
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
+	parser := commandForTest(&flags, io.Discard)
 	args := []string{"publish", "3000", "--ephemeral=false"}
-	parsed, err := parser.Parse(args)
+	parsed, err := parser(args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,10 +335,6 @@ func TestBarePublishReachesCanonicalDispatch(t *testing.T) {
 	if reason, _, ok := failure.Describe(err); !ok || reason != failure.MissingTarget {
 		t.Fatalf("run failure reason = %q, %t", reason, ok)
 	}
-	var parseError *kong.ParseError
-	if errors.As(err, &parseError) {
-		t.Fatalf("bare publish returned parse error: %v", err)
-	}
 	if got, ok := clioutput.CommandOf(err); !ok || got != "tnl publish" {
 		t.Fatalf("command = %q, %t", got, ok)
 	}
@@ -380,11 +346,8 @@ func TestBarePublishReachesCanonicalDispatch(t *testing.T) {
 
 func TestDemoPublishUsesFreshEphemeralURLAndSkipsProject(t *testing.T) {
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := parser.Parse([]string{"publish", "--demo", "--open=false"})
+	parser := commandForTest(&flags, io.Discard)
+	parsed, err := parser([]string{"publish", "--demo", "--open=false"})
 	if err != nil {
 		t.Fatal(err)
 	}

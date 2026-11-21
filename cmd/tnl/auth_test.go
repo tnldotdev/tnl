@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -32,26 +31,20 @@ func TestAuthCommandParsing(t *testing.T) {
 	} {
 		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
 			var flags cli
-			parser, err := kong.New(&flags)
+			parser := commandForTest(&flags, io.Discard)
+			parsed, err := parser(test.args)
 			if err != nil {
 				t.Fatal(err)
 			}
-			parsed, err := parser.Parse(test.args)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := canonicalParsedCommand(parsed.Command()); got != test.command {
+			if got := commandID(parsed); got != test.command {
 				t.Fatalf("command = %q", got)
 			}
 		})
 	}
 	for _, old := range []string{"login", "logout", "auth login --pkce", "auth login --token", "auth login --no-open", "auth login --login-token"} {
 		var flags cli
-		parser, err := kong.New(&flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := parser.Parse(strings.Split(old, " ")); err == nil {
+		parser := commandForTest(&flags, io.Discard)
+		if _, err := parser(strings.Split(old, " ")); err == nil {
 			t.Fatalf("obsolete %s accepted", old)
 		}
 	}

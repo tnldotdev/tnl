@@ -13,8 +13,8 @@ import (
 )
 
 type urlAccessCommand struct {
-	Show urlAccessShowCommand `cmd:"" help:"Show the saved visitor access policy."`
-	Set  urlAccessSetCommand  `cmd:"" help:"Replace the complete visitor access policy, including its IP list, without stopping the publisher."`
+	Show urlAccessShowCommand
+	Set  urlAccessSetCommand
 }
 
 type urlAccessShowCommand struct {

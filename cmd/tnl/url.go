@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/spf13/cobra"
+
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -21,12 +23,12 @@ import (
 )
 
 type publicURLCommand struct {
-	List      publicURLListCommand      `cmd:"" help:"List public URLs you may visit; --team filters the results."`
-	Available urlAvailableCommand       `cmd:"" help:"List public URLs you may visit."`
-	Inventory publicURLInventoryCommand `cmd:"" help:"List public service endpoints owned by the selected team."`
-	Access    urlAccessCommand          `cmd:"" help:"Show or replace one HTTP service's visitor access policy."`
-	Update    publicURLUpdateCommand    `cmd:"" help:"Change an HTTP service target."`
-	Delete    publicURLDeleteCommand    `cmd:"" help:"Delete a service by ID or public address; use tnl url inventory to find it."`
+	List      publicURLListCommand
+	Available urlAvailableCommand
+	Inventory publicURLInventoryCommand
+	Access    urlAccessCommand
+	Update    publicURLUpdateCommand
+	Delete    publicURLDeleteCommand
 }
 
 type publicURLUpdateCommand struct {
@@ -272,4 +274,47 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	fields = append(fields, clioutput.Field{Label: "target", Value: target})
 	return writeHumanFrame(output, "tnl url update", "updated", "restart the publisher to use the new target",
 		clioutput.Fields(fields...))
+}
+
+func (a *commandApp) newURLCommand() *cobra.Command {
+	f := a.flags
+	cURL := &cobra.Command{Use: "url", Short: "Manage public URLs.", GroupID: "manage"}
+	cURLList := &cobra.Command{Use: "list", Short: "List public URLs you may visit; --team filters the results."}
+	a.leaf(cURLList, &f.URL.List, func(call commandCall) error {
+		return runURLList(call.ctx, f.URL.List, a.out, a.errOut)
+	})
+	cURL.AddCommand(cURLList)
+	cURLAvailable := &cobra.Command{Use: "available", Short: "List public URLs you may visit."}
+	a.leaf(cURLAvailable, &f.URL.Available, func(call commandCall) error {
+		return runURLAvailable(call.ctx, f.URL.Available, a.out, a.errOut)
+	})
+	cURL.AddCommand(cURLAvailable)
+	cURLInventory := &cobra.Command{Use: "inventory", Short: "List public service endpoints owned by the selected team."}
+	a.leaf(cURLInventory, &f.URL.Inventory, func(call commandCall) error {
+		return runURLInventory(call.ctx, f.URL.Inventory, a.out, a.errOut)
+	})
+	cURL.AddCommand(cURLInventory)
+	cURLAccess := &cobra.Command{Use: "access", Short: "Show or replace one HTTP service's visitor access policy."}
+	cURLAccessShow := &cobra.Command{Use: "show", Short: "Show the saved visitor access policy."}
+	a.leaf(cURLAccessShow, &f.URL.Access.Show, func(call commandCall) error {
+		return runURLAccessShow(call.ctx, f.URL.Access.Show, a.out, a.errOut)
+	})
+	cURLAccess.AddCommand(cURLAccessShow)
+	cURLAccessSet := &cobra.Command{Use: "set", Short: "Replace the complete visitor access policy, including its IP list, without stopping the publisher."}
+	a.leaf(cURLAccessSet, &f.URL.Access.Set, func(call commandCall) error {
+		return runURLAccessSet(call.ctx, f.URL.Access.Set, a.out, a.errOut)
+	})
+	cURLAccess.AddCommand(cURLAccessSet)
+	cURL.AddCommand(cURLAccess)
+	cURLUpdate := &cobra.Command{Use: "update", Short: "Change an HTTP service target."}
+	a.leaf(cURLUpdate, &f.URL.Update, func(call commandCall) error {
+		return runURLUpdate(call.ctx, f.URL.Update, a.out, a.errOut)
+	})
+	cURL.AddCommand(cURLUpdate)
+	cURLDelete := &cobra.Command{Use: "delete", Short: "Delete a service by ID or public address; use tnl url inventory to find it."}
+	a.leaf(cURLDelete, &f.URL.Delete, func(call commandCall) error {
+		return runURLDelete(call.ctx, f.URL.Delete, a.out, a.errOut)
+	})
+	cURL.AddCommand(cURLDelete)
+	return cURL
 }

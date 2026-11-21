@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+	"github.com/tnldotdev/tnl/internal/cliflags"
+
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -16,11 +19,11 @@ import (
 )
 
 type authCommand struct {
-	Credential authCredentialCommand `cmd:"" help:"Create a scoped signing credential for a deployment backend."`
-	Status     authStatusCommand     `cmd:"" help:"Show local credentials; --check silently validates with the server."`
-	Login      authLoginCommand      `cmd:"" help:"Log in explicitly, or manage a resumable login operation."`
-	Logout     logoutCommand         `cmd:"" help:"Cancel login operations and remove the saved control session."`
-	Browser    authBrowserCommand    `cmd:"" help:"Sign in to visit an HTTP public URL in a browser."`
+	Credential authCredentialCommand
+	Status     authStatusCommand
+	Login      authLoginCommand
+	Logout     logoutCommand
+	Browser    authBrowserCommand
 }
 
 type authStatusCommand struct {
@@ -40,11 +43,11 @@ type loginCommand struct {
 
 type authLoginCommand struct {
 	loginCommand `embed:""`
-	Run          struct{}             `cmd:"" default:"1" hidden:""`
-	Start        struct{}             `cmd:"" help:"Return a pending device login operation immediately."`
-	Wait         authOperationCommand `cmd:"" help:"Wait for approval and save credentials for this operation."`
-	Inspect      authOperationCommand `cmd:"" help:"Show the current state of a saved login attempt."`
-	Cancel       authOperationCommand `cmd:"" help:"Cancel this login attempt so it cannot save a session."`
+	Run          struct{}
+	Start        struct{}
+	Wait         authOperationCommand
+	Inspect      authOperationCommand
+	Cancel       authOperationCommand
 }
 
 type authOperationCommand struct {
@@ -233,4 +236,61 @@ func runLogout(ctx context.Context, flags logoutCommand, output io.Writer, diagn
 	return writeHumanFrame(output, "tnl auth logout", "logged out", "local session removed",
 		clioutput.Fields(clioutput.Field{Label: "control", Value: serverURL}),
 	)
+}
+
+func (a *commandApp) newAuthCommand() *cobra.Command {
+	f := a.flags
+	cAuth := &cobra.Command{Use: "auth", Short: "Inspect credentials and explicitly log in or out.", GroupID: "manage"}
+	cAuthCredential := &cobra.Command{Use: "credential", Short: "Create a scoped signing credential for a deployment backend."}
+	cAuthCredentialCreate := &cobra.Command{Use: "create", Short: "Approve independent deployment management, connection, and publication capabilities."}
+	a.leaf(cAuthCredentialCreate, &f.Auth.Credential.Create, func(call commandCall) error {
+		return runAuthCredentialCreate(call.ctx, f.Auth.Credential.Create, call.project, a.out, a.errOut)
+	})
+	cAuthCredential.AddCommand(cAuthCredentialCreate)
+	cAuth.AddCommand(cAuthCredential)
+	cAuthStatus := &cobra.Command{Use: "status", Short: "Show local credentials; --check silently validates with the server."}
+	a.leaf(cAuthStatus, &f.Auth.Status, func(call commandCall) error {
+		return runAuthStatus(call.ctx, f.Auth.Status, a.out, a.errOut)
+	})
+	cAuth.AddCommand(cAuthStatus)
+	cAuthLogin := &cobra.Command{Use: "login", Short: "Log in explicitly, or manage a resumable login operation."}
+	cliflags.Bind(cAuthLogin, &f.Auth.Login.loginCommand, true)
+	cAuthLoginRun := &cobra.Command{Use: "run", Short: "", Hidden: true}
+	a.leaf(cAuthLoginRun, &f.Auth.Login.Run, func(call commandCall) error {
+		return runLogin(call.ctx, f.Auth.Login.loginCommand, os.Stdin, a.out, a.errOut)
+	})
+	cAuthLogin.AddCommand(cAuthLoginRun)
+	a.useDefault(cAuthLogin, cAuthLoginRun)
+	cAuthLoginStart := &cobra.Command{Use: "start", Short: "Return a pending device login operation immediately."}
+	a.leaf(cAuthLoginStart, &f.Auth.Login.Start, func(call commandCall) error {
+		return runAuthLoginStart(call.ctx, f.Auth.Login.loginCommand, os.Stdin, a.out, a.errOut)
+	})
+	cAuthLogin.AddCommand(cAuthLoginStart)
+	cAuthLoginWait := &cobra.Command{Use: "wait", Short: "Wait for approval and save credentials for this operation."}
+	a.leaf(cAuthLoginWait, &f.Auth.Login.Wait, func(call commandCall) error {
+		return runAuthLoginOperation(call.ctx, f.Auth.Login.loginCommand, f.Auth.Login.Wait.ID, "wait", a.out, a.errOut)
+	})
+	cAuthLogin.AddCommand(cAuthLoginWait)
+	cAuthLoginInspect := &cobra.Command{Use: "inspect", Short: "Show the current state of a saved login attempt."}
+	a.leaf(cAuthLoginInspect, &f.Auth.Login.Inspect, func(call commandCall) error {
+		return runAuthLoginOperation(call.ctx, f.Auth.Login.loginCommand, f.Auth.Login.Inspect.ID, "inspect", a.out, a.errOut)
+	})
+	cAuthLogin.AddCommand(cAuthLoginInspect)
+	cAuthLoginCancel := &cobra.Command{Use: "cancel", Short: "Cancel this login attempt so it cannot save a session."}
+	a.leaf(cAuthLoginCancel, &f.Auth.Login.Cancel, func(call commandCall) error {
+		return runAuthLoginOperation(call.ctx, f.Auth.Login.loginCommand, f.Auth.Login.Cancel.ID, "cancel", a.out, a.errOut)
+	})
+	cAuthLogin.AddCommand(cAuthLoginCancel)
+	cAuth.AddCommand(cAuthLogin)
+	cAuthLogout := &cobra.Command{Use: "logout", Short: "Cancel login operations and remove the saved control session."}
+	a.leaf(cAuthLogout, &f.Auth.Logout, func(call commandCall) error {
+		return runLogout(call.ctx, f.Auth.Logout, a.out, a.errOut)
+	})
+	cAuth.AddCommand(cAuthLogout)
+	cAuthBrowser := &cobra.Command{Use: "browser", Short: "Sign in to visit an HTTP public URL in a browser."}
+	a.leaf(cAuthBrowser, &f.Auth.Browser, func(call commandCall) error {
+		return runAuthBrowser(call.ctx, f.Auth.Browser, a.out, a.errOut)
+	})
+	cAuth.AddCommand(cAuthBrowser)
+	return cAuth
 }

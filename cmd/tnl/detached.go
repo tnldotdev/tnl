@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/spf13/cobra"
+
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/connector"
@@ -16,8 +18,8 @@ import (
 )
 
 type detachedCommand struct {
-	List detachedListCommand `cmd:"" help:"List detached publications for this client state."`
-	Stop detachedStopCommand `cmd:"" help:"Stop a detached publication."`
+	List detachedListCommand
+	Stop detachedStopCommand
 }
 type detachedListCommand struct {
 	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
@@ -100,4 +102,20 @@ func runDetachedStop(flags detachedStopCommand, output io.Writer) error {
 		return err
 	}
 	return writeHumanFrame(output, "tnl detached stop", "stopping", "", clioutput.Fields(clioutput.Field{Label: "id", Value: flags.ID}))
+}
+
+func (a *commandApp) newDetachedCommand() *cobra.Command {
+	f := a.flags
+	cDetached := &cobra.Command{Use: "detached", Short: "Inspect and stop detached publications.", GroupID: "operate"}
+	cDetachedList := &cobra.Command{Use: "list", Short: "List detached publications for this client state."}
+	a.leaf(cDetachedList, &f.Detached.List, func(call commandCall) error {
+		return runDetachedList(f.Detached.List, a.out)
+	})
+	cDetached.AddCommand(cDetachedList)
+	cDetachedStop := &cobra.Command{Use: "stop", Short: "Stop a detached publication."}
+	a.leaf(cDetachedStop, &f.Detached.Stop, func(call commandCall) error {
+		return runDetachedStop(f.Detached.Stop, a.out)
+	})
+	cDetached.AddCommand(cDetachedStop)
+	return cDetached
 }

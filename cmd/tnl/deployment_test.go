@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alecthomas/kong"
 	"github.com/tnldotdev/tnl/internal/failure"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -20,23 +19,20 @@ func TestDeploymentCommandsCaptureExplicitProjectAndTeam(t *testing.T) {
 		{"deployment", "delete", "production"},
 	} {
 		var flags cli
-		parser, err := kong.New(&flags, kong.Writers(io.Discard, io.Discard))
-		if err != nil {
-			t.Fatal(err)
-		}
+		parser := commandForTest(&flags, io.Discard)
 		args = append(args, "--project-key", "shop", "--team", "acme", "--output", "json")
-		parsed, err := parser.Parse(args)
+		parsed, err := parser(args)
 		if err != nil {
 			t.Fatal(err)
 		}
-		selected := selectedDeploymentFlags(parsed.Command(), &flags)
+		selected := selectedDeploymentFlags(commandID(parsed), &flags)
 		if selected == nil || selected.ProjectKey != "shop" || selected.Team != "acme" || selected.Output != statusOutputJSON {
 			t.Fatal("deployment selection was lost")
 		}
 		configured := "project-team"
 		project := projectConfiguration{}
 		project.Config.Team = &configured
-		if err = applyProjectCommandContext(parsed.Command(), project, &flags); err != nil {
+		if err = applyProjectCommandContext(commandID(parsed), project, &flags); err != nil {
 			t.Fatal(err)
 		}
 		if selection := selected.selection(); selection.SelectedTeam != "acme" || selection.ProjectTeam != configured {

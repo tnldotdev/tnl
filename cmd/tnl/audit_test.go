@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alecthomas/kong"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -31,12 +30,9 @@ func auditEvent(cursor int64) controlv1.ServiceAuditEvent {
 
 func TestAuditListParsesRequestedWorkflowAndProjectTeam(t *testing.T) {
 	var flags cli
-	parser, err := kong.New(&flags)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := parser.Parse([]string{"audit", "list", "--team", "shop", "--service", "eks-api", "--since", "24h", "--output", "json"})
-	if err != nil || parsed.Command() != "audit list" {
+	parser := commandForTest(&flags, io.Discard)
+	parsed, err := parser([]string{"audit", "list", "--team", "shop", "--service", "eks-api", "--since", "24h", "--output", "json"})
+	if err != nil || commandID(parsed) != "audit list" {
 		t.Fatalf("audit command: %v", err)
 	}
 	if flags.Audit.List.Team != "shop" || flags.Audit.List.Service != "eks-api" || flags.Audit.List.Since != "24h" || flags.Audit.List.Output != "json" || flags.Audit.List.Limit != 100 {
