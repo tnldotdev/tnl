@@ -15,6 +15,10 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 )
 
+func (w *ServiceWorker) processOne(ctx context.Context) (bool, error) {
+	return w.attempt(ctx, func(bool) {})
+}
+
 func TestServiceWorkerAdvancesExactDNSOrder(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	const hostname = "route.example.test"

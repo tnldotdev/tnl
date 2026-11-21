@@ -83,7 +83,7 @@ func TestCertificateAttemptDeadlineReportsAndRetriesWithLiveParent(t *testing.T)
 					t.Fatal(err)
 				}
 				worker.client = factory
-				if err := worker.Run(ctx); err != nil {
+				if err := worker.Run(ctx, NewServiceClaimQueue()); err != nil {
 					t.Fatal(err)
 				}
 				if claims != 2 || store.saves != 1 || store.saved.State != "authorizing" {
@@ -136,7 +136,7 @@ func TestCertificateLifetimeShutdownDoesNotReportAttemptFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			worker.client = func(controlstate.ACMEAccount) (acmeAPI, error) { return api, nil }
-			if err := worker.Run(ctx); err != nil {
+			if err := worker.Run(ctx, NewServiceClaimQueue()); err != nil {
 				t.Fatal(err)
 			}
 			if api.calls != 1 || record.Logs() != "" {

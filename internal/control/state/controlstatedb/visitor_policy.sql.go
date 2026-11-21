@@ -11,6 +11,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const hasVisitorPolicyRegisteredKeyCandidates = `-- name: HasVisitorPolicyRegisteredKeyCandidates :one
+SELECT EXISTS (
+    SELECT 1
+    FROM control.applied_project_services binding
+    JOIN control.deployment_management_services selected ON selected.team_id=binding.team_id AND selected.project_key=binding.project_key AND selected.service=binding.service AND selected.capability='connect' AND selected.revoked_at IS NULL
+    WHERE binding.service_id=$1::text
+)
+`
+
+func (q *Queries) HasVisitorPolicyRegisteredKeyCandidates(ctx context.Context, serviceID string) (bool, error) {
+	row := q.db.QueryRow(ctx, hasVisitorPolicyRegisteredKeyCandidates, serviceID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const readVisitorPolicyEvents = `-- name: ReadVisitorPolicyEvents :many
 SELECT revision,changed_at FROM control.visitor_policy_events
 WHERE resource_id=$1 AND revision>$2
@@ -37,6 +53,54 @@ func (q *Queries) ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPo
 	for rows.Next() {
 		var i ReadVisitorPolicyEventsRow
 		if err := rows.Scan(&i.Revision, &i.ChangedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readVisitorPolicyRegisteredKeys = `-- name: ReadVisitorPolicyRegisteredKeys :many
+SELECT approval.grant_id,signing.id AS key_id,current.public_key::bytea AS public_key,current.expires_at::timestamptz AS expires_at
+FROM control.applied_project_services binding
+JOIN control.deployment_management_services selected ON selected.team_id=binding.team_id AND selected.project_key=binding.project_key AND selected.service=binding.service AND selected.capability='connect' AND selected.revoked_at IS NULL
+JOIN control.deployment_management_grants approval ON approval.grant_id=selected.grant_id
+JOIN control.publisher_grants grant_record ON grant_record.id=approval.grant_id
+JOIN control.publisher_identity_keys signing ON signing.publisher_identity_id=grant_record.publisher_identity_id AND signing.retired_at IS NULL
+JOIN LATERAL control.deployment_connect_authority(approval.grant_id,signing.id,$1,$2::timestamptz) current ON true
+WHERE binding.service_id=$1 ORDER BY approval.grant_id,signing.id LIMIT 4097
+`
+
+type ReadVisitorPolicyRegisteredKeysParams struct {
+	ServiceID string
+	AtTime    pgtype.Timestamptz
+}
+
+type ReadVisitorPolicyRegisteredKeysRow struct {
+	GrantID   string
+	KeyID     string
+	PublicKey []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) ReadVisitorPolicyRegisteredKeys(ctx context.Context, arg ReadVisitorPolicyRegisteredKeysParams) ([]ReadVisitorPolicyRegisteredKeysRow, error) {
+	rows, err := q.db.Query(ctx, readVisitorPolicyRegisteredKeys, arg.ServiceID, arg.AtTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadVisitorPolicyRegisteredKeysRow
+	for rows.Next() {
+		var i ReadVisitorPolicyRegisteredKeysRow
+		if err := rows.Scan(
+			&i.GrantID,
+			&i.KeyID,
+			&i.PublicKey,
+			&i.ExpiresAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

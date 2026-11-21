@@ -162,6 +162,7 @@ func startPrivateFixtureWorkers(t *testing.T, ctx context.Context, process *daem
 	if err != nil {
 		t.Fatal(err)
 	}
-	process.start("private fixture certificate worker", func() error { return worker.Run(ctx) })
+	serviceClaims := certificates.NewServiceClaimQueue()
+	process.start("private fixture certificate worker", func() error { return worker.Run(ctx, serviceClaims) })
 	process.start("private fixture DNS worker", func() error { return addresses.Run(ctx) })
 }
