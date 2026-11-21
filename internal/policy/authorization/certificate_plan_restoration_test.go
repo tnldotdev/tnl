@@ -1,9 +1,10 @@
 package authorization
 
 import (
-	"reflect"
 	"slices"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
@@ -143,8 +144,11 @@ func TestServiceCertificateRestoredRoutineTwelveCaseFormationMatrix(t *testing.T
 			}
 			checkPlan := func(got *CertificatePlan, want CertificatePlan) {
 				t.Helper()
-				if got == nil || !reflect.DeepEqual(*got, want) || !slices.IsSorted(got.Identifiers) {
-					t.Fatalf("complete plan=%+v, want %+v", got, want)
+				if diff := cmp.Diff(&want, got); diff != "" {
+					t.Fatalf("certificate plan (-want +got):\n%s", diff)
+				}
+				if !slices.IsSorted(got.Identifiers) {
+					t.Fatalf("unsorted certificate identifiers: %v", got.Identifiers)
 				}
 			}
 			// current state capture passes false/true here independently of

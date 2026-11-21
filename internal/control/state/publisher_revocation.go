@@ -63,17 +63,7 @@ func closePublisherServiceRuns(ctx context.Context, tx pgx.Tx, q *controlstatedb
 	if err != nil {
 		return err
 	}
-	var services []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		services = append(services, id)
-	}
-	err = rows.Err()
-	rows.Close()
+	services, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
@@ -14,17 +16,7 @@ func (d *Database) expireCompanyEligibility(ctx context.Context, now time.Time) 
 	if err != nil {
 		return err
 	}
-	var teams []string
-	for rows.Next() {
-		var team string
-		if err = rows.Scan(&team); err != nil {
-			rows.Close()
-			return err
-		}
-		teams = append(teams, team)
-	}
-	err = rows.Err()
-	rows.Close()
+	teams, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
 		return err
 	}
