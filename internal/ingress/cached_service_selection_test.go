@@ -34,33 +34,35 @@ func selectCachedService(ctx context.Context, server *Server, lease ingressv1.In
 func TestCachedServiceSelectionSkipsOnlyTheExhaustedRun(t *testing.T) {
 	for _, reason := range []string{"service_connections", "service_connection_total", "service_connection_rate", "pending_service_connections", "pending_service_rate"} {
 		t.Run(reason, func(t *testing.T) {
-			server, lease, runs := cachedSelectionServer(t, 9, !strings.HasPrefix(reason, "pending_"))
-			for _, run := range runs[:8] {
-				exhaustSelectionRun(t, server, run, reason)
-			}
-			capacity, reason := server.admitPendingService()
-			if capacity == nil {
-				t.Fatal(reason)
-			}
-			defer capacity.close()
-			deadline := capacity.deadline
-			selected, err := selectCachedService(t.Context(), server, lease, capacity)
-			if err != nil || selected.access != httpRequestAccess || selected.serviceID != runs[8].ServiceId ||
-				selected.runID != runs[8].ServiceRunId || selected.number != runs[8].RunNumber ||
-				!capacity.deadline.Equal(deadline) || selected.visitorID == "" {
-				t.Fatal("cached selection changed the sibling identity or setup deadline", err)
-			}
-			// selection holds one class of process capacity, never one per candidate.
-			if server.admitted[pendingConnection]+server.admitted[visitorConnection] != 1 {
-				t.Fatal("candidate search duplicated process capacity")
-			}
-			capacity.close()
-			pending, active := publicServiceAdmissionCounts(server)
-			key := selectionRunKey(runs[8])
-			if pending != 0 || active != 0 || server.traffic.runs[key] != nil && server.traffic.runs[key].active != 0 ||
-				server.traffic.pendingRuns[key] != nil && server.traffic.pendingRuns[key].active != 0 {
-				t.Fatal("selected candidate retained capacity after close")
-			}
+			synctest.Test(t, func(t *testing.T) {
+				server, lease, runs := cachedSelectionServer(t, 9, !strings.HasPrefix(reason, "pending_"))
+				for _, run := range runs[:8] {
+					exhaustSelectionRun(t, server, run, reason)
+				}
+				capacity, reason := server.admitPendingService()
+				if capacity == nil {
+					t.Fatal(reason)
+				}
+				defer capacity.close()
+				deadline := capacity.deadline
+				selected, err := selectCachedService(t.Context(), server, lease, capacity)
+				if err != nil || selected.access != httpRequestAccess || selected.serviceID != runs[8].ServiceId ||
+					selected.runID != runs[8].ServiceRunId || selected.number != runs[8].RunNumber ||
+					!capacity.deadline.Equal(deadline) || selected.visitorID == "" {
+					t.Fatal("cached selection changed the sibling identity or setup deadline", err)
+				}
+				// selection holds one class of process capacity, never one per candidate.
+				if server.admitted[pendingConnection]+server.admitted[visitorConnection] != 1 {
+					t.Fatal("candidate search duplicated process capacity")
+				}
+				capacity.close()
+				pending, active := publicServiceAdmissionCounts(server)
+				key := selectionRunKey(runs[8])
+				if pending != 0 || active != 0 || server.traffic.runs[key] != nil && server.traffic.runs[key].active != 0 ||
+					server.traffic.pendingRuns[key] != nil && server.traffic.pendingRuns[key].active != 0 {
+					t.Fatal("selected candidate retained capacity after close")
+				}
+			})
 		})
 	}
 }

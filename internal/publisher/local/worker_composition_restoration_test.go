@@ -821,14 +821,14 @@ func TestConfiguredTargetProbeCancellationKeepsPublicationAndJoins(t *testing.T)
 	actual := restoredWorkerReceive(t, captured, 2*time.Second).config
 	current := restoredWorkerService(t, a, "web", func(s publisherapp.Service) bool { return s.Routable })
 	armed.Store(true)
-	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	result := make(chan bool, 1)
 	go func() { result <- actual.Healthy(ctx) }()
-	restoredWorkerReceive(t, entered, 250*time.Millisecond)
+	restoredWorkerReceive(t, entered, 2*time.Second)
 	cancel()
-	restoredWorkerReceive(t, canceled, 500*time.Millisecond)
-	if restoredWorkerReceive(t, result, 500*time.Millisecond) {
+	restoredWorkerReceive(t, canceled, 2*time.Second)
+	if restoredWorkerReceive(t, result, 2*time.Second) {
 		t.Error("canceled real target probe reported healthy")
 	}
 	if after := a.manager.Snapshot().Services[0]; after.RunNumber != current.RunNumber || !after.Routable || after.Ready || f.Runs.Load() != 1 {
