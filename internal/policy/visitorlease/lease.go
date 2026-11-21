@@ -483,7 +483,7 @@ func (g *Guard) Renew(permission visitortoken.VerifiedPermission) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	if _, active := l.guards[g]; !active || g.anonymous || !permission.SameIdentity(g.permission) || !g.allowedLocked(now) || !l.allowedLocked(permission, g.source, now) {
+	if _, active := l.guards[g]; !active || g.anonymous || !permission.SameAdmission(g.permission) || !g.allowedLocked(now) || !l.allowedLocked(permission, g.source, now) {
 		return visitortoken.ErrPolicy
 	}
 	g.permission = permission

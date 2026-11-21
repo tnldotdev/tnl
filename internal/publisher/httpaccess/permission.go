@@ -193,6 +193,12 @@ func AuthorizeRequest(w http.ResponseWriter, r *http.Request, policy *visitorlea
 		if tokens != nil {
 			prepared, accepted, release, found := tokens.use(permission.token, guard.local)
 			guard.release = release
+			// renewal can retire this cookie after its proof was verified but
+			// before the new request registered its guard.
+			if !found && tokens.rejects(permission.token) {
+				guard.Finish()
+				return result, nil, nil, diagnostic.Wrap(diagnostic.VisitorAccessDenied, visitortoken.ErrToken)
+			}
 			if found {
 				result.permission, result.bearer = accepted, visitortoken.Token(prepared.VisitorToken)
 				if permission.renewed || prepared.VisitorToken != permission.token.Reveal() {

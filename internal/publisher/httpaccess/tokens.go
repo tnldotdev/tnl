@@ -49,10 +49,30 @@ type browserTokenSource struct {
 	parentDeadline time.Time
 	reprepared     bool
 	used           time.Time
-	aliases        map[[32]byte]time.Time
+	aliases        map[[32]byte]browserTokenAlias
 	guards         map[*visitorlease.Guard]struct{}
 	generation     uint64
 	denied         bool
+}
+
+type browserTokenAlias struct {
+	expiresAt time.Time
+	retired   bool
+}
+
+// a different authorization may serve future requests, not earlier guards or
+// aliases. keep the negative alias entries until their signed expiry.
+func (s *browserTokenSource) retireAdmission() []*visitorlease.Guard {
+	guards := make([]*visitorlease.Guard, 0, len(s.guards))
+	for guard := range s.guards {
+		guards = append(guards, guard)
+	}
+	clear(s.guards)
+	for digest, alias := range s.aliases {
+		alias.retired = true
+		s.aliases[digest] = alias
+	}
+	return guards
 }
 
 type browserTokenRenewal struct {
@@ -157,7 +177,13 @@ func (b *Tokens) installSource(source json.RawMessage, response controlv1.Visito
 	key := sha256.Sum256(source)
 	digest := sha256.Sum256([]byte(response.VisitorToken))
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	var retired []*visitorlease.Guard
+	defer func() {
+		b.mu.Unlock()
+		for _, guard := range retired {
+			guard.Revoke()
+		}
+	}()
 	if b.closed {
 		return visitortoken.ErrPolicy
 	}
@@ -169,7 +195,7 @@ func (b *Tokens) installSource(source json.RawMessage, response controlv1.Visito
 		if len(b.sources) >= maximumBrowserTokenSources {
 			return errors.New("publisher browser token sources are full")
 		}
-		prior = &browserTokenSource{source: bytes.Clone(source), aliases: make(map[[32]byte]time.Time), guards: make(map[*visitorlease.Guard]struct{}), reprepared: session}
+		prior = &browserTokenSource{source: bytes.Clone(source), aliases: make(map[[32]byte]browserTokenAlias), guards: make(map[*visitorlease.Guard]struct{}), reprepared: session}
 		b.sources[key] = prior
 	} else {
 		if !prior.permission.SameSubject(permission) {
@@ -186,8 +212,8 @@ func (b *Tokens) installSource(source json.RawMessage, response controlv1.Visito
 			return visitortoken.ErrBinding
 		}
 	}
-	for digest, until := range prior.aliases {
-		if !until.After(view.AuthorityTime(now)) {
+	for digest, alias := range prior.aliases {
+		if !alias.expiresAt.After(view.AuthorityTime(now)) {
 			delete(prior.aliases, digest)
 			delete(b.tokens, digest)
 		}
@@ -195,12 +221,18 @@ func (b *Tokens) installSource(source json.RawMessage, response controlv1.Visito
 	if _, exists := prior.aliases[digest]; !exists && len(prior.aliases) >= maximumBrowserTokenAliases {
 		return errors.New("browser token renewal aliases are full")
 	}
+	if prior.aliases[digest].retired {
+		return visitortoken.ErrBinding
+	}
+	if !prior.permission.SameAdmission(permission) {
+		retired = prior.retireAdmission()
+	}
 	prior.response, prior.permission, prior.parentDeadline, prior.used = response, permission, parent, now
 	clear(prior.source)
 	prior.source = bytes.Clone(source)
 	prior.generation++
 	prior.denied = false
-	prior.aliases[digest], b.tokens[digest] = permission.Facts().ExpiresAt, prior
+	prior.aliases[digest], b.tokens[digest] = browserTokenAlias{expiresAt: permission.Facts().ExpiresAt}, prior
 	return nil
 }
 
@@ -220,7 +252,7 @@ func (b *Tokens) use(token visitortoken.Token, guard *visitorlease.Guard) (contr
 	now := time.Now()
 	b.mu.Lock()
 	source := b.tokens[digest]
-	if b.closed || !enabled || source == nil || source.denied || !source.aliases[digest].After(view.AuthorityTime(now)) {
+	if b.closed || !enabled || source == nil || source.denied || source.aliases[digest].retired || !source.aliases[digest].expiresAt.After(view.AuthorityTime(now)) {
 		b.mu.Unlock()
 		return controlv1.VisitorTokenResponse{}, visitortoken.VerifiedPermission{}, func() {}, false
 	}
@@ -264,7 +296,7 @@ func (b *Tokens) replacement(token visitortoken.Token, proof visitortoken.Verifi
 	}
 	replacement := visitortoken.Token(response.VisitorToken)
 	permission, err := visitortoken.VerifyBearer(replacement, view, time.Now())
-	if err != nil || !permission.SameIdentity(proof) {
+	if err != nil || !permission.SameAdmission(proof) {
 		return "", visitortoken.VerifiedPermission{}, visitortoken.ErrBinding
 	}
 	return replacement, permission, nil
@@ -276,7 +308,8 @@ func (b *Tokens) rejects(token visitortoken.Token) bool {
 	digest := sha256.Sum256([]byte(token.Reveal()))
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.closed || b.tokens[digest] != nil && b.tokens[digest].denied
+	source := b.tokens[digest]
+	return b.closed || source != nil && (source.denied || source.aliases[digest].retired)
 }
 
 func (b *Tokens) refresh(ctx context.Context, report func(error)) {
@@ -288,8 +321,8 @@ func (b *Tokens) refresh(ctx context.Context, report func(error)) {
 	b.mu.Lock()
 	var due []browserTokenRenewal
 	for key, source := range b.sources {
-		for digest, expires := range source.aliases {
-			if !expires.After(view.AuthorityTime(now)) {
+		for digest, alias := range source.aliases {
+			if !alias.expiresAt.After(view.AuthorityTime(now)) {
 				delete(source.aliases, digest)
 				delete(b.tokens, digest)
 			}
@@ -368,39 +401,45 @@ func (b *Tokens) renew(ctx context.Context, job browserTokenRenewal, report func
 		}
 	}
 	terminal := browserTokenTerminal(err)
-	var guards []*visitorlease.Guard
+	var guards, retired []*visitorlease.Guard
 	b.mu.Lock()
 	source := job.source
 	current := !b.closed && b.sources[job.key] == source && !source.denied && source.generation == job.generation
 	if current && (err == nil || terminal) {
-		for guard := range source.guards {
-			guards = append(guards, guard)
-		}
 		if terminal {
 			source.denied = true
+			retired = source.retireAdmission()
 		} else {
 			digest := sha256.Sum256([]byte(response.VisitorToken))
 			if owner := b.tokens[digest]; owner != nil && owner != source {
 				err = visitortoken.ErrBinding
 			} else if _, exists := source.aliases[digest]; !exists && len(source.aliases) >= maximumBrowserTokenAliases {
 				err = errors.New("browser token renewal aliases are full")
+			} else if source.aliases[digest].retired {
+				err = visitortoken.ErrBinding
 			} else {
+				if source.permission.SameAdmission(permission) {
+					for guard := range source.guards {
+						guards = append(guards, guard)
+					}
+				} else {
+					retired = source.retireAdmission()
+				}
 				source.response, source.permission = response, permission
 				if job.reprepared {
 					source.parentDeadline = response.ExpiresAt
 				}
-				source.aliases[digest], b.tokens[digest] = permission.Facts().ExpiresAt, source
+				source.aliases[digest], b.tokens[digest] = browserTokenAlias{expiresAt: permission.Facts().ExpiresAt}, source
 				source.generation++
 			}
 		}
 	}
 	b.mu.Unlock()
+	for _, guard := range retired {
+		guard.Revoke()
+	}
 	for _, guard := range guards {
-		if terminal {
-			guard.Revoke()
-		} else if err == nil {
-			_ = guard.Renew(permission)
-		}
+		_ = guard.Renew(permission)
 	}
 	if current && err != nil && ctx.Err() == nil && report != nil {
 		report(err)

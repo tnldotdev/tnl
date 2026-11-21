@@ -14,6 +14,7 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 )
 
@@ -45,6 +46,7 @@ type Permission struct {
 	Port                  uint16 // zero is exact signed data, never a wildcard.
 	VisitorPolicyRevision int64
 	Subject               Subject
+	BrowserGrantID        string
 	ExpiresAt             time.Time
 }
 
@@ -67,17 +69,24 @@ func (p VerifiedPermission) SameIdentity(other VerifiedPermission) bool {
 	return p.SameSubject(other) && p.facts.Scope == other.facts.Scope && p.facts.Hostname == other.facts.Hostname && p.facts.Port == other.facts.Port
 }
 
+// SameAdmission is stricter than identity: a new grant for the same browser
+// can admit a new request, but cannot renew a stream admitted by an old grant.
+func (p VerifiedPermission) SameAdmission(other VerifiedPermission) bool {
+	return p.SameIdentity(other) && p.facts.BrowserGrantID == other.facts.BrowserGrantID
+}
+
 type claims struct {
-	ID       string             `json:"jti"`
-	Version  int                `json:"version"`
-	Issuer   string             `json:"iss"`
-	Scope    visitorscope.Scope `json:"scope"`
-	Hostname string             `json:"hostname"`
-	Port     uint16             `json:"port"`
-	Revision int64              `json:"visitor_policy_revision"`
-	Issued   int64              `json:"iat"`
-	Expires  int64              `json:"exp"`
-	Subject  json.RawMessage    `json:"visitor"`
+	BrowserGrantID string             `json:"browser_grant_id,omitempty"`
+	ID             string             `json:"jti"`
+	Version        int                `json:"version"`
+	Issuer         string             `json:"iss"`
+	Scope          visitorscope.Scope `json:"scope"`
+	Hostname       string             `json:"hostname"`
+	Port           uint16             `json:"port"`
+	Revision       int64              `json:"visitor_policy_revision"`
+	Issued         int64              `json:"iat"`
+	Expires        int64              `json:"exp"`
+	Subject        json.RawMessage    `json:"visitor"`
 }
 
 type protectedHeader struct {
@@ -95,11 +104,17 @@ func validResource(scope visitorscope.Scope, hostname string) bool {
 	return err == nil && canonical == hostname && !strings.Contains(hostname, "*") && scope.Valid()
 }
 
+func validBrowserGrant(subject Subject, id string) bool {
+	_, browser := subject.(Browser)
+	return id == "" || browser && opaqueid.Valid(id, opaqueid.ServiceGrantPrefix)
+}
+
 // Sign receives a decision already authorized by control. the supplied deadline
 // must be capped by every parent; renewable callers also cap it at five minutes.
 func Sign(issuer, keyID string, private ed25519.PrivateKey, permission Permission, now time.Time) (Token, error) {
 	if !validText(issuer, 256) || !validText(keyID, 128) || len(private) != ed25519.PrivateKeySize ||
-		!validResource(permission.Scope, permission.Hostname) || permission.VisitorPolicyRevision < 1 || !permission.ExpiresAt.After(now) || permission.ExpiresAt.Unix() <= now.Unix() {
+		!validResource(permission.Scope, permission.Hostname) || !validBrowserGrant(permission.Subject, permission.BrowserGrantID) ||
+		permission.VisitorPolicyRevision < 1 || !permission.ExpiresAt.After(now) || permission.ExpiresAt.Unix() <= now.Unix() {
 		return "", ErrToken
 	}
 	visitor, err := encodeSubject(permission.Subject)
@@ -111,7 +126,7 @@ func Sign(issuer, keyID string, private ed25519.PrivateKey, permission Permissio
 		return "", ErrToken
 	}
 	payload, err := json.Marshal(claims{ID: base64.RawURLEncoding.EncodeToString(nonce[:]), Version: 1, Issuer: issuer, Scope: permission.Scope, Hostname: permission.Hostname, Port: permission.Port,
-		Revision: permission.VisitorPolicyRevision, Issued: now.Unix(), Expires: permission.ExpiresAt.Unix(), Subject: visitor})
+		Revision: permission.VisitorPolicyRevision, Issued: now.Unix(), Expires: permission.ExpiresAt.Unix(), Subject: visitor, BrowserGrantID: permission.BrowserGrantID})
 	if err != nil {
 		return "", ErrToken
 	}
@@ -256,7 +271,10 @@ func verifySignature(token Token, view View, now time.Time) (Permission, error) 
 	if err != nil {
 		return Permission{}, err
 	}
-	permission := Permission{SigningKeyID: keyID, Scope: value.Scope, Hostname: value.Hostname, Port: value.Port, VisitorPolicyRevision: value.Revision, Subject: subject, ExpiresAt: time.Unix(value.Expires, 0).UTC()}
+	if !validBrowserGrant(subject, value.BrowserGrantID) {
+		return Permission{}, ErrToken
+	}
+	permission := Permission{SigningKeyID: keyID, Scope: value.Scope, Hostname: value.Hostname, Port: value.Port, VisitorPolicyRevision: value.Revision, Subject: subject, BrowserGrantID: value.BrowserGrantID, ExpiresAt: time.Unix(value.Expires, 0).UTC()}
 	return permission, nil
 }
 
