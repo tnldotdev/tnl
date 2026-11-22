@@ -210,11 +210,11 @@ func (d *Database) GetServiceCertificateIssuance(ctx context.Context, service, r
 		return result, err
 	}
 	defer rollback(ctx, tx, "get managed certificate issuance", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, service); err != nil {
+	if err = lockServiceForRun(ctx, tx, service); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	run, err := d.serviceRunAuthorization(ctx, tx, q, service, runID, token, clock.current())
+	run, err := d.serviceRunObservationAuthorization(ctx, tx, q, service, runID, token, clock.current())
 	if err != nil {
 		return result, err
 	}

@@ -8,6 +8,52 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+func TestIntegrationAliasWatchIsolatesSiblingsAndRetainsSharedChanges(t *testing.T) {
+	f, _, _ := newRunAliasServiceFixture(t)
+	d, ctx := f.database, t.Context()
+	a, b := f.publish(t, f.service), f.publish(t, f.service)
+	compare := func(seen ...ConnectorPeerWatchVersion) []ConnectorPeerWatchVersion {
+		t.Helper()
+		changed, err := d.CompareConnectorPeerWatchVersions(ctx, seen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return changed
+	}
+	initial := func(r ServiceRunState) ConnectorPeerWatchVersion {
+		t.Helper()
+		hints := compare(ConnectorPeerWatchVersion{RunID: r.RunID, Revision: -1})
+		if len(hints) != 1 || !controlv1.ValidPublisherPolicyBookmark(hints[0].PolicyBookmark) {
+			t.Fatal("missing initial policy hint")
+		}
+		return hints[0]
+	}
+	seenA, seenB := initial(a), initial(b)
+	if err := d.CloseServiceRun(ctx, a.ServiceID, a.RunID, a.Token, f.now); err != nil {
+		t.Fatal(err)
+	}
+	if changed := compare(seenA, seenB); len(changed) != 1 || changed[0].RunID != a.RunID || changed[0].Revision != -1 {
+		t.Fatal("closing an alias disturbed its sibling", changed)
+	}
+	c := f.publish(t, f.service)
+	if changed := compare(seenB); len(changed) != 0 {
+		t.Fatal("new alias disturbed its sibling", changed)
+	}
+	seenC := initial(c)
+	if _, err := d.pool.Exec(ctx, `SELECT control.touch_visitor_policy($1)`, f.service.ID); err != nil {
+		t.Fatal(err)
+	}
+	changes := compare(seenB, seenC)
+	if len(changes) != 2 {
+		t.Fatal("shared policy failed to reach both survivors", changes)
+	}
+	for _, change := range changes {
+		if change.Revision < 0 || change.PolicyBookmark == seenB.PolicyBookmark || change.PolicyBookmark == seenC.PolicyBookmark {
+			t.Fatal("shared policy did not produce fresh live bookmarks")
+		}
+	}
+}
+
 func TestIntegrationPolicyWatchFollowsWorkloadParent(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_watch")
 	ctx := t.Context()
@@ -35,7 +81,7 @@ func TestIntegrationPolicyWatchFollowsWorkloadParent(t *testing.T) {
 	bookmark := func() string {
 		t.Helper()
 		var value string
-		if err := d.pool.QueryRow(ctx, `SELECT bookmark FROM control.publisher_policy_watch_bookmarks WHERE service_id=$1`, service).Scan(&value); err != nil || !controlv1.ValidPublisherPolicyBookmark(value) {
+		if err := d.pool.QueryRow(ctx, `SELECT bookmark FROM control.service_policy_watch_bookmarks WHERE service_id=$1`, service).Scan(&value); err != nil || !controlv1.ValidPublisherPolicyBookmark(value) {
 			t.Fatal("missing bookmark", err)
 		}
 		return value

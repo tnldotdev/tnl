@@ -89,7 +89,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	}
 	for _, table := range []string{
 		"identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_trials", "dns_authorities", "dns_challenge_changes",
-		"services", "service_runs", "service_connection_slots", "relay_services", "relay_leases", "ingress_leases", "relay_service_reservations",
+		"services", "service_runs", "service_connection_slots", "relay_services", "relay_leases", "ingress_leases",
 		"acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_run_fences",
 		"service_recovery_episodes", "service_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
 	} {

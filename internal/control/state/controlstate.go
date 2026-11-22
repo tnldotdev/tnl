@@ -34,7 +34,10 @@ const schemaLayoutQuery = `
 	SELECT to_regclass('control.connector_peer_watch_versions') IS NOT NULL
 		AND to_regclass('control.registered_key_watch_versions') IS NOT NULL
 		AND to_regclass('control.visitor_policy_watch_versions') IS NOT NULL
-		AND to_regclass('control.publisher_policy_watch_bookmarks') IS NOT NULL
+		AND to_regclass('control.publisher_run_policy_bookmarks') IS NOT NULL
+		AND to_regclass('control.run_alias_watch_versions') IS NOT NULL
+		AND EXISTS (SELECT 1 FROM pg_catalog.pg_class
+			WHERE oid=to_regclass('control.relay_service_reservations') AND relkind='v')
 		AND EXISTS (
 			SELECT 1 FROM pg_catalog.pg_proc
 			WHERE oid = to_regprocedure('control.visitor_identity_permission(text,text,text,text,text,timestamptz)')

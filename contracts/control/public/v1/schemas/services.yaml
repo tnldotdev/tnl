@@ -572,6 +572,9 @@ schemas:
       policy_confirmation:
         $ref: "../openapi.yaml#/components/schemas/PublisherPolicyConfirmation"
         description: A fresh visitor-policy observation for a matching complete snapshot. The publisher lease and the watch do not confer this authority.
+      alias_policy_confirmation:
+        $ref: "../openapi.yaml#/components/schemas/PublisherPolicyConfirmation"
+        description: A separate observation for the exact run_hostname, returned to publishers requesting alias policy confirmation.
       observed_at:
         type: string
         format: date-time

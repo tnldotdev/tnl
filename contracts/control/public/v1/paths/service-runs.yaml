@@ -329,7 +329,7 @@ paths:
         content:
           application/json:
             schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunHeartbeat" }
-      description: Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced.
+      description: Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Publishers supporting separate alias policy confirmation may request it with the confirm_alias=1 query on both renewal and policy reads.
       security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }

@@ -19,6 +19,14 @@ import (
 func TestIntegrationRunAliasPreparationRetriesKeepSavedRandomHostname(t *testing.T) {
 	f, _, _ := newRunAliasServiceFixture(t)
 	var previous ServiceRunPreparation
+	aliasRevision := func(run string) int64 {
+		t.Helper()
+		var revision int64
+		if err := f.database.pool.QueryRow(t.Context(), `SELECT revision FROM control.run_alias_watch_versions WHERE service_run_id=$1`, run).Scan(&revision); err != nil {
+			t.Fatal("missing alias binding revision", err)
+		}
+		return revision
+	}
 	for range 2 {
 		enrollment := publisherEnrollment(t, f.database, serviceTestAuthority{TeamID: f.project.TeamID, ActingIdentityID: f.project.ActorID},
 			PublisherScope{TeamID: f.project.TeamID, Kind: "service", ServiceID: f.service.ID}, f.now)
@@ -46,9 +54,13 @@ func TestIntegrationRunAliasPreparationRetriesKeepSavedRandomHostname(t *testing
 		if err := f.database.CloseServiceRun(t.Context(), f.service.ID, first.RunID, first.Token, f.now); err != nil {
 			t.Fatal("retire the first publisher run", err)
 		}
+		retired := aliasRevision(first.RunID)
 		replacement, err := f.database.PrepareServiceRun(t.Context(), f.service.ID, publisher, "replacement-random-alias", f.now, request)
 		if err != nil || replacement.RunHostname != first.RunHostname || replacement.RunID == first.RunID || replacement.RunNumber <= first.RunNumber {
 			t.Fatal("publisher restart changed its saved address or reused its old run", err)
+		}
+		if aliasRevision(first.RunID) <= retired || aliasRevision(replacement.RunID) == 0 {
+			t.Fatal("alias handoff did not invalidate both run bindings")
 		}
 		var owner string
 		if err := f.database.pool.QueryRow(t.Context(), `SELECT service_run_id FROM control.service_endpoints WHERE hostname=$1 AND retired_at IS NULL`,
@@ -380,6 +392,26 @@ func TestIntegrationRunAliasVisitorPolicySelectsOnlyItsCurrentRun(t *testing.T) 
 		if err != nil || policy.Policy.Hostname != expected || policy.Policy.PublicEndpoint == nil || policy.Policy.PublicEndpoint.Hostname != expected {
 			t.Fatal("policy lost its selected hostname", hostname, err)
 		}
+		if hostname == f.run.RunHostname && policy.ConfirmationKey != nil {
+			t.Fatal("legacy alias reader received heartbeat-only refresh timing")
+		}
+	}
+	alias, err := f.database.ReadPublisherHostPolicy(t.Context(), auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, f.now, true, f.run.RunHostname)
+	if err != nil || alias.ConfirmationKey == nil {
+		t.Fatal("eligible alias did not receive a snapshot key", err)
+	}
+	renew := func() ServiceRunState {
+		state, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now.Add(time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	state := renew()
+	if state.AliasPolicyConfirmation == nil || state.PolicyConfirmation == nil ||
+		state.AliasPolicyConfirmation.Hostname != f.run.RunHostname || state.AliasPolicyConfirmation.ConfirmationKey != *alias.ConfirmationKey ||
+		state.PolicyConfirmation.ConfirmationKey == *alias.ConfirmationKey || !state.AliasPolicyConfirmation.ValidUntil.After(alias.Policy.ValidUntil) {
+		t.Fatal("renewal did not confirm two distinct host-bound snapshots")
 	}
 	for _, hostname := range []string{sibling.RunHostname, "foreign.example", strings.ToUpper(f.run.RunHostname)} {
 		if _, err := f.database.ReadPublisherVisitorPolicy(t.Context(), auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, f.now, hostname); err == nil {
@@ -393,6 +425,9 @@ func TestIntegrationRunAliasVisitorPolicySelectsOnlyItsCurrentRun(t *testing.T) 
 	}
 	if _, err := f.database.ReadPublisherVisitorPolicy(t.Context(), auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, f.now, f.run.RunHostname); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("withdrawn alias still received visitor policy", err)
+	}
+	if state := renew(); state.AliasPolicyConfirmation != nil || state.PolicyConfirmation == nil {
+		t.Fatal("alias withdrawal did not isolate canonical renewal")
 	}
 	if _, err := f.database.ReadPublisherVisitorPolicy(t.Context(), auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, f.now); err != nil {
 		t.Fatal("alias withdrawal interrupted canonical policy", err)

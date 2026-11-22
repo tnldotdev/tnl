@@ -5,7 +5,6 @@ SELECT watched.run_id::text AS run_id,
     COALESCE(policy.bookmark,'')::text AS policy_bookmark
 FROM (SELECT unnest(sqlc.arg(run_ids)::text[]) AS run_id,unnest(sqlc.arg(revisions)::bigint[]) AS seen,
     unnest(sqlc.arg(policy_bookmarks)::text[]) AS policy_seen) watched
-LEFT JOIN control.service_runs run ON run.id=watched.run_id AND run.started_at IS NOT NULL AND run.closed_at IS NULL
-LEFT JOIN control.connector_peer_watch_versions version ON version.service_run_id=run.id
-LEFT JOIN control.publisher_policy_watch_bookmarks policy ON policy.service_id=run.service_id
+LEFT JOIN control.publisher_run_policy_bookmarks policy ON policy.service_run_id=watched.run_id
+LEFT JOIN control.connector_peer_watch_versions version ON version.service_run_id=watched.run_id
 WHERE policy.bookmark IS NULL OR COALESCE(version.revision,0)<>watched.seen OR policy.bookmark<>watched.policy_seen;

@@ -29,11 +29,14 @@ func (q *Queries) HasVisitorPolicyRegisteredKeyCandidates(ctx context.Context, s
 
 const readPublisherPolicyConfirmation = `-- name: ReadPublisherPolicyConfirmation :one
 SELECT watched.bookmark::text AS bookmark,issuer.issuer,service.certificate_hostname,
+    CASE WHEN run.run_hostname<>'' AND run.certificate_expires_at IS NOT NULL
+              AND control.service_run_alias_current(run.id,run.run_hostname)
+         THEN run.run_hostname ELSE '' END::text AS alias_hostname,
     LEAST($1::timestamptz,service.expires_at,run.serving_until,run.certificate_expires_at)::timestamptz AS valid_until
 FROM control.service_runs run
 JOIN control.services service ON service.id=run.service_id AND service.certificate_hostname=run.certificate_hostname
 JOIN control.teams team ON team.id=service.team_id AND team.deleted_at IS NULL
-JOIN control.publisher_policy_watch_bookmarks watched ON watched.service_id=service.id
+JOIN control.publisher_run_policy_bookmarks watched ON watched.service_run_id=run.id
 JOIN control.visitor_token_issuer issuer ON issuer.id
 WHERE run.id=$2 AND run.service_id=$3
     AND run.run_number=$4 AND run.closed_at IS NULL AND run.started_at IS NOT NULL
@@ -61,10 +64,11 @@ type ReadPublisherPolicyConfirmationRow struct {
 	Bookmark            string
 	Issuer              string
 	CertificateHostname string
+	AliasHostname       string
 	ValidUntil          pgtype.Timestamptz
 }
 
-// confirm only ordinary canonical scopes without time-dependent parents.
+// confirm only ordinary scopes without time-dependent parents.
 // every check, including the change bookmark, uses one statement snapshot.
 func (q *Queries) ReadPublisherPolicyConfirmation(ctx context.Context, arg ReadPublisherPolicyConfirmationParams) (ReadPublisherPolicyConfirmationRow, error) {
 	row := q.db.QueryRow(ctx, readPublisherPolicyConfirmation,
@@ -78,6 +82,7 @@ func (q *Queries) ReadPublisherPolicyConfirmation(ctx context.Context, arg ReadP
 		&i.Bookmark,
 		&i.Issuer,
 		&i.CertificateHostname,
+		&i.AliasHostname,
 		&i.ValidUntil,
 	)
 	return i, err

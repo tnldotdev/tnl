@@ -163,7 +163,7 @@ func TestIntegrationServiceStartReclamationRestoredExpiredFirstAttemptDoesNotCle
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	key := "tnl:relay-assignment-totals"
+	key := "tnl:relay-service:" + old.run.Connections[0].RelayServiceID
 	if _, err := gate.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))`, key); err != nil {
 		t.Fatal(err)
 	}

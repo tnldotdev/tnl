@@ -6,50 +6,73 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
+type connectorRunSelection struct {
+	id, hostname string
+	number       int64
+	until        time.Time
+	pair         *ConnectorPeerPairReady
+}
+
+// select the run, its hostname, and both relay hints in one statement. a
+// concurrent disconnect may make the hint stale but cannot mix two snapshots.
+// the left join retains a routable run with just one ready connection.
+func readConnectorRunSelection(ctx context.Context, tx pgx.Tx, candidate string, args ...any) (result connectorRunSelection, err error) {
+	rows, err := tx.Query(ctx, `WITH candidate AS (`+candidate+`)
+		SELECT r.id,r.run_number,r.certificate_hostname,c.valid_until,r.publisher_identity_id,
+			COALESCE(leg.connection_slot,-1),COALESCE(leg.publisher_connection_id,''),
+			COALESCE(leg.connection_assignment_revision,0),COALESCE(leg.relay_service_id,''),
+			COALESCE(leg.relay_id,''),COALESCE(leg.relay_run_id,''),COALESCE(leg.relay_lease_revision,0),
+			COALESCE(leg.relay_address,''),COALESCE(leg.tls_server_name,'')
+		FROM candidate c JOIN control.service_runs r ON r.id=c.id AND r.run_number=c.run_number
+		LEFT JOIN LATERAL (
+			SELECT slot.* FROM control.service_connection_slots slot
+			JOIN control.relay_leases l USING(relay_id,relay_run_id,relay_lease_revision,relay_service_id)
+			JOIN control.relay_services s ON s.relay_service_id=slot.relay_service_id
+			WHERE slot.service_run_id=r.id AND slot.service_id=r.service_id AND slot.run_number=r.run_number
+			  AND slot.state='ready' AND slot.session_open AND l.serving_until>$2 AND NOT l.draining
+			  AND s.enabled AND s.relay_address=slot.relay_address AND s.tls_server_name=slot.tls_server_name
+		) leg ON true ORDER BY leg.connection_slot`, args...)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	var pair ConnectorPeerPairReady
+	var present [2]bool
+	for rows.Next() {
+		var slot int
+		var leg ConnectorPeerPairRelay
+		lease := &leg.RelayLease
+		if err := rows.Scan(&result.id, &result.number, &result.hostname, &result.until, &pair.PublisherIdentityID,
+			&slot, &leg.PublisherConnectionID, &leg.AssignmentRevision, &lease.RelayServiceID, &lease.RelayID,
+			&lease.RelayRunID, &lease.RelayLeaseRevision, &leg.RelayAddress, &leg.TLSServerName); err != nil {
+			return result, err
+		}
+		if slot >= 0 && slot < len(present) && opaqueid.Valid(leg.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) &&
+			leg.AssignmentRevision > 0 && lease.RelayLeaseRevision > 0 {
+			pair.Relays[slot], present[slot] = leg, true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+	if result.id == "" {
+		return result, pgx.ErrNoRows
+	}
+	if present[0] && present[1] && pair.Relays[0].RelayLease.RelayServiceID != pair.Relays[1].RelayLease.RelayServiceID {
+		result.pair = &pair
+	}
+	return result, nil
+}
+
 func connectorPairReadySelection(ctx context.Context, tx pgx.Tx, runID, serviceID string, number int64, now time.Time) (*ConnectorPeerPairReady, error) {
-	var publisher string
-	err := tx.QueryRow(ctx, `SELECT publisher_identity_id FROM control.service_runs
-	    WHERE id=$1 AND service_id=$2 AND run_number=$3 AND certificate_expires_at>$4`, runID, serviceID, number, now).Scan(&publisher)
+	const exact = `SELECT id,run_number,certificate_expires_at AS valid_until FROM control.service_runs
+		WHERE id=$1 AND certificate_expires_at>$2 AND service_id=$3 AND run_number=$4`
+	result, err := readConnectorRunSelection(ctx, tx, exact, runID, now, serviceID, number)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	slots, err := controlstatedb.New(tx).ListServiceConnectionSlots(ctx, runID)
-	if err != nil || len(slots) != 2 {
-		return nil, err
-	}
-	if slots[0].RelayServiceID == slots[1].RelayServiceID {
-		return nil, nil
-	}
-	ready := &ConnectorPeerPairReady{PublisherIdentityID: publisher}
-	for i, slot := range slots {
-		if int(slot.ConnectionSlot) != i || slot.ServiceID != serviceID || slot.RunNumber != number || slot.State != "ready" || !slot.SessionOpen ||
-			!opaqueid.Valid(slot.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || slot.ConnectionAssignmentRevision < 1 ||
-			!slot.RelayID.Valid || !slot.RelayRunID.Valid || !slot.RelayLeaseRevision.Valid || slot.RelayLeaseRevision.Int64 < 1 {
-			return nil, nil
-		}
-		var relay ConnectorPeerPairRelay
-		var revision int64
-		err := tx.QueryRow(ctx, `SELECT lease.relay_service_id,lease.relay_id,lease.relay_run_id,lease.relay_lease_revision,service.relay_address,service.tls_server_name
-		    FROM control.relay_leases lease JOIN control.relay_services service ON service.relay_service_id=lease.relay_service_id
-		    WHERE lease.relay_id=$1 AND lease.relay_run_id=$2 AND lease.relay_lease_revision=$3 AND lease.relay_service_id=$4
-		    AND lease.serving_until>$5 AND NOT lease.draining AND service.enabled`, slot.RelayID.String, slot.RelayRunID.String, slot.RelayLeaseRevision.Int64, slot.RelayServiceID, now).
-			Scan(&relay.RelayLease.RelayServiceID, &relay.RelayLease.RelayID, &relay.RelayLease.RelayRunID, &revision, &relay.RelayAddress, &relay.TLSServerName)
-		if errors.Is(err, pgx.ErrNoRows) || err == nil && (slot.RelayAddress != relay.RelayAddress || slot.TlsServerName != relay.TLSServerName) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		relay.RelayLease.RelayLeaseRevision = uint64(revision)
-		relay.PublisherConnectionID, relay.AssignmentRevision = slot.PublisherConnectionID, slot.ConnectionAssignmentRevision
-		ready.Relays[i] = relay
-	}
-	return ready, nil
+	return result.pair, err
 }

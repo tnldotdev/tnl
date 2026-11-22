@@ -167,7 +167,7 @@ func TestIntegrationConnectorPeerWatchRejectsPreWatchV1(t *testing.T) {
 	f.claim(t, pair, 0, f.now.Add(time.Second))
 	before := connectorPairSavedAuthority(t, d, pair.ID)
 	// the previous v1 lacked this view despite reporting the same version.
-	if _, err := d.pool.Exec(ctx, `DROP VIEW control.publisher_policy_watch_bookmarks`); err != nil {
+	if _, err := d.pool.Exec(ctx, `DROP VIEW control.publisher_run_policy_bookmarks`); err != nil {
 		t.Fatal(err)
 	}
 	if old, err := Open(ctx, pooledURL, testStorageKey, "", naming.ManagedURLModeGenerated); err == nil {

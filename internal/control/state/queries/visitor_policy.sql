@@ -16,14 +16,17 @@ SELECT issuer FROM control.visitor_token_issuer WHERE id;
 SELECT * FROM control.services WHERE id=sqlc.arg(id);
 
 -- name: ReadPublisherPolicyConfirmation :one
--- confirm only ordinary canonical scopes without time-dependent parents.
+-- confirm only ordinary scopes without time-dependent parents.
 -- every check, including the change bookmark, uses one statement snapshot.
 SELECT watched.bookmark::text AS bookmark,issuer.issuer,service.certificate_hostname,
+    CASE WHEN run.run_hostname<>'' AND run.certificate_expires_at IS NOT NULL
+              AND control.service_run_alias_current(run.id,run.run_hostname)
+         THEN run.run_hostname ELSE '' END::text AS alias_hostname,
     LEAST(sqlc.arg(max_until)::timestamptz,service.expires_at,run.serving_until,run.certificate_expires_at)::timestamptz AS valid_until
 FROM control.service_runs run
 JOIN control.services service ON service.id=run.service_id AND service.certificate_hostname=run.certificate_hostname
 JOIN control.teams team ON team.id=service.team_id AND team.deleted_at IS NULL
-JOIN control.publisher_policy_watch_bookmarks watched ON watched.service_id=service.id
+JOIN control.publisher_run_policy_bookmarks watched ON watched.service_run_id=run.id
 JOIN control.visitor_token_issuer issuer ON issuer.id
 WHERE run.id=sqlc.arg(run_id) AND run.service_id=sqlc.arg(service_id)
     AND run.run_number=sqlc.arg(run_number) AND run.closed_at IS NULL AND run.started_at IS NOT NULL

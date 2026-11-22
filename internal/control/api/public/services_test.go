@@ -27,7 +27,25 @@ func (s *serviceHeartbeatStore) HeartbeatServiceRun(_ context.Context, service, 
 	s.service, s.run, s.token, s.health = service, run, token, health
 	s.calls++
 	return controlstate.ServiceRunState{ServiceID: service, RunID: run, RunNumber: 1, State: "starting", ExpiresAt: now.Add(45 * time.Second),
+		RunHostname: "test-alias.example", AliasPolicyConfirmation: &controlv1.PublisherPolicyConfirmation{Hostname: "test-alias.example"},
 		Healthy: health.Healthy, StreamCapacity: health.StreamCapacity, ReportedStreams: health.ActiveStreams}, nil
+}
+
+func TestHeartbeatAliasEvidenceRequiresNegotiation(t *testing.T) {
+	for _, query := range []string{"", "?confirm_alias=0", "?confirm_alias=1"} {
+		h := &handler{dependencies: Stores{ServiceRuns: &serviceHeartbeatStore{}}}
+		r := httptest.NewRequest(http.MethodPost, "/renew"+query, strings.NewReader(`{"healthy":true,"stream_capacity":5,"active_streams":0}`))
+		r.Header.Set("Authorization", "Bearer run-token")
+		w := httptest.NewRecorder()
+		h.RenewServiceRun(w, r, "service", "run")
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil || w.Code != 200 {
+			t.Fatal("renew", err, w.Code)
+		}
+		if _, ok := raw["alias_policy_confirmation"]; ok != (query == "?confirm_alias=1") {
+			t.Fatalf("unexpected alias confirmation for query %q", query)
+		}
+	}
 }
 
 func TestServiceHeartbeatPreservesExplicitHealthAndStreamCounts(t *testing.T) {

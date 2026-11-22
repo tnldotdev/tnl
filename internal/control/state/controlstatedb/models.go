@@ -777,9 +777,9 @@ type ControlPublisherNamespaceAllocation struct {
 	RequestedExpiresAt        pgtype.Timestamptz
 }
 
-type ControlPublisherPolicyWatchBookmark struct {
-	ServiceID string
-	Bookmark  string
+type ControlPublisherRunPolicyBookmark struct {
+	ServiceRunID string
+	Bookmark     string
 }
 
 type ControlPublisherRuntime struct {
@@ -890,9 +890,13 @@ type ControlRelayService struct {
 }
 
 type ControlRelayServiceReservation struct {
-	ID                int64
 	RelayServiceID    string
 	ReservedSlotCount int64
+}
+
+type ControlRunAliasWatchVersion struct {
+	ServiceRunID string
+	Revision     int64
 }
 
 type ControlService struct {
@@ -1117,6 +1121,11 @@ type ControlServiceNamespaceClaim struct {
 	CreatedAt      pgtype.Timestamptz
 	RetiredAt      pgtype.Timestamptz
 	ReusableAfter  pgtype.Timestamptz
+}
+
+type ControlServicePolicyWatchBookmark struct {
+	ServiceID string
+	Bookmark  string
 }
 
 type ControlServicePortClaim struct {

@@ -142,15 +142,10 @@ func (d *Database) startServiceRunAttempt(ctx context.Context, service, id strin
 		if err := requireNewServiceWork(ctx, q, MaintenanceControlServiceRunCreation); err != nil {
 			return result, err
 		}
-		placements, err := selectRelayServicePlacements(ctx, q, clock.current(), run.PreferredRegions...)
+		placements, eligible, err := selectRelayServicePlacements(ctx, tx, clock.current(), run.PreferredRegions...)
 		if err != nil {
 			if serviceRunCapacityOnly(err) {
-				// reuse placement's eligibility owner under the locks already
-				// held by this attempt; callers cannot supply these service IDs.
-				eligible, _, lookupErr := availableRelayServicePlacements(ctx, q, clock.current())
-				if lookupErr != nil {
-					return result, errors.Join(err, lookupErr)
-				}
+				// reclaim only against the locked set that actually ran out.
 				for _, relay := range eligible {
 					result.capacityRelays = append(result.capacityRelays, relay.relayServiceID)
 				}

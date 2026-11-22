@@ -256,6 +256,45 @@ func TestPublisherWatchRechecksAuthorityBeforeReturningChangedScope(t *testing.T
 	})
 }
 
+type stalledWatchAuthorization struct {
+	watchTestStore
+	stallAt int
+}
+
+func (s *stalledWatchAuthorization) AuthorizeConnectorPeerWatch(ctx context.Context, _ string, _ string, _ int64, _ string, _ time.Time) error {
+	s.authCalls++
+	if s.authCalls == s.stallAt {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return nil
+}
+
+func TestPublisherWatchAuthorizationTimeoutReturnsUnavailable(t *testing.T) {
+	for _, at := range []int{1, 2} {
+		t.Run(strconv.Itoa(at), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				store := &stalledWatchAuthorization{stallAt: at}
+				store.current = map[string]int64{publisherCORSRun: 1}
+				watch := NewPublisherWatch(store)
+				ctx, stop := context.WithCancel(t.Context())
+				done := make(chan error, 1)
+				go func() { done <- watch.Run(ctx) }()
+				defer func() { stop(); <-done }()
+				body := `{"runs":[{"service_run_id":"` + publisherCORSRun + `","service_id":"` + publisherCORSService +
+					`","run_number":"1","run_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","connector_revision":"0"}]}`
+				r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/publisher/watch", strings.NewReader(body))
+				r.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				testHandler(t, Config{PublisherWatch: watch}, nil, nil, nil).ServeHTTP(w, r)
+				if w.Code != http.StatusServiceUnavailable || watch.used != 0 || strings.Contains(w.Body.String(), "changes") {
+					t.Fatalf("watch timeout returned %d, reserved scopes %d", w.Code, watch.used)
+				}
+			})
+		})
+	}
+}
+
 func assertWatchHint(t *testing.T, ready <-chan publisherWatchResult, want ...controlstate.ConnectorPeerWatchVersion) {
 	t.Helper()
 	select {

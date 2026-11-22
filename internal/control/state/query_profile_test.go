@@ -32,7 +32,7 @@ func TestProfilePlacementQueries(t *testing.T) {
 		if count != 1000 && count != 2500 && count != f.routes {
 			continue
 		}
-		if _, err := f.database.pool.Exec(t.Context(), "ANALYZE control.service_runs; ANALYZE control.service_connection_slots; ANALYZE control.relay_service_reservations"); err != nil {
+		if _, err := f.database.pool.Exec(t.Context(), "ANALYZE control.service_runs; ANALYZE control.service_connection_slots; ANALYZE control.relay_services"); err != nil {
 			t.Fatal(err)
 		}
 		rows, err := queries.ListRelayServiceAssignmentTotals(t.Context())

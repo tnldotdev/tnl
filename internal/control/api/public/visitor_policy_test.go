@@ -20,7 +20,7 @@ type publisherPolicyStoreFixture struct {
 	calls int
 }
 
-func (s *publisherPolicyStoreFixture) ReadPublisherVisitorPolicy(_ context.Context, _ visitorscope.Scope, _ string, _ int64, _ string, _ int64, _ time.Time, _ ...string) (controlv1.VisitorPolicyUpdate, error) {
+func (s *publisherPolicyStoreFixture) ReadPublisherHostPolicy(_ context.Context, _ visitorscope.Scope, _ string, _ int64, _ string, _ int64, _ time.Time, _ bool, _ ...string) (controlv1.VisitorPolicyUpdate, error) {
 	s.calls++
 	return controlv1.VisitorPolicyUpdate{}, nil
 }

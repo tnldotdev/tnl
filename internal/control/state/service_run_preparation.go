@@ -49,6 +49,7 @@ type ServiceRunAssignment struct {
 
 type ServiceRunState struct {
 	PolicyConfirmation              *controlv1.PublisherPolicyConfirmation
+	AliasPolicyConfirmation         *controlv1.PublisherPolicyConfirmation
 	ServiceID, RunID, Token, State  string
 	RunNumber                       int64
 	EndpointRevision                int64
@@ -534,11 +535,23 @@ func replenishServiceConnections(ctx context.Context, tx pgx.Tx, q *controlstate
 	if len(replaced) == 0 {
 		return nil
 	}
-	services, _, err := availableRelayServicePlacements(ctx, q, now)
+	choose := func(services []relayServicePlacement) []relayServicePlacement {
+		_, choices := chooseReplacementPlacements(services, replaced, used, run.ReadyAt.Valid)
+		return choices
+	}
+	services, err := lockRankedRelayPlacements(ctx, tx, now, run.PreferredRegions, choose)
 	if err != nil {
 		return err
 	}
-	rankRelayPlacements(services, run.PreferredRegions)
+	selected, choices := chooseReplacementPlacements(services, replaced, used, run.ReadyAt.Valid)
+	if len(selected) == 0 {
+		// retain the surviving connection when no replacement fits.
+		return nil
+	}
+	return replaceServiceSlots(ctx, q, seed, run, selected, choices, now)
+}
+
+func chooseReplacementPlacements(services []relayServicePlacement, replaced []controlstatedb.ControlServiceConnectionSlot, used map[string]bool, established bool) ([]controlstatedb.ControlServiceConnectionSlot, []relayServicePlacement) {
 	// there are at most two replacement slots. try the complete set first;
 	// only an established run may make progress with a one-slot subset.
 	place := func(mask uint8) ([]controlstatedb.ControlServiceConnectionSlot, []relayServicePlacement) {
@@ -565,7 +578,7 @@ func replenishServiceConnections(ctx context.Context, tx pgx.Tx, q *controlstate
 				service.assignments-free[service.relayServiceID] < service.capacity
 		}
 		choices := make([]relayServicePlacement, len(selected))
-		if run.ReadyAt.Valid {
+		if established {
 			// preserve slot ownership when its own service returns. otherwise
 			// the first closed slot could take the only returning service.
 			for index, old := range selected {
@@ -596,7 +609,7 @@ func replenishServiceConnections(ctx context.Context, tx pgx.Tx, q *controlstate
 		return selected, choices
 	}
 	selected, choices := place(uint8(1<<len(replaced)) - 1)
-	if len(selected) == 0 && run.ReadyAt.Valid && len(replaced) == 2 {
+	if len(selected) == 0 && established && len(replaced) == 2 {
 		for index := range replaced {
 			selected, choices = place(1 << index)
 			if len(selected) != 0 {
@@ -604,11 +617,10 @@ func replenishServiceConnections(ctx context.Context, tx pgx.Tx, q *controlstate
 			}
 		}
 	}
-	if len(selected) == 0 {
-		// failed placement must not roll back the surviving publisher
-		// connection or its one-relay routing projection.
-		return nil
-	}
+	return selected, choices
+}
+
+func replaceServiceSlots(ctx context.Context, q *controlstatedb.Queries, seed credentials.AssignmentSeed, run controlstatedb.ControlServiceRun, selected []controlstatedb.ControlServiceConnectionSlot, choices []relayServicePlacement, now time.Time) error {
 	// remove all old slots before inserting any replacements: a selected relay
 	// service may still belong to another old slot in this same batch.
 	for _, old := range selected {
@@ -736,8 +748,8 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if err = lockServiceOwner(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
-	// renewal changes the run, not the saved service's identity. serialize
-	// authority changes without blocking transactions retaining an identity FK.
+	// siblings can renew together. the owner guard still fences revocation and
+	// the shared service lock keeps endpoint edits out until this run commits.
 	endpoint, err := lockServiceRunEndpoint(ctx, tx, serviceID)
 	if err != nil {
 		return result, err
@@ -835,7 +847,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if !previousExpiration.After(clock.current()) || !run.PublisherExpiresAt.Time.After(clock.current()) {
 		return result, ErrServiceAccess
 	}
-	confirmation, err := d.policyConfirmation(ctx, q, run, run.ServingObservedAt.Time)
+	confirmations, err := d.policyConfirmations(ctx, q, run, run.ServingObservedAt.Time)
 	if err != nil {
 		return result, err
 	}
@@ -860,7 +872,8 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		}
 	}
 	return ServiceRunState{ServiceID: serviceID, RunID: runID, RunNumber: run.RunNumber,
-		PolicyConfirmation: confirmation, EndpointRevision: endpoint.revision, PublicEndpointReady: endpointReady,
+		PolicyConfirmation: confirmations.canonical, AliasPolicyConfirmation: confirmations.alias,
+		EndpointRevision: endpoint.revision, PublicEndpointReady: endpointReady,
 		RunHostname: run.RunHostname, RunAliasReady: aliasReady,
 		Healthy: run.Healthy, StreamCapacity: run.StreamCapacity, ReportedStreams: run.ReportedStreams,
 		State: run.State, ExpiresAt: run.PublisherExpiresAt.Time, ObservedAt: run.ServingObservedAt.Time, ServingUntil: run.ServingUntil.Time,

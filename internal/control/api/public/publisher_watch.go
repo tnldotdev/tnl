@@ -8,6 +8,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/serverhttp"
@@ -178,6 +179,16 @@ func watchAuthorityDenied(err error) bool {
 	return err == controlstate.ErrServiceAccess || err == controlstate.ErrPublisherIdentity || err == controlstate.ErrGuestTrialSpent
 }
 
+func watchAuthorizationProblem(request, auth context.Context, w http.ResponseWriter, operation string, err error) {
+	// an exhausted server-side observation budget grants nothing. let the
+	// publisher retry without treating database contention as a terminal fault.
+	if auth.Err() == context.DeadlineExceeded && failure.Only(err, context.DeadlineExceeded) {
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher watch authorization timed out")
+		return
+	}
+	serviceRunProblem(request, w, operation, err)
+}
+
 func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !h.acceptingNewWork(r.Context(), w) {
@@ -230,7 +241,7 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			stop()
-			serviceRunProblem(r.Context(), w, "authorize publisher watch", err)
+			watchAuthorizationProblem(r.Context(), auth, w, "authorize publisher watch", err)
 			return
 		}
 		revision := int64(-1)
@@ -262,7 +273,7 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 					change.Revision = -1
 					change.PolicyBookmark = ""
 				} else if err != nil {
-					serviceRunProblem(r.Context(), w, "recheck publisher watch", err)
+					watchAuthorizationProblem(r.Context(), auth, w, "recheck publisher watch", err)
 					return
 				}
 			}

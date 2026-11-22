@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -60,8 +61,10 @@ type endpointReadinessObservations struct {
 
 type aliasEndpointReadinessControl struct {
 	*endpointReadinessControl
-	hostname   *string
-	aliasReady *bool
+	hostname     *string
+	aliasReady   *bool
+	confirmHosts bool
+	reads        map[string]int
 }
 
 func (c *aliasEndpointReadinessControl) ReadPublisherVisitorPolicy(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
@@ -71,6 +74,17 @@ func (c *aliasEndpointReadinessControl) ReadPublisherVisitorPolicy(ctx context.C
 			return controlv1.VisitorPolicyUpdate{}, ErrPrivateStream
 		}
 		update.Policy.Hostname = body.Hostname
+		if c.confirmHosts {
+			c.endpointMu.Lock()
+			c.reads[body.Hostname]++
+			c.endpointMu.Unlock()
+			key := strings.Repeat("a", 64)
+			if body.Hostname == c.prep.Hostname {
+				key = strings.Repeat("c", 64)
+			}
+			update.ConfirmationKey = &key
+			update.Policy.ValidUntil = update.Policy.ObservedAt.Add(12 * time.Second)
+		}
 	}
 	return update, err
 }
@@ -80,6 +94,13 @@ func (c *aliasEndpointReadinessControl) HeartbeatServiceRun(ctx context.Context,
 	c.endpointMu.Lock()
 	defer c.endpointMu.Unlock()
 	state.RunHostname, state.RunAliasReady = c.hostname, c.aliasReady
+	if c.confirmHosts {
+		evidence := func(host, digit string) *controlv1.PublisherPolicyConfirmation {
+			return &controlv1.PublisherPolicyConfirmation{Hostname: host, ConfirmationKey: strings.Repeat(digit, 64), ObservedAt: state.ObservedAt, ValidUntil: state.ObservedAt.Add(12 * time.Second)}
+		}
+		state.PolicyConfirmation = evidence(c.prep.Hostname, "c")
+		state.AliasPolicyConfirmation = evidence(*c.prep.RunHostname, "a")
+	}
 	return state, err
 }
 
@@ -324,6 +345,34 @@ func TestPublicServiceRunReadinessWaitsForItsExactAlias(t *testing.T) {
 		assertEndpointReadiness(t, observed, false, 1)
 		control.setAlias(new(httpRunAlias), new(true))
 		assertEndpointHeartbeatsContinue(t, cfg, base)
+		assertEndpointReadiness(t, observed, true, 1)
+	})
+}
+
+func TestServiceRunRenewsBothHostnamePolicies(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg, base, observed := endpointReadinessFixture(t, controlv1.ServiceProtocolHTTP, true, true, 7)
+		cfg.HeartbeatInterval = time.Second
+		base.prep.RunHostname = new(httpRunAlias)
+		plan := *base.prep.CertificatePlan
+		plan.CacheKey, plan.Scope = "run-alias/renewal", base.prep.Hostname
+		plan.Identifiers = []string{base.prep.Hostname, httpRunAlias}
+		base.prep.CertificatePlan = &plan
+		control := &aliasEndpointReadinessControl{endpointReadinessControl: base, hostname: new(httpRunAlias), aliasReady: new(true), confirmHosts: true, reads: map[string]int{}}
+		cfg.Control = control
+		stop := startEndpointReadinessRun(t, cfg, base, observed)
+		defer stop()
+		count := func(host string) int {
+			control.endpointMu.Lock()
+			defer control.endpointMu.Unlock()
+			return control.reads[host]
+		}
+		a, b := count(base.prep.Hostname), count(httpRunAlias)
+		time.Sleep(24 * time.Second)
+		synctest.Wait()
+		if a == 0 || b == 0 || count(base.prep.Hostname) != a || count(httpRunAlias) != b {
+			t.Fatal("a quiet hostname refetched policy after its original deadline", a, b, count(base.prep.Hostname), count(httpRunAlias))
+		}
 		assertEndpointReadiness(t, observed, true, 1)
 	})
 }
