@@ -129,24 +129,31 @@ func (s *Session) ServeServiceCapacity(ctx context.Context) (result error) {
 		work.Wait()
 		result = errors.Join(result, cleanupErr)
 	}()
-	for {
-		stream, err := s.transport.AcceptStream(ctx)
-		if err != nil {
-			if muxsession.NormalSessionCloseOnly(err) ||
-				ctx.Err() != nil && (failure.Only(err, context.Cause(ctx)) || failure.Only(err, ctx.Err())) {
-				return nil
-			}
-			return err
+	terminal := func(err error) error {
+		if muxsession.NormalSessionCloseOnly(err) ||
+			ctx.Err() != nil && (failure.Only(err, context.Cause(ctx)) || failure.Only(err, ctx.Err())) {
+			return nil
 		}
+		return err
+	}
+	for {
+		// leave a burst in the transport's bounded backlog until a reader is
+		// free. the request still carries its original reservation deadline.
 		select {
 		case slots <- struct{}{}:
-			work.Go(func() {
-				defer func() { <-slots }()
-				recordCleanup(s.answerServiceCapacity(ctx, stream))
-			})
-		default:
-			recordCleanup(stream.Reset(0))
+		case <-ctx.Done():
+			return terminal(s.Err())
+		case <-s.Done():
+			return terminal(s.Err())
 		}
+		stream, err := s.transport.AcceptStream(ctx)
+		if err != nil {
+			return terminal(err)
+		}
+		work.Go(func() {
+			defer func() { <-slots }()
+			recordCleanup(s.answerServiceCapacity(ctx, stream))
+		})
 	}
 }
 
