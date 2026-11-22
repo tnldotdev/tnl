@@ -123,8 +123,11 @@ applying the Worker migration that retires its old reservations.
 
 Volunteer selection uses finite requests with 5–15 second retry jitter. Peer
 responses request connection closure, including HTTP/2 GOAWAY, so random probes
-and 20-second presence reports do not retain idle relay streams. Startup allows
-three minutes; replacement begins four minutes before the turn ends.
+and 20-second presence reports do not retain idle relay streams. If a presence
+request loses its connection before headers arrive, the tab tries the same
+host once more within the original five seconds. Both attempts refresh one
+tab lease. Startup allows three minutes; replacement begins four minutes before
+the turn ends.
 
 Qualify 3, 10, 30, 100, 300, then 1,000 hosts. At each stage measure open visitor
 connections, gossip bytes, startup time, bundle transfer and verification,
