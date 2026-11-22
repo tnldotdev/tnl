@@ -11,7 +11,7 @@ import (
 )
 
 type publisherVisitorPolicyStore interface {
-	ReadPublisherHostPolicy(context.Context, visitorscope.Scope, string, int64, string, int64, time.Time, bool, ...string) (controlv1.VisitorPolicyUpdate, error)
+	ReadPublisherVisitorPolicy(context.Context, visitorscope.Scope, string, int64, string, int64, time.Time, ...string) (controlv1.VisitorPolicyUpdate, error)
 }
 
 const maxPublisherVisitorPolicyRequestBytes = 1024
@@ -39,8 +39,7 @@ func (h *handler) ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, 503, controlv1.Unavailable, "visitor policy is unavailable")
 		return
 	}
-	confirmAlias := r.URL.Query().Get(controlv1.AliasPolicyConfirmationQuery) == "1"
-	result, err := store.ReadPublisherHostPolicy(r.Context(), scope, body.RunId, body.RunNumber, credential, body.AfterRevision, observed, confirmAlias, body.Hostname)
+	result, err := store.ReadPublisherVisitorPolicy(r.Context(), scope, body.RunId, body.RunNumber, credential, body.AfterRevision, observed, body.Hostname)
 	if err != nil {
 		writeVisitorTokenProblem(r.Context(), w, err)
 		return

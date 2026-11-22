@@ -14,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationRunAliasPreparationRetriesKeepSavedRandomHostname(t *testing.T) {
@@ -383,6 +384,7 @@ func TestIntegrationRunAliasVisitorPolicySelectsOnlyItsCurrentRun(t *testing.T) 
 	f.run = f.publish(t, f.service)
 	sibling := f.publish(t, f.service)
 	auth := f.auth()
+	policies := make(map[string]controlv1.VisitorPolicyUpdate)
 	for _, hostname := range []string{"", f.service.Endpoint.Hostname, f.run.RunHostname} {
 		policy, err := f.database.ReadPublisherVisitorPolicy(t.Context(), auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, f.now, hostname)
 		expected := hostname
@@ -392,13 +394,14 @@ func TestIntegrationRunAliasVisitorPolicySelectsOnlyItsCurrentRun(t *testing.T) 
 		if err != nil || policy.Policy.Hostname != expected || policy.Policy.PublicEndpoint == nil || policy.Policy.PublicEndpoint.Hostname != expected {
 			t.Fatal("policy lost its selected hostname", hostname, err)
 		}
-		if hostname == f.run.RunHostname && policy.ConfirmationKey != nil {
-			t.Fatal("legacy alias reader received heartbeat-only refresh timing")
+		if policy.ConfirmationKey == nil {
+			t.Fatal("eligible hostname did not receive a snapshot key", hostname)
 		}
+		policies[hostname] = policy
 	}
-	alias, err := f.database.ReadPublisherHostPolicy(t.Context(), auth.Subject, auth.RunID, auth.Number, auth.Token.String(), 0, f.now, true, f.run.RunHostname)
-	if err != nil || alias.ConfirmationKey == nil {
-		t.Fatal("eligible alias did not receive a snapshot key", err)
+	canonical, alias := policies[f.service.Endpoint.Hostname], policies[f.run.RunHostname]
+	if *canonical.ConfirmationKey != *policies[""].ConfirmationKey {
+		t.Fatal("implicit and explicit canonical reads received different keys")
 	}
 	renew := func() ServiceRunState {
 		state, err := f.database.HeartbeatServiceRun(t.Context(), f.service.ID, f.run.RunID, f.run.Token, f.now.Add(time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64})
@@ -410,7 +413,8 @@ func TestIntegrationRunAliasVisitorPolicySelectsOnlyItsCurrentRun(t *testing.T) 
 	state := renew()
 	if state.AliasPolicyConfirmation == nil || state.PolicyConfirmation == nil ||
 		state.AliasPolicyConfirmation.Hostname != f.run.RunHostname || state.AliasPolicyConfirmation.ConfirmationKey != *alias.ConfirmationKey ||
-		state.PolicyConfirmation.ConfirmationKey == *alias.ConfirmationKey || !state.AliasPolicyConfirmation.ValidUntil.After(alias.Policy.ValidUntil) {
+		state.PolicyConfirmation.Hostname != f.service.Endpoint.Hostname || state.PolicyConfirmation.ConfirmationKey != *canonical.ConfirmationKey ||
+		*canonical.ConfirmationKey == *alias.ConfirmationKey || !state.AliasPolicyConfirmation.ValidUntil.After(alias.Policy.ValidUntil) {
 		t.Fatal("renewal did not confirm two distinct host-bound snapshots")
 	}
 	for _, hostname := range []string{sibling.RunHostname, "foreign.example", strings.ToUpper(f.run.RunHostname)} {

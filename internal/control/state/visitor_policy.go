@@ -224,10 +224,6 @@ func readVisitorPolicyRegisteredKeys(ctx context.Context, q *controlstatedb.Quer
 }
 
 func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time, hostnames ...string) (controlv1.VisitorPolicyUpdate, error) {
-	return d.ReadPublisherHostPolicy(ctx, scope, run, number, token, after, now, false, hostnames...)
-}
-
-func (d *Database) ReadPublisherHostPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time, confirmAlias bool, hostnames ...string) (controlv1.VisitorPolicyUpdate, error) {
 	hostname, err := serviceHTTPHostnameSelection(hostnames)
 	if err != nil {
 		return controlv1.VisitorPolicyUpdate{}, ErrVisitorPolicy
@@ -235,11 +231,11 @@ func (d *Database) ReadPublisherHostPolicy(ctx context.Context, scope visitorsco
 	// retry a rolled-back observation with fresh time and current run authority.
 	// this never replays a credential redemption or an application admission.
 	return retryVisitorPreparation(ctx, now, func(at time.Time) (controlv1.VisitorPolicyUpdate, error) {
-		return d.readPublisherVisitorPolicyTransaction(ctx, scope, run, number, token, after, at, hostname, confirmAlias)
+		return d.readPublisherVisitorPolicyTransaction(ctx, scope, run, number, token, after, at, hostname)
 	})
 }
 
-func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time, hostname string, confirmAlias bool) (result controlv1.VisitorPolicyUpdate, retErr error) {
+func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time, hostname string) (result controlv1.VisitorPolicyUpdate, retErr error) {
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
@@ -282,12 +278,12 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	if row.CertificateExpiresAt.Valid {
 		result.Policy.ValidUntil = minTime(result.Policy.ValidUntil, row.CertificateExpiresAt.Time)
 	}
-	if result.Policy.Enabled && (result.Policy.Hostname == row.CertificateHostname || confirmAlias) {
+	if result.Policy.Enabled {
 		confirmations, err := d.policyConfirmations(ctx, q, row, now)
 		if err != nil {
 			return result, err
 		}
-		if confirmation := confirmations.forHost(result.Policy.Hostname, confirmAlias); confirmation != nil && !confirmation.ValidUntil.After(result.Policy.ValidUntil) {
+		if confirmation := confirmations.forHost(result.Policy.Hostname); confirmation != nil && !confirmation.ValidUntil.After(result.Policy.ValidUntil) {
 			result.ConfirmationKey = &confirmation.ConfirmationKey
 		}
 	}

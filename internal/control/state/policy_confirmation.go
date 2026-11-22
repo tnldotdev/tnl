@@ -46,11 +46,11 @@ func (d *Database) policyConfirmations(ctx context.Context, q *controlstatedb.Qu
 	return result, nil
 }
 
-func (p policyConfirmations) forHost(hostname string, confirmAlias bool) *controlv1.PublisherPolicyConfirmation {
+func (p policyConfirmations) forHost(hostname string) *controlv1.PublisherPolicyConfirmation {
 	if p.canonical != nil && p.canonical.Hostname == hostname {
 		return p.canonical
 	}
-	if confirmAlias && p.alias != nil && p.alias.Hostname == hostname {
+	if p.alias != nil && p.alias.Hostname == hostname {
 		return p.alias
 	}
 	return nil

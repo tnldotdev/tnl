@@ -221,7 +221,7 @@ func (c *Client) GetPublisherService(ctx context.Context, serviceID, publisherAc
 
 func (c *Client) HeartbeatServiceRun(ctx context.Context, serviceID, runID string, token credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	return request[controlv1.ServiceRunState](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RenewServiceRun(ctx, serviceID, runID, health, append(editors, requestAliasPolicyConfirmation)...)
+		return c.api.RenewServiceRun(ctx, serviceID, runID, health, editors...)
 	})
 }
 

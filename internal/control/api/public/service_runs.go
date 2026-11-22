@@ -186,9 +186,7 @@ func (h *handler) RenewServiceRun(w http.ResponseWriter, r *http.Request, servic
 	}
 	if state.RunHostname != "" {
 		response.RunHostname, response.RunAliasReady = &state.RunHostname, &state.RunAliasReady
-		if r.URL.Query().Get(controlv1.AliasPolicyConfirmationQuery) == "1" {
-			response.AliasPolicyConfirmation = state.AliasPolicyConfirmation
-		}
+		response.AliasPolicyConfirmation = state.AliasPolicyConfirmation
 	}
 	writeJSON(w, 200, response)
 }

@@ -12,15 +12,8 @@ import (
 // within 2 MiB; unrelated operations retain the 1 MiB response limit.
 const maxVisitorPolicyResponseBytes = 2 << 20
 
-func requestAliasPolicyConfirmation(_ context.Context, r *http.Request) error {
-	query := r.URL.Query()
-	query.Set(controlv1.AliasPolicyConfirmationQuery, "1")
-	r.URL.RawQuery = query.Encode()
-	return nil
-}
-
 func (c *Client) ReadPublisherVisitorPolicy(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
 	return requestWithTimeoutAndLimit[controlv1.VisitorPolicyUpdate](ctx, c, c.timeout, token, maxVisitorPolicyResponseBytes, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ReadPublisherVisitorPolicy(ctx, body, append(editors, requestAliasPolicyConfirmation)...)
+		return c.api.ReadPublisherVisitorPolicy(ctx, body, editors...)
 	})
 }

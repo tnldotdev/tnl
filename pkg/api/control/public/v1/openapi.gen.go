@@ -6899,7 +6899,7 @@ type ClientInterface interface {
 
 	// RenewServiceRunWithBody Renew a service run and report publisher health and capacity
 	//
-	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Publishers supporting separate alias policy confirmation may request it with the confirm_alias=1 query on both renewal and policy reads.
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Eligible canonical and alias policies receive separate hostname-bound confirmations.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6908,7 +6908,7 @@ type ClientInterface interface {
 
 	// RenewServiceRun Renew a service run and report publisher health and capacity
 	//
-	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Publishers supporting separate alias policy confirmation may request it with the confirm_alias=1 query on both renewal and policy reads.
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Eligible canonical and alias policies receive separate hostname-bound confirmations.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7078,7 +7078,7 @@ type ClientInterface interface {
 
 	// ReadPublisherVisitorPolicyWithBody Refresh the current run's visitor policy and verification keys
 	//
-	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. Use the confirm_alias=1 query to request a confirmation key for an eligible exact alias. Without it, alias snapshots require regular full reads.
+	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. An eligible snapshot includes a confirmation key bound to its exact hostname.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -7087,7 +7087,7 @@ type ClientInterface interface {
 
 	// ReadPublisherVisitorPolicy Refresh the current run's visitor policy and verification keys
 	//
-	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. Use the confirm_alias=1 query to request a confirmation key for an eligible exact alias. Without it, alias snapshots require regular full reads.
+	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. An eligible snapshot includes a confirmation key bound to its exact hostname.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -10109,7 +10109,7 @@ func (c *Client) CreateServiceRunPreview(ctx context.Context, serviceId ServiceI
 
 // RenewServiceRunWithBody Renew a service run and report publisher health and capacity
 //
-// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Publishers supporting separate alias policy confirmation may request it with the confirm_alias=1 query on both renewal and policy reads.
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Eligible canonical and alias policies receive separate hostname-bound confirmations.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10128,7 +10128,7 @@ func (c *Client) RenewServiceRunWithBody(ctx context.Context, serviceId ServiceI
 
 // RenewServiceRun Renew a service run and report publisher health and capacity
 //
-// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Publishers supporting separate alias policy confirmation may request it with the confirm_alias=1 query on both renewal and policy reads.
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Eligible canonical and alias policies receive separate hostname-bound confirmations.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10498,7 +10498,7 @@ func (c *Client) RevokeVisitorDevice(ctx context.Context, deviceId string, reqEd
 
 // ReadPublisherVisitorPolicyWithBody Refresh the current run's visitor policy and verification keys
 //
-// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. Use the confirm_alias=1 query to request a confirmation key for an eligible exact alias. Without it, alias snapshots require regular full reads.
+// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. An eligible snapshot includes a confirmation key bound to its exact hostname.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10517,7 +10517,7 @@ func (c *Client) ReadPublisherVisitorPolicyWithBody(ctx context.Context, content
 
 // ReadPublisherVisitorPolicy Refresh the current run's visitor policy and verification keys
 //
-// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. Use the confirm_alias=1 query to request a confirmation key for an eligible exact alias. Without it, alias snapshots require regular full reads.
+// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. An eligible snapshot includes a confirmation key bound to its exact hostname.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -18655,7 +18655,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenewServiceRunWithBodyWithResponse Renew a service run and report publisher health and capacity
 	//
-	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Publishers supporting separate alias policy confirmation may request it with the confirm_alias=1 query on both renewal and policy reads.
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Eligible canonical and alias policies receive separate hostname-bound confirmations.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18664,7 +18664,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenewServiceRunWithResponse Renew a service run and report publisher health and capacity
 	//
-	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Publishers supporting separate alias policy confirmation may request it with the confirm_alias=1 query on both renewal and policy reads.
+	// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Eligible canonical and alias policies receive separate hostname-bound confirmations.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18844,7 +18844,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReadPublisherVisitorPolicyWithBodyWithResponse Refresh the current run's visitor policy and verification keys
 	//
-	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. Use the confirm_alias=1 query to request a confirmation key for an eligible exact alias. Without it, alias snapshots require regular full reads.
+	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. An eligible snapshot includes a confirmation key bound to its exact hostname.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -18853,7 +18853,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReadPublisherVisitorPolicyWithResponse Refresh the current run's visitor policy and verification keys
 	//
-	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. Use the confirm_alias=1 query to request a confirmation key for an eligible exact alias. Without it, alias snapshots require regular full reads.
+	// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. An eligible snapshot includes a confirmation key bound to its exact hostname.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -27255,7 +27255,7 @@ func (c *ClientWithResponses) CreateServiceRunPreviewWithResponse(ctx context.Co
 
 // RenewServiceRunWithBodyWithResponse Renew a service run and report publisher health and capacity
 //
-// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Publishers supporting separate alias policy confirmation may request it with the confirm_alias=1 query on both renewal and policy reads.
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Eligible canonical and alias policies receive separate hostname-bound confirmations.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27270,7 +27270,7 @@ func (c *ClientWithResponses) RenewServiceRunWithBodyWithResponse(ctx context.Co
 
 // RenewServiceRunWithResponse Renew a service run and report publisher health and capacity
 //
-// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Publishers supporting separate alias policy confirmation may request it with the confirm_alias=1 query on both renewal and policy reads.
+// Renew only the current run using its exact service run token. First readiness requires two live relay services; one surviving ready connection can continue serving while the other is replaced. Eligible canonical and alias policies receive separate hostname-bound confirmations.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27570,7 +27570,7 @@ func (c *ClientWithResponses) RevokeVisitorDeviceWithResponse(ctx context.Contex
 
 // ReadPublisherVisitorPolicyWithBodyWithResponse Refresh the current run's visitor policy and verification keys
 //
-// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. Use the confirm_alias=1 query to request a confirmation key for an eligible exact alias. Without it, alias snapshots require regular full reads.
+// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. An eligible snapshot includes a confirmation key bound to its exact hostname.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27585,7 +27585,7 @@ func (c *ClientWithResponses) ReadPublisherVisitorPolicyWithBodyWithResponse(ctx
 
 // ReadPublisherVisitorPolicyWithResponse Refresh the current run's visitor policy and verification keys
 //
-// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. Use the confirm_alias=1 query to request a confirmation key for an eligible exact alias. Without it, alias snapshots require regular full reads.
+// Refresh visitor policy and revocations for one publisher run using its exact run token. This is a publisher operation, not a visitor or management read, and can return private policy data for the run. It does not renew the publisher process lease or grant traffic access. An eligible snapshot includes a confirmation key bound to its exact hostname.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
