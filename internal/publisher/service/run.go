@@ -76,6 +76,7 @@ type Prepared struct {
 	policy                 *visitorlease.Lease
 	refreshPolicies        []func(context.Context) error
 	policyOwner            *httpaccess.Policy
+	aliasPolicyOwner       *httpaccess.Policy
 	metadataRevision       int64
 
 	certificateInstalled <-chan struct{}

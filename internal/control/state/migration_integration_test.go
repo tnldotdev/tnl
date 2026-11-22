@@ -89,7 +89,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	}
 	for _, table := range []string{
 		"identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_trials", "dns_authorities", "dns_challenge_changes",
-		"services", "service_runs", "service_connection_slots", "relay_services", "relay_leases", "ingress_leases", "relay_service_reservations",
+		"services", "service_runs", "service_connection_slots", "relay_services", "relay_leases", "ingress_leases",
 		"acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_run_fences",
 		"service_recovery_episodes", "service_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
 	} {
@@ -138,6 +138,19 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	}
 	if err := Migrate(ctx, databaseURL); err == nil {
 		t.Fatal("migration accepted a newer database schema")
+	}
+	// rejection must not bootstrap a lock or migration history in an older,
+	// populated control schema, even when it predates those objects.
+	if _, err := database.pool.Exec(ctx, `DROP TABLE control.schema_migration_lock,control.goose_db_version`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, databaseURL); err == nil {
+		t.Fatal("migration accepted an unversioned populated schema")
+	}
+	var unchanged bool
+	if err := database.pool.QueryRow(ctx, `SELECT to_regclass('control.schema_migration_lock') IS NULL
+		AND to_regclass('control.goose_db_version') IS NULL AND to_regclass('control.services') IS NOT NULL`).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatal("migration changed an incompatible unversioned schema", err)
 	}
 }
 

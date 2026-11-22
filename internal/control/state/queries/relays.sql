@@ -261,17 +261,24 @@ WHERE relay_id = sqlc.arg(relay_id)
   AND session_open
   AND state IN ('connected', 'ready', 'draining');
 
--- callers hold the affected service and existing service run rows. take the
--- assignment-total guard before relay service guards and lease rows; lock every relay service
--- before checking capacity or locking leases.
+-- a ranking hint only. recheck the selected services and leases under lock.
+-- name: ReadRelayPlacementCandidates :many
+SELECT services.relay_service_id,services.region,
+    LEAST(sum(leases.connection_capacity),9223372036854775807)::bigint AS capacity,
+    reservations.reserved_slot_count AS assignments
+FROM control.relay_services services
+JOIN control.relay_leases leases USING(relay_service_id)
+JOIN control.relay_service_reservations reservations USING(relay_service_id)
+WHERE services.enabled AND leases.lease_expires_at>sqlc.arg(now) AND NOT leases.draining
+    AND leases.protocol_version=1 AND leases.connection_capacity>0 AND leases.stream_capacity>0
+GROUP BY services.relay_service_id,services.region,reservations.reserved_slot_count;
+
 -- name: LockRelayServicesForPlacement :many
-WITH assignment_guard AS MATERIALIZED (
-    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-assignment-totals', 0))
-), service_guards AS MATERIALIZED (
+WITH service_guards AS MATERIALIZED (
     SELECT relay_service_id,
         pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || relay_service_id, 0))
-    FROM control.relay_services CROSS JOIN assignment_guard
-    WHERE enabled
+    FROM control.relay_services
+    WHERE enabled AND (COALESCE(cardinality(sqlc.arg(ids)::text[]),0)=0 OR relay_service_id=ANY(sqlc.arg(ids)::text[]))
     ORDER BY relay_service_id
 )
 SELECT services.relay_service_id
@@ -304,7 +311,7 @@ FROM control.relay_services AS services CROSS JOIN service_guard
 WHERE services.relay_service_id = sqlc.arg(relay_service_id)
 FOR UPDATE OF services;
 
--- diagnostic/test oracle only; placement reads trigger-maintained totals.
+-- diagnostic/test oracle only; joins the parent to check slot eligibility.
 -- name: CountOpenServiceRunAssignmentsByRelayService :many
 SELECT connections.relay_service_id,
     count(*) AS assignment_count
@@ -317,6 +324,10 @@ GROUP BY connections.relay_service_id;
 -- name: ListRelayServiceAssignmentTotals :many
 SELECT relay_service_id, reserved_slot_count AS assignment_count
 FROM control.relay_service_reservations;
+
+-- name: ReadPlacementAssignmentTotals :many
+SELECT relay_service_id,reserved_slot_count AS assignment_count FROM control.relay_service_reservations
+WHERE relay_service_id=ANY(sqlc.arg(ids)::text[]);
 
 -- name: StoreRelayTransportCertificate :one
 WITH service_guard AS MATERIALIZED (

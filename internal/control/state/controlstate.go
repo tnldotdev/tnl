@@ -34,7 +34,10 @@ const schemaLayoutQuery = `
 	SELECT to_regclass('control.connector_peer_watch_versions') IS NOT NULL
 		AND to_regclass('control.registered_key_watch_versions') IS NOT NULL
 		AND to_regclass('control.visitor_policy_watch_versions') IS NOT NULL
-		AND to_regclass('control.publisher_policy_watch_bookmarks') IS NOT NULL
+		AND to_regclass('control.publisher_run_policy_bookmarks') IS NOT NULL
+		AND to_regclass('control.run_alias_watch_versions') IS NOT NULL
+		AND EXISTS (SELECT 1 FROM pg_catalog.pg_class
+			WHERE oid=to_regclass('control.relay_service_reservations') AND relkind='v')
 		AND EXISTS (
 			SELECT 1 FROM pg_catalog.pg_proc
 			WHERE oid = to_regprocedure('control.visitor_identity_permission(text,text,text,text,text,timestamptz)')
@@ -76,8 +79,22 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("controlstate: migrate: connect database: %w", err)
 	}
-	if err := ensureMigrationLock(ctx, db); err != nil {
-		return fmt.Errorf("controlstate: migrate: bootstrap lock: %w", err)
+	// only an empty control schema needs bootstrap writes. an existing schema
+	// missing its migration metadata must not acquire new tables on rejection.
+	var versioned, populated bool
+	const hasControlTables = `EXISTS (SELECT 1 FROM pg_catalog.pg_class
+		WHERE relnamespace=to_regnamespace('control') AND relkind IN ('r','p','v','m','f')
+			AND relname NOT IN ('schema_migration_lock','goose_db_version'))`
+	if err := db.QueryRowContext(ctx, `SELECT to_regclass('control.goose_db_version') IS NOT NULL, `+hasControlTables).Scan(&versioned, &populated); err != nil {
+		return fmt.Errorf("controlstate: migrate: inspect database: %w", err)
+	}
+	if !versioned {
+		if populated {
+			return errors.New("controlstate: incompatible unversioned control schema; use a fresh PostgreSQL database")
+		}
+		if err := ensureMigrationLock(ctx, db); err != nil {
+			return fmt.Errorf("controlstate: migrate: bootstrap lock: %w", err)
+		}
 	}
 
 	lockTx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
@@ -126,6 +143,12 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 		return fmt.Errorf("controlstate: migrate: database schema version %d is newer than supported version %d; use a fresh PostgreSQL database", current, target)
 	}
 	if current == 0 {
+		if err := lockTx.QueryRowContext(ctx, `SELECT `+hasControlTables).Scan(&populated); err != nil {
+			return fmt.Errorf("controlstate: migrate: inspect uninitialized database: %w", err)
+		}
+		if populated {
+			return errors.New("controlstate: incompatible version 0 control schema; use a fresh PostgreSQL database")
+		}
 		if _, err := provider.Up(ctx); err != nil {
 			return fmt.Errorf("controlstate: migrate database: %w", err)
 		}

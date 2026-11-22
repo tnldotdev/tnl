@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
 func TestIntegrationRelayLifecycleCapacityOneReplenishment(t *testing.T) {
@@ -77,7 +76,7 @@ func TestIntegrationRelayLifecycleCapacityOneReplenishment(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, tx)
-			if _, err := selectRelayServicePlacements(t.Context(), controlstatedb.New(tx), at); !errors.Is(err, ErrInsufficientRelayServices) {
+			if _, _, err := selectRelayServicePlacements(t.Context(), tx, at); !errors.Is(err, ErrInsufficientRelayServices) {
 				t.Fatalf("replacement reservations did not consume capacity: %v", err)
 			}
 		})

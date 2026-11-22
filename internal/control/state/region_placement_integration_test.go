@@ -1,12 +1,12 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/region"
 )
 
@@ -70,7 +70,7 @@ func TestIntegrationProviderRegionPlacementAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, tx)
-	placements, err := selectRelayServicePlacements(t.Context(), controlstatedb.New(tx), now, "fly:sjc", "aws:us-west-1")
+	placements, _, err := selectRelayServicePlacements(t.Context(), tx, now, "fly:sjc", "aws:us-west-1")
 	if err != nil || placements[0].relayServiceID != "aws-b" || placements[1].relayServiceID != "near" {
 		t.Fatal("capacity or geographic fallback changed", placements, err)
 	}
@@ -89,6 +89,57 @@ func TestIntegrationProviderRegionPlacementAndRecovery(t *testing.T) {
 	}
 	if recovered.Connections[0].RelayServiceID != "aws-b" || recovered.Connections[0].Revision != 2 || recovered.Connections[1] != setup.Connections[1] {
 		t.Fatal("recovery lost stored preferences or replaced the surviving assignment")
+	}
+}
+
+func TestIntegrationPlacementOnlyLocksSelectedRelays(t *testing.T) {
+	for _, held := range []string{"far", "fly"} {
+		t.Run(held, func(t *testing.T) {
+			d, now := newControlStateIntegrationDatabase(t, "selected_relays")
+			regionalRelays(t, d, now)
+			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+			defer cancel()
+			gate, err := d.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackTestTransaction(t, gate)
+			if _, err := gate.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_service_id=$1 FOR UPDATE`, held); err != nil {
+				t.Fatal(err)
+			}
+			workers := newIntegrationWorkers(t, cancel)
+			defer workers.stop()
+			done := make(chan error, 1)
+			var selected [2]relayServicePlacement
+			workers.Go(func() {
+				tx, err := d.pool.Begin(ctx)
+				if err == nil {
+					defer rollbackTestTransaction(t, tx)
+					selected, _, err = selectRelayServicePlacements(ctx, tx, now, "fly:sjc", "aws:us-west-1")
+				}
+				done <- err
+			})
+			if held == "fly" {
+				waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), done)
+				// the ranking saw capacity; by the time we get the lock it is gone.
+				if _, err := gate.Exec(ctx, `UPDATE control.relay_leases SET draining=true,drain_deadline=$2 WHERE relay_service_id=$1`, held, now.Add(time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+				if err := gate.Commit(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := awaitIntegrationResult(t, ctx, done); err != nil {
+				t.Fatal(err)
+			}
+			if held == "fly" {
+				if selected[0].relayServiceID != "aws-a" || selected[1].relayServiceID != "aws-b" {
+					t.Fatal("did not retry on two live relays", selected)
+				}
+			} else if selected[0].relayServiceID != "fly" || selected[1].relayServiceID != "aws-a" {
+				t.Fatal("unrelated lease changed selection", selected)
+			}
+		})
 	}
 }
 

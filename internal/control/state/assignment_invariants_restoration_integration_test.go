@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
@@ -37,6 +38,62 @@ func TestIntegrationAssignmentRestoredParentEligibilityRejectsDrift(t *testing.T
 		t.Fatal("rejected eligibility drift changed the stored run or children")
 	}
 	assertRestoredAssignmentState(t, ctx, f.database.pool, 2)
+}
+
+func TestIntegrationOppositeRelayTransfersUseOnlyReceivingCapacity(t *testing.T) {
+	topology := newRestoredAssignmentTopology(t)
+	first, second := topology.fixtures[0], topology.fixtures[1]
+	d := first.database
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	old := []string{first.run.Connections[0].RelayServiceID, first.run.Connections[1].RelayServiceID}
+	spares := []string{"transfer-spare-b", "transfer-spare-a"}
+	for _, id := range spares {
+		if _, err := d.RegisterRelay(ctx, relayLifecycleRegistration(id), first.now, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const move = `UPDATE control.service_connection_slots SET relay_service_id=($2::text[])[connection_slot+1]
+		WHERE service_run_id=$1 AND session_open`
+	if _, err := d.pool.Exec(ctx, move, second.run.RunID, spares); err != nil {
+		t.Fatal(err)
+	}
+	transfer := func(run string, destinations []string) pgx.Tx {
+		t.Helper()
+		tx, err := d.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { rollbackTestTransaction(t, tx) })
+		got, _, err := lockedRelayPlacements(ctx, controlstatedb.New(tx), first.now, destinations)
+		if err != nil || len(got) != 2 {
+			t.Fatal("could not lock both receiving services", err)
+		}
+		if moved, err := tx.Exec(ctx, move, run, destinations); err != nil || moved.RowsAffected() != 2 {
+			t.Fatal("did not transfer both reservations", err)
+		}
+		return tx
+	}
+	for _, rollback := range []bool{true, false} {
+		a := transfer(first.run.RunID, spares)
+		// keep a's destination locks held. b must finish in the other
+		// direction without waiting for a to release a counter.
+		b := transfer(second.run.RunID, old)
+		if rollback {
+			if err := errors.Join(a.Rollback(ctx), b.Rollback(ctx)); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := errors.Join(b.Commit(ctx), a.Commit(ctx)); err != nil {
+			t.Fatal(err)
+		}
+		assertRestoredAssignmentState(t, ctx, d.pool, 10)
+		var firstOnSpares int
+		if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.service_connection_slots
+			WHERE service_run_id=$1 AND relay_service_id=ANY($2)`, first.run.RunID, spares).Scan(&firstOnSpares); err != nil ||
+			(rollback && firstOnSpares != 0) || (!rollback && firstOnSpares != 2) {
+			t.Fatal("wrong recipients after transfer", firstOnSpares, err)
+		}
+	}
 }
 
 func TestIntegrationAssignmentRestoredTransitionMatrix(t *testing.T) {
@@ -206,7 +263,7 @@ func TestIntegrationAssignmentRestoredStartAuditRollback(t *testing.T) {
 	}
 	before := restoredAssignmentSnapshot(t, ctx, d.pool, prepared.RunID)
 	// this fault exists only in this disposable database. it observes the real
-	// slots and trigger-maintained reservations before rejecting the real audit.
+	// slots and their indexed reservations before rejecting the real audit.
 	for _, statement := range []string{
 		`CREATE FUNCTION control.restored_reject_start_audit() RETURNS trigger LANGUAGE plpgsql AS $$
 		DECLARE slots bigint; relays bigint; reservations bigint;
@@ -326,18 +383,18 @@ func TestIntegrationAssignmentRestoredExpiryPlacementAllowsUnrelatedProgress(t *
 		}
 		replacementDone <- err
 	})
-	expiryPID := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), replacementDone)
-	assertRestoredAssignmentGuard(t, ctx, d, expiryPID, true)
+	waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), replacementDone)
 	workers.Go(func() {
 		var err error
 		heartbeat, err = d.HeartbeatServiceRun(ctx, sibling.service.ID, sibling.run.RunID, sibling.run.Token, at,
 			ServiceRunHealth{StreamCapacity: 64})
 		heartbeatDone <- err
 	})
-	heartbeatPID := waitForPostgresBlock(t, ctx, d, expiryPID, heartbeatDone)
-	assertRestoredAssignmentGuard(t, ctx, d, heartbeatPID, false)
+	if err := awaitIntegrationResult(t, ctx, heartbeatDone); err != nil {
+		t.Fatal("sibling placement waited for another run's uncommitted release", err)
+	}
 	// two distinct assigned slots provide two progressing claim/readiness
-	// calls while expiry and placement are both blocked, without a ready-slot
+	// calls while expiry is blocked, without a ready-slot
 	// duplicate claim masking the lock graph.
 	if len(unrelated.run.Connections) != 2 {
 		t.Fatal("unrelated progress requires two slots")
@@ -359,9 +416,8 @@ func TestIntegrationAssignmentRestoredExpiryPlacementAllowsUnrelatedProgress(t *
 		t.Fatal(err)
 	}
 	replacementErr := awaitIntegrationResult(t, ctx, replacementDone)
-	heartbeatErr := awaitIntegrationResult(t, ctx, heartbeatDone)
-	if err := errors.Join(replacementErr, heartbeatErr); err != nil {
-		t.Fatal(err)
+	if replacementErr != nil {
+		t.Fatal(replacementErr)
 	}
 	if replacement.RunID == f.run.RunID || replacement.RunNumber != f.run.RunNumber+1 || len(replacement.Connections) != 2 ||
 		heartbeat.RunID != sibling.run.RunID || len(heartbeat.Connections) != 2 {
@@ -474,8 +530,7 @@ func TestIntegrationAssignmentRestoredBulkClosureLockOrder(t *testing.T) {
 				}
 				bulkDone <- err
 			})
-			bulkPID := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), bulkDone)
-			assertRestoredAssignmentGuard(t, ctx, d, bulkPID, true)
+			waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), bulkDone)
 			blockedTotal := int64(10)
 			if cleanup {
 				blockedTotal = 8
@@ -485,15 +540,16 @@ func TestIntegrationAssignmentRestoredBulkClosureLockOrder(t *testing.T) {
 				f := fixtures[2]
 				singleDone <- d.CloseServiceRun(ctx, f.service.ID, f.run.RunID, f.run.Token, now)
 			})
-			singlePID := waitForPostgresBlock(t, ctx, d, bulkPID, singleDone)
-			assertRestoredAssignmentGuard(t, ctx, d, singlePID, false)
+			if err := awaitIntegrationResult(t, ctx, singleDone); err != nil {
+				t.Fatal("independent close waited on a shared relay total", err)
+			}
+			assertRestoredAssignmentState(t, ctx, d.pool, blockedTotal-2)
 			if err := gate.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
 			bulkErr := awaitIntegrationResult(t, ctx, bulkDone)
-			singleErr := awaitIntegrationResult(t, ctx, singleDone)
-			if err := errors.Join(bulkErr, singleErr); err != nil {
-				t.Fatal(err)
+			if bulkErr != nil {
+				t.Fatal(bulkErr)
 			}
 			for index, f := range fixtures {
 				var closed bool
@@ -614,8 +670,7 @@ func restoredAssignmentSnapshot(t *testing.T, ctx context.Context, db controlsta
 func installRestoredAssignmentMutationGate(t *testing.T, ctx context.Context, d *Database, runID string) string {
 	t.Helper()
 	key := "tnl:test:restored-assignment-mutation:" + runID
-	// only this disposable database gets the test hook. its name orders it
-	// after the real counter trigger; it acquires only the separate test key.
+	// pause the slot's release before commit, using a separate test key.
 	if _, err := d.pool.Exec(ctx, `CREATE FUNCTION control.restored_assignment_mutation_gate()
 		RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
@@ -639,66 +694,6 @@ func installRestoredAssignmentMutationGate(t *testing.T, ctx context.Context, d 
 		t.Fatal(err)
 	}
 	return key
-}
-
-func assertRestoredAssignmentGuard(t *testing.T, ctx context.Context, d *Database, pid int32, granted bool) {
-	t.Helper()
-	var count int
-	err := d.pool.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE pid=$1 AND locktype='advisory'
-		AND database=(SELECT oid FROM pg_database WHERE datname=current_database())
-		AND mode='ExclusiveLock' AND granted=$2 AND objsubid=1
-		AND classid=((hashtextextended('tnl:relay-assignment-totals',0)>>32)&4294967295)::oid
-		AND objid=(hashtextextended('tnl:relay-assignment-totals',0)&4294967295)::oid`,
-		pid, granted).Scan(&count)
-	if err != nil || count != 1 {
-		var snapshot string
-		diagnosticErr := d.pool.QueryRow(ctx, `WITH subjects AS MATERIALIZED (
-			SELECT activity.pid FROM pg_stat_activity activity
-			WHERE activity.datname=current_database() AND (
-				activity.pid=$1 OR activity.pid=ANY(pg_blocking_pids($1))
-				OR $1=ANY(pg_blocking_pids(activity.pid)))
-		) SELECT jsonb_build_object(
-			'expected',jsonb_build_object(
-				'database',(SELECT oid FROM pg_database WHERE datname=current_database()),
-				'hash',hashtextextended('tnl:relay-assignment-totals',0),
-				'classid',((hashtextextended('tnl:relay-assignment-totals',0)>>32)&4294967295)::oid,
-				'objid',(hashtextextended('tnl:relay-assignment-totals',0)&4294967295)::oid,
-				'objsubid',1,'mode','ExclusiveLock','granted',$2::boolean),
-			'activity',(SELECT jsonb_agg(jsonb_build_object(
-				'pid',activity.pid,'query',activity.query,'state',activity.state,
-				'wait_event_type',activity.wait_event_type,'wait_event',activity.wait_event,
-				'xact_start',activity.xact_start,'query_start',activity.query_start,
-				'blockers',pg_blocking_pids(activity.pid)) ORDER BY activity.pid)
-				FROM pg_stat_activity activity JOIN subjects USING(pid)),
-			'locks',(SELECT jsonb_agg(to_jsonb(locks) ORDER BY
-				locks.pid,locks.locktype,locks.database,locks.relation,locks.page,locks.tuple,
-				locks.classid,locks.objid,locks.objsubid,locks.mode,locks.granted)
-				FROM pg_locks locks JOIN subjects USING(pid)),
-			'triggers',(SELECT jsonb_agg(jsonb_build_object(
-				'relation',trigger_record.tgrelid::regclass::text,'name',trigger_record.tgname,
-				'internal',trigger_record.tgisinternal,'deferrable',trigger_record.tgdeferrable,
-				'initially_deferred',trigger_record.tginitdeferred,
-				'definition',pg_get_triggerdef(trigger_record.oid,true)) ORDER BY trigger_record.tgrelid,trigger_record.tgname)
-				FROM pg_trigger trigger_record WHERE trigger_record.tgrelid IN (
-					'control.service_runs'::regclass,'control.service_connection_slots'::regclass)),
-			'constraints',(SELECT jsonb_agg(jsonb_build_object(
-				'relation',constraint_record.conrelid::regclass::text,'name',constraint_record.conname,
-				'definition',pg_get_constraintdef(constraint_record.oid,true))
-				ORDER BY constraint_record.conrelid,constraint_record.conname)
-				FROM pg_constraint constraint_record WHERE constraint_record.conrelid IN (
-					'control.service_runs'::regclass,'control.service_connection_slots'::regclass)),
-			'functions',(SELECT jsonb_agg(pg_get_functiondef(function_record.oid) ORDER BY function_record.proname)
-				FROM pg_proc function_record WHERE function_record.pronamespace='control'::regnamespace
-					AND function_record.proname IN (
-						'update_relay_assignment_totals','audit_service_run','append_service_audit'))
-		)::text`, pid, granted).Scan(&snapshot)
-		if diagnosticErr != nil {
-			t.Log("reservation guard diagnostics failed within the existing caller", diagnosticErr)
-		} else {
-			t.Log("reservation guard wait snapshot", snapshot)
-		}
-		t.Fatal("wait graph did not use the actual reservation guard", pid, granted, count, err)
-	}
 }
 
 func requireRestoredPostgresFailure(t *testing.T, err error, code, constraint, detail string) {

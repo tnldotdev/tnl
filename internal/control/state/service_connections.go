@@ -44,7 +44,7 @@ func lockServiceConnectionRun(ctx context.Context, tx pgx.Tx, q *controlstatedb.
 	if err != nil {
 		return controlstatedb.ControlServiceRun{}, ErrServiceAccess
 	}
-	if err := lockServiceAdmission(ctx, tx, serviceID); err != nil {
+	if err := lockServiceForRun(ctx, tx, serviceID); err != nil {
 		return controlstatedb.ControlServiceRun{}, err
 	}
 	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
@@ -280,7 +280,7 @@ func (d *Database) DisconnectServicePublisherConnection(ctx context.Context, con
 	if _, err = checkedPrivateAssignmentBinding(serviceID, runID, connectionID, runNumber, revision); err != nil {
 		return result, err
 	}
-	if err = lockServiceAdmission(ctx, tx, serviceID); err != nil {
+	if err = lockServiceForRun(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)

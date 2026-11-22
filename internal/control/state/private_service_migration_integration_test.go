@@ -1,6 +1,11 @@
 package state
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/tnldotdev/tnl/internal/naming"
+)
 
 func TestIntegrationPrivateServiceMigrationPreservesReservations(t *testing.T) {
 	d, directURL, now := newControlStateIntegrationDatabaseWithURL(t, "private_port_migration")
@@ -39,5 +44,28 @@ func TestIntegrationPrivateServiceMigrationPreservesReservations(t *testing.T) {
 		if snapshot() != before {
 			t.Fatal("repeat initialization changed service identity or a reserved public port")
 		}
+	}
+	// an earlier v1 has the service-wide publisher watch, but no run-scoped
+	// bookmarks. a v1 stamp never authorizes conversion or erasure of its rows.
+	if _, err := d.pool.Exec(ctx, `DROP VIEW control.publisher_run_policy_bookmarks;
+		ALTER VIEW control.service_policy_watch_bookmarks RENAME TO publisher_policy_watch_bookmarks;
+		DROP TABLE control.run_alias_watch_versions`); err != nil {
+		t.Fatal(err)
+	}
+	rejected := func(op string, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "incompatible version 1 database schema") {
+			t.Fatalf("%s accepted the older watch schema or failed for another reason: %v", op, err)
+		}
+	}
+	rejected("migrate", Migrate(ctx, directURL))
+	rejected("readiness", d.Readiness(ctx))
+	old, err := Open(ctx, directURL, testStorageKey, "", naming.ManagedURLModeGenerated)
+	if old != nil {
+		old.Close()
+	}
+	rejected("open", err)
+	if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != 1 || snapshot() != before {
+		t.Fatal("rejection changed the version, service, or reservation", err)
 	}
 }

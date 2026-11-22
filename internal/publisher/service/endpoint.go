@@ -253,7 +253,8 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		prepared.policyOwner = httpFrontend.browser.Policy
 		prepared.refreshPolicies = append(prepared.refreshPolicies, prepared.policyOwner.Refresh)
 		if httpFrontend.alias != nil {
-			prepared.refreshPolicies = append(prepared.refreshPolicies, httpFrontend.alias.browser.Policy.Refresh)
+			prepared.aliasPolicyOwner = httpFrontend.alias.browser.Policy
+			prepared.refreshPolicies = append(prepared.refreshPolicies, prepared.aliasPolicyOwner.Refresh)
 		}
 		prepared.httpResponseHooks = httpFrontend.ResponseHooks
 		if !servicestream.HandlerOnly && prepared.handler == nil && prepared.targetResolver == nil {

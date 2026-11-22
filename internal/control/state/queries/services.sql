@@ -44,14 +44,16 @@ LEFT JOIN control.publisher_namespace_allocations allocation ON allocation.servi
 WHERE service.id=sqlc.arg(service_id);
 
 -- name: ListServiceConfigurations :many
+-- service_id is unique on each binding. join it once rather than planning an
+-- existence subquery for every row of a batch, including single-service reads.
 SELECT service.id AS service_id,COALESCE(local.service,service.name)::text AS service,
     service.configuration_ciphertext,service.storage_key_id,
     (local.service_id IS NOT NULL)::boolean AS local_owned,
-    EXISTS(SELECT 1 FROM control.applied_project_services binding
-        WHERE binding.service_id=service.id) AS deployment_owned,
+    (binding.service_id IS NOT NULL)::boolean AS deployment_owned,
     (allocation.service_id IS NOT NULL)::boolean AS allocation_owned,
     COALESCE(allocation.required_temporary_approval,'')::text AS required_temporary_approval
 FROM control.services service
+LEFT JOIN control.applied_project_services binding ON binding.service_id=service.id
 LEFT JOIN control.local_project_services local ON local.service_id=service.id
 LEFT JOIN control.publisher_namespace_allocations allocation ON allocation.service_id=service.id
 WHERE service.id=ANY(sqlc.arg(service_ids)::text[])

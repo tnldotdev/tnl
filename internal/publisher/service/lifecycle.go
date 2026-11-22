@@ -489,10 +489,15 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		bound.mu.Unlock()
 		status.TargetHealthy = config.Healthy(ctx)
 		owner := prepared.policyOwner
-		var observation visitorlease.Request
+		var observation, aliasObservation visitorlease.Request
 		if owner != nil {
 			observation = owner.Lease().Begin()
 			observation.Deadline, _ = ctx.Deadline()
+		}
+		alias := prepared.aliasPolicyOwner
+		if alias != nil {
+			aliasObservation = alias.Lease().Begin()
+			aliasObservation.Deadline, _ = ctx.Deadline()
 		}
 		state, err = config.Control.HeartbeatServiceRun(ctx, config.ServiceID, setup.ServiceRunId, runToken,
 			controlv1.ServiceRunHeartbeat{Healthy: status.TargetHealthy, StreamCapacity: config.StreamCapacity, ActiveStreams: int32(active)})
@@ -510,6 +515,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				servingConfirmation = next
 				if owner != nil {
 					owner.ObserveRenewal(observation, state.PolicyConfirmation, state.ObservedAt, controlUntil)
+				}
+				if alias != nil {
+					alias.ObserveRenewal(aliasObservation, state.AliasPolicyConfirmation, state.ObservedAt, controlUntil)
 				}
 			}
 			if err != nil {

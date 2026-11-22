@@ -57,8 +57,8 @@ func TestIntegrationServiceRestoredExpiredReplacementQueuesBehindHeartbeatPlacem
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	// placement takes the assignment-total guard before these relay rows.
-	// holding a relay row leaves that guard with the blocked heartbeat.
+	// the heartbeat takes the selected relay service guards before these rows.
+	// holding the rows makes a competing placement wait on those same guards.
 	if _, err := gate.Exec(ctx, `SELECT relay_service_id FROM control.relay_services ORDER BY relay_service_id FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}

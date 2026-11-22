@@ -197,7 +197,7 @@ type CountOpenServiceRunAssignmentsByRelayServiceRow struct {
 	AssignmentCount int64
 }
 
-// diagnostic/test oracle only; placement reads trigger-maintained totals.
+// diagnostic/test oracle only; joins the parent to check slot eligibility.
 func (q *Queries) CountOpenServiceRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenServiceRunAssignmentsByRelayServiceRow, error) {
 	rows, err := q.db.Query(ctx, countOpenServiceRunAssignmentsByRelayService)
 	if err != nil {
@@ -587,13 +587,11 @@ func (q *Queries) LockRelayServiceForCertificate(ctx context.Context, relayServi
 }
 
 const lockRelayServicesForPlacement = `-- name: LockRelayServicesForPlacement :many
-WITH assignment_guard AS MATERIALIZED (
-    SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-assignment-totals', 0))
-), service_guards AS MATERIALIZED (
+WITH service_guards AS MATERIALIZED (
     SELECT relay_service_id,
         pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || relay_service_id, 0))
-    FROM control.relay_services CROSS JOIN assignment_guard
-    WHERE enabled
+    FROM control.relay_services
+    WHERE enabled AND (COALESCE(cardinality($1::text[]),0)=0 OR relay_service_id=ANY($1::text[]))
     ORDER BY relay_service_id
 )
 SELECT services.relay_service_id
@@ -604,11 +602,8 @@ ORDER BY services.relay_service_id
 FOR UPDATE OF services
 `
 
-// callers hold the affected service and existing service run rows. take the
-// assignment-total guard before relay service guards and lease rows; lock every relay service
-// before checking capacity or locking leases.
-func (q *Queries) LockRelayServicesForPlacement(ctx context.Context) ([]string, error) {
-	rows, err := q.db.Query(ctx, lockRelayServicesForPlacement)
+func (q *Queries) LockRelayServicesForPlacement(ctx context.Context, ids []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, lockRelayServicesForPlacement, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -647,6 +642,81 @@ type MarkSupersededRelayRunSigningKeysParams struct {
 func (q *Queries) MarkSupersededRelayRunSigningKeys(ctx context.Context, arg MarkSupersededRelayRunSigningKeysParams) error {
 	_, err := q.db.Exec(ctx, markSupersededRelayRunSigningKeys, arg.RelayRunID, arg.SupersededAt, arg.RelayID)
 	return err
+}
+
+const readPlacementAssignmentTotals = `-- name: ReadPlacementAssignmentTotals :many
+SELECT relay_service_id,reserved_slot_count AS assignment_count FROM control.relay_service_reservations
+WHERE relay_service_id=ANY($1::text[])
+`
+
+type ReadPlacementAssignmentTotalsRow struct {
+	RelayServiceID  string
+	AssignmentCount int64
+}
+
+func (q *Queries) ReadPlacementAssignmentTotals(ctx context.Context, ids []string) ([]ReadPlacementAssignmentTotalsRow, error) {
+	rows, err := q.db.Query(ctx, readPlacementAssignmentTotals, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadPlacementAssignmentTotalsRow
+	for rows.Next() {
+		var i ReadPlacementAssignmentTotalsRow
+		if err := rows.Scan(&i.RelayServiceID, &i.AssignmentCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRelayPlacementCandidates = `-- name: ReadRelayPlacementCandidates :many
+SELECT services.relay_service_id,services.region,
+    LEAST(sum(leases.connection_capacity),9223372036854775807)::bigint AS capacity,
+    reservations.reserved_slot_count AS assignments
+FROM control.relay_services services
+JOIN control.relay_leases leases USING(relay_service_id)
+JOIN control.relay_service_reservations reservations USING(relay_service_id)
+WHERE services.enabled AND leases.lease_expires_at>$1 AND NOT leases.draining
+    AND leases.protocol_version=1 AND leases.connection_capacity>0 AND leases.stream_capacity>0
+GROUP BY services.relay_service_id,services.region,reservations.reserved_slot_count
+`
+
+type ReadRelayPlacementCandidatesRow struct {
+	RelayServiceID string
+	Region         string
+	Capacity       int64
+	Assignments    int64
+}
+
+// a ranking hint only. recheck the selected services and leases under lock.
+func (q *Queries) ReadRelayPlacementCandidates(ctx context.Context, now pgtype.Timestamptz) ([]ReadRelayPlacementCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, readRelayPlacementCandidates, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadRelayPlacementCandidatesRow
+	for rows.Next() {
+		var i ReadRelayPlacementCandidatesRow
+		if err := rows.Scan(
+			&i.RelayServiceID,
+			&i.Region,
+			&i.Capacity,
+			&i.Assignments,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const registerRelay = `-- name: RegisterRelay :one

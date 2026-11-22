@@ -215,7 +215,7 @@ func setExpirationProgressServingDeadline(t *testing.T, f *servicePublicationFix
 }
 
 // the disposable database owns this exact-run pause. the gate holds only a
-// separate test advisory key, never the production reservation guard.
+// separate test advisory key, never a placement lock.
 func newExpirationProgressCloseGate(t *testing.T, ctx context.Context, d *Database, runID string) (pgx.Tx, string) {
 	t.Helper()
 	if _, err := d.pool.Exec(ctx, `CREATE TABLE control.expiry_progress_test_runs(id text PRIMARY KEY);

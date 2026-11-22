@@ -23,7 +23,7 @@ type serviceRunEndpoint struct {
 func lockServiceRunEndpoint(ctx context.Context, tx pgx.Tx, serviceID string) (serviceRunEndpoint, error) {
 	var endpoint serviceRunEndpoint
 	err := tx.QueryRow(ctx, `SELECT id,endpoint_revision,certificate_hostname,domain_id,ingress_pool_id,protocol,service_port,public,run_alias_parent
-	    FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL FOR NO KEY UPDATE`, serviceID).Scan(
+	    FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL FOR SHARE`, serviceID).Scan(
 		&endpoint.id, &endpoint.revision, &endpoint.hostname, &endpoint.domain, &endpoint.pool, &endpoint.protocol, &endpoint.port, &endpoint.public, &endpoint.aliasParent)
 	return endpoint, publisherLookupError(err, ErrServiceAccess)
 }

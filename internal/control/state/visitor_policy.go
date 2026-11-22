@@ -223,10 +223,10 @@ func readVisitorPolicyRegisteredKeys(ctx context.Context, q *controlstatedb.Quer
 	return leases, nil
 }
 
-func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time, hostnames ...string) (result controlv1.VisitorPolicyUpdate, retErr error) {
+func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, now time.Time, hostnames ...string) (controlv1.VisitorPolicyUpdate, error) {
 	hostname, err := serviceHTTPHostnameSelection(hostnames)
 	if err != nil {
-		return result, ErrVisitorPolicy
+		return controlv1.VisitorPolicyUpdate{}, ErrVisitorPolicy
 	}
 	// retry a rolled-back observation with fresh time and current run authority.
 	// this never replays a credential redemption or an application admission.
@@ -278,12 +278,12 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	if row.CertificateExpiresAt.Valid {
 		result.Policy.ValidUntil = minTime(result.Policy.ValidUntil, row.CertificateExpiresAt.Time)
 	}
-	if result.Policy.Enabled && result.Policy.Hostname == row.CertificateHostname {
-		confirmation, err := d.policyConfirmation(ctx, q, row, now)
+	if result.Policy.Enabled {
+		confirmations, err := d.policyConfirmations(ctx, q, row, now)
 		if err != nil {
 			return result, err
 		}
-		if confirmation != nil && !confirmation.ValidUntil.After(result.Policy.ValidUntil) {
+		if confirmation := confirmations.forHost(result.Policy.Hostname); confirmation != nil && !confirmation.ValidUntil.After(result.Policy.ValidUntil) {
 			result.ConfirmationKey = &confirmation.ConfirmationKey
 		}
 	}

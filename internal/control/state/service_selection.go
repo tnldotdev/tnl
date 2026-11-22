@@ -112,7 +112,11 @@ func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID, endpoin
 		}
 		start, after = cursor.Start.RunNumber, cursor.After.RunNumber
 	}
-	err = tx.QueryRow(ctx, `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,permission.expires_at,run.certificate_expires_at)
+	err = tx.QueryRow(ctx, routableServiceRunSQL, serviceID, now, start, after, endpointHostname).Scan(&id, &number, &until)
+	return
+}
+
+const routableServiceRunSQL = `SELECT run.id,run.run_number,LEAST(run.publisher_expires_at,permission.expires_at,run.certificate_expires_at) AS valid_until
 	    FROM control.service_runs run
 	    JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
 	    JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,$2) permission ON true
@@ -129,31 +133,29 @@ func selectRoutableServiceRun(ctx context.Context, tx pgx.Tx, serviceID, endpoin
 	        WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND lease.lease_expires_at>$2 AND NOT lease.draining AND lease.reported_streams<lease.stream_capacity)
 	    AND GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))<run.stream_capacity
 	    ORDER BY CASE WHEN $3::bigint=0 THEN GREATEST(run.reported_streams,(SELECT count(*) FROM control.service_visitor_capacity stream WHERE stream.service_run_id=run.id AND stream.closed_at IS NULL AND stream.valid_until>$2))::numeric/run.stream_capacity ELSE 0 END,
-	        CASE WHEN $3::bigint>0 AND run.run_number<=$3 THEN 1 ELSE 0 END,run.run_number LIMIT 1`, serviceID, now, start, after, endpointHostname).
-		Scan(&id, &number, &until)
-	return
-}
+	        CASE WHEN $3::bigint>0 AND run.run_number<=$3 THEN 1 ELSE 0 END,run.run_number LIMIT 1`
 
 func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string, subject VisitorSubject, now time.Time) (result ServiceSelection, retErr error) {
+	clock := newAuthorizationClock(now)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "select service run", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, serviceID); err != nil {
+	if err = lockServiceForRun(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
-	until, _, err := VisitorSubjectAccess(ctx, tx, serviceID, subject, now)
+	until, _, err := VisitorSubjectAccess(ctx, tx, serviceID, subject, clock.current())
 	if err != nil {
 		return result, err
 	}
-	service, err := controlstatedb.New(tx).LockService(ctx, serviceID)
+	service, err := controlstatedb.New(tx).GetService(ctx, serviceID)
 	if err != nil {
 		return result, err
 	}
 	// count only admitted streams with a current hard deadline. no established
 	// stream moves, and expired authority cannot retain capacity indefinitely.
-	result.ServiceRunID, result.RunNumber, result.ExpiresAt, err = selectRoutableServiceRun(ctx, tx, serviceID, "", now)
+	selected, err := readConnectorRunSelection(ctx, tx, routableServiceRunSQL, serviceID, clock.current(), int64(0), int64(0), "")
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
 	}
@@ -162,7 +164,8 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	}
 	result.ServiceID, result.IdentityID, result.DeviceID = serviceID, subject.IdentityID, subject.DeviceID
 	result.Subject = subject
-	result.ExpiresAt = minTime(result.ExpiresAt, until)
+	result.ServiceRunID, result.RunNumber, result.PairReady = selected.id, selected.number, selected.pair
+	result.ExpiresAt = minTime(selected.until, until)
 	result.ServiceMetadata, err = checkedServiceMetadata(service)
 	if err != nil {
 		return result, err
@@ -170,18 +173,15 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	if result.Endpoint == nil {
 		return result, ErrServiceMetadata
 	}
-	if err = tx.QueryRow(ctx, `SELECT certificate_hostname FROM control.service_runs WHERE id=$1`, result.ServiceRunID).Scan(&result.Endpoint.Hostname); err != nil {
-		return result, err
-	}
+	result.Endpoint.Hostname = selected.hostname
 	if result.Protocol == "kubernetes" {
 		result.KubernetesAuth, err = d.visitorKubernetesAuth(ctx, controlstatedb.New(tx), serviceID)
 		if err != nil {
 			return result, err
 		}
 	}
-	result.PairReady, err = connectorPairReadySelection(ctx, tx, result.ServiceRunID, serviceID, result.RunNumber, now)
-	if err != nil {
-		return result, err
+	if !result.ExpiresAt.After(clock.current()) {
+		return ServiceSelection{}, ErrServiceAccess
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err

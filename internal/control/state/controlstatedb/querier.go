@@ -71,6 +71,8 @@ type Querier interface {
 	CompanySubjectDeadline(ctx context.Context, arg CompanySubjectDeadlineParams) (pgtype.Timestamptz, error)
 	CompanySubjectSessionAuthorized(ctx context.Context, arg CompanySubjectSessionAuthorizedParams) (bool, error)
 	// an untouched run starts at zero. a missing or closed run has no version.
+	// filter the live bookmark view before joining it to the caller's cursor.
+	// otherwise a hash join can compute every run's bookmark for each batch.
 	CompareConnectorPeerWatchVersions(ctx context.Context, arg CompareConnectorPeerWatchVersionsParams) ([]CompareConnectorPeerWatchVersionsRow, error)
 	// only a checked publisher report can advance this startup barrier. a retry
 	// retains a newer report, capped by the currently checked delivery authority.
@@ -86,7 +88,7 @@ type Querier interface {
 	CountActiveSharesForService(ctx context.Context, arg CountActiveSharesForServiceParams) (int64, error)
 	CountConnectorPeerPairOwners(ctx context.Context, arg CountConnectorPeerPairOwnersParams) (int64, error)
 	CountGuestCurrentServices(ctx context.Context, guestID pgtype.Text) (int64, error)
-	// diagnostic/test oracle only; placement reads trigger-maintained totals.
+	// diagnostic/test oracle only; joins the parent to check slot eligibility.
 	CountOpenServiceRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenServiceRunAssignmentsByRelayServiceRow, error)
 	CountRecentGuestTrialsByIP(ctx context.Context, arg CountRecentGuestTrialsByIPParams) (int64, error)
 	CountRelayActiveConnections(ctx context.Context, arg CountRelayActiveConnectionsParams) (int64, error)
@@ -325,6 +327,8 @@ type Querier interface {
 	ListServiceAuditEvents(ctx context.Context, arg ListServiceAuditEventsParams) ([]ControlServiceAuditEvent, error)
 	ListServiceAuditEventsByID(ctx context.Context, eventIds []string) ([]ControlServiceAuditEvent, error)
 	ListServiceAuditOwners(ctx context.Context, serviceIds []string) ([]ListServiceAuditOwnersRow, error)
+	// service_id is unique on each binding. join it once rather than planning an
+	// existence subquery for every row of a batch, including single-service reads.
 	ListServiceConfigurations(ctx context.Context, serviceIds []string) ([]ListServiceConfigurationsRow, error)
 	ListServiceConnectionSlots(ctx context.Context, serviceRunID string) ([]ControlServiceConnectionSlot, error)
 	// replace expired never-ready claims even with a live relay lease.
@@ -393,10 +397,7 @@ type Querier interface {
 	LockPublisherEnrollment(ctx context.Context, id string) (ControlPublisherEnrollment, error)
 	LockPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
 	LockRelayServiceForCertificate(ctx context.Context, relayServiceID string) (string, error)
-	// callers hold the affected service and existing service run rows. take the
-	// assignment-total guard before relay service guards and lease rows; lock every relay service
-	// before checking capacity or locking leases.
-	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
+	LockRelayServicesForPlacement(ctx context.Context, ids []string) ([]string, error)
 	LockService(ctx context.Context, id string) (ControlService, error)
 	LockServiceAuditClock(ctx context.Context, arg LockServiceAuditClockParams) error
 	// run closure holds its parent first. lock shared orders in stable order before
@@ -453,14 +454,17 @@ type Querier interface {
 	ReadConnectorPeerClaimBounds(ctx context.Context, pairID string) ([]ReadConnectorPeerClaimBoundsRow, error)
 	// relay leases are current-state recheck deadlines, not pair renewals.
 	ReadConnectorPeerObservationRelayBounds(ctx context.Context, arg ReadConnectorPeerObservationRelayBoundsParams) ([]ReadConnectorPeerObservationRelayBoundsRow, error)
+	ReadPlacementAssignmentTotals(ctx context.Context, ids []string) ([]ReadPlacementAssignmentTotalsRow, error)
 	ReadPublisherGrant(ctx context.Context, arg ReadPublisherGrantParams) (ControlPublisherGrant, error)
 	ReadPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
-	// confirm only ordinary canonical scopes without time-dependent parents.
+	// confirm only ordinary scopes without time-dependent parents.
 	// every check, including the change bookmark, uses one statement snapshot.
 	ReadPublisherPolicyConfirmation(ctx context.Context, arg ReadPublisherPolicyConfirmationParams) (ReadPublisherPolicyConfirmationRow, error)
 	// an unbound service cannot gain a registered key from a change to another
 	// service's project. the binding counter survives removal and recreation.
 	ReadRegisteredKeyWatchVersion(ctx context.Context, serviceID string) (ReadRegisteredKeyWatchVersionRow, error)
+	// a ranking hint only. recheck the selected services and leases under lock.
+	ReadRelayPlacementCandidates(ctx context.Context, now pgtype.Timestamptz) ([]ReadRelayPlacementCandidatesRow, error)
 	ReadServiceHTTPBrowserSession(ctx context.Context, arg ReadServiceHTTPBrowserSessionParams) (ReadServiceHTTPBrowserSessionRow, error)
 	ReadServiceIPKey(ctx context.Context, arg ReadServiceIPKeyParams) (ReadServiceIPKeyRow, error)
 	ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error)
