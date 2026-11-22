@@ -71,6 +71,8 @@ type Querier interface {
 	CompanySubjectDeadline(ctx context.Context, arg CompanySubjectDeadlineParams) (pgtype.Timestamptz, error)
 	CompanySubjectSessionAuthorized(ctx context.Context, arg CompanySubjectSessionAuthorizedParams) (bool, error)
 	// an untouched run starts at zero. a missing or closed run has no version.
+	// filter the live bookmark view before joining it to the caller's cursor.
+	// otherwise a hash join can compute every run's bookmark for each batch.
 	CompareConnectorPeerWatchVersions(ctx context.Context, arg CompareConnectorPeerWatchVersionsParams) ([]CompareConnectorPeerWatchVersionsRow, error)
 	// only a checked publisher report can advance this startup barrier. a retry
 	// retains a newer report, capped by the currently checked delivery authority.
