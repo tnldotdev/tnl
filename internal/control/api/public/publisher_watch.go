@@ -10,6 +10,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/serverhttp"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -179,11 +180,33 @@ func watchAuthorityDenied(err error) bool {
 	return err == controlstate.ErrServiceAccess || err == controlstate.ErrPublisherIdentity || err == controlstate.ErrGuestTrialSpent
 }
 
+func (watch *PublisherWatch) authorize(ctx context.Context, run controlv1.PublisherWatchRun) error {
+	if err := watch.store.AuthorizeConnectorPeerWatch(ctx, run.ServiceId, run.ServiceRunId, run.RunNumber, run.RunToken, time.Now()); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
 func watchAuthorizationProblem(request, auth context.Context, w http.ResponseWriter, operation string, err error) {
+	operationErr := err
+	rollback, failed := err.(*controlstate.RollbackFailure)
+	reportRollback := func(id string) {
+		if failed {
+			operatorlog.ReportContext(request, failure.Operation(operation+" rollback"), failure.ServerAPIInternal, id, rollback.RollbackErr)
+		}
+	}
+	if request.Err() != nil {
+		reportRollback("")
+		return
+	}
+	if failed {
+		operationErr = rollback.OperationErr
+	}
 	// an exhausted server-side observation budget grants nothing. let the
 	// publisher retry without treating database contention as a terminal fault.
-	if auth.Err() == context.DeadlineExceeded && failure.Only(err, context.DeadlineExceeded) {
-		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher watch authorization timed out")
+	if auth.Err() == context.DeadlineExceeded && failure.Only(operationErr, context.DeadlineExceeded) {
+		id := writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher watch authorization timed out")
+		reportRollback(id)
 		return
 	}
 	serviceRunProblem(request, w, operation, err)
@@ -234,7 +257,7 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 	changes := make([]controlstate.ConnectorPeerWatchVersion, 0, len(body.Runs))
 	auth, stop := context.WithTimeout(r.Context(), publisherWatchAuth)
 	for _, run := range body.Runs {
-		err := watch.store.AuthorizeConnectorPeerWatch(auth, run.ServiceId, run.ServiceRunId, run.RunNumber, run.RunToken, time.Now())
+		err := watch.authorize(auth, run)
 		if watchAuthorityDenied(err) {
 			changes = append(changes, controlstate.ConnectorPeerWatchVersion{RunID: run.ServiceRunId, Revision: -1})
 			continue
@@ -268,7 +291,7 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 		for _, change := range result.changes {
 			if change.Revision >= 0 {
 				run := body.Runs[index[change.RunID]]
-				err := watch.store.AuthorizeConnectorPeerWatch(auth, run.ServiceId, run.ServiceRunId, run.RunNumber, run.RunToken, time.Now())
+				err := watch.authorize(auth, run)
 				if watchAuthorityDenied(err) {
 					change.Revision = -1
 					change.PolicyBookmark = ""
