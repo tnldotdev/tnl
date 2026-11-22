@@ -589,6 +589,18 @@ func (s *Server) RoutingObservedAt() time.Time {
 	return s.services.observedAt
 }
 
+// RunRoutingValidity reports the installed control observation and local serving
+// deadline for one run. both are zero if the run is absent.
+func (s *Server) RunRoutingValidity(runID string) (observedAt, until time.Time) {
+	r := s.services
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if route := r.runs[runID]; route != nil {
+		return route.observedAt, route.until
+	}
+	return time.Time{}, time.Time{}
+}
+
 func (r *ServiceRouting) expireVisitorsLocked(now time.Time) []*routedVisitor {
 	var stopped []*routedVisitor
 	for visitor := range r.visitors {
