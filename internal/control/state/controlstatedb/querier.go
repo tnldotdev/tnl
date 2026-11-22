@@ -327,6 +327,8 @@ type Querier interface {
 	ListServiceAuditEvents(ctx context.Context, arg ListServiceAuditEventsParams) ([]ControlServiceAuditEvent, error)
 	ListServiceAuditEventsByID(ctx context.Context, eventIds []string) ([]ControlServiceAuditEvent, error)
 	ListServiceAuditOwners(ctx context.Context, serviceIds []string) ([]ListServiceAuditOwnersRow, error)
+	// service_id is unique on each binding. join it once rather than planning an
+	// existence subquery for every row of a batch, including single-service reads.
 	ListServiceConfigurations(ctx context.Context, serviceIds []string) ([]ListServiceConfigurationsRow, error)
 	ListServiceConnectionSlots(ctx context.Context, serviceRunID string) ([]ControlServiceConnectionSlot, error)
 	// replace expired never-ready claims even with a live relay lease.
