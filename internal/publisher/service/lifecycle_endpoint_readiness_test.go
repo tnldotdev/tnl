@@ -349,6 +349,49 @@ func TestPublicServiceRunReadinessWaitsForItsExactAlias(t *testing.T) {
 	})
 }
 
+func TestPublicServiceRunObservesAliasPublicationBeforeNextHeartbeat(t *testing.T) {
+	for _, publishes := range []bool{false, true} {
+		name := "pending"
+		if publishes {
+			name = "published"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				cfg, base, observed := endpointReadinessFixture(t, controlv1.ServiceProtocolHTTP, true, true, 7)
+				cfg.HeartbeatInterval = 10 * time.Second
+				base.prep.RunHostname = new(httpRunAlias)
+				plan := *base.prep.CertificatePlan
+				plan.CacheKey, plan.Scope = "run-alias/startup", base.prep.Hostname
+				plan.Identifiers = []string{base.prep.Hostname, httpRunAlias}
+				base.prep.CertificatePlan = &plan
+				control := &aliasEndpointReadinessControl{endpointReadinessControl: base, hostname: new(httpRunAlias), aliasReady: new(false)}
+				cfg.Control = control
+				if publishes {
+					timer := time.AfterFunc(500*time.Millisecond, func() { control.setAlias(new(httpRunAlias), new(true)) })
+					defer timer.Stop()
+				}
+				stop := startEndpointReadinessRun(t, cfg, base, observed)
+				defer stop()
+				time.Sleep(7 * time.Second)
+				synctest.Wait()
+				if calls, _ := base.snapshot(); calls != 3 {
+					t.Fatalf("wanted the initial heartbeat and two bounded startup observations, got %d", calls)
+				}
+				if publishes {
+					assertEndpointReadiness(t, observed, true, 1)
+				} else {
+					assertEndpointReadiness(t, observed, false, 0)
+				}
+				time.Sleep(3 * time.Second)
+				synctest.Wait()
+				if calls, _ := base.snapshot(); calls != 4 {
+					t.Fatalf("lost the regular heartbeat or kept polling the alias: %d calls", calls)
+				}
+			})
+		})
+	}
+}
+
 func TestServiceRunRenewsBothHostnamePolicies(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cfg, base, observed := endpointReadinessFixture(t, controlv1.ServiceProtocolHTTP, true, true, 7)
