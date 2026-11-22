@@ -27,6 +27,13 @@ func domainReleaseBlocks(domain authorityv1.Domain, server, team string) []cliou
 	if domainReleaseConfirmed(domain) {
 		return append(blocks, clioutput.Fields(clioutput.Field{Label: "released", Value: domain.Release.ReleasedAt.UTC().Format(time.RFC3339)}))
 	}
+	if domain.DelegationTarget != nil {
+		if *domain.DelegationTarget == "registrar" {
+			blocks = append(blocks, clioutput.Text("move the domain off the tnl nameservers at its registrar"))
+		} else {
+			blocks = append(blocks, clioutput.Text("remove the tnl nameservers for this domain from its parent DNS"))
+		}
+	}
 	next := "tnl domain status " + domain.Id
 	if server != "" {
 		next += " --server=" + server

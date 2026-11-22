@@ -111,6 +111,11 @@ INSERT INTO control.dns_authorities (
     create_request_digest,
     provider,
     state,
+    delegation_set_id,
+    nameserver_domain,
+    claim_proof_name,
+    claim_proof_value,
+    claim_expires_at,
     available_at,
     created_at,
     updated_at
@@ -124,8 +129,13 @@ INSERT INTO control.dns_authorities (
     'route53',
     'pending',
     $7,
-    $7,
-    $7
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $12,
+    $12
 )
 `
 
@@ -136,6 +146,11 @@ type CreateCustomDNSAuthorityParams struct {
 	CanonicalDomain      string
 	CreateIdempotencyKey string
 	CreateRequestDigest  []byte
+	DelegationSetID      string
+	NameserverDomain     string
+	ClaimProofName       string
+	ClaimProofValue      string
+	ClaimExpiresAt       pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
 }
 
@@ -147,6 +162,11 @@ func (q *Queries) CreateCustomDNSAuthority(ctx context.Context, arg CreateCustom
 		arg.CanonicalDomain,
 		arg.CreateIdempotencyKey,
 		arg.CreateRequestDigest,
+		arg.DelegationSetID,
+		arg.NameserverDomain,
+		arg.ClaimProofName,
+		arg.ClaimProofValue,
+		arg.ClaimExpiresAt,
 		arg.CreatedAt,
 	)
 	return err
@@ -492,7 +512,10 @@ func (q *Queries) FindInvitationTeamByTokenDigest(ctx context.Context, tokenDige
 }
 
 const getCustomDomainByIdempotency = `-- name: GetCustomDomainByIdempotency :one
-SELECT d.id, d.kind, d.team_id, d.canonical_domain, d.dns_authority_reference, d.state, d.authority_revision, d.verification_token_digest, d.created_by_identity_id, d.claim_idempotency_key, d.claim_request_digest, d.make_default_when_ready, d.created_at, d.verified_at, d.reusable_after, d.released_at, d.updated_at, COALESCE(a.nameservers, '{}'::text[]) AS nameservers
+SELECT d.id, d.kind, d.team_id, d.canonical_domain, d.dns_authority_reference, d.state, d.authority_revision, d.verification_token_digest, d.created_by_identity_id, d.claim_idempotency_key, d.claim_request_digest, d.make_default_when_ready, d.created_at, d.verified_at, d.reusable_after, d.released_at, d.updated_at, COALESCE(a.nameservers, '{}'::text[]) AS nameservers,
+    COALESCE(a.claim_proof_name, '') AS claim_proof_name,
+    COALESCE(a.claim_proof_value, '') AS claim_proof_value,
+    a.claim_proof_verified_at, a.claim_expires_at, a.provider_zone_id
 FROM control.domains AS d
 LEFT JOIN control.dns_authorities AS a ON a.authority_reference = d.dns_authority_reference
 WHERE d.created_by_identity_id = $1
@@ -526,6 +549,11 @@ type GetCustomDomainByIdempotencyRow struct {
 	ReleasedAt              pgtype.Timestamptz
 	UpdatedAt               pgtype.Timestamptz
 	Nameservers             []string
+	ClaimProofName          string
+	ClaimProofValue         string
+	ClaimProofVerifiedAt    pgtype.Timestamptz
+	ClaimExpiresAt          pgtype.Timestamptz
+	ProviderZoneID          pgtype.Text
 }
 
 func (q *Queries) GetCustomDomainByIdempotency(ctx context.Context, arg GetCustomDomainByIdempotencyParams) (GetCustomDomainByIdempotencyRow, error) {
@@ -550,6 +578,11 @@ func (q *Queries) GetCustomDomainByIdempotency(ctx context.Context, arg GetCusto
 		&i.ReleasedAt,
 		&i.UpdatedAt,
 		&i.Nameservers,
+		&i.ClaimProofName,
+		&i.ClaimProofValue,
+		&i.ClaimProofVerifiedAt,
+		&i.ClaimExpiresAt,
+		&i.ProviderZoneID,
 	)
 	return i, err
 }
@@ -886,6 +919,11 @@ SELECT
 	 d.state,
     d.authority_revision,
     COALESCE(a.nameservers, '{}'::text[]) AS nameservers,
+    COALESCE(a.claim_proof_name, '') AS claim_proof_name,
+    COALESCE(a.claim_proof_value, '') AS claim_proof_value,
+    a.claim_proof_verified_at,
+    a.claim_expires_at,
+    a.provider_zone_id,
     d.created_at,
     d.verified_at,
     d.updated_at
@@ -921,6 +959,11 @@ type ListIdentityTeamDomainsRow struct {
 	State                 string
 	AuthorityRevision     int64
 	Nameservers           []string
+	ClaimProofName        string
+	ClaimProofValue       string
+	ClaimProofVerifiedAt  pgtype.Timestamptz
+	ClaimExpiresAt        pgtype.Timestamptz
+	ProviderZoneID        pgtype.Text
 	CreatedAt             pgtype.Timestamptz
 	VerifiedAt            pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
@@ -944,6 +987,11 @@ func (q *Queries) ListIdentityTeamDomains(ctx context.Context, arg ListIdentityT
 			&i.State,
 			&i.AuthorityRevision,
 			&i.Nameservers,
+			&i.ClaimProofName,
+			&i.ClaimProofValue,
+			&i.ClaimProofVerifiedAt,
+			&i.ClaimExpiresAt,
+			&i.ProviderZoneID,
 			&i.CreatedAt,
 			&i.VerifiedAt,
 			&i.UpdatedAt,
@@ -1010,6 +1058,30 @@ func (q *Queries) ListIdentityTeams(ctx context.Context, identityID string) ([]L
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOperatorNameserverHostnames = `-- name: ListOperatorNameserverHostnames :many
+SELECT hostname FROM control.operator_nameserver_hostnames ORDER BY hostname
+`
+
+func (q *Queries) ListOperatorNameserverHostnames(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listOperatorNameserverHostnames)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var hostname string
+		if err := rows.Scan(&hostname); err != nil {
+			return nil, err
+		}
+		items = append(items, hostname)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

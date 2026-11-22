@@ -120,6 +120,17 @@ func (c Config) validateControl() error {
 	if c.CustomDomainsEnabled && !c.DNSAutomationEnabled() {
 		return errors.New("custom domains require managed DNS automation")
 	}
+	if c.NameserverDomain != "" && c.Route53DelegationSetID == "" {
+		return errors.New("nameserver domain requires a Route 53 delegation set ID")
+	}
+	if c.Route53DelegationSetID != "" {
+		if !naming.ValidDelegationSetID(c.Route53DelegationSetID) {
+			return errors.New("Route 53 delegation set ID must be the bare ID beginning with N")
+		}
+		if _, err := naming.BrandedNameservers(c.EffectiveNameserverDomain()); err != nil {
+			return err
+		}
+	}
 	if c.Role == RoleStandalone && c.RelayTLSCertificateFile == "" && c.Route53ServerZoneID == "" {
 		return errors.New("standalone requires relay DNS certificate automation or a static relay TLS override")
 	}

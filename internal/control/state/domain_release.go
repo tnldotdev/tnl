@@ -41,6 +41,8 @@ func (d *Database) GetTeamDomain(ctx context.Context, identityID, teamID, domain
 	domain := domainFromRow(row.ID, row.Kind, row.TeamID.String, row.CanonicalDomain,
 		row.DnsAuthorityReference.String, row.State, row.AuthorityRevision, row.Nameservers,
 		row.CreatedAt.Time, row.VerifiedAt.Time, row.UpdatedAt.Time)
+	domain.observeClaim(row.ClaimProofName, row.ClaimProofValue, row.ProviderZoneID.String,
+		row.Nameservers, row.ClaimProofVerifiedAt.Time, row.ClaimExpiresAt.Time)
 	if domain.Kind == DomainKindCustom && (domain.State == DomainReleasing || domain.State == DomainReleased) {
 		domain.Release = &DomainRelease{ObservedAt: row.ObservedAt.Time,
 			Blockers: slices.Clone(row.ReleaseBlockers), CompletionUnknown: domain.State != DomainReleased}

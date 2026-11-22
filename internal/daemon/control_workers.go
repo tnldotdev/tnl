@@ -47,6 +47,11 @@ func (d *daemon) startControlWorkers(
 		return err
 	}
 	d.database = database
+	if domain := cfg.EffectiveNameserverDomain(); domain != "" {
+		if err := database.ReserveOperatorNameservers(ctx, domain, cfg.Route53DelegationSetID); err != nil {
+			return fmt.Errorf("reserve branded nameservers: %w", err)
+		}
+	}
 	database.ConfigureProjectPublisherLimits(cfg.ProjectPublisherLimits)
 	if err := database.ConfigureControlOutageTolerance(cfg.ControlOutageTolerance); err != nil {
 		return err
@@ -123,14 +128,17 @@ func (d *daemon) startControlWorkers(
 				return fmt.Errorf("load Route 53 configuration: %w", err)
 			}
 			d.route53Credentials = awsConfig.Credentials
-			dnsProvider, err = dns.NewRoute53Provider(route53.NewFromConfig(awsConfig))
+			client := route53.NewFromConfig(awsConfig)
+			provider, err := dns.NewRoute53Provider(client)
 			if err != nil {
 				return err
 			}
-			dnsVerifier, err = dns.NewAuthoritativeVerifier(cfg.DNSServer)
+			verifier, err := dns.NewAuthoritativeVerifier(cfg.DNSServer)
 			if err != nil {
 				return err
 			}
+			dnsProvider, dnsVerifier = provider, verifier
+			dnsConfig.BrandedProvider, dnsConfig.BrandedVerifier = dns.NewRoute53DelegationProvider(client), verifier
 		}
 		if cfg.DNSAutomationEnabled() {
 			serviceDNSChallenges, err = dns.NewChallengeManager(database, dnsProvider, dnsVerifier, dnsConfig)

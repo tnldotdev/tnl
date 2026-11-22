@@ -46,6 +46,9 @@ type Domain struct {
 	State                 DomainState
 	AuthorityRevision     int64
 	RequiredRecords       []DNSRecord
+	ClaimStage            string
+	ClaimExpiresAt        time.Time
+	DelegationTarget      string
 	CreatedAt             time.Time
 	VerifiedAt            time.Time
 	UpdatedAt             time.Time
@@ -426,6 +429,8 @@ func (d *Database) ListTeamDomains(ctx context.Context, identityID, teamID strin
 			CreatedAt:  row.CreatedAt.Time,
 			VerifiedAt: row.VerifiedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 		}
+		result[index].observeClaim(row.ClaimProofName, row.ClaimProofValue, row.ProviderZoneID.String,
+			row.Nameservers, row.ClaimProofVerifiedAt.Time, row.ClaimExpiresAt.Time)
 		if result[index].State == DomainReleasing {
 			result[index], err = d.GetTeamDomain(ctx, identityID, teamID, row.ID, time.Now())
 			if err != nil {

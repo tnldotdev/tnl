@@ -106,6 +106,30 @@ func (e DeviceLoginResultStatus) Valid() bool {
 	}
 }
 
+// Defines values for DomainClaimStage.
+const (
+	CheckingNameservers  DomainClaimStage = "checking_nameservers"
+	PreparingZone        DomainClaimStage = "preparing_zone"
+	WaitingForDelegation DomainClaimStage = "waiting_for_delegation"
+	WaitingForOwnership  DomainClaimStage = "waiting_for_ownership"
+)
+
+// Valid indicates whether the value is a known member of the DomainClaimStage enum.
+func (e DomainClaimStage) Valid() bool {
+	switch e {
+	case CheckingNameservers:
+		return true
+	case PreparingZone:
+		return true
+	case WaitingForDelegation:
+		return true
+	case WaitingForOwnership:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DomainKind.
 const (
 	Custom  DomainKind = "custom"
@@ -631,9 +655,9 @@ type CreateTeamRequest struct {
 
 // DNSRecord defines model for DNSRecord.
 type DNSRecord struct {
-	Name  CanonicalHostname `json:"name"`
-	Type  DNSRecordType     `json:"type"`
-	Value string            `json:"value"`
+	Name  string        `json:"name"`
+	Type  DNSRecordType `json:"type"`
+	Value string        `json:"value"`
 }
 
 // DNSRecordType defines model for DNSRecord.Type.
@@ -666,9 +690,14 @@ type DeviceLoginResultStatus string
 type Domain struct {
 	AuthorityRevision int64             `json:"authority_revision,string"`
 	CanonicalDomain   CanonicalHostname `json:"canonical_domain"`
+	ClaimExpiresAt    *time.Time        `json:"claim_expires_at,omitempty"`
+	ClaimStage        *DomainClaimStage `json:"claim_stage,omitempty"`
 	CreatedAt         time.Time         `json:"created_at"`
-	Id                DomainID          `json:"id"`
-	Kind              DomainKind        `json:"kind"`
+
+	// DelegationTarget Where to set the delegation, either the parent DNS name or `registrar` for a registered domain.
+	DelegationTarget *string    `json:"delegation_target,omitempty"`
+	Id               DomainID   `json:"id"`
+	Kind             DomainKind `json:"kind"`
 
 	// Release Current owner observations, not a release estimate. DNS authority release must be confirmed even after other blockers clear. Facts may change after observed_at.
 	Release         *DomainRelease `json:"release,omitempty"`
@@ -678,6 +707,9 @@ type Domain struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 	VerifiedAt      *time.Time     `json:"verified_at,omitempty"`
 }
+
+// DomainClaimStage defines model for Domain.ClaimStage.
+type DomainClaimStage string
 
 // DomainID defines model for DomainID.
 type DomainID = ResourceID

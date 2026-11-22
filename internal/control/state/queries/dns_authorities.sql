@@ -13,8 +13,8 @@ FOR UPDATE;
 WITH candidate AS (
     SELECT authority_reference
     FROM control.dns_authorities
-    WHERE state IN ('pending', 'releasing')
-      AND available_at <= sqlc.arg(claimed_at)
+    WHERE ((state IN ('pending', 'releasing') AND available_at <= sqlc.arg(claimed_at))
+        OR (state IN ('pending', 'failed') AND claim_expires_at <= sqlc.arg(claimed_at)))
       AND (work_owner IS NULL OR work_expires_at <= sqlc.arg(claimed_at))
     ORDER BY available_at, authority_reference
     FOR UPDATE SKIP LOCKED
@@ -34,7 +34,8 @@ RETURNING authorities.*;
 UPDATE control.dns_authorities
 SET provider_zone_id = sqlc.narg(provider_zone_id),
     state = sqlc.arg(state),
-    nameservers = sqlc.arg(nameservers),
+    nameservers = COALESCE(sqlc.arg(nameservers)::text[], '{}'::text[]),
+    claim_proof_verified_at = sqlc.narg(claim_proof_verified_at),
     work_revision = work_revision + 1,
     work_owner = NULL,
     work_expires_at = NULL,
@@ -46,6 +47,8 @@ WHERE authority_reference = sqlc.arg(authority_reference)
   AND work_epoch = sqlc.arg(work_epoch)
   AND work_expires_at > sqlc.arg(completed_at)
   AND work_revision = sqlc.arg(expected_work_revision)
+  AND (sqlc.arg(state)::text <> 'ready' OR claim_expires_at IS NULL OR claim_expires_at > sqlc.arg(completed_at))
+  AND (sqlc.narg(claim_proof_verified_at)::timestamptz IS NULL OR claim_expires_at > sqlc.narg(claim_proof_verified_at))
 RETURNING *;
 
 -- name: LockDNSAuthorityLocalTeam :exec

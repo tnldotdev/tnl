@@ -363,6 +363,7 @@ func (h *handler) ClaimTeamDomain(
 	domain, err := h.store.ClaimTeamDomain(request.Context(), controlstate.ClaimDomainRequest{
 		IdentityID: principal.IdentityID, TeamID: string(teamID), IdempotencyKey: params.IdempotencyKey,
 		RequestDigest: digest, Domain: body.Domain, MakeDefault: makeDefault,
+		DelegationSetID: h.config.DelegationSetID, NameserverDomain: h.config.NameserverDomain,
 	}, time.Now())
 	if err != nil {
 		writeControlStateProblem(request.Context(), response, "claim team domain", err)

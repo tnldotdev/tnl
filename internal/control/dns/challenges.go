@@ -21,6 +21,8 @@ type ChallengeRecord struct {
 	AuthorityReference    string
 	TeamID                string
 	DomainID              string
+	Nameservers           []string
+	DelegationSetID       string
 	RecordName            string
 	DesiredOwnedValues    []string
 	PreviouslyOwnedValues []string
@@ -244,6 +246,10 @@ func (m *ChallengeManager) recordForChallenge(ctx context.Context, challenge con
 		}
 		record.ZoneID, record.CustomZone = authority.ProviderZoneID, true
 		record.AuthorityReference = authority.Reference
+		if authority.DelegationSetID != "" {
+			record.Nameservers = authority.Nameservers
+			record.DelegationSetID = authority.DelegationSetID
+		}
 	}
 	record.DesiredOwnedValues, record.PreviouslyOwnedValues = challengeTXTValues(challenge.Presentations)
 	expected := challengeTXTValue(challenge.ChallengeDigest)

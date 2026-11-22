@@ -53,6 +53,11 @@ SELECT
 	 d.state,
     d.authority_revision,
     COALESCE(a.nameservers, '{}'::text[]) AS nameservers,
+    COALESCE(a.claim_proof_name, '') AS claim_proof_name,
+    COALESCE(a.claim_proof_value, '') AS claim_proof_value,
+    a.claim_proof_verified_at,
+    a.claim_expires_at,
+    a.provider_zone_id,
     d.created_at,
     d.verified_at,
     d.updated_at
@@ -523,8 +528,14 @@ FROM control.domains
 WHERE released_at IS NULL
 ORDER BY canonical_domain;
 
+-- name: ListOperatorNameserverHostnames :many
+SELECT hostname FROM control.operator_nameserver_hostnames ORDER BY hostname;
+
 -- name: GetCustomDomainByIdempotency :one
-SELECT d.*, COALESCE(a.nameservers, '{}'::text[]) AS nameservers
+SELECT d.*, COALESCE(a.nameservers, '{}'::text[]) AS nameservers,
+    COALESCE(a.claim_proof_name, '') AS claim_proof_name,
+    COALESCE(a.claim_proof_value, '') AS claim_proof_value,
+    a.claim_proof_verified_at, a.claim_expires_at, a.provider_zone_id
 FROM control.domains AS d
 LEFT JOIN control.dns_authorities AS a ON a.authority_reference = d.dns_authority_reference
 WHERE d.created_by_identity_id = sqlc.arg(identity_id)
@@ -542,6 +553,11 @@ INSERT INTO control.dns_authorities (
     create_request_digest,
     provider,
     state,
+    delegation_set_id,
+    nameserver_domain,
+    claim_proof_name,
+    claim_proof_value,
+    claim_expires_at,
     available_at,
     created_at,
     updated_at
@@ -554,6 +570,11 @@ INSERT INTO control.dns_authorities (
     sqlc.arg(create_request_digest),
     'route53',
     'pending',
+    sqlc.arg(delegation_set_id),
+    sqlc.arg(nameserver_domain),
+    sqlc.arg(claim_proof_name),
+    sqlc.arg(claim_proof_value),
+    sqlc.narg(claim_expires_at),
     sqlc.arg(created_at),
     sqlc.arg(created_at),
     sqlc.arg(created_at)

@@ -36,6 +36,10 @@ const schemaLayoutQuery = `
 		AND to_regclass('control.visitor_policy_watch_versions') IS NOT NULL
 		AND to_regclass('control.publisher_run_policy_bookmarks') IS NOT NULL
 		AND to_regclass('control.run_alias_watch_versions') IS NOT NULL
+		AND to_regclass('control.operator_nameserver_hostnames') IS NOT NULL
+		AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
+			WHERE attrelid=to_regclass('control.dns_authorities')
+				AND attname='claim_proof_verified_at' AND NOT attisdropped)
 		AND EXISTS (SELECT 1 FROM pg_catalog.pg_rewrite r JOIN pg_catalog.pg_depend d
 			ON d.classid='pg_rewrite'::regclass AND d.objid=r.oid AND d.refclassid='pg_class'::regclass
 			WHERE r.ev_class=to_regclass('control.service_policy_watch_bookmarks')

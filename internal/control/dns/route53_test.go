@@ -2,6 +2,8 @@ package dns
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,6 +99,41 @@ func TestRoute53ProviderRejectsChangedCustomZoneNameservers(t *testing.T) {
 	client.recordSets[dnsName(work.CanonicalDomain)][0].ResourceRecords[0].Value = aws.String("ns-foreign.example.test.")
 	if _, err := provider.EnsureCustomZone(t.Context(), work); err == nil || len(client.changes) != 0 {
 		t.Fatalf("changed nameservers: changes %#v, error %v", client.changes, err)
+	}
+}
+
+func TestRoute53ProviderBrandsOnlyTheCapturedDelegationSet(t *testing.T) {
+	work := testDNSWork(time.Now().UTC())
+	work.DelegationSetID, work.NameserverDomain = "NBRAND", "dns.example.test"
+	work.Nameservers = []string{"ns1.dns.example.test", "ns2.dns.example.test", "ns3.dns.example.test", "ns4.dns.example.test"}
+	backend := []string{"ns-1.example.test", "ns-2.example.test", "ns-3.example.test", "ns-4.example.test"}
+	client, provider := route53TestProvider(t, work.CanonicalDomain)
+	client.get.HostedZone.CallerReference = aws.String(work.Reference)
+	client.created = client.get.HostedZone
+	client.get.DelegationSet = &types.DelegationSet{Id: aws.String("/delegationset/NWRONG"), NameServers: backend}
+	client.recordSets[dnsName(work.CanonicalDomain)][0] = *simpleRecordSet(work.CanonicalDomain, types.RRTypeNs, backend)
+	if _, err := provider.EnsureCustomZone(t.Context(), work); err == nil || len(client.changes) != 0 {
+		t.Fatalf("wrong AWS set changed records: %v", err)
+	}
+	client.get.DelegationSet.Id = aws.String("/delegationset/NBRAND")
+	result, err := provider.EnsureCustomZone(t.Context(), work)
+	if err != nil || !slices.Equal(result.Nameservers, work.Nameservers) || client.createDelegationSet != "NBRAND" || len(client.changes) != 2 {
+		t.Fatalf("branded zone = %#v, err %v, changes %#v", result, err, client.changes)
+	}
+	ns, soa := client.changes[0].ResourceRecordSet, client.changes[1].ResourceRecordSet
+	names, err := canonicalNameserversFromRecords(ns.ResourceRecords)
+	if err != nil || !slices.Equal(names, work.Nameservers) ||
+		!strings.HasPrefix(aws.ToString(soa.ResourceRecords[0].Value), "ns1.dns.example.test. ") {
+		t.Fatalf("branded apex: %#v / %#v", ns, soa)
+	}
+	client.tags = ownedRoute53Tags(work)
+	checked, err := provider.addressZone(t.Context(), AddressRecord{
+		ZoneID: result.ID, ZoneDomain: work.CanonicalDomain, CanonicalHostname: "web." + work.CanonicalDomain,
+		CustomZone: true, Nameservers: work.Nameservers, DelegationSetID: work.DelegationSetID, AuthorityReference: work.Reference,
+		TeamID: work.TeamID, DomainID: work.DomainID,
+	})
+	if err != nil || !slices.Equal(checked.Nameservers, work.Nameservers) {
+		t.Fatalf("endpoint and ACME verification reverted to AWS names: %#v / %v", checked, err)
 	}
 }
 
@@ -228,29 +265,31 @@ func ownedRoute53Tags(work controlstate.DNSAuthorityWork) []types.Tag {
 }
 
 type route53Stub struct {
-	created       *types.HostedZone
-	get           *route53.GetHostedZoneOutput
-	tags          []types.Tag
-	addedTags     []types.Tag
-	taggedZoneID  string
-	deletedZoneID string
-	createCalls   int
-	recordSets    map[string][]types.ResourceRecordSet
-	changes       []types.Change
-	createErr     error
-	listZones     func(*route53.ListHostedZonesByNameInput) (*route53.ListHostedZonesByNameOutput, error)
-	listRecords   func(context.Context, *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error)
-	changeRecords func(context.Context, *route53.ChangeResourceRecordSetsInput) (*route53.ChangeResourceRecordSetsOutput, error)
-	changeStatus  types.ChangeStatus
-	getChangeID   string
+	created             *types.HostedZone
+	get                 *route53.GetHostedZoneOutput
+	tags                []types.Tag
+	addedTags           []types.Tag
+	taggedZoneID        string
+	deletedZoneID       string
+	createCalls         int
+	createDelegationSet string
+	recordSets          map[string][]types.ResourceRecordSet
+	changes             []types.Change
+	createErr           error
+	listZones           func(*route53.ListHostedZonesByNameInput) (*route53.ListHostedZonesByNameOutput, error)
+	listRecords         func(context.Context, *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error)
+	changeRecords       func(context.Context, *route53.ChangeResourceRecordSetsInput) (*route53.ChangeResourceRecordSetsOutput, error)
+	changeStatus        types.ChangeStatus
+	getChangeID         string
 }
 
 func (s *route53Stub) CreateHostedZone(
 	_ context.Context,
-	_ *route53.CreateHostedZoneInput,
+	input *route53.CreateHostedZoneInput,
 	_ ...func(*route53.Options),
 ) (*route53.CreateHostedZoneOutput, error) {
 	s.createCalls++
+	s.createDelegationSet = aws.ToString(input.DelegationSetId)
 	return &route53.CreateHostedZoneOutput{HostedZone: s.created}, s.createErr
 }
 

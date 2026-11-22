@@ -51,6 +51,8 @@ func authorityAPIConfigFrom(cfg daemonconfig.Config, httpClient *http.Client) co
 		OIDCIssuer: cfg.OIDCIssuer, WebServiceSecret: cfg.WebServiceSecret,
 		ManagedDomain:        cfg.ManagedDomain,
 		CustomDomainsEnabled: cfg.CustomDomainsEnabled,
+		DelegationSetID:      cfg.Route53DelegationSetID,
+		NameserverDomain:     cfg.EffectiveNameserverDomain(),
 		OIDCClientID:         cfg.OIDCClientID, OIDCClientSecret: cfg.OIDCClientSecret, OIDCScopes: cfg.EffectiveOIDCScopes(), HTTPClient: httpClient,
 		AccessTokenLifetime:  cfg.AccessTokenLifetime,
 		RefreshTokenLifetime: cfg.RefreshTokenLifetime,

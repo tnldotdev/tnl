@@ -96,11 +96,13 @@ type Config struct {
 	EmailURL      string `name:"email-url" env:"TNLD_EMAIL_URL" help:"HTTPS origin of the invitation email receiver."`
 	WebhookSecret string `name:"webhook-secret" env:"TNLD_WEBHOOK_SECRET" help:"Shared secret for invitation email delivery."`
 
-	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
-	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed domain; enables DNS automation."`
-	Route53ServerZoneID  string   `name:"route53-server-zone-id" env:"TNLD_ROUTE53_SERVER_ZONE_ID" help:"Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."`
-	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"One stable public IPv4 address for the primary ingress pool."`
-	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"One stable public IPv6 address for the primary ingress pool."`
+	Route53Region          string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
+	Route53ManagedZoneID   string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed domain; enables DNS automation."`
+	Route53ServerZoneID    string   `name:"route53-server-zone-id" env:"TNLD_ROUTE53_SERVER_ZONE_ID" help:"Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."`
+	Route53DelegationSetID string   `name:"route53-delegation-set-id" env:"TNLD_ROUTE53_DELEGATION_SET_ID" help:"Reusable Route 53 delegation set ID for branded custom domains."`
+	NameserverDomain       string   `name:"nameserver-domain" env:"TNLD_NAMESERVER_DOMAIN" help:"Domain for ns1 through ns4. Defaults to the server domain when a delegation set is configured."`
+	IngressIPv4Addresses   []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"One stable public IPv4 address for the primary ingress pool."`
+	IngressIPv6Addresses   []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"One stable public IPv6 address for the primary ingress pool."`
 
 	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
@@ -247,7 +249,7 @@ func (c Config) Validate() (retErr error) {
 			return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
 		}
 		if c.EmailURL != "" || c.WebhookSecret != "" || c.WebServiceSecret != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
-			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
+			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" || c.Route53DelegationSetID != "" || c.NameserverDomain != "" ||
 			len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0 {
 			return errors.New("ingress and relay roles cannot receive hosted, storage, or DNS provider configuration")
 		}

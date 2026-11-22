@@ -311,6 +311,7 @@ type Querier interface {
 	// routing is read from one snapshot, never changed by a visitor connection.
 	ListIngressServiceRuns(ctx context.Context, arg ListIngressServiceRunsParams) ([]ListIngressServiceRunsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
+	ListOperatorNameserverHostnames(ctx context.Context) ([]string, error)
 	ListPreviewServices(ctx context.Context, previewID string) ([]string, error)
 	ListProjectDeployments(ctx context.Context, arg ListProjectDeploymentsParams) ([]ControlDeployment, error)
 	// one row per open publication, or one row for an idle/unrealized resource.

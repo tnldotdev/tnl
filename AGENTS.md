@@ -52,10 +52,11 @@ THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
   `TestMigrationOneIsImmutable` hashes unchanged. Numbered migrations are the
   schema authority; do not add separate baseline identities or rename client
   state files to ship a feature.
-- The approved PostgreSQL-only v1 replacement includes browser grant continuity,
-  per-run alias watch bookmarks, and indexed relay slot reservations. It also
-  replaces the preceding publisher-watch v1. Earlier PostgreSQL schemas have no
-  upgrade path to this baseline, even if they report v1. Client SQLite is unchanged.
+- The approved PostgreSQL-only v1 replacement includes branded DNS claims and
+  nameserver reservations. It replaces earlier PostgreSQL layouts, including
+  the publisher-watch and relay-reservation v1 layouts. Earlier PostgreSQL
+  schemas have no upgrade path to this baseline, even if they report v1.
+  Client SQLite is unchanged.
 - Test schema changes against populated older databases, including skipped
   releases within the supported upgrade path. Preserve data and credentials;
   migrate data before retiring storage. Document required upgrade order and

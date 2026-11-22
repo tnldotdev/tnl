@@ -3189,6 +3189,14 @@
           "type": "string",
           "description": "Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."
         },
+        "route53_delegation_set_id": {
+          "type": "string",
+          "description": "Reusable Route 53 delegation set ID for branded custom domains."
+        },
+        "nameserver_domain": {
+          "type": "string",
+          "description": "Domain for ns1 through ns4. Defaults to the server domain when a delegation set is configured."
+        },
         "ingress_ipv4_address": {
           "items": {
             "type": "string"

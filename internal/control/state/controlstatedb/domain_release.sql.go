@@ -16,6 +16,9 @@ SELECT domain.id, domain.kind, domain.team_id, domain.canonical_domain,
     domain.dns_authority_reference, domain.state, domain.authority_revision,
     domain.created_at, domain.verified_at, domain.updated_at, domain.released_at,
     COALESCE(authority.nameservers, '{}'::text[]) AS nameservers,
+    COALESCE(authority.claim_proof_name, '') AS claim_proof_name,
+    COALESCE(authority.claim_proof_value, '') AS claim_proof_value,
+    authority.claim_proof_verified_at, authority.claim_expires_at, authority.provider_zone_id,
     $1::timestamptz AS observed_at,
     array_remove(ARRAY[
         CASE WHEN EXISTS (
@@ -93,6 +96,11 @@ type GetIdentityTeamDomainReleaseRow struct {
 	UpdatedAt             pgtype.Timestamptz
 	ReleasedAt            pgtype.Timestamptz
 	Nameservers           []string
+	ClaimProofName        string
+	ClaimProofValue       string
+	ClaimProofVerifiedAt  pgtype.Timestamptz
+	ClaimExpiresAt        pgtype.Timestamptz
+	ProviderZoneID        pgtype.Text
 	ObservedAt            pgtype.Timestamptz
 	ReleaseBlockers       []string
 	CertificateExpiresAt  pgtype.Timestamptz
@@ -119,6 +127,11 @@ func (q *Queries) GetIdentityTeamDomainRelease(ctx context.Context, arg GetIdent
 		&i.UpdatedAt,
 		&i.ReleasedAt,
 		&i.Nameservers,
+		&i.ClaimProofName,
+		&i.ClaimProofValue,
+		&i.ClaimProofVerifiedAt,
+		&i.ClaimExpiresAt,
+		&i.ProviderZoneID,
 		&i.ObservedAt,
 		&i.ReleaseBlockers,
 		&i.CertificateExpiresAt,

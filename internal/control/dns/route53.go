@@ -152,6 +152,7 @@ func (p *Route53Provider) reconcileChallenge(ctx context.Context, record Challen
 		ZoneID: record.ZoneID, ZoneDomain: record.ZoneDomain, CustomZone: record.CustomZone,
 		AuthorityReference: record.AuthorityReference, TeamID: record.TeamID, DomainID: record.DomainID,
 		CanonicalHostname: record.RecordName,
+		Nameservers:       record.Nameservers, DelegationSetID: record.DelegationSetID,
 	}
 	zone, err := p.addressZone(ctx, zoneRecord)
 	if err != nil {
@@ -267,29 +268,25 @@ func (p *Route53Provider) EnsureCustomZone(ctx context.Context, work controlstat
 		return Zone{}, err
 	}
 	if hostedZone == nil {
-		output, err := p.client.CreateHostedZone(ctx, &route53.CreateHostedZoneInput{
+		input := &route53.CreateHostedZoneInput{
 			CallerReference: aws.String(work.Reference), Name: aws.String(work.CanonicalDomain),
 			HostedZoneConfig: &types.HostedZoneConfig{Comment: aws.String("tnl DNS authority " + work.Reference)},
-		})
+		}
+		if work.DelegationSetID != "" {
+			input.DelegationSetId = aws.String(work.DelegationSetID)
+		}
+		output, err := p.client.CreateHostedZone(ctx, input)
 		if err != nil {
 			return Zone{}, fmt.Errorf("dnscontroller: create Route 53 hosted zone: %w", err)
+		}
+		if output == nil {
+			return Zone{}, errors.New("Route 53 returned no hosted zone")
 		}
 		hostedZone = output.HostedZone
 	}
 	zoneID, err := validateHostedZone(hostedZone, work)
 	if err != nil {
 		return Zone{}, err
-	}
-	if _, err := p.client.ChangeTagsForResource(ctx, &route53.ChangeTagsForResourceInput{
-		ResourceId: aws.String(zoneID), ResourceType: types.TagResourceTypeHostedzone,
-		AddTags: []types.Tag{
-			{Key: aws.String(managedByTagKey), Value: aws.String(managedByTagValue)},
-			{Key: aws.String(authorityReferenceTagKey), Value: aws.String(work.Reference)},
-			{Key: aws.String(domainIDTagKey), Value: aws.String(work.DomainID)},
-			{Key: aws.String(teamIDTagKey), Value: aws.String(work.TeamID)},
-		},
-	}); err != nil {
-		return Zone{}, fmt.Errorf("dnscontroller: tag Route 53 hosted zone: %w", err)
 	}
 	output, err := p.client.GetHostedZone(ctx, &route53.GetHostedZoneInput{Id: aws.String(zoneID)})
 	if err != nil {
@@ -305,15 +302,37 @@ func (p *Route53Provider) EnsureCustomZone(ctx context.Context, work controlstat
 	if err != nil {
 		return Zone{}, err
 	}
-	if err := p.reconcileCustomZoneTTL(ctx, zoneID, work.CanonicalDomain, nameservers); err != nil {
+	published := nameservers
+	if work.DelegationSetID != "" {
+		if delegationSetID(output.DelegationSet) != work.DelegationSetID || len(nameservers) != 4 {
+			return Zone{}, terminalf("Route 53 zone uses the wrong reusable delegation set")
+		}
+		branded, err := naming.BrandedNameservers(work.NameserverDomain)
+		if err != nil || !slices.Equal(branded, work.Nameservers) {
+			return Zone{}, terminalf("invalid saved nameservers for branded delegation")
+		}
+		published = branded
+	}
+	if _, err := p.client.ChangeTagsForResource(ctx, &route53.ChangeTagsForResourceInput{
+		ResourceId: aws.String(zoneID), ResourceType: types.TagResourceTypeHostedzone,
+		AddTags: []types.Tag{
+			{Key: aws.String(managedByTagKey), Value: aws.String(managedByTagValue)},
+			{Key: aws.String(authorityReferenceTagKey), Value: aws.String(work.Reference)},
+			{Key: aws.String(domainIDTagKey), Value: aws.String(work.DomainID)},
+			{Key: aws.String(teamIDTagKey), Value: aws.String(work.TeamID)},
+		},
+	}); err != nil {
+		return Zone{}, fmt.Errorf("dnscontroller: tag Route 53 hosted zone: %w", err)
+	}
+	if err := p.reconcileCustomZoneApex(ctx, zoneID, work.CanonicalDomain, nameservers, published); err != nil {
 		return Zone{}, err
 	}
-	return Zone{ID: zoneID, Nameservers: nameservers}, nil
+	return Zone{ID: zoneID, Nameservers: published}, nil
 }
 
-// Route 53 creates apex NS and SOA records with long TTLs. preserve their
-// contents and lower only the caching values, including SOA negative caching.
-func (p *Route53Provider) reconcileCustomZoneTTL(ctx context.Context, zoneID, domain string, nameservers []string) error {
+// only change apex records on a zone whose identity and delegation set match.
+// keep SOA fields other than the primary nameserver and negative cache TTL.
+func (p *Route53Provider) reconcileCustomZoneApex(ctx context.Context, zoneID, domain string, assigned, published []string) error {
 	sets, err := p.listRecordSets(ctx, zoneID, domain)
 	if err != nil {
 		return err
@@ -337,11 +356,12 @@ func (p *Route53Provider) reconcileCustomZoneTTL(ctx context.Context, zoneID, do
 		return terminalf("custom zone has invalid apex NS or SOA records")
 	}
 	actualNameservers, err := canonicalNameserversFromRecords(ns.ResourceRecords)
-	if err != nil || !slices.Equal(actualNameservers, nameservers) {
+	if err != nil || !slices.Equal(actualNameservers, normalizeDNSNames(assigned)) && !slices.Equal(actualNameservers, normalizeDNSNames(published)) {
 		return terminalf("custom zone apex NS records do not match its delegation set")
 	}
 	fields := strings.Fields(aws.ToString(soa.ResourceRecords[0].Value))
-	if len(fields) != 7 || !slices.Contains(nameservers, strings.TrimSuffix(strings.ToLower(fields[0]), ".")) {
+	if len(fields) != 7 || !slices.Contains(assigned, strings.TrimSuffix(strings.ToLower(fields[0]), ".")) &&
+		!slices.Contains(published, strings.TrimSuffix(strings.ToLower(fields[0]), ".")) {
 		return terminalf("custom zone has invalid apex SOA record")
 	}
 	minimum, err := strconv.ParseUint(fields[6], 10, 32)
@@ -352,20 +372,27 @@ func (p *Route53Provider) reconcileCustomZoneTTL(ctx context.Context, zoneID, do
 	if ns.TTL == nil || soa.TTL == nil {
 		return terminalf("custom zone has apex records without TTLs")
 	}
-	if *ns.TTL > 60 {
+	if *ns.TTL > 60 || !slices.Equal(actualNameservers, normalizeDNSNames(published)) {
 		updated := *ns
-		updated.TTL = aws.Int64(60)
+		updated.TTL = aws.Int64(min(*ns.TTL, 60))
+		if !slices.Equal(actualNameservers, normalizeDNSNames(published)) {
+			updated.ResourceRecords = simpleRecordSet(domain, types.RRTypeNs, published).ResourceRecords
+		}
 		changes = append(changes, types.Change{Action: types.ChangeActionUpsert, ResourceRecordSet: &updated})
 	}
-	if *soa.TTL > 60 || minimum > 60 {
+	replacePrimary := !slices.Contains(published, strings.TrimSuffix(strings.ToLower(fields[0]), "."))
+	if *soa.TTL > 60 || minimum > 60 || replacePrimary {
 		updated := *soa
 		if *soa.TTL > 60 {
 			updated.TTL = aws.Int64(60)
 		}
 		if minimum > 60 {
 			fields[6] = "60"
-			updated.ResourceRecords = []types.ResourceRecord{{Value: aws.String(strings.Join(fields, " "))}}
 		}
+		if replacePrimary {
+			fields[0] = dnsName(published[0])
+		}
+		updated.ResourceRecords = []types.ResourceRecord{{Value: aws.String(strings.Join(fields, " "))}}
 		changes = append(changes, types.Change{Action: types.ChangeActionUpsert, ResourceRecordSet: &updated})
 	}
 	if len(changes) == 0 {
@@ -415,6 +442,9 @@ func (p *Route53Provider) ReleaseCustomZone(ctx context.Context, work controlsta
 	}
 	if _, err := validateHostedZone(output.HostedZone, work); err != nil {
 		return err
+	}
+	if work.DelegationSetID != "" && delegationSetID(output.DelegationSet) != work.DelegationSetID {
+		return terminalf("refusing to release a Route 53 zone on a different delegation set")
 	}
 	tags, err := p.client.ListTagsForResource(ctx, &route53.ListTagsForResourceInput{
 		ResourceId: aws.String(zoneID), ResourceType: types.TagResourceTypeHostedzone,
@@ -502,6 +532,12 @@ func (p *Route53Provider) addressZone(ctx context.Context, record AddressRecord)
 	nameservers, err := canonicalNameservers(output.DelegationSet.NameServers)
 	if err != nil {
 		return Zone{}, err
+	}
+	if record.CustomZone && record.DelegationSetID != "" {
+		if delegationSetID(output.DelegationSet) != record.DelegationSetID || len(record.Nameservers) != 4 {
+			return Zone{}, terminalf("custom-domain zone uses the wrong reusable delegation set")
+		}
+		nameservers = slices.Clone(record.Nameservers)
 	}
 	return Zone{ID: zoneID, Nameservers: nameservers}, nil
 }
