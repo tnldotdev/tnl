@@ -36,6 +36,10 @@ const schemaLayoutQuery = `
 		AND to_regclass('control.visitor_policy_watch_versions') IS NOT NULL
 		AND to_regclass('control.publisher_run_policy_bookmarks') IS NOT NULL
 		AND to_regclass('control.run_alias_watch_versions') IS NOT NULL
+		AND EXISTS (SELECT 1 FROM pg_catalog.pg_rewrite r JOIN pg_catalog.pg_depend d
+			ON d.classid='pg_rewrite'::regclass AND d.objid=r.oid AND d.refclassid='pg_class'::regclass
+			WHERE r.ev_class=to_regclass('control.service_policy_watch_bookmarks')
+				AND d.refobjid=to_regclass('control.deployment_management_services'))
 		AND EXISTS (SELECT 1 FROM pg_catalog.pg_class
 			WHERE oid=to_regclass('control.relay_service_reservations') AND relkind='v')
 		AND EXISTS (
@@ -298,15 +302,30 @@ func parsePoolConfig(rawURL string) (*pgxpool.Config, error) {
 	}
 	parsed, _ := url.Parse(rawURL) // validated above.
 	parameters := parsed.Query()
+	const option = "tnl_experimental_prepared_statements"
+	prepared := false
+	if values, ok := parameters[option]; ok {
+		if len(values) != 1 || (values[0] != "true" && values[0] != "false") {
+			return nil, errors.New("tnl_experimental_prepared_statements must be true or false")
+		}
+		prepared = values[0] == "true"
+		parameters.Del(option)
+	}
 	if !parameters.Has("pool_max_conns") {
 		parameters.Set("pool_max_conns", "8")
-		parsed.RawQuery = parameters.Encode()
 	}
+	parsed.RawQuery = parameters.Encode()
 	config, err := pgxpool.ParseConfig(parsed.String())
 	if err != nil {
 		return nil, fmt.Errorf("configure PostgreSQL URL: %w", err)
 	}
 	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	if prepared {
+		if config.ConnConfig.StatementCacheCapacity < 1 {
+			return nil, errors.New("prepared statements require a positive statement_cache_capacity")
+		}
+		config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+	}
 	return config, nil
 }
 

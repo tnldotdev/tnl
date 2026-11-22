@@ -429,6 +429,9 @@ type Querier interface {
 	// registration holds the lease row lock until this update commits. a matching
 	// old run clears its supersession only after it has passed lease and key checks.
 	MarkSupersededRelayRunSigningKeys(ctx context.Context, arg MarkSupersededRelayRunSigningKeysParams) error
+	// redemption checks the approved service but only writes the enrollment and
+	// the new publisher. serialize with service edits, not sibling observations.
+	ObservePublisherEnrollmentService(ctx context.Context, id string) (ControlService, error)
 	ObserveServiceRecoveryEpisode(ctx context.Context, arg ObserveServiceRecoveryEpisodeParams) (ControlServiceRecoveryEpisode, error)
 	ObserveServiceRun(ctx context.Context, arg ObserveServiceRunParams) (ControlServiceRun, error)
 	OpenServiceRecoveryEpisode(ctx context.Context, arg OpenServiceRecoveryEpisodeParams) error

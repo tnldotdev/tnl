@@ -89,10 +89,36 @@ func lockServiceAdmission(ctx context.Context, tx pgx.Tx, id string) error {
 	return lockEnabledService(ctx, tx, id)
 }
 
+// a row lock alone lets a later reader join current readers while a writer
+// waits. queue publication work after the owner and before any service or run
+// row. the row locks still protect against writers outside publication.
+func queueRunReader(ctx context.Context, tx pgx.Tx, id string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended('tnl:service-publication:' || $1::text,0))`, id)
+	return err
+}
+
+func queueRunWriter(ctx context.Context, tx pgx.Tx, id string) error {
+	if err := lockServiceOwner(ctx, tx, id); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('tnl:service-publication:' || $1::text,0))`, id)
+	return err
+}
+
+func lockServiceForPublication(ctx context.Context, tx pgx.Tx, id string) error {
+	if err := queueRunWriter(ctx, tx, id); err != nil {
+		return err
+	}
+	return lockEnabledService(ctx, tx, id)
+}
+
 // run operations share the service row but still queue behind service edits and
 // capacity writers. the caller locks the particular run before changing it.
 func lockServiceForRun(ctx context.Context, tx pgx.Tx, id string) error {
 	if err := lockServiceOwner(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := queueRunReader(ctx, tx, id); err != nil {
 		return err
 	}
 	var found string
@@ -118,6 +144,9 @@ func lockPublicServiceVisitorCapacity(ctx context.Context, tx pgx.Tx, id string)
 // explicit authority writers still exclude them with the service's FOR UPDATE.
 func lockPublisherVisitorPolicy(ctx context.Context, tx pgx.Tx, id string) error {
 	if err := lockServiceOwner(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := queueRunReader(ctx, tx, id); err != nil {
 		return err
 	}
 	var found string

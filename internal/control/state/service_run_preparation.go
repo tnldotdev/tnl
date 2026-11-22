@@ -117,7 +117,7 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		return result, err
 	}
 	defer rollback(ctx, tx, "prepare service run", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, serviceID); err != nil {
+	if err = lockServiceForPublication(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
@@ -750,6 +750,9 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	}
 	// siblings can renew together. the owner guard still fences revocation and
 	// the shared service lock keeps endpoint edits out until this run commits.
+	if err = queueRunReader(ctx, tx, serviceID); err != nil {
+		return result, err
+	}
 	endpoint, err := lockServiceRunEndpoint(ctx, tx, serviceID)
 	if err != nil {
 		return result, err
@@ -892,7 +895,7 @@ func (d *Database) CloseServiceRun(ctx context.Context, serviceID, runID, token 
 		return err
 	}
 	defer rollback(ctx, tx, "close service run", &retErr)()
-	if err = lockServiceOwner(ctx, tx, serviceID); err != nil {
+	if err = queueRunWriter(ctx, tx, serviceID); err != nil {
 		return err
 	}
 	q := controlstatedb.New(tx)

@@ -200,7 +200,7 @@ func TestIntegrationPublisherVisitorPolicyRetainsAuthorityAndRunGuards(t *testin
 				written <- err
 			})
 			writerPID := waitForPostgresBlock(t, ctx, d, observerPID, written)
-			expected := "FOR UPDATE"
+			expected := "pg_advisory_xact_lock(hashtextextended('tnl:service-publication:'"
 			if operation == "service-disable" {
 				expected = "-- name: LockLocalTeamForMutation"
 			}

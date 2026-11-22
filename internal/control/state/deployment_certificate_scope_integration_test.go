@@ -51,6 +51,7 @@ func TestIntegrationExplicitDeploymentCertificateScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var watched []ConnectorPeerWatchVersion
 	for i, key := range []string{"first-wildcard", "second-wildcard"} {
 		replica := enrollAppliedDeployment(t, d, request, enrollment, now)
 		assignments, err := d.GetDeploymentPublisherAppAssignments(ctx, replica.lease.AccessToken, now)
@@ -72,7 +73,14 @@ func TestIntegrationExplicitDeploymentCertificateScope(t *testing.T) {
 				t.Fatal(err)
 			}
 			installPrivateTestCertificate(t, d, prepared, run, now, 30*24*time.Hour)
+			watched, err = d.CompareConnectorPeerWatchVersions(ctx, []ConnectorPeerWatchVersion{{RunID: run.RunID, Revision: -1}})
+			if err != nil || len(watched) != 1 || watched[0].PolicyBookmark == "" {
+				t.Fatal("first publisher did not obtain a policy bookmark", err)
+			}
 		}
+	}
+	if changed, err := d.CompareConnectorPeerWatchVersions(ctx, watched); err != nil || len(changed) != 0 {
+		t.Fatal("enrolling a sibling changed the first publisher's policy bookmark", err)
 	}
 	registration, key := managementRegistration(t, scope, now)
 	registration.Permissions = map[string][]string{"publish": {"api"}}

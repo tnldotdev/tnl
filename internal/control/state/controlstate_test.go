@@ -81,6 +81,28 @@ func TestParsePoolConfig(t *testing.T) {
 	if config.ConnConfig.DefaultQueryExecMode != pgx.QueryExecModeExec {
 		t.Fatalf("query execution mode = %v, want %v", config.ConnConfig.DefaultQueryExecMode, pgx.QueryExecModeExec)
 	}
+	const base = "postgresql://user:secret@database.example/tnl?pool_max_conns=5&tnl_experimental_prepared_statements="
+	for _, tc := range []struct {
+		value string
+		mode  pgx.QueryExecMode
+	}{
+		{"true", pgx.QueryExecModeCacheStatement},
+		{"false&default_query_exec_mode=cache_statement", pgx.QueryExecModeExec},
+	} {
+		cfg, err := parsePoolConfig(base + tc.value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, leaked := cfg.ConnConfig.RuntimeParams["tnl_experimental_prepared_statements"]; leaked ||
+			cfg.ConnConfig.DefaultQueryExecMode != tc.mode || cfg.MaxConns != 5 {
+			t.Fatal("control option changed the pool size, selected the wrong mode or reached the server")
+		}
+	}
+	for _, value := range []string{"", "typo", "true&tnl_experimental_prepared_statements=false", "true&statement_cache_capacity=0"} {
+		if _, err := parsePoolConfig(base + value); err == nil {
+			t.Fatalf("accepted invalid prepared statement setting %q", value)
+		}
+	}
 }
 
 func TestDatabaseURLValidation(t *testing.T) {
