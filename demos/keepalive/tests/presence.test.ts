@@ -1,4 +1,5 @@
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import { renewPresence } from "../src/page/visitor.ts";
 import { REPLACE_BEFORE_MS, STARTUP_MS } from "../src/policy.ts";
 import { Gossip, HOST_PARENT, reportedTabs, type Host } from "../src/peers/gossip.ts";
 import {
@@ -10,6 +11,9 @@ import {
 
 const now = Date.UTC(2026, 10, 19);
 const releaseID = "a".repeat(64);
+const tab = "0336c461-0342-45ba-865e-b813ec381839";
+
+afterEach(() => vi.unstubAllGlobals());
 
 function host(label: "a" | "b" | "c", run: number): Host {
   return {
@@ -27,6 +31,54 @@ it("refreshes a single tab lease, bounds memory and expires silent tabs", () => 
   expect(leases.touch("0", now + 1000)).toBe(true);
   expect(leases.count(now + TAB_LEASE_MS)).toBe(1);
   expect(leases.count(now + TAB_LEASE_MS + 1000)).toBe(0);
+});
+
+it("recovers a lost presence reply without counting the tab twice", async () => {
+  const h = host("a", 1);
+  const leases = new TabLeases();
+  const send = vi.fn<typeof fetch>(async (url, init) => {
+    expect(String(url)).toBe(`${h.origin}/__keepalive/presence`);
+    expect(init?.body).toBe(JSON.stringify({ tab, releaseID }));
+    expect(leases.touch(tab, now)).toBe(true);
+    if (send.mock.calls.length === 1) throw new TypeError("lost response headers");
+    return Response.json({
+      host: h,
+      startedAt: now,
+      tabs: leases.count(now),
+      hosts: 1,
+      saturated: false,
+      fallback: [],
+    });
+  });
+  vi.stubGlobal("fetch", send);
+  const observed = await renewPresence(h, tab, releaseID, new AbortController().signal);
+  expect(observed.tabs).toBe(1);
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(send.mock.calls[1]?.[1]?.signal).toBe(send.mock.calls[0]?.[1]?.signal);
+});
+
+it("does not retry a refusal, changed run, or canceled presence request", async () => {
+  for (const outcome of ["refused", "changed", "canceled"]) {
+    const owner = new AbortController();
+    const send = vi.fn(async () => {
+      if (outcome === "refused") return new Response("unavailable", { status: 503 });
+      if (outcome === "canceled") {
+        owner.abort();
+        throw new TypeError("connection closed");
+      }
+      return Response.json({
+        host: host("a", 2),
+        startedAt: now,
+        tabs: 1,
+        hosts: 1,
+        saturated: false,
+        fallback: [],
+      });
+    });
+    vi.stubGlobal("fetch", send);
+    await expect(renewPresence(host("a", 1), tab, releaseID, owner.signal)).rejects.toThrow();
+    expect(send).toHaveBeenCalledTimes(1);
+  }
 });
 
 it("sums fresh reports once and does not replace a tally with an old service run", () => {

@@ -7,6 +7,37 @@ import { MAX_MANIFEST_BYTES, parseRelease, readJSON, RELEASE_PATH } from "../rel
 
 export type Observation = Omit<z.infer<typeof presenceSummary>, "fallback">;
 
+export async function renewPresence(
+  host: Host,
+  tab: string,
+  releaseID: string,
+  signal: AbortSignal,
+) {
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
+  const url = new URL(PRESENCE_PATH, host.origin);
+  const body = JSON.stringify(heartbeatSchema.parse({ tab, releaseID }));
+  const send = () =>
+    fetch(url, {
+      method: "POST",
+      body,
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "error",
+      signal: deadline,
+    });
+  const response = await send().catch((err: unknown) => {
+    deadline.throwIfAborted();
+    if (!(err instanceof TypeError)) throw err;
+    // the relay can close before fetch gets headers. the same tab refreshes
+    // one lease even if the counting host already received the first POST.
+    return send();
+  });
+  const report = presenceSummary.safeParse(await readJSON(response, 4_096, deadline));
+  if (!report.success || !sameRun(host, report.data.host))
+    throw new Error("The counting host changed.");
+  return report.data;
+}
+
 export async function observeVisitors(
   signal: AbortSignal,
   update: (observation: Observation | undefined) => void,
@@ -41,19 +72,7 @@ export async function observeVisitors(
         host = alternates.splice(index, 1)[0];
       }
       if (host === undefined) throw new Error("No counting host.");
-      const deadline = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
-      const response = await fetch(new URL(PRESENCE_PATH, host.origin), {
-        method: "POST",
-        body: JSON.stringify(heartbeatSchema.parse({ tab, releaseID })),
-        cache: "no-store",
-        credentials: "omit",
-        redirect: "error",
-        signal: deadline,
-      });
-      const report = presenceSummary.safeParse(await readJSON(response, 4_096, deadline));
-      if (!report.success || !sameRun(host, report.data.host))
-        throw new Error("The counting host changed.");
-      const { fallback, ...observation } = report.data;
+      const { fallback, ...observation } = await renewPresence(host, tab, releaseID, signal);
       alternates = fallback.filter((candidate) => !sameRun(candidate, observation.host));
       if (!signal.aborted) update(observation);
     } catch {
