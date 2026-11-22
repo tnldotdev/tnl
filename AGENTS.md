@@ -44,12 +44,14 @@ THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
   requires explicit user approval for that specific break. Explain the impact
   and migration path first, then record the approval and reason in the PR and
   release notes. A version bump or a general request to release is not approval.
-- Published migrations are immutable unless a schema replacement is explicitly
-  approved under the breaking-change rule above. Both migration-1 files are
-  pinned by `TestMigrationOneIsImmutable` in their state packages. Add numbered
-  migrations; do not rewrite old SQL or update the pinned hashes to make a change pass.
-  Numbered migrations are the schema authority; do not add separate baseline
-  identities or rename client state files to ship a feature.
+- Published migrations are immutable by default. The repository owner may
+  explicitly authorize rewriting a specific published migration and updating
+  its pinned hash under the breaking-change rule above. Record the approval,
+  reason, and impact on existing databases in the PR and release notes. Without
+  that approval, add a numbered migration and leave the published SQL and
+  `TestMigrationOneIsImmutable` hashes unchanged. Numbered migrations are the
+  schema authority; do not add separate baseline identities or rename client
+  state files to ship a feature.
 - The approved PostgreSQL-only v1 replacement includes browser grant continuity,
   per-run alias watch bookmarks, and indexed relay slot reservations. It also
   replaces the preceding publisher-watch v1. Earlier PostgreSQL schemas have no
