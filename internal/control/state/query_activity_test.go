@@ -89,7 +89,7 @@ func (r *beginActivityRecorder) TraceQueryStart(ctx context.Context, conn *pgx.C
 
 func TestIntegrationQueryActivityLabelsActualBeginTxVariants(t *testing.T) {
 	_, databaseURL, _ := newControlStateIntegrationDatabaseWithURL(t, "begin_activity")
-	config, err := parsePoolConfig(databaseURL)
+	config, err := (PoolConfig{URL: databaseURL}).pgxConfig()
 	if err != nil {
 		t.Fatal(err)
 	}

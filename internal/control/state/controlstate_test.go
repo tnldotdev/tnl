@@ -63,7 +63,8 @@ func TestParseDirectConfig(t *testing.T) {
 func TestParsePoolConfig(t *testing.T) {
 	t.Parallel()
 
-	defaultConfig, err := parsePoolConfig("postgresql://user:secret@database.example/tnl?sslmode=require")
+	const base = "postgresql://user:secret@database.example/tnl?sslmode=require"
+	defaultConfig, err := (PoolConfig{URL: base}).pgxConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +72,12 @@ func TestParsePoolConfig(t *testing.T) {
 		t.Fatalf("default maximum connections = %d, want 8", defaultConfig.MaxConns)
 	}
 
-	config, err := parsePoolConfig("postgresql://user:secret@database.example/tnl?sslmode=require&pool_max_conns=5&default_query_exec_mode=cache_statement")
+	if mode := defaultConfig.ConnConfig.DefaultQueryExecMode; mode != pgx.QueryExecModeCacheStatement {
+		t.Fatalf("default query mode = %v, want cache_statement", mode)
+	}
+	// the opt-out wins even if the URL requests cached statements.
+	pool := PoolConfig{URL: base + "&pool_max_conns=5&default_query_exec_mode=cache_statement&statement_cache_capacity=0", DisablePreparedStatements: true}
+	config, err := pool.pgxConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,27 +87,9 @@ func TestParsePoolConfig(t *testing.T) {
 	if config.ConnConfig.DefaultQueryExecMode != pgx.QueryExecModeExec {
 		t.Fatalf("query execution mode = %v, want %v", config.ConnConfig.DefaultQueryExecMode, pgx.QueryExecModeExec)
 	}
-	const base = "postgresql://user:secret@database.example/tnl?pool_max_conns=5&tnl_experimental_prepared_statements="
-	for _, tc := range []struct {
-		value string
-		mode  pgx.QueryExecMode
-	}{
-		{"true", pgx.QueryExecModeCacheStatement},
-		{"false&default_query_exec_mode=cache_statement", pgx.QueryExecModeExec},
-	} {
-		cfg, err := parsePoolConfig(base + tc.value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, leaked := cfg.ConnConfig.RuntimeParams["tnl_experimental_prepared_statements"]; leaked ||
-			cfg.ConnConfig.DefaultQueryExecMode != tc.mode || cfg.MaxConns != 5 {
-			t.Fatal("control option changed the pool size, selected the wrong mode or reached the server")
-		}
-	}
-	for _, value := range []string{"", "typo", "true&tnl_experimental_prepared_statements=false", "true&statement_cache_capacity=0"} {
-		if _, err := parsePoolConfig(base + value); err == nil {
-			t.Fatalf("accepted invalid prepared statement setting %q", value)
-		}
+	pool.DisablePreparedStatements = false
+	if _, err := pool.pgxConfig(); err == nil {
+		t.Fatal("accepted an empty statement cache with prepared statements enabled")
 	}
 }
 

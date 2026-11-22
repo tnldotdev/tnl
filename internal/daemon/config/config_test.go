@@ -103,6 +103,24 @@ func TestParseServiceCertificateWorkers(t *testing.T) {
 	}
 }
 
+func TestDisablePreparedStatements(t *testing.T) {
+	for _, role := range []Role{RoleControl, RoleStandalone} {
+		t.Run(string(role), func(t *testing.T) {
+			t.Setenv("TNLD_DISABLE_PREPARED_STATEMENTS", "false")
+			if validCertificateConfig(t, role).DisablePreparedStatements {
+				t.Fatal("unexpected opt-out")
+			}
+			if !validCertificateConfig(t, role, "--disable-prepared-statements").DisablePreparedStatements {
+				t.Fatal("flag did not override the environment")
+			}
+			t.Setenv("TNLD_DISABLE_PREPARED_STATEMENTS", "true")
+			if !validCertificateConfig(t, role).DisablePreparedStatements {
+				t.Fatal("environment opt-out was ignored")
+			}
+		})
+	}
+}
+
 func TestParseProjectPublisherLimits(t *testing.T) {
 	const project = "tm_0123456789abcdefghijkl/keepalive"
 	t.Setenv("TNLD_PROJECT_PUBLISHER_LIMITS", project+"=1024")
@@ -450,7 +468,7 @@ func TestConfigDNSIngressAddressValidation(t *testing.T) {
 	}
 }
 
-func validCertificateConfig(t *testing.T, role Role) Config {
+func validCertificateConfig(t *testing.T, role Role, flags ...string) Config {
 	t.Helper()
 	args := []string{"--role", string(role)}
 	if role == RoleStandalone {
@@ -475,7 +493,7 @@ func validCertificateConfig(t *testing.T, role Role) Config {
 	if role == RoleRelay {
 		args = append(args, "--relay-service-id", "relay-a", "--relay-id", "relay-1", "--relay-address", "relay-a.infra.example.test:443", "--internal-relay-address", "relay-1.internal:9445")
 	}
-	cfg, err := Parse(args)
+	cfg, err := Parse(append(args, flags...))
 	if err != nil {
 		t.Fatal(err)
 	}

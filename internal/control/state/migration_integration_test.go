@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
@@ -84,9 +83,30 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	if err := database.Readiness(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if mode := database.pool.Config().ConnConfig.DefaultQueryExecMode; mode != pgx.QueryExecModeExec {
-		t.Fatalf("query mode = %v, want exec", mode)
+	checkPrepared := func(db *Database, want bool) {
+		t.Helper()
+		conn, err := db.pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Release()
+		const query = `SELECT $1::int + 1`
+		var value int
+		if err := conn.QueryRow(ctx, query, 41).Scan(&value); err != nil || value != 42 {
+			t.Fatalf("pooled query returned %d: %v", value, err)
+		}
+		var prepared bool
+		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT FROM pg_prepared_statements WHERE statement=$1)`, query).Scan(&prepared); err != nil || prepared != want {
+			t.Fatalf("query prepared on the PostgreSQL session = %t, want %t: %v", prepared, want, err)
+		}
 	}
+	checkPrepared(database, true)
+	ordinary, err := (PoolConfig{URL: databaseURL, DisablePreparedStatements: true}).Open(ctx, testStorageKey, "", naming.ManagedURLModeGenerated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ordinary.Close)
+	checkPrepared(ordinary, false)
 	for _, table := range []string{
 		"identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_trials", "dns_authorities", "dns_challenge_changes",
 		"services", "service_runs", "service_connection_slots", "relay_services", "relay_leases", "ingress_leases",

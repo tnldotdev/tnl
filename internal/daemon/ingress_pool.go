@@ -18,7 +18,7 @@ func ApplyIngressPool(ctx context.Context, cfg daemonconfig.Config) error {
 	if err != nil {
 		return err
 	}
-	database, err := controlstate.Open(ctx, cfg.DatabaseURL, cfg.StorageKey, cfg.StorageKeyPrevious, cfg.ManagedURLMode)
+	database, err := openControlState(ctx, cfg)
 	if err != nil {
 		return err
 	}

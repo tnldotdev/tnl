@@ -42,8 +42,9 @@ type Config struct {
 	FlyMachineIdentity bool   `name:"fly-machine-identity" env:"TNLD_FLY_MACHINE_IDENTITY" help:"Derive ingress or relay process identity and exact private forwarding address from Fly Machine metadata."`
 	RelayIDPrefix      string `name:"relay-id-prefix" env:"TNLD_RELAY_ID_PREFIX" help:"Relay process identity prefix used with --fly-machine-identity."`
 
-	DatabaseURL   string `name:"database-url" env:"TNLD_DATABASE_URL" help:"Pooled PostgreSQL URL used by control and standalone."`
-	MetricsListen string `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
+	DatabaseURL               string `name:"database-url" env:"TNLD_DATABASE_URL" help:"Pooled PostgreSQL URL used by control and standalone."`
+	DisablePreparedStatements bool   `name:"disable-prepared-statements" env:"TNLD_DISABLE_PREPARED_STATEMENTS" help:"Use ordinary SQL execution on the control database pool. Set for transaction poolers without prepared-statement support."`
+	MetricsListen             string `name:"metrics-listen" env:"TNLD_METRICS_LISTEN" default:"127.0.0.1:9090" help:"Private Prometheus listen address; empty disables metrics."`
 
 	ProjectPublisherLimits map[string]int `name:"project-publisher-limit" env:"TNLD_PROJECT_PUBLISHER_LIMITS" help:"Set a publisher identity quota for a project (TEAM_ID/PROJECT_KEY=LIMIT). Omit to use no project quota."`
 

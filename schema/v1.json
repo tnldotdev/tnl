@@ -2961,6 +2961,10 @@
           "type": "string",
           "description": "Pooled PostgreSQL URL used by control and standalone."
         },
+        "disable_prepared_statements": {
+          "type": "boolean",
+          "description": "Use ordinary SQL execution on the control database pool. Set for transaction poolers without prepared-statement support."
+        },
         "metrics_listen": {
           "type": "string",
           "description": "Private Prometheus listen address; empty disables metrics.",
