@@ -6,6 +6,11 @@ VALUES (sqlc.arg(id), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(name_scope), s
 -- name: LockService :one
 SELECT * FROM control.services WHERE id = sqlc.arg(id) FOR UPDATE;
 
+-- name: ObservePublisherEnrollmentService :one
+-- redemption checks the approved service but only writes the enrollment and
+-- the new publisher. serialize with service edits, not sibling observations.
+SELECT * FROM control.services WHERE id=sqlc.arg(id) FOR SHARE;
+
 -- name: GetServiceCreationRequest :one
 SELECT service_id,request_digest FROM control.service_creation_requests
 WHERE created_by_identity_id=sqlc.arg(created_by_identity_id) AND idempotency_key=sqlc.arg(idempotency_key);

@@ -28,6 +28,11 @@ type dnsBackend interface {
 	dns.ChallengeVerifier
 }
 
+func openControlState(ctx context.Context, cfg daemonconfig.Config) (*controlstate.Database, error) {
+	pool := controlstate.PoolConfig{URL: cfg.DatabaseURL, DisablePreparedStatements: cfg.DisablePreparedStatements}
+	return pool.Open(ctx, cfg.StorageKey, cfg.StorageKeyPrevious, cfg.ManagedURLMode)
+}
+
 // startControlWorkers opens control's durable state and starts its background
 // work. all started workers are joined by daemon.shutdown, including when a
 // later initialization step fails.
@@ -37,7 +42,7 @@ func (d *daemon) startControlWorkers(
 	acmeHTTPClient *http.Client,
 	metrics *observability.Metrics,
 ) error {
-	database, err := controlstate.Open(ctx, cfg.DatabaseURL, cfg.StorageKey, cfg.StorageKeyPrevious, cfg.ManagedURLMode)
+	database, err := openControlState(ctx, cfg)
 	if err != nil {
 		return err
 	}

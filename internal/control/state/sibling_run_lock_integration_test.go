@@ -80,3 +80,48 @@ func TestIntegrationSiblingRunOperationsDuringHeartbeat(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIntegrationQueuedRunClosePrecedesNewSiblingHeartbeat(t *testing.T) {
+	f, _, _ := newRunAliasServiceFixture(t)
+	a, b := f.publish(t, f.service), f.publish(t, f.service)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	gate, err := f.database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, gate)
+	if _, err := gate.Exec(ctx, `SELECT id FROM control.service_runs WHERE id=$1 FOR UPDATE`, b.RunID); err != nil {
+		t.Fatal(err)
+	}
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
+	renew := func(r ServiceRunState) chan error {
+		done := make(chan error, 1)
+		workers.Go(func() {
+			_, err := f.database.HeartbeatServiceRun(ctx, r.ServiceID, r.RunID, r.Token, f.now, ServiceRunHealth{Healthy: true, StreamCapacity: 64})
+			done <- err
+		})
+		return done
+	}
+	reader := renew(b)
+	readerPID := waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), reader)
+	closeA := make(chan error, 1)
+	workers.Go(func() { closeA <- f.database.CloseServiceRun(ctx, a.ServiceID, a.RunID, a.Token, f.now) })
+	writerPID := waitForPostgresBlock(t, ctx, f.database, readerPID, closeA)
+	// this heartbeat must queue behind the already waiting close, even though
+	// the active reader is for b and its service row lock is compatible.
+	late := renew(a)
+	waitForPostgresBlock(t, ctx, f.database, writerPID, late)
+	if err := gate.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, done := range []chan error{reader, closeA} {
+		if err := awaitIntegrationResult(t, ctx, done); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := awaitIntegrationResult(t, ctx, late); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("late heartbeat did not observe run closure", err)
+	}
+}

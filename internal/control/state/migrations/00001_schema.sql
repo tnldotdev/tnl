@@ -3291,7 +3291,12 @@ LEFT JOIN control.applied_project_services b ON b.service_id=s.id
 LEFT JOIN control.deployments deployment ON deployment.id=b.deployment_id
 LEFT JOIN control.registered_key_watch_versions binding ON (binding.team_id,binding.project_key,binding.service_id)=('','',s.id)
 LEFT JOIN control.registered_key_watch_versions project ON (project.team_id,project.project_key,project.service_id)=(b.team_id,b.project_key,'')
-LEFT JOIN control.registered_key_watch_versions team ON (team.team_id,team.project_key,team.service_id)=(b.team_id,'','');
+-- a team signing key affects visitor policy only if this service has a connect
+-- selection. the project counter covers adding or removing that selection.
+LEFT JOIN control.registered_key_watch_versions team ON (team.team_id,team.project_key,team.service_id)=(b.team_id,'','')
+    AND EXISTS (SELECT 1 FROM control.deployment_management_services selected
+        WHERE selected.team_id=b.team_id AND selected.project_key=b.project_key AND selected.service=b.service
+            AND selected.capability='connect' AND selected.revoked_at IS NULL);
 
 CREATE VIEW control.publisher_run_policy_bookmarks AS
 SELECT run.id AS service_run_id,

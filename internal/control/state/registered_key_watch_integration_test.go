@@ -21,6 +21,14 @@ func TestIntegrationRegisteredKeyWatchTracksAuthorityInputs(t *testing.T) {
 		return v
 	}
 	outside := controlstatedb.New(f.d.pool)
+	policy := func(q controlstatedb.DBTX, service string) string {
+		t.Helper()
+		var bookmark string
+		if err := q.QueryRow(ctx, `SELECT bookmark FROM control.service_policy_watch_bookmarks WHERE service_id=$1`, service).Scan(&bookmark); err != nil {
+			t.Fatal(err)
+		}
+		return bookmark
+	}
 	initial := read(t, outside, service)
 	r, _ := managementRegistration(t, f.setup.DeploymentScope, f.now)
 	r.AllDeployments, r.DeploymentIDs = false, []string{f.deployment.ID}
@@ -30,6 +38,9 @@ func TestIntegrationRegisteredKeyWatchTracksAuthorityInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := read(t, outside, service)
+	beforePolicy := policy(f.d.pool, service)
+	web := f.deployment.Services["web"].ID
+	webPolicy := policy(f.d.pool, web)
 	if before == initial {
 		t.Fatal("first connect grant did not advance its service's bookmark")
 	}
@@ -70,6 +81,12 @@ func TestIntegrationRegisteredKeyWatchTracksAuthorityInputs(t *testing.T) {
 			full(t, q, 0)
 			if read(t, q, service) == before || read(t, outside, service) != before {
 				t.Fatal("bookmark and permissions did not change in the same transaction")
+			}
+			if beforePolicy == policy(tx, service) {
+				t.Fatal("subscriber missed a change to its connect authority")
+			}
+			if mutation.name == "key" && webPolicy != policy(tx, web) {
+				t.Fatal("a service without a connect selection woke for a team signing key")
 			}
 		})
 	}

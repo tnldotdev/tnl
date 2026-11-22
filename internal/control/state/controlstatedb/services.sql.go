@@ -1646,6 +1646,54 @@ func (q *Queries) LockServiceRunsForClose(ctx context.Context, serviceID string)
 	return items, nil
 }
 
+const observePublisherEnrollmentService = `-- name: ObservePublisherEnrollmentService :one
+SELECT id, team_id, guest_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, configuration_ciphertext, storage_key_id, trust_revision, endpoint_revision, service_revision, visitor_revision, publisher_pool, ephemeral, expires_at, require_post_quantum, domain_id, certificate_hostname, certificate_scope, run_alias_parent, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id=$1 FOR SHARE
+`
+
+// redemption checks the approved service but only writes the enrollment and
+// the new publisher. serialize with service edits, not sibling observations.
+func (q *Queries) ObservePublisherEnrollmentService(ctx context.Context, id string) (ControlService, error) {
+	row := q.db.QueryRow(ctx, observePublisherEnrollmentService, id)
+	var i ControlService
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.GuestID,
+		&i.Name,
+		&i.NameScope,
+		&i.PlacementWorktreeKey,
+		&i.PlacementWorktreeLabel,
+		&i.Protocol,
+		&i.TlsMetadata,
+		&i.ConfigurationCiphertext,
+		&i.StorageKeyID,
+		&i.TrustRevision,
+		&i.EndpointRevision,
+		&i.ServiceRevision,
+		&i.VisitorRevision,
+		&i.PublisherPool,
+		&i.Ephemeral,
+		&i.ExpiresAt,
+		&i.RequirePostQuantum,
+		&i.DomainID,
+		&i.CertificateHostname,
+		&i.CertificateScope,
+		&i.RunAliasParent,
+		&i.ServicePort,
+		&i.IngressPoolID,
+		&i.Public,
+		&i.CreatedByIdentityID,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.Enabled,
+		&i.NextRunNumber,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const observeServiceRun = `-- name: ObserveServiceRun :one
 SELECT preferred_regions, traffic_limits, id, service_id, team_id, guest_id, protocol, run_number, publisher_identity_id, publisher_grant_id, publisher_key_id, idempotency_key, request_digest, preparation_expires_at, assignment_seed_ciphertext, assignment_seed_storage_key_id, run_token_digest, started_at, state, healthy, stream_capacity, reported_streams, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_domain_id, certificate_hostname, certificate_namespace, run_hostname, run_alias_parent, require_post_quantum, certificate_issuance_id, supplied_certificate_sha256, certificate_expires_at, created_at, publisher_expires_at, serving_observed_at, serving_until, ready_at, closed_at, assignments_open FROM control.service_runs
 WHERE id = $1 AND service_id = $2 FOR SHARE

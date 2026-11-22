@@ -2,10 +2,8 @@ package daemon
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -28,22 +26,21 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type outageTrafficGate struct {
-	mu            sync.Mutex
-	blocked       bool
-	grants        map[string]controloutage.Confirmation
-	policyKey     string
-	policyRenewed time.Time
-	runID         string
-	runToken      credentials.ServiceRunToken
-	refusals      map[string]int
-	roleDeadlines func() map[string]time.Time
+	mu              sync.Mutex
+	blocked         bool
+	grants          map[string]controloutage.Confirmation
+	policyKey       string
+	policyRenewed   time.Time
+	runID           string
+	runToken        credentials.ServiceRunToken
+	refusals        map[string]int
+	roleDeadlines   func() map[string]time.Time
+	routingValidity func(string) (time.Time, time.Time)
 }
 
 func (g *outageTrafficGate) record(key string, started, observed, until time.Time) {
@@ -70,6 +67,10 @@ func (g *outageTrafficGate) transition(blocked bool) (time.Time, time.Time) {
 				earliest = deadline
 			}
 		}
+	}
+	if g.routingValidity != nil {
+		_, until := g.routingValidity(g.runID)
+		earliest = minTime(earliest, until)
 	}
 	return now, earliest
 }
@@ -219,34 +220,7 @@ func newOutagePrivateProxy(t *testing.T, cfg *daemonconfig.Config, ca *testCerti
 			return (&net.Dialer{}).DialContext(ctx, network, address)
 		},
 	}
-	proxy.ModifyResponse = func(response *http.Response) error {
-		if response.StatusCode != 200 {
-			return nil
-		}
-		body, err := io.ReadAll(response.Body)
-		if err != nil {
-			return err
-		}
-		_ = response.Body.Close()
-		response.Body = io.NopCloser(bytes.NewReader(body))
-		var snapshot ingressv1.IngressServices
-		if json.Unmarshal(body, &snapshot) == nil && !snapshot.ObservedAt.IsZero() && len(snapshot.Runs) != 0 {
-			until := snapshot.ValidUntil
-			for _, run := range snapshot.Runs {
-				source, err := tunnelv1.ReadVisitorSourceAuthority(run.SourceAuthority)
-				if err != nil {
-					return err
-				}
-				until = minTime(until, time.Unix(source.ValidUntil, 0))
-			}
-			// the handler holds the same fault lock through the complete reply.
-			started, _ := response.Request.Context().Value(outageRequestStarted{}).(time.Time)
-			gate.record("routing", started, snapshot.ObservedAt, until)
-		}
-		return nil
-	}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		started := time.Now()
 		gate.mu.Lock()
 		defer gate.mu.Unlock()
 		if gate.blocked {
@@ -254,7 +228,7 @@ func newOutagePrivateProxy(t *testing.T, cfg *daemonconfig.Config, ca *testCerti
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), outageRequestStarted{}, started)))
+		proxy.ServeHTTP(w, r)
 	}))
 	server.TLS = serviceRuntimeTLS(t, ca, cfg.ServerHostname())
 	server.StartTLS()
@@ -266,8 +240,6 @@ func newOutagePrivateProxy(t *testing.T, cfg *daemonconfig.Config, ca *testCerti
 	cfg.PrivateControlListen = server.Listener.Addr().String()
 	return stop
 }
-
-type outageRequestStarted struct{}
 
 type outageHTTPStream struct {
 	body     io.ReadCloser
@@ -386,6 +358,9 @@ func TestIntegrationControlOutageTraffic(t *testing.T) {
 		t.Fatal(err)
 	}
 	process := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
+	// ingress spends the time from request start to proxy arrival as well as
+	// response latency. the proxy cannot reconstruct the installed deadline.
+	gate.routingValidity = process.ingresses[0].server.RunRoutingValidity
 	gate.roleDeadlines = func() map[string]time.Time {
 		deadlines := map[string]time.Time{"ingress": process.ingresses[0].controller.Lease().ServingUntil}
 		for id, relay := range f.relayProcesses {
@@ -525,12 +500,14 @@ func TestIntegrationControlOutageTraffic(t *testing.T) {
 		if !gate.policyRenewed.After(firstOutage) {
 			return false, nil
 		}
-		for _, key := range []string{"publisher", "policy", "connector", "visitor-permission", "publisher-installation", "routing"} {
-			if !gate.grants[key].ObservedAt.After(firstOutage) || !gate.grants[key].Deadline.After(time.Now().Add(7*time.Second)) {
+		minUntil := time.Now().Add(7 * time.Second)
+		for _, key := range []string{"publisher", "policy", "connector", "visitor-permission", "publisher-installation"} {
+			if !gate.grants[key].ObservedAt.After(firstOutage) || !gate.grants[key].Deadline.After(minUntil) {
 				return false, nil
 			}
 		}
-		return true, nil
+		observed, until := gate.routingValidity(gate.runID)
+		return observed.After(firstOutage) && until.After(minUntil), nil
 	})
 	outageAt, earliest := gate.transition(true)
 	gate.mu.Lock()

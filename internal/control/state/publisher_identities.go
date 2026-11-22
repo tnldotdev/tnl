@@ -243,7 +243,7 @@ func validatePublisherScope(ctx context.Context, q *controlstatedb.Queries, s Pu
 			s.MembershipID != "" || s.NamespaceScope != "" || s.GuestID != guest || (s.TeamID == "") != (guest != "") {
 			return ErrPublisherIdentity
 		}
-		service, err := q.LockService(ctx, s.ServiceID)
+		service, err := q.ObservePublisherEnrollmentService(ctx, s.ServiceID)
 		if err != nil {
 			return publisherLookupError(err, ErrPublisherIdentity)
 		}

@@ -36,6 +36,10 @@ const schemaLayoutQuery = `
 		AND to_regclass('control.visitor_policy_watch_versions') IS NOT NULL
 		AND to_regclass('control.publisher_run_policy_bookmarks') IS NOT NULL
 		AND to_regclass('control.run_alias_watch_versions') IS NOT NULL
+		AND EXISTS (SELECT 1 FROM pg_catalog.pg_rewrite r JOIN pg_catalog.pg_depend d
+			ON d.classid='pg_rewrite'::regclass AND d.objid=r.oid AND d.refclassid='pg_class'::regclass
+			WHERE r.ev_class=to_regclass('control.service_policy_watch_bookmarks')
+				AND d.refobjid=to_regclass('control.deployment_management_services'))
 		AND EXISTS (SELECT 1 FROM pg_catalog.pg_class
 			WHERE oid=to_regclass('control.relay_service_reservations') AND relkind='v')
 		AND EXISTS (
@@ -169,9 +173,18 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 	return nil
 }
 
-// Open connects to already-migrated control state using a pooled PostgreSQL
-// URL and an explicit managed URL mode. it never creates or migrates schema objects.
+type PoolConfig struct {
+	URL                       string
+	DisablePreparedStatements bool
+}
+
+// Open uses the default serving pool with prepared statements.
 func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey string, mode naming.ManagedURLMode) (*Database, error) {
+	return PoolConfig{URL: pooledURL}.Open(ctx, currentStorageKey, previousStorageKey, mode)
+}
+
+// Open connects to already-migrated control state. it never creates or migrates schema objects.
+func (p PoolConfig) Open(ctx context.Context, currentStorageKey, previousStorageKey string, mode naming.ManagedURLMode) (*Database, error) {
 	if mode != naming.ManagedURLModeSimple && mode != naming.ManagedURLModeGenerated {
 		return nil, errors.New("controlstate: invalid managed URL mode")
 	}
@@ -179,7 +192,7 @@ func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey 
 	if err != nil {
 		return nil, fmt.Errorf("controlstate: open: %w", err)
 	}
-	config, err := parsePoolConfig(pooledURL)
+	config, err := p.pgxConfig()
 	if err != nil {
 		return nil, fmt.Errorf("controlstate: open: %w", err)
 	}
@@ -292,11 +305,11 @@ func parseDirectConfig(rawURL string) (*pgx.ConnConfig, error) {
 	return config, nil
 }
 
-func parsePoolConfig(rawURL string) (*pgxpool.Config, error) {
-	if err := validateDatabaseURL(rawURL); err != nil {
+func (p PoolConfig) pgxConfig() (*pgxpool.Config, error) {
+	if err := validateDatabaseURL(p.URL); err != nil {
 		return nil, err
 	}
-	parsed, _ := url.Parse(rawURL) // validated above.
+	parsed, _ := url.Parse(p.URL) // validated above.
 	parameters := parsed.Query()
 	if !parameters.Has("pool_max_conns") {
 		parameters.Set("pool_max_conns", "8")
@@ -306,7 +319,14 @@ func parsePoolConfig(rawURL string) (*pgxpool.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configure PostgreSQL URL: %w", err)
 	}
-	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	if p.DisablePreparedStatements {
+		config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	} else {
+		if config.ConnConfig.StatementCacheCapacity < 1 {
+			return nil, errors.New("prepared statements require a positive statement_cache_capacity; set --disable-prepared-statements to use ordinary execution")
+		}
+		config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+	}
 	return config, nil
 }
 
