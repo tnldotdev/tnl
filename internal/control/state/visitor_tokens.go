@@ -172,6 +172,11 @@ func retryVisitorPreparationWithLockAttempts[T any](ctx context.Context, now tim
 		if !errors.As(err, &pgErr) || pgErr == nil || pgErr.Code != "40001" && pgErr.Code != "40P01" && pgErr.Code != "55P03" {
 			return result, err
 		}
+		// retry only after the previous attempt rolled back cleanly.
+		var cleanup *RollbackFailure
+		if errors.As(err, &cleanup) {
+			return result, err
+		}
 		limit := 8
 		if pgErr.Code == "55P03" {
 			limit = lockAttempts

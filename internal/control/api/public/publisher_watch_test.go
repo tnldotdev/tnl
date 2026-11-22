@@ -1,9 +1,12 @@
 package public
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -259,39 +262,86 @@ func TestPublisherWatchRechecksAuthorityBeforeReturningChangedScope(t *testing.T
 type stalledWatchAuthorization struct {
 	watchTestStore
 	stallAt int
+	fail    func(error) error
 }
 
 func (s *stalledWatchAuthorization) AuthorizeConnectorPeerWatch(ctx context.Context, _ string, _ string, _ int64, _ string, _ time.Time) error {
 	s.authCalls++
 	if s.authCalls == s.stallAt {
 		<-ctx.Done()
-		return ctx.Err()
+		return s.fail(ctx.Err())
 	}
 	return nil
 }
 
 func TestPublisherWatchAuthorizationTimeoutReturnsUnavailable(t *testing.T) {
-	for _, at := range []int{1, 2} {
-		t.Run(strconv.Itoa(at), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				store := &stalledWatchAuthorization{stallAt: at}
-				store.current = map[string]int64{publisherCORSRun: 1}
-				watch := NewPublisherWatch(store)
-				ctx, stop := context.WithCancel(t.Context())
-				done := make(chan error, 1)
-				go func() { done <- watch.Run(ctx) }()
-				defer func() { stop(); <-done }()
-				body := `{"runs":[{"service_run_id":"` + publisherCORSRun + `","service_id":"` + publisherCORSService +
-					`","run_number":"1","run_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","connector_revision":"0"}]}`
-				r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/publisher/watch", strings.NewReader(body))
-				r.Header.Set("Content-Type", "application/json")
-				w := httptest.NewRecorder()
-				testHandler(t, Config{PublisherWatch: watch}, nil, nil, nil).ServeHTTP(w, r)
-				if w.Code != http.StatusServiceUnavailable || watch.used != 0 || strings.Contains(w.Body.String(), "changes") {
-					t.Fatalf("watch timeout returned %d, reserved scopes %d", w.Code, watch.used)
-				}
+	storageErr := errors.New("private database detail")
+	for _, tc := range []struct {
+		name           string
+		fail           func(error) error
+		status         int
+		loggedRollback bool
+	}{
+		{"deadline", func(e error) error { return e }, 503, false},
+		{"authorization finished after deadline", func(error) error { return nil }, 503, false},
+		{"deadline and rollback failure", func(e error) error {
+			return &controlstate.RollbackFailure{OperationErr: fmt.Errorf("query: %w", e), RollbackErr: storageErr}
+		}, 503, true},
+		{"unrelated operation failure", func(e error) error { return errors.Join(e, storageErr) }, 500, false},
+		{"only rollback timed out", func(e error) error {
+			return &controlstate.RollbackFailure{OperationErr: storageErr, RollbackErr: e}
+		}, 500, false},
+	} {
+		for at, phase := range []string{"initial", "recheck"} {
+			t.Run(tc.name+"/"+phase, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					var logs bytes.Buffer
+					previous := log.Writer()
+					log.SetOutput(&logs)
+					defer log.SetOutput(previous)
+					store := &stalledWatchAuthorization{stallAt: at + 1, fail: tc.fail}
+					store.current = map[string]int64{publisherCORSRun: 1}
+					watch := NewPublisherWatch(store)
+					ctx, stop := context.WithCancel(t.Context())
+					done := make(chan error, 1)
+					go func() { done <- watch.Run(ctx) }()
+					defer func() { stop(); <-done }()
+					body := `{"runs":[{"service_run_id":"` + publisherCORSRun + `","service_id":"` + publisherCORSService +
+						`","run_number":"1","run_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","connector_revision":"0"}]}`
+					r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/publisher/watch", strings.NewReader(body))
+					r.Header.Set("Content-Type", "application/json")
+					w := httptest.NewRecorder()
+					testHandler(t, Config{PublisherWatch: watch}, nil, nil, nil).ServeHTTP(w, r)
+					if w.Code != tc.status || watch.used != 0 || store.authCalls != store.stallAt ||
+						strings.Contains(w.Body.String(), "changes") || strings.Contains(w.Body.String(), publisherCORSRun) {
+						t.Fatalf("watch timeout returned %d, reserved scopes %d", w.Code, watch.used)
+					}
+					var problem controlv1.Problem
+					if json.Unmarshal(w.Body.Bytes(), &problem) != nil || problem.RequestId == "" ||
+						tc.loggedRollback != strings.Contains(logs.String(), "watch rollback") ||
+						tc.loggedRollback && !strings.Contains(logs.String(), problem.RequestId) ||
+						strings.Contains(w.Body.String()+logs.String(), storageErr.Error()) {
+						t.Fatalf("watch lost safe rollback diagnostics: %s, %s", w.Body.String(), logs.String())
+					}
+				})
 			})
-		})
+		}
+	}
+}
+
+func TestPublisherWatchReportsRollbackAfterRequestEnds(t *testing.T) {
+	request, cancel := context.WithCancel(t.Context())
+	cancel()
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(previous)
+	w := httptest.NewRecorder()
+	watchAuthorizationProblem(request, request, w, "authorize publisher watch", &controlstate.RollbackFailure{
+		OperationErr: request.Err(), RollbackErr: errors.New("private cleanup failure"),
+	})
+	if w.Body.Len() != 0 || !strings.Contains(logs.String(), "authorize publisher watch rollback") || strings.Contains(logs.String(), "private cleanup failure") {
+		t.Fatal("ended watch wrote a response or lost safe rollback diagnostics")
 	}
 }
 

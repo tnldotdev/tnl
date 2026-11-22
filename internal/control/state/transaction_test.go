@@ -43,4 +43,10 @@ func TestRollbackRetainsIndependentFailureAfterCancellation(t *testing.T) {
 	if result != nil {
 		t.Fatal(result)
 	}
+	tx.failure = errors.Join(pgx.ErrTxClosed, failure)
+	rollback(ctx, tx, "test", &result)()
+	var cleanup *RollbackFailure
+	if !errors.As(result, &cleanup) || cleanup.OperationErr != nil || !errors.Is(cleanup.RollbackErr, failure) {
+		t.Fatal("closed transaction hid an independent rollback failure", result)
+	}
 }
