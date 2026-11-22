@@ -139,6 +139,19 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	if err := Migrate(ctx, databaseURL); err == nil {
 		t.Fatal("migration accepted a newer database schema")
 	}
+	// rejection must not bootstrap a lock or migration history in an older,
+	// populated control schema, even when it predates those objects.
+	if _, err := database.pool.Exec(ctx, `DROP TABLE control.schema_migration_lock,control.goose_db_version`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, databaseURL); err == nil {
+		t.Fatal("migration accepted an unversioned populated schema")
+	}
+	var unchanged bool
+	if err := database.pool.QueryRow(ctx, `SELECT to_regclass('control.schema_migration_lock') IS NULL
+		AND to_regclass('control.goose_db_version') IS NULL AND to_regclass('control.services') IS NOT NULL`).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatal("migration changed an incompatible unversioned schema", err)
+	}
 }
 
 func TestIntegrationScopedForeignKeys(t *testing.T) {
