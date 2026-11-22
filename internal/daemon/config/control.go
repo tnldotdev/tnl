@@ -125,7 +125,7 @@ func (c Config) validateControl() error {
 	}
 	if c.Route53DelegationSetID != "" {
 		if !naming.ValidDelegationSetID(c.Route53DelegationSetID) {
-			return errors.New("Route 53 delegation set ID must be the bare ID beginning with N")
+			return errors.New("route53-delegation-set-id must be the bare ID beginning with N")
 		}
 		if _, err := naming.BrandedNameservers(c.EffectiveNameserverDomain()); err != nil {
 			return err

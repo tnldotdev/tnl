@@ -280,7 +280,7 @@ func (p *Route53Provider) EnsureCustomZone(ctx context.Context, work controlstat
 			return Zone{}, fmt.Errorf("dnscontroller: create Route 53 hosted zone: %w", err)
 		}
 		if output == nil {
-			return Zone{}, errors.New("Route 53 returned no hosted zone")
+			return Zone{}, errors.New("missing hosted zone in Route 53 response")
 		}
 		hostedZone = output.HostedZone
 	}
