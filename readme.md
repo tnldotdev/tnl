@@ -20,12 +20,12 @@ Give your local app an HTTPS URL you can share, or connect to a service on a pri
 `tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop.
 
 Chase and Aya work on `zelda` at Nintendo. Nintendo has added
-`dev.nintendo.com`, so each checkout gets its own URL:
+`tnl.nintendo.com`, so each checkout gets its own URL:
 
 ```text
-https://app-zelda.chase.dev.nintendo.com       -> Chase's main checkout
-https://app-zelda-perf.chase.dev.nintendo.com  -> Chase's perf worktree
-https://app-zelda.aya.dev.nintendo.com         -> Aya's main checkout
+https://app-zelda.chase.tnl.nintendo.com       -> Chase's main checkout
+https://app-zelda-perf.chase.tnl.nintendo.com  -> Chase's perf worktree
+https://app-zelda.aya.tnl.nintendo.com         -> Aya's main checkout
 ```
 
 Without a custom domain, Nintendo gets a generated suffix on `tnl.dev`, such as
@@ -68,7 +68,7 @@ If you can't install `tnl` on a client, you can give your service a public hostn
 ```text
                your app or database client
                             |
-                db.dev.nintendo.com:15443
+                db.tnl.nintendo.com:15443
                    (or your subdomain)
                             v
                        tnl ingress
@@ -172,8 +172,8 @@ pnpm dev
 This would end up looking like:
 
 ```text
-app-zelda.chase.dev.nintendo.com       -> tnl -> localhost:5173
-app-zelda-perf.chase.dev.nintendo.com  -> tnl -> localhost:5174
+app-zelda.chase.tnl.nintendo.com       -> tnl -> localhost:5173
+app-zelda-perf.chase.tnl.nintendo.com  -> tnl -> localhost:5174
 ```
 
 Vite and Next.js can choose another port when the preferred one is taken.
@@ -222,16 +222,16 @@ Chase registers one URL for each integration across his Zelda worktrees.
 OAuth automatically returns the browser to the worktree that started login:
 
 ```text
-https://app-zelda-perf.chase.dev.nintendo.com
+https://app-zelda-perf.chase.tnl.nintendo.com
     |
     v
   GitHub
     |
     v
-https://oauth-zelda-k7n2p9.chase.dev.nintendo.com/auth/callback
+https://oauth-zelda-k7n2p9.chase.tnl.nintendo.com/auth/callback
     |
     v
-https://app-zelda-perf.chase.dev.nintendo.com
+https://app-zelda-perf.chase.tnl.nintendo.com
 ```
 
 Or, for webhooks, the same event fans out to all running worktrees:
@@ -240,7 +240,7 @@ Or, for webhooks, the same event fans out to all running worktrees:
 Stripe
   |
   v
-https://hooks-zelda-m5p7v2k4t3q6a.chase.dev.nintendo.com/webhooks/stripe
+https://hooks-zelda-m5p7v2k4t3q6a.chase.tnl.nintendo.com/webhooks/stripe
   |
   +---> Chase's main checkout
   +---> Chase's perf worktree
@@ -367,26 +367,26 @@ See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actio
 ## custom domains or self-hosting
 
 Claim only a domain you control. For example, Nintendo can delegate
-`dev.nintendo.com` without changing the nameservers for `nintendo.com`.
+`tnl.nintendo.com` without changing the nameservers for `nintendo.com`.
 
 Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates. See [setting up a custom domain](https://tnl.dev/docs/domains).
 
 Choose the owner at claim time:
 
 ```sh
-tnl domain claim dev.nintendo.com --personal
+tnl domain claim tnl.nintendo.com --personal
 # or, to claim it for Nintendo instead:
-tnl domain claim dev.nintendo.com --team nintendo --default
-tnl domain status dev.nintendo.com --team nintendo
+tnl domain claim tnl.nintendo.com --team nintendo --default
+tnl domain status tnl.nintendo.com --team nintendo
 ```
 
-With a personal claim, Chase's named `app` uses `app.dev.nintendo.com`.
-With a Nintendo claim, Chase and Aya get `app.chase.dev.nintendo.com` and
-`app.aya.dev.nintendo.com`. Changing the default affects new services, not
+With a personal claim, Chase's named `app` uses `app.tnl.nintendo.com`.
+With a Nintendo claim, Chase and Aya get `app.chase.tnl.nintendo.com` and
+`app.aya.tnl.nintendo.com`. Changing the default affects new services, not
 saved URLs. Deployments have their own branch, for example
-`app.production.zelda.deploy.dev.nintendo.com`.
+`app.production.zelda.deploy.tnl.nintendo.com`.
 
-Chase can later run `tnl domain transfer dev.nintendo.com --to-team nintendo`.
+Chase can later run `tnl domain transfer tnl.nintendo.com --to-team nintendo`.
 If he owns both teams, the move needs one command. Otherwise the destination
 owner runs the printed accept command. The same DNS delegation stays in place;
 saved services, publisher grants, and outstanding certificates must be cleared
