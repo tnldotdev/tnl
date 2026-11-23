@@ -51,6 +51,12 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 	if err != nil || number < 1 {
 		return result, ErrServiceAccess
 	}
+	select {
+	case d.publisherAuditSlots <- struct{}{}:
+		defer func() { <-d.publisherAuditSlots }()
+	case <-ctx.Done():
+		return result, context.Cause(ctx)
+	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err

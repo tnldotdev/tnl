@@ -62,6 +62,7 @@ type Database struct {
 	oidcAdmissions         map[string]configuredAdmission
 	projectPublisherLimits map[string]int
 	pool                   *pgxpool.Pool
+	publisherAuditSlots    chan struct{}
 	storageKey             *storagekey.Keyring
 	managedURLMode         naming.ManagedURLMode
 	diagnosticsMu          sync.Mutex
@@ -216,7 +217,12 @@ func (p PoolConfig) Open(ctx context.Context, currentStorageKey, previousStorage
 		pool.Close()
 		return nil, err
 	}
-	database := &Database{pool: pool, storageKey: keyring, managedURLMode: mode, activity: activity, connections: connections}
+	database := &Database{
+		pool: pool, storageKey: keyring, managedURLMode: mode, activity: activity, connections: connections,
+		// leave room for watch comparisons and run updates when one team's
+		// audit writers are queued on its commit-order lock.
+		publisherAuditSlots: make(chan struct{}, max(1, config.MaxConns-2)),
+	}
 	var missingGuestKey bool
 	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.guest_trials
 		WHERE expires_at > now() AND source_ip_key_id <> $1 AND source_ip_key_id <> $2)`,
