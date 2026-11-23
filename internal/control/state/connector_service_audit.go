@@ -1,8 +1,8 @@
 package state
 
 import (
-	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"net/netip"
 	"time"
@@ -90,44 +90,15 @@ func (d *Database) publisherAuditAttempt(ctx context.Context, serviceID, runID s
 	if err := lockServiceOwner(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
-	// a report reads the saved service but does not change it. queue behind
-	// publication writers and allow heartbeats for other runs to proceed.
-	if err := queueRunReader(ctx, tx, serviceID); err != nil {
-		return result, err
-	}
-	var retained string
-	if err := tx.QueryRow(ctx, `SELECT id FROM control.services WHERE id=$1 FOR SHARE`, serviceID).Scan(&retained); err != nil {
-		return result, publisherLookupError(err, ErrServiceAccess)
-	}
-	q := controlstatedb.New(tx)
-	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrServiceAccess
-	}
+	run, err := d.lockPublisherAuditRun(ctx, tx, serviceID, runID, number, digest)
 	if err != nil {
 		return result, err
 	}
-	if run.RunNumber != number || !bytes.Equal(digest[:], run.RunTokenDigest) || !run.ReadyAt.Valid {
-		return result, ErrServiceAccess
-	}
-	until := run.PublisherExpiresAt.Time
-	if run.ClosedAt.Valid {
-		until = minTime(until, run.ClosedAt.Time)
-	}
-	err = tx.QueryRow(ctx, `SELECT LEAST($4::timestamptz,p.revoked_at,g.revoked_at,g.expires_at)
-		FROM control.publisher_identities p JOIN control.publisher_grants g ON g.publisher_identity_id=p.id
-		WHERE p.id=$1 AND g.id=$2 AND p.team_id IS NOT DISTINCT FROM $3::text
-		AND p.guest_id IS NOT DISTINCT FROM $5::text`,
-		run.PublisherIdentityID, run.PublisherGrantID, run.TeamID, until, run.GuestID).Scan(&until)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return result, ErrServiceAccess
-	}
-	if err != nil {
-		return result, err
-	}
+	until := run.Until
 	if now.After(until.Add(serviceObservationDeliveryGrace)) {
 		return result, ErrServiceAccess
 	}
+	q := controlstatedb.New(tx)
 	events := make([]serviceaudit.Event, 0, len(batch.Events))
 	for _, o := range batch.Events {
 		if o.ServiceKind != "service" || o.ServiceID != serviceID || o.RunID != runID || o.RunNumber != number {
@@ -142,7 +113,7 @@ func (d *Database) publisherAuditAttempt(ctx context.Context, serviceID, runID s
 			if o.EventType == "connection.close" || o.EventType == "connection.open" && o.Outcome != "allowed" {
 				deadline = deadline.Add(serviceObservationDeliveryGrace)
 			}
-			if o.DeliveryGeneration != 0 || o.OccurredAt.Before(run.CreatedAt.Time.Add(-time.Second)) || o.OccurredAt.After(deadline) {
+			if o.DeliveryGeneration != 0 || o.OccurredAt.Before(run.CreatedAt.Add(-time.Second)) || o.OccurredAt.After(deadline) {
 				return ServiceObservationResult{}, ErrServiceAuditAccess
 			}
 			events = append(events, e)
@@ -217,4 +188,40 @@ func (d *Database) publisherAuditAttempt(ctx context.Context, serviceID, runID s
 	d.activity.metrics.Load().ServiceAuditCount("accepted", uint64(result.Accepted))
 	d.activity.metrics.Load().ServiceAuditCount("duplicate", uint64(result.Duplicates))
 	return result, nil
+}
+
+//go:embed batch/read_publisher_audit_run.sql
+var readPublisherAuditRunSQL string
+
+type publisherAuditRun struct {
+	TeamID, GuestID     pgtype.Text
+	PublisherIdentityID string
+	Protocol            string
+	CreatedAt, Until    time.Time
+}
+
+// the caller already holds the owner. pipeline this report's remaining locks
+// in order. the final statement gets a fresh snapshot after any lock wait;
+// joining grant facts to the locking statement could read pre-wait authority.
+func (d *Database) lockPublisherAuditRun(ctx context.Context, tx pgx.Tx, service, run string, number int64, digest []byte) (publisherAuditRun, error) {
+	var facts publisherAuditRun
+	locked := func(tag pgconn.CommandTag) error {
+		if tag.RowsAffected() != 1 {
+			return ErrServiceAccess
+		}
+		return nil
+	}
+	b := new(pgx.Batch)
+	b.Queue(queueRunReaderSQL, service)
+	b.Queue(`SELECT id FROM control.services WHERE id=$1 FOR SHARE`, service).Exec(locked)
+	b.Queue(`SELECT id FROM control.service_runs WHERE service_id=$1 AND id=$2 FOR UPDATE`, service, run).Exec(locked)
+	b.Queue(readPublisherAuditRunSQL, service, run, number, digest).QueryRow(func(row pgx.Row) error {
+		return row.Scan(&facts.TeamID, &facts.GuestID, &facts.PublisherIdentityID, &facts.Protocol, &facts.CreatedAt, &facts.Until)
+	})
+	// pgx does not send individual query traces for a batch. measure the
+	// complete read, including any wait to acquire its locks.
+	query := d.activity.TraceQueryStart(ctx, tx.Conn(), pgx.TraceQueryStartData{SQL: readPublisherAuditRunSQL})
+	err := tx.SendBatch(ctx, b).Close()
+	d.activity.TraceQueryEnd(query, tx.Conn(), pgx.TraceQueryEndData{Err: err})
+	return facts, publisherLookupError(err, ErrServiceAccess)
 }
