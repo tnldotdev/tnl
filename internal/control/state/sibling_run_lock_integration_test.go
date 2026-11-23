@@ -8,6 +8,9 @@ import (
 	"net/netip"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 )
 
 func TestIntegrationSiblingRunOperationsDuringHeartbeat(t *testing.T) {
@@ -45,6 +48,14 @@ func TestIntegrationSiblingRunOperationsDuringHeartbeat(t *testing.T) {
 	workers.Go(func() { _, err := beat(a); heartbeat <- err })
 	waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), heartbeat)
 
+	event := serviceaudit.Observation{
+		EventID: serviceaudit.NewID(), ServiceKind: "service", ServiceID: b.ServiceID,
+		RunID: b.RunID, RunNumber: b.RunNumber, VisitorConnectionID: mustOpaqueID(t, opaqueid.VisitorConnectionPrefix),
+		EventType: "http.decision", Outcome: "allowed", SourceIP: "192.0.2.10", OccurredAt: f.now,
+	}
+	if result, err := d.IngestServiceRunObservations(ctx, b.ServiceID, b.RunID, b.Token, b.RunNumber, serviceaudit.Batch{Events: []serviceaudit.Observation{event}}, f.now); err != nil || result.Accepted != 1 {
+		t.Fatal("sibling publisher audit", result, err)
+	}
 	if _, err := d.GetServiceCertificateIssuance(ctx, b.ServiceID, b.RunID, b.Token, issuance, f.now); err != nil {
 		t.Fatal("sibling certificate read", err)
 	}

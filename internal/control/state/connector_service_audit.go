@@ -61,10 +61,16 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 	if err := lockServiceOwner(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
-	q := controlstatedb.New(tx)
-	if _, err := q.LockService(ctx, serviceID); err != nil {
+	// a report reads the saved service but does not change it. queue behind
+	// publication writers and allow heartbeats for other runs to proceed.
+	if err := queueRunReader(ctx, tx, serviceID); err != nil {
+		return result, err
+	}
+	var retained string
+	if err := tx.QueryRow(ctx, `SELECT id FROM control.services WHERE id=$1 FOR SHARE`, serviceID).Scan(&retained); err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
+	q := controlstatedb.New(tx)
 	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess
