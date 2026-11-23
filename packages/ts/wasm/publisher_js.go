@@ -292,7 +292,10 @@ func startPublisherUsing(encoded string, host js.Value, enrolled *enrolledPublis
 		}
 		// service.Publish owns and joins its run, including visitor handlers.
 		// the host adapter independently fences any late handler invocation.
-		err = errors.Join(err, handler.Close(), publisherCleanup(ctx, prepared))
+		handlerErr := handler.Close()
+		allocationErr := publisherCleanup(ctx, prepared)
+		reportFixturePublisherExit(prepared.Service.Endpoint.Public, ctx.Err() != nil, err, handlerErr, allocationErr)
+		err = errors.Join(err, handlerErr, allocationErr)
 		unwatch()
 		stopHandler()
 		cancel()

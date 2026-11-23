@@ -9,12 +9,16 @@ import {
   durablePublisher,
   type DurableObjectPublisherState,
 } from "../../dist/durable-object.worker.js";
-import { check, fixtureSchema, publisherFailures } from "./fixture.ts";
+import { check, durablePublisherFailure, fixtureSchema, publisherFailures } from "./fixture.ts";
 import { publisherHandler } from "./handler.ts";
 import { installPublisherFixtureHost, runtimeStarts } from "./host.ts";
 
 interface Fetcher {
   fetch(request: Request): Promise<Response>;
+}
+interface ControlObservation {
+  operation: "run.close" | "audit.report";
+  status: number | "pending" | "rejected";
 }
 interface Environment {
   FIXTURE: string;
@@ -44,12 +48,17 @@ export class Publisher {
   readonly #owner: ReturnType<typeof durablePublisher>;
   readonly #runtime = crypto.randomUUID();
   readonly #url: string | undefined;
+  readonly #exitKey: string;
+  readonly #control: ControlObservation[] = [];
   #identityImports = 0;
 
   constructor(state: DurableObjectPublisherState, environment: Environment, service = "web") {
     const fixture = fixtureSchema.parse(JSON.parse(environment.FIXTURE));
     this.#url = service === "web" ? fixture.named_url : undefined;
-    prepareFixtureHost(fixture, environment);
+    this.#exitKey =
+      this.#url === undefined ? "__tnlWasmPrivatePublisherExit" : "__tnlWasmPublicPublisherExit";
+    Reflect.deleteProperty(globalThis, this.#exitKey);
+    prepareFixtureHost(fixture, environment, this.#control);
     this.#owner = durablePublisher(state, {
       configuration: { project: fixture.project, deployment: fixture.deployment, service },
       identity: () => {
@@ -61,17 +70,21 @@ export class Publisher {
   }
 
   async fetch(request: Request): Promise<Response> {
+    let phase: "ready" | "start" | "stop" | "resume" = "ready";
     try {
       await this.#owner.ready;
       const operation = new URL(request.url).pathname;
       if (operation === "/start") {
+        phase = "start";
         const publication = await this.#owner.start();
         check(publication.url === this.#url, "named durable publication changed URL");
         if (this.#url === undefined)
           check(!("url" in publication), "private durable publication exposed a public URL");
       } else if (operation === "/stop") {
+        phase = "stop";
         await this.#owner.stop();
       } else if (operation === "/resume" || operation === "/status") {
+        phase = "resume";
         await this.#owner.resume();
       } else {
         return new Response("unknown fixture operation", { status: 404 });
@@ -82,9 +95,12 @@ export class Publisher {
         go_runtimes: runtimeStarts(),
         identity_imports: this.#identityImports,
       });
-    } catch {
-      // do not return request data, signing credentials or arbitrary go errors.
-      return Response.json({ error: "actual Go/WASM durable publisher failed" }, { status: 500 });
+    } catch (error) {
+      const exit: unknown = Reflect.get(globalThis, this.#exitKey);
+      return Response.json(
+        { control: this.#control, ...durablePublisherFailure(error, phase, exit) },
+        { status: 500 },
+      );
     }
   }
 
@@ -102,13 +118,33 @@ export class PrivatePublisher extends Publisher {
 function prepareFixtureHost(
   fixture: ReturnType<typeof fixtureSchema.parse>,
   environment: Environment,
+  control?: ControlObservation[],
 ): void {
   installPublisherFixtureHost(fixture);
   Reflect.set(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
     if (url.origin === fixture.control_url) {
-      const response = await environment.CONTROL.fetch(request);
+      const op =
+        request.method === "DELETE" && /^\/v1\/services\/[^/]+\/runs\/[^/]+$/.test(url.pathname)
+          ? "run.close"
+          : url.pathname.endsWith("/service-observations")
+            ? "audit.report"
+            : undefined;
+      const entry: ControlObservation | undefined =
+        op === undefined ? undefined : { operation: op, status: "pending" };
+      if (entry !== undefined && control !== undefined) {
+        if (control.length === 8) control.shift();
+        control.push(entry);
+      }
+      let response: Response;
+      try {
+        response = await environment.CONTROL.fetch(request);
+      } catch (error) {
+        if (entry !== undefined) entry.status = "rejected";
+        throw error;
+      }
+      if (entry !== undefined) entry.status = response.status;
       if (
         url.pathname === "/v1/publisher/deployments/enroll" ||
         url.pathname === "/v1/publisher/deployments/verify"

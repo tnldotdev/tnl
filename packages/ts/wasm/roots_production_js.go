@@ -9,6 +9,8 @@ import (
 
 func reportFixtureFailure(error) {}
 
+func reportFixturePublisherExit(bool, bool, error, error, error) {}
+
 func fixtureServiceRoots(host js.Value) (*x509.CertPool, error) {
 	if value := bridgeGet(host, "__tnlTestServiceRootPEM"); !value.IsUndefined() && !value.IsNull() {
 		return nil, errArguments
