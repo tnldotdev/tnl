@@ -2004,28 +2004,29 @@ func (q *Queries) ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams
 
 const renewServiceRun = `-- name: RenewServiceRun :one
 UPDATE control.service_runs run SET publisher_expires_at = LEAST($1,service.expires_at,publisher_grant.expires_at),
-    serving_observed_at=GREATEST(run.serving_observed_at,$2),
+    healthy=$2,stream_capacity=$3,reported_streams=$4,
+    serving_observed_at=GREATEST(run.serving_observed_at,$5),
     serving_until=LEAST(CASE
-        WHEN $2<run.serving_observed_at THEN run.serving_until
-        WHEN $2=run.serving_observed_at THEN LEAST(run.serving_until,$3)
-        ELSE $3 END,
+        WHEN $5<run.serving_observed_at THEN run.serving_until
+        WHEN $5=run.serving_observed_at THEN LEAST(run.serving_until,$6)
+        ELSE $6 END,
         service.expires_at,publisher_grant.expires_at,run.certificate_expires_at)
 FROM control.services service, control.publisher_grants publisher_grant, control.publisher_identities publisher
-WHERE run.id = $4 AND run.run_number = $5
-    AND run.service_id = $6
-    AND run.run_token_digest = $7
-    AND run.closed_at IS NULL AND run.serving_until > $8
-    AND $1::timestamptz > $8
+WHERE run.id = $7 AND run.run_number = $8
+    AND run.service_id = $9
+    AND run.run_token_digest = $10
+    AND run.closed_at IS NULL AND run.serving_until > $11
+    AND $1::timestamptz > $11
     AND service.id = run.service_id AND service.enabled AND service.deleted_at IS NULL
-    AND (service.expires_at IS NULL OR service.expires_at>$8)
+    AND (service.expires_at IS NULL OR service.expires_at>$11)
     AND publisher_grant.id = run.publisher_grant_id AND publisher_grant.publisher_identity_id=run.publisher_identity_id
     AND publisher_grant.revoked_at IS NULL
-    AND (publisher_grant.expires_at IS NULL OR publisher_grant.expires_at > $8)
+    AND (publisher_grant.expires_at IS NULL OR publisher_grant.expires_at > $11)
     AND publisher.id = run.publisher_identity_id AND publisher.team_id IS NOT DISTINCT FROM service.team_id
     AND publisher.guest_id IS NOT DISTINCT FROM service.guest_id
     AND publisher.revoked_at IS NULL
-    AND control.active_publisher(publisher.id,$8)
-    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,$8))
+    AND control.active_publisher(publisher.id,$11)
+    AND EXISTS(SELECT 1 FROM control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,run.service_id,$11))
     AND EXISTS(SELECT 1 FROM control.publisher_identity_keys signing WHERE signing.id=run.publisher_key_id
         AND signing.publisher_identity_id=run.publisher_identity_id AND (publisher_grant.kind='service' OR signing.retired_at IS NULL))
 RETURNING run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.guest_id, run.protocol, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_namespace, run.run_hostname, run.run_alias_parent, run.require_post_quantum, run.certificate_issuance_id, run.supplied_certificate_sha256, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.serving_observed_at, run.serving_until, run.ready_at, run.closed_at, run.assignments_open
@@ -2033,6 +2034,9 @@ RETURNING run.preferred_regions, run.traffic_limits, run.id, run.service_id, run
 
 type RenewServiceRunParams struct {
 	PublisherExpiresAt pgtype.Timestamptz
+	Healthy            bool
+	StreamCapacity     int32
+	ReportedStreams    int32
 	ServingObservedAt  pgtype.Timestamptz
 	ServingUntil       pgtype.Timestamptz
 	ID                 string
@@ -2045,6 +2049,9 @@ type RenewServiceRunParams struct {
 func (q *Queries) RenewServiceRun(ctx context.Context, arg RenewServiceRunParams) (ControlServiceRun, error) {
 	row := q.db.QueryRow(ctx, renewServiceRun,
 		arg.PublisherExpiresAt,
+		arg.Healthy,
+		arg.StreamCapacity,
+		arg.ReportedStreams,
 		arg.ServingObservedAt,
 		arg.ServingUntil,
 		arg.ID,
