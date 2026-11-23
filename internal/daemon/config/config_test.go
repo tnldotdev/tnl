@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -161,6 +162,32 @@ func TestParseDomainPolicy(t *testing.T) {
 		"--route53-managed-zone-id", "ZMANAGED", "--ingress-ipv4-address", "192.0.2.1"))
 	if err != nil || !cfg.CustomDomainsEnabled || cfg.ManagedDomainMaxMemberChildLabels != 1 {
 		t.Fatalf("explicit domain policy = %v", err)
+	}
+}
+
+func TestParseBrandedDelegation(t *testing.T) {
+	t.Setenv("TNLD_ROUTE53_SERVER_ZONE_ID", "ZSERVER")
+	base := []string{"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl",
+		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey}
+	for _, flags := range [][]string{
+		{"--nameserver-domain=dns.example.com"},
+		{"--route53-delegation-set-id=/delegationset/N123"},
+		{"--route53-delegation-set-id=N123", "--nameserver-domain=DNS.example.com"},
+	} {
+		if _, err := Parse(append(slices.Clone(base), flags...)); err == nil {
+			t.Fatalf("accepted invalid settings %q", flags)
+		}
+	}
+	for _, want := range []string{"tnl.example.com", "dns.example.com"} {
+		args := append(slices.Clone(base), "--route53-delegation-set-id=N123")
+		if want == "dns.example.com" {
+			args = append(args, "--nameserver-domain="+want)
+		}
+		cfg, err := Parse(args)
+		if err != nil || cfg.EffectiveNameserverDomain() != want {
+			t.Fatalf("nameserver domain = %q, error %v, want %q", cfg.EffectiveNameserverDomain(), err, want)
+		}
 	}
 }
 

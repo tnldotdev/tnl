@@ -97,7 +97,10 @@ func writeDomainClaimWithContext(output io.Writer, claimed authorityv1.Domain, m
 		clioutput.Field{Label: "state", Value: string(claimed.State)},
 		clioutput.Field{Label: "id", Value: claimed.Id},
 	)}
-	blocks = append(blocks, domainDNSRecordBlocks(claimed.RequiredRecords)...)
+	blocks = append(blocks, domainClaimDNSBlocks(claimed)...)
+	if makeDefault && claimed.ClaimStage != nil {
+		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "default", Value: "when ready"}))
+	}
 	state, footer := domainClaimPresentation(claimed, makeDefault)
 	if timedOut {
 		next := "tnl domain status " + claimed.CanonicalDomain
@@ -111,7 +114,7 @@ func writeDomainClaimWithContext(output io.Writer, claimed authorityv1.Domain, m
 		blocks = append(blocks, clioutput.Text("DNS records not yet available"), clioutput.Fields(
 			clioutput.Field{Label: "next", Value: next},
 		))
-		if makeDefault {
+		if makeDefault && claimed.ClaimStage == nil {
 			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "default", Value: "when ready"}))
 		}
 	}
@@ -192,13 +195,25 @@ func writeDomainObservation(output io.Writer, command string, domain authorityv1
 	if domain.State == authorityv1.DomainStateReleasing || domain.State == authorityv1.DomainStateReleased {
 		blocks = append(blocks, domainReleaseBlocks(domain, server, team)...)
 	} else {
-		blocks = append(blocks, domainDNSRecordBlocks(domain.RequiredRecords)...)
+		blocks = append(blocks, domainClaimDNSBlocks(domain)...)
 	}
 	state, footer := domainStatusPresentation(domain)
 	return writeHumanFrame(output, command, state, footer, blocks...)
 }
 
 func domainStatusPresentation(domain authorityv1.Domain) (string, string) {
+	if domain.State == authorityv1.DomainStatePending && domain.ClaimStage != nil {
+		switch *domain.ClaimStage {
+		case authorityv1.CheckingNameservers:
+			return "checking nameservers", "check domain status again"
+		case authorityv1.WaitingForOwnership:
+			return "waiting for ownership proof", "add the TXT record before changing any nameservers"
+		case authorityv1.PreparingZone:
+			return "preparing dns zone", "check status before adding nameservers"
+		case authorityv1.WaitingForDelegation:
+			return "waiting for delegation", "add the nameservers shown above"
+		}
+	}
 	if domain.State == authorityv1.DomainStatePending && len(domain.RequiredRecords) == 0 {
 		return "provisioning", "DNS records not yet available; check again later"
 	}
@@ -220,6 +235,25 @@ func domainStatusPresentation(domain authorityv1.Domain) (string, string) {
 	return string(domain.State), "check domain status before use"
 }
 
+func domainClaimDNSBlocks(domain authorityv1.Domain) []clioutput.Block {
+	var blocks []clioutput.Block
+	if domain.ClaimStage != nil {
+		blocks = append(blocks, clioutput.Text("tnl will manage this domain and all names beneath it"))
+		if *domain.ClaimStage == authorityv1.WaitingForOwnership || *domain.ClaimStage == authorityv1.WaitingForDelegation {
+			if domain.DelegationTarget != nil && *domain.DelegationTarget != "registrar" {
+				blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "add records under", Value: *domain.DelegationTarget}),
+					clioutput.Text("leave the parent domain's nameservers unchanged"))
+			} else if *domain.ClaimStage == authorityv1.WaitingForDelegation {
+				blocks = append(blocks, clioutput.Text("change the domain's nameservers at its registrar; existing DNS records are not copied"))
+			}
+		}
+		if domain.ClaimExpiresAt != nil {
+			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "claim expires", Value: domain.ClaimExpiresAt.UTC().Format(time.RFC3339)}))
+		}
+	}
+	return append(blocks, domainDNSRecordBlocks(domain.RequiredRecords)...)
+}
+
 func domainDNSRecordBlocks(records []authorityv1.DNSRecord) []clioutput.Block {
 	blocks := make([]clioutput.Block, 0, len(records))
 	for _, record := range records {
@@ -235,6 +269,9 @@ func domainDNSRecordBlocks(records []authorityv1.DNSRecord) []clioutput.Block {
 func domainClaimPresentation(domain authorityv1.Domain, makeDefault bool) (string, string) {
 	state, footer := string(domain.State), ""
 	if domain.State == authorityv1.DomainStatePending {
+		if domain.ClaimStage != nil {
+			return domainStatusPresentation(domain)
+		}
 		if len(domain.RequiredRecords) == 0 {
 			state, footer = "provisioning", "run tnl domain status to check DNS setup"
 			if makeDefault {

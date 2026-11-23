@@ -36,6 +36,8 @@ type AddressRecord struct {
 	AuthorityReference   string
 	TeamID               string
 	DomainID             string
+	Nameservers          []string
+	DelegationSetID      string
 	Owner                AddressOwner
 	CanonicalHostname    string
 	IngressIPv4Addresses []string
@@ -52,6 +54,18 @@ type Provider interface {
 type DNSVerifier interface {
 	Verify(context.Context, string, []string) (bool, error)
 	VerifyAddress(context.Context, string, []string, []string, []string) (bool, error)
+}
+
+type BrandedDelegationProvider interface {
+	DelegationNameservers(context.Context, string) ([]string, error)
+}
+
+type BrandedDelegationVerifier interface {
+	VerifyNameserverMapping(context.Context, []string, []string) error
+	VerifyClaimProof(context.Context, string, string, string, []string) (bool, error)
+	VerifyParentDelegation(context.Context, string, []string) (bool, error)
+	VerifyDelegationRemoved(context.Context, string, []string) (bool, error)
+	VerifyBrandedZone(context.Context, string, []string) (bool, error)
 }
 
 type Store interface {
@@ -75,6 +89,8 @@ type Config struct {
 	ManagedZoneID        string
 	IngressIPv4Addresses []string
 	IngressIPv6Addresses []string
+	BrandedProvider      BrandedDelegationProvider
+	BrandedVerifier      BrandedDelegationVerifier
 }
 
 type DNSObserver interface {

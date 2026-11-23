@@ -12,6 +12,16 @@ func (c Config) DNSAutomationEnabled() bool {
 	return c.Role.RunsControl() && c.Route53ManagedZoneID != ""
 }
 
+func (c Config) EffectiveNameserverDomain() string {
+	if c.Route53DelegationSetID == "" {
+		return ""
+	}
+	if c.NameserverDomain != "" {
+		return c.NameserverDomain
+	}
+	return c.ServerDomain
+}
+
 func (c Config) DNSProviderEnabled() bool {
 	return c.Role.RunsControl() && (c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "")
 }

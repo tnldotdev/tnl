@@ -15,8 +15,8 @@ const claimDNSAuthorityWork = `-- name: ClaimDNSAuthorityWork :one
 WITH candidate AS (
     SELECT authority_reference
     FROM control.dns_authorities
-    WHERE state IN ('pending', 'releasing')
-      AND available_at <= $3
+    WHERE ((state IN ('pending', 'releasing') AND available_at <= $3)
+        OR (state IN ('pending', 'failed') AND claim_expires_at <= $3))
       AND (work_owner IS NULL OR work_expires_at <= $3)
     ORDER BY available_at, authority_reference
     FOR UPDATE SKIP LOCKED
@@ -30,7 +30,7 @@ SET work_owner = $1,
     updated_at = GREATEST(authorities.updated_at, $3)
 FROM candidate
 WHERE authorities.authority_reference = candidate.authority_reference
-RETURNING authorities.id, authorities.authority_reference, authorities.team_id, authorities.domain_id, authorities.canonical_domain, authorities.create_idempotency_key, authorities.create_request_digest, authorities.release_idempotency_key, authorities.provider, authorities.provider_zone_id, authorities.state, authorities.nameservers, authorities.work_revision, authorities.work_owner, authorities.work_epoch, authorities.work_expires_at, authorities.attempts, authorities.available_at, authorities.last_error, authorities.created_at, authorities.updated_at
+RETURNING authorities.id, authorities.authority_reference, authorities.team_id, authorities.domain_id, authorities.canonical_domain, authorities.create_idempotency_key, authorities.create_request_digest, authorities.release_idempotency_key, authorities.provider, authorities.provider_zone_id, authorities.state, authorities.nameservers, authorities.delegation_set_id, authorities.nameserver_domain, authorities.claim_proof_name, authorities.claim_proof_value, authorities.claim_proof_verified_at, authorities.claim_expires_at, authorities.work_revision, authorities.work_owner, authorities.work_epoch, authorities.work_expires_at, authorities.attempts, authorities.available_at, authorities.last_error, authorities.created_at, authorities.updated_at
 `
 
 type ClaimDNSAuthorityWorkParams struct {
@@ -55,6 +55,12 @@ func (q *Queries) ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthori
 		&i.ProviderZoneID,
 		&i.State,
 		&i.Nameservers,
+		&i.DelegationSetID,
+		&i.NameserverDomain,
+		&i.ClaimProofName,
+		&i.ClaimProofValue,
+		&i.ClaimProofVerifiedAt,
+		&i.ClaimExpiresAt,
 		&i.WorkRevision,
 		&i.WorkOwner,
 		&i.WorkEpoch,
@@ -109,7 +115,7 @@ func (q *Queries) DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthority
 }
 
 const getDNSAuthority = `-- name: GetDNSAuthority :one
-SELECT id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+SELECT id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, delegation_set_id, nameserver_domain, claim_proof_name, claim_proof_value, claim_proof_verified_at, claim_expires_at, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
 FROM control.dns_authorities
 WHERE authority_reference = $1
 `
@@ -130,6 +136,12 @@ func (q *Queries) GetDNSAuthority(ctx context.Context, authorityReference string
 		&i.ProviderZoneID,
 		&i.State,
 		&i.Nameservers,
+		&i.DelegationSetID,
+		&i.NameserverDomain,
+		&i.ClaimProofName,
+		&i.ClaimProofValue,
+		&i.ClaimProofVerifiedAt,
+		&i.ClaimExpiresAt,
 		&i.WorkRevision,
 		&i.WorkOwner,
 		&i.WorkEpoch,
@@ -144,7 +156,7 @@ func (q *Queries) GetDNSAuthority(ctx context.Context, authorityReference string
 }
 
 const lockDNSAuthority = `-- name: LockDNSAuthority :one
-SELECT id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+SELECT id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, delegation_set_id, nameserver_domain, claim_proof_name, claim_proof_value, claim_proof_verified_at, claim_expires_at, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
 FROM control.dns_authorities
 WHERE authority_reference = $1
 FOR UPDATE
@@ -166,6 +178,12 @@ func (q *Queries) LockDNSAuthority(ctx context.Context, authorityReference strin
 		&i.ProviderZoneID,
 		&i.State,
 		&i.Nameservers,
+		&i.DelegationSetID,
+		&i.NameserverDomain,
+		&i.ClaimProofName,
+		&i.ClaimProofValue,
+		&i.ClaimProofVerifiedAt,
+		&i.ClaimExpiresAt,
 		&i.WorkRevision,
 		&i.WorkOwner,
 		&i.WorkEpoch,
@@ -217,25 +235,29 @@ const saveDNSAuthorityWork = `-- name: SaveDNSAuthorityWork :one
 UPDATE control.dns_authorities
 SET provider_zone_id = $1,
     state = $2,
-    nameservers = $3,
+    nameservers = COALESCE($3::text[], '{}'::text[]),
+    claim_proof_verified_at = $4,
     work_revision = work_revision + 1,
     work_owner = NULL,
     work_expires_at = NULL,
-    available_at = $4,
-    last_error = $5,
-    updated_at = $6
-WHERE authority_reference = $7
-  AND work_owner = $8
-  AND work_epoch = $9
-  AND work_expires_at > $6
-  AND work_revision = $10
-RETURNING id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
+    available_at = $5,
+    last_error = $6,
+    updated_at = $7
+WHERE authority_reference = $8
+  AND work_owner = $9
+  AND work_epoch = $10
+  AND work_expires_at > $7
+  AND work_revision = $11
+  AND ($2::text <> 'ready' OR claim_expires_at IS NULL OR claim_expires_at > $7)
+  AND ($4::timestamptz IS NULL OR claim_expires_at > $4)
+RETURNING id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, delegation_set_id, nameserver_domain, claim_proof_name, claim_proof_value, claim_proof_verified_at, claim_expires_at, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
 `
 
 type SaveDNSAuthorityWorkParams struct {
 	ProviderZoneID       pgtype.Text
 	State                string
 	Nameservers          []string
+	ClaimProofVerifiedAt pgtype.Timestamptz
 	AvailableAt          pgtype.Timestamptz
 	LastError            pgtype.Text
 	CompletedAt          pgtype.Timestamptz
@@ -250,6 +272,7 @@ func (q *Queries) SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthority
 		arg.ProviderZoneID,
 		arg.State,
 		arg.Nameservers,
+		arg.ClaimProofVerifiedAt,
 		arg.AvailableAt,
 		arg.LastError,
 		arg.CompletedAt,
@@ -272,6 +295,12 @@ func (q *Queries) SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthority
 		&i.ProviderZoneID,
 		&i.State,
 		&i.Nameservers,
+		&i.DelegationSetID,
+		&i.NameserverDomain,
+		&i.ClaimProofName,
+		&i.ClaimProofValue,
+		&i.ClaimProofVerifiedAt,
+		&i.ClaimExpiresAt,
 		&i.WorkRevision,
 		&i.WorkOwner,
 		&i.WorkEpoch,

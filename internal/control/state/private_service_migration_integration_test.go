@@ -52,6 +52,8 @@ func TestIntegrationPrivateServiceMigrationPreservesReservations(t *testing.T) {
 		}
 	}
 	for _, prior := range []string{
+		// versions without branded DNS do not reserve operator nameservers or save claim proof.
+		`DROP TABLE control.operator_nameserver_hostnames`,
 		// the unscoped bookmark view did not read the service's connect selection.
 		`CREATE OR REPLACE VIEW control.service_policy_watch_bookmarks AS
 		 SELECT id AS service_id, ''::text AS bookmark FROM control.services`,

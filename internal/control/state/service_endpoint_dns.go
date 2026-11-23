@@ -37,6 +37,7 @@ func reconcileServiceEndpoint(ctx context.Context, tx pgx.Tx, endpoint serviceEn
 	var hostname string
 	err := tx.QueryRow(ctx, `INSERT INTO control.service_endpoints(hostname,service_id,deployment_id,domain_id,namespace,ingress_pool_id,public,dns_automation,dns_authority_reference,dns_state,dns_available_at,created_at,local_source_key)
 	    SELECT $1,$2,$3,domain.id,$5,$6,$7,$12,domain.dns_authority_reference,$8,$9,$10,$11 FROM control.domains domain WHERE domain.id=$4
+	      AND NOT EXISTS (SELECT 1 FROM control.operator_nameserver_hostnames WHERE hostname=$1)
 	    ON CONFLICT(hostname) DO UPDATE SET service_id=EXCLUDED.service_id,deployment_id=EXCLUDED.deployment_id,domain_id=EXCLUDED.domain_id,namespace=EXCLUDED.namespace,ingress_pool_id=EXCLUDED.ingress_pool_id,public=EXCLUDED.public,dns_automation=EXCLUDED.dns_automation,
 	      retired_at=NULL,reusable_after=NULL,dns_authority_reference=EXCLUDED.dns_authority_reference,
 	      dns_state=CASE

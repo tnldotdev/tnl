@@ -150,5 +150,9 @@ func (w *Worker) addressZoneRecord(ctx context.Context, record AddressRecord) (A
 	}
 	record.ZoneID, record.ZoneDomain, record.CustomZone = authority.ProviderZoneID, authority.CanonicalDomain, true
 	record.AuthorityReference, record.TeamID = authority.Reference, authority.TeamID
+	if authority.DelegationSetID != "" {
+		record.Nameservers = authority.Nameservers
+		record.DelegationSetID = authority.DelegationSetID
+	}
 	return record, authority.Nameservers, true, nil
 }

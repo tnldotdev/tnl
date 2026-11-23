@@ -29,6 +29,8 @@ type Config struct {
 	RefreshTokenLifetime time.Duration
 	DNSAutomation        bool
 	CustomDomainsEnabled bool
+	DelegationSetID      string
+	NameserverDomain     string
 	EmailDelivery        bool
 }
 

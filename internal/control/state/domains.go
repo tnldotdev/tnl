@@ -2,9 +2,12 @@ package state
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,12 +19,14 @@ import (
 var ErrDomainNotFound = errors.New("controlstate: domain not found")
 
 type ClaimDomainRequest struct {
-	IdentityID     string
-	TeamID         string
-	IdempotencyKey string
-	RequestDigest  [32]byte
-	Domain         string
-	MakeDefault    bool
+	IdentityID       string
+	TeamID           string
+	IdempotencyKey   string
+	RequestDigest    [32]byte
+	Domain           string
+	MakeDefault      bool
+	DelegationSetID  string
+	NameserverDomain string
 }
 
 func (d *Database) ClaimTeamDomain(
@@ -53,7 +58,7 @@ func (d *Database) ClaimTeamDomain(
 	if err != nil {
 		return Domain{}, fmt.Errorf("controlstate: claim team domain: lock managed domain: %w", err)
 	}
-	canonical, _, err := naming.CustomDomain(request.Domain, managedDomain.CanonicalDomain)
+	canonical, apex, err := naming.CustomDomain(request.Domain, managedDomain.CanonicalDomain)
 	if err != nil || canonical != request.Domain {
 		return Domain{}, ErrAuthorityInvalid
 	}
@@ -67,11 +72,14 @@ func (d *Database) ClaimTeamDomain(
 		if err := tx.Commit(ctx); err != nil {
 			return Domain{}, fmt.Errorf("controlstate: claim team domain: commit retry: %w", err)
 		}
-		return domainFromRow(
+		result := domainFromRow(
 			existing.ID, existing.Kind, existing.TeamID.String, existing.CanonicalDomain,
 			existing.DnsAuthorityReference.String, existing.State, existing.AuthorityRevision,
 			existing.Nameservers, existing.CreatedAt.Time, existing.VerifiedAt.Time, existing.UpdatedAt.Time,
-		), nil
+		)
+		result.observeClaim(existing.ClaimProofName, existing.ClaimProofValue, existing.ProviderZoneID.String,
+			existing.Nameservers, existing.ClaimProofVerifiedAt.Time, existing.ClaimExpiresAt.Time)
+		return result, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Domain{}, fmt.Errorf("controlstate: claim team domain: read idempotent domain: %w", err)
@@ -84,6 +92,45 @@ func (d *Database) ClaimTeamDomain(
 		if naming.IsWithin(canonical, current) || naming.IsWithin(current, canonical) {
 			return Domain{}, ErrAuthorityConflict
 		}
+	}
+	reserved, err := queries.ListOperatorNameserverHostnames(ctx)
+	if err != nil {
+		return Domain{}, err
+	}
+	if request.NameserverDomain != "" {
+		names, err := naming.BrandedNameservers(request.NameserverDomain)
+		if err != nil {
+			return Domain{}, ErrAuthorityInvalid
+		}
+		reserved = append(reserved, names...)
+	}
+	for _, name := range reserved {
+		if naming.IsWithin(name, canonical) || naming.IsWithin(canonical, name) {
+			return Domain{}, ErrAuthorityConflict
+		}
+	}
+	var proofName, proofValue string
+	var expiresAt time.Time
+	var expiry *time.Time
+	if request.DelegationSetID != "" {
+		if !naming.ValidDelegationSetID(request.DelegationSetID) || request.NameserverDomain == "" {
+			return Domain{}, ErrAuthorityInvalid
+		}
+		proofName, err = naming.DomainClaimProof(canonical, apex)
+		if err != nil {
+			return Domain{}, ErrAuthorityInvalid
+		}
+		var token [24]byte
+		if _, err := rand.Read(token[:]); err != nil {
+			return Domain{}, err
+		}
+		// this is a public DNS proof, not a credential. store it so retries
+		// always show the same instructions.
+		proofValue = "tnl-claim=" + base64.RawURLEncoding.EncodeToString(token[:])
+		expiresAt = now.Add(7 * 24 * time.Hour)
+		expiry = &expiresAt
+	} else if request.NameserverDomain != "" {
+		return Domain{}, ErrAuthorityInvalid
 	}
 	revision, err := queries.AdvanceTeamPolicyRevision(ctx, controlstatedb.AdvanceTeamPolicyRevisionParams{
 		UpdatedAt: timestamp(now), TeamID: request.TeamID,
@@ -103,6 +150,8 @@ func (d *Database) ClaimTeamDomain(
 		AuthorityReference: authorityReference, TeamID: request.TeamID, DomainID: domainID,
 		CanonicalDomain: canonical, CreateIdempotencyKey: "self_hosted_" + domainID,
 		CreateRequestDigest: request.RequestDigest[:], CreatedAt: timestamp(now),
+		DelegationSetID: request.DelegationSetID, NameserverDomain: request.NameserverDomain,
+		ClaimProofName: proofName, ClaimProofValue: proofValue, ClaimExpiresAt: nullableTime(expiry),
 	}); err != nil {
 		return Domain{}, fmt.Errorf("controlstate: claim team domain: create DNS authority: %w", err)
 	}
@@ -122,10 +171,12 @@ func (d *Database) ClaimTeamDomain(
 	if err := tx.Commit(ctx); err != nil {
 		return Domain{}, fmt.Errorf("controlstate: claim team domain: commit: %w", err)
 	}
-	return domainFromRow(
+	result = domainFromRow(
 		row.ID, row.Kind, row.TeamID.String, row.CanonicalDomain, row.DnsAuthorityReference.String,
 		row.State, row.AuthorityRevision, nil, row.CreatedAt.Time, row.VerifiedAt.Time, row.UpdatedAt.Time,
-	), nil
+	)
+	result.observeClaim(proofName, proofValue, "", nil, time.Time{}, expiresAt)
+	return result, nil
 }
 
 func (d *Database) SetTeamDefaultDomain(
@@ -310,5 +361,36 @@ func domainFromRow(
 		DNSAuthorityReference: authorityReference, State: DomainState(state), AuthorityRevision: authorityRevision,
 		RequiredRecords: nameserverRecords(canonicalDomain, nameservers), CreatedAt: createdAt,
 		VerifiedAt: verifiedAt, UpdatedAt: updatedAt,
+	}
+}
+
+func (d *Domain) observeClaim(proofName, proofValue, zone string, nameservers []string, proofAt, expiresAt time.Time) {
+	if proofName == "" || d.State != DomainPending && (d.State != DomainReleasing || proofAt.IsZero()) {
+		return
+	}
+	if naming.IsWithin(proofName, d.CanonicalDomain) {
+		d.DelegationTarget = "registrar"
+	} else {
+		_, d.DelegationTarget, _ = strings.Cut(d.CanonicalDomain, ".")
+	}
+	if d.State == DomainReleasing {
+		return
+	}
+	d.ClaimExpiresAt = expiresAt
+	switch {
+	case len(nameservers) == 0:
+		d.ClaimStage = "checking_nameservers"
+	case proofAt.IsZero():
+		d.ClaimStage = "waiting_for_ownership"
+	case zone == "":
+		d.ClaimStage = "preparing_zone"
+	default:
+		d.ClaimStage = "waiting_for_delegation"
+	}
+	if zone == "" {
+		d.RequiredRecords = nil
+	}
+	if len(nameservers) != 0 && proofAt.IsZero() {
+		d.RequiredRecords = append(d.RequiredRecords, DNSRecord{Name: proofName, Type: "TXT", Value: proofValue})
 	}
 }

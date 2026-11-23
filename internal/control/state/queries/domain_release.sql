@@ -3,6 +3,9 @@ SELECT domain.id, domain.kind, domain.team_id, domain.canonical_domain,
     domain.dns_authority_reference, domain.state, domain.authority_revision,
     domain.created_at, domain.verified_at, domain.updated_at, domain.released_at,
     COALESCE(authority.nameservers, '{}'::text[]) AS nameservers,
+    COALESCE(authority.claim_proof_name, '') AS claim_proof_name,
+    COALESCE(authority.claim_proof_value, '') AS claim_proof_value,
+    authority.claim_proof_verified_at, authority.claim_expires_at, authority.provider_zone_id,
     sqlc.arg(observed_at)::timestamptz AS observed_at,
     array_remove(ARRAY[
         CASE WHEN EXISTS (

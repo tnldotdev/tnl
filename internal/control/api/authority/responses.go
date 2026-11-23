@@ -89,6 +89,14 @@ func domainResponse(domain controlstate.Domain) authorityv1.Domain {
 	if domain.TeamID != "" {
 		result.TeamId = &domain.TeamID
 	}
+	if domain.ClaimStage != "" {
+		stage := authorityv1.DomainClaimStage(domain.ClaimStage)
+		result.ClaimStage = &stage
+		result.ClaimExpiresAt = &domain.ClaimExpiresAt
+	}
+	if domain.DelegationTarget != "" {
+		result.DelegationTarget = &domain.DelegationTarget
+	}
 	if !domain.VerifiedAt.IsZero() {
 		result.VerifiedAt = &domain.VerifiedAt
 	}

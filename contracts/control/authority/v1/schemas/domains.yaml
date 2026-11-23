@@ -55,7 +55,10 @@ schemas:
     required: [name, type, value]
     properties:
       name:
-        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+        type: string
+        minLength: 1
+        maxLength: 253
+        pattern: "^[a-z0-9_](?:[a-z0-9_.-]*[a-z0-9])?$"
       type:
         type: string
         enum: [NS, TXT, CNAME, A, AAAA]
@@ -97,6 +100,15 @@ schemas:
         type: array
         items:
           $ref: "../openapi.yaml#/components/schemas/DNSRecord"
+      claim_stage:
+        type: string
+        enum: [checking_nameservers, waiting_for_ownership, preparing_zone, waiting_for_delegation]
+      claim_expires_at:
+        type: string
+        format: date-time
+      delegation_target:
+        type: string
+        description: Where to set the delegation, either the parent DNS name or `registrar` for a registered domain.
       verified_at:
         type: string
         format: date-time

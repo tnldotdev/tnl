@@ -294,6 +294,12 @@ CREATE TABLE control.dns_authorities (
     provider_zone_id text,
     state text NOT NULL CHECK (state IN ('pending', 'ready', 'releasing', 'released', 'failed')),
     nameservers text[] NOT NULL DEFAULT '{}'::text[],
+    delegation_set_id text NOT NULL DEFAULT '',
+    nameserver_domain text NOT NULL DEFAULT '',
+    claim_proof_name text NOT NULL DEFAULT '',
+    claim_proof_value text NOT NULL DEFAULT '',
+    claim_proof_verified_at timestamptz,
+    claim_expires_at timestamptz,
     work_revision bigint NOT NULL DEFAULT 1 CHECK (work_revision >= 1),
     work_owner text,
     work_epoch bigint NOT NULL DEFAULT 0 CHECK (work_epoch >= 0),
@@ -304,12 +310,28 @@ CREATE TABLE control.dns_authorities (
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL,
     CHECK ((work_owner IS NULL) = (work_expires_at IS NULL)),
+    CHECK ((delegation_set_id = '') = (nameserver_domain = '')),
+    CHECK ((delegation_set_id = '') = (claim_proof_name = '')),
+    CHECK ((delegation_set_id = '') = (claim_proof_value = '')),
+    CHECK ((delegation_set_id = '') = (claim_expires_at IS NULL)),
+    CHECK (claim_expires_at IS NULL OR claim_expires_at > created_at),
+    CHECK (claim_proof_verified_at IS NULL OR claim_expires_at IS NOT NULL AND claim_proof_verified_at >= created_at AND claim_proof_verified_at < claim_expires_at),
+    CHECK (state <> 'ready' OR delegation_set_id = '' OR
+        (claim_proof_verified_at IS NOT NULL AND provider_zone_id IS NOT NULL AND cardinality(nameservers) = 4)),
     CHECK (updated_at >= created_at)
 );
 
 CREATE INDEX dns_authorities_available_work
     ON control.dns_authorities (available_at, authority_reference)
     WHERE state IN ('pending', 'releasing');
+
+CREATE INDEX dns_authorities_claim_expiry ON control.dns_authorities (claim_expires_at)
+    WHERE state IN ('pending', 'failed') AND claim_expires_at IS NOT NULL;
+
+CREATE TABLE control.operator_nameserver_hostnames (
+    hostname text PRIMARY KEY CHECK (hostname <> ''),
+    delegation_set_id text NOT NULL CHECK (delegation_set_id <> '')
+);
 
 CREATE TABLE control.domains (
     id text PRIMARY KEY CHECK (id <> ''),

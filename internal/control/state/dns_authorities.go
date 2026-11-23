@@ -21,30 +21,36 @@ var (
 )
 
 type DNSAuthority struct {
-	Reference       string
-	TeamID          string
-	DomainID        string
-	CanonicalDomain string
-	State           DNSAuthorityState
-	RequiredRecords []DNSRecord
-	LastError       string
-	ProviderZoneID  string
-	Nameservers     []string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	Reference        string
+	TeamID           string
+	DomainID         string
+	CanonicalDomain  string
+	State            DNSAuthorityState
+	RequiredRecords  []DNSRecord
+	LastError        string
+	ProviderZoneID   string
+	Nameservers      []string
+	NameserverDomain string
+	DelegationSetID  string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type DNSAuthorityWork struct {
 	DNSAuthority
-	Provider       string
-	ProviderZoneID string
-	Nameservers    []string
-	WorkRevision   uint64
-	Attempts       uint64
-	AvailableAt    time.Time
-	WorkerID       string
-	WorkEpoch      uint64
-	WorkExpiresAt  time.Time
+	Provider             string
+	ProviderZoneID       string
+	Nameservers          []string
+	ClaimProofName       string
+	ClaimProofValue      string
+	ClaimProofVerifiedAt time.Time
+	ClaimExpiresAt       time.Time
+	WorkRevision         uint64
+	Attempts             uint64
+	AvailableAt          time.Time
+	WorkerID             string
+	WorkEpoch            uint64
+	WorkExpiresAt        time.Time
 }
 
 func (d *Database) GetDNSAuthority(ctx context.Context, reference string) (DNSAuthority, error) {
@@ -112,9 +118,14 @@ func (d *Database) SaveDNSAuthorityWork(
 	if err := queries.LockDNSAuthorityLocalDomain(ctx, text(work.Reference)); err != nil {
 		return DNSAuthorityWork{}, fmt.Errorf("controlstate: save DNS authority work: lock local domain: %w", err)
 	}
+	var verifiedAt *time.Time
+	if !work.ClaimProofVerifiedAt.IsZero() {
+		verifiedAt = &work.ClaimProofVerifiedAt
+	}
 	row, err := queries.SaveDNSAuthorityWork(ctx, controlstatedb.SaveDNSAuthorityWorkParams{
 		ProviderZoneID: nullableText(work.ProviderZoneID), State: string(work.State), Nameservers: slices.Clone(work.Nameservers),
-		AvailableAt: timestamptz(work.AvailableAt), LastError: nullableText(work.LastError), CompletedAt: timestamptz(now),
+		ClaimProofVerifiedAt: nullableTime(verifiedAt),
+		AvailableAt:          timestamptz(work.AvailableAt), LastError: nullableText(work.LastError), CompletedAt: timestamptz(now),
 		AuthorityReference: work.Reference, WorkOwner: text(work.WorkerID), WorkEpoch: positive(work.WorkEpoch),
 		ExpectedWorkRevision: positive(work.WorkRevision),
 	})
@@ -184,6 +195,7 @@ func dnsAuthority(row controlstatedb.ControlDnsAuthority) (DNSAuthority, error) 
 		CanonicalDomain: row.CanonicalDomain, State: state,
 		RequiredRecords: nameserverRecords(row.CanonicalDomain, row.Nameservers), LastError: row.LastError.String,
 		ProviderZoneID: row.ProviderZoneID.String, Nameservers: slices.Clone(row.Nameservers),
+		NameserverDomain: row.NameserverDomain, DelegationSetID: row.DelegationSetID,
 		CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 	}, nil
 }
@@ -196,6 +208,8 @@ func dnsAuthorityWork(row controlstatedb.ControlDnsAuthority, requireLease bool)
 	}
 	return DNSAuthorityWork{
 		DNSAuthority: authority, Provider: row.Provider, ProviderZoneID: row.ProviderZoneID.String,
+		ClaimProofName: row.ClaimProofName, ClaimProofValue: row.ClaimProofValue,
+		ClaimProofVerifiedAt: row.ClaimProofVerifiedAt.Time, ClaimExpiresAt: row.ClaimExpiresAt.Time,
 		Nameservers: slices.Clone(row.Nameservers), WorkRevision: uint64(row.WorkRevision),
 		Attempts: uint64(row.Attempts), AvailableAt: row.AvailableAt.Time,
 		WorkerID: row.WorkOwner.String, WorkEpoch: uint64(row.WorkEpoch), WorkExpiresAt: row.WorkExpiresAt.Time,

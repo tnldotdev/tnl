@@ -445,6 +445,12 @@ type ControlDnsAuthority struct {
 	ProviderZoneID        pgtype.Text
 	State                 string
 	Nameservers           []string
+	DelegationSetID       string
+	NameserverDomain      string
+	ClaimProofName        string
+	ClaimProofValue       string
+	ClaimProofVerifiedAt  pgtype.Timestamptz
+	ClaimExpiresAt        pgtype.Timestamptz
 	WorkRevision          int64
 	WorkOwner             pgtype.Text
 	WorkEpoch             int64
@@ -632,6 +638,11 @@ type ControlOidcAssertionExchange struct {
 	AssertionDigest []byte
 	ConsumedAt      pgtype.Timestamptz
 	ExpiresAt       pgtype.Timestamptz
+}
+
+type ControlOperatorNameserverHostname struct {
+	Hostname        string
+	DelegationSetID string
 }
 
 type ControlPreview struct {
