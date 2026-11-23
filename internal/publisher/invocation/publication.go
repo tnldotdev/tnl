@@ -146,7 +146,12 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		if err != nil {
 			return err
 		}
-		services, err := preparePublisherServices(ctx, state, server, flags.PublicURL, flags.Name, flags.Domain, flags.SelectedTeam, flags.Ephemeral, authenticated, !flags.Demo)
+		name := flags.Name
+		if name == "" && flags.PublicURL == "" && !flags.Ephemeral &&
+			(authenticated.Discovery.ManagedUrlMode != controlv1.Generated || flags.Domain != "") {
+			name = flags.FallbackName
+		}
+		services, err := preparePublisherServices(ctx, state, server, flags.PublicURL, name, flags.Domain, flags.SelectedTeam, flags.Ephemeral, authenticated, !flags.Demo)
 		if err != nil {
 			return err
 		}

@@ -33,6 +33,7 @@ type PublicOptions struct {
 	AccessToken        string
 	PublicURL          string
 	Name               string
+	FallbackName       string
 	Domain             string
 	Team               string
 	SelectedTeam       string

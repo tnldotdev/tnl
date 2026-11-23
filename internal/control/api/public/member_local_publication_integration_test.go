@@ -23,8 +23,8 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestIntegrationMemberFreshNamedLocalPreparationWithoutInventory(t *testing.T) {
-	f := newCompanyHTTPFixture(t, "member_local_preparation")
+func newMemberPublicationFixture(t *testing.T, f *companyHTTPFixture) (controlstate.Team, controlstate.Membership, authorityv1.ControlSessionResponse) {
+	t.Helper()
 	ctx := t.Context()
 	owner, session := f.basic(serviceOwnerSub), f.basic(serviceRecipientSub)
 	team, err := f.d.CreateTeam(ctx, controlstate.CreateTeamRequest{
@@ -46,6 +46,13 @@ func TestIntegrationMemberFreshNamedLocalPreparationWithoutInventory(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	return team, membership, session
+}
+
+func TestIntegrationMemberFreshNamedLocalPreparationWithoutInventory(t *testing.T) {
+	f := newCompanyHTTPFixture(t, "member_local_preparation")
+	ctx := t.Context()
+	team, membership, session := newMemberPublicationFixture(t, f)
 	h, err := NewHandler(Config{ControlURL: f.server.URL, ManagedURLMode: naming.ManagedURLModeGenerated}, DatabaseStores(f.d), f.d, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +134,7 @@ func TestIntegrationMemberFreshNamedLocalPreparationWithoutInventory(t *testing.
 	if local.Service != "web" || local.WorktreeKey != project.LocalWorktreeKey() || local.ServiceId == "" || local.Metadata == nil || local.Metadata.Endpoint == nil {
 		t.Fatal("native preparation lost exact selected local service")
 	}
-	if !strings.HasSuffix(local.Metadata.Endpoint.Hostname, "."+member.ManagedLabel+".example.test") {
+	if !strings.HasSuffix(local.Metadata.Endpoint.Hostname, ".developer."+selectedTeam.ManagedLabel+".example.test") {
 		t.Fatal("native preparation escaped the member namespace")
 	}
 	retry, err := invocation.RealizeLocalService(ctx, control, selected)

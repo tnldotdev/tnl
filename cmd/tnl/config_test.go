@@ -143,7 +143,7 @@ func TestProjectConfigurationUsesStateSpecificWorktreeLabelEverywhere(t *testing
 	}
 }
 
-func TestBarePublishUsesStableDirectoryNameWithoutConfiguration(t *testing.T) {
+func TestBarePublishPassesStableDirectoryNameAsFallback(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
 	stateRoot := filepath.Join(t.TempDir(), "state")
@@ -157,10 +157,12 @@ func TestBarePublishUsesStableDirectoryNameWithoutConfiguration(t *testing.T) {
 		if err := project.applyPublish(&flags); err != nil {
 			t.Fatal(err)
 		}
-		if flags.Name != project.Worktree.Label.FullLabel || flags.Name == "" || previous != "" && flags.Name != previous {
-			t.Fatalf("bare publish name = %q, worktree name = %q", flags.Name, project.Worktree.Label.FullLabel)
+		options := publicOptions(flags)
+		if options.Name != "" || options.FallbackName != project.Worktree.Label.FullLabel ||
+			options.FallbackName == "" || previous != "" && options.FallbackName != previous {
+			t.Fatalf("bare publish name = %q, fallback = %q, worktree name = %q", options.Name, options.FallbackName, project.Worktree.Label.FullLabel)
 		}
-		previous = flags.Name
+		previous = options.FallbackName
 	}
 }
 
@@ -194,13 +196,14 @@ func TestPublishRootNameDoesNotOverrideNamedServiceHostname(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantName := test.wantName
+			wantFallback := ""
 			if wantName == "worktree" {
-				wantName = project.Worktree.Label.FullLabel
+				wantName, wantFallback = "", project.Worktree.Label.FullLabel
 			} else if wantName == "web-worktree" {
 				wantName = clientproject.ServiceWorktreeLabel("web", project.Worktree)
 			}
-			if flags.Name != wantName || flags.PublicURL != test.wantURL {
-				t.Fatalf("name=%q URL=%q, want name=%q URL=%q", flags.Name, flags.PublicURL, wantName, test.wantURL)
+			if flags.Name != wantName || flags.PublicURL != test.wantURL || flags.fallbackName != wantFallback {
+				t.Fatalf("name=%q URL=%q fallback=%q, want name=%q URL=%q fallback=%q", flags.Name, flags.PublicURL, flags.fallbackName, wantName, test.wantURL, wantFallback)
 			}
 		})
 	}
@@ -326,7 +329,7 @@ func TestPublishArgumentThatIsNotAServiceRemainsTarget(t *testing.T) {
 	if err := project.applyPublish(&flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Service != "" || flags.Target != "3000" || flags.Name != worktree.Label.FullLabel {
+	if flags.Service != "" || flags.Target != "3000" || flags.Name != "" || flags.fallbackName != worktree.Label.FullLabel {
 		t.Fatalf("publish flags = %#v", flags)
 	}
 }

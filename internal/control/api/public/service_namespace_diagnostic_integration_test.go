@@ -26,7 +26,7 @@ func TestIntegrationServiceNamespaceHintUsesOnlyCurrentActorAuthority(t *testing
 		t.Fatal("namespace fixture has no exact owner", err)
 	}
 	domain := domains[0]
-	ownerNamespace := members[0].ManagedLabel + "." + domain.CanonicalDomain
+	ownerNamespace := members[0].MemberSlug + "." + members[0].ManagedLabel + "." + domain.CanonicalDomain
 	ownerHost := "private." + ownerNamespace
 	saved, err := f.database.CreateServiceAt(t.Context(), f.team, f.actor, "private-owner", "private-owner",
 		controlstate.ServicePlacement{DomainID: domain.ID, Hostname: ownerHost}, now,
@@ -61,7 +61,7 @@ func TestIntegrationServiceNamespaceHintUsesOnlyCurrentActorAuthority(t *testing
 	if member.ID == "" {
 		t.Fatal("invitation did not create current membership")
 	}
-	namespace := member.ManagedLabel + "." + domain.CanonicalDomain
+	namespace := member.MemberSlug + "." + member.ManagedLabel + "." + domain.CanonicalDomain
 	call := func(token, hostname, key string, hint bool) string {
 		t.Helper()
 		body := fmt.Sprintf(`{"team_id":%q,"name":%q,"reserve":true,"placement":{"domain_id":%q,"hostname":%q},"configuration":{"protocol":"http","target":"app"}}`,
