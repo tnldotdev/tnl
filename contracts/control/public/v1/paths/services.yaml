@@ -1,4 +1,21 @@
 paths:
+  /v1/service-addresses/{hostname}:
+    get:
+      operationId: getServiceByHostname
+      tags: [services]
+      summary: Read one saved service by its exact hostname
+      description: Requires management authority for the service in the selected team. This lookup never creates or claims an address.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+        - { name: hostname, in: path, required: true, schema: { type: string, maxLength: 253 } }
+      responses:
+        "200":
+          description: Saved service
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/Service" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/projects/{project_key}/services/{service}:
     get:
       operationId: getProjectService

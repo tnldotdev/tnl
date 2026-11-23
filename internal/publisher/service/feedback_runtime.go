@@ -29,6 +29,7 @@ type feedbackRuntime struct {
 	serviceID   string
 	service     string
 	projectRoot string
+	projectID   string
 	runID       string
 	hostname    string
 	number      int64
@@ -46,14 +47,15 @@ func newFeedbackRuntime(config HTTP) (*feedbackRuntime, error) {
 	if !config.Feedback {
 		return nil, nil
 	}
-	if config.State == nil || config.Control == nil || !opaqueid.Valid(config.PreviewID, opaqueid.PreviewPrefix) || config.ProjectService == "" || !config.Demo && config.ProjectRoot == "" {
-		return nil, errors.New("service: feedback requires a configured preview, project service, and project root")
+	if config.State == nil || config.Control == nil || !opaqueid.Valid(config.PreviewID, opaqueid.PreviewPrefix) || config.ProjectService == "" ||
+		!config.Demo && (config.ProjectRoot == "" || config.FeedbackProjectID == "") {
+		return nil, errors.New("service: feedback requires a configured preview, project service, and local project identity")
 	}
 	asset, assetPath := toolbar.Script()
 	return &feedbackRuntime{
 		demo:   config.Demo,
 		client: config.Control, state: config.State, previewID: config.PreviewID, serviceID: config.Subject.ID,
-		service: config.ProjectService, projectRoot: config.ProjectRoot,
+		service: config.ProjectService, projectRoot: config.ProjectRoot, projectID: config.FeedbackProjectID,
 		runID: config.RunID, hostname: config.Hostname, number: config.Number, token: config.Token,
 		browsers: make(map[[32]byte]*browserTrail), asset: asset, assetPath: assetPath,
 	}, nil
@@ -74,7 +76,7 @@ func (f *feedbackRuntime) local(ctx context.Context, access controlv1.FeedbackRe
 	if f.demo {
 		return f.state.DemoFeedback(ctx, f.previewID, authorize)
 	}
-	return f.state.Feedback(ctx, f.projectRoot, f.previewID, authorize)
+	return f.state.Feedback(ctx, f.projectID, f.previewID, authorize)
 }
 
 func (f *feedbackRuntime) close(ctx context.Context) error {

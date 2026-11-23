@@ -3,6 +3,7 @@ package invocation
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,10 +13,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -29,9 +32,13 @@ func TestProjectRuntimePreparationRealizesOnlySelectedLocalService(t *testing.T)
 			name = "public"
 		}
 		t.Run(name, func(t *testing.T) {
-			testProjectRuntimePreparation(t, public, nil)
+			testProjectRuntimePreparation(t, public, false, nil)
 		})
 	}
+}
+
+func TestProjectRuntimePreparationAllocatesOpaqueHostname(t *testing.T) {
+	testProjectRuntimePreparation(t, true, true, nil)
 }
 
 func TestProjectRuntimePreparationRejectsInvalidSelectedEndpoint(t *testing.T) {
@@ -50,12 +57,12 @@ func TestProjectRuntimePreparationRejectsInvalidSelectedEndpoint(t *testing.T) {
 		{"zero HTTP port", func(s *controlv1.LocalProjectService) { s.Metadata.Endpoint.Port = 0 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			testProjectRuntimePreparation(t, false, test.change)
+			testProjectRuntimePreparation(t, false, false, test.change)
 		})
 	}
 }
 
-func testProjectRuntimePreparation(t *testing.T, public bool, corrupt func(*controlv1.LocalProjectService)) {
+func testProjectRuntimePreparation(t *testing.T, public, opaque bool, corrupt func(*controlv1.LocalProjectService)) {
 	t.Helper()
 	root := t.TempDir()
 	project := clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")},
@@ -70,6 +77,9 @@ func testProjectRuntimePreparation(t *testing.T, public bool, corrupt func(*cont
 				"remote": {ServiceTarget: config.ServiceTarget{Type: "address", Address: new(config.Target("https://remote.internal:443")),
 					TLS: &config.TargetTLS{CA: new("invalid remote trust")}}},
 			}}}},
+	}
+	if opaque {
+		project.Config.Naming = "opaque"
 	}
 	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
@@ -90,11 +100,23 @@ func testProjectRuntimePreparation(t *testing.T, public bool, corrupt func(*cont
 	var mutations []string
 	realized := false
 	preparing := false
+	host := "web.developer.example.test"
+	domainID, membershipID := serviceTestID(t, opaqueid.DomainPrefix), "membership_1"
+	mode := controlv1.Simple
+	managedLabel := "developer"
+	previewParent := strings.Repeat("a", 26) + ".preview.example.test"
+	previewID := serviceTestID(t, opaqueid.PublisherIdentityPrefix)
+	enrollmentID := serviceTestID(t, opaqueid.PublisherEnrollmentPrefix)
+	enrollmentKey := enrollmentID + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	if opaque {
+		mode, managedLabel = controlv1.Generated, "quiet-heron"
+		host = "s-" + strings.Repeat("b", 26) + "." + previewParent
+	}
 	selected := controlv1.LocalProjectService{Service: "web", WorktreeKey: worktree, ServiceId: "svc_0123456789abcdefghijkl",
-		Hostname: new("web.developer.example.test"),
+		Hostname: &host,
 		Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TrustRevision: 1,
 			TargetTls: &controlv1.ServiceTargetTLS{Hostname: "target.internal", Pem: new("must-not-reach-browser"), Digest: "private-trust"},
-			Endpoint:  &controlv1.ServiceEndpoint{Hostname: "web.developer.example.test", Port: 443, Public: public}}}
+			Endpoint:  &controlv1.ServiceEndpoint{Hostname: host, Port: 443, Public: public}}}
 	if corrupt != nil {
 		corrupt(&selected)
 	}
@@ -102,7 +124,7 @@ func testProjectRuntimePreparation(t *testing.T, public bool, corrupt func(*cont
 		mu.Lock()
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/v1/discovery" && r.Header.Get("Authorization") != "Bearer "+token.String() {
+		if r.URL.Path != "/v1/discovery" && r.URL.Path != "/v1/publisher-enrollments/redeem" && r.Header.Get("Authorization") != "Bearer "+token.String() {
 			t.Error("preparation lost the selected control credential")
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -110,20 +132,35 @@ func testProjectRuntimePreparation(t *testing.T, public bool, corrupt func(*cont
 		var response any
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/discovery":
-			response = controlv1.ControlDiscovery{ManagedUrlMode: "simple", Authentication: controlv1.AuthenticationFacts{
+			response = controlv1.ControlDiscovery{ManagedDomain: "example.test", ManagedUrlMode: mode, DnsAutomation: opaque, Authentication: controlv1.AuthenticationFacts{
 				Methods: []controlv1.AuthenticationFactsMethods{controlv1.Oidc},
 				Oidc:    &controlv1.OIDCAuthenticationFacts{Issuer: "https://identity.example", LoginFlow: controlv1.DeviceCode},
 			}}
 		case "GET /v1/identity":
 			response = authorityv1.IdentityContext{PersonalTeamId: "team_1", Memberships: []authorityv1.Membership{
-				{TeamId: "team_1", MemberSlug: "developer", ManagedLabel: "developer"},
+				{Id: membershipID, TeamId: "team_1", MemberSlug: "developer", ManagedLabel: managedLabel},
 			}}
 		case "GET /v1/teams/team_1":
-			response = authorityv1.Team{Id: "team_1", DisplayName: "developer", Kind: authorityv1.Personal, DefaultDomainId: "domain_1"}
+			response = authorityv1.Team{Id: "team_1", DisplayName: "developer", Kind: authorityv1.Personal, DefaultDomainId: domainID, ManagedLabel: managedLabel}
 		case "GET /v1/teams/team_1/domains":
 			response = authorityv1.DomainPage{Domains: []authorityv1.Domain{
-				{Id: "domain_1", CanonicalDomain: "example.test", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady},
+				{Id: domainID, CanonicalDomain: "example.test", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady},
 			}}
+		case "POST /v1/publisher-enrollments":
+			var request controlv1.CreatePublisherEnrollmentRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			if !opaque || request.Preview == nil || !*request.Preview || request.DomainId == nil || *request.DomainId != domainID {
+				t.Error("preparation enrolled a publisher outside the preview namespace")
+			}
+			w.WriteHeader(http.StatusCreated)
+			response = controlv1.PublisherEnrollment{Id: enrollmentID, EnrollmentKey: enrollmentKey, Kind: "namespace", TeamId: "team_1", DomainId: &domainID, Namespace: &previewParent, ExpiresAt: time.Now().Add(time.Minute)}
+		case "POST /v1/publisher-enrollments/redeem":
+			response = authorityv1.PublisherEnrollmentResult{
+				Kind: "namespace", TeamId: "team_1", DomainId: &domainID, Namespace: &previewParent, ClientId: previewID,
+				KeyId: serviceTestID(t, opaqueid.PublisherIdentityKeyPrefix), GrantId: serviceTestID(t, opaqueid.PublisherGrantPrefix),
+			}
 		case "PUT " + localPath + "web":
 			mutations = append(mutations, r.Method+" "+r.URL.Path)
 			var request controlv1.RealizeLocalProjectServiceRequest
@@ -138,6 +175,9 @@ func testProjectRuntimePreparation(t *testing.T, public bool, corrupt func(*cont
 				request.Configuration.Target != "app" || request.Configuration.Public == nil || *request.Configuration.Public != public ||
 				request.Configuration.TargetTls != nil {
 				t.Error("preparation changed its exact local declaration", request)
+			}
+			if opaque && (request.PreviewPublisherId == nil || *request.PreviewPublisherId != previewID) {
+				t.Error("opaque preparation allocated a readable hostname")
 			}
 			realized = true
 			response = selected
@@ -203,7 +243,7 @@ func testProjectRuntimePreparation(t *testing.T, public bool, corrupt func(*cont
 		}
 		return
 	}
-	if err != nil || len(prepared.Services) != 1 || prepared.Services["web"].URL != "https://web.developer.example.test" ||
+	if err != nil || len(prepared.Services) != 1 || prepared.Services["web"].URL != "https://"+host ||
 		prepared.Services["web"].Public != public || prepared.Services["web"].Port != 443 {
 		t.Fatal("preparation omitted its selected endpoint", prepared, err)
 	}

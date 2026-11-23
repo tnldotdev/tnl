@@ -38,7 +38,7 @@ func prepareAliasServices(ctx context.Context, state *clientstate.Database, proj
 	if alias.Hostname != nil {
 		publicURL, relative = "https://"+*alias.Hostname, ""
 	}
-	services, err := preparePublisherServices(ctx, state, server, publicURL, relative, domain, team, false, authenticated)
+	services, err := preparePublisherServices(ctx, state, server, publicURL, relative, domain, team, false, authenticated, false)
 	if err != nil {
 		return publisherServices{}, err
 	}

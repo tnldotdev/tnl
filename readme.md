@@ -19,35 +19,34 @@ Give your local app an HTTPS URL you can share, or connect to a service on a pri
 
 `tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop.
 
-For example, take a repo named `demo` with an `app` service. The main checkout and a `perf` worktree each get their own URL:
+Imagine Chase works at Hooli. He leaves the `hooli/nucleus` app running in his main checkout while he tests a compression speedup in a `perf` worktree. Each checkout gets its own URL:
 
 ```text
-                             your browser
-                                   |
-                         https://*.example.com
-                      (tnl.dev or your subdomain)
-                                   v
-                              tnl ingress
-                         (hosted/self-hosted)
-                                   |
-                +------------------+------------------+
-                |                                     |
-           direct UDP                             tnl relay
-        (when possible)                           (fallback)
-                |                                     |
-                +------------------+------------------+
-                                   |
-+----------------------------------v----------------------------------+
-|                             your laptop                             |
-|                                  |                                  |
-|                +-----------------+----------------+                 |
-|                v                                  v                 |
-|       tnl (main checkout)                tnl (perf worktree)        |
-|       app-demo.example.com            app-demo-perf.example.com     |
-|                |                                  |                 |
-|                v                                  v                 |
-|         localhost:5173                     localhost:5174           |
-+---------------------------------------------------------------------+
+                               your browser
+                                     |
+                       https://*.chase.tnl.hooli.xyz
+                                     v
+                                tnl ingress
+                           (hosted/self-hosted)
+                                     |
+                  +------------------+------------------+
+                  |                                     |
+             direct UDP                             tnl relay
+          (when possible)                           (fallback)
+                  |                                     |
+                  +------------------+------------------+
+                                     |
++------------------------------------v------------------------------------+
+|                               your laptop                               |
+|                                    |                                    |
+|                  +-----------------+----------------+                   |
+|                  v                                  v                   |
+|         tnl (main checkout)                tnl (perf worktree)          |
+|   app-nucleus.chase.tnl.hooli.xyz  app-nucleus-perf.chase.tnl.hooli.xyz |
+|                  |                                  |                   |
+|                  v                                  v                   |
+|           localhost:5173                     localhost:5174             |
++-------------------------------------------------------------------------+
 ```
 
 The Next.js and Vite plugins automatically handle port conflicts. And OAuth and webhooks get one consistent URL that works across all worktrees.
@@ -83,13 +82,12 @@ The connection will attempt P2P hole-punched UDP and fall back to using relays (
 +---------------------------------------------------------------------+
 ```
 
-If you can't install `tnl` on a client, you can give your service a public hostname and port instead. For example:
+If you can't install `tnl` on a client, you can give your service a public hostname and port instead. For example, Hooli could enable a public endpoint for `orders` in its `prod` deployment:
 
 ```text
                your app or database client
                             |
-                  api.example.com:15443
-                   (or your subdomain)
+      orders.prod.nucleus.deploy.tnl.hooli.xyz:15443
                             v
                        tnl ingress
                             |
@@ -140,10 +138,11 @@ It also creates a project configuration:
 import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
+  team: "hooli",
   feedback: true,
   services: { app: {} },
   deployments: {
-    local: { targets: { app: { publicURL: {} } } },
+    local: { targets: { app: { public: true } } },
   },
 });
 ```
@@ -158,7 +157,8 @@ pnpm exec tnl auth login
 
 By default, visitors need a sign-in, share link, or token. Hot reloading, WebSockets, SSE, and streaming responses are all supported.
 
-_Already have an app listening on port 3000? Run `pnpm exec tnl publish 3000`._
+Already have an app listening on port 3000? Run `pnpm exec tnl publish 3000`.
+Use `--hostname` to select an exact public hostname or restart at a saved address.
 
 See [installation options](https://tnl.dev/docs/publish), the
 [quickstart](https://tnl.dev/docs), and [framework integrations](https://tnl.dev/docs/frameworks).
@@ -179,12 +179,12 @@ This would end up looking like:
 ```text
 your browser
 |
-+-- https://app-demo.example.com
++-- https://app-nucleus.chase.tnl.hooli.xyz
 |          |
 |          v
 |   main checkout -> localhost:5173
 |
-+-- https://app-demo-perf.example.com
++-- https://app-nucleus-perf.chase.tnl.hooli.xyz
            |
            v
     perf worktree -> localhost:5174
@@ -232,7 +232,7 @@ The OAuth and webhook URLs do not change when you work across multiple checkouts
 OAuth automatically returns the browser to the worktree that started login:
 
 ```text
-                   https://app-demo-perf.example.com
+              https://app-nucleus-perf.chase.tnl.hooli.xyz
                                    |
                                    | start login
                                    v
@@ -240,28 +240,28 @@ OAuth automatically returns the browser to the worktree that started login:
                                    |
                                    v
 +--[ oauth callback url ]---------------------------------------------+
-|             https://oauth-demo.example.com/auth/callback            |
+|    https://oauth-nucleus-k7n2p9.chase.tnl.hooli.xyz/auth/callback   |
 +---------------------------------------------------------------------+
                                    |
                                    | redirect browser
                                    v
-                   https://app-demo-perf.example.com
+              https://app-nucleus-perf.chase.tnl.hooli.xyz
 ```
 
 Or, for webhooks, the same event fans out to all running worktrees:
 
 ```text
-                         webhook (e.g. Stripe)
-                                   |
-                                   v
-+--[ webhook url ]----------------------------------------------------+
-|            https://hooks-demo.example.com/webhooks/stripe           |
-+---------------------------------------------------------------------+
-                                   |
-                       +-----------+-----------+
-                       |                       |
-                       v                       v
-                 main checkout            perf worktree
+                           webhook (e.g. Stripe)
+                                     |
+                                     v
++--[ webhook url ]--------------------------------------------------------+
+| https://hooks-nucleus-m5p7v2k4t3q6a.chase.tnl.hooli.xyz/webhooks/stripe |
++-------------------------------------------------------------------------+
+                                     |
+                         +-----------+-----------+
+                         |                       |
+                         v                       v
+                   main checkout            perf worktree
 ```
 
 You can also select a single webhook receiver, instead of fanning out. See [OAuth setup](https://tnl.dev/docs/development#register-one-oauth-callback-for-your-worktrees)
@@ -360,7 +360,7 @@ import { defineConfig } from "drizzle-kit";
 import { connect, deployment } from "@tnldotdev/tnl/node";
 
 const production = deployment("production", {
-  project: "acme/demo",
+  project: "hooli/nucleus",
   services: { orders: { protocol: "postgres" } },
 });
 const database = await connect(production, "orders");
@@ -384,23 +384,9 @@ See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actio
 
 ## custom domains or self-hosting
 
-You can also add a subdomain you own, for URLs like `https://app.chase.dev.example.com`.
+You can also add a subdomain you own. For example, if Chase claims `tnl.hooli.xyz` for his personal team, he can publish an app at `app.tnl.hooli.xyz`. If a team, e.g. Hooli, claims the subdomain, each team member gets a separate name: Chase uses `app.chase.tnl.hooli.xyz`, and Aya uses `app.aya.tnl.hooli.xyz`.
 
 Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates. See [setting up a custom domain](https://tnl.dev/docs/domains).
-
-Choose the owner at claim time:
-
-```sh
-tnl domain claim dev.nintendo.com --personal
-# or, to claim it for Nintendo instead:
-tnl domain claim dev.nintendo.com --team nintendo
-```
-
-Chase can later run `tnl domain transfer dev.nintendo.com --to-team nintendo`.
-If he owns both teams, the move needs one command. Otherwise the destination
-owner runs the printed accept command. The same DNS delegation stays in place;
-saved services, publisher grants, and outstanding certificates must be cleared
-first. The reverse move uses `--to-personal`.
 
 Or, you can even run the whole stack yourself (control, ingress, and relays), forever free. See [running your own server](https://tnl.dev/docs/self-hosting).
 

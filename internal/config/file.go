@@ -29,6 +29,9 @@ func ValidateDocument(document Document) error {
 }
 
 func ValidateTNL(config TNL) error {
+	if config.Naming != "" && config.Naming != "opaque" {
+		return errors.New(`naming must be "opaque" when set`)
+	}
 	if err := ValidateWorkloads(config.Services, config.Workloads); err != nil {
 		return err
 	}

@@ -95,7 +95,7 @@ func attachIntegrations(ctx context.Context, state *clientstate.Database, projec
 	if saved.Id != cfg.ServiceID || !saved.Enabled || saved.Endpoint == nil || saved.DomainId == nil {
 		return nil, publisheridentity.ErrScope
 	}
-	services, err := preparePublisherServices(ctx, state, server, "https://"+saved.Endpoint.Hostname, "", "", selectedTeam, false, authenticated)
+	services, err := preparePublisherServices(ctx, state, server, "https://"+saved.Endpoint.Hostname, "", "", selectedTeam, false, authenticated, false)
 	if err != nil {
 		return nil, err
 	}

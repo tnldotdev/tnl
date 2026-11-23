@@ -116,7 +116,7 @@ func TestServiceHTTPConfiguredPreviewDoesNotAllocateADemoPreview(t *testing.T) {
 	facts := HTTP{Control: serviceBrowserControl{HTTPControl: feedback, origin: "https://control.example.test", policy: policy},
 		State:   testFeedbackState(t),
 		Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_0123456789abcdefghijkl"}, RunID: "srun_0123456789abcdefghijkl",
-		Number: 7, Token: "run-secret", Feedback: true, ProjectService: "web", ProjectRoot: t.TempDir(), PreviewID: previewID}
+		Number: 7, Token: "run-secret", Feedback: true, ProjectService: "web", ProjectRoot: t.TempDir(), FeedbackProjectID: strings.Repeat("a", 64), PreviewID: previewID}
 	prepared, closeHTTP, err := PrepareHTTP(t.Context(), facts)
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestServiceHTTPConfiguredPreviewDoesNotAllocateADemoPreview(t *testing.T) {
 	runtime, _ := prepared.feedback.(*feedbackRuntime)
 	if calls != 0 || prepared.PreviewID != previewID || prepared.browser == nil || prepared.browser.PreviewID != previewID ||
 		runtime == nil || runtime.previewID != previewID || runtime.demo ||
-		runtime.projectRoot != facts.ProjectRoot {
+		runtime.projectRoot != facts.ProjectRoot || runtime.projectID != facts.FeedbackProjectID {
 		t.Fatal("ordinary configured feedback allocated or replaced its preview", calls)
 	}
 }

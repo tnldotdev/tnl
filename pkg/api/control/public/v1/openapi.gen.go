@@ -2459,6 +2459,9 @@ type CreatePublisherEnrollmentRequest struct {
 	// Ownership Member-owned publishers stop with that membership. Team ownership requires a shared service and current team administration; the creator remains audit history only. Defaults to member for namespaces and team for shared services.
 	Ownership *CreatePublisherEnrollmentRequestOwnership `json:"ownership,omitempty"`
 
+	// Preview Request a new publisher-specific neutral parent on the hosted managed domain.
+	Preview *bool `json:"preview,omitempty"`
+
 	// Protocols Immutable protocols authorized for one actual exact service grant. The current service protocol must be included before the grant can authorize publication. Service edits, token exchange, key rotation, and retries never widen this set. This is independent of public reachability and visitor permission.
 	Protocols *PublisherServiceProtocols `json:"protocols,omitempty"`
 	ServiceId *ServiceID                 `json:"service_id,omitempty"`
@@ -3696,11 +3699,12 @@ type ReadinessResponseStatus string
 
 // RealizeLocalProjectServiceRequest Shared service policy for one local worktree. Native clients send persistent random source/worktree IDs and an app target; directory mappings, listener selection, readiness, and mounts stay local.
 type RealizeLocalProjectServiceRequest struct {
-	Configuration     ProjectServiceConfiguration `json:"configuration"`
-	SourceFingerprint string                      `json:"source_fingerprint"`
-	TeamId            string                      `json:"team_id"`
-	WorktreeKey       string                      `json:"worktree_key"`
-	WorktreeLabel     *string                     `json:"worktree_label,omitempty"`
+	Configuration      ProjectServiceConfiguration `json:"configuration"`
+	PreviewPublisherId *ResourceID                 `json:"preview_publisher_id,omitempty"`
+	SourceFingerprint  string                      `json:"source_fingerprint"`
+	TeamId             string                      `json:"team_id"`
+	WorktreeKey        string                      `json:"worktree_key"`
+	WorktreeLabel      *string                     `json:"worktree_label,omitempty"`
 }
 
 // RedeemDeploymentPublisherEnrollmentRequest defines model for RedeemDeploymentPublisherEnrollmentRequest.
@@ -4074,10 +4078,14 @@ type ServicePage struct {
 
 // ServicePlacement defines model for ServicePlacement.
 type ServicePlacement struct {
-	DomainId      *DomainID `json:"domain_id,omitempty"`
-	Hostname      *string   `json:"hostname,omitempty"`
-	WorktreeKey   *string   `json:"worktree_key,omitempty"`
-	WorktreeLabel *string   `json:"worktree_label,omitempty"`
+	DomainId           *DomainID   `json:"domain_id,omitempty"`
+	Hostname           *string     `json:"hostname,omitempty"`
+	PreviewPublisherId *ResourceID `json:"preview_publisher_id,omitempty"`
+
+	// UseSavedAddress On a named reservation, keep the saved address even if the team default has changed.
+	UseSavedAddress *bool   `json:"use_saved_address,omitempty"`
+	WorktreeKey     *string `json:"worktree_key,omitempty"`
+	WorktreeLabel   *string `json:"worktree_label,omitempty"`
 }
 
 // ServiceProtocol defines model for ServiceProtocol.
@@ -4948,6 +4956,11 @@ type RevokePublisherGrantParams struct {
 // GetDeploymentPublisherAssignmentsParams defines parameters for GetDeploymentPublisherAssignments.
 type GetDeploymentPublisherAssignmentsParams struct {
 	AppOwned *bool `form:"app_owned,omitempty" json:"app_owned,omitempty"`
+}
+
+// GetServiceByHostnameParams defines parameters for GetServiceByHostname.
+type GetServiceByHostnameParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
 // ListServicesParams defines parameters for ListServices.
@@ -6376,6 +6389,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetServiceByHostname Read one saved service by its exact hostname
+	//
+	// Requires management authority for the service in the selected team. This lookup never creates or claims an address.
+	//
+	// Corresponds with GET /v1/service-addresses/{hostname} (the `GetServiceByHostname` operationId).
+	GetServiceByHostname(ctx context.Context, hostname string, params *GetServiceByHostnameParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AcceptServiceInvitationWithBody Accept an invitation for the signed-in verified email identity
 	//
@@ -8967,6 +8987,23 @@ func (c *Client) WatchPublisherRuns(ctx context.Context, body WatchPublisherRuns
 // Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetServiceByHostname Read one saved service by its exact hostname
+//
+// Requires management authority for the service in the selected team. This lookup never creates or claims an address.
+//
+// Corresponds with GET /v1/service-addresses/{hostname} (the `GetServiceByHostname` operationId).
+func (c *Client) GetServiceByHostname(ctx context.Context, hostname string, params *GetServiceByHostnameParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetServiceByHostnameRequest(c.Server, hostname, params)
 	if err != nil {
 		return nil, err
 	}
@@ -14253,6 +14290,63 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetServiceByHostnameRequest constructs an http.Request for the GetServiceByHostname method
+func NewGetServiceByHostnameRequest(server string, hostname string, params *GetServiceByHostnameParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "hostname", hostname, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/service-addresses/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAcceptServiceInvitationRequest calls the generic AcceptServiceInvitation builder with application/json body
 func NewAcceptServiceInvitationRequest(server string, body AcceptServiceInvitationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -18106,6 +18200,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/ready (the `GetReadiness` operationId).
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
+
+	// GetServiceByHostnameWithResponse Read one saved service by its exact hostname
+	//
+	// Requires management authority for the service in the selected team. This lookup never creates or claims an address.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/service-addresses/{hostname} (the `GetServiceByHostname` operationId).
+	GetServiceByHostnameWithResponse(ctx context.Context, hostname string, params *GetServiceByHostnameParams, reqEditors ...RequestEditorFn) (*GetServiceByHostnameResponse, error)
 
 	// AcceptServiceInvitationWithBodyWithResponse Accept an invitation for the signed-in verified email identity
 	//
@@ -22048,6 +22151,54 @@ func (r GetReadinessResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetReadinessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetServiceByHostnameResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Service
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetServiceByHostnameResponse) GetJSON200() *Service {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetServiceByHostnameResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetServiceByHostnameResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetServiceByHostnameResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetServiceByHostnameResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetServiceByHostnameResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26341,6 +26492,21 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 	return ParseGetReadinessResponse(rsp)
 }
 
+// GetServiceByHostnameWithResponse Read one saved service by its exact hostname
+//
+// Requires management authority for the service in the selected team. This lookup never creates or claims an address.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/service-addresses/{hostname} (the `GetServiceByHostname` operationId).
+func (c *ClientWithResponses) GetServiceByHostnameWithResponse(ctx context.Context, hostname string, params *GetServiceByHostnameParams, reqEditors ...RequestEditorFn) (*GetServiceByHostnameResponse, error) {
+	rsp, err := c.GetServiceByHostname(ctx, hostname, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetServiceByHostnameResponse(rsp)
+}
+
 // AcceptServiceInvitationWithBodyWithResponse Accept an invitation for the signed-in verified email identity
 //
 // Exchange the one-use invitation secret under the current signed-in identity. Control verifies the recipient email and creates an exact-service identity grant; acceptance grants no management or publisher permission.
@@ -29912,6 +30078,39 @@ func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error
 	return response, nil
 }
 
+// ParseGetServiceByHostnameResponse parses an HTTP response from a GetServiceByHostnameWithResponse call
+func ParseGetServiceByHostnameResponse(rsp *http.Response) (*GetServiceByHostnameResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetServiceByHostnameResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Service
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseAcceptServiceInvitationResponse parses an HTTP response from a AcceptServiceInvitationWithResponse call
 func ParseAcceptServiceInvitationResponse(rsp *http.Response) (*AcceptServiceInvitationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -32185,6 +32384,9 @@ type ServerInterface interface {
 	// GetReadiness Confirm that the tnld role is ready to serve
 	// (GET /v1/ready)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
+	// GetServiceByHostname Read one saved service by its exact hostname
+	// (GET /v1/service-addresses/{hostname})
+	GetServiceByHostname(w http.ResponseWriter, r *http.Request, hostname string, params GetServiceByHostnameParams)
 	// AcceptServiceInvitation Accept an invitation for the signed-in verified email identity
 	// (POST /v1/service-invitations/accept)
 	AcceptServiceInvitation(w http.ResponseWriter, r *http.Request)
@@ -34838,6 +35040,48 @@ func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// GetServiceByHostname operation middleware
+func (siw *ServerInterfaceWrapper) GetServiceByHostname(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "hostname" -------------
+	var hostname string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "hostname", r.PathValue("hostname"), &hostname, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hostname", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetServiceByHostnameParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetServiceByHostname(w, r, hostname, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // AcceptServiceInvitation operation middleware
 func (siw *ServerInterfaceWrapper) AcceptServiceInvitation(w http.ResponseWriter, r *http.Request) {
 
@@ -37070,6 +37314,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/visitor-devices/{device_id}", wrapper.RevokeVisitorDevice)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services", wrapper.ListServices)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services", wrapper.CreateService)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service-addresses/{hostname}", wrapper.GetServiceByHostname)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}", wrapper.DeleteService)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}", wrapper.GetService)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/services/{service_id}", wrapper.ConfigureService)

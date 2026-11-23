@@ -43,6 +43,9 @@ JOIN control.team_memberships AS m
 WHERE t.id = sqlc.arg(team_id)
   AND t.deleted_at IS NULL;
 
+-- name: GetTeamNaming :one
+SELECT display_name, managed_label FROM control.teams WHERE id=sqlc.arg(team_id) AND deleted_at IS NULL;
+
 -- name: ListIdentityTeamDomains :many
 SELECT
     d.id,
@@ -356,11 +359,14 @@ SELECT EXISTS (
     SELECT 1 FROM control.service_endpoints AS endpoint
     JOIN control.services AS service ON service.id = endpoint.service_id
     JOIN control.domains AS domain ON domain.id = endpoint.domain_id
+    JOIN control.teams AS team ON team.id = service.team_id
+    CROSS JOIN LATERAL (SELECT CASE domain.kind
+        WHEN 'managed' THEN team.managed_label || '.' || domain.canonical_domain
+        ELSE domain.canonical_domain END AS team_suffix) AS suffix
     WHERE service.team_id = sqlc.arg(team_id)
       AND service.deleted_at IS NULL AND endpoint.retired_at IS NULL
-      AND domain.kind = 'custom'
-      AND (endpoint.hostname = sqlc.arg(label)::text || '.' || domain.canonical_domain
-        OR endpoint.hostname LIKE '%.' || sqlc.arg(label)::text || '.' || domain.canonical_domain)
+      AND (endpoint.hostname = sqlc.arg(label)::text || '.' || suffix.team_suffix
+        OR endpoint.hostname LIKE '%.' || sqlc.arg(label)::text || '.' || suffix.team_suffix)
 );
 
 -- name: TeamMemberSlugReserved :one

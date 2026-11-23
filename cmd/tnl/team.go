@@ -43,7 +43,7 @@ type teamUseCommand struct {
 type teamCreateCommand struct {
 	remoteFlags `embed:""`
 	Name        string `arg:"" name:"name" required:"" help:"Unique, permanent lowercase DNS label for the team."`
-	MemberSlug  string `name:"member-slug" help:"Creator's immutable custom-domain label; defaults to one derived from your identity name."`
+	MemberSlug  string `name:"member-slug" help:"Creator's team-local DNS label. Hosted teams get a generated label if omitted."`
 }
 
 type teamMembersCommand struct {
@@ -58,7 +58,7 @@ type teamInviteCommand struct {
 
 type teamInviteCreateCommand struct {
 	scopedTeamFlags `embed:""`
-	MemberSlug      string               `name:"member-slug" required:"" help:"Reserved member namespace label on custom domains."`
+	MemberSlug      string               `name:"member-slug" help:"Reserve a team-local DNS label. Hosted teams get a generated label if omitted."`
 	Role            authorityv1.TeamRole `name:"role" enum:"member,admin,owner" default:"member" help:"Initial team role."`
 	Email           string               `name:"email" help:"Optional verified-email restriction."`
 	ExpiresIn       time.Duration        `name:"expires-in" default:"168h" help:"Invitation lifetime."`
@@ -100,20 +100,23 @@ func runTeamCurrent(ctx context.Context, command teamCurrentCommand, output, dia
 		return err
 	}
 	defer session.Close()
-	current, err := session.Current(ctx)
+	current, err := session.CurrentWithDomains(ctx)
 	if err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl team current", "selected", "",
-		clioutput.Fields(
-			clioutput.Field{Label: "server", Value: session.Authenticated().ServerEndpoint},
-			clioutput.Field{Label: "team", Value: current.Team().DisplayName},
-			clioutput.Field{Label: "kind", Value: string(current.Team().Kind)},
-			clioutput.Field{Label: "role", Value: string(current.Membership().Role)},
-			clioutput.Field{Label: "member slug", Value: current.Membership().MemberSlug},
-			clioutput.Field{Label: "team ID", Value: current.Team().Id},
-		),
-	)
+	fields := []clioutput.Field{
+		clioutput.Field{Label: "server", Value: session.Authenticated().ServerEndpoint},
+		clioutput.Field{Label: "team", Value: current.Team().DisplayName},
+		clioutput.Field{Label: "kind", Value: string(current.Team().Kind)},
+		clioutput.Field{Label: "role", Value: string(current.Membership().Role)},
+		clioutput.Field{Label: "member slug", Value: current.Membership().MemberSlug},
+		clioutput.Field{Label: "team ID", Value: current.Team().Id},
+	}
+	if domain, err := current.ReadyDomain(""); err == nil {
+		namespace, _ := current.Namespace(domain)
+		fields = append(fields, clioutput.Field{Label: "new named URL", Value: "https://app." + namespace})
+	}
+	return writeHumanFrame(output, "tnl team current", "selected", "", clioutput.Fields(fields...))
 }
 
 func runTeamList(ctx context.Context, command teamListCommand, output, diagnostics io.Writer) error {
@@ -237,11 +240,11 @@ func runTeamMembers(ctx context.Context, command teamMembersCommand, output, dia
 		return err
 	}
 	defer session.Close()
-	membership, err := session.CurrentMembership(ctx)
+	current, err := session.Current(ctx)
 	if err != nil {
 		return err
 	}
-	page, err := session.Authenticated().Authority.ListTeamMemberships(ctx, membership.TeamId)
+	page, err := session.Authenticated().Authority.ListTeamMemberships(ctx, current.Team().Id)
 	if err != nil {
 		return err
 	}
@@ -251,7 +254,7 @@ func runTeamMembers(ctx context.Context, command teamMembersCommand, output, dia
 			Domain: session.Authenticated().Discovery.ManagedDomain, Managed: true,
 			Mode:     naming.ManagedURLMode(session.Authenticated().Discovery.ManagedUrlMode),
 			Personal: value.TeamKind == authorityv1.Personal,
-			TeamName: value.TeamDisplayName, MemberSlug: value.MemberSlug, ManagedLabel: value.ManagedLabel,
+			TeamName: value.TeamDisplayName, MemberSlug: value.MemberSlug, ManagedLabel: current.Team().ManagedLabel,
 		})
 		blocks = append(blocks, clioutput.Section(value.MemberSlug, clioutput.Fields(
 			clioutput.Field{Label: "role", Value: string(value.Role)},
@@ -278,6 +281,13 @@ func runTeamInviteCreate(ctx context.Context, command teamInviteCreateCommand, o
 	}
 	body := authorityv1.CreateInvitationRequest{
 		MemberSlug: command.MemberSlug, InitialRole: command.Role, ExpiresAt: time.Now().Add(command.ExpiresIn).UTC(),
+	}
+	if body.MemberSlug == "" && current.Mode() == naming.ManagedURLModeGenerated {
+		label, err := naming.RandomHostnameLabel()
+		if err != nil {
+			return err
+		}
+		body.MemberSlug = "m-" + label
 	}
 	if command.Email != "" {
 		email := openapiEmail(command.Email)

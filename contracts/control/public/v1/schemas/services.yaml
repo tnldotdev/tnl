@@ -124,6 +124,10 @@ schemas:
       hostname: { type: string, minLength: 1, maxLength: 253 }
       worktree_key: { type: string, minLength: 1, maxLength: 128 }
       worktree_label: { type: string, minLength: 1, maxLength: 63 }
+      preview_publisher_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
+      use_saved_address:
+        type: boolean
+        description: On a named reservation, keep the saved address even if the team default has changed.
   ServiceProtocol:
     type: string
     enum: [http, tcp, mysql, postgres, kubernetes]

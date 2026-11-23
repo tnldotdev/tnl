@@ -39,6 +39,7 @@ func (h *handler) RealizeLocalProjectService(w http.ResponseWriter, r *http.Requ
 		SourceFingerprint string                                    `json:"source_fingerprint"`
 		WorktreeKey       string                                    `json:"worktree_key"`
 		WorktreeLabel     string                                    `json:"worktree_label"`
+		PreviewPublisher  string                                    `json:"preview_publisher_id"`
 		Configuration     *controlstate.ProjectServiceConfiguration `json:"configuration"`
 	}
 	if decodeJSONLimited(w, r, &body, 2<<20) != nil || body.Configuration == nil {
@@ -54,7 +55,7 @@ func (h *handler) RealizeLocalProjectService(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, 503, controlv1.Unavailable, "local project services are unavailable")
 		return
 	}
-	result, err := store.RealizeLocalProjectService(r.Context(), controlstate.RealizeLocalProjectServiceRequest{TeamID: body.TeamID, ProjectKey: project, SourceFingerprint: body.SourceFingerprint, Service: service, WorktreeKey: body.WorktreeKey, WorktreeLabel: body.WorktreeLabel, DNSAutomation: h.config.DNSAutomation, ActorID: actor, Configuration: *body.Configuration, Now: time.Now()})
+	result, err := store.RealizeLocalProjectService(r.Context(), controlstate.RealizeLocalProjectServiceRequest{TeamID: body.TeamID, ProjectKey: project, SourceFingerprint: body.SourceFingerprint, Service: service, WorktreeKey: body.WorktreeKey, WorktreeLabel: body.WorktreeLabel, PreviewPublisher: body.PreviewPublisher, DNSAutomation: h.config.DNSAutomation, ActorID: actor, Configuration: *body.Configuration, Now: time.Now()})
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "realize local project service", err)
 		return

@@ -136,7 +136,7 @@ func TestAppWorkflowLocalRealizationSurvivesGitChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("step %d local app requires Git identity: %v", step, err)
 		}
-		if len(identities) > 1 && identities[step] != identities[0] {
+		if step > 1 && identities[step] != identities[1] {
 			t.Fatalf("local identity changed: %v", identities)
 		}
 		if step < 2 {

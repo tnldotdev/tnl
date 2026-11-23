@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 // ServicePlacement selects a ready team domain and a source-bound local
@@ -19,6 +21,8 @@ type ServicePlacement struct {
 	Hostname         string `json:"hostname,omitempty"`
 	WorktreeKey      string `json:"worktree_key,omitempty"`
 	WorktreeLabel    string `json:"worktree_label,omitempty"`
+	PreviewPublisher string `json:"preview_publisher_id,omitempty"`
+	UseSavedAddress  bool   `json:"use_saved_address,omitempty"`
 	DNSAutomation    bool   `json:"-"`
 	SourceKey        string `json:"-"`
 	RunAliasParent   string `json:"-"`
@@ -27,6 +31,14 @@ type ServicePlacement struct {
 }
 
 func (p ServicePlacement) Validate() error {
+	if p.UseSavedAddress && (!p.Reserve || p.PreviewPublisher != "" || p.Hostname == "" ||
+		p.WorktreeKey != "" || p.WorktreeLabel != "") {
+		return ErrProjectConfigurationInvalid
+	}
+	if p.PreviewPublisher != "" && (!opaqueid.Valid(p.PreviewPublisher, opaqueid.PublisherIdentityPrefix) ||
+		p.Hostname != "" || p.RunAliasParent != "" || !p.DNSAutomation) {
+		return ErrProjectConfigurationInvalid
+	}
 	if len(p.WorktreeKey) > 128 || strings.TrimSpace(p.WorktreeKey) != p.WorktreeKey || strings.ContainsAny(p.WorktreeKey, "\x00\r\n") || p.WorktreeLabel != "" && (p.WorktreeKey == "" || !validProjectDNSLabel(p.WorktreeLabel)) || strings.TrimSpace(p.DomainID) != p.DomainID || strings.ContainsAny(p.DomainID, "\x00\r\n") {
 		return ErrProjectConfigurationInvalid
 	}
@@ -67,6 +79,13 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 	if domainID == "" && row.DomainID.Valid {
 		domainID = row.DomainID.String
 	}
+	if domainID == "" && placement.PreviewPublisher != "" {
+		domain, err := controlstatedb.New(tx).FindManagedDomain(ctx)
+		if err != nil {
+			return err
+		}
+		domainID = domain.ID
+	}
 	if domainID == "" {
 		if err = tx.QueryRow(ctx, `SELECT COALESCE(default_domain_id,'') FROM control.teams WHERE id=$1 AND deleted_at IS NULL`, row.TeamID).Scan(&domainID); err != nil {
 			return err
@@ -76,21 +95,43 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 	if err != nil {
 		return err
 	}
-	owner := naming.MemberNamespace(facts.CanonicalDomain, facts.DomainKind == "managed", facts.ActorManagedLabel, facts.ActorMemberSlug)
+	owner := facts.localNamespace(d.managedURLMode)
 	label, err := localManagedWorktreeLabel(placement.WorktreeKey, placement.WorktreeLabel)
 	if err != nil {
 		return err
 	}
 	namespace := owner
-	if label != "" {
+	if label != "" && d.managedURLMode != naming.ManagedURLModeGenerated {
 		namespace = label + "." + owner
 	}
-	hostname, err := naming.CanonicalizeHostname(name + "." + namespace)
+	hostLabel := name
+	if label != "" && d.managedURLMode == naming.ManagedURLModeGenerated {
+		hostLabel = naming.ProjectDNSLabel(name, label)
+	}
+	hostname, err := naming.CanonicalizeHostname(hostLabel + "." + namespace)
 	if err != nil {
 		return ErrProjectConfigurationInvalid
 	}
 	if placement.Hostname != "" {
 		hostname = placement.Hostname
+	}
+	var previewGrant, previewParent string
+	if placement.PreviewPublisher != "" {
+		if d.managedURLMode != naming.ManagedURLModeGenerated || facts.DomainKind != "managed" || row.Protocol != "http" || !public {
+			return ErrProjectConfigurationInvalid
+		}
+		if row.CertificateHostname == "" {
+			previewGrant, previewParent, err = previewPublisherGrant(ctx, tx, placement.PreviewPublisher, row.TeamID.String, facts.ActorMembershipID, domainID, facts.CanonicalDomain, now)
+			if err != nil {
+				return err
+			}
+			hostname, err = naming.RandomHostname(naming.ServiceHostnameKind, previewParent)
+			if err != nil {
+				return err
+			}
+		} else if _, ok := naming.PreviewHostname(row.CertificateHostname, facts.CanonicalDomain); !ok {
+			return ErrServiceConflict
+		}
 	}
 	intent := placement.SourceKey
 	standalone := intent == ""
@@ -104,7 +145,8 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 			return err
 		}
 		if placement.Hostname != "" && row.CertificateHostname != placement.Hostname ||
-			row.DomainID.String != domainID || row.PlacementWorktreeKey != placement.WorktreeKey || row.PlacementWorktreeLabel != label ||
+			row.DomainID.String != domainID || row.PlacementWorktreeKey != placement.WorktreeKey ||
+			standalone && row.PlacementWorktreeLabel != label ||
 			sourceOwner.local == standalone || sourceOwner.key != sourceOwner.sourceKey(intent) {
 			return ErrServiceConflict
 		}
@@ -127,14 +169,20 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 		return err
 	}
 	if err = claimServiceSourceHostname(ctx, tx, hostname, domainID, sourceOwner, now); err != nil {
-		return err
+		if !errors.Is(err, ErrServiceConflict) || placement.Hostname != "" || previewGrant != "" || standalone || d.managedURLMode != naming.ManagedURLModeGenerated {
+			return err
+		}
+		hostname = naming.ProjectDNSLabel(hostLabel, sourceOwner.key[:10]) + "." + namespace
+		if err = claimServiceSourceHostname(ctx, tx, hostname, domainID, sourceOwner, now); err != nil {
+			return err
+		}
 	}
 	port, err := allocateServicePort(ctx, tx, service, facts.IngressPoolID, public, now)
 	if err != nil {
 		return err
 	}
-	// local publishers receive exact-host plans, never authority over another
-	// service or the member/worktree namespace as a whole.
+	// the endpoint is exact. a preview publisher gets wildcard scope only at
+	// run preparation, after control checks its dedicated parent grant.
 	if err = reconcileServiceEndpoint(ctx, tx, serviceEndpoint{ServiceID: service, LocalSourceKey: sourceOwner.key, DomainID: domainID, Hostname: hostname, Namespace: hostname, PoolID: facts.IngressPoolID, Public: public, Automation: placement.DNSAutomation}, now); err != nil {
 		return err
 	}
@@ -142,7 +190,29 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 	if err != nil {
 		return projectConstraintError(err)
 	}
+	if previewGrant != "" {
+		if _, err = tx.Exec(ctx, `INSERT INTO control.opaque_service_hosts(service_id,grant_id,hostname,parent)
+		    VALUES($1,$2,$3,$4)`, service, previewGrant, hostname, previewParent); err != nil {
+			return err
+		}
+	}
 	return d.configureServiceRunAliasParent(ctx, tx, service, actor, placement.RunAliasParent, now)
+}
+
+func previewPublisherGrant(ctx context.Context, tx pgx.Tx, publisher, team, membership, domain, suffix string, now time.Time) (grant, parent string, err error) {
+	err = tx.QueryRow(ctx, `SELECT g.id,g.namespace FROM control.publisher_grants g
+	    JOIN control.publisher_identities p ON p.id=g.publisher_identity_id
+	    WHERE p.id=$1 AND p.team_id=$2 AND p.owner_membership_id=$3 AND g.membership_id=$3
+	      AND g.domain_id=$4 AND g.kind='namespace' AND g.revoked_at IS NULL AND control.active_publisher(p.id,$5)
+	      AND (g.expires_at IS NULL OR g.expires_at>$5)
+	      AND g.namespace ~ '^[a-z2-7]{26}\.preview\.'`, publisher, team, membership, domain, now).Scan(&grant, &parent)
+	if err != nil {
+		return "", "", publisherLookupError(err, ErrServiceAccess)
+	}
+	if !naming.PreviewParent(parent, suffix) {
+		return "", "", ErrServiceAccess
+	}
+	return grant, parent, nil
 }
 
 // configure keeps captured placement unless the declaration explicitly selects
@@ -177,7 +247,7 @@ func (d *Database) configureStandaloneServiceEndpoint(ctx context.Context, tx pg
 	if declaration.Hostname != "" {
 		desired.Hostname = declaration.Hostname
 	} else if desired.DomainID != endpoint.DomainID {
-		namespace := naming.MemberNamespace(facts.CanonicalDomain, facts.DomainKind == "managed", facts.ActorManagedLabel, facts.ActorMemberSlug)
+		namespace := facts.localNamespace(d.managedURLMode)
 		if row.PlacementWorktreeLabel != "" {
 			namespace = row.PlacementWorktreeLabel + "." + namespace
 		}

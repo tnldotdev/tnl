@@ -20,6 +20,11 @@ func TestIntegrationRetiredExplicitServiceHostnameTransfersDeployment(t *testing
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			d, now := newControlStateIntegrationDatabase(t, "explicit_endpoint_reuse")
+			if !test.explicit {
+				// simple servers can hand off a retired default hostname.
+				// hosted defaults stay inside their own deployment branch.
+				d.managedURLMode = naming.ManagedURLModeSimple
+			}
 			r := appliedProjectRequest(t, d, now)
 			domain := deploymentCustomDomain(t, d, r, now)
 			declaration := ProjectServiceConfiguration{Protocol: "http", Target: "localhost:3000", Public: new(true), DomainID: domain.ID}
@@ -132,7 +137,7 @@ func TestIntegrationRetiredExplicitServiceHostnameTransfersDeployment(t *testing
 }
 
 func TestIntegrationRetiredDefaultHostnameKeepsSiblingCertificateFence(t *testing.T) {
-	e := newRestoredCertificateEnvironment(t, DomainKindCustom, naming.ManagedURLModeGenerated, false)
+	e := newRestoredCertificateEnvironment(t, DomainKindCustom, naming.ManagedURLModeSimple, false)
 	applied, _ := e.deployment(t, "old", false, map[string]ProjectServiceConfiguration{
 		"api":   {Protocol: "http", Target: "localhost:3000", Public: new(true)},
 		"other": {Protocol: "http", Target: "localhost:3001", Public: new(true)},

@@ -265,6 +265,9 @@ schemas:
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       protocols: { $ref: "../openapi.yaml#/components/schemas/PublisherServiceProtocols" }
       domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      preview:
+        type: boolean
+        description: Request a new publisher-specific neutral parent on the hosted managed domain.
   PublisherEnrollment:
     type: object
     additionalProperties: false

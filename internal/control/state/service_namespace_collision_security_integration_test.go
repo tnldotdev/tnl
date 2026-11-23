@@ -15,6 +15,10 @@ func TestIntegrationServiceDeploymentNamespaceCollisionBothOrders(t *testing.T) 
 			for _, prefix := range []string{"", "web.", "other.", "deep.web."} {
 				t.Run(kind+"/"+first+"/"+prefix, func(t *testing.T) {
 					d, now, owner, team := newAuthorityTeam(t)
+					// the hosted mode reserves the branch before any service
+					// exists. this test retains both collision orders on a
+					// self-hosted domain where the branch is not reserved.
+					d.managedURLMode = naming.ManagedURLModeSimple
 					domains, err := d.ListTeamDomains(t.Context(), owner, team.ID)
 					if err != nil || len(domains) != 1 {
 						t.Fatal(err)

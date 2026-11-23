@@ -51,7 +51,7 @@ func TestProjectServerSelection(t *testing.T) {
 func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	root := t.TempDir()
 	worktree := clientproject.ApplyWorktreeHashSalt(clientproject.Worktree{Root: root, Name: "tnl"}, root, [32]byte{1})
-	selected := authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"}
+	selected := authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", ManagedLabel: "ecstatic-penguin"}
 	membership := authorityv1.Membership{Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember, ManagedLabel: "ecstatic-penguin", MemberSlug: "chase"}
 	claimed := "studio.example.test"
 	domains := []authorityv1.Domain{
@@ -64,7 +64,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 		domain          *string
 		domainID        string
 	}{
-		{"managed", "ecstatic-penguin.tnl.dev", nil, ""},
+		{"managed", "chase.ecstatic-penguin.tnl.dev", nil, ""},
 		{"custom", "chase.studio.example.test", &claimed, "domain_2"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

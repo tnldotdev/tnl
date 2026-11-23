@@ -14,6 +14,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -37,7 +38,6 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	current := FromTeamContext(selectedTeam)
 	profile, err := a.state.Server(ctx, auth.ServerEndpoint)
 	if err != nil {
 		return publisherapp.Configuration{}, err
@@ -56,7 +56,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err := targetplan.PreflightPrivate(ctx, plan); err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	realized, err := RealizeLocalService(ctx, auth.Control, LocalService{Project: project.Project, Team: current, Name: service.Name, TargetResolver: a.TargetResolver})
+	realized, err := a.realizeLocalService(ctx, auth, selectedTeam, service.Name)
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
@@ -64,13 +64,21 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	if saved.Id != realized.ServiceId || saved.TeamId != current.team.Id || !saved.Enabled {
+	if saved.Id != realized.ServiceId || saved.TeamId != selectedTeam.Team().Id || !saved.Enabled {
 		return publisherapp.Configuration{}, publisheridentity.ErrScope
 	}
 	if err := publisheridentity.MatchServiceDeclaration(saved, config.Protocol(definition), trust); err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	native, identity, err := publisheridentity.EnsureServiceOwner(ctx, profile, auth.Control, auth.Authority, saved)
+	var native *publisheridentity.Native
+	if saved.Endpoint != nil {
+		if _, opaque := naming.PreviewHostname(saved.Endpoint.Hostname, auth.Discovery.ManagedDomain); opaque {
+			native, _, _, err = selectSavedPreview(ctx, profile, auth, selectedTeam, saved, plan)
+		}
+	}
+	if native == nil && err == nil {
+		native, _, err = publisheridentity.EnsureServiceOwner(ctx, profile, auth.Control, auth.Authority, saved)
+	}
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
@@ -115,7 +123,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		framework = ""
 	}
 	base := publisherservice.RunConfig{Telemetry: a.Telemetry, Framework: framework, Control: native, State: profile, Access: native.Access,
-		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
+		PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
 		ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved), InspectionMode: policy.Mode,
 		ProjectRoot: project.Root, ProjectService: service.Name}
 	base.ShutdownContext = a.manager.PublicationShutdownContext(service.RegistrationID)
@@ -135,7 +143,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		if err != nil {
 			return publisherapp.Configuration{}, err
 		}
-		preview, err := ensurePreview(ctx, a.state, profile, auth.Control, auth.ServerEndpoint, saved.TeamId, project.Root)
+		preview, err := ensurePreview(ctx, a.state, profile, auth.Control, auth.ServerEndpoint, saved.TeamId, project.LocalWorktreeKey())
 		if err != nil {
 			return publisherapp.Configuration{}, err
 		}
@@ -147,6 +155,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			return publisherapp.Configuration{}, failure.Wrap("associate preview", failure.ServerResponseInvalid, errors.New("preview omitted the selected service"))
 		}
 		base.PreviewID, base.Feedback = preview, effective.Feedback != nil && *effective.Feedback
+		base.FeedbackProjectID = project.LocalPublicationIdentity().Fingerprint
 	}
 	publication.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) (result error) {
 		base.ShutdownDeadline = func() time.Time {

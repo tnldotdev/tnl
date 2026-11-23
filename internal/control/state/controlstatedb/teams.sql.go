@@ -882,6 +882,22 @@ func (q *Queries) GetTeamMembershipContext(ctx context.Context, arg GetTeamMembe
 	return i, err
 }
 
+const getTeamNaming = `-- name: GetTeamNaming :one
+SELECT display_name, managed_label FROM control.teams WHERE id=$1 AND deleted_at IS NULL
+`
+
+type GetTeamNamingRow struct {
+	DisplayName  string
+	ManagedLabel string
+}
+
+func (q *Queries) GetTeamNaming(ctx context.Context, teamID string) (GetTeamNamingRow, error) {
+	row := q.db.QueryRow(ctx, getTeamNaming, teamID)
+	var i GetTeamNamingRow
+	err := row.Scan(&i.DisplayName, &i.ManagedLabel)
+	return i, err
+}
+
 const listCurrentDomainNames = `-- name: ListCurrentDomainNames :many
 SELECT canonical_domain
 FROM control.domains
@@ -2015,11 +2031,14 @@ SELECT EXISTS (
     SELECT 1 FROM control.service_endpoints AS endpoint
     JOIN control.services AS service ON service.id = endpoint.service_id
     JOIN control.domains AS domain ON domain.id = endpoint.domain_id
+    JOIN control.teams AS team ON team.id = service.team_id
+    CROSS JOIN LATERAL (SELECT CASE domain.kind
+        WHEN 'managed' THEN team.managed_label || '.' || domain.canonical_domain
+        ELSE domain.canonical_domain END AS team_suffix) AS suffix
     WHERE service.team_id = $1
       AND service.deleted_at IS NULL AND endpoint.retired_at IS NULL
-      AND domain.kind = 'custom'
-      AND (endpoint.hostname = $2::text || '.' || domain.canonical_domain
-        OR endpoint.hostname LIKE '%.' || $2::text || '.' || domain.canonical_domain)
+      AND (endpoint.hostname = $2::text || '.' || suffix.team_suffix
+        OR endpoint.hostname LIKE '%.' || $2::text || '.' || suffix.team_suffix)
 )
 `
 

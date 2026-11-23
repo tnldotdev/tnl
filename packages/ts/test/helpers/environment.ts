@@ -9,7 +9,7 @@ export const environmentBaseline = {
   TNL_STATE_DIR: undefined,
   TNL_PROJECT_RUNTIME: undefined,
   TNL_PUBLIC_HOSTNAME: undefined,
-  TNL_PUBLIC_URL: undefined,
+  TNL_HOSTNAME: undefined,
   TNL_TUNNEL_ID: undefined,
   BUN_PORT: undefined,
   NODE_PORT: undefined,
@@ -26,7 +26,7 @@ const blockedSubprocessEnvironment = [
   "TNL_ACCESS_TOKEN",
   "TNL_PROJECT_RUNTIME",
   "TNL_PUBLIC_HOSTNAME",
-  "TNL_PUBLIC_URL",
+  "TNL_HOSTNAME",
   "TNL_TUNNEL_ID",
 ] as const;
 

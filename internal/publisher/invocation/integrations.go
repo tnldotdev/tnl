@@ -37,7 +37,7 @@ func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, pro
 	if project.Config.DeploymentSettings.Domain != nil {
 		domain = *project.Config.DeploymentSettings.Domain
 	}
-	services, err := preparePublisherServices(ctx, state, server, "", "", domain, team, false, authenticated)
+	services, err := preparePublisherServices(ctx, state, server, "", "", domain, team, false, authenticated, false)
 	if err != nil {
 		return meta.IntegrationOrigin{}, publisherServices{}, err
 	}

@@ -165,6 +165,8 @@ paths:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor-devices~1{device_id}"
   /v1/services:
     $ref: "./paths/services.yaml#/paths/~1v1~1services"
+  /v1/service-addresses/{hostname}:
+    $ref: "./paths/services.yaml#/paths/~1v1~1service-addresses~1{hostname}"
   /v1/services/{service_id}:
     $ref: "./paths/services.yaml#/paths/~1v1~1services~1{service_id}"
   /v1/services/{service_id}/configuration:

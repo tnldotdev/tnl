@@ -198,7 +198,7 @@ func TestPublishHostnameOptions(t *testing.T) {
 	t.Setenv("TNL_NAME", "env-name")
 	var flags cli
 	parser := commandForTest(&flags, io.Discard)
-	parsed, err := parser([]string{"publish", "3000", "--public-url", "https://flag.example", "--name", "api"})
+	parsed, err := parser([]string{"publish", "3000", "--hostname", "https://flag.example", "--name", "api"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,9 +207,37 @@ func TestPublishHostnameOptions(t *testing.T) {
 	}
 }
 
+func TestPublishRejectsRetiredPublicURLFlag(t *testing.T) {
+	t.Setenv("TNL_HOSTNAME", "")
+	t.Setenv("TNL_PUBLIC_URL", "old.example.test")
+	var flags cli
+	parser := commandForTest(&flags, io.Discard)
+	if _, err := parser([]string{"publish", "3000"}); err != nil || flags.Publish.PublicURL != "" {
+		t.Fatalf("retired TNL_PUBLIC_URL was read: %q, %v", flags.Publish.PublicURL, err)
+	}
+	if _, err := parser([]string{"publish", "3000", "--public-url", "https://flag.example"}); err == nil {
+		t.Fatal("retired --public-url flag was accepted")
+	}
+}
+
+func TestPublishResumePrintsHostnameFlag(t *testing.T) {
+	var stderr bytes.Buffer
+	output, err := newPublishOutput(publishOutputHuman, "tnl publish", io.Discard, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags := publishCommand{Target: "3000"}
+	if err := publicationPresentation(t.Context(), flags, output).Resume("https://app.example.test", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "--hostname") || strings.Contains(stderr.String(), "--public-url") {
+		t.Fatal("resume output did not use --hostname", stderr.String())
+	}
+}
+
 func TestPublishFromEnrollmentEnvironmentWithoutProjectConfig(t *testing.T) {
 	t.Setenv("TNL_TARGET", "")
-	t.Setenv("TNL_PUBLIC_URL", "")
+	t.Setenv("TNL_HOSTNAME", "")
 	t.Setenv("TNL_ENROLL_KEY", "pen_0123456789abcdefghijkl.example")
 	var flags cli
 	parser := commandForTest(&flags, io.Discard)
@@ -266,7 +294,7 @@ func TestTunnelCLIUnitOverridesConflictingEnvironmentUnit(t *testing.T) {
 	t.Setenv("TNL_NAME", "environment-name")
 	var flags cli
 	parser := commandForTest(&flags, io.Discard)
-	args := []string{"publish", "3000", "--public-url", "https://api.example", "--ip", "current"}
+	args := []string{"publish", "3000", "--hostname", "https://api.example", "--ip", "current"}
 	parsed, err := parser(args)
 	if err != nil {
 		t.Fatal(err)
@@ -372,8 +400,8 @@ func TestDemoPublishUsesFreshEphemeralURLAndSkipsProject(t *testing.T) {
 	}{
 		{"target", []string{"publish", "--demo", "3000"}, failure.DemoTargetNotAllowed, "remove the service or target"},
 		{"config", []string{"--config", "missing.yml", "publish", "--demo"}, failure.DemoConfigNotUsed, "remove --config"},
-		{"name", []string{"publish", "--demo", "--name", "saved"}, failure.DemoURLManaged, "remove --name or --public-url"},
-		{"public url", []string{"publish", "--demo", "--public-url", "https://saved.example"}, failure.DemoURLManaged, "remove --name or --public-url"},
+		{"name", []string{"publish", "--demo", "--name", "saved"}, failure.DemoURLManaged, "remove --name or --hostname"},
+		{"hostname", []string{"publish", "--demo", "--hostname", "https://saved.example"}, failure.DemoURLManaged, "remove --name or --hostname"},
 		{"ephemeral", []string{"publish", "--demo", "--ephemeral=false"}, failure.DemoMustBeEphemeral, "remove --ephemeral=false"},
 		{"concurrency", []string{"publish", "--demo", "--concurrency", "0"}, failure.InvalidTunnelFlags, "--concurrency"},
 	} {

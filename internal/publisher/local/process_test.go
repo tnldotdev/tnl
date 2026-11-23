@@ -139,7 +139,7 @@ func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *te
 				{TeamId: "team_1", MemberSlug: "developer", ManagedLabel: "developer"},
 			}}
 		case "GET /v1/teams/team_1":
-			response = authorityv1.Team{Id: "team_1", DisplayName: "developer", Kind: authorityv1.Personal, DefaultDomainId: "domain_1"}
+			response = authorityv1.Team{Id: "team_1", DisplayName: "developer", Kind: authorityv1.Personal, DefaultDomainId: "domain_1", ManagedLabel: "developer"}
 		case "GET /v1/teams/team_1/domains":
 			response = authorityv1.DomainPage{Domains: []authorityv1.Domain{
 				{Id: "domain_1", CanonicalDomain: "example.test", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady},

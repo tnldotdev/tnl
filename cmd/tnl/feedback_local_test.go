@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -76,10 +77,14 @@ func TestFeedbackCommandsUseOnlyLocalContentAndDeleteWholeThread(t *testing.T) {
 	}
 	root := t.TempDir()
 	project := projectConfiguration{Project: clientproject.Project{Root: root, Selection: clientproject.Selection{Path: filepath.Join(root, "tnl.json")}, Config: config.TNL{Services: config.Services{"web": {}}}}}
-	if err = profile.SavePreviewID(t.Context(), statusTestTeamOne, root, preview); err != nil {
+	project.Project, err = project.Project.BindLocalIdentity(t.Context(), state)
+	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := profile.Feedback(t.Context(), root, preview, func(_ context.Context, selected, operation string) (controlv1.FeedbackAuthorization, error) {
+	if err = profile.SavePreviewID(t.Context(), statusTestTeamOne, project.LocalWorktreeKey(), preview); err != nil {
+		t.Fatal(err)
+	}
+	local, err := profile.Feedback(t.Context(), project.LocalPublicationIdentity().Fingerprint, preview, func(_ context.Context, selected, operation string) (controlv1.FeedbackAuthorization, error) {
 		return controlv1.FeedbackAuthorization{PreviewId: preview, ServiceId: selected, ServiceRunId: runID, RunNumber: 1, Operation: controlv1.FeedbackOperation(operation), Actor: "reviewer", ExpiresAt: time.Now().Add(4 * time.Second), Author: controlv1.FeedbackAuthor{IdentityId: new(identity), DisplayName: "Reviewer", Verified: true}}, nil
 	})
 	if err != nil {
@@ -88,6 +93,17 @@ func TestFeedbackCommandsUseOnlyLocalContentAndDeleteWholeThread(t *testing.T) {
 	body := controlv1.CreateFeedbackReportRequest{PreviewId: preview, RunNumber: 1, Service: "web", PagePath: "/", Evidence: controlv1.FeedbackEvidence{SchemaVersion: 1}, SourceAtReport: controlv1.SourceState{SchemaVersion: 1, ChangedFiles: []controlv1.SourceFileState{}}}
 	body.Report.Text = "private local report"
 	thread, err := local.Create(t.Context(), service, runID, "report", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.CommandContext(t.Context(), "git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	project.Worktree, err = clientproject.ResolveWorktree(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.Project, err = project.Project.BindLocalIdentity(t.Context(), state)
 	if err != nil {
 		t.Fatal(err)
 	}

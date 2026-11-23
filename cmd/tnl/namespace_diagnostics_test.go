@@ -66,7 +66,7 @@ func TestPolicyDiagnosticNamespaceUntrustedServerAndIndependentFault(t *testing.
 					Title: "arbitrary private-value\x1b[31m\n" + policyDiagnosticNamespace, Detail: strings.Repeat("private-value", 1000),
 					Details: &details, RequestId: "req_fixture"})
 			})
-			stdout, stderr, err := invoke("publish", "3000", "--foreground", "--public-url=existing.foreign.example.test")
+			stdout, stderr, err := invoke("publish", "3000", "--foreground", "--hostname=existing.foreign.example.test")
 			if err == nil || stdout != "" || calls != 1 {
 				t.Fatalf("malicious problem caused publication work or hid its failure: calls=%d err=%v\n%s", calls, err, stderr)
 			}
@@ -138,6 +138,13 @@ func namespaceDiagnosticCommand(t *testing.T, handler http.HandlerFunc) func(...
 			}})
 			return
 		}
+		if r.Method == http.MethodGet && r.URL.Query().Get("team_id") == policyDiagnosticTeam &&
+			(r.URL.Path == "/v1/service-addresses/existing.foreign.example.test" || r.URL.Path == "/v1/service-addresses/missing.foreign.example.test") {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(controlv1.Problem{Code: controlv1.NotFound, Status: http.StatusNotFound})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/services" {
 			t.Errorf("namespace denial performed unexpected work: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -170,7 +177,7 @@ func TestPolicyDiagnosticNamespaceAPIClientAndHumanCommand(t *testing.T) {
 			invoke := namespaceDiagnosticCommand(t, handler.ServeHTTP)
 			var previous string
 			for _, hostname := range []string{"existing.foreign.example.test", "missing.foreign.example.test"} {
-				stdout, stderr, err := invoke("publish", "3000", "--foreground", "--public-url="+hostname)
+				stdout, stderr, err := invoke("publish", "3000", "--foreground", "--hostname="+hostname)
 				if err == nil || stdout != "" || store.calls == 0 {
 					t.Fatalf("publication did not return the actual API denial: %v\n%s", err, stderr)
 				}
@@ -202,7 +209,7 @@ func TestPolicyDiagnosticNamespacePreservesActualPublishNDJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	invoke := namespaceDiagnosticCommand(t, handler.ServeHTTP)
-	stdout, stderr, err := invoke("publish", "3000", "--foreground", "--public-url=existing.foreign.example.test", "--output=ndjson")
+	stdout, stderr, err := invoke("publish", "3000", "--foreground", "--hostname=existing.foreign.example.test", "--output=ndjson")
 	if !errors.Is(err, clientcontrol.ErrNotFound) || stderr != "" || store.calls != 1 {
 		t.Fatalf("publication denial changed NDJSON output ownership or its original cause: %v\n%s\n%s", err, stdout, stderr)
 	}

@@ -13,11 +13,11 @@ func TestServiceHostnameDescendantsRetainMembershipOwnership(t *testing.T) {
 			context := serviceHostnameFacts{
 				DomainState: "ready", DomainKind: kind, CanonicalDomain: "example.test",
 				ActorMembershipID: "membership_actor", ActorRole: "owner",
-				ActorMemberSlug: "actor", ActorManagedLabel: "actor-unique",
+				ActorMemberSlug: "actor", ActorManagedLabel: "actor-unique", TeamManagedLabel: "copper-otter",
 			}
 			label := context.ActorMemberSlug
 			if kind == "managed" {
-				label = context.ActorManagedLabel
+				label = "actor.copper-otter"
 			} else {
 				context.DomainTeamID = text("team_actor")
 			}

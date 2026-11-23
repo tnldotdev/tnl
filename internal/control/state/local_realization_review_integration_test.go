@@ -69,15 +69,17 @@ func TestIntegrationAppliedProjectLocalProjectionAndMemberBinding(t *testing.T) 
 	}
 	member := addAuthorityMember(t, d, now, r.ActingIdentityID, r.TeamID, "projection-reader", TeamRoleMember)
 	local := RealizeLocalProjectServiceRequest{TeamID: r.TeamID, ProjectKey: "local", SourceFingerprint: strings.Repeat("a", 64), Service: "web", WorktreeKey: "checkout-a", ActorID: r.ActingIdentityID, Configuration: ProjectServiceConfiguration{Target: "app", Public: new(true), Access: &ProjectServiceAccess{Team: true}}, Now: now}
+	var label, slug string
+	if err := d.pool.QueryRow(t.Context(), `SELECT team.managed_label,r.member_slug FROM control.team_memberships m
+	    JOIN control.teams team ON team.id=m.team_id JOIN control.member_slug_reservations r ON r.id=m.slug_reservation_id
+	    WHERE m.id=$1`, r.MembershipID).Scan(&label, &slug); err != nil {
+		t.Fatal(err)
+	}
 	for _, worktree := range []string{"checkout-a", "checkout-b"} {
-		// the existing generated member namespace is shared by both worktrees,
-		// while service IDs and captured hostnames remain independent.
-		var label string
-		if err := d.pool.QueryRow(t.Context(), `SELECT managed_label FROM control.team_memberships WHERE id=$1`, r.MembershipID).Scan(&label); err != nil {
-			t.Fatal(err)
-		}
+		// both worktrees use the same member namespace but have independent
+		// service IDs and captured hostnames.
 		local.WorktreeKey = worktree
-		local.Configuration.Hostname = worktree + "." + label + ".tunnels.example.test"
+		local.Configuration.Hostname = worktree + "." + slug + "." + label + ".tunnels.example.test"
 		if _, err := d.RealizeLocalProjectService(t.Context(), local); err != nil {
 			t.Fatal(err)
 		}

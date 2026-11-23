@@ -293,7 +293,7 @@
       "slug": "demo-url-managed",
       "class": "invalid",
       "message": "the built-in demo chooses its own public URL",
-      "action": "remove --name or --public-url from tnl publish --demo"
+      "action": "remove --name or --hostname from tnl publish --demo"
     },
     {
       "code": "TNL_CLIENT_DETACHED_NOT_FOUND",
@@ -510,7 +510,7 @@
       "slug": "invalid-tunnel-flags",
       "class": "invalid",
       "message": "tunnel options conflict or contain an invalid value",
-      "action": "check --public-url, --name, --ip, and HTTP limits such as --concurrency"
+      "action": "check --hostname, --name, --ip, and HTTP limits such as --concurrency"
     },
     {
       "code": "TNL_CLIENT_LOCAL_PRIVATE_SERVICE_UNAVAILABLE",
@@ -678,7 +678,7 @@
       "slug": "publisher-install-options",
       "class": "invalid",
       "message": "installed publication requires a saved HTTP public URL and stable target",
-      "action": "select --name or --public-url with a stable HTTP target; remove demo, ephemeral, and open options"
+      "action": "select --name or --hostname with a stable HTTP target; remove demo, ephemeral, and open options"
     },
     {
       "code": "TNL_CLIENT_PUBLISHER_INSTALL_SOURCE_INVALID",

@@ -6,8 +6,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationPrivateManagedLocalNamespacesAndCapturedPlans(t *testing.T) {
@@ -26,11 +24,11 @@ func TestIntegrationPrivateManagedLocalNamespacesAndCapturedPlans(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var domain, kind, label, slug string
-	if err = d.pool.QueryRow(t.Context(), `SELECT domain.canonical_domain,domain.kind,member.managed_label,reservation.member_slug FROM control.services service JOIN control.domains domain ON domain.id=service.domain_id JOIN control.team_memberships member ON member.team_id=service.team_id AND member.identity_id=$2 AND member.removed_at IS NULL JOIN control.member_slug_reservations reservation ON reservation.id=member.slug_reservation_id WHERE service.id=$1`, record.ID, r.ActorID).Scan(&domain, &kind, &label, &slug); err != nil {
+	var domain, label string
+	if err = d.pool.QueryRow(t.Context(), `SELECT domain.canonical_domain,team.managed_label FROM control.services service JOIN control.domains domain ON domain.id=service.domain_id JOIN control.teams team ON team.id=service.team_id WHERE service.id=$1`, record.ID).Scan(&domain, &label); err != nil {
 		t.Fatal(err)
 	}
-	want := "orders.feature-a." + naming.MemberNamespace(domain, kind == "managed", label, slug)
+	want := "orders-feature-a." + label + "." + domain
 	if record.Endpoint.Hostname != want || record.Endpoint.Port != 0 || record.DomainID == "" {
 		t.Fatalf("local namespace or endpoint capture: %+v want %s", record, want)
 	}

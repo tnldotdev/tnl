@@ -112,6 +112,35 @@ func EnsureNamespace(ctx context.Context, state *clientstate.Store, control Name
 	return ensureSelectedEnrollment(ctx, state, control, NativeControl{Services: control, Allocations: control}, authority, enrollmentSelection{kind: "namespace", team: team, id: domain, namespace: namespace})
 }
 
+// EnsurePreviewPublisher keeps neutral allocations on a separate identity.
+// it never sets the default namespace used by SDK publishers.
+func EnsurePreviewPublisher(ctx context.Context, state *clientstate.Store, control ServiceOwnerControl, authority EnrollmentAuthority, team, membership, domain, managedDomain string) (*Native, authorityv1.PublisherEnrollmentResult, error) {
+	if state == nil || team == "" || membership == "" || domain == "" || managedDomain == "" {
+		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
+	}
+	return ensureSelectedEnrollment(ctx, state, control, NativeControl{Services: control}, authority, enrollmentSelection{
+		kind: "preview", team: team, id: domain, managedDomain: managedDomain, membership: membership,
+	})
+}
+
+func LoadPreviewPublisher(ctx context.Context, state *clientstate.Store, control ServiceOwnerControl, authority EnrollmentAuthority, team, membership, domain, managedDomain, parent string) (*Native, bool, error) {
+	scope := enrollmentSelection{kind: "preview", team: team, id: domain, managedDomain: managedDomain, membership: membership}
+	saved, found, err := state.SelectedPublisherIdentity(ctx, "namespace", namespaceScope(team, domain, "preview/"+membership))
+	if err != nil || !found {
+		return nil, false, err
+	}
+	var identity authorityv1.PublisherEnrollmentResult
+	if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID ||
+		!scope.matches(string(identity.Kind), identity.TeamId, identity.ServiceId, identity.DomainId, identity.Namespace) {
+		return nil, false, ErrScope
+	}
+	if *identity.Namespace != parent {
+		return nil, false, nil
+	}
+	native, err := NewNative(NativeControl{Services: control}, authority, identity, saved.SigningKey)
+	return native, err == nil, err
+}
+
 // LoadFile uses only a portable signing key. an explicit server must match the
 // exact recorded control URL; invalid files never fall back to a login session.
 func LoadFile(path, server string, control NativeControl, authority AssertionExchanger) (*Native, error) {

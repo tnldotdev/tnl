@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
@@ -29,11 +28,7 @@ func TestIntegrationMemberFreshNamedLocalPublicationAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal("ordinary member cannot realize a fresh named local app", err)
 	}
-	var label string
-	if err := d.pool.QueryRow(ctx, `SELECT managed_label FROM control.team_memberships WHERE id=$1`, member.ID).Scan(&label); err != nil {
-		t.Fatal(err)
-	}
-	want := "web.feature." + naming.MemberNamespace("tunnels.example.test", true, label, member.MemberSlug)
+	want := "web-feature." + member.MemberSlug + "." + team.ManagedLabel + ".tunnels.example.test"
 	if local.Hostname != want || local.Metadata == nil {
 		t.Fatal("member realization escaped the selected namespace")
 	}

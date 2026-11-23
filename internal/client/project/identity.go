@@ -21,9 +21,9 @@ type SourceIdentity struct {
 	Source      naming.GitProjectSource
 }
 
-// LocalPublicationIdentity identifies configured development services in this
-// canonical project directory. Git initialization, origin changes and branches
-// do not change it. it is not a portable source identity for apply or workloads.
+// LocalPublicationIdentity identifies configured development services in one
+// checkout. Git moves, origin changes, and branches do not change it. it is
+// not a portable source identity for apply or workloads.
 type LocalPublicationIdentity struct {
 	Key         string
 	Fingerprint string
@@ -43,13 +43,17 @@ func (p Project) LocalWorktreeKey() string {
 }
 
 type LocalIdentityStore interface {
-	LocalProjectIdentity(context.Context, string) (string, string, error)
+	LocalProjectIdentity(context.Context, string, string) (string, string, error)
 }
 
 // BindLocalIdentity is composed after static project evaluation, with protected
 // local state. source identity for remote apply and workloads is independent.
 func (p Project) BindLocalIdentity(ctx context.Context, store LocalIdentityStore) (Project, error) {
-	source, worktree, err := store.LocalProjectIdentity(ctx, p.Root)
+	key, err := p.checkoutKey(ctx)
+	if err != nil {
+		return Project{}, err
+	}
+	source, worktree, err := store.LocalProjectIdentity(ctx, p.Root, key)
 	if err != nil {
 		return Project{}, err
 	}

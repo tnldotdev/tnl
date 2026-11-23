@@ -64,6 +64,7 @@ type HTTP struct {
 	PreviewID             string
 	ProjectService        string
 	ProjectRoot           string
+	FeedbackProjectID     string
 	Demo                  bool
 	PublicEndpoint        bool
 	BrowserLoginAvailable *bool

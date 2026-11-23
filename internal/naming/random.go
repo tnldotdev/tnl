@@ -46,3 +46,26 @@ func RandomHostname(kind HostnameKind, parent string) (string, error) {
 	}
 	return string(kind) + "-" + label + "." + parent, nil
 }
+
+func PreviewParent(parent, managedDomain string) bool {
+	label, ok := strings.CutSuffix(parent, ".preview."+managedDomain)
+	return ok && validRandomHostnameLabel(label)
+}
+
+func PreviewHostname(hostname, managedDomain string) (string, bool) {
+	label, parent, _ := strings.Cut(hostname, ".")
+	id, ok := strings.CutPrefix(label, "s-")
+	return parent, ok && validRandomHostnameLabel(id) && PreviewParent(parent, managedDomain)
+}
+
+func validRandomHostnameLabel(label string) bool {
+	if len(label) != 26 {
+		return false
+	}
+	for _, ch := range label {
+		if (ch < 'a' || ch > 'z') && (ch < '2' || ch > '7') {
+			return false
+		}
+	}
+	return true
+}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -16,10 +17,18 @@ import (
 // enrollmentSelection names one exact owner scope, not a reusable grant policy.
 type enrollmentSelection struct {
 	kind, team, id, namespace string
+	managedDomain, membership string
 }
 
 func (s enrollmentSelection) matches(kind, team string, service, domain, namespace *string) bool {
-	if kind != s.kind || team != s.team {
+	if team != s.team {
+		return false
+	}
+	if s.kind == "preview" {
+		return kind == "namespace" && domain != nil && *domain == s.id && service == nil &&
+			namespace != nil && naming.PreviewParent(*namespace, s.managedDomain)
+	}
+	if kind != s.kind {
 		return false
 	}
 	switch s.kind {
@@ -45,6 +54,9 @@ func ensureSelectedEnrollment(ctx context.Context, state *clientstate.Store, con
 		request.ServiceId = &scope.id
 	case "namespace":
 		selection, key, request.DomainId = "namespace", namespaceScope(scope.team, scope.id, scope.namespace), &scope.id
+	case "preview":
+		selection, key, request.DomainId = "namespace", namespaceScope(scope.team, scope.id, "preview/"+scope.membership), &scope.id
+		request.Preview = new(true)
 	default:
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}

@@ -143,7 +143,13 @@ func (c projectConfiguration) applyPublish(flags *publishCommand) error {
 		applyOpenConfiguration(&flags.openOptions, effective.HTTP)
 	}
 	if !private && !enrolled && !config.NonHTTPProtocol(flags.Protocol) {
-		applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
+		if service == "" {
+			if flags.PublicURL == "" && flags.Name == "" && !flags.Ephemeral {
+				flags.fallbackName = clientproject.ServiceWorktreeLabel("", c.Worktree)
+			}
+		} else {
+			applyBuiltInHostname(&flags.tunnelFlags, service, c.Worktree)
+		}
 	}
 	if flags.Target == "" && service == "" && !enrolled {
 		return failure.Wrap("select target", failure.MissingTarget,
@@ -347,10 +353,10 @@ func validateTunnelFlags(flags tunnelFlags) error {
 		return errors.New("--rate-burst must be positive and requires a rate limit")
 	}
 	if flags.PublicURL != "" && flags.Name != "" {
-		return errors.New("--public-url and --name are mutually exclusive")
+		return errors.New("--hostname and --name are mutually exclusive")
 	}
 	if flags.Ephemeral && (flags.PublicURL != "" || flags.Name != "") {
-		return errors.New("temporary publication chooses its own public URL; omit --name and --public-url")
+		return errors.New("temporary publication chooses its own public URL; omit --name and --hostname")
 	}
 	return nil
 }

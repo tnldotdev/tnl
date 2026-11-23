@@ -48,6 +48,10 @@ func reviewerHTTPRun(t *testing.T, control *clientcontrol.Client, service contro
 	if err != nil {
 		t.Fatal(err)
 	}
+	projectID, _, err := local.LocalProjectIdentity(t.Context(), project, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	until := time.Now().Add(time.Minute)
 	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
@@ -59,7 +63,7 @@ func reviewerHTTPRun(t *testing.T, control *clientcontrol.Client, service contro
 	frontend, closeFrontend, err := publisherservice.PrepareHTTP(t.Context(), publisherservice.HTTP{
 		Control: control, State: profile, Subject: run.Subject, RunID: run.RunID, Number: run.Number, Token: run.Token,
 		Hostname: service.Placement.Hostname, Port: 443, Header: header, Source: netip.MustParseAddrPort("192.0.2.9:1234"),
-		Feedback: true, PreviewID: preview, ProjectService: "web", ProjectRoot: project,
+		Feedback: true, PreviewID: preview, ProjectService: "web", ProjectRoot: project, FeedbackProjectID: projectID,
 		ReserveCapacity: func(context.Context) error { return nil },
 	})
 	if err != nil {

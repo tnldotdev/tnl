@@ -18,8 +18,8 @@ type previewControl interface {
 	CreatePreview(context.Context, string, string) (controlv1.Preview, error)
 }
 
-func ensurePreview(ctx context.Context, state *clientstate.Database, store *clientstate.Store, control previewControl, server, teamID, projectRoot string) (string, error) {
-	if teamID == "" || projectRoot == "" || server == "" {
+func ensurePreview(ctx context.Context, state *clientstate.Database, store *clientstate.Store, control previewControl, server, teamID, worktreeKey string) (string, error) {
+	if teamID == "" || worktreeKey == "" || server == "" {
 		return "", failure.Wrap("select preview project", failure.ProjectConfigInvalid, errors.New("preview requires one server, team, and project"))
 	}
 	salt, err := state.WorktreeHashSalt(ctx)
@@ -27,7 +27,7 @@ func ensurePreview(ctx context.Context, state *clientstate.Database, store *clie
 		return "", err
 	}
 	hash := hmac.New(sha256.New, salt[:])
-	_, _ = hash.Write([]byte(server + "\x00" + teamID + "\x00" + projectRoot))
+	_, _ = hash.Write([]byte(server + "\x00" + teamID + "\x00" + worktreeKey))
 	key := hex.EncodeToString(hash.Sum(nil))
 	preview, err := control.CreatePreview(ctx, teamID, key)
 	if err != nil {
@@ -36,12 +36,12 @@ func ensurePreview(ctx context.Context, state *clientstate.Database, store *clie
 	if !opaqueid.Valid(preview.Id, opaqueid.PreviewPrefix) || preview.TeamId != teamID {
 		return "", failure.Wrap("create project preview", failure.ServerResponseInvalid, errors.New("server returned an invalid preview"))
 	}
-	if saved, found, err := store.PreviewID(ctx, teamID, projectRoot); err != nil {
+	if saved, found, err := store.PreviewID(ctx, teamID, worktreeKey); err != nil {
 		return "", err
 	} else if found && saved != preview.Id {
 		return "", failure.Wrap("resolve saved preview", failure.PreviewStateConflict, errors.New("saved preview differs from the server; check the selected team and client state"))
 	}
-	if err := store.SavePreviewID(ctx, teamID, projectRoot, preview.Id); err != nil {
+	if err := store.SavePreviewID(ctx, teamID, worktreeKey, preview.Id); err != nil {
 		return "", err
 	}
 	return preview.Id, nil

@@ -26,6 +26,7 @@ type serviceVisitorStore interface {
 	CreateServiceAt(context.Context, string, string, string, string, controlstate.ServicePlacement, time.Time, controlstate.ServiceMetadata, *controlstate.ProjectServiceConfiguration) (controlstate.ServiceRecord, error)
 	ConfigureService(context.Context, string, string, controlstate.ServiceMetadata, *controlstate.ProjectServiceConfiguration, controlstate.ServiceUpdateConditions, time.Time) (controlstate.ServiceRecord, error)
 	GetService(context.Context, string, string) (controlstate.ServiceRecord, error)
+	GetServiceByHostname(context.Context, string, string, string) (controlstate.ServiceRecord, error)
 	GetServiceConfiguration(context.Context, string, string) (*controlstate.ProjectServiceConfiguration, string, error)
 	DeleteService(context.Context, string, string, controlstate.ServiceDeleteConditions, time.Time) error
 	DeleteGuestService(context.Context, string, controlstate.GuestCredential, time.Time) error
@@ -269,6 +270,8 @@ func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ contro
 		placement.Hostname = optionalServiceString(body.Placement.Hostname)
 		placement.WorktreeKey = optionalServiceString(body.Placement.WorktreeKey)
 		placement.WorktreeLabel = optionalServiceString(body.Placement.WorktreeLabel)
+		placement.PreviewPublisher = optionalServiceString(body.Placement.PreviewPublisherId)
+		placement.UseSavedAddress = body.Placement.UseSavedAddress != nil && *body.Placement.UseSavedAddress
 	}
 	record, err := store.CreateServiceAt(r.Context(), body.TeamId, identity, body.Name, r.Header.Get("Idempotency-Key"), placement, time.Now(), metadata, configuration)
 	if err != nil {
@@ -304,6 +307,20 @@ func (h *handler) ListServices(w http.ResponseWriter, r *http.Request, params co
 		page.NextCursor = &next
 	}
 	writeJSON(w, 200, page)
+}
+
+func (h *handler) GetServiceByHostname(w http.ResponseWriter, r *http.Request, hostname string, params controlv1.GetServiceByHostnameParams) {
+	w.Header().Set("Cache-Control", "no-store")
+	store, identity, ok := h.serviceVisitor(w, r)
+	if !ok {
+		return
+	}
+	record, err := store.GetServiceByHostname(r.Context(), params.TeamId, hostname, identity)
+	if err != nil {
+		serviceVisitorError(r.Context(), w, "get saved service by hostname", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, serviceaccess.Service(record))
 }
 
 func (h *handler) GetService(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {

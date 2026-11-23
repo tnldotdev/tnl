@@ -101,6 +101,7 @@ schemas:
       source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
       worktree_key: { type: string, minLength: 1, maxLength: 128 }
       worktree_label: { type: string, minLength: 1, maxLength: 63 }
+      preview_publisher_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
       configuration: { $ref: "../openapi.yaml#/components/schemas/ProjectServiceConfiguration" }
   LocalProjectService:
     type: object

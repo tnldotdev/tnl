@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,10 +41,11 @@ func TestIntegrationTeamCreation(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(repeated, team) {
 		t.Fatalf("idempotent team after identity rename = %#v, %v", repeated, err)
 	}
-	requiresSlug := authorityTeamRequest(session.Identity.Identity.ID)
-	requiresSlug.DisplayName, requiresSlug.MemberSlug, requiresSlug.IdempotencyKey = "new-team", "", "no-usable-identity-name"
-	if _, err := database.CreateTeam(t.Context(), requiresSlug, now); !errors.Is(err, ErrMemberSlugRequired) {
-		t.Fatalf("missing member slug for non-ASCII identity name: %v", err)
+	generatedSlug := authorityTeamRequest(session.Identity.Identity.ID)
+	generatedSlug.DisplayName, generatedSlug.MemberSlug, generatedSlug.IdempotencyKey = "new-team", "", "no-usable-identity-name"
+	next, err := database.CreateTeam(t.Context(), generatedSlug, now)
+	if err != nil {
+		t.Fatalf("hosted team could not generate a label for a non-ASCII identity: %v", err)
 	}
 	request.RequestDigest = sha256.Sum256([]byte("changed"))
 	if _, err := database.CreateTeam(t.Context(), request, now); !errors.Is(err, ErrAuthorityIdempotency) {
@@ -55,8 +57,14 @@ func TestIntegrationTeamCreation(t *testing.T) {
 		t.Fatalf("NUL display name was not rejected at validation: %v", err)
 	}
 	memberships, err := database.ListTeamMemberships(t.Context(), session.Identity.Identity.ID, team.ID)
-	if err != nil || len(memberships) != 1 || memberships[0].Role != "owner" || memberships[0].MemberSlug != "operator" || memberships[0].TeamDisplayName != team.DisplayName {
+	if err != nil || len(memberships) != 1 || memberships[0].Role != "owner" ||
+		!strings.HasPrefix(memberships[0].MemberSlug, "m-") || memberships[0].ManagedLabel != team.ManagedLabel || memberships[0].TeamDisplayName != team.DisplayName {
 		t.Fatalf("initial memberships = %#v, %v", memberships, err)
+	}
+	nextMembers, err := database.ListTeamMemberships(t.Context(), session.Identity.Identity.ID, next.ID)
+	if err != nil || len(nextMembers) != 1 || !strings.HasPrefix(nextMembers[0].MemberSlug, "m-") ||
+		nextMembers[0].MemberSlug == memberships[0].MemberSlug || nextMembers[0].ManagedLabel != next.ManagedLabel {
+		t.Fatalf("second team did not generate its own member label: %#v, %v", nextMembers, err)
 	}
 	duplicate := authorityTeamRequest(session.Identity.Identity.ID)
 	duplicate.IdempotencyKey = "duplicate-name"
@@ -101,6 +109,13 @@ func TestIntegrationSimpleModeOnlyReservesReadableLabels(t *testing.T) {
 	var count int
 	if err := database.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.managed_label_reservations`).Scan(&count); err != nil || count != 4 {
 		t.Fatalf("reserved labels = %d, want four readable names: %v", count, err)
+	}
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.identities SET display_name='李 小龙' WHERE id=$1`, owner); err != nil {
+		t.Fatal(err)
+	}
+	teamRequest.DisplayName, teamRequest.MemberSlug, teamRequest.IdempotencyKey = "new-team", "", "no-usable-identity-name"
+	if _, err := database.CreateTeam(t.Context(), teamRequest, now); !errors.Is(err, ErrMemberSlugRequired) {
+		t.Fatalf("missing member slug for a non-ASCII identity on a simple server: %v", err)
 	}
 }
 

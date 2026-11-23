@@ -226,6 +226,7 @@ type Querier interface {
 	GetShare(ctx context.Context, id string) (ControlShare, error)
 	GetTeamActorContext(ctx context.Context, arg GetTeamActorContextParams) (GetTeamActorContextRow, error)
 	GetTeamMembershipContext(ctx context.Context, arg GetTeamMembershipContextParams) (GetTeamMembershipContextRow, error)
+	GetTeamNaming(ctx context.Context, teamID string) (GetTeamNamingRow, error)
 	GetVisitorParentSession(ctx context.Context, id string) (ControlControlSession, error)
 	GetVisitorPolicyRevision(ctx context.Context, teamID string) (int64, error)
 	GetWorkloadSession(ctx context.Context, id string) (ControlWorkloadSession, error)

@@ -147,7 +147,7 @@ func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation se
 		}
 		service, err = prepareInstalledHTTPService(ctx, publisherServices{
 			authenticated: session.Authenticated(), state: profile, routes: control,
-			hostname: hostname, teamID: current.Team().Id, domainID: domain.Id,
+			hostname: hostname, teamID: current.Team().Id, domainID: domain.Id, exactHostname: exact != "",
 		}, flags, plan, policy)
 		if err != nil {
 			return err

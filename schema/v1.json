@@ -31,6 +31,11 @@
         "team": {
           "type": "string"
         },
+        "naming": {
+          "type": "string",
+          "enum": ["opaque"],
+          "description": "Use opaque hosted addresses for new public HTTP development services."
+        },
         "feedback": {
           "type": "boolean"
         },

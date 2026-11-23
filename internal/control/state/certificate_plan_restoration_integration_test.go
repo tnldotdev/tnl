@@ -188,6 +188,9 @@ func TestIntegrationCertificateRestoredTwelveCaseCapturedPlanMatrix(t *testing.T
 				}
 				owner := naming.SharedPublicURLNamespace(e.domain.CanonicalDomain, test.kind == DomainKindManaged,
 					mode, e.team.DisplayName, e.team.ManagedLabel)
+				if !test.simple {
+					owner = "deploy." + owner
+				}
 				namespace := "production.plan." + owner
 				if applied.Deployments[0].Namespace != namespace {
 					t.Fatal("simple/generated/custom deployment naming changed", applied.Deployments[0].Namespace, namespace)
@@ -200,7 +203,7 @@ func TestIntegrationCertificateRestoredTwelveCaseCapturedPlanMatrix(t *testing.T
 			} else {
 				namespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
 					Domain: e.domain.CanonicalDomain, Managed: test.kind == DomainKindManaged, Mode: mode,
-					TeamName: e.team.DisplayName, MemberSlug: e.member.MemberSlug, ManagedLabel: e.member.ManagedLabel,
+					TeamName: e.team.DisplayName, MemberSlug: e.member.MemberSlug, ManagedLabel: e.team.ManagedLabel,
 				})
 				if direct {
 					t.Fatal("member matrix unexpectedly selected a shared personal name")
@@ -275,7 +278,7 @@ func TestIntegrationCertificateRestoredNamespaceReuseRejectsForeignTeamAndDeeper
 			// enrollment. no run is assigned a made-up namespace plan.
 			owner := naming.SharedPublicURLNamespace(e.domain.CanonicalDomain, true, naming.ManagedURLModeGenerated,
 				e.team.DisplayName, e.team.ManagedLabel)
-			namespace := "production.reuse." + owner
+			namespace := "production.reuse.deploy." + owner
 			deeperHostname := "deep.second." + namespace
 			_, replica := e.deployment(t, "reuse", true, map[string]ProjectServiceConfiguration{
 				"first":  {Protocol: "http", Target: "localhost:3000", Public: new(true)},

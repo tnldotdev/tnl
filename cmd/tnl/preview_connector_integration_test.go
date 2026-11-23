@@ -281,7 +281,7 @@ func TestIntegrationConnectorOnlyPreviewAttachmentAndPresentation(t *testing.T) 
 	}
 	store, err := state.Server(ctx, server.URL)
 	if err == nil {
-		err = store.SavePreviewID(ctx, team.Id, project.Root, preview.Id)
+		err = store.SavePreviewID(ctx, team.Id, project.LocalWorktreeKey(), preview.Id)
 	}
 	closeErr := state.Close()
 	if err != nil || closeErr != nil {

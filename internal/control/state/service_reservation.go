@@ -56,7 +56,8 @@ func (d *Database) serviceReservationOwner(ctx context.Context, tx pgx.Tx, team,
 func reservedServiceRecord(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlService, member serviceMembership, name string, placement ServicePlacement, selected serviceSourceOwner) (ServiceRecord, error) {
 	if !row.Enabled || row.DeletedAt.Valid || row.GuestID.Valid || row.TeamID.String != member.teamID ||
 		row.Name != name || row.DomainID.String != placement.DomainID || row.CertificateHostname != placement.Hostname ||
-		row.PlacementWorktreeKey != "" || row.PlacementWorktreeLabel != "" || row.Ephemeral {
+		row.PlacementWorktreeKey != "" || row.PlacementWorktreeLabel != "" || row.Ephemeral ||
+		placement.UseSavedAddress && row.NameScope != "named/"+row.CreatedByIdentityID.String {
 		return ServiceRecord{}, ErrServiceConflict
 	}
 	owner, err := storedServiceSourceOwner(ctx, tx, row, false)

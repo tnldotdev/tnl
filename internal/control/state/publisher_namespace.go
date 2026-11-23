@@ -132,6 +132,9 @@ func (d *Database) AllocatePublisherService(ctx context.Context, p PublisherIden
 	if domain.Kind == "custom" && !domain.DnsAuthorityReference.Valid {
 		return result, ErrServiceAccess
 	}
+	if domain.Kind == "managed" && naming.PreviewParent(current.Scope.Namespace, domain.CanonicalDomain) {
+		return result, ErrPublisherIdentity
+	}
 	// SQL checks the stored namespace's current domain and owner independently
 	// of the issuing person's human management permissions.
 	result, err = d.allocateService(ctx, tx, current, "", domain.ID, current.Scope.Namespace, r, s, mode, clock)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tnldotdev/tnl/internal/client/detached"
@@ -42,6 +43,7 @@ type publishCommand struct {
 	serverFromConfig  bool
 	selectedTeam      string
 	projectRoot       string
+	fallbackName      string
 	demoNameFromCLI   bool
 	Service           string
 	TelemetryDisabled bool
@@ -153,7 +155,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 }
 
 func publicOptions(flags publishCommand) invocation.PublicOptions {
-	return invocation.PublicOptions{Telemetry: flags.telemetry, TelemetryDisabled: flags.TelemetryDisabled, PreferredRegions: flags.PreferredRegions, RequirePostQuantum: flags.RequirePostQuantum, Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
+	return invocation.PublicOptions{Telemetry: flags.telemetry, TelemetryDisabled: flags.TelemetryDisabled, PreferredRegions: flags.PreferredRegions, RequirePostQuantum: flags.RequirePostQuantum, Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, FallbackName: flags.fallbackName, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
 }
 
 func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstate.Database, string, string) (*auth.Client, error) {
@@ -165,6 +167,29 @@ func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstat
 func publicationPresentation(ctx context.Context, flags publishCommand, output *publishOutput) *invocation.Presentation {
 	return &invocation.Presentation{
 		Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped,
+		Resume: func(url, team, server string) error {
+			if output.mode != publishOutputHuman {
+				return nil
+			}
+			// saved policy comes from control, not from the current project config.
+			quote := func(value string) string {
+				if !strings.ContainsAny(value, " \t\r\n'\"$`\\;|&<>()!*?#[]{}~") {
+					return value
+				}
+				return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+			}
+			command := "tnl --no-config publish " + quote(flags.Target) + " --hostname " + url
+			if team != "" {
+				command += " --team " + quote(team)
+			}
+			if server != "" {
+				command += " --server " + quote(server)
+			}
+			if flags.StateDir != "" {
+				command += " --state-dir " + quote(flags.StateDir)
+			}
+			return writeHumanFrame(output.stderr, "tnl publish", "address saved", "", clioutput.Fields(clioutput.Field{Label: "resume", Value: command}))
+		},
 		ProvisioningStalled: output.provisioningStalled, TransportFallback: output.transportFallback, TargetUnavailable: output.targetUnavailable,
 		Progress: func(p invocation.Progress) error { return output.integrationURLMessage(p.State, p.Hint, p.Details...) },
 		Warning: func(message string) error {

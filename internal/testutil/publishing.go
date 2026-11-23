@@ -405,7 +405,7 @@ func (f *PublishingFixture) serve(w http.ResponseWriter, r *http.Request) {
 				Memberships: []authorityv1.Membership{{Id: "mem_0000000000000000000001", TeamId: team, ManagedLabel: "member", MemberSlug: "member", Role: authorityv1.TeamRoleOwner, TeamKind: authorityv1.Personal}}})
 			return
 		case "/v1/teams/" + team:
-			publishingWrite(w, 200, authorityv1.Team{Id: team, DefaultDomainId: domain, PolicyRevision: 1, Kind: authorityv1.Personal})
+			publishingWrite(w, 200, authorityv1.Team{Id: team, DefaultDomainId: domain, PolicyRevision: 1, Kind: authorityv1.Personal, ManagedLabel: "member"})
 			return
 		case "/v1/teams/" + team + "/domains":
 			publishingWrite(w, 200, authorityv1.DomainPage{Domains: []authorityv1.Domain{{Id: domain, CanonicalDomain: "services.example", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}})

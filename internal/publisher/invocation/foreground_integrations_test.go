@@ -26,11 +26,14 @@ import (
 )
 
 func TestForegroundIntegrationsRetainAuthenticatedSelection(t *testing.T) {
-	for _, scenario := range []string{"no_oauth_control", "environment_token_explicit_server", "flag_token_no_saved_session", "team_override", "conflicting_environment", "shutdown_failure", "shutdown_cancellation"} {
+	for _, scenario := range []string{"no_oauth_control", "generated_without_dns_automation", "environment_token_explicit_server", "flag_token_no_saved_session", "team_override", "conflicting_environment", "shutdown_failure", "shutdown_cancellation"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("TNL_ACCESS_TOKEN", "")
 			t.Setenv("TNL_SERVER", "")
 			f := newForegroundFixture(t)
+			if scenario == "generated_without_dns_automation" {
+				f.saved.Endpoint.Hostname, f.services.hostname = "app.member.quiet-heron.example", "app.member.quiet-heron.example"
+			}
 			f.saved.EndpointRevision = 1
 			shutdown := scenario == "shutdown_failure" || scenario == "shutdown_cancellation"
 			shutdownProblem := errors.New("integration shutdown request failed")
@@ -107,7 +110,7 @@ func TestForegroundIntegrationsRetainAuthenticatedSelection(t *testing.T) {
 					}
 					teamReads = append(teamReads, id)
 					return serviceTestResponse(r, 200, authorityv1.Team{Id: id, DisplayName: "selected",
-						Kind: authorityv1.Organization, DefaultDomainId: domain.Id, PolicyRevision: 1}), nil
+						Kind: authorityv1.Organization, ManagedLabel: "quiet-heron", DefaultDomainId: domain.Id, PolicyRevision: 1}), nil
 				}
 				if shutdown && r.Method == http.MethodPost && r.URL.Path == "/v1/services" {
 					data, err := io.ReadAll(r.Body)
@@ -172,7 +175,7 @@ func TestForegroundIntegrationsRetainAuthenticatedSelection(t *testing.T) {
 				t.Setenv("TNL_ACCESS_TOKEN", "another-credential")
 				t.Setenv("TNL_SERVER", "https://other.example")
 			}
-			origin, err := resolve.IntegrationOrigin(t.Context(), database, project, f.services.authenticated.ServerEndpoint, "member.example", "oauth")
+			origin, err := resolve.IntegrationOrigin(t.Context(), database, project, f.services.authenticated.ServerEndpoint, "member.quiet-heron.example", "oauth")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -197,6 +200,9 @@ func TestForegroundIntegrationsRetainAuthenticatedSelection(t *testing.T) {
 					original, err = auth.Authenticate(ctx, auth.Config{ServerEndpoint: server, State: state, AccessToken: token, HTTPClient: &http.Client{Transport: transport}})
 					return original, err
 				}}
+			if scenario == "generated_without_dns_automation" {
+				flags.PublicURL, flags.FallbackName = "", "app"
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
 			err = PublishHTTP(ctx, flags, &Presentation{})

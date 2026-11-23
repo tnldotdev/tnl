@@ -265,7 +265,10 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	project := t.TempDir()
+	project, _, err := database.LocalProjectIdentity(ctx, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	feedbackFor := func(authorize clientstate.FeedbackAuthorize) *clientstate.FeedbackStore {
 		t.Helper()
 		local, err := profile.Feedback(ctx, project, preview.ID, authorize)

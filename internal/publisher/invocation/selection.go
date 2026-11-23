@@ -30,6 +30,11 @@ type publisherServices struct {
 	customDomainAvailable bool
 	policyRevision        uint64
 	ephemeral             bool
+	neutral               bool
+	previewResume         bool
+	exactHostname         bool
+	savedName             string
+	context               team.Context
 	routes                *clientcontrol.Client
 }
 
@@ -77,6 +82,7 @@ func preparePublisherServices(
 	serverURL, publicURL, name, selectedDomain, selectedTeam string,
 	ephemeral bool,
 	authenticated *auth.Client,
+	foreground bool,
 ) (publisherServices, error) {
 	publisherState, err := state.Server(ctx, serverURL)
 	if err != nil {
@@ -105,7 +111,21 @@ func preparePublisherServices(
 			return publisherServices{}, failure.Wrap("select service address", failure.InvalidTunnelFlags, err)
 		}
 	}
-	hostname, domain, err := resolve.PublishHostname(publicURL, name, selectedDomain, selected)
+	var hostname string
+	var domain authorityv1.Domain
+	_, previewResume := naming.PreviewHostname(publicURL, discovery.ManagedDomain)
+	neutral := foreground && opaqueNamingAvailable(discovery) &&
+		publicURL == "" && name == "" && selectedDomain == ""
+	previewResume = previewResume && selected.Mode() == naming.ManagedURLModeGenerated
+	if neutral || previewResume {
+		domain, err = selected.ManagedDomain()
+		hostname = publicURL
+		if previewResume && (name != "" || selectedDomain != "" || ephemeral) {
+			return publisherServices{}, failure.Wrap("resume service", failure.InvalidTunnelFlags, errors.New("use a saved preview URL without --name, --domain, or --ephemeral"))
+		}
+	} else {
+		hostname, domain, err = resolve.PublishHostname(publicURL, name, selectedDomain, selected)
+	}
 	if err != nil {
 		return publisherServices{}, err
 	}
@@ -114,6 +134,11 @@ func preparePublisherServices(
 	})
 	namespace, direct := selected.Namespace(domain)
 	_, within := naming.ChildDepth(hostname, namespace)
+	savedName := ""
+	if foreground && selected.Mode() == naming.ManagedURLModeGenerated &&
+		publicURL == "" && name != "" && selectedDomain == "" {
+		savedName = name
+	}
 	return publisherServices{
 		domainKind: domain.Kind, customDomainAvailable: customAvailable,
 		authenticated:   authenticated,
@@ -126,6 +151,11 @@ func preparePublisherServices(
 		memberNamespace: !direct && within,
 		policyRevision:  uint64(current.team.PolicyRevision),
 		ephemeral:       ephemeral,
+		neutral:         neutral,
+		previewResume:   previewResume,
+		exactHostname:   foreground && publicURL != "",
+		savedName:       savedName,
+		context:         selected,
 		routes:          authenticated.Control,
 	}, nil
 }

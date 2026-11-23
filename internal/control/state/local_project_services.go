@@ -19,6 +19,7 @@ import (
 type RealizeLocalProjectServiceRequest struct {
 	TeamID, ProjectKey, SourceFingerprint, Service, WorktreeKey, ActorID string
 	WorktreeLabel                                                        string
+	PreviewPublisher                                                     string
 	DNSAutomation                                                        bool
 	Configuration                                                        ProjectServiceConfiguration
 	Now                                                                  time.Time
@@ -252,7 +253,14 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 			return result, e
 		}
 	}
-	if err = d.ensureLocalServiceEndpoint(ctx, tx, entry.ServiceID.String, r.ActorID, s.Name, ServicePlacement{DomainID: s.DomainID, Hostname: s.Hostname, RunAliasParent: s.RunAliasParent, WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel, SourceKey: r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service, DNSAutomation: r.DNSAutomation}, projectServicePublic(s), r.Now); err != nil {
+	placement := ServicePlacement{DomainID: s.DomainID, Hostname: s.Hostname, RunAliasParent: s.RunAliasParent,
+		WorktreeKey: localPlacementKey(r.WorktreeKey), WorktreeLabel: r.WorktreeLabel,
+		SourceKey:     r.ProjectKey + "/" + r.SourceFingerprint + "/" + r.WorktreeKey + "/" + r.Service,
+		DNSAutomation: r.DNSAutomation, PreviewPublisher: r.PreviewPublisher}
+	if err := placement.Validate(); err != nil {
+		return result, err
+	}
+	if err = d.ensureLocalServiceEndpoint(ctx, tx, entry.ServiceID.String, r.ActorID, s.Name, placement, projectServicePublic(s), r.Now); err != nil {
 		return result, err
 	}
 	row, err := q.LockService(ctx, entry.ServiceID.String)
