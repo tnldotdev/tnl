@@ -160,16 +160,23 @@ export function createProxy(release: Release, fetchHost = fetch) {
     refresh(candidates(Date.now()), retain);
     while (attempted.size < ATTEMPTS && !deadline.aborted) {
       const origins = candidates(Date.now()).filter((origin) => !attempted.has(origin));
-      const origin = origins[cursor % origins.length];
-      if (origin === undefined) {
-        if (discovered) break;
+      let origin = origins[cursor % origins.length];
+      // after two cached aliases fail, use the remaining attempt on a host
+      // answering the shared address. the roster may lag behind a turnover.
+      if (!discovered && (origin === undefined || attempted.size === ATTEMPTS - 1)) {
         discovered = true;
         const message = await probe(sharedHost, true, deadline);
-        if (message === undefined) break;
-        const response = discover(message);
-        if (response !== undefined) return response;
-        continue;
+        if (message !== undefined) {
+          const response = discover(message);
+          if (response !== undefined) return response;
+        }
+        const available = candidates(Date.now()).filter((value) => !attempted.has(value));
+        origin =
+          attempted.size > 0 && message !== undefined && available.includes(message.from.origin)
+            ? message.from.origin
+            : available[cursor % available.length];
       }
+      if (origin === undefined || deadline.aborted) break;
       // pick the starting position synchronously so concurrent requests rotate too.
       if (attempted.size === 0) cursor++;
       attempted.add(origin);

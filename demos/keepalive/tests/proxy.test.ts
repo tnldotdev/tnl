@@ -114,6 +114,24 @@ it("uses the shared address only for discovery when hosts stop", async () => {
   );
 });
 
+it("rediscovers a live publisher before spending the last asset attempt on stale aliases", async () => {
+  const { proxy, fetchHost, report } = await setup();
+  fetchHost.mockResolvedValueOnce(report());
+  expect((await proxy.peers(request(PEERS_PATH))).status).toBe(200);
+  fetchHost.mockClear();
+  const live = `https://p-${"d".repeat(26)}.${HOST_PARENT}`;
+  fetchHost.mockImplementation(async (input) => {
+    const url = new URL(String(input));
+    if (url.href === SHARED_HOST + PEERS_PATH) return report([live]);
+    if (url.origin === live && url.pathname === "/app.js") return new Response(script);
+    throw new Error("publisher retired");
+  });
+  expect(await (await proxy.file(request("/app.js"))).text()).toBe(script);
+  const calls = fetchHost.mock.calls.map(([url]) => String(url));
+  expect(calls.slice(2)).toEqual([SHARED_HOST + PEERS_PATH, live + "/app.js"]);
+  expect(new Set(calls.slice(0, 2)).size).toBe(2);
+});
+
 it("does not give an old forwarded alias a fresh lifetime", async () => {
   const { proxy, fetchHost, report } = await setup();
   fetchHost.mockResolvedValueOnce(report(aliases, 61_000));
