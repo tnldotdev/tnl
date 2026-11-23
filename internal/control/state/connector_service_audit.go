@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -57,11 +58,33 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 	case <-ctx.Done():
 		return result, context.Cause(ctx)
 	}
-	tx, err := d.pool.Begin(ctx)
+	// a conflicting insert is rolled back as a whole. recheck the original
+	// run and batch before comparing stored IDs; never retry an ambiguous commit.
+	result, err = d.publisherAuditAttempt(ctx, serviceID, runID, digest[:], number, batch, now, true)
+	var cleanup *RollbackFailure
+	var duplicate *pgconn.PgError
+	if !errors.As(err, &cleanup) && errors.As(err, &duplicate) && duplicate.Code == "23505" && duplicate.TableName == "service_audit_events" && duplicate.ConstraintName == "service_audit_events_id_key" && ctx.Err() == nil {
+		return d.publisherAuditAttempt(ctx, serviceID, runID, digest[:], number, batch, now, false)
+	}
+	return result, err
+}
+
+func (d *Database) publisherAuditAttempt(ctx context.Context, serviceID, runID string, digest []byte, number int64, batch serviceaudit.Batch, now time.Time, fresh bool) (result ServiceObservationResult, retErr error) {
+	conn, err := d.pool.Acquire(ctx)
 	if err != nil {
 		return result, err
 	}
-	defer rollback(ctx, tx, "ingest native service audit", &retErr)()
+	defer conn.Release()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return result, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			rollback(ctx, tx, "ingest native service audit", &retErr)()
+		}
+	}()
 	// audit inserts retain foreign keys to the owner. take that parent before
 	// the run, as heartbeat and closure do, even for a report after service deletion.
 	if err := lockServiceOwner(ctx, tx, serviceID); err != nil {
@@ -172,13 +195,25 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 		}
 		events = append(events, e)
 	}
-	result, err = d.insertServiceObservationBatch(ctx, tx, events, now)
-	if err != nil {
-		return ServiceObservationResult{}, err
+	if fresh {
+		checked, err := d.checkedObservationEvents(ctx, tx, events)
+		if err != nil {
+			return result, err
+		}
+		if err := d.appendFreshPublisherAudit(ctx, tx, checked, now, run.TeamID, run.GuestID); err != nil {
+			return result, err
+		}
+		result.Accepted = len(events)
+	} else {
+		result, err = d.insertServiceObservationBatch(ctx, tx, events, now)
+		if err != nil {
+			return result, err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return ServiceObservationResult{}, err
+		}
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return ServiceObservationResult{}, err
-	}
+	committed = true
 	d.activity.metrics.Load().ServiceAuditCount("accepted", uint64(result.Accepted))
 	d.activity.metrics.Load().ServiceAuditCount("duplicate", uint64(result.Duplicates))
 	return result, nil

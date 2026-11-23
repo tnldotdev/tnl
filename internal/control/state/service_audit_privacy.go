@@ -16,6 +16,13 @@ const serviceAuditIPKeyPurpose = "service-audit"
 // callers have authorized observations and locked their service parents. audit
 // keys never leave control; distributed allowlist/block keys cannot test them.
 func (d *Database) insertServiceObservationBatch(ctx context.Context, tx pgx.Tx, events []serviceaudit.Event, now time.Time) (ServiceObservationResult, error) {
+	checked, err := d.checkedObservationEvents(ctx, tx, events)
+	if err != nil {
+		return ServiceObservationResult{}, err
+	}
+	return insertServiceAuditBatch(ctx, tx, checked, now)
+}
+func (d *Database) checkedObservationEvents(ctx context.Context, tx pgx.Tx, events []serviceaudit.Event) ([]serviceaudit.Event, error) {
 	checked := make([]serviceaudit.Event, len(events))
 	keys := make(map[string][32]byte)
 	for i, event := range events {
@@ -23,7 +30,7 @@ func (d *Database) insertServiceObservationBatch(ctx context.Context, tx pgx.Tx,
 		if !found {
 			value, err := d.ensureServiceIPKey(ctx, controlstatedb.New(tx), event.ServiceID, serviceAuditIPKeyPurpose)
 			if err != nil {
-				return ServiceObservationResult{}, err
+				return nil, err
 			}
 			key = [32]byte(value)
 			clear(value)
@@ -31,14 +38,14 @@ func (d *Database) insertServiceObservationBatch(ctx context.Context, tx pgx.Tx,
 		}
 		source, err := netip.ParseAddr(event.SourceIP)
 		if err != nil {
-			return ServiceObservationResult{}, serviceaudit.ErrInvalid
+			return nil, serviceaudit.ErrInvalid
 		}
 		event.SourceDigest, err = ippolicy.HashAddress(key, source)
 		if err != nil {
-			return ServiceObservationResult{}, err
+			return nil, err
 		}
 		event.SourceIP = ""
 		checked[i] = event
 	}
-	return insertServiceAuditBatch(ctx, tx, checked, now)
+	return checked, nil
 }

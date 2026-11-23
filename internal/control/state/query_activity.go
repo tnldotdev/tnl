@@ -16,7 +16,7 @@ import (
 // only names compiled from our sqlc sources may leave the process. never retain
 // SQL, arguments, errors, connection configuration, or request context here.
 //
-//go:embed queries/*.sql
+//go:embed queries/*.sql batch/*.sql
 var diagnosticQuerySources embed.FS
 
 var diagnosticQueryNames = observability.DatabaseOperations(diagnosticQuerySources)
