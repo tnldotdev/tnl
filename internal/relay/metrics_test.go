@@ -52,7 +52,7 @@ func (failingMetricControl) RenewRelay(context.Context, relayv1.RelayID, relayv1
 
 func TestRelayControlMetricsRecordCanceledAndTimedOutCalls(t *testing.T) {
 	metrics := observability.New("relay")
-	controller := &Controller{client: failingMetricControl{}, observer: metrics, now: time.Now, load: func() (int64, int64) { return 0, 0 }}
+	controller := &Controller{client: failingMetricControl{}, observer: metrics, now: time.Now, load: func() (int64, int64) { return 0, 0 }, leaseRequest: make(chan struct{}, 1)}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if err := controller.register(ctx); !errors.Is(err, context.Canceled) {

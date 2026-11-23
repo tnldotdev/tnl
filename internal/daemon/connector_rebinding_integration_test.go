@@ -215,6 +215,12 @@ func restartRebindingRelay(t *testing.T, f *privateSeparatedFixture, id string) 
 	}
 	settings.internalListener = internal
 	f.owner.cleanupResource(t, func() { _ = internal.Close() })
+	forwarding, err := net.ListenPacket("udp4", settings.internalAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.internalPacket = forwarding
+	f.owner.cleanupResource(t, func() { _ = forwarding.Close() })
 	tcp, err := net.Listen("tcp", settings.relayAddress)
 	if err != nil {
 		t.Fatal(err)

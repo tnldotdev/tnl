@@ -249,17 +249,23 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 func (f *privateSeparatedFixture) startFixtureRelay(t *testing.T, id string) *privateRelayFixture {
 	t.Helper()
 	name := id + ".private.integration.test"
-	internal := serviceRuntimeListener(t, f.owner)
+	internal, forwarding := fixtureRelaySockets(t, f.owner)
 	// relay discovery uses the same advertised address for TCP, QUIC and STUN.
-	publisher, packet, err := transporttest.ListenTCPUDP()
+	publisher, packet := fixtureRelaySockets(t, f.owner)
+	settings := relayProcessSettings{controlEndpoint: f.controlConfig.PrivateControlEndpoint(), controlAddress: f.controlConfig.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
+		relayServiceID: id, relayID: id, relayAddress: publisher.Addr().String(), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, f.certificateAuthority, name), internalListener: internal, internalPacket: forwarding, internalAddress: internal.Addr().String(),
+		tcpListener: publisher, udpPacket: packet, udpListen: packet.LocalAddr().String(), quic: f.controlConfig.RelayQUICConfig(), runtime: relaySettingsFrom(f.controlConfig)}
+	return f.runFixtureRelay(t, settings)
+}
+
+func fixtureRelaySockets(t *testing.T, owner *runtimeTopology) (net.Listener, net.PacketConn) {
+	t.Helper()
+	listener, packet, err := transporttest.ListenTCPUDP()
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.owner.cleanupResource(t, func() { _ = publisher.Close(); _ = packet.Close() })
-	settings := relayProcessSettings{controlEndpoint: f.controlConfig.PrivateControlEndpoint(), controlAddress: f.controlConfig.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
-		relayServiceID: id, relayID: id, relayAddress: publisher.Addr().String(), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, f.certificateAuthority, name), internalListener: internal, internalAddress: internal.Addr().String(),
-		tcpListener: publisher, udpPacket: packet, udpListen: packet.LocalAddr().String(), quic: f.controlConfig.RelayQUICConfig(), runtime: relaySettingsFrom(f.controlConfig)}
-	return f.runFixtureRelay(t, settings)
+	owner.cleanupResource(t, func() { _ = listener.Close(); _ = packet.Close() })
+	return listener, packet
 }
 
 func (f *privateSeparatedFixture) runFixtureRelay(t *testing.T, settings relayProcessSettings) *privateRelayFixture {
@@ -280,7 +286,8 @@ func (f *privateSeparatedFixture) runFixtureRelay(t *testing.T, settings relayPr
 	if err := relay.startRelay(lifetime, settings, metrics); err != nil {
 		t.Fatal(err)
 	}
-	fixture.settings.internalListener, fixture.settings.tcpListener, fixture.settings.udpPacket = nil, nil, nil
+	fixture.settings.internalListener, fixture.settings.internalPacket = nil, nil
+	fixture.settings.tcpListener, fixture.settings.udpPacket = nil, nil
 	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
 		return relay.readyRelays(daemonconfig.RoleRelay, time.Now()) == nil, nil
 	})
