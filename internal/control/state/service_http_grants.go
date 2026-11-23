@@ -74,12 +74,12 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 }
 
 func (d *Database) ListServiceHTTPGrants(ctx context.Context, service, actor string, now time.Time) (result []controlv1.ServiceHTTPGrantSummary, retErr error) {
-	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
+	tx, err := d.beginServiceObservation(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, err
 	}
 	defer rollback(ctx, tx, "list service HTTP grants", &retErr)()
-	_, err = lockManagedService(ctx, tx, service, actor)
+	_, err = observeManagedService(ctx, tx, service, actor)
 	if err != nil {
 		return nil, err
 	}

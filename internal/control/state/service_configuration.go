@@ -65,7 +65,7 @@ func (d *Database) GetServiceConfiguration(ctx context.Context, serviceID, actor
 	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) {
 		return nil, "", ErrServiceAccess
 	}
-	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
+	tx, err := d.beginServiceObservation(ctx, serviceReadOptions(ctx))
 	if err != nil {
 		return nil, "", err
 	}

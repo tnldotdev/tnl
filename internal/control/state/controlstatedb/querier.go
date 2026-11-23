@@ -432,6 +432,7 @@ type Querier interface {
 	MarkSupersededRelayRunSigningKeys(ctx context.Context, arg MarkSupersededRelayRunSigningKeysParams) error
 	ObserveAppliedProject(ctx context.Context, arg ObserveAppliedProjectParams) (ControlAppliedProject, error)
 	ObserveDeployment(ctx context.Context, arg ObserveDeploymentParams) (ControlDeployment, error)
+	ObserveIdentityBootstrap(ctx context.Context) error
 	// redemption checks the approved service but only writes the enrollment and
 	// the new publisher. serialize with service edits, not sibling observations.
 	ObservePublisherEnrollmentService(ctx context.Context, id string) (ControlService, error)

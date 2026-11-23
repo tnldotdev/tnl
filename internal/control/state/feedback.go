@@ -86,7 +86,8 @@ func (d *Database) AuthorizeReviewerFeedback(ctx context.Context, auth ServiceHT
 	}
 	defer rollback(ctx, tx, "authorize local reviewer feedback", &retErr)()
 	q := controlstatedb.New(tx)
-	if err = d.lockServiceHTTPRun(ctx, tx, auth, clock.current()); err != nil {
+	run, err := d.observeServiceHTTPRun(ctx, tx, auth, clock)
+	if err != nil {
 		return result, err
 	}
 	scope, err := q.FeedbackRunScope(ctx, controlstatedb.FeedbackRunScopeParams{ServiceID: auth.Subject.ID, ServiceRunID: auth.RunID, PreviewID: preview, RunNumber: auth.Number, Now: timestamptz(clock.current())})
@@ -98,7 +99,7 @@ func (d *Database) AuthorizeReviewerFeedback(ctx context.Context, auth ServiceHT
 		return result, err
 	}
 	actor.ServiceRun = &auth
-	checked, err := d.currentReviewer(ctx, tx, service, actor, clock)
+	checked, err := d.currentReviewer(ctx, tx, service, run, actor, clock)
 	if err != nil {
 		return result, err
 	}
@@ -146,7 +147,7 @@ func (d *Database) AuthorizeImplementerFeedback(ctx context.Context, identity, s
 		return result, err
 	}
 	defer rollback(ctx, tx, "authorize local implementer feedback", &retErr)()
-	if err = authorizeFeedbackService(ctx, tx, service, identity, clock.current()); err != nil {
+	if err = authorizeFeedbackService(ctx, tx, service, identity, clock); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
@@ -185,7 +186,7 @@ func (d *Database) AuthorizeImplementerFeedback(ctx context.Context, identity, s
 	return result, nil
 }
 
-func authorizeFeedbackService(ctx context.Context, tx pgx.Tx, service, identity string, now time.Time) error {
+func authorizeFeedbackService(ctx context.Context, tx pgx.Tx, service, identity string, clock authorizationClock) error {
 	q := controlstatedb.New(tx)
 	candidate, err := q.GetFeedbackService(ctx, service)
 	if err != nil {
@@ -194,14 +195,17 @@ func authorizeFeedbackService(ctx context.Context, tx pgx.Tx, service, identity 
 	if candidate.GuestID.Valid || !candidate.TeamID.Valid {
 		return ErrFeedbackAccess
 	}
-	if _, err = q.LockLocalTeamForMutation(ctx, candidate.TeamID.String); err != nil {
+	if _, err = q.LockLocalTeamForSession(ctx, candidate.TeamID.String); err != nil {
 		return publisherLookupError(err, ErrFeedbackAccess)
 	}
-	member, err := serviceMembershipForActor(ctx, tx, candidate.TeamID.String, identity, now)
+	member, err := serviceMembershipUnderTeamGuard(ctx, tx, candidate.TeamID.String, identity, clock)
 	if err != nil {
 		return err
 	}
-	row, err := q.LockService(ctx, service)
+	if err := queueRunReader(ctx, tx, service); err != nil {
+		return err
+	}
+	row, err := q.ObservePublisherEnrollmentService(ctx, service)
 	if err != nil {
 		return publisherLookupError(err, ErrFeedbackAccess)
 	}

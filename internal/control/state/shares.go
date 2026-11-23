@@ -470,7 +470,7 @@ func (d *Database) GetShareForManagement(ctx context.Context, id, identity strin
 	if !opaqueid.Valid(id, opaqueid.SharePrefix) || identity == "" {
 		return result, ErrShareNotFound
 	}
-	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
+	tx, err := d.beginServiceObservation(ctx, serviceReadOptions(ctx))
 	if err != nil {
 		return result, err
 	}
@@ -483,7 +483,7 @@ func (d *Database) GetShareForManagement(ctx context.Context, id, identity strin
 	if row.GuestID.Valid || row.CreatedByIdentityID.String != identity {
 		return result, ErrShareNotFound
 	}
-	member, err := serviceMembershipForActor(ctx, tx, row.TeamID.String, identity, clock.current())
+	member, err := readServiceMembership(ctx, tx, row.TeamID.String, identity, clock)
 	if err != nil {
 		return result, err
 	}
@@ -516,13 +516,13 @@ func (d *Database) ListTeamShares(ctx context.Context, team, identity, cursor st
 	if team == "" || identity == "" || cursor != "" && !opaqueid.Valid(cursor, opaqueid.SharePrefix) {
 		return SharePage{}, ErrShareInvalid
 	}
-	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
+	tx, err := d.beginServiceObservation(ctx, serviceReadOptions(ctx))
 	if err != nil {
 		return SharePage{}, err
 	}
 	defer rollback(ctx, tx, "list managed shares", &retErr)()
 	now := time.Now()
-	member, err := serviceMembershipForActor(ctx, tx, team, identity, now)
+	member, err := readServiceMembership(ctx, tx, team, identity, newAuthorizationClock(now))
 	if err != nil {
 		return SharePage{}, err
 	}

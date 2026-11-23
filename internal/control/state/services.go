@@ -62,6 +62,14 @@ func lockService(ctx context.Context, tx pgx.Tx, serviceID, actorID string) (con
 // operational suspension retains management authority without treating a
 // disabled service as available for publication or declaration changes.
 func lockManagedService(ctx context.Context, tx pgx.Tx, serviceID, actorID string) (controlstatedb.ControlService, error) {
+	return managedServiceAuthority(ctx, tx, serviceID, actorID, false)
+}
+
+func observeManagedService(ctx context.Context, tx pgx.Tx, serviceID, actorID string) (controlstatedb.ControlService, error) {
+	return managedServiceAuthority(ctx, tx, serviceID, actorID, true)
+}
+
+func managedServiceAuthority(ctx context.Context, tx pgx.Tx, serviceID, actorID string, observe bool) (controlstatedb.ControlService, error) {
 	var teamID string
 	err := tx.QueryRow(ctx, `SELECT team_id FROM control.services WHERE id=$1 AND guest_id IS NULL AND deleted_at IS NULL`, serviceID).Scan(&teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -70,18 +78,29 @@ func lockManagedService(ctx context.Context, tx pgx.Tx, serviceID, actorID strin
 	if err != nil {
 		return controlstatedb.ControlService{}, err
 	}
-	_, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, teamID)
+	q := controlstatedb.New(tx)
+	teamGuard, serviceGuard := q.LockLocalTeamForMutation, q.LockService
+	if observe {
+		teamGuard, serviceGuard = q.LockLocalTeamForSession, q.ObservePublisherEnrollmentService
+	}
+	_, err = teamGuard(ctx, teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return controlstatedb.ControlService{}, ErrServiceAccess
 	}
 	if err != nil {
 		return controlstatedb.ControlService{}, err
 	}
-	member, err := serviceMembershipForActor(ctx, tx, teamID, actorID, time.Now())
+	clock := newAuthorizationClock(time.Now())
+	member, err := checkedActorMembership(ctx, tx, teamID, actorID, clock, !observe)
 	if err != nil {
 		return controlstatedb.ControlService{}, err
 	}
-	service, err := controlstatedb.New(tx).LockService(ctx, serviceID)
+	if observe {
+		if err := queueRunReader(ctx, tx, serviceID); err != nil {
+			return controlstatedb.ControlService{}, err
+		}
+	}
+	service, err := serviceGuard(ctx, serviceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return service, ErrServiceAccess
 	}
@@ -90,6 +109,11 @@ func lockManagedService(ctx context.Context, tx pgx.Tx, serviceID, actorID strin
 	}
 	if service.TeamID.String != teamID || service.GuestID.Valid || service.DeletedAt.Valid {
 		return service, ErrServiceAccess
+	}
+	if observe {
+		if err := recheckServiceMembership(ctx, tx, teamID, actorID, member, clock); err != nil {
+			return service, err
+		}
 	}
 	if err = requireServiceManagement(ctx, tx, service, member); err != nil {
 		return service, err

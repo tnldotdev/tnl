@@ -1,6 +1,9 @@
 -- name: LockIdentityBootstrap :exec
 SELECT pg_advisory_xact_lock(837174137711267953);
 
+-- name: ObserveIdentityBootstrap :exec
+SELECT pg_advisory_xact_lock_shared(837174137711267953);
+
 -- name: ResolveLoginTeam :one
 SELECT id FROM control.teams WHERE (display_name=sqlc.arg(selection) OR id=sqlc.arg(selection)) AND deleted_at IS NULL;
 

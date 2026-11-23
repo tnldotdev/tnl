@@ -33,9 +33,9 @@ func (FeedbackConnectorVisitProof) feedbackVisitProof() {}
 func (FeedbackConnectorVisitProof) String() string      { return "feedback connector visit proof" }
 func (FeedbackConnectorVisitProof) GoString() string    { return "feedback connector visit proof" }
 
-// callers retain lockServiceHTTPRun and the current preview scope in this
+// callers retain the observed run and the current preview scope in this
 // transaction. returned permission is visit authority only, never authorship.
-func (d *Database) verifyFeedbackVisitProof(ctx context.Context, tx pgx.Tx, auth ServiceHTTPRun, proof FeedbackVisitProof, source netip.Addr, clock authorizationClock) (visitortoken.Permission, error) {
+func (d *Database) verifyFeedbackVisitProof(ctx context.Context, tx pgx.Tx, auth ServiceHTTPRun, run controlstatedb.ControlServiceRun, proof FeedbackVisitProof, source netip.Addr, clock authorizationClock) (visitortoken.Permission, error) {
 	update, err := d.readVisitorPolicy(ctx, tx, auth.Subject, 0, clock.current())
 	if err != nil {
 		return visitortoken.Permission{}, err
@@ -118,13 +118,6 @@ func (d *Database) verifyFeedbackVisitProof(ctx context.Context, tx pgx.Tx, auth
 			return visitortoken.Permission{}, errors.Join(ErrFeedbackAccess, err)
 		}
 		q := controlstatedb.New(tx)
-		run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: auth.RunID, ServiceID: auth.Subject.ID})
-		if err != nil {
-			return visitortoken.Permission{}, publisherLookupError(err, ErrFeedbackAccess)
-		}
-		if run.RunNumber != auth.Number {
-			return visitortoken.Permission{}, ErrFeedbackAccess
-		}
 		pair, err := q.LockConnectorPeerPairForLegClaim(ctx, supplied.PairID)
 		if err != nil {
 			return visitortoken.Permission{}, publisherLookupError(err, ErrFeedbackAccess)

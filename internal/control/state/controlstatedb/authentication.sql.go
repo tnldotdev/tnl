@@ -632,6 +632,15 @@ func (q *Queries) LoginTeamRequiresCompany(ctx context.Context, id string) (bool
 	return company_sign_in_required, err
 }
 
+const observeIdentityBootstrap = `-- name: ObserveIdentityBootstrap :exec
+SELECT pg_advisory_xact_lock_shared(837174137711267953)
+`
+
+func (q *Queries) ObserveIdentityBootstrap(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, observeIdentityBootstrap)
+	return err
+}
+
 const reserveManagedLabel = `-- name: ReserveManagedLabel :one
 INSERT INTO control.managed_label_reservations (label, created_at)
 VALUES ($1, $2)
