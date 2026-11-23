@@ -250,6 +250,15 @@ export class Gossip {
   #nextPrune = Infinity;
   #saturatedUntil = 0;
   #probing = false;
+  #presence:
+    | {
+        at: number;
+        until: number;
+        hosts: number;
+        remoteTabs: number;
+        fallback: readonly Host[];
+      }
+    | undefined;
 
   constructor(releaseID: string, host: Host, startedAt: number, details?: HostDetails) {
     this.releaseID = releaseID;
@@ -302,6 +311,27 @@ export class Gossip {
     return { local, total: local + reportedTabs(hosts, now, REMOTE_TAB_REPORT_MS, this.#self) };
   }
 
+  // local leases change on every heartbeat; the remote view changes only on
+  // a peer update, a suspect deadline, or the expiry of a host or tab report.
+  presenceView(now: number) {
+    const cached = this.#presence;
+    if (cached !== undefined && cached.at <= now && now < cached.until) return cached;
+    const peers = this.#countedPeers(now);
+    const fallback: Host[] = [];
+    let remoteTabs = 0;
+    let until = Infinity;
+    for (const { change, suspectAt } of peers) {
+      until = Math.min(until, change.endsAt ?? change.reportedAt + KEEP_MS);
+      if (suspectAt !== undefined) until = Math.min(until, suspectAt + SUSPECT_MS);
+      if (change.tabs !== undefined && now < change.tabs.observedAt + REMOTE_TAB_REPORT_MS) {
+        until = Math.min(until, change.tabs.observedAt + REMOTE_TAB_REPORT_MS);
+        remoteTabs += change.tabs.count;
+      }
+      if (!change.departing) fallback.push(change);
+    }
+    return (this.#presence = { at: now, until, hosts: peers.length + 1, remoteTabs, fallback });
+  }
+
   canRetire(now: number, target: number, hosts: readonly Change[]) {
     if (this.saturated(now) || this.readyBeyondWindow(now, hosts) < target) return false;
     // don't call a host surplus when most peers' tab counts are too old to use.
@@ -339,6 +369,7 @@ export class Gossip {
       ) {
         // the same report can clear local suspicion without resetting its sends.
         delete previous.suspectAt;
+        this.#presence = undefined;
         this.#considerCertificate(previous, now);
       }
       return;
@@ -357,6 +388,7 @@ export class Gossip {
     const entry =
       suspectAt !== undefined && !recovered ? { change, slot, suspectAt } : { change, slot };
     this.#peers.set(change.publisherID, entry);
+    this.#presence = undefined;
     this.#slots[slot] = entry;
     this.#considerCertificate(entry, now);
     this.#nextPrune = Math.min(this.#nextPrune, recordDeadline(change));
@@ -496,6 +528,7 @@ export class Gossip {
     for (const [id, peer] of this.#peers) {
       const deadline = recordDeadline(peer.change);
       if (deadline <= now) {
+        this.#presence = undefined;
         this.#peers.delete(id);
         this.#priority.delete(id);
         this.#fresh.delete(id);
@@ -568,6 +601,7 @@ export class Gossip {
       ) {
         // don't mark an updated peer record based on an earlier failed check.
         selected.suspectAt = clock();
+        this.#presence = undefined;
       }
     } finally {
       this.#probing = false;

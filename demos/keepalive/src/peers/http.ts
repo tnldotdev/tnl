@@ -209,9 +209,9 @@ export function peerServer(
     if (!heartbeat.success || heartbeat.data.releaseID !== releaseID) return c.body(null, 400);
     const now = Date.now();
     if (!leases.touch(heartbeat.data.tab, now)) return c.body(null, 503);
-    gossip.observeTabs(leases.count(now), now);
-    const live = gossip.hosts(now);
-    const fallback = live.filter((host) => !host.departing);
+    const localTabs = leases.count(now);
+    gossip.observeTabs(localTabs, now);
+    const { hosts, remoteTabs, fallback } = gossip.presenceView(now);
     const offset = Math.floor(Math.random() * fallback.length);
     const hints: Host[] = [];
     for (let i = 0; i < Math.min(fallback.length, MAX_FALLBACK_HOSTS); i++) {
@@ -221,8 +221,8 @@ export function peerServer(
     return c.json({
       host: gossip.self,
       startedAt: gossip.startedAt,
-      tabs: gossip.tabSnapshot(now, live).total,
-      hosts: live.length + 1,
+      tabs: localTabs + remoteTabs,
+      hosts,
       saturated: gossip.saturated(now),
       fallback: hints,
     });
