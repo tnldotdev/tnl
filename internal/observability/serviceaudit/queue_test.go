@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -95,6 +96,44 @@ func TestQueueRetriesStableIDsAndFlushesOnClose(t *testing.T) {
 	if q.Observe(observation()) {
 		t.Fatal("accepted event after close")
 	}
+}
+
+func TestQueueBatchesArrivalsDuringDeliveryAtTheNextTick(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var batches []int
+		started, finish := make(chan struct{}), make(chan struct{})
+		q, err := NewQueue(t.Context(), QueueConfig{
+			BatchSize: 4, FlushInterval: time.Second, Report: func(_ context.Context, batch Batch) error {
+				batches = append(batches, len(batch.Events))
+				if len(batches) == 1 {
+					close(started)
+					<-finish
+				}
+				return nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = q.Close(t.Context()) }()
+		for range 4 {
+			q.Observe(observation())
+		}
+		<-started
+		q.Observe(observation())
+		time.Sleep(200 * time.Millisecond)
+		close(finish)
+		synctest.Wait()
+		if len(batches) != 1 {
+			t.Fatal("in-flight arrivals triggered another partial batch", batches)
+		}
+		q.Observe(observation())
+		time.Sleep(800 * time.Millisecond)
+		synctest.Wait()
+		if len(batches) != 2 || batches[1] != 2 {
+			t.Fatal("next flush missed the pending events", batches)
+		}
+	})
 }
 
 func TestQueuePayloadBoundAndUnsafeFields(t *testing.T) {

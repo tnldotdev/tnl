@@ -194,21 +194,29 @@ func (q *Queue) run(ctx context.Context) {
 			q.config.Dropped(dropped)
 		}
 	}()
-	timer := time.NewTimer(q.config.FlushInterval)
-	defer timer.Stop()
-	closing := false
+	ticker := time.NewTicker(q.config.FlushInterval)
+	defer ticker.Stop()
+	closing, drain := false, false
 	for {
-		if !closing {
+		fullOnly := false
+		if !closing && !drain {
 			select {
 			case <-ctx.Done():
 				return
 			case <-q.stop:
 				closing = true
 			case <-q.notify:
-			case <-timer.C:
+				fullOnly = true
+			case <-ticker.C:
 			}
 		}
 		q.mu.Lock()
+		// notifications count the in-flight batch toward capacity. after its
+		// acknowledgment, newly arrived events may not fill a batch yet.
+		if fullOnly && len(q.items) < q.config.BatchSize {
+			q.mu.Unlock()
+			continue
+		}
 		dropped := q.dropped
 		q.dropped = 0
 		n := min(len(q.items), q.config.BatchSize)
@@ -222,6 +230,9 @@ func (q *Queue) run(ctx context.Context) {
 			size += item.bytes + 1
 		}
 		n = len(batch.Events)
+		// drain events already due that did not fit this report. new arrivals
+		// wait for a full batch or the original tick, including during a send.
+		drain = n < len(q.items)
 		q.mu.Unlock()
 		if dropped > 0 && q.config.Dropped != nil {
 			q.config.Dropped(dropped)
@@ -230,22 +241,11 @@ func (q *Queue) run(ctx context.Context) {
 			if closing {
 				return
 			}
-			timer.Reset(q.config.FlushInterval)
 			continue
 		}
 		if !q.deliver(ctx, batch) {
 			return
 		}
-		q.mu.Lock()
-		more := len(q.items) > 0
-		q.mu.Unlock()
-		if more {
-			select {
-			case q.notify <- struct{}{}:
-			default:
-			}
-		}
-		timer.Reset(q.config.FlushInterval)
 	}
 }
 
