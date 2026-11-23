@@ -9,6 +9,23 @@ import (
 	"context"
 )
 
+const bindDirectoryIdentityToCheckout = `-- name: BindDirectoryIdentityToCheckout :exec
+UPDATE local_project_identities
+SET project_root=?1
+WHERE local_project_identities.project_root=?2
+  AND NOT EXISTS (SELECT 1 FROM local_project_identities AS bound WHERE bound.project_root=?1)
+`
+
+type BindDirectoryIdentityToCheckoutParams struct {
+	CheckoutKey string
+	Directory   string
+}
+
+func (q *Queries) BindDirectoryIdentityToCheckout(ctx context.Context, arg BindDirectoryIdentityToCheckoutParams) error {
+	_, err := q.db.ExecContext(ctx, bindDirectoryIdentityToCheckout, arg.CheckoutKey, arg.Directory)
+	return err
+}
+
 const ensureLocalProjectIdentity = `-- name: EnsureLocalProjectIdentity :one
 INSERT INTO local_project_identities(project_root,source_id,worktree_id)
 VALUES(?1,?2,?3)

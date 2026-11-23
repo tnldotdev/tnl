@@ -29,15 +29,39 @@ func (d *Database) LocalProjectIdentity(ctx context.Context, root, checkoutKey s
 		return "", "", errors.New("local project identity needs a directory")
 	}
 	key := canonical
+	queries := d.queries
+	var commit func() error
 	if checkoutKey != "" {
 		key = "checkout:" + checkoutKey
+		// consume the directory-only receipt on its first git binding. a
+		// later checkout at this path cannot inherit the bound checkout's IDs.
+		tx, err := d.db.BeginTx(ctx, nil)
+		if err != nil {
+			return "", "", err
+		}
+		defer tx.Rollback()
+		queries = queries.WithTx(tx)
+		if err := queries.BindDirectoryIdentityToCheckout(ctx, clientstatedb.BindDirectoryIdentityToCheckoutParams{
+			CheckoutKey: key, Directory: canonical,
+		}); err != nil {
+			return "", "", err
+		}
+		commit = tx.Commit
 	}
 	var entropy [64]byte
 	if _, err := rand.Read(entropy[:]); err != nil {
 		return "", "", err
 	}
-	row, err := d.queries.EnsureLocalProjectIdentity(ctx, clientstatedb.EnsureLocalProjectIdentityParams{
+	row, err := queries.EnsureLocalProjectIdentity(ctx, clientstatedb.EnsureLocalProjectIdentityParams{
 		ProjectRoot: key, SourceID: hex.EncodeToString(entropy[:32]), WorktreeID: hex.EncodeToString(entropy[32:]),
 	})
-	return row.SourceID, row.WorktreeID, err
+	if err != nil {
+		return "", "", err
+	}
+	if commit != nil {
+		if err := commit(); err != nil {
+			return "", "", err
+		}
+	}
+	return row.SourceID, row.WorktreeID, nil
 }

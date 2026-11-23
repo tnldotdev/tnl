@@ -20,9 +20,6 @@ func TestLocalPublicationIdentityIgnoresGitOrigin(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"web":{}}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.CommandContext(t.Context(), "git", "init", "--quiet", parent).CombinedOutput(); err != nil {
-		t.Fatalf("git: %v %s", err, out)
-	}
 	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +58,7 @@ func TestLocalPublicationIdentityIgnoresGitOrigin(t *testing.T) {
 	}
 	check(before)
 	for _, args := range [][]string{
+		{"init", "--quiet", parent},
 		{"-C", parent, "remote", "add", "origin", "https://example.test/one.git"},
 		{"-C", parent, "remote", "set-url", "origin", "https://example.test/two.git"},
 	} {

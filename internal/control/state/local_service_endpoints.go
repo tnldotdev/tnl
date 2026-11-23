@@ -146,7 +146,7 @@ func (d *Database) ensureLocalServiceEndpoint(ctx context.Context, tx pgx.Tx, se
 		}
 		if placement.Hostname != "" && row.CertificateHostname != placement.Hostname ||
 			row.DomainID.String != domainID || row.PlacementWorktreeKey != placement.WorktreeKey ||
-			d.managedURLMode != naming.ManagedURLModeGenerated && row.PlacementWorktreeLabel != label ||
+			standalone && row.PlacementWorktreeLabel != label ||
 			sourceOwner.local == standalone || sourceOwner.key != sourceOwner.sourceKey(intent) {
 			return ErrServiceConflict
 		}

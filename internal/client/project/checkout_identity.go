@@ -27,7 +27,7 @@ func (p Project) checkoutKey(ctx context.Context) (string, error) {
 	}
 	dir := strings.TrimSuffix(string(output), "\n")
 	if !filepath.IsAbs(dir) {
-		return "", errors.New("Git returned a non-absolute checkout identity directory")
+		return "", errors.New("checkout identity directory from Git is not absolute")
 	}
 	id, err := readOrCreateCheckoutID(dir)
 	if err != nil {
