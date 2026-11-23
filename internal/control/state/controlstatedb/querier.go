@@ -261,6 +261,8 @@ type Querier interface {
 	InsertPublisherKey(ctx context.Context, arg InsertPublisherKeyParams) error
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
 	InsertService(ctx context.Context, arg InsertServiceParams) (ControlService, error)
+	// earlier owners are already locked in order. take the final owner's clock
+	// before allocating a cursor; the arrays have one element per event.
 	InsertServiceAuditEvents(ctx context.Context, arg InsertServiceAuditEventsParams) ([]string, error)
 	InsertServiceCertificateOrder(ctx context.Context, arg InsertServiceCertificateOrderParams) (ControlAcmeOrder, error)
 	InsertServiceCertificateRequest(ctx context.Context, arg InsertServiceCertificateRequestParams) error

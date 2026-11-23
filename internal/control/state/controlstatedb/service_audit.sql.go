@@ -32,28 +32,73 @@ func (q *Queries) CleanupServiceAuditEvents(ctx context.Context, arg CleanupServ
 }
 
 const insertServiceAuditEvents = `-- name: InsertServiceAuditEvents :many
+WITH clock AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended('tnl:service-audit:' ||
+        COALESCE($16::text,'guest/'||$17::text),0))
+)
 INSERT INTO control.service_audit_events(id,team_id,guest_id,service_id,event_type,occurred_at,received_at,
     actor_identity_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_digest,outcome,reason,configuration_revision)
-SELECT entry.value->>'id',NULLIF(entry.value->>'team_id',''),service.guest_id,service.id,
-    entry.value->>'event_type',(entry.value->>'occurred_at')::timestamptz,$1,
-    NULLIF(entry.value->>'actor_identity_id',''),NULLIF(entry.value->>'device_id',''),
-    NULLIF(entry.value->>'publisher_identity_id',''),NULLIF(entry.value->>'run_id',''),
-    NULLIF(entry.value->>'visitor_connection_id',''),NULLIF(entry.value->>'source_digest',''),
-    NULLIF(entry.value->>'outcome',''),NULLIF(entry.value->>'reason',''),NULLIF((entry.value->>'configuration_revision')::bigint,0)
-FROM jsonb_array_elements(convert_from($2::bytea,'UTF8')::jsonb) WITH ORDINALITY AS entry(value,position)
-JOIN control.services service ON service.id=(entry.value->>'service_id')
-ORDER BY entry.position
+SELECT e.id,NULLIF(e.team,''),s.guest_id,s.id,e.kind,e.happened,$1,
+    NULLIF(e.actor,''),NULLIF(e.device,''),NULLIF(e.publisher,''),NULLIF(e.run,''),NULLIF(e.visitor,''),
+    NULLIF(e.source,''),NULLIF(e.outcome,''),NULLIF(e.reason,''),NULLIF(e.revision,0)
+FROM clock CROSS JOIN control.services s CROSS JOIN (
+    SELECT unnest($2::text[]) AS id,unnest($3::text[]) AS team,
+        unnest($4::text[]) AS service,unnest($5::text[]) AS kind,
+        unnest($6::timestamptz[]) AS happened,unnest($7::text[]) AS actor,
+        unnest($8::text[]) AS device,unnest($9::text[]) AS publisher,
+        unnest($10::text[]) AS run,unnest($11::text[]) AS visitor,
+        unnest($12::text[]) AS source,unnest($13::text[]) AS outcome,
+        unnest($14::text[]) AS reason,unnest($15::bigint[]) AS revision,
+        generate_subscripts($2::text[],1) AS position
+) e
+WHERE s.id=e.service
+ORDER BY e.position
 ON CONFLICT(id) DO NOTHING
 RETURNING id
 `
 
 type InsertServiceAuditEventsParams struct {
 	ReceivedAt pgtype.Timestamptz
-	Events     []byte
+	Ids        []string
+	Teams      []string
+	Services   []string
+	Kinds      []string
+	Times      []pgtype.Timestamptz
+	Actors     []string
+	Devices    []string
+	Publishers []string
+	Runs       []string
+	Visitors   []string
+	Sources    []string
+	Outcomes   []string
+	Reasons    []string
+	Revisions  []int64
+	TeamID     pgtype.Text
+	GuestID    pgtype.Text
 }
 
+// earlier owners are already locked in order. take the final owner's clock
+// before allocating a cursor; the arrays have one element per event.
 func (q *Queries) InsertServiceAuditEvents(ctx context.Context, arg InsertServiceAuditEventsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, insertServiceAuditEvents, arg.ReceivedAt, arg.Events)
+	rows, err := q.db.Query(ctx, insertServiceAuditEvents,
+		arg.ReceivedAt,
+		arg.Ids,
+		arg.Teams,
+		arg.Services,
+		arg.Kinds,
+		arg.Times,
+		arg.Actors,
+		arg.Devices,
+		arg.Publishers,
+		arg.Runs,
+		arg.Visitors,
+		arg.Sources,
+		arg.Outcomes,
+		arg.Reasons,
+		arg.Revisions,
+		arg.TeamID,
+		arg.GuestID,
+	)
 	if err != nil {
 		return nil, err
 	}

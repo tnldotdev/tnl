@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"maps"
 	"net/netip"
@@ -174,10 +173,12 @@ func insertServiceAuditBatch(ctx context.Context, tx pgx.Tx, events []serviceaud
 	teams := make(map[string]pgtype.Text, len(owners))
 	// serialize cursor allocation with commits once per owner, in the same
 	// owner order as parent locking. sequence order alone can skip a slow commit.
+	finalOwner := owners[len(owners)-1]
+	finalClock := controlstatedb.LockServiceAuditClockParams{TeamID: finalOwner.TeamID, GuestID: finalOwner.GuestID}
 	var locked controlstatedb.LockServiceAuditClockParams
 	for _, owner := range owners {
 		scope := controlstatedb.LockServiceAuditClockParams{TeamID: owner.TeamID, GuestID: owner.GuestID}
-		if scope != locked {
+		if scope != locked && scope != finalClock {
 			if err := q.LockServiceAuditClock(ctx, scope); err != nil {
 				return ServiceObservationResult{}, err
 			}
@@ -190,11 +191,7 @@ func insertServiceAuditBatch(ctx context.Context, tx pgx.Tx, events []serviceaud
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
 	}
-	payload, err := json.Marshal(unique)
-	if err != nil {
-		return ServiceObservationResult{}, err
-	}
-	inserted, err := q.InsertServiceAuditEvents(ctx, controlstatedb.InsertServiceAuditEventsParams{Events: payload, ReceivedAt: timestamptz(now)})
+	inserted, err := q.InsertServiceAuditEvents(ctx, auditInsertParams(unique, now, finalClock))
 	if err != nil {
 		return ServiceObservationResult{}, err
 	}
@@ -226,6 +223,26 @@ func insertServiceAuditBatch(ctx context.Context, tx pgx.Tx, events []serviceaud
 		}
 	}
 	return ServiceObservationResult{Accepted: len(inserted), Duplicates: len(events) - len(inserted)}, nil
+}
+
+func auditInsertParams(events []serviceaudit.Event, now time.Time, clock controlstatedb.LockServiceAuditClockParams) controlstatedb.InsertServiceAuditEventsParams {
+	n := len(events)
+	p := controlstatedb.InsertServiceAuditEventsParams{
+		TeamID: clock.TeamID, GuestID: clock.GuestID, ReceivedAt: timestamptz(now),
+		Ids: make([]string, n), Teams: make([]string, n), Services: make([]string, n),
+		Kinds: make([]string, n), Times: make([]pgtype.Timestamptz, n),
+		Actors: make([]string, n), Devices: make([]string, n), Publishers: make([]string, n),
+		Runs: make([]string, n), Visitors: make([]string, n), Sources: make([]string, n),
+		Outcomes: make([]string, n), Reasons: make([]string, n), Revisions: make([]int64, n),
+	}
+	for i, e := range events {
+		p.Ids[i], p.Teams[i], p.Services[i] = e.ID, e.TeamID, e.ServiceID
+		p.Kinds[i], p.Times[i] = e.EventType, timestamptz(e.OccurredAt)
+		p.Actors[i], p.Devices[i], p.Publishers[i] = e.ActorIdentityID, e.DeviceID, e.PublisherIdentityID
+		p.Runs[i], p.Visitors[i], p.Sources[i] = e.RunID, e.VisitorConnectionID, e.SourceDigest
+		p.Outcomes[i], p.Reasons[i], p.Revisions[i] = e.Outcome, e.Reason, e.ConfigurationRevision
+	}
+	return p
 }
 
 func sameServiceAuditEvent(a, b serviceaudit.Event) bool {
