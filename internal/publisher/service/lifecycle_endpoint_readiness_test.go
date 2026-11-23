@@ -350,12 +350,12 @@ func TestPublicServiceRunReadinessWaitsForItsExactAlias(t *testing.T) {
 }
 
 func TestPublicServiceRunObservesAliasPublicationBeforeNextHeartbeat(t *testing.T) {
-	for _, publishes := range []bool{false, true} {
-		name := "pending"
-		if publishes {
-			name = "published"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		publishAt time.Duration
+		calls     int
+	}{{"pending", 0, 4}, {"early", 500 * time.Millisecond, 3}, {"after-first-observation", 2 * time.Second, 4}} {
+		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				cfg, base, observed := endpointReadinessFixture(t, controlv1.ServiceProtocolHTTP, true, true, 7)
 				cfg.HeartbeatInterval = 10 * time.Second
@@ -366,25 +366,25 @@ func TestPublicServiceRunObservesAliasPublicationBeforeNextHeartbeat(t *testing.
 				base.prep.CertificatePlan = &plan
 				control := &aliasEndpointReadinessControl{endpointReadinessControl: base, hostname: new(httpRunAlias), aliasReady: new(false)}
 				cfg.Control = control
-				if publishes {
-					timer := time.AfterFunc(500*time.Millisecond, func() { control.setAlias(new(httpRunAlias), new(true)) })
+				if tc.publishAt != 0 {
+					timer := time.AfterFunc(tc.publishAt, func() { control.setAlias(new(httpRunAlias), new(true)) })
 					defer timer.Stop()
 				}
 				stop := startEndpointReadinessRun(t, cfg, base, observed)
 				defer stop()
 				time.Sleep(7 * time.Second)
 				synctest.Wait()
-				if calls, _ := base.snapshot(); calls != 3 {
-					t.Fatalf("wanted the initial heartbeat and two bounded startup observations, got %d", calls)
+				if calls, _ := base.snapshot(); calls != tc.calls {
+					t.Fatalf("wanted %d startup heartbeats, got %d", tc.calls, calls)
 				}
-				if publishes {
+				if tc.publishAt != 0 {
 					assertEndpointReadiness(t, observed, true, 1)
 				} else {
 					assertEndpointReadiness(t, observed, false, 0)
 				}
 				time.Sleep(3 * time.Second)
 				synctest.Wait()
-				if calls, _ := base.snapshot(); calls != 4 {
+				if calls, _ := base.snapshot(); calls != tc.calls+1 {
 					t.Fatalf("lost the regular heartbeat or kept polling the alias: %d calls", calls)
 				}
 			})

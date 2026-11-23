@@ -648,7 +648,19 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	heartbeatOK := true
 	startupConfirmationAttempted := false
 	var aliasCheck <-chan time.Time
+	var aliasTimer *time.Timer
+	defer func() {
+		if aliasTimer != nil {
+			aliasTimer.Stop()
+		}
+	}()
 	const aliasCheckDelay = time.Second
+	aliasPending := func() bool {
+		return heartbeatOK && approved.Endpoint.Public && state.EndpointRevision == approved.EndpointRevision &&
+			prepared.runHostname != "" && state.RunHostname != nil && *state.RunHostname == prepared.runHostname &&
+			state.RunAliasReady != nil && !*state.RunAliasReady
+	}
+	var observedPendingOnce bool
 	refreshHeartbeat := func() (stop bool, err error) {
 		if !state.PublisherExpiresAt.After(time.Now()) {
 			return true, ErrPrivateStream
@@ -759,16 +771,11 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				if stop, err := refreshHeartbeat(); stop {
 					return err
 				}
-				// alias DNS can publish just after the first two slots connect.
-				// give that exact run one more observation before the next regular
-				// heartbeat. a regular tick supersedes this check, even on failure.
-				if heartbeatOK && config.HeartbeatInterval > aliasCheckDelay && approved.Endpoint.Public &&
-					state.EndpointRevision == approved.EndpointRevision && prepared.runHostname != "" &&
-					state.RunHostname != nil && *state.RunHostname == prepared.runHostname &&
-					state.RunAliasReady != nil && !*state.RunAliasReady {
-					timer := time.NewTimer(aliasCheckDelay)
-					defer timer.Stop()
-					aliasCheck = timer.C
+				// dns publication can follow the two slot claims. bound observations
+				// before the first regular tick, which supersedes them even on failure.
+				if aliasPending() && config.HeartbeatInterval > aliasCheckDelay {
+					aliasTimer = time.NewTimer(aliasCheckDelay)
+					aliasCheck = aliasTimer.C
 				}
 				continue
 			}
@@ -803,6 +810,11 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			if !ready && localReadiness(current, time.Now()) {
 				if stop, err := refreshHeartbeat(); stop {
 					return err
+				}
+				if !observedPendingOnce && aliasPending() && config.HeartbeatInterval > 3*aliasCheckDelay {
+					observedPendingOnce = true
+					aliasTimer.Reset(2 * aliasCheckDelay)
+					aliasCheck = aliasTimer.C
 				}
 			}
 		case <-ticker.C:
