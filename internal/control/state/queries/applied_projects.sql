@@ -1,6 +1,9 @@
 -- name: LockAppliedProject :one
 SELECT * FROM control.applied_projects WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) FOR UPDATE;
 
+-- name: ObserveAppliedProject :one
+SELECT * FROM control.applied_projects WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) FOR SHARE;
+
 -- name: ListDiscoverableProjects :many
 SELECT project_key, project_label, revision, updated_at FROM control.applied_projects
 WHERE team_id=sqlc.arg(team_id) AND project_key>sqlc.arg(after_key) AND retired_at IS NULL

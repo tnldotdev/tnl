@@ -12,17 +12,17 @@ import (
 
 // publishing is not management. acquire team/project/deployment parents,
 // select the exact binding, then lock the service before the signing identity.
-func (d *Database) deploymentPublicationSelection(ctx context.Context, tx pgx.Tx, scope DeploymentScope, selector string, now time.Time) (PublisherIdentity, controlstatedb.ControlDeploymentManagementGrant, controlstatedb.ControlDeployment, error) {
+func (d *Database) deploymentPublicationSelection(ctx context.Context, tx pgx.Tx, scope DeploymentScope, selector string, now time.Time, mode deploymentLockMode) (PublisherIdentity, controlstatedb.ControlDeploymentManagementGrant, controlstatedb.ControlDeployment, error) {
 	var approval controlstatedb.ControlDeploymentManagementGrant
 	var deployment controlstatedb.ControlDeployment
 	q := controlstatedb.New(tx)
 	if scope.AccessToken == "" {
 		return PublisherIdentity{}, approval, deployment, ErrDeploymentAccess
 	}
-	if _, err := q.LockLocalTeamForMutation(ctx, scope.TeamID); err != nil {
+	if err := mode.team(ctx, q, scope.TeamID); err != nil {
 		return PublisherIdentity{}, approval, deployment, publisherLookupError(err, ErrDeploymentAccess)
 	}
-	if _, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey}); err != nil {
+	if _, err := mode.project(ctx, q, scope.TeamID, scope.ProjectKey); err != nil {
 		return PublisherIdentity{}, approval, deployment, publisherLookupError(err, ErrDeploymentAccess)
 	}
 	p, err := d.authenticatePublisherAccess(ctx, q, scope.AccessToken, "", now, false)
@@ -39,7 +39,7 @@ func (d *Database) deploymentPublicationSelection(ctx context.Context, tx pgx.Tx
 	if approval.TeamID != scope.TeamID || approval.ProjectKey != scope.ProjectKey {
 		return p, approval, deployment, ErrDeploymentAccess
 	}
-	deployment, err = q.LockDeployment(ctx, controlstatedb.LockDeploymentParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey, Selector: selector})
+	deployment, err = mode.selectDeployment(ctx, q, scope.TeamID, scope.ProjectKey, selector)
 	if err != nil {
 		return p, approval, deployment, publisherLookupError(err, ErrDeploymentAccess)
 	}
@@ -86,7 +86,7 @@ func (d *Database) GetDeploymentPublication(ctx context.Context, scope Deploymen
 		return result, err
 	}
 	defer rollback(ctx, tx, "read deployment publication", &retErr)()
-	p, _, deployment, err := d.deploymentPublicationSelection(ctx, tx, scope, selector, clock.current())
+	p, _, deployment, err := d.deploymentPublicationSelection(ctx, tx, scope, selector, clock.current(), deploymentRead)
 	if err != nil {
 		return result, err
 	}
@@ -95,11 +95,14 @@ func (d *Database) GetDeploymentPublication(ctx context.Context, scope Deploymen
 		return result, publisherLookupError(err, ErrDeploymentAccess)
 	}
 	q := controlstatedb.New(tx)
-	row, err := q.LockService(ctx, id)
+	if err = queueRunReader(ctx, tx, id); err != nil {
+		return result, err
+	}
+	row, err := q.ObservePublisherEnrollmentService(ctx, id)
 	if err != nil {
 		return result, publisherLookupError(err, ErrDeploymentAccess)
 	}
-	p, err = d.currentDeploymentPublication(ctx, q, scope.AccessToken, clock, true)
+	p, err = d.currentDeploymentPublication(ctx, q, scope.AccessToken, clock, false)
 	if err != nil {
 		return result, err
 	}
@@ -151,7 +154,7 @@ func (d *Database) AllocateDeploymentPublication(ctx context.Context, r Allocate
 		return result, err
 	}
 	defer rollback(ctx, tx, "allocate deployment publication", &retErr)()
-	p, approval, deployment, err := d.deploymentPublicationSelection(ctx, tx, r.DeploymentScope, r.Deployment, clock.current())
+	p, approval, deployment, err := d.deploymentPublicationSelection(ctx, tx, r.DeploymentScope, r.Deployment, clock.current(), deploymentMutation)
 	if err != nil {
 		return result, err
 	}

@@ -643,18 +643,23 @@ func (d *Database) GetProjectConfiguration(ctx context.Context, team, key, actor
 	}
 	defer rollback(ctx, tx, "get project configuration", &retErr)()
 	q := controlstatedb.New(tx)
-	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
+	if err = deploymentRead.team(ctx, q, team); err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if err = serviceManager(ctx, tx, team, actor); err != nil {
+	clock := newAuthorizationClock(time.Now())
+	member, err := serviceMembershipUnderTeamGuard(ctx, tx, team, actor, clock)
+	if err != nil {
 		return result, err
 	}
-	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: key})
+	if err := member.requireAdministrator(ctx); err != nil {
+		return result, err
+	}
+	row, err := deploymentRead.project(ctx, q, team, key)
 	if err != nil {
 		return result, err
 	}
 	if deployment != "local" {
-		selected, err := q.LockDeployment(ctx, controlstatedb.LockDeploymentParams{TeamID: team, ProjectKey: key, Selector: deployment})
+		selected, err := deploymentRead.selectDeployment(ctx, q, team, key, deployment)
 		if err != nil && (!errors.Is(err, pgx.ErrNoRows) || opaqueid.Valid(deployment, "dpl_")) {
 			return result, err
 		}
@@ -672,6 +677,9 @@ func (d *Database) GetProjectConfiguration(ctx context.Context, team, key, actor
 	result, err = d.appliedProjectStatus(ctx, tx, row, deployment, c)
 	if err != nil {
 		return result, err
+	}
+	if err := recheckServiceMembership(ctx, tx, team, actor, member, clock); err != nil {
+		return AppliedProjectConfiguration{}, err
 	}
 	return result, tx.Commit(ctx)
 }

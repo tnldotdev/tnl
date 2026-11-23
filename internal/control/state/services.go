@@ -106,14 +106,18 @@ func checkedServiceRecord(row controlstatedb.ControlService) (ServiceRecord, err
 }
 
 func serviceManager(ctx context.Context, tx pgx.Tx, teamID, actorID string) error {
-	if _, signed := serviceActor(ctx); signed {
-		return serviceActorManager(ctx, tx, teamID, actorID, time.Now())
-	}
 	member, err := serviceMembershipForActor(ctx, tx, teamID, actorID, time.Now())
 	if err != nil {
 		return err
 	}
+	return member.requireAdministrator(ctx)
+}
+
+func (member serviceMembership) requireAdministrator(ctx context.Context) error {
 	if !member.administrator() {
+		if _, signed := serviceActor(ctx); signed {
+			return ErrServiceManagerRequired
+		}
 		return ErrServiceAccess
 	}
 	return nil

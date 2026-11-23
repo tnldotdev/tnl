@@ -694,6 +694,34 @@ func (q *Queries) LockDeploymentByID(ctx context.Context, id string) (ControlDep
 	return i, err
 }
 
+const observeAppliedProject = `-- name: ObserveAppliedProject :one
+SELECT team_id, project_key, source_fingerprint, project_label, revision, configuration_hash, configuration_ciphertext, storage_key_id, created_by_identity_id, updated_at, retired_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2 FOR SHARE
+`
+
+type ObserveAppliedProjectParams struct {
+	TeamID     string
+	ProjectKey string
+}
+
+func (q *Queries) ObserveAppliedProject(ctx context.Context, arg ObserveAppliedProjectParams) (ControlAppliedProject, error) {
+	row := q.db.QueryRow(ctx, observeAppliedProject, arg.TeamID, arg.ProjectKey)
+	var i ControlAppliedProject
+	err := row.Scan(
+		&i.TeamID,
+		&i.ProjectKey,
+		&i.SourceFingerprint,
+		&i.ProjectLabel,
+		&i.Revision,
+		&i.ConfigurationHash,
+		&i.ConfigurationCiphertext,
+		&i.StorageKeyID,
+		&i.CreatedByIdentityID,
+		&i.UpdatedAt,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
 const observeDeployment = `-- name: ObserveDeployment :one
 SELECT g.ownership, g.id, g.team_id, g.project_key, g.name, g.description, g.domain_id, g.namespace, g.revision, g.configuration_hash, g.configuration_ciphertext, g.storage_key_id, g.create_principal_id, g.create_idempotency_key, g.create_request_digest, g.deleted_at FROM control.deployments g
 WHERE g.team_id=$1 AND g.project_key=$2 AND g.deleted_at IS NULL

@@ -76,7 +76,7 @@ func (d *Database) CreateDeploymentPublisherEnrollment(ctx context.Context, r Cr
 		return result, err
 	}
 	defer rollback(ctx, tx, "create deployment publisher enrollment", &retErr)()
-	access, _, err := d.lockDeploymentAccess(ctx, tx, r.DeploymentScope, r.Now)
+	access, _, err := d.lockDeploymentAccess(ctx, tx, r.DeploymentScope, r.Now, deploymentMutation)
 	if err != nil {
 		return result, err
 	}
@@ -242,11 +242,11 @@ func (d *Database) GetDeploymentPublisher(ctx context.Context, scope DeploymentS
 		return result, err
 	}
 	defer rollback(ctx, tx, "get deployment publisher", &retErr)()
-	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, time.Now())
+	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, time.Now(), deploymentRead)
 	if err != nil {
 		return result, err
 	}
-	deployment, err := controlstatedb.New(tx).LockDeployment(ctx, controlstatedb.LockDeploymentParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey, Selector: selector})
+	deployment, err := deploymentRead.selectDeployment(ctx, controlstatedb.New(tx), scope.TeamID, scope.ProjectKey, selector)
 	if err != nil {
 		return result, publisherLookupError(err, ErrDeploymentNotFound)
 	}
@@ -272,12 +272,12 @@ func (d *Database) ListDeploymentPublishers(ctx context.Context, scope Deploymen
 		return nil, err
 	}
 	defer rollback(ctx, tx, "list deployment publishers", &retErr)()
-	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, time.Now())
+	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, time.Now(), deploymentRead)
 	if err != nil {
 		return nil, err
 	}
 	q := controlstatedb.New(tx)
-	deployment, err := q.LockDeployment(ctx, controlstatedb.LockDeploymentParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey, Selector: selector})
+	deployment, err := deploymentRead.selectDeployment(ctx, q, scope.TeamID, scope.ProjectKey, selector)
 	if err != nil {
 		return nil, publisherLookupError(err, ErrDeploymentNotFound)
 	}
@@ -341,7 +341,7 @@ func (d *Database) RevokeDeploymentPublisher(ctx context.Context, scope Deployme
 		return err
 	}
 	defer rollback(ctx, tx, "revoke deployment publisher", &retErr)()
-	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, now)
+	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, now, deploymentMutation)
 	if err != nil {
 		return err
 	}
