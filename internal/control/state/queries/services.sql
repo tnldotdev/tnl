@@ -287,6 +287,7 @@ WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id)
 
 -- name: RenewServiceRun :one
 UPDATE control.service_runs run SET publisher_expires_at = LEAST(sqlc.arg(publisher_expires_at),service.expires_at,publisher_grant.expires_at),
+    healthy=sqlc.arg(healthy),stream_capacity=sqlc.arg(stream_capacity),reported_streams=sqlc.arg(reported_streams),
     serving_observed_at=GREATEST(run.serving_observed_at,sqlc.arg(serving_observed_at)),
     serving_until=LEAST(CASE
         WHEN sqlc.arg(serving_observed_at)<run.serving_observed_at THEN run.serving_until
