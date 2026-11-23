@@ -142,3 +142,31 @@ it("keeps capacity for expiring turns but does not replace surplus hosts", () =>
   expect(b.maybeStart(now, 3, () => true)).toBe(false);
   expect(b.maybeStart(now + STARTUP_MS, 3, () => true)).toBe(true);
 });
+
+it("refreshes the presence view on a new report and at tab and host expiry", () => {
+  const a = new Gossip(releaseID, host("a", 1), now);
+  const b = new Gossip(releaseID, host("b", 2), now, {
+    endsAt: now + REMOTE_TAB_REPORT_MS + 1000,
+  });
+  b.observeTabs(5, now);
+  a.receive(b.message(now), now);
+  expect(a.presenceView(now)).toMatchObject({ hosts: 2, remoteTabs: 5, fallback: [b.self] });
+  b.update({ departing: true });
+  a.receive(b.message(now + 1), now + 1);
+  expect(a.presenceView(now + 1)).toMatchObject({ hosts: 2, remoteTabs: 5, fallback: [] });
+  expect(a.presenceView(now + REMOTE_TAB_REPORT_MS).remoteTabs).toBe(0);
+  expect(a.presenceView(now + REMOTE_TAB_REPORT_MS + 1000).hosts).toBe(1);
+});
+
+it("counts a shared origin once and reveals its next live publisher after departure", () => {
+  const a = new Gossip(releaseID, host("a", 1), now);
+  const b = new Gossip(releaseID, host("b", 2), now);
+  const c = new Gossip(releaseID, { ...host("c", 3), origin: b.self.origin }, now);
+  b.observeTabs(2, now);
+  c.observeTabs(3, now);
+  a.receive(b.message(now), now);
+  a.receive(c.message(now), now);
+  expect(a.presenceView(now)).toMatchObject({ hosts: 2, remoteTabs: 2, fallback: [b.self] });
+  a.receive(b.leave(now + 1), now + 1);
+  expect(a.presenceView(now + 1)).toMatchObject({ hosts: 2, remoteTabs: 3, fallback: [c.self] });
+});
