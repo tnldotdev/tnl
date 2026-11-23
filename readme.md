@@ -388,6 +388,20 @@ You can also add a subdomain you own, for URLs like `https://app.chase.dev.examp
 
 Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates. See [setting up a custom domain](https://tnl.dev/docs/domains).
 
+Choose the owner at claim time:
+
+```sh
+tnl domain claim dev.nintendo.com --personal
+# or, to claim it for Nintendo instead:
+tnl domain claim dev.nintendo.com --team nintendo
+```
+
+Chase can later run `tnl domain transfer dev.nintendo.com --to-team nintendo`.
+If he owns both teams, the move needs one command. Otherwise the destination
+owner runs the printed accept command. The same DNS delegation stays in place;
+saved services, publisher grants, and outstanding certificates must be cleared
+first. The reverse move uses `--to-personal`.
+
 Or, you can even run the whole stack yourself (control, ingress, and relays), forever free. See [running your own server](https://tnl.dev/docs/self-hosting).
 
 ## how much does it cost?

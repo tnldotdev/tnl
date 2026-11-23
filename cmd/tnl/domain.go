@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,17 +18,27 @@ import (
 )
 
 type domainCommand struct {
-	Claim   domainClaimCommand
-	Default domainDefaultCommand
-	List    domainListCommand
-	Status  domainStatusCommand
-	Release domainReleaseCommand
+	Claim    domainClaimCommand
+	Default  domainDefaultCommand
+	List     domainListCommand
+	Status   domainStatusCommand
+	Release  domainReleaseCommand
+	Transfer domainTransferCommand
 }
 
 type domainClaimCommand struct {
 	scopedTeamFlags `embed:""`
 	Domain          string `arg:"" name:"domain" required:"" help:"Canonical domain name to claim."`
 	Default         bool   `name:"default" help:"Make the domain the team default after it becomes ready."`
+	Personal        bool   `name:"personal" help:"Claim the domain for your personal team."`
+}
+
+type domainTransferCommand struct {
+	remoteFlags `embed:""`
+	Domain      string `arg:"" name:"domain" required:"" help:"Custom domain to transfer."`
+	ToTeam      string `name:"to-team" help:"Destination team name or ID."`
+	ToPersonal  bool   `name:"to-personal" help:"Transfer to your personal team."`
+	Accept      bool   `name:"accept" help:"Accept a pending transfer as the destination owner."`
 }
 
 type domainDefaultCommand struct {
@@ -54,24 +65,80 @@ func runDomainClaim(ctx context.Context, command domainClaimCommand, output, dia
 	if err != nil || domain != command.Domain {
 		return failure.Wrap("validate custom domain", failure.InvalidDomainName, errors.Join(err, errors.New("domain must use lowercase ASCII DNS labels without a trailing dot")))
 	}
+	if command.Personal && command.Team != "" {
+		return failure.Wrap("select domain owner", failure.InvalidTunnelFlags, errors.New("choose either --personal or --team"))
+	}
 	session, err := openTeamSession(ctx, command.selection(), "tnl domain claim", diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	current, err := session.CurrentWithDomains(ctx)
-	if err != nil {
-		return err
+	teamID := session.Identity().PersonalTeamId
+	if !command.Personal {
+		membership, err := session.CurrentMembership(ctx)
+		if err != nil {
+			return err
+		}
+		teamID = membership.TeamId
 	}
 	key, err := randomIdempotencyKey()
 	if err != nil {
 		return err
 	}
-	claimed, timedOut, err := clientteam.ClaimAndWaitForDomainRecords(ctx, session.Authenticated().Authority, current.Team().Id, domain, key, command.Default, defaultDomainClaimWait())
+	claimed, timedOut, err := clientteam.ClaimAndWaitForDomainRecords(ctx, session.Authenticated().Authority, teamID, domain, key, command.Default, defaultDomainClaimWait())
 	if err != nil {
 		return err
 	}
-	return writeDomainClaimWithContext(output, claimed, command.Default, timedOut, session.Authenticated().ServerEndpoint, current.Team().Id)
+	return writeDomainClaimWithContext(output, claimed, command.Default, timedOut, session.Authenticated().ServerEndpoint, teamID)
+}
+
+func runDomainTransfer(ctx context.Context, command domainTransferCommand, output, diagnostics io.Writer) error {
+	if (command.ToTeam != "") == command.ToPersonal {
+		return failure.Wrap("select destination", failure.InvalidTunnelFlags, errors.New("choose one of --to-personal or --to-team"))
+	}
+	if domain, err := naming.CanonicalizeHostname(command.Domain); err != nil || domain != command.Domain {
+		return failure.Wrap("validate custom domain", failure.InvalidDomainName, errors.New("domain must use lowercase ASCII DNS labels without a trailing dot"))
+	}
+	session, err := openTeamSession(ctx, command.remoteFlags, "tnl domain transfer", diagnostics)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	destination := command.ToTeam
+	if command.ToPersonal {
+		destination = session.Identity().PersonalTeamId
+	} else if !opaqueid.Valid(destination, opaqueid.TeamPrefix) {
+		membership, err := session.ResolveMembership(ctx, destination)
+		if err != nil {
+			return err
+		}
+		destination = membership.TeamId
+	}
+	result, err := session.Authenticated().Authority.TransferDomain(ctx, command.Domain, destination, command.Accept)
+	if err != nil {
+		return err
+	}
+	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "domain", Value: result.Domain},
+		clioutput.Field{Label: "from team", Value: result.SourceTeamId}, clioutput.Field{Label: "to team", Value: result.DestinationTeamId})}
+	hint := "existing DNS delegation kept"
+	switch result.State {
+	case authorityv1.Blocked:
+		if result.Blockers == nil || len(*result.Blockers) == 0 {
+			return failure.Wrap("transfer domain", failure.ServerResponseInvalid, errors.New("missing transfer blockers"))
+		}
+		return failure.Wrap("transfer domain", failure.ServerConflict, errors.New(strings.Join(*result.Blockers, "\n")))
+	case authorityv1.Offered:
+		if result.ExpiresAt == nil {
+			return failure.Wrap("transfer domain", failure.ServerResponseInvalid, errors.New("missing transfer offer expiry"))
+		}
+		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "expires", Value: result.ExpiresAt.Format(time.RFC3339)},
+			clioutput.Field{Label: "accept", Value: "tnl domain transfer " + result.Domain + " --to-team " + destination + " --accept"}))
+		hint = "send the accept command to the destination owner"
+	case authorityv1.Transferred:
+	default:
+		return failure.Wrap("transfer domain", failure.ServerResponseInvalid, errors.New("unknown transfer outcome"))
+	}
+	return writeHumanFrame(output, "tnl domain transfer", string(result.State), hint, blocks...)
 }
 
 func defaultDomainClaimWait() clientteam.DomainClaimWait {
@@ -97,6 +164,9 @@ func writeDomainClaimWithContext(output io.Writer, claimed authorityv1.Domain, m
 		clioutput.Field{Label: "state", Value: string(claimed.State)},
 		clioutput.Field{Label: "id", Value: claimed.Id},
 	)}
+	if team != "" {
+		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "team", Value: team}))
+	}
 	blocks = append(blocks, domainClaimDNSBlocks(claimed)...)
 	if makeDefault && claimed.ClaimStage != nil {
 		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "default", Value: "when ready"}))
@@ -368,5 +438,10 @@ func (a *commandApp) newDomainCommand() *cobra.Command {
 		return runDomainRelease(call.ctx, f.Domain.Release, a.out, a.errOut)
 	})
 	cDomain.AddCommand(cDomainRelease)
+	cDomainTransfer := &cobra.Command{Use: "transfer", Short: "Transfer a custom domain without changing its DNS delegation."}
+	a.leaf(cDomainTransfer, &f.Domain.Transfer, func(call commandCall) error {
+		return runDomainTransfer(call.ctx, f.Domain.Transfer, a.out, a.errOut)
+	})
+	cDomain.AddCommand(cDomainTransfer)
 	return cDomain
 }

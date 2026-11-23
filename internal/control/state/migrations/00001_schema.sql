@@ -373,6 +373,17 @@ CREATE UNIQUE INDEX domains_creator_idempotency
     ON control.domains (team_id, created_by_identity_id, claim_idempotency_key)
     WHERE claim_idempotency_key IS NOT NULL;
 
+CREATE TABLE control.domain_transfer_offers (
+    domain_id text PRIMARY KEY REFERENCES control.domains(id) ON DELETE RESTRICT,
+    source_team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
+    destination_team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
+    offered_by text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    offered_session_id text NOT NULL,
+    authority_revision bigint NOT NULL,
+    expires_at timestamptz NOT NULL,
+    CHECK (source_team_id <> destination_team_id)
+);
+
 ALTER TABLE control.teams
     ADD CONSTRAINT teams_default_domain_id_fkey
     FOREIGN KEY (default_domain_id) REFERENCES control.domains(id) ON DELETE RESTRICT;

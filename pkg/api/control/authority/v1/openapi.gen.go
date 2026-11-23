@@ -211,6 +211,27 @@ func (e DomainState) Valid() bool {
 	}
 }
 
+// Defines values for DomainTransferState.
+const (
+	Blocked     DomainTransferState = "blocked"
+	Offered     DomainTransferState = "offered"
+	Transferred DomainTransferState = "transferred"
+)
+
+// Valid indicates whether the value is a known member of the DomainTransferState enum.
+func (e DomainTransferState) Valid() bool {
+	switch e {
+	case Blocked:
+		return true
+	case Offered:
+		return true
+	case Transferred:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EmailDeliveryRequestType.
 const (
 	TeamInvitation EmailDeliveryRequestType = "team_invitation"
@@ -743,6 +764,26 @@ type DomainReleaseBlocker string
 
 // DomainState defines model for DomainState.
 type DomainState string
+
+// DomainTransfer defines model for DomainTransfer.
+type DomainTransfer struct {
+	Blockers          *[]string           `json:"blockers,omitempty"`
+	DestinationTeamId TeamID              `json:"destination_team_id"`
+	Domain            CanonicalHostname   `json:"domain"`
+	ExpiresAt         *time.Time          `json:"expires_at,omitempty"`
+	SourceTeamId      TeamID              `json:"source_team_id"`
+	State             DomainTransferState `json:"state"`
+}
+
+// DomainTransferState defines model for DomainTransfer.State.
+type DomainTransferState string
+
+// DomainTransferRequest defines model for DomainTransferRequest.
+type DomainTransferRequest struct {
+	Accept            *bool             `json:"accept,omitempty"`
+	DestinationTeamId TeamID            `json:"destination_team_id"`
+	Domain            CanonicalHostname `json:"domain"`
+}
 
 // EmailDeliveryRequest Invitation email sent by control to POST /api/internal/tnl/emails on the configured mailer. HTTP 204 means the mailer sent it or already recorded that delivery_id.
 type EmailDeliveryRequest struct {
@@ -1446,6 +1487,9 @@ type RefreshControlSessionJSONRequestBody = RefreshControlSessionRequest
 // RecoverCompanyOwnerJSONRequestBody defines body for RecoverCompanyOwner for application/json ContentType.
 type RecoverCompanyOwnerJSONRequestBody RecoverCompanyOwnerJSONBody
 
+// TransferDomainJSONRequestBody defines body for TransferDomain for application/json ContentType.
+type TransferDomainJSONRequestBody = DomainTransferRequest
+
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
 
@@ -1734,6 +1778,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
 	RecoverCompanyOwner(ctx context.Context, body RecoverCompanyOwnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TransferDomainWithBody Offer, accept, or complete a verified custom domain transfer
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/domain-transfers (the `TransferDomain` operationId).
+	TransferDomainWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TransferDomain Offer, accept, or complete a verified custom domain transfer
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/domain-transfers (the `TransferDomain` operationId).
+	TransferDomain(ctx context.Context, body TransferDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetIdentityContext Read the authenticated identity and memberships
 	//
@@ -2492,6 +2550,40 @@ func (c *Client) RecoverCompanyOwnerWithBody(ctx context.Context, contentType st
 // Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
 func (c *Client) RecoverCompanyOwner(ctx context.Context, body RecoverCompanyOwnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRecoverCompanyOwnerRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TransferDomainWithBody Offer, accept, or complete a verified custom domain transfer
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/domain-transfers (the `TransferDomain` operationId).
+func (c *Client) TransferDomainWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTransferDomainRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TransferDomain Offer, accept, or complete a verified custom domain transfer
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/domain-transfers (the `TransferDomain` operationId).
+func (c *Client) TransferDomain(ctx context.Context, body TransferDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTransferDomainRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4236,6 +4328,46 @@ func NewRecoverCompanyOwnerRequestWithBody(server string, contentType string, bo
 	}
 
 	operationPath := fmt.Sprintf("/v1/company-access/recovery")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewTransferDomainRequest calls the generic TransferDomain builder with application/json body
+func NewTransferDomainRequest(server string, body TransferDomainJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewTransferDomainRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewTransferDomainRequestWithBody constructs an http.Request for the TransferDomain method, with any body, and a specified content type
+func NewTransferDomainRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/domain-transfers")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6984,6 +7116,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/company-access/recovery (the `RecoverCompanyOwner` operationId).
 	RecoverCompanyOwnerWithResponse(ctx context.Context, body RecoverCompanyOwnerJSONRequestBody, reqEditors ...RequestEditorFn) (*RecoverCompanyOwnerResponse, error)
 
+	// TransferDomainWithBodyWithResponse Offer, accept, or complete a verified custom domain transfer
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/domain-transfers (the `TransferDomain` operationId).
+	TransferDomainWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransferDomainResponse, error)
+
+	// TransferDomainWithResponse Offer, accept, or complete a verified custom domain transfer
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/domain-transfers (the `TransferDomain` operationId).
+	TransferDomainWithResponse(ctx context.Context, body TransferDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*TransferDomainResponse, error)
+
 	// GetIdentityContextWithResponse Read the authenticated identity and memberships
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -8057,6 +8203,54 @@ func (r RecoverCompanyOwnerResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RecoverCompanyOwnerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type TransferDomainResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DomainTransfer
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r TransferDomainResponse) GetJSON200() *DomainTransfer {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r TransferDomainResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r TransferDomainResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r TransferDomainResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TransferDomainResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r TransferDomainResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -10724,6 +10918,32 @@ func (c *ClientWithResponses) RecoverCompanyOwnerWithResponse(ctx context.Contex
 	return ParseRecoverCompanyOwnerResponse(rsp)
 }
 
+// TransferDomainWithBodyWithResponse Offer, accept, or complete a verified custom domain transfer
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/domain-transfers (the `TransferDomain` operationId).
+func (c *ClientWithResponses) TransferDomainWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransferDomainResponse, error) {
+	rsp, err := c.TransferDomainWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTransferDomainResponse(rsp)
+}
+
+// TransferDomainWithResponse Offer, accept, or complete a verified custom domain transfer
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/domain-transfers (the `TransferDomain` operationId).
+func (c *ClientWithResponses) TransferDomainWithResponse(ctx context.Context, body TransferDomainJSONRequestBody, reqEditors ...RequestEditorFn) (*TransferDomainResponse, error) {
+	rsp, err := c.TransferDomain(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTransferDomainResponse(rsp)
+}
+
 // GetIdentityContextWithResponse Read the authenticated identity and memberships
 //
 // Returns a wrapper object for the known response body format(s).
@@ -12087,6 +12307,39 @@ func ParseRecoverCompanyOwnerResponse(rsp *http.Response) (*RecoverCompanyOwnerR
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseTransferDomainResponse parses an HTTP response from a TransferDomainWithResponse call
+func ParseTransferDomainResponse(rsp *http.Response) (*TransferDomainResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TransferDomainResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DomainTransfer
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -13805,6 +14058,9 @@ type ServerInterface interface {
 	// RecoverCompanyOwner Explicit audited recovery grants a personal-account exception to a nonremoved owner
 	// (POST /v1/company-access/recovery)
 	RecoverCompanyOwner(w http.ResponseWriter, r *http.Request)
+	// TransferDomain Offer, accept, or complete a verified custom domain transfer
+	// (POST /v1/domain-transfers)
+	TransferDomain(w http.ResponseWriter, r *http.Request)
 	// GetIdentityContext Read the authenticated identity and memberships
 	// (GET /v1/identity)
 	GetIdentityContext(w http.ResponseWriter, r *http.Request)
@@ -14218,6 +14474,20 @@ func (siw *ServerInterfaceWrapper) RecoverCompanyOwner(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RecoverCompanyOwner(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TransferDomain operation middleware
+func (siw *ServerInterfaceWrapper) TransferDomain(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TransferDomain(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -16476,6 +16746,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/invitations/accept", wrapper.AcceptInvitation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/domains", wrapper.ListTeamDomains)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/domains", wrapper.ClaimTeamDomain)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/domain-transfers", wrapper.TransferDomain)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}/default", wrapper.SetTeamDefaultDomain)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}", wrapper.ReleaseTeamDomain)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/domains/{domain_id}", wrapper.GetTeamDomain)

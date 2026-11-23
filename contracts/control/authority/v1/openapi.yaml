@@ -114,6 +114,8 @@ paths:
     $ref: "./paths/invites.yaml#/paths/~1v1~1invitations~1accept"
   /v1/teams/{team_id}/domains:
     $ref: "./paths/domains.yaml#/paths/~1v1~1teams~1{team_id}~1domains"
+  /v1/domain-transfers:
+    $ref: "./paths/domains.yaml#/paths/~1v1~1domain-transfers"
   /v1/teams/{team_id}/domains/{domain_id}/default:
     $ref: "./paths/domains.yaml#/paths/~1v1~1teams~1{team_id}~1domains~1{domain_id}~1default"
   /v1/teams/{team_id}/domains/{domain_id}:
@@ -291,6 +293,10 @@ components:
       $ref: "./schemas/domains.yaml#/schemas/DomainPage"
     ClaimDomainRequest:
       $ref: "./schemas/domains.yaml#/schemas/ClaimDomainRequest"
+    DomainTransferRequest:
+      $ref: "./schemas/domains.yaml#/schemas/DomainTransferRequest"
+    DomainTransfer:
+      $ref: "./schemas/domains.yaml#/schemas/DomainTransfer"
     CertificateChallengeMethod:
       $ref: "./schemas/common.yaml#/schemas/CertificateChallengeMethod"
     CertificatePlan:

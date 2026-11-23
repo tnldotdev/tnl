@@ -141,3 +141,37 @@ schemas:
       make_default:
         type: boolean
         default: false
+  DomainTransferRequest:
+    type: object
+    additionalProperties: false
+    required: [domain, destination_team_id]
+    properties:
+      domain:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+      destination_team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      accept:
+        type: boolean
+        default: false
+  DomainTransfer:
+    type: object
+    additionalProperties: false
+    required: [state, domain, source_team_id, destination_team_id]
+    properties:
+      state:
+        type: string
+        enum: [offered, blocked, transferred]
+      domain:
+        $ref: "../openapi.yaml#/components/schemas/CanonicalHostname"
+      source_team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      destination_team_id:
+        $ref: "../openapi.yaml#/components/schemas/TeamID"
+      blockers:
+        type: array
+        maxItems: 27
+        items:
+          type: string
+      expires_at:
+        type: string
+        format: date-time
