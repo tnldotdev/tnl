@@ -90,15 +90,23 @@ export function createProxy(release: Release, fetchHost = fetch) {
     path: string,
     signal: AbortSignal,
     check: (response: Response) => Promise<T>,
+    headerBudget?: number,
   ) {
     let response: Response | undefined;
     try {
-      response = await fetchHost(new URL(path, origin), {
-        cache: "no-store",
-        credentials: "omit",
-        redirect: "manual",
-        signal,
-      });
+      const headers = new AbortController();
+      const timer =
+        headerBudget === undefined ? undefined : setTimeout(() => headers.abort(), headerBudget);
+      try {
+        response = await fetchHost(new URL(path, origin), {
+          cache: "no-store",
+          credentials: "omit",
+          redirect: "manual",
+          signal: timer === undefined ? signal : AbortSignal.any([signal, headers.signal]),
+        });
+      } finally {
+        clearTimeout(timer);
+      }
       const value = await check(response);
       signal.throwIfAborted();
       return value;
@@ -151,7 +159,11 @@ export function createProxy(release: Release, fetchHost = fetch) {
     request: Request,
     sharedHost: string,
     retain: Retain | undefined,
-    read: (origin: string, signal: AbortSignal) => Promise<Response | undefined>,
+    read: (
+      origin: string,
+      signal: AbortSignal,
+      alternate: boolean,
+    ) => Promise<Response | undefined>,
     discover: (message: GossipMessage) => Response | undefined = () => undefined,
   ): Promise<Response> {
     const deadline = AbortSignal.any([request.signal, AbortSignal.timeout(20_000)]);
@@ -159,7 +171,7 @@ export function createProxy(release: Release, fetchHost = fetch) {
     const attempted = new Set<string>();
     refresh(candidates(Date.now()), retain);
     while (attempted.size < ATTEMPTS && !deadline.aborted) {
-      const origins = candidates(Date.now()).filter((origin) => !attempted.has(origin));
+      let origins = candidates(Date.now()).filter((origin) => !attempted.has(origin));
       let origin = origins[cursor % origins.length];
       // after two cached aliases fail, use the remaining attempt on a host
       // answering the shared address. the roster may lag behind a turnover.
@@ -170,17 +182,21 @@ export function createProxy(release: Release, fetchHost = fetch) {
           const response = discover(message);
           if (response !== undefined) return response;
         }
-        const available = candidates(Date.now()).filter((value) => !attempted.has(value));
+        origins = candidates(Date.now()).filter((value) => !attempted.has(value));
         origin =
-          attempted.size > 0 && message !== undefined && available.includes(message.from.origin)
+          attempted.size > 0 && message !== undefined && origins.includes(message.from.origin)
             ? message.from.origin
-            : available[cursor % available.length];
+            : origins[cursor % origins.length];
       }
       if (origin === undefined || deadline.aborted) break;
       // pick the starting position synchronously so concurrent requests rotate too.
       if (attempted.size === 0) cursor++;
       attempted.add(origin);
-      const response = await read(origin, deadline);
+      const response = await read(
+        origin,
+        deadline,
+        attempted.size < ATTEMPTS && origins.length > 1,
+      );
       if (response !== undefined) return response;
       if (!deadline.aborted) coolDown(origin);
     }
@@ -199,16 +215,22 @@ export function createProxy(release: Release, fetchHost = fetch) {
       ) {
         return new Response(null, { status: 404 });
       }
-      return fromHost(request, sharedHost, retain, (origin, deadline) => {
+      return fromHost(request, sharedHost, retain, (origin, deadline, alternate) => {
         const signal = AbortSignal.any([deadline, AbortSignal.timeout(6_000)]);
         const selected = known.get(origin);
-        return get(origin, asset.path, signal, async (response) => {
-          const bytes = await readAssetResponse(asset, response, signal);
-          signal.throwIfAborted();
-          if (selected !== undefined && known.get(origin) === selected)
-            selected.seenAt = Date.now();
-          return new Response(bytes, { headers: siteHeaders(contentType(asset.path)) });
-        });
+        return get(
+          origin,
+          asset.path,
+          signal,
+          async (response) => {
+            const bytes = await readAssetResponse(asset, response, signal);
+            signal.throwIfAborted();
+            if (selected !== undefined && known.get(origin) === selected)
+              selected.seenAt = Date.now();
+            return new Response(bytes, { headers: siteHeaders(contentType(asset.path)) });
+          },
+          alternate ? 1_000 : undefined,
+        );
       });
     },
     peers(request: Request, sharedHost = SHARED_HOST, retain?: Retain) {
