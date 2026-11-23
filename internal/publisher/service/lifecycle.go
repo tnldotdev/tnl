@@ -647,6 +647,8 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	ready := false
 	heartbeatOK := true
 	startupConfirmationAttempted := false
+	var aliasCheck <-chan time.Time
+	const aliasCheckDelay = time.Second
 	refreshHeartbeat := func() (stop bool, err error) {
 		if !state.PublisherExpiresAt.After(time.Now()) {
 			return true, ErrPrivateStream
@@ -757,6 +759,17 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				if stop, err := refreshHeartbeat(); stop {
 					return err
 				}
+				// alias DNS can publish just after the first two slots connect.
+				// give that exact run one more observation before the next regular
+				// heartbeat. a regular tick supersedes this check, even on failure.
+				if heartbeatOK && config.HeartbeatInterval > aliasCheckDelay && approved.Endpoint.Public &&
+					state.EndpointRevision == approved.EndpointRevision && prepared.runHostname != "" &&
+					state.RunHostname != nil && *state.RunHostname == prepared.runHostname &&
+					state.RunAliasReady != nil && !*state.RunAliasReady {
+					timer := time.NewTimer(aliasCheckDelay)
+					defer timer.Stop()
+					aliasCheck = timer.C
+				}
 				continue
 			}
 		}
@@ -783,8 +796,18 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			expires.Stop()
 		case <-prepared.certificateInstalled:
 			expires.Stop()
+		case <-aliasCheck:
+			expires.Stop()
+			aliasCheck = nil
+			current, _ := paths.Snapshot()
+			if !ready && localReadiness(current, time.Now()) {
+				if stop, err := refreshHeartbeat(); stop {
+					return err
+				}
+			}
 		case <-ticker.C:
 			expires.Stop()
+			aliasCheck = nil
 			if stop, err := refreshHeartbeat(); stop {
 				return err
 			}
