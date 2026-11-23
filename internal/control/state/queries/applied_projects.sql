@@ -58,6 +58,11 @@ SELECT g.* FROM control.deployments g
 WHERE g.team_id=sqlc.arg(team_id) AND g.project_key=sqlc.arg(project_key) AND g.deleted_at IS NULL
 AND (g.id=sqlc.arg(selector) OR EXISTS(SELECT 1 FROM control.deployment_names alias WHERE alias.deployment_id=g.id AND alias.name=sqlc.arg(selector))) FOR UPDATE;
 
+-- name: ObserveDeployment :one
+SELECT g.* FROM control.deployments g
+WHERE g.team_id=sqlc.arg(team_id) AND g.project_key=sqlc.arg(project_key) AND g.deleted_at IS NULL
+AND (g.id=sqlc.arg(selector) OR EXISTS(SELECT 1 FROM control.deployment_names alias WHERE alias.deployment_id=g.id AND alias.name=sqlc.arg(selector))) FOR SHARE;
+
 -- name: ListDeployments :many
 SELECT * FROM control.deployments
 WHERE team_id=sqlc.arg(team_id) AND project_key=sqlc.arg(project_key) AND deleted_at IS NULL

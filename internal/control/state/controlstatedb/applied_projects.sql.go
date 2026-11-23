@@ -694,6 +694,42 @@ func (q *Queries) LockDeploymentByID(ctx context.Context, id string) (ControlDep
 	return i, err
 }
 
+const observeDeployment = `-- name: ObserveDeployment :one
+SELECT g.ownership, g.id, g.team_id, g.project_key, g.name, g.description, g.domain_id, g.namespace, g.revision, g.configuration_hash, g.configuration_ciphertext, g.storage_key_id, g.create_principal_id, g.create_idempotency_key, g.create_request_digest, g.deleted_at FROM control.deployments g
+WHERE g.team_id=$1 AND g.project_key=$2 AND g.deleted_at IS NULL
+AND (g.id=$3 OR EXISTS(SELECT 1 FROM control.deployment_names alias WHERE alias.deployment_id=g.id AND alias.name=$3)) FOR SHARE
+`
+
+type ObserveDeploymentParams struct {
+	TeamID     string
+	ProjectKey string
+	Selector   string
+}
+
+func (q *Queries) ObserveDeployment(ctx context.Context, arg ObserveDeploymentParams) (ControlDeployment, error) {
+	row := q.db.QueryRow(ctx, observeDeployment, arg.TeamID, arg.ProjectKey, arg.Selector)
+	var i ControlDeployment
+	err := row.Scan(
+		&i.Ownership,
+		&i.ID,
+		&i.TeamID,
+		&i.ProjectKey,
+		&i.Name,
+		&i.Description,
+		&i.DomainID,
+		&i.Namespace,
+		&i.Revision,
+		&i.ConfigurationHash,
+		&i.ConfigurationCiphertext,
+		&i.StorageKeyID,
+		&i.CreatePrincipalID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestDigest,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const removeProjectServiceDeclarations = `-- name: RemoveProjectServiceDeclarations :exec
 DELETE FROM control.project_services declaration
 WHERE declaration.team_id=$1 AND declaration.project_key=$2 AND NOT(declaration.name=ANY($3::text[]))
