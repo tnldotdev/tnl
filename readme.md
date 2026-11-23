@@ -19,7 +19,7 @@ Give your local app an HTTPS URL you can share, or connect to a service on a pri
 
 `tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop.
 
-Imagine Chase works at Hooli. He leaves the `hooli/nucleus` app running in his main checkout while he tests a compression speedup in a `perf` worktree. Each checkout gets its own URL:
+For example, Chase works at Hooli. He leaves the `hooli/nucleus` app running in his main checkout while he tests a compression speedup in a `perf` worktree. Each checkout gets its own URL:
 
 ```text
                                your browser
@@ -60,7 +60,7 @@ For instance, you can run a `tnl` publisher inside your VPC. Traffic between the
 The connection will attempt P2P hole-punched UDP and fall back to using relays (which can't read your encrypted traffic). Your db or Kubernetes API aren't publicly exposed:
 
 ```text
-    tnl (your laptop)    tnl (GitHub Actions)    tnl (Node.js/Python)
+    tnl (your laptop)    tnl (GitHub Actions)      tnl (JS/Python)
             |                      |                      |
             +----------------------+----------------------+
                                    |
@@ -376,15 +376,17 @@ export default defineConfig({
 });
 ```
 
-The deployment handle reads the job's prepared connection settings without stopping
-the job-owned connector. The db password comes from GitHub secrets. In an
-application, close the deployment handle after the database client has closed.
-
 See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actions-job).
 
 ## custom domains or self-hosting
 
-You can also add a subdomain you own. For example, if Chase claims `tnl.hooli.xyz` for his personal team, he can publish an app at `app.tnl.hooli.xyz`. If a team, e.g. Hooli, claims the subdomain, each team member gets a separate name: Chase uses `app.chase.tnl.hooli.xyz`, and Aya uses `app.aya.tnl.hooli.xyz`.
+You can also add a subdomain you own. Here’s how hostnames under `tnl.hooli.xyz` look for personal/org teams:
+
+| Team        | Developer | Hostname                  |
+| ----------- | --------- | ------------------------- |
+| Personal    | Chase     | `app.tnl.chaseadams.dev`  |
+| Org (Hooli) | Chase     | `app.chase.tnl.hooli.xyz` |
+| Org (Hooli) | Gavin     | `app.gavin.tnl.hooli.xyz` |
 
 Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates. See [setting up a custom domain](https://tnl.dev/docs/domains).
 
@@ -422,7 +424,7 @@ Here's how `tnl` compares to Tailscale, Cloudflare, and ngrok.
 
 ## contributing
 
-External pull requests are not accepted. Please open an issue to report a bug or suggest a change.
+External pull requests are not accepted. Please open an issue to report a bug or suggest a change, or open a fork; we will periodically review ideas from forks.
 
 ## license
 
