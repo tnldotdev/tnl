@@ -39,6 +39,7 @@ type PreparedConnector struct {
 	closeErr           error
 	work               sync.WaitGroup
 	permissionUpdates  chan preparedPermissionRenewal
+	shorterPermission  chan struct{}
 	permissionCancel   context.CancelCauseFunc
 	permissionStop     *preparedPermissionStop
 	permissionUntil    time.Time
@@ -61,7 +62,9 @@ func (streamForwarding) preparedStreamPhase() {}
 func (streamClosed) preparedStreamPhase()     {}
 
 type preparedPermissionPhase interface{ preparedPermissionPhase() }
-type permissionUsable struct{}
+type permissionUsable struct {
+	acknowledged tunnelv1.ConnectorPermissionUpdate
+}
 type permissionQueued struct{ wait chan struct{} }
 type permissionRenewing struct{ wait chan struct{} }
 type permissionDenied struct{}
@@ -350,8 +353,22 @@ func (p *PreparedConnector) finish() {
 func (p *PreparedConnector) queuePermission(renewal preparedPermissionRenewal) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closedLocked() || p.ctx.Err() != nil || p.permissionDeniedLocked() || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now()) {
+	now := time.Now()
+	if p.closedLocked() || p.ctx.Err() != nil || p.permissionDeniedLocked() || !renewal.until.After(now) || !p.permissionUntil.IsZero() && !p.permissionUntil.After(now) {
 		return ErrServiceConnection
+	}
+	// this exact visitor, binding and signed proof already have a publisher
+	// acknowledgment. a repeat can shorten its local fence, never extend it.
+	if usable, ok := p.permission.(permissionUsable); ok && usable.acknowledged.VisitorConnectionID != "" &&
+		usable.acknowledged == renewal.update && !renewal.until.After(p.permissionUntil) {
+		if renewal.until.Before(p.permissionUntil) {
+			p.permissionUntil = renewal.until
+			select {
+			case p.shorterPermission <- struct{}{}:
+			default:
+			}
+		}
+		return nil
 	}
 	if p.permissionWaitLocked() == nil {
 		p.permission = permissionQueued{wait: make(chan struct{})}
@@ -379,6 +396,7 @@ func (p *PreparedConnector) startPermissionWorkerLocked() {
 	p.permissionCancel = cancel
 	p.permissionStop = &preparedPermissionStop{owner: p}
 	p.permissionUpdates = make(chan preparedPermissionRenewal, 1)
+	p.shorterPermission = make(chan struct{}, 1)
 	p.work.Add(1)
 	go p.renewPermissions(ctx, p.permissionUpdates)
 }
@@ -404,25 +422,32 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 		p.mu.Unlock()
 		wait := ctx
 		stopWait := func() {}
+		idle := &preparedPermissionExpiry{owner: p, until: until}
 		if !until.IsZero() {
-			wait, stopWait = context.WithDeadlineCause(ctx, until, &preparedPermissionExpiry{owner: p, until: until})
+			wait, stopWait = context.WithDeadlineCause(ctx, until, idle)
 		}
 		select {
+		case <-p.shorterPermission:
+			stopWait()
+			continue
 		case <-wait.Done():
 			if cause := context.Cause(wait); !failure.Only(cause, p.permissionStop) {
+				p.mu.Lock()
 				switch authority := cause.(type) {
 				case *connectorAuthorityExpiry:
 					// only an idle wait borrows the owning watcher's stop. an
 					// entered renewal below retains its entire operation result.
-					cause = &preparedPermissionExpiry{owner: p, until: until, cause: authority}
+					cause = &preparedPermissionExpiry{owner: p, until: p.permissionUntil, cause: authority}
 				case *preparedPermissionExpiry:
-					// the idle timer retains its separate exact expiry provenance.
+					if authority == idle {
+						// a shorter fence may have raced this same idle timer.
+						cause = &preparedPermissionExpiry{owner: p, until: p.permissionUntil}
+					}
 				default:
 					if p.ctx.Err() != nil {
 						cause = &preparedPermissionOwnerStop{owner: p, lifetime: p.ctx}
 					}
 				}
-				p.mu.Lock()
 				p.permissionErr = cause
 				p.mu.Unlock()
 			}
@@ -431,15 +456,7 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 			return
 		case renewal := <-updates:
 			stopWait()
-			// the writer owns the short exchange budget so a staged packet binding
-			// can pause delivery without borrowing the unacknowledged new authority.
-			bound := renewal.until
-			if !until.IsZero() {
-				bound = earliestConnectorDeadline(bound, until)
-			}
-			call, cancel := context.WithDeadline(ctx, bound)
-			err := p.renewPermission(call, func() error { return renewal.writer.Renew(call, renewal.update) }, renewal.until)
-			cancel()
+			err := p.renewPermission(ctx, renewal)
 			if failure.Only(err, tunnel.ErrConnectorPermissionStale) {
 				continue // keep the write fence until a fresh binding proof is ACKed.
 			}
@@ -476,7 +493,7 @@ func (p *PreparedConnector) Close() error {
 // renewPermission fences only new writes for this visitor until the publisher
 // acknowledges its signed update. an already-entered write never delays control
 // renewal. denial leaves a permanent fence before any waiting write is released.
-func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() error, nextUntil time.Time) error {
+func (p *PreparedConnector) renewPermission(ctx context.Context, renewal preparedPermissionRenewal) error {
 	p.mu.Lock()
 	if cause := context.Cause(ctx); cause != nil {
 		p.mu.Unlock()
@@ -495,17 +512,28 @@ func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() er
 		pending = make(chan struct{})
 	}
 	p.permission = permissionRenewing{wait: pending}
+	// use the current fence even if both a shorter deadline and a new proof
+	// arrived while the worker was idle. only an acknowledgment can extend it.
+	bound := renewal.until
+	if !p.permissionUntil.IsZero() {
+		bound = earliestConnectorDeadline(bound, p.permissionUntil)
+	}
 	p.mu.Unlock()
-	err := renew()
+	call, cancel := context.WithDeadline(ctx, bound)
+	err := context.Cause(call)
+	if err == nil {
+		err = renewal.writer.Renew(call, renewal.update)
+	}
+	cancel()
 	p.mu.Lock()
 	if err == nil && !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now()) {
 		err = context.DeadlineExceeded
 	}
 	if err == nil {
-		if !nextUntil.After(time.Now()) {
+		if !renewal.until.After(time.Now()) {
 			err = context.DeadlineExceeded
 		} else {
-			p.permissionUntil = nextUntil
+			p.permissionUntil = renewal.until
 		}
 	}
 	stale := failure.Only(err, tunnel.ErrConnectorPermissionStale)
@@ -520,7 +548,7 @@ func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() er
 		p.permission = permissionDenied{}
 		close(pending)
 	} else if len(p.permissionUpdates) == 0 {
-		p.permission = permissionUsable{}
+		p.permission = permissionUsable{acknowledged: renewal.update}
 		close(pending)
 	} else {
 		p.permission = permissionQueued{wait: pending}

@@ -82,6 +82,14 @@ func TestConnectorRenewalDenialKeepsAcknowledgmentFailureAfterCarrierClosure(t *
 		defer leg.Close()
 		changed := make(chan struct{})
 		close(changed)
+		// an authority notification in the final interval cannot extend this
+		// leg. only a later pair horizon should send the scripted renewal.
+		original := p.until
+		p.until = time.Now().Add(time.Millisecond)
+		if disposition, err := p.maintainConnectorLeg(budget, 0, leg, changed); disposition != retryAttempt || err != nil || p.terminalDenied != nil {
+			t.Fatal("redundant renewal entered the relay exchange before pair expiry", disposition, err)
+		}
+		p.until = original
 		disposition, err := p.maintainConnectorLeg(budget, 0, leg, changed)
 		var cleanup *tunnel.SessionCleanupError
 		if disposition != terminateConnection || !errors.Is(err, physical) || !errors.As(err, &cleanup) ||
