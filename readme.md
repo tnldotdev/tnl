@@ -19,18 +19,37 @@ Give your local app an HTTPS URL you can share, or connect to a service on a pri
 
 `tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop.
 
-Chase and Aya work on `zelda` at Nintendo. Nintendo has added
-`tnl.nintendo.com`, so each checkout gets its own URL:
+Imagine Chase works at Hooli. He leaves the `hooli/nucleus` app running in his main checkout while he tests a compression speedup in a `perf` worktree. Each checkout gets its own URL:
 
 ```text
-https://app-zelda.chase.tnl.nintendo.com       -> Chase's main checkout
-https://app-zelda-perf.chase.tnl.nintendo.com  -> Chase's perf worktree
-https://app-zelda.aya.tnl.nintendo.com         -> Aya's main checkout
+                               your browser
+                                     |
+                       https://*.chase.tnl.hooli.xyz
+                                     v
+                                tnl ingress
+                           (hosted/self-hosted)
+                                     |
+                  +------------------+------------------+
+                  |                                     |
+             direct UDP                             tnl relay
+          (when possible)                           (fallback)
+                  |                                     |
+                  +------------------+------------------+
+                                     |
++------------------------------------v------------------------------------+
+|                               your laptop                               |
+|                                    |                                    |
+|                  +-----------------+----------------+                   |
+|                  v                                  v                   |
+|         tnl (main checkout)                tnl (perf worktree)          |
+|   app-nucleus.chase.tnl.hooli.xyz  app-nucleus-perf.chase.tnl.hooli.xyz |
+|                  |                                  |                   |
+|                  v                                  v                   |
+|           localhost:5173                     localhost:5174             |
++-------------------------------------------------------------------------+
 ```
 
-Without a custom domain, Nintendo gets a generated suffix on `tnl.dev`, such as
-`copper-otter.tnl.dev`. Chase and Aya use member labels within Nintendo only.
-Chase's main URL would be `https://app-zelda.chase.copper-otter.tnl.dev`.
+The Next.js and Vite plugins automatically handle port conflicts. And OAuth and webhooks get one consistent URL that works across all worktrees.
 
 ### in prod
 
@@ -63,13 +82,12 @@ The connection will attempt P2P hole-punched UDP and fall back to using relays (
 +---------------------------------------------------------------------+
 ```
 
-If you can't install `tnl` on a client, you can give your service a public hostname and port instead. For example:
+If you can't install `tnl` on a client, you can give your service a public hostname and port instead. For example, Hooli could enable a public endpoint for `orders` in its `prod` deployment:
 
 ```text
                your app or database client
                             |
-                db.tnl.nintendo.com:15443
-                   (or your subdomain)
+      orders.prod.nucleus.deploy.tnl.hooli.xyz:15443
                             v
                        tnl ingress
                             |
@@ -113,15 +131,14 @@ export default defineConfig({
 });
 ```
 
-It also creates a project configuration. In Zelda, Chase and Aya add `team`
-so they publish to Nintendo even when another team is selected locally:
+It also creates a project configuration:
 
 ```ts
 // tnl.config.ts
 import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
-  team: "nintendo",
+  team: "hooli",
   feedback: true,
   services: { app: {} },
   deployments: {
@@ -141,26 +158,13 @@ pnpm exec tnl auth login
 By default, visitors need a sign-in, share link, or token. Hot reloading, WebSockets, SSE, and streaming responses are all supported.
 
 Already have an app listening on port 3000? Run `pnpm exec tnl publish 3000`.
-On hosted `tnl.dev`, it gives you a fresh, restricted URL under `preview.tnl.dev`
-without putting your name, team, or project in DNS. Ctrl+C stops serving.
-To use that URL again, run the `--public-url` command printed by `tnl`. Use
-`--ephemeral` if you want the service removed after it stops.
-
-Opaque URLs from one publisher share a random DNS parent and reuse that
-publisher's wildcard certificate. The URLs are visibly related, but the
-parent doesn't identify the publisher. The wildcard covers only that parent,
-not all of `preview.tnl.dev`. A replacement publisher can serve a saved URL
-with a new certificate for just that hostname.
-New publishers and replacements still need issuance capacity:
-`preview.tnl.dev` does not get a separate [Let's Encrypt limit](https://letsencrypt.org/docs/rate-limits/#new-certificates-per-registered-domain)
-from `tnl.dev`.
 
 See [installation options](https://tnl.dev/docs/publish), the
 [quickstart](https://tnl.dev/docs), and [framework integrations](https://tnl.dev/docs/frameworks).
 
 ## run worktrees side by side
 
-Chase leaves Zelda running in his main checkout. In another terminal:
+Once your `tnl` setup is committed to Git, you can leave the app running in your main checkout, and in another terminal, create a worktree and start the app there too:
 
 ```bash
 git worktree add ../perf
@@ -172,15 +176,20 @@ pnpm dev
 This would end up looking like:
 
 ```text
-app-zelda.chase.tnl.nintendo.com       -> tnl -> localhost:5173
-app-zelda-perf.chase.tnl.nintendo.com  -> tnl -> localhost:5174
+your browser
+|
++-- https://app-nucleus.chase.tnl.hooli.xyz
+|          |
+|          v
+|   main checkout -> localhost:5173
+|
++-- https://app-nucleus-perf.chase.tnl.hooli.xyz
+           |
+           v
+    perf worktree -> localhost:5174
 ```
 
-Vite and Next.js can choose another port when the preferred one is taken.
-Restarting a checkout, changing its port, or moving it with `git worktree move`
-keeps its URL. A fresh checkout at the old path gets a different address.
-Set `naming: "opaque"` in the project configuration to keep project and member
-names out of new app URLs. Read [more about worktrees](https://tnl.dev/docs/development#develop-in-parallel-worktrees).
+Vite and Next.js can choose another port when the preferred one is taken, and `tnl` will publish the port they actually open. Restarting either checkout reuses its URL. Read [more about worktrees](https://tnl.dev/docs/development#develop-in-parallel-worktrees).
 
 ## share it and get feedback
 
@@ -217,33 +226,41 @@ export default defineConfig({
 });
 ```
 
-Chase registers one URL for each integration across his Zelda worktrees.
+The OAuth and webhook URLs do not change when you work across multiple checkouts. They "just work" across all your worktrees.
 
 OAuth automatically returns the browser to the worktree that started login:
 
 ```text
-https://app-zelda-perf.chase.tnl.nintendo.com
-    |
-    v
-  GitHub
-    |
-    v
-https://oauth-zelda-k7n2p9.chase.tnl.nintendo.com/auth/callback
-    |
-    v
-https://app-zelda-perf.chase.tnl.nintendo.com
+              https://app-nucleus-perf.chase.tnl.hooli.xyz
+                                   |
+                                   | start login
+                                   v
+                                 GitHub
+                                   |
+                                   v
++--[ oauth callback url ]---------------------------------------------+
+|    https://oauth-nucleus-k7n2p9.chase.tnl.hooli.xyz/auth/callback   |
++---------------------------------------------------------------------+
+                                   |
+                                   | redirect browser
+                                   v
+              https://app-nucleus-perf.chase.tnl.hooli.xyz
 ```
 
 Or, for webhooks, the same event fans out to all running worktrees:
 
 ```text
-Stripe
-  |
-  v
-https://hooks-zelda-m5p7v2k4t3q6a.chase.tnl.nintendo.com/webhooks/stripe
-  |
-  +---> Chase's main checkout
-  +---> Chase's perf worktree
+                           webhook (e.g. Stripe)
+                                     |
+                                     v
++--[ webhook url ]--------------------------------------------------------+
+| https://hooks-nucleus-m5p7v2k4t3q6a.chase.tnl.hooli.xyz/webhooks/stripe |
++-------------------------------------------------------------------------+
+                                     |
+                         +-----------+-----------+
+                         |                       |
+                         v                       v
+                   main checkout            perf worktree
 ```
 
 You can also select a single webhook receiver, instead of fanning out. See [OAuth setup](https://tnl.dev/docs/development#register-one-oauth-callback-for-your-worktrees)
@@ -342,7 +359,7 @@ import { defineConfig } from "drizzle-kit";
 import { connect, deployment } from "@tnldotdev/tnl/node";
 
 const production = deployment("production", {
-  project: "nintendo/zelda",
+  project: "hooli/nucleus",
   services: { orders: { protocol: "postgres" } },
 });
 const database = await connect(production, "orders");
@@ -366,31 +383,9 @@ See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actio
 
 ## custom domains or self-hosting
 
-Claim only a domain you control. For example, Nintendo can delegate
-`tnl.nintendo.com` without changing the nameservers for `nintendo.com`.
+You can also add a subdomain you own. For example, if Chase claims `tnl.hooli.xyz` for his personal team, he can publish an app at `app.tnl.hooli.xyz`. If a team, e.g. Hooli, claims the subdomain, each team member gets a separate name: Chase uses `app.chase.tnl.hooli.xyz`, and Aya uses `app.aya.tnl.hooli.xyz`.
 
 Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates. See [setting up a custom domain](https://tnl.dev/docs/domains).
-
-Choose the owner at claim time:
-
-```sh
-tnl domain claim tnl.nintendo.com --personal
-# or, to claim it for Nintendo instead:
-tnl domain claim tnl.nintendo.com --team nintendo --default
-tnl domain status tnl.nintendo.com --team nintendo
-```
-
-With a personal claim, Chase's named `app` uses `app.tnl.nintendo.com`.
-With a Nintendo claim, Chase and Aya get `app.chase.tnl.nintendo.com` and
-`app.aya.tnl.nintendo.com`. Changing the default affects new services, not
-saved URLs. Deployments have their own branch, for example
-`app.production.zelda.deploy.tnl.nintendo.com`.
-
-Chase can later run `tnl domain transfer tnl.nintendo.com --to-team nintendo`.
-If he owns both teams, the move needs one command. Otherwise the destination
-owner runs the printed accept command. The same DNS delegation stays in place;
-saved services, publisher grants, and outstanding certificates must be cleared
-first. The reverse move uses `--to-personal`.
 
 Or, you can even run the whole stack yourself (control, ingress, and relays), forever free. See [running your own server](https://tnl.dev/docs/self-hosting).
 
