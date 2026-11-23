@@ -340,6 +340,11 @@ func (d *Database) commitDeploymentAccess(ctx context.Context, tx pgx.Tx, a depl
 	if a.grantID == "" {
 		return commitDeployment(ctx, tx, a.scope)
 	}
+	if a.mode == deploymentRead {
+		if err := observeDeploymentCredential(ctx, tx, a.principalID, a.grantID); err != nil {
+			return err
+		}
+	}
 	if _, err := d.authenticatePublisherAccess(ctx, controlstatedb.New(tx), a.scope.AccessToken, "", a.clock.current(), a.mode == deploymentMutation); err != nil {
 		return err
 	}

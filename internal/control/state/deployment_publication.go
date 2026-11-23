@@ -102,6 +102,9 @@ func (d *Database) GetDeploymentPublication(ctx context.Context, scope Deploymen
 	if err != nil {
 		return result, publisherLookupError(err, ErrDeploymentAccess)
 	}
+	if err := observeDeploymentCredential(ctx, tx, p.ID, p.GrantID); err != nil {
+		return result, err
+	}
 	p, err = d.currentDeploymentPublication(ctx, q, scope.AccessToken, clock, false)
 	if err != nil {
 		return result, err
