@@ -519,4 +519,41 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 			t.Fatalf("cross-team acknowledgement is not retry-stable: %+v %v", result, err)
 		}
 	}
+	// a conflict discovered after insertion must roll back the other owner's
+	// new event. its cursor must never appear in a later page.
+	batch := batches[0]
+	batch.Events[0].EventID = serviceaudit.NewID()
+	batch.Events[1].Reason = "capacity"
+	if _, err := d.IngestIngressServiceObservations(ctx, leases[0].IngressLeaseIdentity, batch, now); !errors.Is(err, ErrServiceAuditAccess) {
+		t.Fatal("accepted conflicting cross-team receipt", err)
+	}
+	var visible bool
+	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.service_audit_events WHERE id=$1)`, batch.Events[0].EventID).Scan(&visible); err != nil || visible {
+		t.Fatal("failed batch committed its other owner's event", err)
+	}
+	// revoke one receipt behind the queued service writer. an ingress report
+	// authorized before the queue would persist a fact that no longer exists.
+	edit, err := d.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, edit)
+	if err := queueRunWriter(ctx, edit, batch.Events[0].ServiceID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	workers.Go(func() {
+		_, err := d.IngestIngressServiceObservations(ctx, leases[0].IngressLeaseIdentity, serviceaudit.Batch{Events: batch.Events[:1]}, now)
+		done <- err
+	})
+	waitForPostgresBlock(t, ctx, d, int32(edit.Conn().PgConn().PID()), done)
+	if _, err := edit.Exec(ctx, `DELETE FROM control.public_service_visitors WHERE visitor_connection_id=$1`, batch.Events[0].VisitorConnectionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := edit.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitIntegrationResult(t, ctx, done); !errors.Is(err, ErrServiceAuditAccess) {
+		t.Fatal("ingress used a receipt removed while queued", err)
+	}
 }

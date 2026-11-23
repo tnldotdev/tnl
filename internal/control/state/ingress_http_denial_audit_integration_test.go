@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -48,10 +49,23 @@ func TestIntegrationIngressHTTPSelectionDenialUsesSignedRoutingAuthority(t *test
 	// keep the sender current at delivery without replacing the original
 	// routing evidence or increasing its one-minute liveness duration.
 	lease = renewReporter(lease)
-	result, err := d.IngestIngressServiceObservations(ctx, lease.IngressLeaseIdentity,
+	heartbeat, err := d.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, heartbeat)
+	if err := lockServiceForRun(ctx, heartbeat, f.service.ID); err != nil {
+		t.Fatal(err)
+	}
+	bounded, stop := context.WithTimeout(ctx, 2*time.Second)
+	defer stop()
+	result, err := d.IngestIngressServiceObservations(bounded, lease.IngressLeaseIdentity,
 		serviceaudit.Batch{Events: []serviceaudit.Observation{observation, observation}}, reported)
 	if err != nil || result.Accepted != 1 || result.Duplicates != 1 {
 		t.Fatal("signed HTTP selection denial was not deduplicated", result, err)
+	}
+	if err := heartbeat.Commit(ctx); err != nil {
+		t.Fatal(err)
 	}
 	page, err := d.ListServiceAudit(ctx, f.project.TeamID, f.project.ActorID, ServiceAuditFilter{ServiceID: f.service.ID}, reported)
 	if err != nil {

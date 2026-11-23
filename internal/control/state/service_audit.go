@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -351,6 +353,7 @@ func observationEvent(o serviceaudit.Observation) serviceaudit.Event {
 }
 
 func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease IngressLeaseIdentity, batch serviceaudit.Batch, now time.Time) (result ServiceObservationResult, retErr error) {
+	clock := newAuthorizationClock(now)
 	if err := validateIngressLeaseIdentity(lease); err != nil {
 		return result, err
 	}
@@ -365,19 +368,47 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 	q := controlstatedb.New(tx)
 	// reject a stale sender before reading its receipts, without holding the
 	// ingress row ahead of service parents. repeat under lock before commit.
-	if err := requireCurrentIngressLease(ctx, q, lease, now); err != nil {
+	if err := requireCurrentIngressLease(ctx, q, lease, clock.current()); err != nil {
 		return result, err
 	}
-	events := make([]serviceaudit.Event, 0, len(batch.Events))
-	owners := make(map[string]string)
+	ids := make(map[string]struct{})
 	for _, o := range batch.Events {
-		if o.PairID != "" || o.EventType != "connection.open" && o.EventType != "connection.close" {
+		if o.ServiceKind != "service" || o.PairID != "" || o.EventType != "connection.open" && o.EventType != "connection.close" {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
+		ids[o.ServiceID] = struct{}{}
+	}
+	parents, err := q.ListServiceAuditOwners(ctx, slices.Collect(maps.Keys(ids)))
+	if err != nil {
+		return result, err
+	}
+	if len(parents) != len(ids) {
+		return result, ErrServiceAuditAccess
+	}
+	// the query orders owners, then services. keep that order for parent locks,
+	// first-use privacy keys, and cursor allocation, even across reversed batches.
+	order := make(map[string]int, len(parents))
+	for i, parent := range parents {
+		if i == 0 || parents[i-1].TeamID != parent.TeamID || parents[i-1].GuestID != parent.GuestID {
+			if err := lockServiceOwner(ctx, tx, parent.ID); err != nil {
+				return result, err
+			}
+		}
+		order[parent.ID] = i
+	}
+	for _, parent := range parents {
+		// delayed evidence can belong to a disabled or closed service. wait for
+		// its writer, then verify the receipt, without requiring it to serve now.
+		if err := queueRunReader(ctx, tx, parent.ID); err != nil {
+			return result, err
+		}
+		if _, err := q.ObservePublisherEnrollmentService(ctx, parent.ID); err != nil {
+			return result, publisherLookupError(err, ErrServiceAuditAccess)
+		}
+	}
+	events := make([]serviceaudit.Event, 0, len(batch.Events))
+	for _, o := range batch.Events {
 		e := observationEvent(o)
-		if o.ServiceKind != "service" {
-			return ServiceObservationResult{}, ErrServiceAuditAccess
-		}
 		sourceDigest := ""
 		if len(o.RoutingAuthority) == 0 {
 			source, sourceErr := netip.ParseAddr(o.SourceIP)
@@ -395,7 +426,7 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 				return ServiceObservationResult{}, ErrServiceAuditAccess
 			}
 			if len(o.RoutingAuthority) != 0 {
-				e.TeamID, err = d.ingressSelectionDenialOwner(ctx, tx, lease, o, now)
+				e.TeamID, err = d.ingressSelectionDenialOwner(ctx, tx, lease, o, clock.current())
 			} else {
 				// native selection still has a control admission receipt. recover
 				// only its owner; it selected no serving run or visitor identity.
@@ -424,45 +455,21 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 		if err != nil {
 			return ServiceObservationResult{}, err
 		}
-		if _, found := owners[o.ServiceID]; !found {
-			var owner string
-			if err := tx.QueryRow(ctx, `SELECT COALESCE(team_id,'guest/'||guest_id) FROM control.services WHERE id=$1`, o.ServiceID).Scan(&owner); err != nil {
-				return ServiceObservationResult{}, err
-			}
-			owners[o.ServiceID] = owner
-		}
 		events = append(events, e)
 	}
-	owner := func(e serviceaudit.Event) string { return owners[e.ServiceID] }
-	// owner foreign keys can wait for heartbeat or closure. acquire parents
-	// before the ingress lease, and order both parents and clocks across batches.
 	sort.SliceStable(events, func(i, j int) bool {
-		if a, b := owner(events[i]), owner(events[j]); a != b {
-			return a < b
-		}
-		return events[i].ServiceID < events[j].ServiceID
+		return order[events[i].ServiceID] < order[events[j].ServiceID]
 	})
-	var lockedOwner, lockedService string
-	for _, e := range events {
-		if key := owner(e); key != lockedOwner {
-			if err := lockServiceOwner(ctx, tx, e.ServiceID); err != nil {
-				return ServiceObservationResult{}, err
-			}
-			lockedOwner = key
-		}
-		if e.ServiceID != lockedService {
-			if _, err := q.LockService(ctx, e.ServiceID); err != nil {
-				return ServiceObservationResult{}, publisherLookupError(err, ErrServiceAuditAccess)
-			}
-			lockedService = e.ServiceID
-		}
-	}
-	if _, err = lockCurrentIngressLease(ctx, q, lease, now); err != nil {
+	current, err := lockCurrentIngressLease(ctx, q, lease, clock.current())
+	if err != nil {
 		return result, err
 	}
 	result, err = d.insertServiceObservationBatch(ctx, tx, events, now)
 	if err != nil {
 		return ServiceObservationResult{}, err
+	}
+	if !current.LeaseExpiresAt.Time.After(clock.current()) {
+		return ServiceObservationResult{}, ErrIngressLeaseStale
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return ServiceObservationResult{}, err
