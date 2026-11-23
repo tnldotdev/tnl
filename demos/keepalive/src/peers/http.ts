@@ -18,7 +18,13 @@ import {
   type GossipMessage,
   type Host,
 } from "./gossip.ts";
-import { heartbeatSchema, PRESENCE_PATH, TabLeases } from "./presence.ts";
+import {
+  heartbeatSchema,
+  PRESENCE_PATH,
+  sampleAudience,
+  sampledTab,
+  TabLeases,
+} from "./presence.ts";
 import { MAX_FALLBACK_HOSTS, TREE_PATH, treeSample } from "./view.ts";
 import { readBytes, readJSON } from "../release.ts";
 import { INVITATION_PATH, READY_HEADER, invitationSchema } from "../enrollment.ts";
@@ -120,6 +126,7 @@ export function peerServer(
   const app = new Hono();
   const allowed = (origin: string) => (allowedOrigins.includes(origin) ? origin : undefined);
   const leases = new TabLeases();
+  let sampling = false;
   let gossip: Gossip | undefined;
   let promotion:
     | {
@@ -143,8 +150,22 @@ export function peerServer(
 
   function reportMessage(now: number, requesterMessage?: GossipMessage) {
     if (gossip === undefined) throw new Error("No peer view yet.");
-    gossip.observeTabs(leases.count(now), now);
+    gossip.observeTabs(leases.count(now, sampling), now);
     return gossip.message(now, requesterMessage);
+  }
+
+  function updateSampling(view: Gossip, now: number) {
+    sampling = sampleAudience(
+      view.presenceView(now).remoteTabs + leases.count(now, sampling),
+      sampling,
+    );
+  }
+
+  function audience(view: Gossip, now: number) {
+    const { remoteTabs, hosts } = view.presenceView(now);
+    const local = leases.count(now, sampling);
+    view.observeTabs(local, now);
+    return { tabs: local + remoteTabs, hosts, saturated: view.saturated(now), sampling };
   }
 
   async function send(
@@ -197,7 +218,10 @@ export function peerServer(
     if (gossip === undefined || signal.aborted) return c.body(null, 503);
     const invitation = c.req.header(READY_HEADER);
     if (invitation !== undefined && invitation !== acceptedInvitation) return c.body(null, 403);
-    return c.json(reportMessage(Date.now()));
+    const now = Date.now();
+    updateSampling(gossip, now);
+    const summary = audience(gossip, now);
+    return c.json({ ...gossip.message(now), audience: summary });
   });
   app.post(PRESENCE_PATH, async (c) => {
     if (!allowed(c.req.header("Origin") ?? "")) return c.body(null, 403);
@@ -208,10 +232,11 @@ export function peerServer(
     );
     if (!heartbeat.success || heartbeat.data.releaseID !== releaseID) return c.body(null, 400);
     const now = Date.now();
-    if (!leases.touch(heartbeat.data.tab, now)) return c.body(null, 503);
-    const localTabs = leases.count(now);
-    gossip.observeTabs(localTabs, now);
-    const { hosts, remoteTabs, fallback } = gossip.presenceView(now);
+    updateSampling(gossip, now);
+    if ((!sampling || sampledTab(heartbeat.data.tab)) && !leases.touch(heartbeat.data.tab, now))
+      return c.body(null, 503);
+    const summary = audience(gossip, now);
+    const { fallback } = gossip.presenceView(now);
     const offset = Math.floor(Math.random() * fallback.length);
     const hints: Host[] = [];
     for (let i = 0; i < Math.min(fallback.length, MAX_FALLBACK_HOSTS); i++) {
@@ -221,9 +246,7 @@ export function peerServer(
     return c.json({
       host: gossip.self,
       startedAt: gossip.startedAt,
-      tabs: localTabs + remoteTabs,
-      hosts,
-      saturated: gossip.saturated(now),
+      ...summary,
       fallback: hints,
     });
   });
@@ -534,7 +557,8 @@ export function peerServer(
         const now = Date.now();
         const departing = replacing();
         peers.update({ departing });
-        peers.observeTabs(leases.count(now), now);
+        updateSampling(peers, now);
+        peers.observeTabs(leases.count(now, sampling), now);
         if (promotion !== undefined && promotion.endsAt <= now) promotion = undefined;
         if (probe === undefined) {
           const operation = AbortSignal.any([signal, probing.signal]);

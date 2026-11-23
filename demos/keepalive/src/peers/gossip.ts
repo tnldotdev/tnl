@@ -1,7 +1,7 @@
 import * as z from "zod";
 import { hostNameSchema } from "./host-names.ts";
 import { BOOTSTRAP_TURN_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "../policy.ts";
-import { MAX_TABS_PER_HOST, REMOTE_TAB_REPORT_MS, TAB_LEASE_MS } from "./presence.ts";
+import { MAX_TABS_PER_HOST, REMOTE_TAB_REPORT_MS, SAMPLE_WEIGHT } from "./presence.ts";
 import { certificateReport, newerCertificate } from "../hosting/certificate.ts";
 
 export const HOST_PARENT = "hosts.keepthisalive.com";
@@ -11,6 +11,7 @@ export const MAX_MESSAGE_BYTES = 24 * 1024;
 export const MAX_PEERS = 8_192;
 export const MAX_CHANGES = 40;
 export const PROBE_MS = 2_000;
+export const FRESH_REPORT_MS = 60_000;
 export const SUSPECT_MS = 15_000;
 export const KEEP_MS = 5 * 60_000;
 const PRIORITY_CHANGES = 8;
@@ -47,7 +48,10 @@ const changeSchema = hostSchema.extend({
   departing: z.boolean().optional(),
   tabs: z
     .strictObject({
-      count: z.int().min(0).max(MAX_TABS_PER_HOST),
+      count: z
+        .int()
+        .min(0)
+        .max(MAX_TABS_PER_HOST * SAMPLE_WEIGHT),
       observedAt: z.int().positive(),
     })
     .optional(),
@@ -55,11 +59,24 @@ const changeSchema = hostSchema.extend({
   certificate: certificateReport.optional(),
 });
 const startTimeSchema = z.int().min(EARLIEST_START);
+export const audienceSchema = z.strictObject({
+  tabs: z
+    .int()
+    .min(0)
+    .max((MAX_PEERS + 1) * MAX_TABS_PER_HOST * SAMPLE_WEIGHT),
+  hosts: z
+    .int()
+    .min(1)
+    .max(MAX_PEERS + 1),
+  saturated: z.boolean(),
+  sampling: z.boolean(),
+});
 const messageSchema = z.strictObject({
   releaseID: releaseIDSchema,
   startedAt: startTimeSchema,
   from: changeSchema,
   changes: z.array(changeSchema).max(MAX_CHANGES),
+  audience: audienceSchema.optional(),
 });
 export type Host = Readonly<z.infer<typeof hostSchema>>;
 export type Change = Readonly<z.infer<typeof changeSchema>>;
@@ -336,7 +353,7 @@ export class Gossip {
     if (this.saturated(now) || this.readyBeyondWindow(now, hosts) < target) return false;
     // don't call a host surplus when most peers' tab counts are too old to use.
     return (
-      hosts.filter(({ tabs }) => tabs !== undefined && now - tabs.observedAt < TAB_LEASE_MS)
+      hosts.filter(({ tabs }) => tabs !== undefined && now - tabs.observedAt < FRESH_REPORT_MS)
         .length >=
       hosts.length * 0.9
     );
@@ -394,7 +411,7 @@ export class Gossip {
     this.#nextPrune = Math.min(this.#nextPrune, recordDeadline(change));
     if (previous === undefined || importantChange(change, previous.change))
       this.#priority.enqueue(change.publisherID);
-    else if (now - change.reportedAt < TAB_LEASE_MS) {
+    else if (now - change.reportedAt < FRESH_REPORT_MS) {
       // send recent updates as well as cycling through the older reports.
       this.#fresh.delete(change.publisherID);
       this.#fresh.add(change.publisherID);
@@ -471,7 +488,7 @@ export class Gossip {
       if (excluded?.has(id)) continue;
       this.#fresh.delete(id);
       const peer = this.#peers.get(id);
-      if (peer === undefined || selected.has(id) || now - peer.change.reportedAt >= TAB_LEASE_MS)
+      if (peer === undefined || selected.has(id) || now - peer.change.reportedAt >= FRESH_REPORT_MS)
         continue;
       selected.add(id);
       changes.push(peer.change);
@@ -644,7 +661,7 @@ export class Gossip {
 export function reportedTabs(
   changes: readonly Change[],
   now: number,
-  maxAge = TAB_LEASE_MS,
+  maxAge = FRESH_REPORT_MS,
   exclude?: Host,
 ) {
   const seen = new Set(exclude === undefined ? [] : [exclude.publisherID, exclude.origin]);

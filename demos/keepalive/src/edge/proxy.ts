@@ -2,6 +2,7 @@ import {
   MAX_MESSAGE_BYTES,
   PEERS_PATH,
   SHARED_HOST,
+  hostIdentity,
   parseMessage,
   type GossipMessage,
 } from "../peers/gossip.ts";
@@ -49,6 +50,7 @@ export function createProxy(release: Release, fetchHost = fetch) {
   let refreshCursor = cursor;
   let refreshAt = 0;
   let refreshing = false;
+  let audience: { until: number; message: GossipMessage } | undefined;
 
   function remember(message: GossipMessage, now: number) {
     for (const host of [message.from, ...message.changes]) {
@@ -126,7 +128,14 @@ export function createProxy(release: Release, fetchHost = fetch) {
       const message = parseMessage(body, release.id, now);
       if (message === undefined || (!shared && origin !== message.from.origin)) return undefined;
       remember(message, now);
-      return message.from.left || (message.from.endsAt ?? Infinity) <= now ? undefined : message;
+      if (message.from.left || (message.from.endsAt ?? Infinity) <= now) return undefined;
+      if (
+        message.audience !== undefined &&
+        known.get(message.from.origin)?.sequence === message.from.seq
+      ) {
+        audience = { until: Math.min(now, message.from.reportedAt) + STALE_MS, message };
+      }
+      return message;
     });
   }
 
@@ -204,6 +213,36 @@ export function createProxy(release: Release, fetchHost = fetch) {
   }
 
   return {
+    audience(request: Request, retain: Retain) {
+      if (request.method !== "GET" || new URL(request.url).search !== "")
+        return new Response(null, { status: 404 });
+      const now = Date.now();
+      // share only a bounded observation. a crowd reading it must not send a
+      // probe per tab, or keep reporting an old audience after the host stops.
+      if (!refreshing && now >= refreshAt) refresh(candidates(now), retain);
+      const message = audience?.message;
+      const host = message && known.get(message.from.origin);
+      if (
+        !audience ||
+        now >= audience.until ||
+        !message?.audience ||
+        !host ||
+        host.stopped ||
+        host.run !== BigInt(message.from.runNumber) ||
+        host.endsAt <= now ||
+        host.retryAt > now
+      )
+        return new Response(null, { status: 204, headers: siteHeaders("application/json") });
+      return Response.json(
+        {
+          ...message.audience,
+          releaseID: release.id,
+          startedAt: message.startedAt,
+          host: hostIdentity(message.from),
+        },
+        { headers: siteHeaders("application/json") },
+      );
+    },
     file(request: Request, sharedHost = SHARED_HOST, retain?: Retain) {
       const { pathname, search } = new URL(request.url);
       const asset = assets.get(pathname === "/" ? "/index.html" : pathname);

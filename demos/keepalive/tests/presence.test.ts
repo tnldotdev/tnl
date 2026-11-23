@@ -1,9 +1,19 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { renewPresence } from "../src/page/visitor.ts";
+import { observeVisitors, renewPresence } from "../src/page/visitor.ts";
+import { digest, RELEASE_PATH, WASM_PATH, WORKER_PATH } from "../src/release.ts";
 import { REPLACE_BEFORE_MS, STARTUP_MS } from "../src/policy.ts";
-import { Gossip, HOST_PARENT, reportedTabs, type Host } from "../src/peers/gossip.ts";
+import {
+  FRESH_REPORT_MS,
+  Gossip,
+  HOST_PARENT,
+  reportedTabs,
+  type Host,
+} from "../src/peers/gossip.ts";
 import {
   MAX_TABS_PER_HOST,
+  AUDIENCE_PATH,
+  HEARTBEAT_MS,
+  PRESENCE_PATH,
   REMOTE_TAB_REPORT_MS,
   TAB_LEASE_MS,
   TabLeases,
@@ -57,6 +67,61 @@ it("recovers a lost presence reply without counting the tab twice", async () => 
   expect(send.mock.calls[1]?.[1]?.signal).toBe(send.mock.calls[0]?.[1]?.signal);
 });
 
+it("a held-out visitor reads the edge estimate and resumes reporting on the first small snapshot", async () => {
+  const h = host("a", 1);
+  const assets = ["/index.html", WORKER_PATH, WASM_PATH].map((path) => ({
+    path,
+    size: 1,
+    sha256: "a".repeat(64),
+  }));
+  const id = await digest(new TextEncoder().encode(JSON.stringify(assets)));
+  const reported = {
+    host: h,
+    startedAt: now,
+    tabs: 20000,
+    hosts: 400,
+    saturated: false,
+    sampling: true,
+  };
+  const sent: string[] = [];
+  vi.useFakeTimers({ now });
+  vi.spyOn(crypto, "randomUUID").mockReturnValue(tab);
+  vi.stubGlobal("location", { origin: "https://keepthisalive.com" });
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), "https://keepthisalive.com").pathname;
+    if (path === RELEASE_PATH) return Response.json({ id, assets });
+    if (path === AUDIENCE_PATH) return Response.json({ ...reported, releaseID: id });
+    if (path === PRESENCE_PATH) {
+      sent.push(String(init?.body));
+      return Response.json({ ...reported, fallback: [] });
+    }
+    return Response.json({
+      releaseID: id,
+      startedAt: now,
+      from: { ...h, seq: 1, reportedAt: now, left: false, startingUntil: 0 },
+      changes: [],
+    });
+  });
+  const owner = new AbortController(),
+    update = vi.fn();
+  try {
+    await observeVisitors(owner.signal, update);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ tabs: 20000 }));
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    expect(sent).toEqual([]);
+    Object.assign(reported, { tabs: 300, hosts: 6, sampling: false });
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    expect(sent).toEqual([JSON.stringify({ tab, releaseID: id })]);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ tabs: 300 }));
+    owner.abort();
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    expect(sent).toHaveLength(1);
+  } finally {
+    owner.abort();
+    vi.useRealTimers();
+  }
+});
+
 it("does not retry a refusal, changed run, or canceled presence request", async () => {
   for (const outcome of ["refused", "changed", "canceled"]) {
     const owner = new AbortController();
@@ -96,9 +161,9 @@ it("sums fresh reports once and does not replace a tally with an old service run
   a.receive(oldReport, now + 1000);
   expect(a.tabSnapshot(now + 1000)).toEqual({ local: 101, total: 150 });
   expect(reportedTabs([newReport.from, newReport.from], now + 1000)).toBe(49);
-  expect(a.tabs(now + TAB_LEASE_MS)).toBe(49);
-  expect(a.tabSnapshot(now + TAB_LEASE_MS)).toEqual({ local: 0, total: 49 });
-  expect(a.tabs(now + TAB_LEASE_MS + 1000)).toBe(49);
+  expect(a.tabs(now + FRESH_REPORT_MS)).toBe(49);
+  expect(a.tabSnapshot(now + FRESH_REPORT_MS)).toEqual({ local: 0, total: 49 });
+  expect(a.tabs(now + FRESH_REPORT_MS + 1000)).toBe(49);
   expect(a.tabs(now + REMOTE_TAB_REPORT_MS + 999)).toBe(49);
   expect(a.tabs(now + REMOTE_TAB_REPORT_MS + 1000)).toBe(0);
   a.observeTabs(25, now + REMOTE_TAB_REPORT_MS + 1000);
@@ -133,7 +198,7 @@ it("keeps capacity for expiring turns but does not replace surplus hosts", () =>
   a.receive(c.message(now), now);
   expect(a.canRetire(now, 2, a.hosts(now))).toBe(true);
   expect(a.tabs(now + TAB_LEASE_MS)).toBe(50);
-  expect(a.canRetire(now + TAB_LEASE_MS, 2, a.hosts(now + TAB_LEASE_MS))).toBe(false);
+  expect(a.canRetire(now + FRESH_REPORT_MS, 2, a.hosts(now + FRESH_REPORT_MS))).toBe(false);
   expect(a.canRetire(now, 3, a.hosts(now))).toBe(false);
   expect(a.maybeStart(now, 2, () => true)).toBe(false);
   expect(a.maybeStart(now, 3, () => true)).toBe(true);

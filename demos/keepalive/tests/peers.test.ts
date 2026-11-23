@@ -52,13 +52,16 @@ it("bounds a full exchange and rejects unrelated or unsafe messages", () => {
       startingUntil: max,
       endsAt: max,
       departing: false,
-      tabs: { count: 512, observedAt: max },
+      tabs: { count: 2048, observedAt: max },
       copyFrom: report(1).runID,
       certificate: certificate("f", max),
     });
   const view = new Gossip(release, report(1), max, full(1));
   for (let i = 2; i < MAX_CHANGES + 2; i++) view.receive(message(full(i)), max);
-  const batch = view.message(max);
+  const batch = {
+    ...view.message(max),
+    audience: { tabs: 16_779_264, hosts: MAX_PEERS + 1, saturated: false, sampling: true },
+  };
   expect(batch.changes).toHaveLength(MAX_CHANGES);
   expect(
     new TextEncoder().encode(JSON.stringify({ target: report(2), message: batch })).length,

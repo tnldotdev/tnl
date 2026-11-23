@@ -337,7 +337,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             </p>
             <div class="host-activity">
               <div>
-                serving {hosting.localTabs.toLocaleString()} of ~{hosting.tabs.toLocaleString()}{" "}
+                serving ~{hosting.localTabs.toLocaleString()} of ~{hosting.tabs.toLocaleString()}{" "}
                 {hosting.tabs === 1 ? "tab" : "tabs"}
               </div>
               <div class="request-line">

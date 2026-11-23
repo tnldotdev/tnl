@@ -114,6 +114,38 @@ it("uses the shared address only for discovery when hosts stop", async () => {
   );
 });
 
+it("serves one recent audience observation to many tabs and expires it if refresh stalls", async () => {
+  const { proxy, fetchHost, report } = await setup();
+  vi.useFakeTimers();
+  try {
+    const msg = await report().json();
+    fetchHost.mockResolvedValueOnce(
+      Response.json({
+        ...msg,
+        audience: { hosts: 400, tabs: 20000, sampling: true, saturated: false },
+      }),
+    );
+    await proxy.peers(request(PEERS_PATH));
+    const refresh = Promise.withResolvers<Response>();
+    fetchHost.mockReturnValueOnce(refresh.promise);
+    const tasks: Promise<void>[] = [];
+    const read = () => proxy.audience(request("/__keepalive/audience"), (work) => tasks.push(work));
+    for (let i = 0; i < 10; i++)
+      expect(await read().json()).toMatchObject({
+        releaseID: msg.releaseID,
+        tabs: 20000,
+        sampling: true,
+      });
+    expect(fetchHost).toHaveBeenCalledTimes(2); // discovery and one refresh
+    vi.setSystemTime(Date.now() + 61_000);
+    expect(read().status).toBe(204);
+    refresh.resolve(new Response(null, { status: 503 }));
+    await Promise.all(tasks);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("rediscovers a live publisher before spending the last asset attempt on stale aliases", async () => {
   const { proxy, fetchHost, report } = await setup();
   fetchHost.mockResolvedValueOnce(report());
