@@ -92,8 +92,10 @@ func lockServiceAdmission(ctx context.Context, tx pgx.Tx, id string) error {
 // a row lock alone lets a later reader join current readers while a writer
 // waits. queue publication work after the owner and before any service or run
 // row. the row locks still protect against writers outside publication.
+const queueRunReaderSQL = `SELECT pg_advisory_xact_lock_shared(hashtextextended('tnl:service-publication:' || $1::text,0))`
+
 func queueRunReader(ctx context.Context, tx pgx.Tx, id string) error {
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended('tnl:service-publication:' || $1::text,0))`, id)
+	_, err := tx.Exec(ctx, queueRunReaderSQL, id)
 	return err
 }
 
