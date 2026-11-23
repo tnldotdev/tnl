@@ -16,12 +16,16 @@ func (d *Database) ListServices(ctx context.Context, teamID, actorID, after stri
 	if after != "" && !opaqueid.Valid(after, opaqueid.ServicePrefix) {
 		return nil, "", ErrServiceAccess
 	}
-	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
+	tx, err := d.beginServiceObservation(ctx, serviceReadOptions(ctx))
 	if err != nil {
 		return nil, "", err
 	}
 	defer rollback(ctx, tx, "list services", &retErr)()
-	if err = serviceManager(ctx, tx, teamID, actorID); err != nil {
+	member, err := readServiceMembership(ctx, tx, teamID, actorID, newAuthorizationClock(time.Now()))
+	if err != nil {
+		return nil, "", err
+	}
+	if err := member.requireAdministrator(ctx); err != nil {
 		return nil, "", err
 	}
 	rows, err := controlstatedb.New(tx).ListServicesForTeam(ctx, controlstatedb.ListServicesForTeamParams{TeamID: text(teamID), AfterID: after})
@@ -54,7 +58,7 @@ func (d *Database) GetService(ctx context.Context, serviceID, actorID string) (r
 	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) {
 		return result, ErrServiceAccess
 	}
-	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
+	tx, err := d.beginServiceObservation(ctx, serviceReadOptions(ctx))
 	if err != nil {
 		return result, err
 	}
@@ -80,7 +84,7 @@ func serviceForManagement(ctx context.Context, tx pgx.Tx, serviceID, actorID str
 	var row controlstatedb.ControlService
 	var err error
 	if _, signed := serviceActor(ctx); signed {
-		row, err = lockManagedService(ctx, tx, serviceID, actorID)
+		row, err = observeManagedService(ctx, tx, serviceID, actorID)
 	} else {
 		row, err = controlstatedb.New(tx).GetService(ctx, serviceID)
 		if err == nil {

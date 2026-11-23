@@ -15,7 +15,7 @@ WHERE run.id = sqlc.arg(service_run_id)
   AND run.publisher_expires_at > sqlc.arg(now)
   AND run.state IN ('starting', 'ready')
   AND run.closed_at IS NULL AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
-FOR UPDATE OF run;
+FOR SHARE OF run;
 
 -- name: FeedbackServiceScope :one
 SELECT service.team_id,service.guest_id FROM control.services service

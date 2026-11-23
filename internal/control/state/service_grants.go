@@ -94,12 +94,12 @@ func (d *Database) ListServiceGrants(ctx context.Context, serviceID, actorID, af
 	if !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) || after != "" && !opaqueid.Valid(after, opaqueid.ServiceGrantPrefix) {
 		return nil, "", ErrServiceAccess
 	}
-	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
+	tx, err := d.beginServiceObservation(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, "", err
 	}
 	defer rollback(ctx, tx, "list service grants", &retErr)()
-	if _, err = lockManagedService(ctx, tx, serviceID, actorID); err != nil {
+	if _, err = observeManagedService(ctx, tx, serviceID, actorID); err != nil {
 		return nil, "", err
 	}
 	rows, err := controlstatedb.New(tx).ListServiceGrants(ctx, controlstatedb.ListServiceGrantsParams{ServiceID: text(serviceID), AfterID: after})

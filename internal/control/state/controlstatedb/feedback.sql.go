@@ -86,7 +86,7 @@ WHERE run.id = $1
   AND run.publisher_expires_at > $5
   AND run.state IN ('starting', 'ready')
   AND run.closed_at IS NULL AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
-FOR UPDATE OF run
+FOR SHARE OF run
 `
 
 type FeedbackRunScopeParams struct {

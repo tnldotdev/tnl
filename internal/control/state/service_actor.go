@@ -205,17 +205,41 @@ func serviceReadOptions(ctx context.Context) pgx.TxOptions {
 // beginServiceAccess keeps issuer identity updates ahead of team/admission locks,
 // matching company owner proof and OIDC login's identity bootstrap ordering.
 func (d *Database) beginServiceAccess(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
+	return d.beginServiceActorTransaction(ctx, options, false)
+}
+
+func (d *Database) beginServiceObservation(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
+	return d.beginServiceActorTransaction(ctx, options, true)
+}
+
+func (d *Database) beginServiceActorTransaction(ctx context.Context, options pgx.TxOptions, observe bool) (pgx.Tx, error) {
 	tx, err := d.pool.BeginTx(ctx, options)
 	if err != nil {
 		return nil, err
 	}
 	if _, signed := serviceActor(ctx); signed {
-		if err = controlstatedb.New(tx).LockIdentityBootstrap(ctx); err != nil {
+		q := controlstatedb.New(tx)
+		guard := q.LockIdentityBootstrap
+		if observe {
+			guard = q.ObserveIdentityBootstrap
+		}
+		if err = guard(ctx); err != nil {
 			rollback(ctx, tx, "begin service access", &err)()
 			return nil, err
 		}
 	}
 	return tx, nil
+}
+
+// ordinary inventory reads use one read-only snapshot. a signed read must
+// consume its assertion and queue with current authority before reading it.
+func readServiceMembership(ctx context.Context, tx pgx.Tx, team, actor string, clock authorizationClock) (serviceMembership, error) {
+	if _, signed := serviceActor(ctx); signed {
+		if _, err := controlstatedb.New(tx).LockLocalTeamForSession(ctx, team); err != nil {
+			return serviceMembership{}, publisherLookupError(err, ErrServiceManagerRequired)
+		}
+	}
+	return serviceMembershipUnderTeamGuard(ctx, tx, team, actor, clock)
 }
 
 func serviceActorRecipientSource(ctx context.Context, q *controlstatedb.Queries, team, actor string, i OIDCIdentity, now time.Time) error {

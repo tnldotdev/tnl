@@ -130,7 +130,7 @@ func (d *Database) lockServiceHTTPRun(ctx context.Context, tx pgx.Tx, auth Servi
 	if !auth.valid() {
 		return ErrServiceAccess
 	}
-	if err := lockServiceAdmission(ctx, tx, auth.Subject.ID); err != nil {
+	if err := lockServiceForPublication(ctx, tx, auth.Subject.ID); err != nil {
 		return err
 	}
 	q := controlstatedb.New(tx)
@@ -139,6 +139,23 @@ func (d *Database) lockServiceHTTPRun(ctx context.Context, tx pgx.Tx, auth Servi
 		return err
 	}
 	return validateServiceHTTPRun(ctx, q, auth, run, now)
+}
+
+// a session or feedback decision observes the exact ready run. handoff
+// redemption and logout continue to use exclusive admission.
+func (d *Database) observeServiceHTTPRun(ctx context.Context, tx pgx.Tx, auth ServiceHTTPRun, clock authorizationClock) (run controlstatedb.ControlServiceRun, err error) {
+	if !auth.valid() {
+		return run, ErrServiceAccess
+	}
+	if err := lockServiceForRun(ctx, tx, auth.Subject.ID); err != nil {
+		return run, err
+	}
+	q := controlstatedb.New(tx)
+	run, err = d.serviceRunObservationAuthorization(ctx, tx, q, auth.Subject.ID, auth.RunID, auth.Token.String(), clock.current())
+	if err != nil {
+		return run, err
+	}
+	return run, validateServiceHTTPRun(ctx, q, auth, run, clock.current())
 }
 
 func validateServiceHTTPRun(ctx context.Context, q *controlstatedb.Queries, auth ServiceHTTPRun, run controlstatedb.ControlServiceRun, now time.Time) error {
@@ -481,6 +498,7 @@ func (d *Database) RedeemServiceBrowserHandoff(ctx context.Context, auth Service
 }
 
 func (d *Database) ServiceBrowserSession(ctx context.Context, auth ServiceHTTPRun, secret string, revoke bool, now time.Time) (result VisitorPermission, retErr error) {
+	clock := newAuthorizationClock(now)
 	digest, err := browserDigest(secret)
 	if err != nil {
 		return result, ErrVisitorSignIn
@@ -490,21 +508,42 @@ func (d *Database) ServiceBrowserSession(ctx context.Context, auth ServiceHTTPRu
 		return result, err
 	}
 	defer rollback(ctx, tx, "check managed browser session", &retErr)()
-	if err = d.lockServiceHTTPRun(ctx, tx, auth, now); err != nil {
+	if revoke {
+		if err = d.lockServiceHTTPRun(ctx, tx, auth, clock.current()); err != nil {
+			return result, err
+		}
+		if err := controlstatedb.New(tx).RevokeServiceHTTPBrowserSession(ctx, controlstatedb.RevokeServiceHTTPBrowserSessionParams{ServiceID: auth.Subject.ID, Hostname: auth.Hostname, CookieDigest: digest, Now: timestamptz(clock.current())}); err != nil {
+			if errors.Is(err, ErrServiceAccess) {
+				return result, ErrVisitorSignIn
+			}
+			return result, err
+		}
+		return result, tx.Commit(ctx)
+	}
+	run, err := d.observeServiceHTTPRun(ctx, tx, auth, clock)
+	if err != nil {
 		return result, err
 	}
-	if revoke {
-		err = controlstatedb.New(tx).RevokeServiceHTTPBrowserSession(ctx, controlstatedb.RevokeServiceHTTPBrowserSessionParams{ServiceID: auth.Subject.ID, Hostname: auth.Hostname, CookieDigest: digest, Now: timestamptz(now)})
-	} else {
-		result, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.Hostname, digest, now)
-	}
+	result, err = d.serviceBrowserPermission(ctx, tx, auth.Subject.ID, auth.Hostname, digest, clock.current())
 	if errors.Is(err, ErrServiceAccess) {
 		err = ErrVisitorSignIn
 	}
 	if err != nil {
-		return result, err
+		return VisitorPermission{}, err
 	}
-	return result, tx.Commit(ctx)
+	if _, err := serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
+		return VisitorPermission{}, err
+	}
+	if err := validateServiceHTTPRun(ctx, controlstatedb.New(tx), auth, run, clock.current()); err != nil {
+		return VisitorPermission{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return VisitorPermission{}, err
+	}
+	if result.ExpiresAt == nil || !result.ExpiresAt.After(clock.current()) {
+		return VisitorPermission{}, ErrVisitorSignIn
+	}
+	return result, nil
 }
 
 // the browser row serializes refresh without locking the parent session that

@@ -13,7 +13,7 @@ import (
 
 // feedback may combine a verified browser author with service-scoped share
 // permission. submitted identity and visit booleans are never authority.
-func (d *Database) currentReviewer(ctx context.Context, tx pgx.Tx, service controlstatedb.ControlService, actor FeedbackActor, clock authorizationClock) (authorizedFeedbackActor, error) {
+func (d *Database) currentReviewer(ctx context.Context, tx pgx.Tx, service controlstatedb.ControlService, run controlstatedb.ControlServiceRun, actor FeedbackActor, clock authorizationClock) (authorizedFeedbackActor, error) {
 	now := clock.current()
 	if actor.Kind != "reviewer" || service.Protocol != "http" || actor.ServiceRun == nil ||
 		!actor.ServiceRun.valid() || actor.ServiceRun.Subject.ID != service.ID {
@@ -37,11 +37,7 @@ func (d *Database) currentReviewer(ctx context.Context, tx pgx.Tx, service contr
 		}
 	}
 	q := controlstatedb.New(tx)
-	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: actor.ServiceRun.RunID, ServiceID: service.ID})
-	if err != nil {
-		return authorizedFeedbackActor{}, publisherLookupError(err, ErrFeedbackAccess)
-	}
-	until := minTime(run.PublisherExpiresAt.Time, run.CertificateExpiresAt.Time)
+	until := minTime(run.ServingUntil.Time, minTime(run.PublisherExpiresAt.Time, run.CertificateExpiresAt.Time))
 	publisherUntil, err := serviceRunPublisherPermission(ctx, tx, run, clock.current())
 	if err != nil {
 		return authorizedFeedbackActor{}, err
@@ -91,7 +87,7 @@ func (d *Database) currentReviewer(ctx context.Context, tx pgx.Tx, service contr
 	reference := permission.Reason
 	sharePermission := false
 	if actor.VisitProof != nil {
-		visit, err := d.verifyFeedbackVisitProof(ctx, tx, *actor.ServiceRun, actor.VisitProof, source, clock)
+		visit, err := d.verifyFeedbackVisitProof(ctx, tx, *actor.ServiceRun, run, actor.VisitProof, source, clock)
 		if err != nil {
 			return authorizedFeedbackActor{}, err
 		}
