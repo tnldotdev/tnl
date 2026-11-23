@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
@@ -87,6 +88,7 @@ type leaseTestClient struct {
 	ControlClient
 	register func(context.Context, ingressv1.IngressRegistration) (ingressv1.IngressLease, error)
 	renew    func(context.Context) (ingressv1.IngressLease, error)
+	drain    func(context.Context, ingressv1.IngressDrainRequest) (ingressv1.IngressLease, error)
 }
 
 func (c leaseTestClient) RegisterIngress(ctx context.Context, registration ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
@@ -94,6 +96,9 @@ func (c leaseTestClient) RegisterIngress(ctx context.Context, registration ingre
 }
 func (c leaseTestClient) RenewIngress(ctx context.Context, _ ingressv1.IngressID, _ ingressv1.IngressRenewal) (ingressv1.IngressLease, error) {
 	return c.renew(ctx)
+}
+func (c leaseTestClient) DrainIngress(ctx context.Context, _ ingressv1.IngressID, request ingressv1.IngressDrainRequest) (ingressv1.IngressLease, error) {
+	return c.drain(ctx, request)
 }
 
 func testIngressLease(now time.Time) ingressv1.IngressLease {
@@ -107,6 +112,98 @@ func testLeaseController(t *testing.T, client ControlClient) *Controller {
 		t.Fatal(err)
 	}
 	return controller
+}
+
+func TestIngressRenewalDuringDrain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lease := testIngressLease(time.Now())
+		deadline := time.Now().Add(time.Minute)
+		release := make(chan struct{})
+		renewals := 0
+		client := leaseTestClient{
+			register: func(context.Context, ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
+				return lease, nil
+			},
+			drain: func(_ context.Context, request ingressv1.IngressDrainRequest) (ingressv1.IngressLease, error) {
+				lease.Draining, lease.DrainDeadline = true, &request.Deadline
+				reply := lease
+				<-release
+				return reply, nil
+			},
+			renew: func(context.Context) (ingressv1.IngressLease, error) {
+				renewals++
+				reply := lease
+				reply.RenewedAt = time.Now()
+				return reply, nil
+			},
+		}
+		controller := testLeaseController(t, client)
+		if err := controller.register(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		drained := make(chan error, 1)
+		go func() { drained <- controller.Drain(t.Context(), deadline) }()
+		synctest.Wait()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- controller.renewLoop(ctx) }()
+		time.Sleep(controller.renewalInterval)
+		synctest.Wait()
+		close(release)
+		if err := <-drained; err != nil {
+			t.Fatalf("drain lost a current lease: %v", err)
+		}
+		synctest.Wait()
+		got := controller.Lease()
+		if renewals != 1 || !got.RenewedAt.Equal(time.Now()) || !got.Draining || got.DrainDeadline == nil || !got.DrainDeadline.Equal(deadline) {
+			t.Fatalf("renewals=%d lease=%+v", renewals, got)
+		}
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestIngressDrainDeadlineDuringRenewal(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lease := testIngressLease(time.Now())
+		release := make(chan struct{})
+		client := leaseTestClient{
+			renew: func(context.Context) (ingressv1.IngressLease, error) {
+				<-release
+				return lease, nil
+			},
+			drain: func(context.Context, ingressv1.IngressDrainRequest) (ingressv1.IngressLease, error) {
+				t.Error("expired drain reached control")
+				return lease, nil
+			},
+		}
+		c := testLeaseController(t, client)
+		if err := c.setLease(lease); err != nil {
+			t.Fatal(err)
+		}
+		renewed := make(chan error, 1)
+		go func() { renewed <- c.renew(t.Context()) }()
+		synctest.Wait()
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		deadline, _ := ctx.Deadline()
+		drained := make(chan error, 1)
+		go func() { drained <- c.Drain(ctx, deadline) }()
+		synctest.Wait()
+		if c.Ready(time.Now()) {
+			t.Error("ingress still ready while drain waited for renewal")
+		}
+		if err := <-drained; !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("waiting for renewal: %v", err)
+		}
+		close(release)
+		if err := <-renewed; err != nil || c.Ready(time.Now()) {
+			t.Fatalf("renew after drain: err=%v ready=%t", err, c.Ready(time.Now()))
+		}
+	})
 }
 
 func TestControllerRetriesTransientErrorsButTerminatesStaleRun(t *testing.T) {
