@@ -56,7 +56,7 @@ func (d *Database) ClaimConnectorPeerPairLeg(ctx context.Context, lease RelayLea
 		return result, err
 	}
 	defer rollback(ctx, tx, "claim connector peer pair leg", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, proof.ServiceID); err != nil {
+	if err = lockServiceForRun(ctx, tx, proof.ServiceID); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)

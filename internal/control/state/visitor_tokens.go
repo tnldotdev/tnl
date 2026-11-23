@@ -88,16 +88,23 @@ type visitorResource struct {
 // is independent of a selected run; guest permission also spends its run's fixed
 // serving deadline. neither needs a per-connection database row.
 func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, now time.Time) (visitorResource, error) {
-	resource := visitorResource{Scope: scope}
 	if !scope.Valid() {
-		return resource, ErrVisitorPermission
+		return visitorResource{}, ErrVisitorPermission
 	}
+	if scope.Kind == visitorscope.Service {
+		if err := lockServiceAdmission(ctx, tx, scope.ID); err != nil {
+			return visitorResource{}, err
+		}
+	}
+	return readLockedVisitorResource(ctx, tx, scope, now)
+}
+
+// callers already hold the resource's admission or run guard.
+func readLockedVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, now time.Time) (visitorResource, error) {
+	resource := visitorResource{Scope: scope}
 	q := controlstatedb.New(tx)
 	switch scope.Kind {
 	case visitorscope.Service:
-		if err := lockServiceAdmission(ctx, tx, scope.ID); err != nil {
-			return resource, err
-		}
 		row, err := q.GetService(ctx, scope.ID)
 		if err != nil {
 			return resource, err

@@ -60,7 +60,7 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 		return result, err
 	}
 	defer rollback(ctx, tx, "deliver connector peer binding", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, serviceID); err != nil {
+	if err = lockServiceForRun(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
@@ -68,7 +68,7 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 	if err != nil {
 		return result, err
 	}
-	if _, err = lockVisitorResource(ctx, tx, visitorscope.Scope{Kind: visitorscope.Service, ID: serviceID}, clock.current()); err != nil {
+	if _, err = readLockedVisitorResource(ctx, tx, visitorscope.Scope{Kind: visitorscope.Service, ID: serviceID}, clock.current()); err != nil {
 		return result, err
 	}
 	pair, err := q.LockConnectorPeerPairForLegClaim(ctx, pairID)
