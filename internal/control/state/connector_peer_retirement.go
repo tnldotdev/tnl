@@ -48,13 +48,13 @@ func connectorPeerPairRetainedUntil(pair controlstatedb.ControlConnectorPeerPair
 	return pair.ReplayFenceUntil.Time
 }
 
-// lockConnectorPeerRetirementScope uses the existing owner guard without active,
-// enabled, or deleted filters. no child lock precedes the owner lock.
-func lockConnectorPeerRetirementScope(ctx context.Context, tx pgx.Tx, serviceID string) (service controlstatedb.ControlService, err error) {
+// retained retirement facts remain readable after a team or service is deleted.
+// lock the owner before the service without requiring current serving authority.
+func lockConnectorPeerRetirementOwner(ctx context.Context, tx pgx.Tx, serviceID string) error {
 	var team, guest pgtype.Text
-	err = tx.QueryRow(ctx, `SELECT team_id,guest_id FROM control.services WHERE id=$1`, serviceID).Scan(&team, &guest)
+	err := tx.QueryRow(ctx, `SELECT team_id,guest_id FROM control.services WHERE id=$1`, serviceID).Scan(&team, &guest)
 	if err != nil {
-		return service, publisherLookupError(err, ErrServiceAccess)
+		return publisherLookupError(err, ErrServiceAccess)
 	}
 	q := controlstatedb.New(tx)
 	switch {
@@ -63,13 +63,9 @@ func lockConnectorPeerRetirementScope(ctx context.Context, tx pgx.Tx, serviceID 
 	case guest.Valid && !team.Valid:
 		_, err = q.LockConnectorPeerRetirementGuest(ctx, guest.String)
 	default:
-		return service, ErrServiceAccess
+		return ErrServiceAccess
 	}
-	if err != nil {
-		return service, publisherLookupError(err, ErrServiceAccess)
-	}
-	service, err = q.LockService(ctx, serviceID)
-	return service, publisherLookupError(err, ErrServiceAccess)
+	return publisherLookupError(err, ErrServiceAccess)
 }
 
 // RetireConnectorPeerPair commits only an exact negative fact. snapshot signature
@@ -90,8 +86,11 @@ func (d *Database) RetireConnectorPeerPair(ctx context.Context, serviceID, pairI
 	}
 	defer rollback(ctx, tx, "retire connector peer pair", &retErr)()
 	q := controlstatedb.New(tx)
-	if _, err := lockConnectorPeerRetirementScope(ctx, tx, serviceID); err != nil {
+	if err := lockConnectorPeerRetirementOwner(ctx, tx, serviceID); err != nil {
 		return result, err
+	}
+	if _, err := q.LockService(ctx, serviceID); err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: p.ServiceRunID, ServiceID: serviceID})
 	if err != nil {

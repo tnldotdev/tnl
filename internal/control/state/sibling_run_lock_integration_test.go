@@ -61,6 +61,9 @@ func TestIntegrationSiblingRunOperationsDuringHeartbeat(t *testing.T) {
 	if saved, err := d.GetServiceForPublisher(ctx, f.service.ID, publisher, f.now); err != nil || saved.ID != f.service.ID {
 		t.Fatal("read service for a newly enrolled publisher during sibling heartbeat", err)
 	}
+	if page, err := d.ListConnectorPeerPairs(ctx, b.ServiceID, b.RunID, "", b.Token, f.now); err != nil || len(page.Items) != 0 {
+		t.Fatal("sibling publisher could not reconcile its empty connector list", err)
+	}
 	event := serviceaudit.Observation{
 		EventID: serviceaudit.NewID(), ServiceKind: "service", ServiceID: b.ServiceID,
 		RunID: b.RunID, RunNumber: b.RunNumber, VisitorConnectionID: mustOpaqueID(t, opaqueid.VisitorConnectionPrefix),
@@ -147,5 +150,38 @@ func TestIntegrationQueuedRunClosePrecedesNewSiblingHeartbeat(t *testing.T) {
 	}
 	if err := awaitIntegrationResult(t, ctx, late); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("late heartbeat did not observe run closure", err)
+	}
+}
+
+func TestIntegrationConnectorPeerListQueuesBehindServiceEdit(t *testing.T) {
+	f, _, _ := newRunAliasServiceFixture(t)
+	run := f.publish(t, f.service)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	edit, err := f.database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, edit)
+	if err := queueRunWriter(ctx, edit, f.service.ID); err != nil {
+		t.Fatal(err)
+	}
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
+	listed := make(chan error, 1)
+	workers.Go(func() {
+		_, err := f.database.ListConnectorPeerPairs(ctx, f.service.ID, run.RunID, "", run.Token, f.now)
+		listed <- err
+	})
+	// the writer has not touched the service row yet.
+	waitForPostgresBlock(t, ctx, f.database, int32(edit.Conn().PgConn().PID()), listed)
+	if _, err := edit.Exec(ctx, `UPDATE control.services SET enabled=false WHERE id=$1`, f.service.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := edit.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitIntegrationResult(t, ctx, listed); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("candidate list missed service disablement", err)
 	}
 }
