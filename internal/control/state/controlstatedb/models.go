@@ -496,6 +496,7 @@ type ControlDomainTransferOffer struct {
 	SourceTeamID      string
 	DestinationTeamID string
 	OfferedBy         string
+	OfferedSessionID  string
 	AuthorityRevision int64
 	ExpiresAt         pgtype.Timestamptz
 }
