@@ -82,6 +82,9 @@ func testIntegrationPublicStreamTransports(t *testing.T, restricted bool) {
 				_, config := identity.prepareService(t, target.URL, quic, tcp, controlv1.ProjectServiceConfiguration{
 					Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}},
 				})
+				// this tests stream transport, not the production heartbeat cadence.
+				// observe late certificate and endpoint readiness within the test budget.
+				config.HeartbeatInterval = time.Second
 				handle := startOwnedIntegrationPublisher(t, owner, config, diagnostics)
 				event := ready(t, handle)
 				var token, shareID string

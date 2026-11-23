@@ -55,6 +55,7 @@ type relayProcessSettings struct {
 	transportTLS     *tls.Config
 	internalListen   string
 	internalListener net.Listener
+	internalPacket   net.PacketConn
 	internalAddress  string
 	tcpListen        string
 	tcpListener      net.Listener
@@ -128,7 +129,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 		client: privateClient, relayServiceID: settings.relayServiceID, relayID: settings.relayID,
 		relayAddress: settings.relayAddress, tlsServerName: settings.tlsServerName,
 		transportTLS: transportTLS, certificateChanged: certificateChanged, clusterSecrets: d.clusterSecrets,
-		internalAddress: settings.internalAddress, internalListener: internalListener, metrics: metrics,
+		internalAddress: settings.internalAddress, internalListener: internalListener, internalPacket: settings.internalPacket, metrics: metrics,
 	})
 	if err != nil {
 		_ = udpListener.Close()
@@ -175,6 +176,7 @@ type relayRuntimeConfig struct {
 	clusterSecrets     serverhttp.BearerSecrets
 	internalAddress    string
 	internalListener   net.Listener
+	internalPacket     net.PacketConn
 	metrics            *observability.Metrics
 }
 
@@ -359,8 +361,17 @@ func (d *daemon) startRelayRuntime(
 	if err != nil {
 		return nil, err
 	}
-	internalUDP, err := muxsession.ListenQUIC(runtimeConfig.internalListener.Addr().String(), runtimeConfig.transportTLS,
-		muxsession.QUICConfig{Config: &quic.Config{MaxIncomingStreams: int64(streamCapacity)}})
+	listenAddress := runtimeConfig.internalListener.Addr().String()
+	quicConfig := muxsession.QUICConfig{Config: &quic.Config{MaxIncomingStreams: int64(streamCapacity)}}
+	var internalUDP *muxsession.QUICListener
+	if packet := runtimeConfig.internalPacket; packet != nil {
+		if packet.LocalAddr().String() != listenAddress {
+			return nil, errors.Join(errors.New("internal relay TCP and UDP must share an address"), packet.Close())
+		}
+		internalUDP, err = muxsession.ListenQUICPacket(packet, runtimeConfig.transportTLS, quicConfig)
+	} else {
+		internalUDP, err = muxsession.ListenQUIC(listenAddress, runtimeConfig.transportTLS, quicConfig)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("listen for internal QUIC forwarding: %w", err)
 	}

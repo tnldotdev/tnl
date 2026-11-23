@@ -49,8 +49,8 @@ type ControllerConfig struct {
 // Controller maintains one exact relay lease and applies it to publisher
 // connection transitions.
 type Controller struct {
-	confirmationMu     sync.Mutex
-	confirmation       controloutage.Confirmation
+	leaseRequest       chan struct{}
+	confirmation       controloutage.Confirmation // held by the current lease request
 	client             ControlClient
 	registration       relayv1.RelayRegistration
 	renewalInterval    time.Duration
@@ -99,8 +99,8 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		client: config.Client, registration: registration, renewalInterval: config.RenewalInterval,
 		retryInterval: config.RetryInterval, load: config.Load, leaseChanged: config.LeaseChanged,
 		certificateChanged: config.CertificateChanged, now: config.Now, report: config.Report,
-		observer:     config.Observer,
-		leaseUpdated: make(chan struct{}),
+		observer: config.Observer, leaseUpdated: make(chan struct{}),
+		leaseRequest: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -224,10 +224,29 @@ func (c *Controller) runOnce(ctx context.Context) error {
 	}
 }
 
+// serialize the request as well as its confirmation: a drain observation can
+// otherwise arrive after a concurrent renewal with a newer control timestamp.
+func (c *Controller) lockLeaseRequest(ctx context.Context) error {
+	select {
+	case c.leaseRequest <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-c.leaseRequest
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (c *Controller) register(ctx context.Context) (retErr error) {
-	started := c.now()
 	finish := startOperation(ctx, c.observer, observability.OpRelayRegister)
 	defer func() { finish(retErr) }()
+	if err := c.lockLeaseRequest(ctx); err != nil {
+		return err
+	}
+	defer func() { <-c.leaseRequest }()
+	started := c.now()
 	lease, err := c.client.RegisterRelay(ctx, c.registration)
 	if err != nil {
 		return relayControlError("register relay", err)
@@ -236,9 +255,13 @@ func (c *Controller) register(ctx context.Context) (retErr error) {
 }
 
 func (c *Controller) renew(ctx context.Context) (retErr error) {
-	started := c.now()
 	finish := startOperation(ctx, c.observer, observability.OpRelayRenewLease)
 	defer func() { finish(retErr) }()
+	if err := c.lockLeaseRequest(ctx); err != nil {
+		return err
+	}
+	defer func() { <-c.leaseRequest }()
+	started := c.now()
 	lease := c.Lease()
 	connections, streams := c.load()
 	if connections < 0 || streams < 0 {
@@ -294,9 +317,13 @@ func (c *Controller) Lease() relayv1.RelayLease {
 }
 
 func (c *Controller) Drain(ctx context.Context, deadline time.Time) (retErr error) {
-	started := c.now()
 	finish := startOperation(ctx, c.observer, observability.OpRelayBeginDrain)
 	defer func() { finish(retErr) }()
+	if err := c.lockLeaseRequest(ctx); err != nil {
+		return err
+	}
+	defer func() { <-c.leaseRequest }()
+	started := c.now()
 	lease := c.Lease()
 	if lease.RelayLeaseRevision <= 0 || !deadline.After(c.now()) {
 		return errors.New("relay: active lease and future drain deadline are required")
@@ -320,8 +347,6 @@ func (c *Controller) activeLease() (relayv1.RelayLease, error) {
 }
 
 func (c *Controller) confirmLease(started time.Time, lease relayv1.RelayLease) error {
-	c.confirmationMu.Lock()
-	defer c.confirmationMu.Unlock()
 	next, err := c.confirmation.Confirm(started, lease.RenewedAt, lease.ServingUntil, c.now())
 	if err != nil {
 		return err

@@ -37,7 +37,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
-	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -313,11 +312,7 @@ func wasmFixtureRelays(t *testing.T, f *privateSeparatedFixture) (map[string]*wa
 	var relays []wasmFixtureRelay
 	var pins []string
 	for index := range 2 {
-		listener, packets, err := transporttest.ListenTCPUDP()
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.owner.cleanupResource(t, func() { _ = listener.Close(); _ = packets.Close() })
+		listener, packets := fixtureRelaySockets(t, f.owner)
 		proxy := newWASMCarrierProxy(t, f.owner, listener.Addr().String())
 		_, port, err := net.SplitHostPort(proxy.listener.Addr().String())
 		if err != nil {
@@ -325,11 +320,11 @@ func wasmFixtureRelays(t *testing.T, f *privateSeparatedFixture) (map[string]*wa
 		}
 		address := net.JoinHostPort("localhost", port)
 		id := fmt.Sprintf("portable-relay-%d", index)
-		internal := serviceRuntimeListener(t, f.owner)
+		internal, forwarding := fixtureRelaySockets(t, f.owner)
 		settings := relayProcessSettings{
 			controlEndpoint: f.controlConfig.PrivateControlEndpoint(), controlAddress: f.controlConfig.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
 			relayServiceID: id, relayID: id, relayAddress: address, tlsServerName: "localhost", transportTLS: serviceRuntimeTLS(t, f.certificateAuthority, "localhost"),
-			internalListener: internal, internalAddress: internal.Addr().String(), tcpListener: listener, udpPacket: packets, udpListen: packets.LocalAddr().String(),
+			internalListener: internal, internalPacket: forwarding, internalAddress: internal.Addr().String(), tcpListener: listener, udpPacket: packets, udpListen: packets.LocalAddr().String(),
 			quic: f.controlConfig.RelayQUICConfig(), runtime: relaySettingsFrom(f.controlConfig),
 		}
 		f.runFixtureRelay(t, settings)

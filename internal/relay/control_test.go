@@ -165,6 +165,100 @@ func TestControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 	synctest.Test(t, testControllerDoesNotRegisterAgainAfterAcknowledgingDrain)
 }
 
+func TestDrainWaitsForInFlightRelayRenewal(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		now := time.Now()
+		registration := relayv1.RelayRegistration{
+			RelayServiceId: "relay-a", RelayId: "relay-a-1", RelayRunId: "relay-run-1",
+			ProtocolVersion: 1, RelayAddress: "relay-a.example.test:443", TlsServerName: "relay-a.example.test",
+			InternalRelayAddress: "relay-a.internal:9445", InternalNetworks: []string{},
+			ConnectionCapacity: 10, StreamCapacity: 100,
+		}
+		client := &orderedRelayLeaseClient{
+			lease: relayv1.RelayLease{
+				RelayServiceId: registration.RelayServiceId, RelayId: registration.RelayId, RelayRunId: registration.RelayRunId,
+				RelayLeaseRevision: 1, ProtocolVersion: registration.ProtocolVersion, RelayAddress: registration.RelayAddress,
+				TlsServerName: registration.TlsServerName, InternalRelayAddress: registration.InternalRelayAddress,
+				InternalNetworks: registration.InternalNetworks, ConnectionCapacity: registration.ConnectionCapacity, StreamCapacity: registration.StreamCapacity,
+				RegisteredAt: now, RenewedAt: now, ServingUntil: now.Add(time.Minute),
+			},
+			renewing: make(chan struct{}), release: make(chan struct{}), draining: make(chan struct{}, 2),
+		}
+		c, err := NewController(ControllerConfig{
+			Client: client, Registration: registration, RenewalInterval: time.Second, RetryInterval: time.Second,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.register(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		renewed := make(chan error, 1)
+		go func() { renewed <- c.renew(t.Context()) }()
+		defer close(client.release)
+		<-client.renewing
+
+		waiting, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		drained := make(chan error, 1)
+		deadline := now.Add(10 * time.Second)
+		go func() { drained <- c.Drain(waiting, deadline) }()
+		synctest.Wait()
+		select {
+		case <-client.draining:
+			t.Fatal("drain reached control before the renewal reply was accepted")
+		default:
+		}
+		cancel()
+		if err := <-drained; !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceling a queued drain: %v", err)
+		}
+
+		go func() { drained <- c.Drain(t.Context(), deadline) }()
+		synctest.Wait()
+		client.release <- struct{}{}
+		if err := <-renewed; err != nil {
+			t.Fatal(err)
+		}
+		if err := <-drained; err != nil {
+			t.Fatal(err)
+		}
+		if lease := c.Lease(); !lease.Draining || c.Ready(time.Now()) || lease.DrainDeadline == nil || !lease.DrainDeadline.Equal(deadline) {
+			t.Fatalf("drain did not fence the current lease: %#v", lease)
+		}
+	})
+}
+
+type orderedRelayLeaseClient struct {
+	ControlClient
+	lease    relayv1.RelayLease
+	renewing chan struct{}
+	release  chan struct{}
+	draining chan struct{}
+}
+
+func (c *orderedRelayLeaseClient) RegisterRelay(context.Context, relayv1.RelayRegistration) (relayv1.RelayLease, error) {
+	return c.lease, nil
+}
+
+func (c *orderedRelayLeaseClient) RenewRelay(context.Context, relayv1.RelayID, relayv1.RelayRenewal) (relayv1.RelayLease, error) {
+	close(c.renewing)
+	<-c.release
+	lease := c.lease
+	lease.RenewedAt = time.Now()
+	lease.ServingUntil = lease.RenewedAt.Add(time.Minute)
+	return lease, nil
+}
+
+func (c *orderedRelayLeaseClient) DrainRelay(_ context.Context, _ relayv1.RelayID, request relayv1.RelayDrainRequest) (relayv1.RelayLease, error) {
+	c.draining <- struct{}{}
+	lease := c.lease
+	lease.RenewedAt = time.Now()
+	lease.DrainDeadline = &request.Deadline
+	lease.Draining = true
+	return lease, nil
+}
+
 func testControllerDoesNotRegisterAgainAfterAcknowledgingDrain(t *testing.T) {
 	now := time.Now().UTC()
 	deadline := now.Add(time.Minute)
