@@ -17,6 +17,16 @@ func TestIntegrationSiblingRunOperationsDuringHeartbeat(t *testing.T) {
 	f, _, _ := newRunAliasServiceFixture(t)
 	d := f.database
 	a, b := f.publish(t, f.service), f.publish(t, f.service)
+	enrollment := publisherEnrollment(t, d, serviceTestAuthority{TeamID: f.project.TeamID, ActingIdentityID: f.project.ActorID},
+		PublisherScope{TeamID: f.project.TeamID, Kind: "service", ServiceID: f.service.ID}, f.now)
+	signing, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := d.RedeemPublisherEnrollment(t.Context(), enrollment.Key, signing, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	public, _, err := ed25519.GenerateKey(rand.Reader)
@@ -48,6 +58,9 @@ func TestIntegrationSiblingRunOperationsDuringHeartbeat(t *testing.T) {
 	workers.Go(func() { _, err := beat(a); heartbeat <- err })
 	waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), heartbeat)
 
+	if saved, err := d.GetServiceForPublisher(ctx, f.service.ID, publisher, f.now); err != nil || saved.ID != f.service.ID {
+		t.Fatal("read service for a newly enrolled publisher during sibling heartbeat", err)
+	}
 	event := serviceaudit.Observation{
 		EventID: serviceaudit.NewID(), ServiceKind: "service", ServiceID: b.ServiceID,
 		RunID: b.RunID, RunNumber: b.RunNumber, VisitorConnectionID: mustOpaqueID(t, opaqueid.VisitorConnectionPrefix),

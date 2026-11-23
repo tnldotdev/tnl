@@ -331,7 +331,7 @@ func (d *Database) GetServiceForPublisher(ctx context.Context, id string, publis
 		return result, err
 	}
 	defer rollback(ctx, tx, "read publisher service", &retErr)()
-	if err = lockServiceAdmission(ctx, tx, id); err != nil {
+	if err = lockServiceForRun(ctx, tx, id); err != nil {
 		return result, err
 	}
 	row, err := controlstatedb.New(tx).SelectServiceForPublisher(ctx, controlstatedb.SelectServiceForPublisherParams{ServiceID: id, PublisherIdentityID: publisher.ID, PublisherGrantID: publisher.GrantID, Now: timestamptz(clock.current())})
