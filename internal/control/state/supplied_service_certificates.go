@@ -32,7 +32,7 @@ func (d *Database) markSuppliedServiceCertificateInstalled(ctx context.Context, 
 		return result, err
 	}
 	defer rollback(ctx, tx, "install supplied service certificate", &retErr)()
-	if err = lockServiceForPublication(ctx, tx, service); err != nil {
+	if err = lockServiceForRun(ctx, tx, service); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
