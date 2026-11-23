@@ -491,6 +491,15 @@ type ControlDomain struct {
 	UpdatedAt               pgtype.Timestamptz
 }
 
+type ControlDomainTransferOffer struct {
+	DomainID          string
+	SourceTeamID      string
+	DestinationTeamID string
+	OfferedBy         string
+	AuthorityRevision int64
+	ExpiresAt         pgtype.Timestamptz
+}
+
 type ControlGuestTrial struct {
 	ID                    string
 	CredentialID          pgtype.Text

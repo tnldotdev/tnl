@@ -65,6 +65,7 @@ type Store interface {
 	ClaimTeamDomain(context.Context, controlstate.ClaimDomainRequest, time.Time) (controlstate.Domain, error)
 	SetTeamDefaultDomain(context.Context, string, string, string, time.Time) (controlstate.Team, error)
 	ReleaseTeamDomain(context.Context, string, string, string, time.Time) error
+	TransferDomain(context.Context, string, string, string, bool, time.Time) (controlstate.DomainTransfer, error)
 }
 
 type handler struct {

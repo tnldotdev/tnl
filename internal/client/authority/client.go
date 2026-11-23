@@ -189,6 +189,13 @@ func (c *Client) ClaimTeamDomain(ctx context.Context, teamID, domain, idempotenc
 	})
 }
 
+func (c *Client) TransferDomain(ctx context.Context, domain, destination string, accept bool) (authorityv1.DomainTransfer, error) {
+	body := authorityv1.DomainTransferRequest{Domain: domain, DestinationTeamId: destination, Accept: new(accept)}
+	return request[authorityv1.DomainTransfer](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.TransferDomain(ctx, body, editors...)
+	})
+}
+
 func (c *Client) SetTeamDefaultDomain(ctx context.Context, teamID, domainID string) (authorityv1.Team, error) {
 	return request[authorityv1.Team](ctx, c, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.SetTeamDefaultDomain(ctx, teamID, domainID, editors...)

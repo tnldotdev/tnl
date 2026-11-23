@@ -1,4 +1,25 @@
 paths:
+  /v1/domain-transfers:
+    post:
+      operationId: transferDomain
+      summary: Offer, accept, or complete a verified custom domain transfer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/DomainTransferRequest"
+      responses:
+        "200":
+          description: Transfer outcome
+          content:
+            application/json:
+              schema:
+                $ref: "../openapi.yaml#/components/schemas/DomainTransfer"
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"
   /v1/teams/{team_id}/domains:
     get:
       operationId: listTeamDomains

@@ -411,6 +411,30 @@ func (h *handler) ReleaseTeamDomain(
 	response.WriteHeader(http.StatusNoContent)
 }
 
+func (h *handler) TransferDomain(response http.ResponseWriter, request *http.Request) {
+	principal, ok := h.authenticateControlRequest(response, request)
+	if !ok {
+		return
+	}
+	var body authorityv1.DomainTransferRequest
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeProblem(response, http.StatusBadRequest, authorityv1.InvalidRequest, "invalid request")
+		return
+	}
+	result, err := h.store.TransferDomain(request.Context(), principal.IdentityID, body.Domain, body.DestinationTeamId,
+		body.Accept != nil && *body.Accept, time.Now())
+	if err != nil {
+		writeControlStateProblem(request.Context(), response, "transfer domain", err)
+		return
+	}
+	out := authorityv1.DomainTransfer{Domain: result.Domain, State: authorityv1.DomainTransferState(result.State),
+		SourceTeamId: result.Source, DestinationTeamId: result.Destination, ExpiresAt: result.ExpiresAt}
+	if len(result.Blockers) != 0 {
+		out.Blockers = &result.Blockers
+	}
+	writeJSON(response, http.StatusOK, out)
+}
+
 func authorityRequestDigest(value any) ([32]byte, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {

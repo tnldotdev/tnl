@@ -44,7 +44,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 		"check", "generate", "telemetry on", "telemetry off", "telemetry status",
 		"team current", "team list", "team use", "team create", "team members", "team invite create",
 		"team invite list", "team invite revoke", "team join", "team member set-role", "team member remove",
-		"domain claim", "domain default", "domain list", "domain status", "domain release", "url list", "url inventory", "url available", "url delete",
+		"domain claim", "domain default", "domain list", "domain status", "domain release", "domain transfer", "url list", "url inventory", "url available", "url delete",
 		"url access show", "url access set", "auth browser", "team feedback get", "team feedback set",
 		"share invite create", "share invite accept", "share invite list", "share invite revoke",
 		"publisher enroll", "publisher setup", "publisher provision", "publisher current", "publisher list", "publisher revoke", "publisher grant add", "publisher grant revoke",
