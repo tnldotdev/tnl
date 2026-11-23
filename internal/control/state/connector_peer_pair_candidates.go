@@ -50,15 +50,19 @@ func (d *Database) ListConnectorPeerPairs(ctx context.Context, serviceID, runID,
 	}
 	defer rollback(ctx, tx, "list connector peer pairs", &retErr)()
 	q := controlstatedb.New(tx)
-	service, err := lockConnectorPeerRetirementScope(ctx, tx, serviceID)
-	if err != nil {
+	if err := lockConnectorPeerRetirementOwner(ctx, tx, serviceID); err != nil {
 		return result, err
 	}
-	ownerCurrent := true
-	if service.TeamID.Valid {
-		if err := tx.QueryRow(ctx, `SELECT deleted_at IS NULL FROM control.teams WHERE id=$1`, service.TeamID.String).Scan(&ownerCurrent); err != nil {
-			return result, err
-		}
+	if err := queueRunReader(ctx, tx, serviceID); err != nil {
+		return result, err
+	}
+	// share the service row with sibling runs. a disabled service or deleted
+	// owner still admits an exact-token read of retained retirements below.
+	var includeCandidates bool
+	if err := tx.QueryRow(ctx, `SELECT s.enabled AND s.deleted_at IS NULL AND
+		(s.team_id IS NULL OR EXISTS (SELECT 1 FROM control.teams t WHERE t.id=s.team_id AND t.deleted_at IS NULL))
+		FROM control.services s WHERE s.id=$1 FOR SHARE OF s`, serviceID).Scan(&includeCandidates); err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: runID, ServiceID: serviceID})
 	if err != nil {
@@ -70,7 +74,6 @@ func (d *Database) ListConnectorPeerPairs(ctx context.Context, serviceID, runID,
 	}
 	// authorize positive hints before taking any pair lock. a known serving
 	// denial permits only retained negative facts, never a fabricated retirement.
-	includeCandidates := ownerCurrent && service.Enabled && !service.DeletedAt.Valid
 	until := run.ServingUntil.Time
 	if includeCandidates {
 		_, err = d.validateServiceRunAuthorization(ctx, tx, q, serviceID, runID, run, digest, clock)
