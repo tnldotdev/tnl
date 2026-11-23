@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"time"
 
@@ -20,12 +21,31 @@ type serviceRunEndpoint struct {
 	public                                    bool
 }
 
-func lockServiceRunEndpoint(ctx context.Context, tx pgx.Tx, serviceID string) (serviceRunEndpoint, error) {
+//go:embed batch/lock_service_run_endpoint.sql
+var lockServiceRunEndpointSQL string
+
+func readLockedRunEndpoint(row pgx.Row) (serviceRunEndpoint, error) {
 	var endpoint serviceRunEndpoint
-	err := tx.QueryRow(ctx, `SELECT id,endpoint_revision,certificate_hostname,domain_id,ingress_pool_id,protocol,service_port,public,run_alias_parent
-	    FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL FOR SHARE`, serviceID).Scan(
+	err := row.Scan(
 		&endpoint.id, &endpoint.revision, &endpoint.hostname, &endpoint.domain, &endpoint.pool, &endpoint.protocol, &endpoint.port, &endpoint.public, &endpoint.aliasParent)
 	return endpoint, publisherLookupError(err, ErrServiceAccess)
+}
+
+// this run already holds its owner lock. queue the endpoint read behind
+// publication writers in a separate statement, with a fresh snapshot after
+// the wait. only this renewal's statements share the round trip.
+func (d *Database) lockRenewalEndpoint(ctx context.Context, tx pgx.Tx, service string) (serviceRunEndpoint, error) {
+	var endpoint serviceRunEndpoint
+	b := new(pgx.Batch)
+	b.Queue(queueRunReaderSQL, service)
+	b.Queue(lockServiceRunEndpointSQL, service).QueryRow(func(row pgx.Row) (err error) {
+		endpoint, err = readLockedRunEndpoint(row)
+		return err
+	})
+	query := d.activity.TraceQueryStart(ctx, tx.Conn(), pgx.TraceQueryStartData{SQL: lockServiceRunEndpointSQL})
+	err := tx.SendBatch(ctx, b).Close()
+	d.activity.TraceQueryEnd(query, tx.Conn(), pgx.TraceQueryEndData{Err: err})
+	return endpoint, err
 }
 
 func serviceRunAliasReady(ctx context.Context, tx pgx.Tx, endpoint serviceRunEndpoint, run controlstatedb.ControlServiceRun, canonicalReady bool, now time.Time) (bool, error) {
@@ -74,7 +94,7 @@ func serviceRunFirstReadyGuestEndpointReady(ctx context.Context, tx pgx.Tx, q *c
 	}
 	// the owner and service are already locked before the run. retain the exact
 	// endpoint too, so DNS cannot change between this decision and clock commit.
-	endpoint, err := lockServiceRunEndpoint(ctx, tx, run.ServiceID)
+	endpoint, err := readLockedRunEndpoint(tx.QueryRow(ctx, lockServiceRunEndpointSQL, run.ServiceID))
 	if err != nil {
 		return false, err
 	}

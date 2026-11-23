@@ -752,10 +752,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	}
 	// siblings can renew together. the owner guard still fences revocation and
 	// the shared service lock keeps endpoint edits out until this run commits.
-	if err = queueRunReader(ctx, tx, serviceID); err != nil {
-		return result, err
-	}
-	endpoint, err := lockServiceRunEndpoint(ctx, tx, serviceID)
+	endpoint, err := d.lockRenewalEndpoint(ctx, tx, serviceID)
 	if err != nil {
 		return result, err
 	}
