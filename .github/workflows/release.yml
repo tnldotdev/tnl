@@ -96,9 +96,16 @@ jobs:
           pnpm: true
 
       - name: Build draft release
-        run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          notes="releases/$TAG.md"
+          if [ -f "$notes" ]; then
+            goreleaser release --clean --release-notes "$notes"
+          else
+            goreleaser release --clean
+          fi
 
       - name: Verify release artifacts
         run: |
