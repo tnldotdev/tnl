@@ -58,16 +58,17 @@ var migrationFiles embed.FS
 // Database is the PostgreSQL connection pool for control state. its database
 // details remain private to this package.
 type Database struct {
-	controlOutageTolerance atomic.Int64
-	oidcAdmissions         map[string]configuredAdmission
-	projectPublisherLimits map[string]int
-	pool                   *pgxpool.Pool
-	publisherAuditSlots    chan struct{}
-	storageKey             *storagekey.Keyring
-	managedURLMode         naming.ManagedURLMode
-	diagnosticsMu          sync.Mutex
-	activity               *queryActivity
-	connections            *connectionActivity
+	controlOutageTolerance  atomic.Int64
+	serviceRunLeaseDuration atomic.Int64
+	oidcAdmissions          map[string]configuredAdmission
+	projectPublisherLimits  map[string]int
+	pool                    *pgxpool.Pool
+	publisherAuditSlots     chan struct{}
+	storageKey              *storagekey.Keyring
+	managedURLMode          naming.ManagedURLMode
+	diagnosticsMu           sync.Mutex
+	activity                *queryActivity
+	connections             *connectionActivity
 }
 
 // Migrate initializes the control schema through a direct PostgreSQL URL.

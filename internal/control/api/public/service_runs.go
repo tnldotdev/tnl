@@ -177,8 +177,8 @@ func (h *handler) RenewServiceRun(w http.ResponseWriter, r *http.Request, servic
 		return
 	}
 	response := controlv1.ServiceRunState{
-		PolicyConfirmation: state.PolicyConfirmation,
-		ServiceId:          state.ServiceID, ServiceRunId: state.RunID, RunNumber: state.RunNumber,
+		PolicyConfirmation: state.PolicyConfirmation, RenewAfterMs: state.RenewAfter.Milliseconds(),
+		ServiceId: state.ServiceID, ServiceRunId: state.RunID, RunNumber: state.RunNumber,
 		State: controlv1.ServiceRunStateState(state.State), PublisherExpiresAt: state.ServingUntil, ObservedAt: state.ObservedAt,
 		EndpointRevision: state.EndpointRevision, PublicEndpointReady: state.PublicEndpointReady,
 		Healthy: &state.Healthy, StreamCapacity: &state.StreamCapacity, ActiveStreams: &state.ReportedStreams,

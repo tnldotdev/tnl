@@ -5,12 +5,14 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -255,10 +257,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			return err
 		}
 	}
-	if config.HeartbeatInterval == 0 {
-		config.HeartbeatInterval = 10 * time.Second
-	}
-	if config.HeartbeatInterval < time.Millisecond || config.HeartbeatInterval > 15*time.Second {
+	if config.HeartbeatInterval != 0 && (config.HeartbeatInterval < time.Millisecond || config.HeartbeatInterval > 15*time.Second) {
 		return ErrPrivateStream
 	}
 	key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
@@ -475,6 +474,8 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		report()
 	}()
 	var servingConfirmation controloutage.Confirmation
+	var nextRenewal time.Time
+	var lastHealth controlv1.ServiceRunHeartbeat
 	heartbeat := func(ctx context.Context) (state controlv1.ServiceRunState, err error) {
 		started := time.Now()
 		ctx, finish := observability.PublisherOperation(ctx, "private_heartbeat")
@@ -499,12 +500,15 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			aliasObservation = alias.Lease().Begin()
 			aliasObservation.Deadline, _ = ctx.Deadline()
 		}
-		state, err = config.Control.HeartbeatServiceRun(ctx, config.ServiceID, setup.ServiceRunId, runToken,
-			controlv1.ServiceRunHeartbeat{Healthy: status.TargetHealthy, StreamCapacity: config.StreamCapacity, ActiveStreams: int32(active)})
+		health := controlv1.ServiceRunHeartbeat{Healthy: status.TargetHealthy, StreamCapacity: config.StreamCapacity, ActiveStreams: int32(active)}
+		state, err = config.Control.HeartbeatServiceRun(ctx, config.ServiceID, setup.ServiceRunId, runToken, health)
 		if err == nil {
 			controlUntil := state.PublisherExpiresAt
 			var next controloutage.Confirmation
 			next, state, err = acceptServingConfirmation(servingConfirmation, started, state, time.Now())
+			if err == nil && (state.RenewAfterMs <= 0 || state.RenewAfterMs > int64((1<<63-1)/time.Millisecond)) {
+				err = ErrPrivateStream
+			}
 			if err == nil {
 				err = context.Cause(ctx)
 			}
@@ -513,6 +517,12 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 			if err == nil {
 				servingConfirmation = next
+				delay := time.Duration(state.RenewAfterMs) * time.Millisecond
+				if config.HeartbeatInterval > 0 {
+					delay = min(delay, config.HeartbeatInterval)
+				}
+				nextRenewal = started.Add(delay)
+				lastHealth = health
 				if owner != nil {
 					owner.ObserveRenewal(observation, state.PolicyConfirmation, state.ObservedAt, controlUntil)
 				}
@@ -642,8 +652,23 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			return err
 		}
 	}
-	ticker := time.NewTicker(config.HeartbeatInterval)
-	defer ticker.Stop()
+	// while starting, DNS, certificates or slots can become ready after an
+	// early observation. the longer quiet-run cadence starts after readiness.
+	due := nextRenewal
+	if startup := time.Now().Add(10 * time.Second); startup.Before(due) {
+		due = startup
+	}
+	renew := time.NewTimer(time.Until(due))
+	defer renew.Stop()
+	schedule := func(at time.Time) {
+		due = at
+		renew.Reset(time.Until(at))
+	}
+	// target health is local. only a change in health or available capacity
+	// needs to interrupt a healthy publisher's routine renewal schedule.
+	localCheck := time.NewTicker(10 * time.Second)
+	defer localCheck.Stop()
+	var retryDelay time.Duration
 	ready := false
 	heartbeatOK := true
 	startupConfirmationAttempted := false
@@ -661,11 +686,15 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			state.RunAliasReady != nil && !*state.RunAliasReady
 	}
 	var observedPendingOnce bool
-	refreshHeartbeat := func() (stop bool, err error) {
+	refreshHeartbeat := func(early bool) (stop bool, err error) {
 		if !state.PublisherExpiresAt.After(time.Now()) {
 			return true, ErrPrivateStream
 		}
-		checkCtx, cancel := context.WithDeadline(ctx, state.PublisherExpiresAt)
+		deadline := state.PublisherExpiresAt
+		if limit := time.Now().Add(5 * time.Second); ready && limit.Before(deadline) {
+			deadline = limit
+		}
+		checkCtx, cancel := context.WithDeadline(ctx, deadline)
 		next, err := heartbeat(checkCtx)
 		cancel()
 		if err != nil {
@@ -677,14 +706,33 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 				return true, serviceWorkerError(err, ctx.Err())
 			}
 			reason, _ := failure.ReasonOf(err)
-			if reason != failure.ServerUnavailable && reason != failure.ServerRateLimited {
+			if reason != failure.ServerUnavailable && reason != failure.ServerRateLimited && !(ready && failure.Only(err, context.DeadlineExceeded) && state.PublisherExpiresAt.After(time.Now())) {
 				return true, err
+			}
+			if ready || !early {
+				retryDelay = min(8*time.Second, max(time.Second, 2*retryDelay))
+				delay := retryDelay/2 + rand.N(retryDelay/2)
+				if config.HeartbeatInterval > 0 {
+					delay = min(delay, config.HeartbeatInterval)
+				}
+				var limited *clientcontrol.RateLimitError
+				if errors.As(err, &limited) {
+					delay = max(delay, limited.RetryAfter)
+				}
+				schedule(time.Now().Add(delay))
 			}
 			// a surviving slot remains usable only until the last confirmed
 			// publisher deadline; retry without reviving stale authority.
 			return false, nil
 		}
 		state = next
+		retryDelay = 0
+		if startup := time.Now().Add(10 * time.Second); !ready && startup.Before(nextRenewal) {
+			nextRenewal = startup
+		}
+		if !early || nextRenewal.Before(due) {
+			schedule(nextRenewal)
+		}
 		publisherExpires = state.PublisherExpiresAt
 		heartbeatOK = true
 		for slot := range uint8(2) {
@@ -718,6 +766,14 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	for {
 		connected, changed := paths.Snapshot()
+		if ready && heartbeatOK && ((status.Connected[0] && connected[0] == nil) || (status.Connected[1] && connected[1] == nil)) {
+			// one relay loss may affect a whole fleet. spread early reports and
+			// collapse a second loss into the same scheduled renewal.
+			at := time.Now().Add(500*time.Millisecond + rand.N(time.Second))
+			if at.Before(due) {
+				schedule(at)
+			}
+		}
 		status.LastCheck = time.Now()
 		status.LeaseExpiresAt = state.PublisherExpiresAt
 		status.Connected = [2]bool{connected[0] != nil, connected[1] != nil}
@@ -768,12 +824,12 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			current, _ := paths.Snapshot()
 			if localReadiness(current, time.Now()) {
 				startupConfirmationAttempted = true
-				if stop, err := refreshHeartbeat(); stop {
+				if stop, err := refreshHeartbeat(true); stop {
 					return err
 				}
 				// dns publication can follow the two slot claims. bound observations
 				// before the first regular tick, which supersedes them even on failure.
-				if aliasPending() && config.HeartbeatInterval > aliasCheckDelay {
+				if aliasPending() && time.Until(due) > aliasCheckDelay {
 					aliasTimer = time.NewTimer(aliasCheckDelay)
 					aliasCheck = aliasTimer.C
 				}
@@ -808,19 +864,32 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			aliasCheck = nil
 			current, _ := paths.Snapshot()
 			if !ready && localReadiness(current, time.Now()) {
-				if stop, err := refreshHeartbeat(); stop {
+				if stop, err := refreshHeartbeat(true); stop {
 					return err
 				}
-				if !observedPendingOnce && aliasPending() && config.HeartbeatInterval > 3*aliasCheckDelay {
+				if !observedPendingOnce && aliasPending() && time.Until(due) > 2*aliasCheckDelay {
 					observedPendingOnce = true
 					aliasTimer.Reset(2 * aliasCheckDelay)
 					aliasCheck = aliasTimer.C
 				}
 			}
-		case <-ticker.C:
+		case <-localCheck.C:
+			expires.Stop()
+			if ready && heartbeatOK && time.Until(due) > time.Second {
+				check, cancel := context.WithDeadline(ctx, state.PublisherExpiresAt)
+				healthy := config.Healthy(check)
+				cancel()
+				bound.mu.Lock()
+				full := bound.reservedStreams >= int(config.StreamCapacity)
+				bound.mu.Unlock()
+				if healthy != lastHealth.Healthy || full != (lastHealth.ActiveStreams >= config.StreamCapacity) {
+					schedule(time.Now())
+				}
+			}
+		case <-renew.C:
 			expires.Stop()
 			aliasCheck = nil
-			if stop, err := refreshHeartbeat(); stop {
+			if stop, err := refreshHeartbeat(false); stop {
 				return err
 			}
 		}

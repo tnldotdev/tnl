@@ -124,7 +124,7 @@ func (d *Database) startServiceRunAttempt(ctx context.Context, service, id strin
 		return result, err
 	}
 	token, digest := serviceRunCredential(seed, run.ID)
-	until := now.Add(45 * time.Second)
+	until := now.Add(d.serviceRunLease())
 	if !prepared && run.PublisherExpiresAt.Time.After(until) {
 		until = run.PublisherExpiresAt.Time
 	}

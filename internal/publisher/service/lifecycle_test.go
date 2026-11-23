@@ -175,7 +175,8 @@ func (f *lifecycleControl) HeartbeatServiceRun(_ context.Context, id, run string
 		publicReady = f.approved.Endpoint != nil && f.approved.Endpoint.Public && state == "ready"
 	}
 	return controlv1.ServiceRunState{ServiceId: id, ServiceRunId: run, RunNumber: f.prep.RunNumber,
-		Healthy: &health.Healthy, StreamCapacity: &health.StreamCapacity, ActiveStreams: &health.ActiveStreams,
+		RenewAfterMs: 10_000,
+		Healthy:      &health.Healthy, StreamCapacity: &health.StreamCapacity, ActiveStreams: &health.ActiveStreams,
 		EndpointRevision: endpointRevision, PublicEndpointReady: publicReady,
 		PublisherConnections: connections,
 		ObservedAt:           time.Now(), PublisherExpiresAt: time.Now().Add(time.Minute), State: state}, nil

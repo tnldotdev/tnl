@@ -4177,6 +4177,9 @@ type ServiceRunState struct {
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 	PublisherExpiresAt   time.Time              `json:"publisher_expires_at"`
 
+	// RenewAfterMs Delay from the start of this heartbeat until the next routine renewal. This scheduling hint does not grant serving authority.
+	RenewAfterMs int64 `json:"renew_after_ms"`
+
 	// RunAliasReady Both the canonical endpoint and this run's exact alias have current public DNS and ingress readiness.
 	RunAliasReady *bool `json:"run_alias_ready,omitempty"`
 

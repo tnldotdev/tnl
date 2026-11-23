@@ -156,6 +156,9 @@ func TestIntegrationControlOutageRetainsEarlierServicePublisherAndCertificateExp
 				if err != nil || !heartbeat.ServingUntil.Equal(until) {
 					t.Fatal("operator allowance replaced an earlier actual expiry", heartbeat.ServingUntil, until, err)
 				}
+				if heartbeat.RenewAfter <= 0 || heartbeat.RenewAfter > until.Sub(at)/3 {
+					t.Fatalf("renewal hint %s ignored earlier %s expiry", heartbeat.RenewAfter, parent)
+				}
 				policy, err := d.ReadPublisherVisitorPolicy(t.Context(), visitorscope.Scope{Kind: visitorscope.Service, ID: f.service.ID},
 					f.run.RunID, f.run.RunNumber, f.run.Token, 0, at)
 				if err != nil || !policy.Policy.ValidUntil.Equal(until) {

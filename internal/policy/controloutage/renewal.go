@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const DefaultServiceRunLease = 90 * time.Second
+
 // RenewalDelay uses the granted lifetime, not a second local lease policy.
 // the configured interval is an upper bound; jitter spreads fleet renewals.
 func RenewalDelay(maximum time.Duration, renewedAt, expiresAt time.Time) time.Duration {

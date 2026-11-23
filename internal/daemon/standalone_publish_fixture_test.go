@@ -115,8 +115,9 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 		RelayStreamCapacity: 100, PublisherConnectionStreamLimit: 100, QUICIdleTimeout: time.Minute,
 		IngressLeaseDuration: 5 * time.Second,
 		RelayLeaseDuration:   5 * time.Second, LeaseRenewalInterval: time.Second,
-		ControlOutageTolerance: controloutage.DefaultTolerance,
-		ControlRetryInterval:   10 * time.Millisecond, DrainTimeout: 3 * time.Second,
+		ControlOutageTolerance:  controloutage.DefaultTolerance,
+		ServiceRunLeaseDuration: controloutage.DefaultServiceRunLease,
+		ControlRetryInterval:    10 * time.Millisecond, DrainTimeout: 3 * time.Second,
 	}, listeners
 }
 
