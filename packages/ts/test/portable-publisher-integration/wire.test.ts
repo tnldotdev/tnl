@@ -3,7 +3,12 @@ import {
   publisherChromeArguments,
   publisherWorkerdConfiguration,
 } from "../../../../scripts/test/portable-publisher-config.ts";
-import { fixtureSchema, publisherFailures, PublisherFixtureAssertion } from "./fixture.ts";
+import {
+  durablePublisherFailure,
+  fixtureSchema,
+  publisherFailures,
+  PublisherFixtureAssertion,
+} from "./fixture.ts";
 import { publisherHandler } from "./handler.ts";
 
 const fixture = fixtureSchema.parse({
@@ -68,6 +73,46 @@ test("publisher diagnostics name platform error kinds without their messages", (
   expect(publisherFailures(new TypeError("private payload"), "upload-response")).toEqual([
     { phase: "upload-response", code: "TypeError" },
   ]);
+});
+
+test("durable stop exposes separate joined failures without exporting private fields", () => {
+  const secret = "private control credential";
+  const facts = {
+    types: ["*errors.joinError"],
+    resets: [],
+    canceled: true,
+    deadline: false,
+    closed: false,
+    pipe_closed: false,
+    eof: false,
+    terminal_failed: false,
+    service_unavailable: false,
+  };
+  const exit = {
+    stop_requested: true,
+    publication: { ...facts, message: secret },
+    handler: null,
+    allocation: { ...facts, deadline: true },
+    credential: secret,
+  };
+  const result = durablePublisherFailure(
+    Object.assign(new Error(secret), { code: "sdk.publication_cleanup_failed" }),
+    "stop",
+    exit,
+  );
+  expect(result).toEqual({
+    phase: "stop",
+    failures: [{ phase: "stop", code: "sdk.publication_cleanup_failed" }],
+    exit: {
+      stop_requested: true,
+      publication: facts,
+      handler: null,
+      allocation: { ...facts, deadline: true },
+    },
+  });
+  expect(
+    durablePublisherFailure(new Error(secret), "stop", { ...exit, handler: secret }).exit,
+  ).toBeNull();
 });
 
 test("workerd uses persisted SQLite, static Go/WASM, and no node compatibility mode", () => {

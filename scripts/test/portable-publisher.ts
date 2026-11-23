@@ -296,10 +296,11 @@ async function startWorker(configuration: string) {
           method: "POST",
           signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(120_000)]),
         });
-        check(
-          response.ok,
-          `actual Go/WASM durable publisher ${route} failed: HTTP ${response.status} ${redact((await response.clone().text()).slice(0, 500))}; ${redact(diagnostics.slice(-1500))}`,
-        );
+        if (!response.ok) {
+          throw new Error(
+            `actual Go/WASM durable publisher ${route} failed: HTTP ${response.status} ${redact((await response.text()).slice(0, 4096))}; ${redact(diagnostics.slice(-1500))}`,
+          );
+        }
         return response;
       },
       async call(route: string) {

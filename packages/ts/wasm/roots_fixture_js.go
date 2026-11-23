@@ -29,6 +29,28 @@ func reportFixtureFailure(err error) {
 	if events.Length() >= 16 {
 		return
 	}
+	events.Call("push", fixtureFailureFacts(err))
+}
+
+// keep the most recent joined result per fixture endpoint kind. unrelated
+// earlier failures must not fill the diagnostic buffer ahead of the stop.
+func reportFixturePublisherExit(public, canceled bool, publication, handler, allocation error) {
+	name := "__tnlWasmPrivatePublisherExit"
+	if public {
+		name = "__tnlWasmPublicPublisherExit"
+	}
+	out := map[string]any{"stop_requested": canceled}
+	for stage, err := range map[string]error{"publication": publication, "handler": handler, "allocation": allocation} {
+		if err == nil {
+			out[stage] = nil
+		} else {
+			out[stage] = fixtureFailureFacts(err)
+		}
+	}
+	js.Global().Set(name, out)
+}
+
+func fixtureFailureFacts(err error) map[string]any {
 	types := []any{}
 	resets := []any{}
 	var visit func(error)
@@ -54,7 +76,7 @@ func reportFixtureFailure(err error) {
 	if reason, _, ok := failure.Describe(err); ok {
 		diagnostic["reason"] = string(reason)
 	}
-	events.Call("push", diagnostic)
+	return diagnostic
 }
 
 // only the controlled fixture artifact accepts a host-supplied test issuer.

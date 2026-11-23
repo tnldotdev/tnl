@@ -1,4 +1,5 @@
 import * as z from "zod";
+import { portableDiagnosticsSchema } from "../portable-integration/errors.ts";
 
 // this descriptor is private test input, not browser-safe project metadata.
 export const fixtureSchema = z.strictObject({
@@ -34,6 +35,26 @@ export const fixtureSchema = z.strictObject({
 export type PublisherFixture = z.output<typeof fixtureSchema>;
 
 export class PublisherFixtureAssertion extends Error {}
+
+const exitSchema = z.object({
+  stop_requested: z.boolean(),
+  publication: portableDiagnosticsSchema.element.nullable(),
+  handler: portableDiagnosticsSchema.element.nullable(),
+  allocation: portableDiagnosticsSchema.element.nullable(),
+});
+
+export function durablePublisherFailure(
+  error: unknown,
+  phase: "ready" | "start" | "stop" | "resume",
+  exit: unknown,
+) {
+  const checked = exitSchema.safeParse(exit);
+  return {
+    phase,
+    failures: publisherFailures(error, phase).slice(0, 8),
+    exit: checked.success ? checked.data : null,
+  };
+}
 
 export function check(value: unknown, message: string): asserts value {
   if (!value) throw new PublisherFixtureAssertion(message);
