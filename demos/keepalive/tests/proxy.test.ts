@@ -142,3 +142,62 @@ it("does not give an old forwarded alias a fresh lifetime", async () => {
     `${aliases[0]}/app.js`,
   ]);
 });
+
+it("switches away from a host silent before headers and lets the next body finish", async () => {
+  const { proxy, fetchHost, report } = await setup();
+  vi.useFakeTimers();
+  try {
+    fetchHost.mockResolvedValueOnce(report());
+    fetchHost.mockImplementationOnce(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("no headers")), {
+            once: true,
+          });
+        }),
+    );
+    let bodySignal: AbortSignal | null | undefined;
+    fetchHost.mockImplementationOnce(async (_input, init) => {
+      bodySignal = init?.signal;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            setTimeout(() => {
+              controller.enqueue(new TextEncoder().encode(script));
+              controller.close();
+            }, 1500);
+          },
+        }),
+      );
+    });
+    const result = proxy.file(request("/app.js"));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchHost).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchHost).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(await (await result).text()).toBe(script);
+    expect(bodySignal?.aborted).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps the original header budget for a sole publisher", async () => {
+  const { proxy, fetchHost, report } = await setup();
+  vi.useFakeTimers();
+  try {
+    fetchHost.mockResolvedValueOnce(report(aliases.slice(0, 1)));
+    fetchHost.mockImplementationOnce(async (_input, init) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      init?.signal?.throwIfAborted();
+      return new Response(script);
+    });
+    const result = proxy.file(request("/app.js"));
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(await (await result).text()).toBe(script);
+    expect(fetchHost).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
