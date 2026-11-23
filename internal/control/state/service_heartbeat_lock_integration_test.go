@@ -8,7 +8,7 @@ import (
 )
 
 func TestIntegrationServiceHeartbeatPreservesAuthorityGuards(t *testing.T) {
-	for _, boundary := range []string{"owner", "service"} {
+	for _, boundary := range []string{"owner", "publication", "service"} {
 		t.Run(boundary, func(t *testing.T) {
 			f := newServicePublicationFixture(t)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -20,6 +20,8 @@ func TestIntegrationServiceHeartbeatPreservesAuthorityGuards(t *testing.T) {
 			defer rollbackTestTransaction(t, gate)
 			if boundary == "owner" {
 				_, err = gate.Exec(ctx, `SELECT id FROM control.teams WHERE id=$1 FOR UPDATE`, f.service.TeamID)
+			} else if boundary == "publication" {
+				err = queueRunWriter(ctx, gate, f.service.ID)
 			} else {
 				_, err = gate.Exec(ctx, `SELECT id FROM control.services WHERE id=$1 FOR UPDATE`, f.service.ID)
 			}
