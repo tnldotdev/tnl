@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,31 @@ func TestControlOutageToleranceDefaultEnvironmentAndFlag(t *testing.T) {
 	got, err = Parse(append(args, "--control-outage-tolerance", "7m"))
 	if err != nil || got.ControlOutageTolerance != 7*time.Minute {
 		t.Fatalf("flag tolerance = %v, %v", got.ControlOutageTolerance, err)
+	}
+}
+
+func TestServiceRunLeaseSettings(t *testing.T) {
+	args := controlOutageArguments()
+	want := func(args []string, lease time.Duration) {
+		t.Helper()
+		cfg, err := Parse(args)
+		if err != nil || cfg.ServiceRunLeaseDuration != lease || cfg.ControlOutageTolerance != controloutage.DefaultTolerance {
+			t.Fatalf("run lease %v, serving allowance %v, error %v", cfg.ServiceRunLeaseDuration, cfg.ControlOutageTolerance, err)
+		}
+	}
+	want(args, 90*time.Second)
+	t.Setenv("TNLD_SERVICE_RUN_LEASE_DURATION", "60s")
+	want(args, time.Minute)
+	want(append(args, "--service-run-lease-duration", "30s"), 30*time.Second)
+	for _, invalid := range []string{"0s", "-1s", "999ms", "none"} {
+		if _, err := Parse(append(args, "--service-run-lease-duration", invalid)); err == nil {
+			t.Errorf("accepted lease %s", invalid)
+		}
+	}
+	for _, role := range []Role{RoleRelay, RoleIngress} {
+		if _, err := ResolveExplicit(Config{Role: role}, nil); err == nil || !strings.Contains(err.Error(), "service_run_lease_duration") {
+			t.Fatalf("explicit environment on %s: %v", role, err)
+		}
 	}
 }
 

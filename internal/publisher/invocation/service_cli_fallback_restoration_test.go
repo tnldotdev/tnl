@@ -60,7 +60,7 @@ func (c *cliFallbackObservationControl) StartServiceRun(context.Context, string,
 func (c *cliFallbackObservationControl) HeartbeatServiceRun(_ context.Context, _, _ string, _ credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	now := time.Now()
 	return controlv1.ServiceRunState{ServiceId: c.saved.Id, ServiceRunId: c.prep.ServiceRunId, RunNumber: c.prep.RunNumber,
-		State: "ready", Healthy: &health.Healthy, ObservedAt: now, PublisherExpiresAt: now.Add(time.Minute),
+		State: "ready", Healthy: &health.Healthy, ObservedAt: now, PublisherExpiresAt: now.Add(time.Minute), RenewAfterMs: 10_000,
 		EndpointRevision: c.saved.EndpointRevision, PublicEndpointReady: true, PublisherConnections: c.setup.PublisherConnections}, nil
 }
 func (c *cliFallbackObservationControl) CloseServiceRun(context.Context, string, string, credentials.ServiceRunToken) error {

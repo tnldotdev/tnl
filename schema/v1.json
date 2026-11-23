@@ -3168,6 +3168,11 @@
           "description": "Control-issued serving allowance since the last successful confirmation; earlier actual expiry still wins.",
           "default": "5m"
         },
+        "service_run_lease_duration": {
+          "type": "string",
+          "description": "Control-issued publisher liveness lease (at least 1s). Active publishers renew around one third of the granted lifetime.",
+          "default": "90s"
+        },
         "email_url": {
           "type": "string",
           "description": "HTTPS origin of the invitation email receiver."

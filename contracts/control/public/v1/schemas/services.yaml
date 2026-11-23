@@ -540,6 +540,7 @@ schemas:
         run_number,
         state,
         publisher_expires_at,
+        renew_after_ms,
         observed_at,
         publisher_connections,
         endpoint_revision,
@@ -569,6 +570,11 @@ schemas:
         type: boolean
         description: Both the canonical endpoint and this run's exact alias have current public DNS and ingress readiness.
       publisher_expires_at: { type: string, format: date-time }
+      renew_after_ms:
+        type: integer
+        format: int64
+        minimum: 1
+        description: Delay from the start of this heartbeat until the next routine renewal. This scheduling hint does not grant serving authority.
       policy_confirmation:
         $ref: "../openapi.yaml#/components/schemas/PublisherPolicyConfirmation"
         description: A fresh visitor-policy observation for a matching complete snapshot. The publisher lease and the watch do not confer this authority.

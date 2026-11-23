@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/controloutage"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
@@ -58,6 +59,7 @@ type ServiceRunState struct {
 	RunAliasReady                   bool
 	ExpiresAt                       time.Time
 	ObservedAt, ServingUntil        time.Time
+	RenewAfter                      time.Duration
 	Connections                     []ServiceRunAssignment
 	VisitorSourceKey                [32]byte
 	Healthy                         bool
@@ -767,7 +769,8 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if report.StreamCapacity < 1 || report.StreamCapacity > 1<<20 || report.ActiveStreams < 0 {
 		return result, ErrServiceAccess
 	}
-	until := now.Add(45 * time.Second)
+	lease := d.serviceRunLease()
+	until := now.Add(lease)
 	if run.PublisherExpiresAt.Time.After(until) {
 		until = run.PublisherExpiresAt.Time
 	}
@@ -872,6 +875,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		}
 	}
 	return ServiceRunState{ServiceID: serviceID, RunID: runID, RunNumber: run.RunNumber,
+		RenewAfter:         controloutage.RenewalDelay(lease/3, now, minTime(run.PublisherExpiresAt.Time, run.ServingUntil.Time)),
 		PolicyConfirmation: confirmations.canonical, AliasPolicyConfirmation: confirmations.alias,
 		EndpointRevision: endpoint.revision, PublicEndpointReady: endpointReady,
 		RunHostname: run.RunHostname, RunAliasReady: aliasReady,

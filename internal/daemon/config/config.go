@@ -78,20 +78,21 @@ type Config struct {
 	ACMEProfile               string `name:"acme-profile" env:"TNLD_ACME_PROFILE" default:"tlsserver" help:"ACME certificate profile."`
 	ServiceCertificateWorkers int    `name:"service-certificate-workers" env:"TNLD_SERVICE_CERTIFICATE_WORKERS" default:"8" help:"Concurrent service certificate workers per control process (1-8)."`
 
-	OIDCIssuer             string            `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
-	OIDCClientID           string            `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
-	OIDCClientSecret       string            `name:"oidc-client-secret" env:"TNLD_OIDC_CLIENT_SECRET" help:"Optional secret for control's OIDC server client."`
-	OIDCAdmissionFile      string            `name:"oidc-admission-file" env:"TNLD_OIDC_ADMISSION_FILE" type:"path" help:"JSON admission rules for the configured direct OIDC issuer."`
-	InitialAdministrators  []string          `name:"initial-administrator" env:"TNLD_INITIAL_ADMINISTRATORS" help:"Exact subject at the configured OIDC issuer; grants administrator once."`
-	InitialTeamOwners      map[string]string `name:"initial-team-owner" env:"TNLD_INITIAL_TEAM_OWNERS" help:"Organization team=subject at the configured OIDC issuer; seeds ownership once."`
-	DefaultTeam            string            `name:"default-team" env:"TNLD_DEFAULT_TEAM" help:"Initial team selected for explicitly eligible identities."`
-	DefaultTeamMembers     []string          `name:"default-team-member" env:"TNLD_DEFAULT_TEAM_MEMBERS" help:"Exact OIDC subject eligible for initial default-team membership; applied once."`
-	WebServiceSecret       string            `name:"web-service-secret" env:"TNLD_WEB_SERVICE_SECRET" help:"Scoped credential for identity-context and website invitation operations."`
-	OIDCScopes             []string          `name:"oidc-scope" env:"TNLD_OIDC_SCOPES" help:"OIDC scope requested by clients; repeat for each scope."`
-	AccessTokenLifetime    time.Duration     `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
-	RefreshTokenLifetime   time.Duration     `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
-	GuestDemoEnabled       bool              `name:"guest-demo-enabled" env:"TNLD_GUEST_DEMO_ENABLED" help:"Allow limited anonymous tnl publish --demo runs."`
-	ControlOutageTolerance time.Duration     `name:"control-outage-tolerance" env:"TNLD_CONTROL_OUTAGE_TOLERANCE" default:"5m" help:"Control-issued serving allowance since the last successful confirmation; earlier actual expiry still wins."`
+	OIDCIssuer              string            `name:"oidc-issuer" env:"TNLD_OIDC_ISSUER" help:"OIDC issuer used by the authority."`
+	OIDCClientID            string            `name:"oidc-client-id" env:"TNLD_OIDC_CLIENT_ID" help:"OIDC client ID used by the authority."`
+	OIDCClientSecret        string            `name:"oidc-client-secret" env:"TNLD_OIDC_CLIENT_SECRET" help:"Optional secret for control's OIDC server client."`
+	OIDCAdmissionFile       string            `name:"oidc-admission-file" env:"TNLD_OIDC_ADMISSION_FILE" type:"path" help:"JSON admission rules for the configured direct OIDC issuer."`
+	InitialAdministrators   []string          `name:"initial-administrator" env:"TNLD_INITIAL_ADMINISTRATORS" help:"Exact subject at the configured OIDC issuer; grants administrator once."`
+	InitialTeamOwners       map[string]string `name:"initial-team-owner" env:"TNLD_INITIAL_TEAM_OWNERS" help:"Organization team=subject at the configured OIDC issuer; seeds ownership once."`
+	DefaultTeam             string            `name:"default-team" env:"TNLD_DEFAULT_TEAM" help:"Initial team selected for explicitly eligible identities."`
+	DefaultTeamMembers      []string          `name:"default-team-member" env:"TNLD_DEFAULT_TEAM_MEMBERS" help:"Exact OIDC subject eligible for initial default-team membership; applied once."`
+	WebServiceSecret        string            `name:"web-service-secret" env:"TNLD_WEB_SERVICE_SECRET" help:"Scoped credential for identity-context and website invitation operations."`
+	OIDCScopes              []string          `name:"oidc-scope" env:"TNLD_OIDC_SCOPES" help:"OIDC scope requested by clients; repeat for each scope."`
+	AccessTokenLifetime     time.Duration     `name:"access-token-lifetime" env:"TNLD_ACCESS_TOKEN_LIFETIME" default:"1h" help:"Lifetime of newly issued access tokens."`
+	RefreshTokenLifetime    time.Duration     `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
+	GuestDemoEnabled        bool              `name:"guest-demo-enabled" env:"TNLD_GUEST_DEMO_ENABLED" help:"Allow limited anonymous tnl publish --demo runs."`
+	ControlOutageTolerance  time.Duration     `name:"control-outage-tolerance" env:"TNLD_CONTROL_OUTAGE_TOLERANCE" default:"5m" help:"Control-issued serving allowance since the last successful confirmation; earlier actual expiry still wins."`
+	ServiceRunLeaseDuration time.Duration     `name:"service-run-lease-duration" env:"TNLD_SERVICE_RUN_LEASE_DURATION" default:"90s" help:"Control-issued publisher liveness lease (at least 1s). Active publishers renew around one third of the granted lifetime."`
 
 	EmailURL      string `name:"email-url" env:"TNLD_EMAIL_URL" help:"HTTPS origin of the invitation email receiver."`
 	WebhookSecret string `name:"webhook-secret" env:"TNLD_WEBHOOK_SECRET" help:"Shared secret for invitation email delivery."`
@@ -217,10 +218,16 @@ func (c Config) Validate() (retErr error) {
 			return failure.WrapSetting("validate control outage tolerance", failure.ServerConfigInvalid,
 				failure.SettingControlOutageTolerance, errors.New("control outage tolerance must be positive"))
 		}
+		if c.ServiceRunLeaseDuration < time.Second {
+			return errors.New("service run lease duration must be at least one second")
+		}
 		if err := c.validateControl(); err != nil {
 			return err
 		}
 	} else {
+		if c.ServiceRunLeaseDuration != 0 && c.ServiceRunLeaseDuration != controloutage.DefaultServiceRunLease {
+			return errors.New("service run lease duration is valid only for control and standalone")
+		}
 		if len(c.ProjectPublisherLimits) != 0 {
 			return errors.New("project publisher limits are valid only for control and standalone")
 		}

@@ -27,6 +27,7 @@ func (s *serviceHeartbeatStore) HeartbeatServiceRun(_ context.Context, service, 
 	s.service, s.run, s.token, s.health = service, run, token, health
 	s.calls++
 	return controlstate.ServiceRunState{ServiceID: service, RunID: run, RunNumber: 1, State: "starting", ExpiresAt: now.Add(45 * time.Second),
+		RenewAfter:              25 * time.Second,
 		RunHostname:             "test-alias.example",
 		PolicyConfirmation:      &controlv1.PublisherPolicyConfirmation{Hostname: "test.example", ConfirmationKey: "canonical"},
 		AliasPolicyConfirmation: &controlv1.PublisherPolicyConfirmation{Hostname: "test-alias.example", ConfirmationKey: "alias"},
@@ -44,6 +45,9 @@ func TestHeartbeatReturnsCanonicalAndAliasConfirmations(t *testing.T) {
 		t.Fatal("renew", err, w.Code)
 	}
 	canonical, alias := state.PolicyConfirmation, state.AliasPolicyConfirmation
+	if state.RenewAfterMs != 25_000 {
+		t.Fatal("missing control renewal delay", state.RenewAfterMs)
+	}
 	if canonical == nil || canonical.Hostname != "test.example" || canonical.ConfirmationKey != "canonical" ||
 		alias == nil || alias.Hostname != "test-alias.example" || alias.ConfirmationKey != "alias" {
 		t.Fatal("renewal did not return the two hostname-bound confirmations")

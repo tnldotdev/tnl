@@ -23,3 +23,18 @@ func (d *Database) servingTolerance() time.Duration {
 	}
 	return controloutage.DefaultTolerance
 }
+
+func (d *Database) ConfigureServiceRunLease(duration time.Duration) error {
+	if duration < time.Second {
+		return errors.New("service run lease duration must be at least one second")
+	}
+	d.serviceRunLeaseDuration.Store(int64(duration))
+	return nil
+}
+
+func (d *Database) serviceRunLease() time.Duration {
+	if duration := time.Duration(d.serviceRunLeaseDuration.Load()); duration != 0 {
+		return duration
+	}
+	return controloutage.DefaultServiceRunLease
+}

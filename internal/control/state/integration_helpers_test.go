@@ -98,6 +98,10 @@ func newControlStateIntegrationDatabaseWithURL(t *testing.T, suffix string) (*Da
 		t.Fatal(err)
 	}
 	t.Cleanup(database.Close)
+	// use a nondefault lease: expiry and lock-wait fixtures drive this clock explicitly.
+	if err := database.ConfigureServiceRunLease(45 * time.Second); err != nil {
+		t.Fatal(err)
+	}
 	return database, databaseURL, time.Now().UTC().Truncate(time.Second)
 }
 

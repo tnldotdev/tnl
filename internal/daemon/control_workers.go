@@ -53,6 +53,9 @@ func (d *daemon) startControlWorkers(
 		}
 	}
 	database.ConfigureProjectPublisherLimits(cfg.ProjectPublisherLimits)
+	if err := database.ConfigureServiceRunLease(cfg.ServiceRunLeaseDuration); err != nil {
+		return err
+	}
 	if err := database.ConfigureControlOutageTolerance(cfg.ControlOutageTolerance); err != nil {
 		return err
 	}
