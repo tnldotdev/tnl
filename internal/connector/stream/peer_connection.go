@@ -1013,6 +1013,12 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 	if cause := context.Cause(p.ctx); cause != nil {
 		return retirePath, p.idleLegStop()
 	}
+	// if the receipt covers the rest of the pair's life, a renewal in
+	// its final maintenance interval buys no time. the watch still fences
+	// expiry, and a new pair deadline wakes maintenance through changed.
+	if pair.Relays[slot] == leg.relay && !leg.until.Before(until) && time.Until(until) <= delay {
+		return retryAttempt, nil
+	}
 	call, stop := context.WithDeadline(binding, minConnectorCall(earliestConnectorDeadline(until, leg.until)))
 	defer stop()
 	var proof tunnelv1.ConnectorPairLegProof

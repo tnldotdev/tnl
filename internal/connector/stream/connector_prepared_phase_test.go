@@ -6,7 +6,14 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func permissionDecision(decide func() error) preparedPermissionRenewal {
+	return preparedPermissionRenewal{until: time.Now().Add(time.Minute),
+		writer: preparedRenewalFunc(func(context.Context, tunnelv1.ConnectorPermissionUpdate) error { return decide() })}
+}
 
 func TestPreparedConnectorPermissionPhasesFenceWrites(t *testing.T) {
 	for _, test := range []struct {
@@ -21,11 +28,11 @@ func TestPreparedConnectorPermissionPhasesFenceWrites(t *testing.T) {
 			entered, release := make(chan struct{}), make(chan struct{})
 			result := make(chan error, 1)
 			go func() {
-				result <- p.renewPermission(t.Context(), func() error {
+				result <- p.renewPermission(t.Context(), permissionDecision(func() error {
 					close(entered)
 					<-release
 					return test.err
-				}, time.Now().Add(time.Minute))
+				}))
 			}()
 			<-entered
 			p.mu.Lock()
@@ -49,7 +56,7 @@ func TestPreparedConnectorPermissionPhasesFenceWrites(t *testing.T) {
 				t.Fatal("write permission did not follow the terminal renewal decision", err)
 			}
 			if test.err != nil {
-				if err := p.renewPermission(t.Context(), func() error { return nil }, time.Now().Add(time.Minute)); err == nil {
+				if err := p.renewPermission(t.Context(), permissionDecision(func() error { return nil })); err == nil {
 					t.Fatal("denied permission returned to the usable phase")
 				}
 			}
