@@ -412,8 +412,6 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 			}
 		}
 		order[parent.ID] = i
-	}
-	for _, parent := range parents {
 		// delayed evidence can belong to a disabled or closed service. wait for
 		// its writer, then verify the receipt, without requiring it to serve now.
 		if err := queueRunReader(ctx, tx, parent.ID); err != nil {

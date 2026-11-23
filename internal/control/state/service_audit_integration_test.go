@@ -495,7 +495,24 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 		}
 		done <- err
 	}
+	// a device mutation can hold the first service while locking its next
+	// owner. a blocked reporter must not get ahead of it on the second owner.
+	parents, err := d.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, parents)
+	if err := queueRunWriter(ctx, parents, runs[0].service.ID); err != nil {
+		t.Fatal(err)
+	}
 	workers.Go(func() { ingest(0, first) })
+	waitForPostgresBlock(t, ctx, d, int32(parents.Conn().PgConn().PID()), first)
+	if _, err := parents.Exec(ctx, `SELECT id FROM control.teams WHERE id=$1 FOR UPDATE NOWAIT`, teams[1]); err != nil {
+		t.Fatal("reporter held a later owner while waiting on the first service", err)
+	}
+	if err := parents.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 	firstPID := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), first)
 	workers.Go(func() { ingest(1, second) })
 	waitForPostgresBlock(t, ctx, d, firstPID, second)
