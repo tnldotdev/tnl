@@ -281,23 +281,23 @@ func issueDeploymentPublisherLease(ctx context.Context, tx pgx.Tx, id, key strin
 	return DeploymentPublisherLease{AccessToken: "dpl_lease_" + secret, ExpiresAt: until}, nil
 }
 
-func lockDeploymentPublisherLease(ctx context.Context, tx pgx.Tx, token string, now time.Time) (result DeploymentPublisherIdentity, err error) {
+func lockDeploymentPublisherLease(ctx context.Context, tx pgx.Tx, token string, clock authorizationClock, teamGuard func(context.Context, string) (string, error)) (result DeploymentPublisherIdentity, until time.Time, err error) {
 	if !strings.HasPrefix(token, "dpl_lease_") {
-		return result, ErrDeploymentPublisher
+		return result, until, ErrDeploymentPublisher
 	}
 	digest, err := serviceSecretDigest(strings.TrimPrefix(token, "dpl_lease_"))
 	if err != nil {
-		return result, ErrDeploymentPublisher
+		return result, until, ErrDeploymentPublisher
 	}
 	// locate the team first, then recheck all live state after locking it.
 	if err = tx.QueryRow(ctx, `SELECT g.team_id FROM control.deployment_publisher_leases l JOIN control.deployment_publisher_members m ON m.publisher_identity_id=l.publisher_identity_id JOIN control.deployments g ON g.id=m.deployment_id WHERE l.token_digest=$1`, digest).Scan(&result.TeamID); err != nil {
-		return result, publisherLookupError(err, ErrDeploymentPublisher)
+		return result, until, publisherLookupError(err, ErrDeploymentPublisher)
 	}
-	if _, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, result.TeamID); err != nil {
-		return result, publisherLookupError(err, ErrDeploymentPublisher)
+	if _, err = teamGuard(ctx, result.TeamID); err != nil {
+		return result, until, publisherLookupError(err, ErrDeploymentPublisher)
 	}
-	err = tx.QueryRow(ctx, `SELECT g.project_key,g.id,g.name,m.publisher_identity_id,m.key_id FROM control.deployment_publisher_leases l JOIN control.deployment_publisher_members m ON m.publisher_identity_id=l.publisher_identity_id JOIN control.deployments g ON g.id=m.deployment_id JOIN control.publisher_identities p ON p.id=m.publisher_identity_id JOIN control.publisher_identity_keys k ON k.id=l.key_id AND k.publisher_identity_id=p.id WHERE l.token_digest=$1 AND l.expires_at>$2 AND g.deleted_at IS NULL AND p.revoked_at IS NULL AND k.retired_at IS NULL`, digest, now).Scan(&result.ProjectKey, &result.DeploymentID, &result.DeploymentName, &result.PublisherIdentityID, &result.KeyID)
-	return result, publisherLookupError(err, ErrDeploymentPublisher)
+	err = tx.QueryRow(ctx, `SELECT g.project_key,g.id,g.name,m.publisher_identity_id,m.key_id,l.expires_at FROM control.deployment_publisher_leases l JOIN control.deployment_publisher_members m ON m.publisher_identity_id=l.publisher_identity_id JOIN control.deployments g ON g.id=m.deployment_id JOIN control.publisher_identities p ON p.id=m.publisher_identity_id JOIN control.publisher_identity_keys k ON k.id=l.key_id AND k.publisher_identity_id=p.id WHERE l.token_digest=$1 AND l.expires_at>$2 AND g.deleted_at IS NULL AND p.revoked_at IS NULL AND k.retired_at IS NULL`, digest, clock.current()).Scan(&result.ProjectKey, &result.DeploymentID, &result.DeploymentName, &result.PublisherIdentityID, &result.KeyID, &until)
+	return result, until, publisherLookupError(err, ErrDeploymentPublisher)
 }
 
 func (d *Database) GetDeploymentPublisherAssignments(ctx context.Context, token string, now time.Time) (DeploymentPublisherAssignments, error) {
@@ -309,17 +309,18 @@ func (d *Database) GetDeploymentPublisherAppAssignments(ctx context.Context, tok
 }
 
 func (d *Database) deploymentPublisherAssignments(ctx context.Context, token string, appOwned bool, now time.Time) (result DeploymentPublisherAssignments, retErr error) {
+	clock := newAuthorizationClock(now)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "get deployment assignments", &retErr)()
-	m, err := lockDeploymentPublisherLease(ctx, tx, token, now)
+	q := controlstatedb.New(tx)
+	m, until, err := lockDeploymentPublisherLease(ctx, tx, token, clock, q.LockLocalTeamForSession)
 	if err != nil {
 		return result, err
 	}
-	q := controlstatedb.New(tx)
-	row, err := q.LockDeploymentByID(ctx, m.DeploymentID)
+	row, err := q.ObserveDeployment(ctx, controlstatedb.ObserveDeploymentParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey, Selector: m.DeploymentID})
 	if err != nil {
 		return result, err
 	}
@@ -364,7 +365,7 @@ func (d *Database) deploymentPublisherAssignments(ctx context.Context, token str
 			continue
 		}
 		var grant string
-		if err = tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.deployment_publisher_service_grants assignment JOIN control.publisher_grants g ON g.id=assignment.grant_id WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4 AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$5)`, m.PublisherIdentityID, m.TeamID, m.ProjectKey, s.Service, now).Scan(&grant); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.deployment_publisher_service_grants assignment JOIN control.publisher_grants g ON g.id=assignment.grant_id WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4 AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$5)`, m.PublisherIdentityID, m.TeamID, m.ProjectKey, s.Service, clock.current()).Scan(&grant); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
@@ -373,25 +374,38 @@ func (d *Database) deploymentPublisherAssignments(ctx context.Context, token str
 		// validated endpoint changes do not replace the serving worker.
 		configuration = appliedPublicationConfiguration(configuration)
 		a := DeploymentPublisherServiceAssignment{Service: s.Service, ServiceID: s.ServiceID.String, GrantID: grant, Configuration: configuration}
-		if err = tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>$2)`, a.ServiceID, now).Scan(&a.TrustRevision); err != nil {
-			return result, publisherLookupError(err, ErrDeploymentPublisher)
+		if err = tx.QueryRow(ctx, `SELECT s.trust_revision,LEAST($4::timestamptz,p.expires_at)
+			FROM control.services s CROSS JOIN control.publisher_service_permission($2,$3,$1,$5) p
+			WHERE s.id=$1`, a.ServiceID, m.PublisherIdentityID, grant, until, clock.current()).Scan(&a.TrustRevision, &until); err != nil {
+			return DeploymentPublisherAssignments{}, publisherLookupError(err, ErrDeploymentPublisher)
 		}
 		result.Services = append(result.Services, a)
 	}
-	return result, tx.Commit(ctx)
+	if !until.After(clock.current()) {
+		return DeploymentPublisherAssignments{}, ErrDeploymentPublisher
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DeploymentPublisherAssignments{}, err
+	}
+	if !until.After(clock.current()) {
+		return DeploymentPublisherAssignments{}, ErrDeploymentPublisher
+	}
+	return result, nil
 }
 
 func (d *Database) AcknowledgeDeploymentPublisherConfiguration(ctx context.Context, token string, revision int64, hash string, healthy bool, now time.Time) (retErr error) {
+	clock := newAuthorizationClock(now)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer rollback(ctx, tx, "acknowledge deployment configuration", &retErr)()
-	m, err := lockDeploymentPublisherLease(ctx, tx, token, now)
+	q := controlstatedb.New(tx)
+	m, until, err := lockDeploymentPublisherLease(ctx, tx, token, clock, q.LockLocalTeamForMutation)
 	if err != nil {
 		return err
 	}
-	row, err := controlstatedb.New(tx).LockDeploymentByID(ctx, m.DeploymentID)
+	row, err := q.LockDeploymentByID(ctx, m.DeploymentID)
 	if err != nil {
 		return err
 	}
@@ -401,6 +415,9 @@ func (d *Database) AcknowledgeDeploymentPublisherConfiguration(ctx context.Conte
 	err = controlstatedb.New(tx).AcknowledgeDeploymentPublisherConfiguration(ctx, controlstatedb.AcknowledgeDeploymentPublisherConfigurationParams{PublisherIdentityID: m.PublisherIdentityID, Revision: revision, Healthy: healthy, AcknowledgedAt: timestamptz(now)})
 	if err != nil {
 		return err
+	}
+	if !until.After(clock.current()) {
+		return ErrDeploymentPublisher
 	}
 	return tx.Commit(ctx)
 }
