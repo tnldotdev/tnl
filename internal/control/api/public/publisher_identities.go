@@ -106,6 +106,7 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	request := controlstate.CreatePublisherEnrollmentRequest{Scope: s, Name: b.Name, Kind: string(b.Kind), EditorID: editor, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), Now: time.Now()}
+	request.Preview = b.Preview != nil && *b.Preview
 	protocols, valid := publisherProtocolsInput(b.Protocols)
 	if !valid || s.Kind != "service" && protocols != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "select a nonempty set of supported publisher protocols")

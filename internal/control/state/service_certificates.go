@@ -33,6 +33,21 @@ func serviceCertificatePlan(ctx context.Context, tx pgx.Tx, service controlstate
 		return CertificatePlan{}, publisherLookupError(err, ErrServiceAccess)
 	}
 	scope := service.CertificateScope
+	if kind == "namespace" {
+		var parent string
+		err := tx.QueryRow(ctx, `SELECT parent FROM control.opaque_service_hosts WHERE service_id=$1 AND grant_id=$2 AND hostname=$3`,
+			service.ID, grant, service.CertificateHostname).Scan(&parent)
+		if err == nil {
+			plan := authorization.ServiceCertificatePlan(service.CertificateHostname, parent, false, true)
+			if plan.Scope != parent || !certificateidentity.Covers(plan.Identifiers, service.CertificateHostname) {
+				return CertificatePlan{}, ErrServiceAccess
+			}
+			return CertificatePlan{CacheKey: plan.CacheKey, Scope: plan.Scope, Identifiers: plan.Identifiers, ChallengeMethod: certificateidentity.ChallengeDNS01}, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return CertificatePlan{}, err
+		}
+	}
 	if kind == DeploymentCredentialGrant {
 		scope = service.CertificateHostname
 	}

@@ -20,7 +20,7 @@ func TestLocalProjectIdentitiesAreRandomPersistentAndCanonical(t *testing.T) {
 		return d
 	}
 	d := open()
-	source, worktree, err := d.LocalProjectIdentity(t.Context(), project)
+	source, worktree, err := d.LocalProjectIdentity(t.Context(), project, "")
 	if err != nil || len(source) != 64 || len(worktree) != 64 || source == worktree {
 		t.Fatal("missing independent random identity", err)
 	}
@@ -33,7 +33,7 @@ func TestLocalProjectIdentitiesAreRandomPersistentAndCanonical(t *testing.T) {
 	var workers sync.WaitGroup
 	for range 8 {
 		workers.Go(func() {
-			a, b, err := d.LocalProjectIdentity(t.Context(), project)
+			a, b, err := d.LocalProjectIdentity(t.Context(), project, "")
 			if err != nil || a != source || b != worktree {
 				t.Error("concurrent lookup replaced local identity", err)
 			}
@@ -44,7 +44,7 @@ func TestLocalProjectIdentitiesAreRandomPersistentAndCanonical(t *testing.T) {
 	if err := os.Symlink(project, alias); err != nil {
 		t.Fatal(err)
 	}
-	a, b, err := d.LocalProjectIdentity(t.Context(), alias)
+	a, b, err := d.LocalProjectIdentity(t.Context(), alias, "")
 	if err != nil || a != source || b != worktree {
 		t.Fatal("symlink selected a second identity", err)
 	}
@@ -52,7 +52,7 @@ func TestLocalProjectIdentitiesAreRandomPersistentAndCanonical(t *testing.T) {
 	results := make(chan [2]string, 8)
 	for range 8 {
 		workers.Go(func() {
-			a, b, err := d.LocalProjectIdentity(t.Context(), fresh)
+			a, b, err := d.LocalProjectIdentity(t.Context(), fresh, "")
 			if err != nil {
 				t.Error(err)
 			}
@@ -75,22 +75,22 @@ func TestLocalProjectIdentitiesAreRandomPersistentAndCanonical(t *testing.T) {
 	}
 	d = open()
 	defer d.Close()
-	a, b, err = d.LocalProjectIdentity(t.Context(), project)
+	a, b, err = d.LocalProjectIdentity(t.Context(), project, "")
 	if err != nil || a != source || b != worktree {
 		t.Fatal("restart changed local identity", err)
 	}
-	a, b, err = d.LocalProjectIdentity(t.Context(), root)
+	a, b, err = d.LocalProjectIdentity(t.Context(), root, "")
 	if err != nil || a == source || b == worktree {
 		t.Fatal("different directories shared identity", err)
 	}
-	if _, _, err := d.LocalProjectIdentity(t.Context(), filepath.Base(project)); err == nil {
+	if _, _, err := d.LocalProjectIdentity(t.Context(), filepath.Base(project), ""); err == nil {
 		t.Fatal("accepted noncanonical project directory")
 	}
 	file := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(file, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := d.LocalProjectIdentity(t.Context(), file); err == nil {
+	if _, _, err := d.LocalProjectIdentity(t.Context(), file, ""); err == nil {
 		t.Fatal("accepted a file as a project directory")
 	}
 	other, err := OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), OpenOptions{Protection: ProtectionFile})
@@ -98,7 +98,7 @@ func TestLocalProjectIdentitiesAreRandomPersistentAndCanonical(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer other.Close()
-	a, b, err = other.LocalProjectIdentity(t.Context(), project)
+	a, b, err = other.LocalProjectIdentity(t.Context(), project, "")
 	if err != nil || a == source || b == worktree {
 		t.Fatal("separate client state reused local identity", err)
 	}

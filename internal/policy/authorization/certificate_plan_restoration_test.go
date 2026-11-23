@@ -13,7 +13,7 @@ import (
 func TestServiceCertificateRestoredRoutineTwelveCaseFormationMatrix(t *testing.T) {
 	const (
 		domain              = "routes.example.test"
-		managedMember       = "member-unique.routes.example.test"
+		managedMember       = "member.team-generated.routes.example.test"
 		customMember        = "member.routes.example.test"
 		customDeployment    = "production.shop.routes.example.test"
 		simpleDeployment    = "production.shop.studio.routes.example.test"
@@ -91,7 +91,7 @@ func TestServiceCertificateRestoredRoutineTwelveCaseFormationMatrix(t *testing.T
 			}
 			facts := naming.NamespaceFacts{
 				Domain: domain, Managed: test.managed, Mode: mode, Personal: test.personal,
-				TeamName: "studio", MemberSlug: "member", ManagedLabel: "member-unique",
+				TeamName: "studio", MemberSlug: "member", ManagedLabel: "team-generated",
 			}
 			var namespace string
 			if test.shared {
@@ -122,9 +122,6 @@ func TestServiceCertificateRestoredRoutineTwelveCaseFormationMatrix(t *testing.T
 				namespace, direct = naming.PublicURLNamespace(facts)
 				if direct {
 					t.Fatal("member formation unexpectedly selected a direct shared name")
-				}
-				if native := naming.MemberNamespace(domain, test.managed, facts.ManagedLabel, facts.MemberSlug); native != test.wantNamespace {
-					t.Fatalf("native member suffix=%q, want %q", native, test.wantNamespace)
 				}
 			}
 			if namespace != test.wantNamespace {

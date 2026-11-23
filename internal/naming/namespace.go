@@ -17,7 +17,7 @@ type NamespaceFacts struct {
 	Personal     bool
 	TeamName     string
 	MemberSlug   string
-	ManagedLabel string
+	ManagedLabel string // the team's managed label, not a membership label
 }
 
 // PublicURLNamespace returns the default naming suffix and whether URLs made
@@ -35,7 +35,11 @@ func PublicURLNamespace(facts NamespaceFacts) (string, bool) {
 		}
 		return facts.MemberSlug + "." + facts.TeamName + "." + facts.Domain, false
 	}
-	return facts.ManagedLabel + "." + facts.Domain, false
+	suffix := facts.ManagedLabel + "." + facts.Domain
+	if facts.Personal {
+		return suffix, false
+	}
+	return facts.MemberSlug + "." + suffix, false
 }
 
 // SharedPublicURLNamespace keeps team-owned managed URLs beneath that team's

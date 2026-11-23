@@ -29,7 +29,7 @@ type FeedbackStore struct {
 }
 
 func (s *Store) Feedback(ctx context.Context, root, preview string, authorize FeedbackAuthorize) (*FeedbackStore, error) {
-	project, _, err := s.database.LocalProjectIdentity(ctx, root)
+	project, _, err := s.database.LocalProjectIdentity(ctx, root, "")
 	if err != nil {
 		return nil, err
 	}

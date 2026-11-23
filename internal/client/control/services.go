@@ -92,6 +92,12 @@ func (c *Client) ListServices(ctx context.Context, team string) ([]controlv1.Ser
 	}
 }
 
+func (c *Client) GetServiceByHostname(ctx context.Context, team, hostname string) (controlv1.Service, error) {
+	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetServiceByHostname(ctx, hostname, &controlv1.GetServiceByHostnameParams{TeamId: team}, editors...)
+	})
+}
+
 // ListAvailableServices requests one explicit visitor access path. a public HTTP
 // preview grant does not authorize connector discovery or traffic.
 func (c *Client) ListAvailableServices(ctx context.Context, path controlv1.ServiceAccessPath) ([]controlv1.ServiceSummary, error) {

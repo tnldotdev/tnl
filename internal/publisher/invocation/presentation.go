@@ -29,6 +29,7 @@ type Presentation struct {
 	TargetUnavailable   func() error
 	Draining            func() error
 	Ready               func(string, uint64) error
+	Resume              func(url, team, server string) error
 	Stopped             func() error
 	Progress            func(Progress) error
 	Warning             func(string) error

@@ -54,7 +54,7 @@ func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r A
 		if err = tx.QueryRow(ctx, `SELECT managed_label,display_name,kind FROM control.teams WHERE id=$1`, r.TeamID).Scan(&label, &teamName, &teamKind); err != nil {
 			return err
 		}
-		if domain.Kind == "custom" || domain.Kind == "managed" && teamKind == "organization" && d.managedURLMode == naming.ManagedURLModeSimple {
+		if d.managedURLMode != naming.ManagedURLModeGenerated && (domain.Kind == "custom" || domain.Kind == "managed" && teamKind == "organization") {
 			reserved, err := q.TeamMemberSlugReserved(ctx, controlstatedb.TeamMemberSlugReservedParams{TeamID: r.TeamID, Label: projectLabel})
 			if err != nil {
 				return err
@@ -69,6 +69,9 @@ func (d *Database) ensureDeploymentNamespace(ctx context.Context, tx pgx.Tx, r A
 				label = teamName
 			}
 			owner = label + "." + owner
+		}
+		if d.managedURLMode == naming.ManagedURLModeGenerated {
+			owner = "deploy." + owner
 		}
 		namespace, err = naming.DeploymentNamespace(namespaceLabel, projectLabel, owner)
 		if err != nil {

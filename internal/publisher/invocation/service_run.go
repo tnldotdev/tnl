@@ -14,6 +14,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -56,7 +57,23 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err := targetplan.PreflightPrivate(ctx, plan); err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	realized, err := RealizeLocalService(ctx, auth.Control, LocalService{Project: project.Project, Team: current, Name: service.Name, TargetResolver: a.TargetResolver})
+	request := LocalService{Project: project.Project, Team: current, Name: service.Name, TargetResolver: a.TargetResolver}
+	if project.Config.Naming == "opaque" && config.Protocol(definition) == "http" && definition.Public != nil && *definition.Public {
+		source := project.LocalPublicationIdentity()
+		_, lookupErr := auth.Control.GetLocalProjectService(ctx, source.Key, service.Name, controlv1.GetLocalProjectServiceParams{
+			TeamId: current.team.Id, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(),
+		})
+		if errors.Is(lookupErr, clientcontrol.ErrNotFound) {
+			_, identity, err := previewPublisher(ctx, profile, auth, selectedTeam)
+			if err != nil {
+				return publisherapp.Configuration{}, err
+			}
+			request.PreviewPublisher = identity.ClientId
+		} else if lookupErr != nil {
+			return publisherapp.Configuration{}, lookupErr
+		}
+	}
+	realized, err := RealizeLocalService(ctx, auth.Control, request)
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
@@ -70,7 +87,15 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err := publisheridentity.MatchServiceDeclaration(saved, config.Protocol(definition), trust); err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	native, identity, err := publisheridentity.EnsureServiceOwner(ctx, profile, auth.Control, auth.Authority, saved)
+	var native *publisheridentity.Native
+	if saved.Endpoint != nil {
+		if _, opaque := naming.PreviewHostname(saved.Endpoint.Hostname, auth.Discovery.ManagedDomain); opaque {
+			native, _, _, err = selectSavedPreview(ctx, profile, auth, selectedTeam, saved, plan)
+		}
+	}
+	if native == nil && err == nil {
+		native, _, err = publisheridentity.EnsureServiceOwner(ctx, profile, auth.Control, auth.Authority, saved)
+	}
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
@@ -115,7 +140,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		framework = ""
 	}
 	base := publisherservice.RunConfig{Telemetry: a.Telemetry, Framework: framework, Control: native, State: profile, Access: native.Access,
-		PublisherIdentityID: identity.ClientId, PublisherGrantID: identity.GrantId, PublisherKeyID: identity.KeyId,
+		PublisherIdentityID: native.PublisherIdentityID(), PublisherGrantID: native.PublisherGrantID(), PublisherKeyID: native.PublisherKeyID(),
 		ServiceID: saved.Id, Target: plan.Target, Metadata: publisheridentity.ServiceMetadata(saved), InspectionMode: policy.Mode,
 		ProjectRoot: project.Root, ProjectService: service.Name}
 	base.ShutdownContext = a.manager.PublicationShutdownContext(service.RegistrationID)

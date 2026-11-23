@@ -650,6 +650,13 @@ type ControlOidcAssertionExchange struct {
 	ExpiresAt       pgtype.Timestamptz
 }
 
+type ControlOpaqueServiceHost struct {
+	ServiceID string
+	GrantID   string
+	Hostname  string
+	Parent    string
+}
+
 type ControlOperatorNameserverHostname struct {
 	Hostname        string
 	DelegationSetID string

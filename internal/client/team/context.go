@@ -32,7 +32,7 @@ func (c Context) Namespace(domain authorityv1.Domain) (string, bool) {
 		Domain: domain.CanonicalDomain, Managed: domain.Kind == authorityv1.Managed,
 		Mode: c.mode, Personal: c.team.Kind == authorityv1.Personal,
 		TeamName: c.team.DisplayName, MemberSlug: c.membership.MemberSlug,
-		ManagedLabel: c.membership.ManagedLabel,
+		ManagedLabel: c.team.ManagedLabel,
 	})
 }
 
@@ -56,6 +56,15 @@ func (c Context) ReadyDomain(selected string) (authorityv1.Domain, error) {
 	}
 	return authorityv1.Domain{}, failure.Wrap("select domain", failure.DomainNotAvailable,
 		fmt.Errorf("domain %s is not available to the selected team", selected))
+}
+
+func (c Context) ManagedDomain() (authorityv1.Domain, error) {
+	for _, domain := range c.domains {
+		if domain.Kind == authorityv1.Managed && domain.State == authorityv1.DomainStateReady {
+			return domain, nil
+		}
+	}
+	return authorityv1.Domain{}, failure.Wrap("select managed domain", failure.DomainNotAvailable, errors.New("no ready managed domain"))
 }
 
 func (c Context) defaultReadyDomain() (authorityv1.Domain, error) {

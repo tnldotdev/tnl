@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tnldotdev/tnl/internal/client/detached"
@@ -165,6 +166,27 @@ func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstat
 func publicationPresentation(ctx context.Context, flags publishCommand, output *publishOutput) *invocation.Presentation {
 	return &invocation.Presentation{
 		Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped,
+		Resume: func(url, team, server string) error {
+			if output.mode != publishOutputHuman {
+				return nil
+			}
+			// port and hostname are stable; keep the owner's explicit team/server
+			// flags if present. the saved service still requires authorization.
+			quote := func(value string) string {
+				if !strings.ContainsAny(value, " \t\r\n'\"$`\\;|&<>()!*?#[]{}~") {
+					return value
+				}
+				return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+			}
+			command := "tnl publish " + quote(flags.Target) + " --public-url " + url
+			if team != "" {
+				command += " --team " + quote(team)
+			}
+			if server != "" {
+				command += " --server " + quote(server)
+			}
+			return writeHumanFrame(output.stderr, "tnl publish", "address saved", "", clioutput.Fields(clioutput.Field{Label: "resume", Value: command}))
+		},
 		ProvisioningStalled: output.provisioningStalled, TransportFallback: output.transportFallback, TargetUnavailable: output.targetUnavailable,
 		Progress: func(p invocation.Progress) error { return output.integrationURLMessage(p.State, p.Hint, p.Details...) },
 		Warning: func(message string) error {

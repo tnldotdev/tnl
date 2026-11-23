@@ -33,7 +33,8 @@ func TestIntegrationServiceRoleScopeDomainManagementMatrix(t *testing.T) {
 			if kind == "custom" {
 				domain = deploymentCustomDomain(t, d, ApplyProjectConfigurationRequest{TeamID: team.ID, ActorID: owner}, now)
 			}
-			memberNamespace := naming.MemberNamespace(domain.CanonicalDomain, kind == "managed", member.ManagedLabel, member.MemberSlug)
+			memberNamespace, _ := naming.PublicURLNamespace(naming.NamespaceFacts{Domain: domain.CanonicalDomain, Managed: kind == "managed",
+				Mode: d.managedURLMode, TeamName: team.DisplayName, MemberSlug: member.MemberSlug, ManagedLabel: team.ManagedLabel})
 			sharedNamespace := naming.SharedPublicURLNamespace(domain.CanonicalDomain, kind == "managed", d.managedURLMode, team.DisplayName, team.ManagedLabel)
 			for _, scope := range []string{"member", "shared"} {
 				for index, actor := range []struct {

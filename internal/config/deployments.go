@@ -15,6 +15,7 @@ type Project struct {
 	Name        *string                       `json:"name,omitempty" yaml:"name,omitempty"`
 	Server      *string                       `json:"server,omitempty" yaml:"server,omitempty"`
 	Team        *string                       `json:"team,omitempty" yaml:"team,omitempty"`
+	Naming      string                        `json:"naming,omitempty" yaml:"naming,omitempty" jsonschema:"enum=opaque" jsonschema_description:"Use opaque hosted addresses for new public HTTP development services."`
 	Feedback    *bool                         `json:"feedback,omitempty" yaml:"feedback,omitempty"`
 	OAuth       bool                          `json:"oauth,omitempty" yaml:"oauth,omitempty"`
 	Inspection  *Inspection                   `json:"inspection,omitempty" yaml:"inspection,omitempty"`
@@ -128,6 +129,7 @@ func resolveProjectDeployment(project Project, name string) (TNL, error) {
 			return TNL{}, errors.New("local is client-side selection and has no server domain or description")
 		}
 		resolved.Feedback, resolved.OAuth, resolved.Inspection = project.Feedback, project.OAuth, project.Inspection
+		resolved.Naming = project.Naming
 		resolved.Webhooks, resolved.Aliases = project.Webhooks, project.Aliases
 	} else {
 		resolved.DeploymentSettings = DeploymentSettings{Description: deployment.Description, Domain: deployment.Domain}

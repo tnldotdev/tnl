@@ -134,11 +134,15 @@ func (d *Database) seedDefaultTeamMember(ctx context.Context, seeds HumanAuthent
 		if err != nil {
 			return err
 		}
-		label, err := availableManagedLabel(ctx, q, now)
+		slug, err := generatedMemberSlug()
 		if err != nil {
 			return err
 		}
-		if err := q.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{ID: reservation, TeamID: team.ID, MemberSlug: label, IdentityID: text(identity.Identity.ID), CreatedAt: timestamptz(now)}); err != nil {
+		label, err := d.membershipManagedLabel(ctx, q, team.ID, slug, now)
+		if err != nil {
+			return err
+		}
+		if err := q.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{ID: reservation, TeamID: team.ID, MemberSlug: slug, IdentityID: text(identity.Identity.ID), CreatedAt: timestamptz(now)}); err != nil {
 			return err
 		}
 		if err := q.CreateSeedMember(ctx, controlstatedb.CreateSeedMemberParams{ID: membership, TeamID: team.ID, IdentityID: identity.Identity.ID, SlugReservationID: reservation, ManagedLabel: label, CreatedAt: timestamptz(now)}); err != nil {

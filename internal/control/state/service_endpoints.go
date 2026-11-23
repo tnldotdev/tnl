@@ -43,8 +43,14 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 		if err != nil {
 			return err
 		}
-		if err := authorizeServiceHostname(facts, labels, team, "", hostname, "shared", d.managedURLMode); err != nil {
-			return err
+		if facts.deploymentBranch(d.managedURLMode, hostname) {
+			if hostname == namespace || !hostnameWithin(hostname, namespace) {
+				return ErrServiceConflict
+			}
+		} else {
+			if err := authorizeServiceHostname(facts, labels, team, "", hostname, "shared", d.managedURLMode); err != nil {
+				return err
+			}
 		}
 		certificateScope = hostname
 		if scope := placement.CertificateScope; scope != "" {

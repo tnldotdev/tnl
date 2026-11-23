@@ -11,8 +11,8 @@ func TestMigrationOneIsImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// pinned after the approved PostgreSQL-only domain transfer baseline.
-	const want = "e2fb7c8d4c6070f7d054a5ec77bfec51eabbba596209676736399ba988e13ede"
+	// pinned after the approved PostgreSQL-only hosted naming baseline.
+	const want = "2440c8ccc0cbb21591221416992ed777761383d83c2167a66f6a7dae3a3ca311"
 	if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != want {
 		t.Fatalf("migration 1 changed: SHA-256 = %s, want %s; add a numbered migration unless a schema reset is explicitly approved", got, want)
 	}

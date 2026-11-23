@@ -37,6 +37,9 @@ func (o serviceSourceOwner) sourceKey(intent string) string {
 }
 
 func (d *Database) newServiceSourceOwner(ctx context.Context, tx pgx.Tx, facts serviceHostnameFacts, team, hostname, intent string, standalone, explicit bool) (serviceSourceOwner, error) {
+	if facts.deploymentBranch(d.managedURLMode, hostname) {
+		return serviceSourceOwner{}, ErrServiceAccess
+	}
 	if !explicit {
 		// the endpoint owner already constructed this exact member/worktree
 		// hostname. public naming defaults do not replace that captured scope.
@@ -44,11 +47,7 @@ func (d *Database) newServiceSourceOwner(ctx context.Context, tx pgx.Tx, facts s
 		owner.key = owner.sourceKey(intent)
 		return owner, nil
 	}
-	namespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
-		Domain: facts.CanonicalDomain, Managed: facts.DomainKind == "managed", Mode: d.managedURLMode,
-		Personal: facts.TeamKind == "personal", TeamName: facts.TeamDisplayName,
-		MemberSlug: facts.ActorMemberSlug, ManagedLabel: facts.ActorManagedLabel,
-	})
+	namespace, direct := facts.namespace(d.managedURLMode)
 	scope, membership := NamespaceScopeShared, ""
 	if !direct && hostname != namespace && hostnameWithin(hostname, namespace) {
 		scope, membership = NamespaceScopeMember, facts.ActorMembershipID
@@ -131,7 +130,7 @@ func recordServiceSourceOwner(ctx context.Context, tx pgx.Tx, service, team stri
 }
 
 func (d *Database) authorizeOwnedServiceHostname(ctx context.Context, tx pgx.Tx, facts serviceHostnameFacts, owner serviceSourceOwner, team, domain, hostname string, now time.Time) error {
-	if !owner.valid(team) {
+	if !owner.valid(team) || facts.deploymentBranch(d.managedURLMode, hostname) {
 		return ErrServiceAccess
 	}
 	if owner.scope == NamespaceScopeMember && owner.membership != facts.ActorMembershipID {
@@ -151,16 +150,27 @@ func (d *Database) authorizeOwnedServiceHostname(ctx context.Context, tx pgx.Tx,
 	}
 	scope, membership := owner.scope, owner.membership
 	if scope == NamespaceScopeMember {
-		namespace := naming.MemberNamespace(facts.CanonicalDomain, facts.DomainKind == "managed", facts.ActorManagedLabel, facts.ActorMemberSlug)
+		if facts.DomainKind == "managed" && d.managedURLMode == naming.ManagedURLModeGenerated {
+			if _, ok := naming.PreviewHostname(hostname, facts.CanonicalDomain); ok {
+				var owned bool
+				if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.opaque_service_hosts preview
+				    JOIN control.service_source_owners source ON source.service_id=preview.service_id
+				    WHERE preview.hostname=$1 AND source.local_source_key=$2 AND source.membership_id=$3 AND source.team_id=$4)`,
+					hostname, owner.key, owner.membership, team).Scan(&owned); err != nil {
+					return err
+				}
+				if owned {
+					return nil
+				}
+			}
+		}
+		namespace := facts.localNamespace(d.managedURLMode)
 		if hostname != namespace && hostnameWithin(hostname, namespace) {
 			return nil
 		}
 	}
 	if owner.local && facts.TeamKind == "personal" {
-		_, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
-			Domain: facts.CanonicalDomain, Managed: facts.DomainKind == "managed", Mode: d.managedURLMode,
-			Personal: true, TeamName: facts.TeamDisplayName, MemberSlug: facts.ActorMemberSlug, ManagedLabel: facts.ActorManagedLabel,
-		})
+		_, direct := facts.namespace(d.managedURLMode)
 		if direct {
 			scope, membership = NamespaceScopeShared, ""
 		}

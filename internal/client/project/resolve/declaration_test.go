@@ -51,7 +51,7 @@ func TestDeclarationNormalizesOnlyItsOwnedAccess(t *testing.T) {
 }
 
 func appliedTestContext() team.Context {
-	return team.NewContext(authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"}, authorityv1.Membership{Id: "membership_1", TeamId: "team_1", ManagedLabel: "member", MemberSlug: "member"}, []authorityv1.Domain{{Id: "domain_1", CanonicalDomain: "tnl.dev", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}, "")
+	return team.NewContext(authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", ManagedLabel: "quiet-heron"}, authorityv1.Membership{Id: "membership_1", TeamId: "team_1", ManagedLabel: "member", MemberSlug: "member"}, []authorityv1.Domain{{Id: "domain_1", CanonicalDomain: "tnl.dev", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}, "")
 }
 
 func TestRemoteHTTPSettingsDoNotEnablePublicReachability(t *testing.T) {

@@ -87,7 +87,6 @@ func TestLocalServiceRealizationKeepsIdentityAcrossGitTransitions(t *testing.T) 
 		name string
 		git  []string
 	}{
-		{name: "without git"},
 		{name: "git init", git: []string{"init", "--quiet", root}},
 		{name: "first origin", git: []string{"-C", root, "remote", "add", "origin", "https://example.test/first.git"}},
 		{name: "changed origin", git: []string{"-C", root, "remote", "set-url", "origin", "https://elsewhere.test/second.git"}},

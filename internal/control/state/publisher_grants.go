@@ -18,7 +18,7 @@ func (d *Database) CreatePublisherGrant(ctx context.Context, r CreatePublisherGr
 	}
 	defer rollback(ctx, tx, "create publisher grant", &retErr)()
 	q := controlstatedb.New(tx)
-	resolved, err := d.authorizePublisherScope(ctx, tx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision, r.Protocols)
+	resolved, err := d.authorizePublisherScope(ctx, tx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision, r.Protocols, false)
 	if err != nil {
 		return "", err
 	}

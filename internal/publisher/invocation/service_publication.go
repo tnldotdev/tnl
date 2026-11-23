@@ -219,6 +219,9 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 						continue
 					}
 					owner := naming.MemberNamespace(savedDomain.CanonicalDomain, savedDomain.Kind == "managed", current.membership.ManagedLabel, current.membership.MemberSlug)
+					if selectedContext.Mode() == naming.ManagedURLModeGenerated {
+						owner, _ = selectedContext.Namespace(savedDomain)
+					}
 					if strings.HasSuffix(item.Endpoint.Hostname, "."+owner) {
 						if flags.Domain != "" && domain.Id != savedDomain.Id {
 							return publisheridentity.ErrScope

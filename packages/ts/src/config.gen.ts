@@ -16,6 +16,10 @@ export interface TnlConfig {
   name?: string;
   server?: string;
   team?: string;
+  /**
+   * Use opaque hosted addresses for new public HTTP development services.
+   */
+  naming?: "opaque";
   feedback?: boolean;
   oauth?: boolean;
   inspection?: Inspection;

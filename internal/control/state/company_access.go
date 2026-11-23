@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
@@ -291,7 +290,7 @@ func (d *Database) ProvisionCompanyEligibility(ctx context.Context, token string
 	}
 	if member == "" && r.Eligible && connection.automaticallyAdmits() {
 		unchangedAuthorization = false
-		if !naming.ValidAuthorityLabel(r.MemberSlug) {
+		if !validTeamMemberSlug(r.MemberSlug, d.managedURLMode) {
 			return ErrMemberSlugRequired
 		}
 		if err = d.createManagedCompanyMember(ctx, tx, q, c, r, now); err != nil {
@@ -343,21 +342,9 @@ func (d *Database) createManagedCompanyMember(ctx context.Context, tx pgx.Tx, q 
 	if err != nil {
 		return err
 	}
-	label := ""
-	if d.managedURLMode == naming.ManagedURLModeSimple {
-		var teamName string
-		if err = tx.QueryRow(ctx, `SELECT display_name FROM control.teams WHERE id=$1`, r.TeamID).Scan(&teamName); err != nil {
-			return err
-		}
-		label, err = availablePersonalTeamName(ctx, q, r.MemberSlug+"-"+teamName, now)
-		if err != nil {
-			return err
-		}
-	} else {
-		label, err = availableManagedLabel(ctx, q, now)
-		if err != nil {
-			return err
-		}
+	label, err := d.membershipManagedLabel(ctx, q, r.TeamID, r.MemberSlug, now)
+	if err != nil {
+		return err
 	}
 	if err = q.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{ID: sid, TeamID: r.TeamID, MemberSlug: r.MemberSlug, IdentityID: text(r.IdentityID), CreatedAt: timestamptz(now)}); err != nil {
 		return err

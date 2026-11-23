@@ -12,7 +12,7 @@ import (
 
 func TestProjectPublishHostnameUsesNamespace(t *testing.T) {
 	current := team.NewContext(
-		authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", PolicyRevision: 4},
+		authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", PolicyRevision: 4, ManagedLabel: "quiet-heron"},
 		authorityv1.Membership{Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember, MemberSlug: "chase", ManagedLabel: "chase-abc"},
 		[]authorityv1.Domain{{Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady}}, "",
 	)
@@ -20,7 +20,7 @@ func TestProjectPublishHostnameUsesNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hostname != "api.chase-abc.tnl.dev" || domain.Id != "domain_1" {
+	if hostname != "api.chase.quiet-heron.tnl.dev" || domain.Id != "domain_1" {
 		t.Fatalf("resolution = %q, %#v", hostname, domain)
 	}
 	if _, _, err := PublishHostname("shared.tnl.dev", "", "", current); err == nil {
@@ -30,7 +30,7 @@ func TestProjectPublishHostnameUsesNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	label, found := strings.CutSuffix(generated, ".chase-abc.tnl.dev")
+	label, found := strings.CutSuffix(generated, ".chase.quiet-heron.tnl.dev")
 	if !found || strings.Count(label, "-") != 1 {
 		t.Fatalf("generated service hostname = %q", generated)
 	}
@@ -46,7 +46,7 @@ func TestProjectPublishHostnameScopeMatrix(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			current := team.NewContext(
-				authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", PolicyRevision: 1},
+				authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1", PolicyRevision: 1, ManagedLabel: "quiet-heron"},
 				authorityv1.Membership{Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleOwner,
 					MemberSlug: "member", ManagedLabel: "member-unique"},
 				[]authorityv1.Domain{{Id: "domain_1", Kind: authorityv1.DomainKind(test.kind),
@@ -54,7 +54,7 @@ func TestProjectPublishHostnameScopeMatrix(t *testing.T) {
 			)
 			namespace := "member.routes.example.test"
 			if test.kind == "managed" {
-				namespace = "member-unique.routes.example.test"
+				namespace = "member.quiet-heron.routes.example.test"
 			}
 			name, wantHost := "api", "api."+namespace
 			if test.host != "" {
@@ -90,11 +90,11 @@ func TestProjectManagedAndCustomDefaultURLShapes(t *testing.T) {
 		{"organization_managed", "simple", "organization", "managed", "studio", "routes.example.test", "app.chase.studio.routes.example.test", "member"},
 		{"personal_custom", "simple", "personal", "custom", "chase", "dev.example.test", "app.dev.example.test", "shared"},
 		{"organization_custom", "simple", "organization", "custom", "studio", "studio.example.test", "app.chase.studio.example.test", "member"},
-		{"hosted_generated", "generated", "organization", "managed", "studio", "tnl.dev", "app.ecstatic-penguin.tnl.dev", "member"},
+		{"hosted_generated", "generated", "organization", "managed", "studio", "tnl.dev", "app.chase.ecstatic-penguin.tnl.dev", "member"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			current := team.NewContext(
-				authorityv1.Team{Id: "team", Kind: authorityv1.TeamKind(test.teamKind), DisplayName: test.teamName, DefaultDomainId: "domain"},
+				authorityv1.Team{Id: "team", Kind: authorityv1.TeamKind(test.teamKind), DisplayName: test.teamName, DefaultDomainId: "domain", ManagedLabel: "ecstatic-penguin"},
 				authorityv1.Membership{Id: "member", TeamId: "team", Role: authorityv1.TeamRoleOwner,
 					MemberSlug: "chase", ManagedLabel: "ecstatic-penguin"},
 				[]authorityv1.Domain{{Id: "domain", Kind: authorityv1.DomainKind(test.domainKind),

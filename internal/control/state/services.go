@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
@@ -308,7 +309,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 	commit := func() error {
 		return finishServiceCreation(ctx, tx, teamID, actorID, member, parentUntil, clock)
 	}
-	if !placement.Reserve && !member.administrator() {
+	if !placement.Reserve && placement.PreviewPublisher == "" && !member.administrator() {
 		if _, signed := serviceActor(ctx); signed {
 			return result, ErrServiceManagerRequired
 		}
@@ -324,6 +325,12 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		}
 		if selectedOwner.scope == NamespaceScopeShared {
 			nameScope = "shared"
+		}
+		if placement.UseSavedAddress {
+			if d.managedURLMode != naming.ManagedURLModeGenerated {
+				return result, ErrProjectConfigurationInvalid
+			}
+			nameScope = "named/" + actorID
 		}
 	}
 	receipt, err := q.GetServiceCreationRequest(ctx, controlstatedb.GetServiceCreationRequestParams{CreatedByIdentityID: actorID, IdempotencyKey: key})
@@ -347,17 +354,32 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 			if readErr != nil {
 				return result, readErr
 			}
-			if len(candidates) > 1 {
-				return result, ErrServiceConflict
+			for _, candidate := range candidates {
+				if placement.UseSavedAddress && candidate.NameScope == nameScope && candidate.Name == name {
+					existing = candidate.ID
+					break
+				}
 			}
-			if len(candidates) == 1 {
-				existing = candidates[0].ID
+			if existing == "" {
+				if len(candidates) > 1 {
+					return result, ErrServiceConflict
+				}
+				if len(candidates) == 1 {
+					existing = candidates[0].ID
+				}
 			}
 		}
 		if existing != "" {
 			row, readErr := q.LockService(ctx, existing)
 			if readErr != nil {
 				return result, readErr
+			}
+			if placement.UseSavedAddress && row.NameScope == nameScope && row.Name == name && row.DomainID.Valid {
+				placement.Hostname, placement.DomainID = row.CertificateHostname, row.DomainID.String
+				selectedOwner, err = d.serviceReservationOwner(ctx, tx, teamID, actorID, name, placement, configuration, clock.current())
+				if err != nil {
+					return ServiceRecord{}, err
+				}
 			}
 			result, err = reservedServiceRecord(ctx, tx, row, member, name, placement, selectedOwner)
 			if err != nil {

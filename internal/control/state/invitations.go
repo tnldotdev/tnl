@@ -103,7 +103,9 @@ func (d *Database) CreateTeamInvitation(
 ) (result InvitationSecret, retErr error) {
 	normalizedEmail, err := normalizeEmailRestriction(request.EmailRestriction)
 	if err != nil || !validStateText(request.IdentityID) || !validStateText(request.TeamID) ||
-		!validIdempotencyKey(request.IdempotencyKey) || !naming.ValidAuthorityLabel(request.MemberSlug) ||
+		!validIdempotencyKey(request.IdempotencyKey) ||
+		(request.MemberSlug != "" && !validTeamMemberSlug(request.MemberSlug, d.managedURLMode)) ||
+		(request.MemberSlug == "" && d.managedURLMode != naming.ManagedURLModeGenerated) ||
 		!request.InitialRole.valid() || now.IsZero() || !request.ExpiresAt.After(now) || len(request.RetrySecret) < 32 {
 		return InvitationSecret{}, ErrAuthorityInvalid
 	}
@@ -161,6 +163,12 @@ func (d *Database) CreateTeamInvitation(
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return InvitationSecret{}, fmt.Errorf("controlstate: create team invitation: read idempotent invitation: %w", err)
+	}
+	if request.MemberSlug == "" {
+		request.MemberSlug, err = generatedMemberSlug()
+		if err != nil {
+			return InvitationSecret{}, err
+		}
 	}
 	if occupied, err := queries.TeamSharedNameInUse(ctx, controlstatedb.TeamSharedNameInUseParams{
 		TeamID: text(request.TeamID), Label: request.MemberSlug,
@@ -370,12 +378,7 @@ func (d *Database) AcceptInvitation(
 	if exists {
 		return Membership{}, ErrAuthorityConflict
 	}
-	managedLabel := ""
-	if d.managedURLMode == naming.ManagedURLModeSimple {
-		managedLabel, err = availablePersonalTeamName(ctx, queries, invitation.MemberSlug+"-"+invitation.TeamDisplayName, now)
-	} else {
-		managedLabel, err = availableManagedLabel(ctx, queries, now)
-	}
+	managedLabel, err := d.membershipManagedLabel(ctx, queries, invitation.TeamID, invitation.MemberSlug, now)
 	if err != nil {
 		return Membership{}, err
 	}

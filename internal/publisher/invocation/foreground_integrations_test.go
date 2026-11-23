@@ -107,7 +107,7 @@ func TestForegroundIntegrationsRetainAuthenticatedSelection(t *testing.T) {
 					}
 					teamReads = append(teamReads, id)
 					return serviceTestResponse(r, 200, authorityv1.Team{Id: id, DisplayName: "selected",
-						Kind: authorityv1.Organization, DefaultDomainId: domain.Id, PolicyRevision: 1}), nil
+						Kind: authorityv1.Organization, ManagedLabel: "quiet-heron", DefaultDomainId: domain.Id, PolicyRevision: 1}), nil
 				}
 				if shutdown && r.Method == http.MethodPost && r.URL.Path == "/v1/services" {
 					data, err := io.ReadAll(r.Body)
@@ -172,7 +172,7 @@ func TestForegroundIntegrationsRetainAuthenticatedSelection(t *testing.T) {
 				t.Setenv("TNL_ACCESS_TOKEN", "another-credential")
 				t.Setenv("TNL_SERVER", "https://other.example")
 			}
-			origin, err := resolve.IntegrationOrigin(t.Context(), database, project, f.services.authenticated.ServerEndpoint, "member.example", "oauth")
+			origin, err := resolve.IntegrationOrigin(t.Context(), database, project, f.services.authenticated.ServerEndpoint, "member.quiet-heron.example", "oauth")
 			if err != nil {
 				t.Fatal(err)
 			}

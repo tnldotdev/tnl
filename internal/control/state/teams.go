@@ -72,7 +72,7 @@ type CreateTeamRequest struct {
 func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, now time.Time) (result Team, retErr error) {
 	if !validStateText(request.IdentityID) || !validIdempotencyKey(request.IdempotencyKey) ||
 		!naming.ValidAuthorityLabel(request.DisplayName) ||
-		(request.MemberSlug != "" && !naming.ValidAuthorityLabel(request.MemberSlug)) || now.IsZero() {
+		(request.MemberSlug != "" && !validTeamMemberSlug(request.MemberSlug, d.managedURLMode)) || now.IsZero() {
 		return Team{}, ErrAuthorityInvalid
 	}
 	if err := d.requireOpen(); err != nil {
@@ -110,7 +110,14 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 	}
 	memberSlug := request.MemberSlug
 	if memberSlug == "" {
-		memberSlug = naming.MemberSlugFromDisplayName(identity.DisplayName)
+		if d.managedURLMode == naming.ManagedURLModeGenerated {
+			memberSlug, err = generatedMemberSlug()
+			if err != nil {
+				return Team{}, err
+			}
+		} else {
+			memberSlug = naming.MemberSlugFromDisplayName(identity.DisplayName)
+		}
 		if !naming.ValidAuthorityLabel(memberSlug) {
 			return Team{}, ErrMemberSlugRequired
 		}
@@ -184,6 +191,26 @@ func (d *Database) CreateTeam(ctx context.Context, request CreateTeamRequest, no
 		row.ID, row.Kind, row.DisplayName, row.ManagedLabel, row.DefaultDomainID,
 		row.PolicyRevision, row.CreatedAt, row.UpdatedAt,
 	), nil
+}
+
+func validTeamMemberSlug(slug string, mode naming.ManagedURLMode) bool {
+	return naming.ValidAuthorityLabel(slug) && (mode != naming.ManagedURLModeGenerated || slug != "deploy")
+}
+
+func generatedMemberSlug() (string, error) {
+	label, err := naming.RandomHostnameLabel()
+	return "m-" + label, err
+}
+
+func (d *Database) membershipManagedLabel(ctx context.Context, q *controlstatedb.Queries, team, slug string, now time.Time) (string, error) {
+	facts, err := q.GetTeamNaming(ctx, team)
+	if err != nil {
+		return "", err
+	}
+	if d.managedURLMode == naming.ManagedURLModeGenerated {
+		return facts.ManagedLabel, nil
+	}
+	return availablePersonalTeamName(ctx, q, slug+"-"+facts.DisplayName, now)
 }
 
 func (d *Database) ListTeams(ctx context.Context, identityID string) ([]Team, error) {

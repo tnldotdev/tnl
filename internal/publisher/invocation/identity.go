@@ -28,6 +28,9 @@ func reserveConfiguredService(ctx context.Context, services publisherServices, d
 	}
 	digest := sha256.Sum256([]byte(services.authenticated.ServerEndpoint + "\x00" + services.teamID + "\x00" + services.domainID + "\x00" + services.hostname))
 	name := "service-" + hex.EncodeToString(digest[:12])
+	if services.savedName != "" {
+		name = services.savedName
+	}
 	normalize := func(desired controlv1.ProjectServiceConfiguration) (controlv1.ProjectServiceConfiguration, *targettrust.Snapshot, error) {
 		if desired.Protocol != nil && *desired.Protocol != controlv1.ServiceProtocolHTTP ||
 			desired.Ephemeral != nil && *desired.Ephemeral ||
@@ -92,8 +95,12 @@ func reserveConfiguredService(ctx context.Context, services publisherServices, d
 	// request key through lost replies; no local lock or inventory can prove
 	// that an uncertain remote mutation did not commit.
 	for range 3 {
+		placement := &controlv1.ServicePlacement{DomainId: &services.domainID, Hostname: &services.hostname}
+		if services.savedName != "" {
+			placement.UseSavedAddress = new(true)
+		}
 		current, created, err = services.routes.ReserveServiceAt(ctx, services.teamID, name, key,
-			&controlv1.ServicePlacement{DomainId: &services.domainID, Hostname: &services.hostname},
+			placement,
 			controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP, TargetTls: publisheridentity.ServiceTargetTLS(trust)}, &declaration)
 		if err == nil {
 			break
@@ -104,6 +111,9 @@ func reserveConfiguredService(ctx context.Context, services publisherServices, d
 	}
 	if err != nil {
 		return controlv1.Service{}, err
+	}
+	if !created && services.savedName != "" && current.Endpoint != nil && current.DomainId != nil {
+		services.hostname, services.domainID = current.Endpoint.Hostname, *current.DomainId
 	}
 	if err := check(current); err != nil {
 		return controlv1.Service{}, err

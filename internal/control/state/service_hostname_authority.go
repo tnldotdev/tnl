@@ -33,6 +33,27 @@ type serviceHostnameFacts struct {
 	DomainTeamID                                                         pgtype.Text
 }
 
+func (facts serviceHostnameFacts) namespace(mode naming.ManagedURLMode) (string, bool) {
+	return naming.PublicURLNamespace(naming.NamespaceFacts{
+		Domain: facts.CanonicalDomain, Managed: facts.DomainKind == "managed",
+		Mode: mode, Personal: facts.TeamKind == "personal",
+		TeamName: facts.TeamDisplayName, MemberSlug: facts.ActorMemberSlug, ManagedLabel: facts.TeamManagedLabel,
+	})
+}
+
+func (facts serviceHostnameFacts) localNamespace(mode naming.ManagedURLMode) string {
+	if mode != naming.ManagedURLModeGenerated {
+		return naming.MemberNamespace(facts.CanonicalDomain, facts.DomainKind == "managed", facts.ActorManagedLabel, facts.ActorMemberSlug)
+	}
+	namespace, _ := facts.namespace(mode)
+	return namespace
+}
+
+func (facts serviceHostnameFacts) deploymentBranch(mode naming.ManagedURLMode, hostname string) bool {
+	return mode == naming.ManagedURLModeGenerated && hostnameWithin(hostname, "deploy."+naming.SharedPublicURLNamespace(
+		facts.CanonicalDomain, facts.DomainKind == "managed", mode, facts.TeamDisplayName, facts.TeamManagedLabel))
+}
+
 // callers hold the team mutation guard. use snapshots rather than acquiring a
 // domain row lock after the service lock; domain changes use the opposite order.
 func serviceHostnameAuthority(ctx context.Context, tx pgx.Tx, team, actor, domain string, now time.Time) (facts serviceHostnameFacts, err error) {
@@ -57,14 +78,11 @@ func serviceHostnameAuthority(ctx context.Context, tx pgx.Tx, team, actor, domai
 // member names cannot claim their namespace apex or another member's descendants.
 func authorizeServiceHostname(facts serviceHostnameFacts, labels []controlstatedb.ListTeamNamespaceLabelsRow, team, membership, hostname, scope string, mode naming.ManagedURLMode) error {
 	if facts.DomainState != "ready" || facts.DomainKind == "custom" && facts.DomainTeamID.String != team ||
-		facts.DomainKind == "managed" && facts.DomainTeamID.Valid || !hostnameWithin(hostname, facts.CanonicalDomain) {
+		facts.DomainKind == "managed" && facts.DomainTeamID.Valid || !hostnameWithin(hostname, facts.CanonicalDomain) ||
+		facts.deploymentBranch(mode, hostname) {
 		return ErrServiceAccess
 	}
-	actorNamespace, direct := naming.PublicURLNamespace(naming.NamespaceFacts{
-		Domain: facts.CanonicalDomain, Managed: facts.DomainKind == "managed",
-		Mode: mode, Personal: facts.TeamKind == "personal",
-		TeamName: facts.TeamDisplayName, MemberSlug: facts.ActorMemberSlug, ManagedLabel: facts.ActorManagedLabel,
-	})
+	actorNamespace, direct := facts.namespace(mode)
 	if scope == "member" {
 		if direct || membership != facts.ActorMembershipID || hostname == actorNamespace || !hostnameWithin(hostname, actorNamespace) {
 			return ErrServiceAccess
@@ -79,7 +97,7 @@ func authorizeServiceHostname(facts serviceHostnameFacts, labels []controlstated
 		if depth, within := naming.ChildDepth(hostname, namespace); !within || depth < 1 {
 			return ErrServiceAccess
 		}
-		if facts.TeamKind == "organization" && mode == naming.ManagedURLModeSimple {
+		if facts.TeamKind == "organization" {
 			for _, label := range labels {
 				if hostnameWithin(hostname, label.MemberSlug+"."+namespace) {
 					return ErrServiceAccess

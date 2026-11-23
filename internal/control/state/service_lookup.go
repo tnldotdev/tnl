@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -78,6 +79,40 @@ func (d *Database) GetService(ctx context.Context, serviceID, actorID string) (r
 		return ServiceRecord{}, err
 	}
 	return result, nil
+}
+
+func (d *Database) GetServiceByHostname(ctx context.Context, team, hostname, actor string) (result ServiceRecord, retErr error) {
+	if canonical, err := naming.CanonicalizeHostname(hostname); err != nil || canonical != hostname || team == "" {
+		return result, ErrServiceAccess
+	}
+	tx, err := d.beginServiceAccess(ctx, serviceReadOptions(ctx))
+	if err != nil {
+		return result, err
+	}
+	defer rollback(ctx, tx, "get service by hostname", &retErr)()
+	var id string
+	err = tx.QueryRow(ctx, `SELECT service.id FROM control.service_endpoints endpoint
+	    JOIN control.services service ON service.id=endpoint.service_id
+	    WHERE endpoint.hostname=$1 AND endpoint.retired_at IS NULL AND endpoint.service_run_id IS NULL
+	      AND service.team_id=$2 AND service.deleted_at IS NULL AND service.certificate_hostname=$1`, hostname, team).Scan(&id)
+	if err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	row, err := serviceForManagement(ctx, tx, id, actor)
+	if err != nil {
+		return result, err
+	}
+	if row.TeamID.String != team || row.CertificateHostname != hostname {
+		return result, ErrServiceAccess
+	}
+	result, err = checkedServiceRecord(row)
+	if err != nil {
+		return result, err
+	}
+	if err = serviceSource(ctx, controlstatedb.New(tx), &result); err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
 }
 
 func serviceForManagement(ctx context.Context, tx pgx.Tx, serviceID, actorID string) (controlstatedb.ControlService, error) {

@@ -34,6 +34,7 @@ type TNL struct {
 	Name               *string             `json:"name,omitempty" yaml:"name,omitempty" jsonschema_description:"Saved name for an unnamed HTTP service; named services use their service key unless overridden."`
 	Server             *string             `json:"server,omitempty" yaml:"server,omitempty" jsonschema_description:"Control URL used by this project."`
 	Team               *string             `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
+	Naming             string              `json:"naming,omitempty" yaml:"naming,omitempty"`
 	Feedback           *bool               `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
 	OAuth              bool                `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
 	Inspection         *Inspection         `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP services."`

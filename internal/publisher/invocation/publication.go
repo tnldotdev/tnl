@@ -146,12 +146,33 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		if err != nil {
 			return err
 		}
-		services, err := preparePublisherServices(ctx, state, server, flags.PublicURL, flags.Name, flags.Domain, flags.SelectedTeam, flags.Ephemeral, authenticated)
+		services, err := preparePublisherServices(ctx, state, server, flags.PublicURL, flags.Name, flags.Domain, flags.SelectedTeam, flags.Ephemeral, authenticated, !flags.Demo)
 		if err != nil {
 			return err
 		}
 		selectedTeam = services.teamID
-		if flags.Ephemeral {
+		if services.neutral || services.previewResume {
+			native, saved, plan, err = prepareOpaqueService(ctx, services, flags, policy, plan)
+			if saved.Id != "" && saved.Ephemeral && services.neutral {
+				cleanup = func() error {
+					finish, cancel := context.WithDeadline(context.Background(), shutdownDeadline())
+					defer cancel()
+					deleteErr := authenticated.Control.DeleteService(finish, saved.Id, controlv1.DeleteServiceParams{UnconditionalDelete: new(true)})
+					if errors.Is(deleteErr, clientcontrol.ErrNotFound) {
+						return nil
+					}
+					return deleteErr
+				}
+			}
+			if err != nil {
+				return err
+			}
+			if services.neutral && !flags.Ephemeral && output != nil && output.Resume != nil {
+				if err := output.Resume("https://"+saved.Endpoint.Hostname, selectedTeam, server); err != nil {
+					return err
+				}
+			}
+		} else if flags.Ephemeral {
 			native, _, err = publisheridentity.EnsureNamespace(ctx, profile, authenticated.Control, authenticated.Authority, services.teamID, services.domainID, services.namespace)
 			if err != nil {
 				return err

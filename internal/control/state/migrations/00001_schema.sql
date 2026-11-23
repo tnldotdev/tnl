@@ -118,7 +118,7 @@ CREATE TABLE control.team_memberships (
     team_id text NOT NULL REFERENCES control.teams(id) ON DELETE RESTRICT,
     identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     slug_reservation_id text NOT NULL,
-    managed_label text NOT NULL UNIQUE REFERENCES control.managed_label_reservations(label) ON DELETE RESTRICT,
+    managed_label text NOT NULL REFERENCES control.managed_label_reservations(label) ON DELETE RESTRICT,
     role text NOT NULL CHECK (role IN ('member', 'admin', 'owner')),
     authority_revision bigint NOT NULL CHECK (authority_revision >= 1),
     created_at timestamptz NOT NULL,
@@ -1219,6 +1219,8 @@ CREATE TABLE control.publisher_grants (
         OR (kind = 'deployment_credential' AND service_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND namespace_scope IS NULL AND membership_id IS NULL AND expires_at IS NOT NULL))
 );
 CREATE UNIQUE INDEX publisher_grants_active_namespace ON control.publisher_grants(publisher_identity_id, domain_id, namespace) WHERE revoked_at IS NULL AND kind = 'namespace';
+CREATE UNIQUE INDEX publisher_grants_preview_parent ON control.publisher_grants(domain_id,namespace)
+    WHERE kind='namespace' AND namespace ~ '^[a-z2-7]{26}\.preview\.';
 -- revocation never frees a guest allocation for a replacement identity.
 CREATE UNIQUE INDEX publisher_grants_guest_service ON control.publisher_grants(service_id) WHERE guest_id IS NOT NULL;
 CREATE TABLE control.publisher_enrollments (
@@ -1976,6 +1978,13 @@ CREATE TABLE control.service_endpoints (
     UNIQUE(service_id,publisher_identity_id,publisher_alias_parent)
 );
 CREATE INDEX service_endpoints_dns_work ON control.service_endpoints(dns_available_at,hostname) WHERE dns_available_at IS NOT NULL;
+CREATE TABLE control.opaque_service_hosts (
+    service_id text PRIMARY KEY REFERENCES control.services(id) ON DELETE RESTRICT,
+    grant_id text NOT NULL REFERENCES control.publisher_grants(id) ON DELETE RESTRICT,
+    hostname text NOT NULL UNIQUE,
+    parent text NOT NULL,
+    CHECK (hostname ~ '^s-[a-z2-7]{26}\.' AND split_part(hostname,'.',1)||'.'||parent=hostname)
+);
 -- exact service ownership survives endpoint handoff and local binding replacement.
 -- this captures the validated source, not publication or visitor authority.
 CREATE TABLE control.service_source_owners (
@@ -2328,8 +2337,14 @@ BEGIN
             AND NOT EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation WHERE allocation.service_id=selected_service_id);
     ELSIF binding.grant_kind='namespace' THEN
         RETURN QUERY SELECT binding.deadline
-        WHERE binding.ephemeral AND binding.protocol='http' AND binding.domain_id=binding.granted_domain_id
-            AND EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation
+        WHERE binding.protocol='http' AND binding.domain_id=binding.granted_domain_id
+            AND (EXISTS(SELECT 1 FROM control.opaque_service_hosts preview
+                JOIN control.service_endpoints endpoint ON endpoint.service_id=preview.service_id
+                    AND endpoint.hostname=preview.hostname AND endpoint.retired_at IS NULL
+                    AND endpoint.domain_id=binding.granted_domain_id
+                WHERE preview.service_id=selected_service_id AND preview.grant_id=selected_grant_id
+                    AND preview.hostname=binding.certificate_hostname AND preview.parent=binding.namespace)
+            OR binding.ephemeral AND EXISTS(SELECT 1 FROM control.publisher_namespace_allocations allocation
                 JOIN control.service_endpoints endpoint ON endpoint.service_id=allocation.service_id
                     AND endpoint.hostname=binding.certificate_hostname AND endpoint.retired_at IS NULL
                     AND endpoint.domain_id=binding.granted_domain_id AND endpoint.namespace=binding.namespace
@@ -2346,9 +2361,8 @@ BEGIN
                             AND member.team_id=binding.team_id AND control.active_membership(member.id,at_time)
                             AND (binding.ownership<>'member' OR binding.owner_membership_id=member.id)
                             AND binding.namespace=CASE WHEN domain.kind='custom' THEN reservation.member_slug||'.'||domain.canonical_domain
-                                WHEN binding.namespace=member.managed_label||'.'||domain.canonical_domain THEN member.managed_label||'.'||domain.canonical_domain
-                                WHEN binding.team_kind='personal' THEN binding.team_name||'.'||domain.canonical_domain
-                                ELSE reservation.member_slug||'.'||binding.team_name||'.'||domain.canonical_domain END))));
+                                WHEN binding.team_kind='personal' THEN (SELECT managed_label FROM control.teams WHERE id=binding.team_id)||'.'||domain.canonical_domain
+                                ELSE reservation.member_slug||'.'||(SELECT managed_label FROM control.teams WHERE id=binding.team_id)||'.'||domain.canonical_domain END)))));
     ELSIF binding.grant_kind='deployment_credential' THEN
         RETURN QUERY SELECT binding.deadline
         WHERE binding.ownership='team' AND binding.protocol='http'

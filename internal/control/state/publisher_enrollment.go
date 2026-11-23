@@ -23,13 +23,16 @@ func (d *Database) IssuePublisherEnrollment(ctx context.Context, r CreatePublish
 	if !naming.ValidServiceName(r.Name) || r.Kind != "installed" && r.Kind != "automation" && r.Kind != "run" {
 		return result, ErrPublisherEnrollment
 	}
+	if r.Preview && (r.Kind != "installed" || r.Scope.Kind != "namespace" || r.Ownership == "team") {
+		return result, ErrPublisherEnrollment
+	}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "issue publisher enrollment", &retErr)()
 	q := controlstatedb.New(tx)
-	resolved, err := d.authorizePublisherScope(ctx, tx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision, r.Protocols)
+	resolved, err := d.authorizePublisherScope(ctx, tx, q, r.Scope, r.EditorID, r.EditorMembershipID, r.PolicyRevision, r.Protocols, r.Preview)
 	if err != nil {
 		return result, err
 	}

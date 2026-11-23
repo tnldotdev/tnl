@@ -21,7 +21,8 @@ func TestPublicURLNamespaceOwnership(t *testing.T) {
 		{"organization", "routes.example.com", "studio", "chase.studio.routes.example.com", true, false, false, ManagedURLModeSimple},
 		{"personal_custom", "dev.example.com", "chase", "dev.example.com", false, true, true, ManagedURLModeSimple},
 		{"organization_custom", "studio.example.com", "studio", "chase.studio.example.com", false, false, false, ManagedURLModeSimple},
-		{"hosted_managed", "tnl.dev", "studio", "ecstatic-penguin.tnl.dev", true, false, false, ManagedURLModeGenerated},
+		{"hosted_managed", "tnl.dev", "studio", "chase.ecstatic-penguin.tnl.dev", true, false, false, ManagedURLModeGenerated},
+		{"hosted_personal", "tnl.dev", "chase", "ecstatic-penguin.tnl.dev", true, true, false, ManagedURLModeGenerated},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, shared := PublicURLNamespace(NamespaceFacts{Domain: test.domain, Managed: test.managed,

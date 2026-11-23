@@ -82,6 +82,7 @@ type PublisherAccess struct {
 	Until time.Time
 }
 type CreatePublisherEnrollmentRequest struct {
+	Preview                                  bool
 	Ownership                                string
 	Scope                                    PublisherScope
 	Name, Kind, EditorID, EditorMembershipID string
@@ -112,7 +113,7 @@ func scopeFromGrant(team string, g controlstatedb.ControlPublisherGrant) Publish
 
 // authorizePublisherScope captures an explicit grant after checking the current
 // editor under team/membership locks. grant use never consults that membership.
-func (d *Database) authorizePublisherScope(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, scope PublisherScope, editor, membership string, revision uint64, requested []string) (resolvedPublisherScope, error) {
+func (d *Database) authorizePublisherScope(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, scope PublisherScope, editor, membership string, revision uint64, requested []string, preview bool) (resolvedPublisherScope, error) {
 	if !validStateText(editor) || revision == 0 || scope.GuestID != "" {
 		return nil, ErrPublisherIdentity
 	}
@@ -186,7 +187,17 @@ func (d *Database) authorizePublisherScope(ctx context.Context, tx pgx.Tx, q *co
 	if c.DomainState != "ready" {
 		return nil, ErrPublisherIdentity
 	}
-	ns, direct := naming.PublicURLNamespace(naming.NamespaceFacts{Domain: c.CanonicalDomain, Managed: c.DomainKind == "managed", Mode: d.managedURLMode, Personal: c.TeamKind == "personal", TeamName: c.TeamDisplayName, MemberSlug: c.ActorMemberSlug, ManagedLabel: c.ActorManagedLabel})
+	if preview {
+		if d.managedURLMode != naming.ManagedURLModeGenerated || c.DomainKind != "managed" || scope.Namespace != "" {
+			return nil, ErrPublisherIdentity
+		}
+		label, err := naming.RandomHostnameLabel()
+		if err != nil {
+			return nil, err
+		}
+		return namespacePublisherScope{scope.TeamID, scope.DomainID, label + ".preview." + c.CanonicalDomain, m.ActorMembershipID, NamespaceScopeMember}, nil
+	}
+	ns, direct := c.namespace(d.managedURLMode)
 	if ns == "" || scope.Namespace != "" && scope.Namespace != ns {
 		return nil, ErrPublisherIdentity
 	}

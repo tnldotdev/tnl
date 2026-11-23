@@ -125,11 +125,15 @@ func (d *Database) mapDirectOIDCAdmission(ctx context.Context, q *controlstatedb
 		if err != nil {
 			return err
 		}
-		label, err := availableManagedLabel(ctx, q, now)
+		slug, err := generatedMemberSlug()
 		if err != nil {
 			return err
 		}
-		if err := q.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{ID: reservation, TeamID: intent.TeamID, MemberSlug: label, IdentityID: text(identityID), CreatedAt: timestamptz(now)}); err != nil {
+		label, err := d.membershipManagedLabel(ctx, q, intent.TeamID, slug, now)
+		if err != nil {
+			return err
+		}
+		if err := q.CreateActiveSlugReservation(ctx, controlstatedb.CreateActiveSlugReservationParams{ID: reservation, TeamID: intent.TeamID, MemberSlug: slug, IdentityID: text(identityID), CreatedAt: timestamptz(now)}); err != nil {
 			return err
 		}
 		if err := q.CreateSeedMember(ctx, controlstatedb.CreateSeedMemberParams{ID: membership, TeamID: intent.TeamID, IdentityID: identityID, SlugReservationID: reservation, ManagedLabel: label, CreatedAt: timestamptz(now)}); err != nil {
