@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync/atomic"
 	"testing"
@@ -147,6 +148,60 @@ func TestServiceCapacityNeedsAnUnexpiredDeadline(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatal("expired request reserved capacity")
 	}
+}
+
+func TestServiceCapacityBurstWaitsForReaderWithinOriginalDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client, server := capacitySessions(t)
+		gate := make(chan struct{})
+		var entered atomic.Int32
+		request := func(i int, ctx context.Context) <-chan error {
+			t.Helper()
+			header := maximumServiceHeader("relay-a")
+			header.VisitorConnectionID = fmt.Sprintf("vc_%022d", i)
+			release, err := server.RegisterServiceCapacity(t.Context(), header, func(ctx context.Context) error {
+				entered.Add(1)
+				select {
+				case <-ctx.Done():
+					return context.Cause(ctx)
+				case <-gate:
+					return nil
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(release)
+			return tunnelWorker(t, release, func() error { return client.RequestServiceCapacity(ctx, header) })
+		}
+		var live []<-chan error
+		for i := range 8 {
+			live = append(live, request(i, tunnelContext(t)))
+		}
+		synctest.Wait()
+		if entered.Load() != 8 {
+			t.Fatal("did not occupy the capacity readers")
+		}
+		deadline, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+		defer cancel()
+		expiring := request(8, deadline)
+		live = append(live, request(9, tunnelContext(t)))
+		synctest.Wait()
+		// release the readers only after the first queued visitor has expired.
+		time.Sleep(2 * time.Millisecond)
+		close(gate)
+		if err := await(t, expiring); err == nil {
+			t.Fatal("expired visitor was acknowledged")
+		}
+		for _, done := range live {
+			if err := await(t, done); err != nil {
+				t.Fatal("live visitor lost its reservation during burst", err)
+			}
+		}
+		if entered.Load() != 9 {
+			t.Fatal("expired visitor spent capacity or live callback was skipped", entered.Load())
+		}
+	})
 }
 
 func TestServiceCapacityDoesNotReviveATimedOutReservation(t *testing.T) {
