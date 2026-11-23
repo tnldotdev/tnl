@@ -48,6 +48,12 @@ type resolvedVisitorAccess struct {
 	explicit bool
 }
 
+func resolveSignedInPublishAccess(ctx context.Context, control clientIPLookup, flags PublicOptions) (resolvedVisitorAccess, error) {
+	// guest demos never use this path; control fixes their access to a share.
+	anonymous := flags.Anonymous || (flags.Demo && flags.Access == nil)
+	return resolveVisitorAccess(ctx, control, flags.Access, anonymous, flags.IP)
+}
+
 func resolveVisitorAccess(ctx context.Context, control clientIPLookup, configured *config.Access, anonymous bool, ips []string) (resolvedVisitorAccess, error) {
 	result := resolvedVisitorAccess{access: controlv1.Restricted}
 	if configured != nil {

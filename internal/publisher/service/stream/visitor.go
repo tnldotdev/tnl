@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"net"
 	"net/http"
 	"reflect"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/security/visitorcert"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
@@ -48,12 +51,25 @@ type HTTPVisitor struct{ Frontend HTTPFrontend }
 
 func (v HTTPVisitor) valid() bool { return !nilManagedValue(v.Frontend) }
 
-// TLS proves possession of an optional key. the HTTP authority verifies the
-// exact leaf, issuer, scope and current permission after credential selection.
+// TLS proves possession of an optional key. HTTP authorization verifies the
+// control-signed credential bound to the leaf, scope and current permission.
 func (HTTPVisitor) clientAuth() tls.ClientAuthType { return tls.RequestClientCert }
 func (HTTPVisitor) authorize(context.Context, tls.ConnectionState) (Decision, error) {
 	return Decision{}, ErrEndpoint
 }
+
+var httpVisitorIssuerNames = func() *x509.CertPool {
+	name := pkix.Name{CommonName: visitorcert.IssuerCommonName}
+	subject, err := asn1.Marshal(name.ToRDNSequence())
+	if err != nil {
+		panic(err)
+	}
+	pool := x509.NewCertPool()
+	// with RequestClientCert, TLS advertises only the subject names. there is
+	// no trust anchor here: the issuer name is a client selection hint.
+	pool.AddCert(&x509.Certificate{RawSubject: subject})
+	return pool
+}()
 
 // ConnectorAdmission is consumed only by the connector forwarding path. the
 // concrete service admission owns construction, physical-owner checks and C;

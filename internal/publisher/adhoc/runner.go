@@ -104,7 +104,7 @@ func allocationRequest(options Options) (controlv1.AllocateServiceRequest, strin
 		Public: new(public), Ephemeral: new(true), RequirePostQuantum: new(options.RequirePostQuantum),
 		Http: &controlv1.ProjectServiceHTTP{Access: &controlv1.ProjectHTTPAccess{Mode: &mode}},
 	}
-	if options.IP != nil {
+	if len(ips) != 0 {
 		body.Configuration.Http.Access.Ip = &ips
 	}
 	if options.ExpiresAt != nil {

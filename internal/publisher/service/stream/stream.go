@@ -307,6 +307,10 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	frontTLS := s.TLS.Clone()
 	frontTLS.MinVersion = max(frontTLS.MinVersion, tls.VersionTLS12)
 	frontTLS.ClientAuth = s.Visitor.clientAuth()
+	_, publicHTTP := s.Visitor.(HTTPVisitor)
+	if publicHTTP {
+		frontTLS.ClientCAs = httpVisitorIssuerNames
+	}
 	frontTLS.NextProtos = nil
 	if s.Protocol == config.ProtocolHTTP {
 		frontTLS.MinVersion = max(frontTLS.MinVersion, tls.VersionTLS13)
@@ -314,7 +318,6 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 	}
 	frontTLS.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		hostname, err := naming.CanonicalizeHostname(hello.ServerName)
-		_, publicHTTP := s.Visitor.(HTTPVisitor)
 		alias := publicHTTP && s.Protocol == config.ProtocolHTTP && s.Public && s.RunHostname != "" && hostname == s.RunHostname
 		if (err != nil || hostname != s.Hostname && !alias) && !(s.Protocol == config.ProtocolMySQL && hello.ServerName == "") {
 			return nil, &VisitorHostnameRefusal{}

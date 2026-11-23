@@ -657,5 +657,8 @@ func applyTunnelCLIUnits(parsed *cobra.Command, flags *cli) {
 		apply(&flags.Publish.tunnelFlags)
 		flags.Publish.openFromCLI = open
 		flags.Publish.demoNameFromCLI = name
+		if flags.Publish.Demo && changed("anonymous") && !flags.Publish.Anonymous {
+			flags.Publish.access = &config.Access{Mode: "restricted"}
+		}
 	}
 }

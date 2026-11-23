@@ -387,6 +387,9 @@ func TestDemoPublishUsesFreshEphemeralURLAndSkipsProject(t *testing.T) {
 	if flags.Publish.Target != "" || flags.Publish.Name != "" || !flags.Publish.Ephemeral || flags.Publish.Open {
 		t.Fatalf("demo flags = %+v", flags.Publish)
 	}
+	if flags.Publish.Anonymous || flags.Publish.access != nil {
+		t.Fatal("the demo flag alone must leave guest access selection to the server")
+	}
 	flags.Publish.openFromCLI = false
 	if err := prepareDemoPublish(&flags.Publish, "", true); err != nil || !flags.Publish.Open {
 		t.Fatalf("interactive demo = %+v, error = %v", flags.Publish, err)
@@ -417,6 +420,18 @@ func TestDemoPublishUsesFreshEphemeralURLAndSkipsProject(t *testing.T) {
 				t.Fatalf("demo options %v = %q, want action %q", test.args, stderr.String(), test.action)
 			}
 		})
+	}
+}
+
+func TestDemoPublishHonorsExplicitRestrictedAccess(t *testing.T) {
+	var flags cli
+	parsed, err := commandForTest(&flags, io.Discard)([]string{"publish", "--demo", "--anonymous=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyTunnelCLIUnits(parsed, &flags)
+	if flags.Publish.Anonymous || flags.Publish.access == nil || flags.Publish.access.VisitorMode() != "restricted" {
+		t.Fatal("explicit --anonymous=false did not preserve restricted demo access")
 	}
 }
 

@@ -1,4 +1,4 @@
-// package visitorcert owns the shared client-certificate bounds and error.
+// package visitorcert owns shared client-certificate rules.
 package visitorcert
 
 import (
@@ -8,6 +8,9 @@ import (
 
 const MaxLifetime = 7 * 24 * time.Hour
 const MaxWorkloadLifetime = 6 * time.Hour
+
+// IssuerCommonName is the stable issuer name in tnl client certificates.
+const IssuerCommonName = "tnl service client issuer"
 
 var ErrInvalidCertificate = errors.New("invalid service client certificate")
 
