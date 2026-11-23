@@ -367,6 +367,32 @@ func TestIntegrationConnectorPeerPairClaimReportRollbackAndReadOnlyDelivery(t *t
 	}
 }
 
+func TestIntegrationConnectorPeerBindingOperationsShareService(t *testing.T) {
+	for _, operation := range []string{"claim", "report", "delivery"} {
+		t.Run(operation, func(t *testing.T) {
+			f := newConnectorPairFixture(t)
+			pair := f.create(t)
+			for slot := range pair.Relays {
+				f.claim(t, pair, slot, f.now)
+			}
+			at := f.now.Add(time.Second)
+			proof := testConnectorLegProof(t, pair, 0, at, f.key)
+			checkServiceObservationLocks(t, f.d, pair.ServiceID, func(ctx context.Context) error {
+				switch operation {
+				case "claim":
+					_, err := testClaimConnectorPeerPairLeg(t, f.d, ctx, pair.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.10"), proof, at)
+					return err
+				case "report":
+					return f.d.ConfirmConnectorPeerPairPrepared(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, f.run.Token, ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}, at)
+				default:
+					_, err := f.d.DeliverConnectorPeerPair(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, pair.DeliveryGeneration, f.run.Token, at)
+					return err
+				}
+			}, ErrServiceAccess)
+		})
+	}
+}
+
 func TestIntegrationConnectorPeerPairExpiryDuringDatabaseWait(t *testing.T) {
 	for _, operation := range []string{"claim", "delivery", "report"} {
 		t.Run(operation, func(t *testing.T) {
