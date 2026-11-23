@@ -91,7 +91,7 @@ func managedServiceAuthority(ctx context.Context, tx pgx.Tx, serviceID, actorID 
 		return controlstatedb.ControlService{}, err
 	}
 	clock := newAuthorizationClock(time.Now())
-	member, err := serviceMembershipUnderTeamGuard(ctx, tx, teamID, actorID, clock)
+	member, err := checkedActorMembership(ctx, tx, teamID, actorID, clock, !observe)
 	if err != nil {
 		return controlstatedb.ControlService{}, err
 	}
