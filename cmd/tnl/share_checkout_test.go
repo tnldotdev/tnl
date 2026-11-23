@@ -244,26 +244,22 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 	if err := os.WriteFile(configPath, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	root, err = filepath.EvalSymlinks(root)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configPath}, stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stateDir := filepath.Join(t.TempDir(), "state")
 	db, err := clientstate.Open(t.Context(), stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	store, err := db.Server(t.Context(), server.URL)
 	if err == nil {
-		err = store.SavePreviewID(t.Context(), teamID, root, previewID)
+		err = store.SavePreviewID(t.Context(), teamID, project.LocalWorktreeKey(), previewID)
 	}
 	closeErr := db.Close()
 	if err != nil || closeErr != nil {
 		t.Fatalf("save preview: %v; close: %v", err, closeErr)
-	}
-	project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configPath}, stateDir)
-	if err != nil {
-		t.Fatal(err)
 	}
 	sourceIdentity := project.LocalPublicationIdentity()
 	for i, name := range []string{"web", "api", "web"} {

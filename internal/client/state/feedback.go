@@ -20,7 +20,7 @@ import (
 // by the publisher or signed-in client, never supplied by browser input.
 type FeedbackAuthorize func(context.Context, string, string) (controlv1.FeedbackAuthorization, error)
 
-// FeedbackStore owns content for exactly one local directory, server and preview.
+// FeedbackStore owns content for exactly one local project identity, server and preview.
 // it shares client state's connection and transaction/cleanup ownership.
 type FeedbackStore struct {
 	store            *Store
@@ -28,10 +28,9 @@ type FeedbackStore struct {
 	authorize        FeedbackAuthorize
 }
 
-func (s *Store) Feedback(ctx context.Context, root, preview string, authorize FeedbackAuthorize) (*FeedbackStore, error) {
-	project, _, err := s.database.LocalProjectIdentity(ctx, root, "")
-	if err != nil {
-		return nil, err
+func (s *Store) Feedback(ctx context.Context, project, preview string, authorize FeedbackAuthorize) (*FeedbackStore, error) {
+	if project == "" {
+		return nil, ErrFeedbackInvalid
 	}
 	return s.feedback(ctx, project, preview, authorize)
 }

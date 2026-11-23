@@ -239,7 +239,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 			Feedback:      config.Feedback, PreviewID: config.PreviewID,
 			PublicEndpoint: prepared.managedPublic, BrowserLoginAvailable: config.BrowserLoginAvailable,
 			State:          profile,
-			ProjectService: config.ProjectService, ProjectRoot: config.ProjectRoot, Demo: config.Demo,
+			ProjectService: config.ProjectService, ProjectRoot: config.ProjectRoot, FeedbackProjectID: config.FeedbackProjectID, Demo: config.Demo,
 			Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
 			RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
 			Hostname: prepared.managedHostname, Port: prepared.servicePort, Requests: prepared.serviceHTTPRequests,

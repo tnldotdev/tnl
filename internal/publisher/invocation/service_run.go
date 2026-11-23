@@ -38,7 +38,6 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	current := FromTeamContext(selectedTeam)
 	profile, err := a.state.Server(ctx, auth.ServerEndpoint)
 	if err != nil {
 		return publisherapp.Configuration{}, err
@@ -57,23 +56,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err := targetplan.PreflightPrivate(ctx, plan); err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	request := LocalService{Project: project.Project, Team: current, Name: service.Name, TargetResolver: a.TargetResolver}
-	if project.Config.Naming == "opaque" && config.Protocol(definition) == "http" && definition.Public != nil && *definition.Public {
-		source := project.LocalPublicationIdentity()
-		_, lookupErr := auth.Control.GetLocalProjectService(ctx, source.Key, service.Name, controlv1.GetLocalProjectServiceParams{
-			TeamId: current.team.Id, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(),
-		})
-		if errors.Is(lookupErr, clientcontrol.ErrNotFound) {
-			_, identity, err := previewPublisher(ctx, profile, auth, selectedTeam)
-			if err != nil {
-				return publisherapp.Configuration{}, err
-			}
-			request.PreviewPublisher = identity.ClientId
-		} else if lookupErr != nil {
-			return publisherapp.Configuration{}, lookupErr
-		}
-	}
-	realized, err := RealizeLocalService(ctx, auth.Control, request)
+	realized, err := a.realizeLocalService(ctx, auth, selectedTeam, service.Name)
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
@@ -81,7 +64,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if err != nil {
 		return publisherapp.Configuration{}, err
 	}
-	if saved.Id != realized.ServiceId || saved.TeamId != current.team.Id || !saved.Enabled {
+	if saved.Id != realized.ServiceId || saved.TeamId != selectedTeam.Team().Id || !saved.Enabled {
 		return publisherapp.Configuration{}, publisheridentity.ErrScope
 	}
 	if err := publisheridentity.MatchServiceDeclaration(saved, config.Protocol(definition), trust); err != nil {
@@ -160,7 +143,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 		if err != nil {
 			return publisherapp.Configuration{}, err
 		}
-		preview, err := ensurePreview(ctx, a.state, profile, auth.Control, auth.ServerEndpoint, saved.TeamId, project.Root)
+		preview, err := ensurePreview(ctx, a.state, profile, auth.Control, auth.ServerEndpoint, saved.TeamId, project.LocalWorktreeKey())
 		if err != nil {
 			return publisherapp.Configuration{}, err
 		}
@@ -172,6 +155,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 			return publisherapp.Configuration{}, failure.Wrap("associate preview", failure.ServerResponseInvalid, errors.New("preview omitted the selected service"))
 		}
 		base.PreviewID, base.Feedback = preview, effective.Feedback != nil && *effective.Feedback
+		base.FeedbackProjectID = project.LocalPublicationIdentity().Fingerprint
 	}
 	publication.Run = func(ctx context.Context, tunnel *clientstate.Tunnel, observe func(uint64, bool) error, summary inspection.Observer) (result error) {
 		base.ShutdownDeadline = func() time.Time {

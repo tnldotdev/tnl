@@ -178,7 +178,7 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 				}
 				return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 			}
-			command := "tnl --no-config publish " + quote(flags.Target) + " --public-url " + url
+			command := "tnl --no-config publish " + quote(flags.Target) + " --hostname " + url
 			if team != "" {
 				command += " --team " + quote(team)
 			}

@@ -87,7 +87,7 @@ func localFeedback(ctx context.Context, session *clientteam.Session, project pro
 	if !project.Found() || project.Root == "" || preview == "" {
 		return nil, failure.Wrap("select local feedback", failure.PreviewNotSaved, errors.New("run from the project/worktree that owns the preview; start a configured app service first"))
 	}
-	return session.Store().Feedback(ctx, project.Root, preview, func(ctx context.Context, service, operation string) (controlv1.FeedbackAuthorization, error) {
+	return session.Store().Feedback(ctx, project.LocalPublicationIdentity().Fingerprint, preview, func(ctx context.Context, service, operation string) (controlv1.FeedbackAuthorization, error) {
 		return session.Authenticated().Control.AuthorizeImplementerFeedback(ctx, controlv1.AuthorizeImplementerFeedbackRequest{PreviewId: preview, ServiceId: service, Operation: controlv1.FeedbackOperation(operation)})
 	})
 }
@@ -160,7 +160,7 @@ func feedbackSession(ctx context.Context, flags scopedTeamFlags, project project
 	}
 	previewID := ""
 	if project.Found() && project.Root != "" {
-		id, found, readErr := session.Store().PreviewID(ctx, current.Team().Id, project.Root)
+		id, found, readErr := session.Store().PreviewID(ctx, current.Team().Id, project.LocalWorktreeKey())
 		if readErr != nil {
 			session.Close()
 			return nil, "", "", readErr

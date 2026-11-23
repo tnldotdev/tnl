@@ -103,6 +103,31 @@ func newServiceSetupFixture(t *testing.T, hostname string) *serviceSetupFixture 
 	return f
 }
 
+func TestExactHostnameResumesNamedService(t *testing.T) {
+	f := newServiceSetupFixture(t, "app.chase.tnl.hooli.xyz")
+	named := f.services
+	named.savedName = "app"
+	declaration := controlv1.ProjectServiceConfiguration{Target: "app"}
+	first, err := reserveConfiguredService(t.Context(), named, declaration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.before = func(r *http.Request) (*http.Response, bool) {
+		if r.Method == "GET" && r.URL.Path == "/v1/service-addresses/"+f.services.hostname && r.URL.Query().Get("team_id") == f.services.teamID {
+			return serviceTestResponse(r, 200, first), true
+		}
+		return nil, false
+	}
+	exact := f.services
+	exact.exactHostname = true
+	recovered, err := reserveConfiguredService(t.Context(), exact, declaration, func(controlv1.Service, *controlv1.ProjectServiceConfiguration) (*controlv1.ProjectServiceConfiguration, error) {
+		return nil, nil
+	})
+	if err != nil || recovered.Id != first.Id || recovered.Name != "app" || f.creates != 1 || f.updates != 0 {
+		t.Fatalf("exact hostname did not resume the saved service unchanged: %+v, %v", recovered, err)
+	}
+}
+
 func (f *serviceSetupFixture) issueEnrollment(r *http.Request, enrollment controlv1.PublisherEnrollment) *http.Response {
 	f.enrollments++
 	f.enrollmentKey = f.enrollment + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
@@ -126,6 +151,12 @@ func (f *serviceSetupFixture) serve(r *http.Request) (*http.Response, error) {
 		}
 	}
 	switch r.Method + " " + r.URL.Path {
+	case "GET /v1/service-addresses/" + f.saved.Endpoint.Hostname:
+		management()
+		if f.created && r.URL.Query().Get("team_id") == f.saved.TeamId {
+			return serviceTestResponse(r, 200, f.saved), nil
+		}
+		return serviceTestResponse(r, 404, controlv1.Problem{Code: controlv1.NotFound, Status: 404}), nil
 	case "GET /v1/services":
 		management()
 		page := controlv1.ServicePage{Services: []controlv1.ServiceSummary{}}

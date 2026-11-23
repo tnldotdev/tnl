@@ -280,7 +280,7 @@ var definitions = map[Reason]Definition{
 	},
 	InvalidTunnelFlags: {
 		Class: Invalid, Message: "tunnel options conflict or contain an invalid value",
-		Action: "check --public-url, --name, --ip, and HTTP limits such as --concurrency", Retry: RetryAfterChange,
+		Action: "check --hostname, --name, --ip, and HTTP limits such as --concurrency", Retry: RetryAfterChange,
 	},
 	AppConfigurationConflict: {
 		Class: Conflict, Message: "the local publisher uses another project configuration",
@@ -328,7 +328,7 @@ var definitions = map[Reason]Definition{
 	},
 	PublisherInstallOptions: {
 		Class: Invalid, Message: "installed publication requires a saved HTTP public URL and stable target",
-		Action: "select --name or --public-url with a stable HTTP target; remove demo, ephemeral, and open options", Retry: RetryAfterChange,
+		Action: "select --name or --hostname with a stable HTTP target; remove demo, ephemeral, and open options", Retry: RetryAfterChange,
 	},
 	PublisherInstallInspection: {
 		Class: Invalid, Message: "installed publication does not support inspection capture",
@@ -364,7 +364,7 @@ var definitions = map[Reason]Definition{
 	},
 	DemoURLManaged: {
 		Class: Invalid, Message: "the built-in demo chooses its own public URL",
-		Action: "remove --name or --public-url from tnl publish --demo", Retry: RetryAfterChange,
+		Action: "remove --name or --hostname from tnl publish --demo", Retry: RetryAfterChange,
 	},
 	DemoMustBeEphemeral: {
 		Class: Invalid, Message: "the built-in demo needs an ephemeral public URL",

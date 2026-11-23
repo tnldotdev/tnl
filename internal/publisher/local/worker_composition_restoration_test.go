@@ -66,7 +66,7 @@ func restoredConfiguredWorkers(t *testing.T, definitions config.Services, aliase
 		t.Fatal(err)
 	}
 	hash := hmac.New(sha256.New, salt[:])
-	_, _ = hash.Write([]byte(f.URL + "\x00tm_0000000000000000000001\x00" + a.project.Root))
+	_, _ = hash.Write([]byte(f.URL + "\x00tm_0000000000000000000001\x00" + a.project.LocalWorktreeKey()))
 	declarations := map[string]controlv1.ProjectServiceConfiguration{}
 	for name, definition := range definitions {
 		declarations[name] = controlv1.ProjectServiceConfiguration{Name: new(name), Protocol: new(controlv1.ServiceProtocolHTTP), Target: "app", Public: definition.Public}
@@ -755,7 +755,7 @@ func TestConfiguredProjectFixtureRejectsScopeAndCredentialChanges(t *testing.T) 
 		t.Fatal(err)
 	}
 	hash := hmac.New(sha256.New, salt[:])
-	_, _ = hash.Write([]byte(f.URL + "\x00" + body.TeamId + "\x00" + a.project.Root))
+	_, _ = hash.Write([]byte(f.URL + "\x00" + body.TeamId + "\x00" + a.project.LocalWorktreeKey()))
 	preview, err := owner.CreatePreview(t.Context(), body.TeamId, hex.EncodeToString(hash.Sum(nil)))
 	if err != nil {
 		t.Fatal(err)

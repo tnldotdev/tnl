@@ -148,7 +148,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		}
 		name := flags.Name
 		if name == "" && flags.PublicURL == "" && !flags.Ephemeral &&
-			(authenticated.Discovery.ManagedUrlMode != controlv1.Generated || flags.Domain != "") {
+			(!opaqueNamingAvailable(authenticated.Discovery) || flags.Domain != "") {
 			name = flags.FallbackName
 		}
 		services, err := preparePublisherServices(ctx, state, server, flags.PublicURL, name, flags.Domain, flags.SelectedTeam, flags.Ephemeral, authenticated, !flags.Demo)

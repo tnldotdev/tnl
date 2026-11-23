@@ -7,6 +7,7 @@ import (
 	"errors"
 	"reflect"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -27,9 +28,34 @@ func reserveConfiguredService(ctx context.Context, services publisherServices, d
 		return controlv1.Service{}, publisheridentity.ErrScope
 	}
 	digest := sha256.Sum256([]byte(services.authenticated.ServerEndpoint + "\x00" + services.teamID + "\x00" + services.domainID + "\x00" + services.hostname))
-	name := "service-" + hex.EncodeToString(digest[:12])
-	if services.savedName != "" {
-		name = services.savedName
+	name := services.savedName
+	var exactID string
+	check := func(saved controlv1.Service) error {
+		if !opaqueid.Valid(saved.Id, opaqueid.ServicePrefix) || exactID != "" && saved.Id != exactID ||
+			saved.TeamId != services.teamID || saved.Name == "" || name != "" && saved.Name != name ||
+			saved.DomainId == nil || *saved.DomainId != services.domainID ||
+			!saved.Enabled || saved.Ephemeral || saved.Source != nil || saved.Endpoint == nil || saved.Protocol != controlv1.ServiceProtocolHTTP ||
+			saved.Placement != nil && saved.Placement.WorktreeKey != nil ||
+			saved.Endpoint.Hostname != services.hostname || saved.Endpoint.Port != 443 || !saved.Endpoint.Public {
+			return failure.Wrap("reserve project service", failure.ServerResponseInvalid, errors.New("saved service differs from the exact selected endpoint"))
+		}
+		return nil
+	}
+	if name == "" && services.exactHostname {
+		saved, err := services.routes.GetServiceByHostname(ctx, services.teamID, services.hostname)
+		if err == nil {
+			if err := check(saved); err != nil {
+				return controlv1.Service{}, err
+			}
+			// the name is part of the saved service's source identity. do not
+			// enable name-based selection: the requested hostname must match.
+			name, exactID = saved.Name, saved.Id
+		} else if !errors.Is(err, clientcontrol.ErrNotFound) {
+			return controlv1.Service{}, err
+		}
+	}
+	if name == "" {
+		name = "service-" + hex.EncodeToString(digest[:12])
 	}
 	normalize := func(desired controlv1.ProjectServiceConfiguration) (controlv1.ProjectServiceConfiguration, *targettrust.Snapshot, error) {
 		if desired.Protocol != nil && *desired.Protocol != controlv1.ServiceProtocolHTTP ||
@@ -63,15 +89,6 @@ func reserveConfiguredService(ctx context.Context, services publisherServices, d
 	declaration, trust, err := normalize(declaration)
 	if err != nil {
 		return controlv1.Service{}, err
-	}
-	check := func(saved controlv1.Service) error {
-		if !opaqueid.Valid(saved.Id, opaqueid.ServicePrefix) || saved.TeamId != services.teamID || saved.Name != name || saved.DomainId == nil || *saved.DomainId != services.domainID ||
-			!saved.Enabled || saved.Ephemeral || saved.Source != nil || saved.Endpoint == nil || saved.Protocol != controlv1.ServiceProtocolHTTP ||
-			saved.Placement != nil && saved.Placement.WorktreeKey != nil ||
-			saved.Endpoint.Hostname != services.hostname || saved.Endpoint.Port != 443 || !saved.Endpoint.Public {
-			return failure.Wrap("reserve project service", failure.ServerResponseInvalid, errors.New("saved service differs from the exact selected endpoint"))
-		}
-		return nil
 	}
 	approved := func(saved controlv1.Service, desired controlv1.ProjectServiceConfiguration, trust *targettrust.Snapshot) (controlv1.Service, error) {
 		if err := check(saved); err != nil {

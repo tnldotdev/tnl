@@ -32,6 +32,7 @@ type publisherServices struct {
 	ephemeral             bool
 	neutral               bool
 	previewResume         bool
+	exactHostname         bool
 	savedName             string
 	context               team.Context
 	routes                *clientcontrol.Client
@@ -113,7 +114,7 @@ func preparePublisherServices(
 	var hostname string
 	var domain authorityv1.Domain
 	_, previewResume := naming.PreviewHostname(publicURL, discovery.ManagedDomain)
-	neutral := foreground && selected.Mode() == naming.ManagedURLModeGenerated &&
+	neutral := foreground && opaqueNamingAvailable(discovery) &&
 		publicURL == "" && name == "" && selectedDomain == ""
 	previewResume = previewResume && selected.Mode() == naming.ManagedURLModeGenerated
 	if neutral || previewResume {
@@ -152,6 +153,7 @@ func preparePublisherServices(
 		ephemeral:       ephemeral,
 		neutral:         neutral,
 		previewResume:   previewResume,
+		exactHostname:   foreground && publicURL != "",
 		savedName:       savedName,
 		context:         selected,
 		routes:          authenticated.Control,

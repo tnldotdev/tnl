@@ -177,12 +177,7 @@ test("environment baselines isolate tests/subprocesses and restore inherited val
   expect(sanitized.NODE_OPTIONS).toBeUndefined();
   expect(sanitized.NODE_ENV).toBe("development");
   expect(sanitized.TNL_NO_TELEMETRY).toBe("1");
-  for (const name of [
-    "TNL_ACCESS_TOKEN",
-    "TNL_TUNNEL_ID",
-    "TNL_PUBLIC_HOSTNAME",
-    "TNL_PUBLIC_URL",
-  ]) {
+  for (const name of ["TNL_ACCESS_TOKEN", "TNL_TUNNEL_ID", "TNL_PUBLIC_HOSTNAME", "TNL_HOSTNAME"]) {
     expect(Object.hasOwn(sanitized, name)).toBe(false);
   }
   for (const name of Object.keys(environmentBaseline).filter(

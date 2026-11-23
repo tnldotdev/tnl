@@ -36,11 +36,21 @@ func newLocalFeedbackFixture(t *testing.T) *localFeedbackFixture {
 		t.Fatal(err)
 	}
 	f := &localFeedbackFixture{store: store, root: t.TempDir(), actor: "reviewer", name: "Verified reviewer"}
-	f.local, err = store.Feedback(t.Context(), f.root, feedbackPreview, f.authorize)
+	f.local = feedbackForDirectory(t, store, f.root, feedbackPreview, f.authorize)
+	return f
+}
+
+func feedbackForDirectory(t *testing.T, store *Store, root, preview string, authorize FeedbackAuthorize) *FeedbackStore {
+	t.Helper()
+	project, _, err := store.database.LocalProjectIdentity(t.Context(), root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return f
+	local, err := store.Feedback(t.Context(), project, preview, authorize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return local
 }
 func (f *localFeedbackFixture) authorize(_ context.Context, service, operation string) (controlv1.FeedbackAuthorization, error) {
 	f.mu.Lock()
@@ -243,10 +253,7 @@ func TestFeedbackDeletionIsCompleteScopedAndDoesNotRewind(t *testing.T) {
 	if _, err = f.local.AppendFeedbackEvent(ctx, thread.Id, "reply", controlv1.AppendFeedbackEventRequest{Type: "reply", Text: new("follow-up")}); err != nil {
 		t.Fatal(err)
 	}
-	other, err := f.store.Feedback(ctx, t.TempDir(), feedbackPreview, f.authorize)
-	if err != nil {
-		t.Fatal(err)
-	}
+	other := feedbackForDirectory(t, f.store, t.TempDir(), feedbackPreview, f.authorize)
 	if _, err = other.GetFeedbackThread(ctx, thread.Id); !errors.Is(err, ErrFeedbackNotFound) {
 		t.Fatal("another worktree read the report", err)
 	}
@@ -298,10 +305,7 @@ func TestFeedbackPersistenceAndServerPreviewDirectoryIsolation(t *testing.T) {
 	if err = os.Symlink(f.root, alias); err != nil {
 		t.Fatal(err)
 	}
-	local, err := f.store.Feedback(ctx, alias, feedbackPreview, f.authorize)
-	if err != nil {
-		t.Fatal(err)
-	}
+	local := feedbackForDirectory(t, f.store, alias, feedbackPreview, f.authorize)
 	if got, err := local.GetFeedbackThread(ctx, thread.Id); err != nil || !reflect.DeepEqual(got, thread) {
 		t.Fatal("reopen or symlink lost the owned report", got, err)
 	}
@@ -320,10 +324,7 @@ func TestFeedbackPersistenceAndServerPreviewDirectoryIsolation(t *testing.T) {
 	}{
 		{otherServer, f.root, feedbackPreview}, {otherClient, f.root, feedbackPreview}, {f.store, f.root, "pv_abcdefghijkl0123456789"}, {f.store, t.TempDir(), feedbackPreview},
 	} {
-		other, err := scope.store.Feedback(ctx, scope.root, scope.preview, f.authorize)
-		if err != nil {
-			t.Fatal(err)
-		}
+		other := feedbackForDirectory(t, scope.store, scope.root, scope.preview, f.authorize)
 		if _, err = other.GetFeedbackThread(ctx, thread.Id); !errors.Is(err, ErrFeedbackNotFound) {
 			t.Fatal("feedback crossed a local ownership boundary", err)
 		}
@@ -476,7 +477,7 @@ func TestFeedbackDemoCleanupAndRetainedProjectContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.store.database.now = func() time.Time { return retain.Add(time.Second) }
-	if _, err = f.store.Feedback(ctx, f.root, feedbackPreview, f.authorize); err != nil {
+	if _, err = f.store.Feedback(ctx, f.local.project, feedbackPreview, f.authorize); err != nil {
 		t.Fatal(err)
 	}
 	f.store.database.now = time.Now

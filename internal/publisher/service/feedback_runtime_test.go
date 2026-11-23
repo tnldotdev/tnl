@@ -559,6 +559,7 @@ func TestFeedbackRunCompositionKeepsDirectServiceFacts(t *testing.T) {
 	approved.Protocol, approved.Endpoint.Port = controlv1.ServiceProtocolHTTP, 443
 	control.approved = &approved
 	cfg.Feedback, cfg.PreviewID, cfg.ProjectService, cfg.ProjectRoot = true, "pv_0123456789abcdefghijkl", "web", t.TempDir()
+	cfg.FeedbackProjectID = strings.Repeat("a", 64)
 	prepared, err := newManagedPrepared(control.prep, approved, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -580,6 +581,7 @@ func TestFeedbackRunCompositionKeepsDirectServiceFacts(t *testing.T) {
 	frontend := httpVisitor.Frontend.(HTTP)
 	feedback, _ := frontend.feedback.(*feedbackRuntime)
 	if feedback == nil || feedback.previewID != cfg.PreviewID || feedback.service != cfg.ProjectService || feedback.projectRoot != cfg.ProjectRoot ||
+		feedback.projectID != cfg.FeedbackProjectID ||
 		feedback.serviceID != control.setup.ServiceId || feedback.runID != control.setup.ServiceRunId || feedback.number != control.setup.RunNumber ||
 		feedback.token.String() != control.setup.RunToken || frontend.browser.PreviewID != cfg.PreviewID ||
 		frontend.ResponseHooks.ModifyHTML == nil || frontend.ResponseHooks.ObserveStatus == nil {

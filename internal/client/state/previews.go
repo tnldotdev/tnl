@@ -11,12 +11,12 @@ import (
 )
 
 // PreviewID returns the preview identity saved for this checkout and team.
-func (s *Store) PreviewID(ctx context.Context, teamID, projectRoot string) (string, bool, error) {
-	if teamID == "" || projectRoot == "" {
-		return "", false, failure.Wrap("validate preview identity", failure.InvalidCommand, errors.New("clientstate: team and project root are required"))
+func (s *Store) PreviewID(ctx context.Context, teamID, worktreeKey string) (string, bool, error) {
+	if teamID == "" || worktreeKey == "" {
+		return "", false, failure.Wrap("validate preview identity", failure.InvalidCommand, errors.New("clientstate: team and local worktree identity are required"))
 	}
 	id, err := s.database.queries.GetPreviewID(ctx, clientstatedb.GetPreviewIDParams{
-		ServerOrigin: s.controlEndpoint, TeamID: teamID, ProjectRoot: projectRoot,
+		ServerOrigin: s.controlEndpoint, TeamID: teamID, ProjectRoot: worktreeKey,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
@@ -31,12 +31,12 @@ func (s *Store) PreviewID(ctx context.Context, teamID, projectRoot string) (stri
 }
 
 // SavePreviewID records the preview identity returned by control.
-func (s *Store) SavePreviewID(ctx context.Context, teamID, projectRoot, id string) error {
-	if teamID == "" || projectRoot == "" || !opaqueid.Valid(id, opaqueid.PreviewPrefix) {
+func (s *Store) SavePreviewID(ctx context.Context, teamID, worktreeKey, id string) error {
+	if teamID == "" || worktreeKey == "" || !opaqueid.Valid(id, opaqueid.PreviewPrefix) {
 		return failure.Wrap("validate preview identity", failure.InvalidCommand, errors.New("clientstate: invalid preview identity"))
 	}
 	if err := s.database.queries.SavePreviewID(ctx, clientstatedb.SavePreviewIDParams{
-		ServerOrigin: s.controlEndpoint, TeamID: teamID, ProjectRoot: projectRoot,
+		ServerOrigin: s.controlEndpoint, TeamID: teamID, ProjectRoot: worktreeKey,
 		PreviewID: id, UpdatedAt: s.database.now().UTC().UnixNano(),
 	}); err != nil {
 		return failure.Wrap("save preview ID", failure.ClientStateUnavailable, err)

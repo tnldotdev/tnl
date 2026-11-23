@@ -16,8 +16,12 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+func opaqueNamingAvailable(discovery controlv1.ControlDiscovery) bool {
+	return discovery.DnsAutomation && discovery.ManagedUrlMode == controlv1.Generated
+}
+
 func previewPublisher(ctx context.Context, state *clientstate.Store, client *auth.Client, selected team.Context) (*publisheridentity.Native, authorityv1.PublisherEnrollmentResult, error) {
-	if !client.Discovery.DnsAutomation || selected.Mode() != naming.ManagedURLModeGenerated {
+	if !opaqueNamingAvailable(client.Discovery) || selected.Mode() != naming.ManagedURLModeGenerated {
 		return nil, authorityv1.PublisherEnrollmentResult{}, failure.Wrap("select opaque naming", failure.InvalidTunnelFlags, errors.New("opaque naming requires hosted DNS automation"))
 	}
 	domain, err := selected.ManagedDomain()

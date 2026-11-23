@@ -158,6 +158,7 @@ pnpm exec tnl auth login
 By default, visitors need a sign-in, share link, or token. Hot reloading, WebSockets, SSE, and streaming responses are all supported.
 
 Already have an app listening on port 3000? Run `pnpm exec tnl publish 3000`.
+Use `--hostname` to select an exact public hostname or restart at a saved address.
 
 See [installation options](https://tnl.dev/docs/publish), the
 [quickstart](https://tnl.dev/docs), and [framework integrations](https://tnl.dev/docs/frameworks).

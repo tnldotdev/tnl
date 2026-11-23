@@ -70,7 +70,7 @@ func TestWaitUsesActualOwnerAndFreshPublicTargetProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := hmac.New(sha256.New, salt[:])
-	_, _ = hash.Write([]byte(f.URL + "\x00tm_0000000000000000000001\x00" + root))
+	_, _ = hash.Write([]byte(f.URL + "\x00tm_0000000000000000000001\x00" + project.LocalWorktreeKey()))
 	source := project.LocalPublicationIdentity()
 	if err := f.ConfigureLocal(publishingtest.LocalProject{Key: source.Key, Fingerprint: source.Fingerprint,
 		Worktree: project.LocalWorktreeKey(), Label: project.Worktree.Label.FullLabel, PreviewKey: hex.EncodeToString(hash.Sum(nil)),

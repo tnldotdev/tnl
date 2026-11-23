@@ -204,7 +204,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 		session.Close()
 		return nil, controlv1.Preview{}, nil, err
 	}
-	id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.Root)
+	id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.LocalWorktreeKey())
 	if err != nil || !found {
 		session.Close()
 		if err != nil {
@@ -511,7 +511,7 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 	blocks := make([]clioutput.Block, 0, len(shares))
 	teamGrant := false
 	if project.Found() && project.Root != "" {
-		id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.Root)
+		id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.LocalWorktreeKey())
 		if err != nil {
 			return err
 		}
@@ -682,7 +682,7 @@ func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, proje
 	if err != nil {
 		return err
 	}
-	id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.Root)
+	id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.LocalWorktreeKey())
 	if err != nil {
 		return err
 	}

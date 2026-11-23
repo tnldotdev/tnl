@@ -26,11 +26,14 @@ import (
 )
 
 func TestForegroundIntegrationsRetainAuthenticatedSelection(t *testing.T) {
-	for _, scenario := range []string{"no_oauth_control", "environment_token_explicit_server", "flag_token_no_saved_session", "team_override", "conflicting_environment", "shutdown_failure", "shutdown_cancellation"} {
+	for _, scenario := range []string{"no_oauth_control", "generated_without_dns_automation", "environment_token_explicit_server", "flag_token_no_saved_session", "team_override", "conflicting_environment", "shutdown_failure", "shutdown_cancellation"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Setenv("TNL_ACCESS_TOKEN", "")
 			t.Setenv("TNL_SERVER", "")
 			f := newForegroundFixture(t)
+			if scenario == "generated_without_dns_automation" {
+				f.saved.Endpoint.Hostname, f.services.hostname = "app.member.quiet-heron.example", "app.member.quiet-heron.example"
+			}
 			f.saved.EndpointRevision = 1
 			shutdown := scenario == "shutdown_failure" || scenario == "shutdown_cancellation"
 			shutdownProblem := errors.New("integration shutdown request failed")
@@ -197,6 +200,9 @@ func TestForegroundIntegrationsRetainAuthenticatedSelection(t *testing.T) {
 					original, err = auth.Authenticate(ctx, auth.Config{ServerEndpoint: server, State: state, AccessToken: token, HTTPClient: &http.Client{Transport: transport}})
 					return original, err
 				}}
+			if scenario == "generated_without_dns_automation" {
+				flags.PublicURL, flags.FallbackName = "", "app"
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
 			err = PublishHTTP(ctx, flags, &Presentation{})

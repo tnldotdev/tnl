@@ -71,7 +71,7 @@ type tunnelFlags struct {
 	teamSelectionFlags `embed:""`
 	Domain             string                `name:"domain" env:"TNL_DOMAIN" help:"Ready team domain for the public URL. Defaults to the team's default domain."`
 	Name               string                `name:"name" env:"TNL_NAME" help:"One label beneath the selected domain or member namespace. Defaults to a service-and-worktree name."`
-	PublicURL          string                `name:"public-url" env:"TNL_PUBLIC_URL" help:"Exact public URL hostname or HTTPS origin to publish."`
+	PublicURL          string                `name:"hostname" env:"TNL_HOSTNAME" help:"Exact public hostname to publish. Also accepts an HTTPS origin."`
 	Anonymous          bool                  `name:"anonymous" help:"Do not require a tnl visitor credential; the local service still owns its own authentication."`
 	RequirePostQuantum *bool                 `name:"require-post-quantum" help:"Require hybrid post-quantum key agreement from public HTTPS visitors."`
 	IP                 []string              `name:"ip" help:"Restrict visitor source addresses; repeat for each address, CIDR or 'current'."`
@@ -639,7 +639,7 @@ func canonicalParsedCommand(command string) string {
 
 func applyTunnelCLIUnits(parsed *cobra.Command, flags *cli) {
 	changed := parsed.Flags().Changed
-	publicURL, name, domain, ephemeral, open := changed("public-url"), changed("name"), changed("domain"), changed("ephemeral"), changed("open")
+	publicURL, name, domain, ephemeral, open := changed("hostname"), changed("name"), changed("domain"), changed("ephemeral"), changed("open")
 	inspectionMode := changed("inspection-mode")
 	apply := func(tunnel *tunnelFlags) {
 		tunnel.ephemeralFromCLI = ephemeral

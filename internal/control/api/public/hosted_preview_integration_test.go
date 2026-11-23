@@ -47,7 +47,7 @@ func TestIntegrationMemberHostedPreviewPublicationAndResume(t *testing.T) {
 		number                      uint64
 		names                       []string
 	}
-	publish := func(state, savedAddress string, ephemeral bool) publication {
+	publish := func(state, name, savedAddress string, ephemeral bool) publication {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 		defer cancel()
@@ -55,7 +55,7 @@ func TestIntegrationMemberHostedPreviewPublicationAndResume(t *testing.T) {
 		var resume string
 		err := invocation.PublishHTTP(ctx, invocation.PublicOptions{
 			Target: target.URL, StateDir: state, SelectedTeam: team.ID, ServerURL: f.server.URL, ProjectRoot: projectRoot,
-			AccessToken: session.AccessToken, PublicURL: savedAddress, Ephemeral: ephemeral, FallbackName: "readable-worktree",
+			AccessToken: session.AccessToken, Name: name, PublicURL: savedAddress, Ephemeral: ephemeral, FallbackName: "readable-worktree",
 			Authenticate: func(ctx context.Context, db *clientstate.Database, server, token string) (*auth.Client, error) {
 				return auth.Authenticate(ctx, auth.Config{ServerEndpoint: server, State: db, AccessToken: token, HTTPClient: f.server.Client()})
 			},
@@ -75,8 +75,8 @@ func TestIntegrationMemberHostedPreviewPublicationAndResume(t *testing.T) {
 		if !errors.Is(err, stop) || run.address == "" {
 			t.Fatalf("publication did not reach signed run preparation: %v", err)
 		}
-		if (!ephemeral && savedAddress == "" && resume != run.address) ||
-			((ephemeral || savedAddress != "") && resume != "") {
+		if (!ephemeral && name == "" && savedAddress == "" && resume != run.address) ||
+			((ephemeral || name != "" || savedAddress != "") && resume != "") {
 			t.Fatalf("wrong resume address %q for %q", resume, run.address)
 		}
 		var closed, deleted bool
@@ -90,28 +90,34 @@ func TestIntegrationMemberHostedPreviewPublicationAndResume(t *testing.T) {
 		return run
 	}
 
-	first := publish(firstState, "", false)
+	first := publish(firstState, "", "", false)
 	hostname := strings.TrimPrefix(first.address, "https://")
 	parent, ok := naming.PreviewHostname(hostname, domain)
 	if !ok || !slices.Equal(first.names, []string{"*." + parent}) {
 		t.Fatalf("unnamed publication did not use its opaque parent: %q %v", first.address, first.names)
 	}
-	resumed := publish(firstState, first.address, false)
+	resumed := publish(firstState, "", first.address, false)
 	if resumed.address != first.address || resumed.service != first.service || resumed.publisher != first.publisher ||
 		resumed.number <= first.number || !slices.Equal(resumed.names, first.names) {
 		t.Fatalf("resume did not reuse the saved address and publisher: %+v", resumed)
 	}
-	replacement := publish(filepath.Join(t.TempDir(), "state"), first.address, false)
+	replacement := publish(filepath.Join(t.TempDir(), "state"), "", first.address, false)
 	if replacement.address != first.address || replacement.service != first.service || replacement.publisher == first.publisher ||
 		!slices.Equal(replacement.names, []string{hostname}) {
 		t.Fatalf("replacement did not get exact-host authority: %+v", replacement)
 	}
-	temporary := publish(firstState, "", true)
+	temporary := publish(firstState, "", "", true)
 	temporaryHost := strings.TrimPrefix(temporary.address, "https://")
 	if temporary.address == first.address || temporary.publisher != first.publisher || !slices.Equal(temporary.names, first.names) {
 		t.Fatalf("ephemeral publication did not allocate another address under the same parent: %+v", temporary)
 	}
 	if _, err := member.GetServiceByHostname(t.Context(), team.ID, temporaryHost); !errors.Is(err, clientcontrol.ErrNotFound) {
 		t.Fatalf("stopped ephemeral address is still selectable: %v", err)
+	}
+	named := publish(firstState, "app", "", false)
+	byHostname := publish(firstState, "", named.address, false)
+	if byHostname.address != named.address || byHostname.service != named.service ||
+		byHostname.publisher != named.publisher || byHostname.number <= named.number {
+		t.Fatalf("exact hostname did not resume the named service: first=%+v, resumed=%+v", named, byHostname)
 	}
 }

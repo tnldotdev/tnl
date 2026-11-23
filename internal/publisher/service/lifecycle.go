@@ -98,6 +98,7 @@ type RunConfig struct {
 	ReadinessProof                         func(httpaccess.ReadinessRun) *httpaccess.ReadinessProof
 	Feedback                               bool
 	PreviewID, ProjectService, ProjectRoot string
+	FeedbackProjectID                      string
 	Demo                                   bool
 	// nil asks the public HTTP owner to observe discovery. a nonnil value
 	// captures an earlier successful observation, including disabled or omitted.

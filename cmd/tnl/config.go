@@ -353,10 +353,10 @@ func validateTunnelFlags(flags tunnelFlags) error {
 		return errors.New("--rate-burst must be positive and requires a rate limit")
 	}
 	if flags.PublicURL != "" && flags.Name != "" {
-		return errors.New("--public-url and --name are mutually exclusive")
+		return errors.New("--hostname and --name are mutually exclusive")
 	}
 	if flags.Ephemeral && (flags.PublicURL != "" || flags.Name != "") {
-		return errors.New("temporary publication chooses its own public URL; omit --name and --public-url")
+		return errors.New("temporary publication chooses its own public URL; omit --name and --hostname")
 	}
 	return nil
 }
