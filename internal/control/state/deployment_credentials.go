@@ -113,7 +113,7 @@ func (d *Database) RegisterDeploymentCredential(ctx context.Context, r RegisterD
 		return result, err
 	}
 	defer rollback(ctx, tx, "register deployment credential", &retErr)()
-	if _, err = lockDeploymentManager(ctx, tx, r.DeploymentScope); err != nil {
+	if _, err = lockDeploymentManager(ctx, tx, r.DeploymentScope, deploymentMutation); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
@@ -229,6 +229,7 @@ func deploymentCredentialSelection(ctx context.Context, q *controlstatedb.Querie
 // authority is resolved again inside the operation's team/project transaction.
 // the HTTP lookup, creator identity, and a previous successful call grant nothing.
 type deploymentAccess struct {
+	mode                          deploymentLockMode
 	scope                         DeploymentScope
 	clock                         authorizationClock
 	actorID, principalID, grantID string
@@ -238,20 +239,20 @@ type deploymentAccess struct {
 	expiresAt                     time.Time
 }
 
-func (d *Database) lockDeploymentAccess(ctx context.Context, tx pgx.Tx, scope DeploymentScope, now time.Time) (access deploymentAccess, project controlstatedb.ControlAppliedProject, err error) {
-	access = deploymentAccess{scope: scope, clock: newAuthorizationClock(now), actorID: scope.ActorID, principalID: scope.ActorID}
+func (d *Database) lockDeploymentAccess(ctx context.Context, tx pgx.Tx, scope DeploymentScope, now time.Time, mode deploymentLockMode) (access deploymentAccess, project controlstatedb.ControlAppliedProject, err error) {
+	access = deploymentAccess{scope: scope, clock: newAuthorizationClock(now), actorID: scope.ActorID, principalID: scope.ActorID, mode: mode}
 	if scope.AccessToken == "" {
-		project, err = lockDeploymentManager(ctx, tx, scope)
+		project, err = lockDeploymentManager(ctx, tx, scope, mode)
 		return access, project, err
 	}
 	if _, signed := serviceActor(ctx); signed {
 		return access, project, ErrDeploymentAccess
 	}
 	q := controlstatedb.New(tx)
-	if _, err = q.LockLocalTeamForMutation(ctx, scope.TeamID); err != nil {
+	if err = mode.team(ctx, q, scope.TeamID); err != nil {
 		return access, project, publisherLookupError(err, ErrDeploymentAccess)
 	}
-	project, err = q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey})
+	project, err = mode.project(ctx, q, scope.TeamID, scope.ProjectKey)
 	if err != nil {
 		return access, project, publisherLookupError(err, ErrDeploymentNotFound)
 	}
@@ -339,7 +340,12 @@ func (d *Database) commitDeploymentAccess(ctx context.Context, tx pgx.Tx, a depl
 	if a.grantID == "" {
 		return commitDeployment(ctx, tx, a.scope)
 	}
-	if _, err := d.authenticatePublisherAccess(ctx, controlstatedb.New(tx), a.scope.AccessToken, "", a.clock.current(), true); err != nil {
+	if a.mode == deploymentRead {
+		if err := observeDeploymentCredential(ctx, tx, a.principalID, a.grantID); err != nil {
+			return err
+		}
+	}
+	if _, err := d.authenticatePublisherAccess(ctx, controlstatedb.New(tx), a.scope.AccessToken, "", a.clock.current(), a.mode == deploymentMutation); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

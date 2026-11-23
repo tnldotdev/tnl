@@ -64,7 +64,7 @@ type UpdateDeploymentRequest struct {
 
 // every operation takes the same team guard as apply, then checks current
 // authority. a name, request key, or previous successful read is not permission.
-func lockDeploymentManager(ctx context.Context, tx pgx.Tx, scope DeploymentScope) (controlstatedb.ControlAppliedProject, error) {
+func lockDeploymentManager(ctx context.Context, tx pgx.Tx, scope DeploymentScope, mode deploymentLockMode) (controlstatedb.ControlAppliedProject, error) {
 	q := controlstatedb.New(tx)
 	if scope.AccessToken != "" {
 		return controlstatedb.ControlAppliedProject{}, ErrDeploymentAccess
@@ -76,13 +76,13 @@ func lockDeploymentManager(ctx context.Context, tx pgx.Tx, scope DeploymentScope
 	if !naming.ValidProjectKey(scope.ProjectKey) {
 		return controlstatedb.ControlAppliedProject{}, ErrProjectConfigurationInvalid
 	}
-	if _, err := q.LockLocalTeamForMutation(ctx, scope.TeamID); err != nil {
+	if err := mode.team(ctx, q, scope.TeamID); err != nil {
 		return controlstatedb.ControlAppliedProject{}, publisherLookupError(err, ErrServiceAccess)
 	}
 	if err := serviceManager(ctx, tx, scope.TeamID, scope.ActorID); err != nil {
 		return controlstatedb.ControlAppliedProject{}, err
 	}
-	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey})
+	row, err := mode.project(ctx, q, scope.TeamID, scope.ProjectKey)
 	return row, publisherLookupError(err, ErrDeploymentNotFound)
 }
 
@@ -111,7 +111,7 @@ func (d *Database) CreateDeployment(ctx context.Context, r CreateDeploymentReque
 		return result, err
 	}
 	defer rollback(ctx, tx, "create deployment", &retErr)()
-	access, project, err := d.lockDeploymentAccess(ctx, tx, r.DeploymentScope, r.Now)
+	access, project, err := d.lockDeploymentAccess(ctx, tx, r.DeploymentScope, r.Now, deploymentMutation)
 	if err != nil {
 		return result, err
 	}
@@ -239,7 +239,7 @@ func (d *Database) UpdateDeployment(ctx context.Context, r UpdateDeploymentReque
 		return result, err
 	}
 	defer rollback(ctx, tx, "update deployment", &retErr)()
-	access, _, err := d.lockDeploymentAccess(ctx, tx, r.DeploymentScope, r.Now)
+	access, _, err := d.lockDeploymentAccess(ctx, tx, r.DeploymentScope, r.Now, deploymentMutation)
 	if err != nil {
 		return result, err
 	}
@@ -333,11 +333,11 @@ func (d *Database) GetDeployment(ctx context.Context, scope DeploymentScope, sel
 		return result, err
 	}
 	defer rollback(ctx, tx, "get deployment", &retErr)()
-	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, time.Now())
+	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, time.Now(), deploymentRead)
 	if err != nil {
 		return result, err
 	}
-	row, err := controlstatedb.New(tx).LockDeployment(ctx, controlstatedb.LockDeploymentParams{TeamID: scope.TeamID, ProjectKey: scope.ProjectKey, Selector: selector})
+	row, err := deploymentRead.selectDeployment(ctx, controlstatedb.New(tx), scope.TeamID, scope.ProjectKey, selector)
 	if err != nil {
 		return result, publisherLookupError(err, ErrDeploymentNotFound)
 	}
@@ -360,7 +360,7 @@ func (d *Database) ListDeployments(ctx context.Context, scope DeploymentScope, a
 		return nil, err
 	}
 	defer rollback(ctx, tx, "list deployments", &retErr)()
-	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, time.Now())
+	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, time.Now(), deploymentRead)
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +394,7 @@ func (d *Database) DeleteDeployment(ctx context.Context, scope DeploymentScope, 
 		return err
 	}
 	defer rollback(ctx, tx, "delete deployment", &retErr)()
-	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, now)
+	access, _, err := d.lockDeploymentAccess(ctx, tx, scope, now, deploymentMutation)
 	if err != nil {
 		return err
 	}

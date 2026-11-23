@@ -12,6 +12,7 @@ import (
 func TestIntegrationDeploymentReadersShareParents(t *testing.T) {
 	f := newDeploymentPublicationFixture(t)
 	d, project := f.d, f.project
+	_, _, access, _ := f.approve(t, map[string][]string{"publish": {"web"}}, "")
 	enrollment, err := testDeploymentPublisherEnrollment(d, t.Context(), project.TeamID, project.ProjectKey, "production", project.ActorID, 1, time.Hour, f.now)
 	if err != nil {
 		t.Fatal(err)
@@ -40,6 +41,39 @@ func TestIntegrationDeploymentReadersShareParents(t *testing.T) {
 			t.Fatal("app assignments during sibling work", len(got.Services), err)
 		}
 	})
+	t.Run("publication", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		got, err := d.GetDeploymentPublication(ctx, f.scope(access), "production", "web", f.now)
+		if err != nil || got.ID != service {
+			t.Fatal("named publication during sibling work", got.ID, err)
+		}
+	})
+	t.Run("project", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		got, err := d.GetProjectConfiguration(ctx, project.TeamID, project.ProjectKey, project.ActorID, f.production.ID)
+		if err != nil || got.Deployment != "production" {
+			t.Fatal("project configuration during sibling work", got.Deployment, err)
+		}
+	})
+	t.Run("management", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		scope := DeploymentScope{TeamID: project.TeamID, ProjectKey: project.ProjectKey, ActorID: project.ActorID}
+		if got, err := d.GetDeployment(ctx, scope, "production"); err != nil || got.ID != f.production.ID {
+			t.Fatal("deployment during sibling work", err)
+		}
+		if got, err := d.ListDeployments(ctx, scope, "", 10); err != nil || len(got) != 2 {
+			t.Fatal("deployment list during sibling work", err)
+		}
+		if _, err := d.GetDeploymentPublisher(ctx, scope, "production", member.member.PublisherIdentityID); err != nil {
+			t.Fatal("publisher during sibling work", err)
+		}
+		if got, err := d.ListDeploymentPublishers(ctx, scope, "production", "", 10); err != nil || len(got) != 1 {
+			t.Fatal("publisher list during sibling work", err)
+		}
+	})
 }
 
 func TestIntegrationDeploymentReadersWaitForTeamMutation(t *testing.T) {
@@ -50,7 +84,7 @@ func TestIntegrationDeploymentReadersWaitForTeamMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := enrollAppliedDeployment(t, d, project, enrollment, f.now)
-	for _, op := range []string{"lease deadline", "member"} {
+	for _, op := range []string{"lease deadline", "member", "configuration"} {
 		t.Run(op, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
@@ -66,14 +100,22 @@ func TestIntegrationDeploymentReadersWaitForTeamMutation(t *testing.T) {
 			workers := newIntegrationWorkers(t, cancel)
 			defer workers.stop()
 			workers.Go(func() {
-				at := f.now
-				if op == "lease deadline" {
-					at = member.lease.ExpiresAt.Add(-100 * time.Millisecond)
-				}
-				got, err := d.GetDeploymentPublisherAssignments(ctx, member.lease.AccessToken, at)
-				if !errors.Is(err, ErrDeploymentPublisher) || got.Member.PublisherIdentityID != "" {
-					done <- errors.New("expired or revoked member received assignments or wrong denial")
-					return
+				if op != "configuration" {
+					at := f.now
+					if op == "lease deadline" {
+						at = member.lease.ExpiresAt.Add(-100 * time.Millisecond)
+					}
+					got, err := d.GetDeploymentPublisherAssignments(ctx, member.lease.AccessToken, at)
+					if !errors.Is(err, ErrDeploymentPublisher) || got.Member.PublisherIdentityID != "" {
+						done <- errors.New("revoked member received assignments or wrong denial")
+						return
+					}
+				} else {
+					got, err := d.GetProjectConfiguration(ctx, project.TeamID, project.ProjectKey, project.ActorID, f.production.ID)
+					if err != nil || got.Revision != 77 {
+						done <- errors.New("read missed the committed configuration revision")
+						return
+					}
 				}
 				done <- nil
 			})
@@ -85,8 +127,10 @@ func TestIntegrationDeploymentReadersWaitForTeamMutation(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatal(ctx.Err())
 				}
-			} else {
+			} else if op == "member" {
 				_, err = edit.Exec(ctx, `UPDATE control.publisher_identities SET revoked_at=$2 WHERE id=$1`, member.member.PublisherIdentityID, f.now)
+			} else {
+				_, err = edit.Exec(ctx, `UPDATE control.applied_projects SET revision=77 WHERE team_id=$1 AND project_key=$2`, project.TeamID, project.ProjectKey)
 			}
 			if err != nil {
 				t.Fatal(err)

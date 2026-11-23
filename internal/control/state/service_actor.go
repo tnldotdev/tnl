@@ -86,39 +86,57 @@ func consumeServiceActor(ctx context.Context, q *controlstatedb.Queries, actor s
 	return p.identity, nil
 }
 
-func serviceActorManager(ctx context.Context, tx pgx.Tx, team, actor string, now time.Time) error {
-	member, err := serviceMembershipForActor(ctx, tx, team, actor, now)
+// callers checking several services reuse this fact in the same transaction.
+// consuming an assertion again, even after an admin denial, is not a fallback.
+func serviceMembershipForActor(ctx context.Context, tx pgx.Tx, team, actor string, now time.Time) (member serviceMembership, err error) {
+	clock := newAuthorizationClock(now)
+	if _, signed := serviceActor(ctx); signed {
+		if _, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, team); err != nil {
+			return member, publisherLookupError(err, ErrServiceManagerRequired)
+		}
+	}
+	return checkedActorMembership(ctx, tx, team, actor, clock, true)
+}
+
+func serviceMembershipUnderTeamGuard(ctx context.Context, tx pgx.Tx, team, actor string, clock authorizationClock) (serviceMembership, error) {
+	return checkedActorMembership(ctx, tx, team, actor, clock, false)
+}
+
+func checkedActorMembership(ctx context.Context, tx pgx.Tx, team, actor string, clock authorizationClock, mutation bool) (serviceMembership, error) {
+	var identity *OIDCIdentity
+	if _, signed := serviceActor(ctx); signed {
+		consumed, err := consumeServiceActor(ctx, controlstatedb.New(tx), actor, clock.current())
+		if err != nil {
+			return serviceMembership{}, err
+		}
+		identity = &consumed
+	}
+	return currentServiceMembership(ctx, tx, team, actor, identity, clock.current(), mutation)
+}
+
+// the request already consumed any signed assertion. recheck its deadline and
+// current membership after the operation's last possible wait.
+func recheckServiceMembership(ctx context.Context, tx pgx.Tx, team, actor string, authorized serviceMembership, clock authorizationClock) error {
+	var identity *OIDCIdentity
+	if proof, signed := serviceActor(ctx); signed {
+		if err := validateServiceActorProof(proof, clock.current()); err != nil {
+			return err
+		}
+		identity = &proof.identity
+	}
+	current, err := currentServiceMembership(ctx, tx, team, actor, identity, clock.current(), false)
 	if err != nil {
 		return err
 	}
-	if !member.administrator() {
-		return ErrServiceManagerRequired
+	if current != authorized {
+		return ErrServiceAccess
 	}
 	return nil
 }
 
-// callers checking several services reuse this fact in the same transaction.
-// consuming an assertion again, even after an admin denial, is not a fallback.
-func serviceMembershipForActor(ctx context.Context, tx pgx.Tx, team, actor string, now time.Time) (member serviceMembership, err error) {
-	q := controlstatedb.New(tx)
-	_, signed := serviceActor(ctx)
-	var identity *OIDCIdentity
-	if signed {
-		if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-			return member, publisherLookupError(err, ErrServiceManagerRequired)
-		}
-		consumed, err := consumeServiceActor(ctx, q, actor, now)
-		if err != nil {
-			return member, err
-		}
-		identity = &consumed
-	}
-	return currentServiceMembership(ctx, tx, team, actor, identity, now)
-}
-
 // currentServiceMembership repeats the defining permission checks without
 // consuming a signed assertion again. callers retain the operation's team guard.
-func currentServiceMembership(ctx context.Context, tx pgx.Tx, team, actor string, identity *OIDCIdentity, now time.Time) (member serviceMembership, err error) {
+func currentServiceMembership(ctx context.Context, tx pgx.Tx, team, actor string, identity *OIDCIdentity, now time.Time, mutation bool) (member serviceMembership, err error) {
 	q := controlstatedb.New(tx)
 	signed := identity != nil
 	denied := ErrServiceAccess
@@ -131,8 +149,10 @@ func currentServiceMembership(ctx context.Context, tx pgx.Tx, team, actor string
 		JOIN control.identities person ON person.id=m.identity_id AND person.disabled_at IS NULL
 		WHERE t.id=$1 AND m.identity_id=$2 AND t.deleted_at IS NULL
 		AND m.removed_at IS NULL AND m.manual_suspended_at IS NULL`
-	if signed {
+	if signed && mutation {
 		query += ` FOR UPDATE OF t,m`
+	} else if signed {
+		query += ` FOR SHARE OF t,m`
 	}
 	err = tx.QueryRow(ctx, query, team, actor, now).Scan(&member.id, &member.role, &required, &exception, &active)
 	if err != nil {

@@ -16,20 +16,9 @@ func finishServiceCreation(ctx context.Context, tx pgx.Tx, team, actor string, a
 	if _, err := tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
 		return err
 	}
-	var identity *OIDCIdentity
 	proof, signed := serviceActor(ctx)
-	if signed {
-		if err := validateServiceActorProof(proof, clock.current()); err != nil {
-			return err
-		}
-		identity = &proof.identity
-	}
-	current, err := currentServiceMembership(ctx, tx, team, actor, identity, clock.current())
-	if err != nil {
+	if err := recheckServiceMembership(ctx, tx, team, actor, authorized, clock); err != nil {
 		return err
-	}
-	if current != authorized {
-		return ErrServiceAccess
 	}
 	if !signed {
 		deadline, err := controlstatedb.New(tx).CompanySubjectDeadline(ctx, controlstatedb.CompanySubjectDeadlineParams{
