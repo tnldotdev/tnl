@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/testutil/ipdigest"
@@ -68,15 +69,15 @@ func TestIntegrationServiceAuditBatchBoundsWritesAndPreservesInputOrder(t *testi
 		calls := make(map[string]int)
 		result, err := insertServiceAuditBatch(ctx, auditQueryCountTx{Tx: tx, calls: calls}, events, f.now)
 		accepted := serviceaudit.MaxBatch - 1
-		wantCalls := 3
+		wantCalls := 2
 		if round == 1 {
-			accepted, wantCalls = 0, 4
+			accepted, wantCalls = 0, 3
 		}
 		if err != nil || result.Accepted != accepted || result.Duplicates != len(events)-accepted {
 			t.Fatal("batch lost its within-batch or committed duplicate counts", result, err)
 		}
 		if len(calls) != wantCalls || calls["ListServiceAuditOwners"] != 1 ||
-			calls["LockServiceAuditClock"] != 1 || calls["InsertServiceAuditEvents"] != 1 ||
+			calls["InsertServiceAuditEvents"] != 1 ||
 			calls["ListServiceAuditEventsByID"] != round {
 			t.Fatal("batch repeated owner, clock, insert, or duplicate work per event", calls)
 		}
@@ -171,5 +172,54 @@ func TestIntegrationServiceAuditBatchConflictRollsBackEveryNeighbor(t *testing.T
 				}
 			})
 		}
+	}
+}
+
+func TestIntegrationAuditAppendAllocatesCursorOnlyAfterClock(t *testing.T) {
+	f := newServicePublicationFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	gate, err := f.database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, gate)
+	if err := controlstatedb.New(gate).LockServiceAuditClock(ctx, controlstatedb.LockServiceAuditClockParams{TeamID: text(f.service.TeamID)}); err != nil {
+		t.Fatal(err)
+	}
+	first := serviceaudit.Event{ID: serviceaudit.NewID(), TeamID: f.service.TeamID, ServiceID: f.service.ID, ServiceKind: "service",
+		EventType: "http.decision", RunID: f.run.RunID, PublisherIdentityID: f.publisher.ID, VisitorConnectionID: mustOpaqueID(t, opaqueid.VisitorConnectionPrefix),
+		SourceDigest: ipdigest.Hash("192.0.2.10"), Outcome: "allowed", OccurredAt: f.now}
+	second := first
+	second.ID = serviceaudit.NewID()
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
+	insert := func() (retErr error) {
+		tx, err := f.database.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer rollback(ctx, tx, "test queued audit append", &retErr)()
+		if err := insertServiceAudit(ctx, tx, second, f.now); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	done := make(chan error, 1)
+	workers.Go(func() { done <- insert() })
+	waitForPostgresBlock(t, ctx, f.database, int32(gate.Conn().PgConn().PID()), done)
+	if err := insertServiceAudit(ctx, gate, first, f.now); err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitIntegrationResult(t, ctx, done); err != nil {
+		t.Fatal(err)
+	}
+	var inOrder bool
+	if err := f.database.pool.QueryRow(ctx, `SELECT a.cursor < b.cursor FROM control.service_audit_events a,control.service_audit_events b
+		WHERE a.id=$1 AND b.id=$2`, first.ID, second.ID).Scan(&inOrder); err != nil || !inOrder {
+		t.Fatal("polling after the first commit would skip the waiting report", err)
 	}
 }
