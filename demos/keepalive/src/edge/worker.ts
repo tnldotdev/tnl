@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { credentials, enrollmentConfigured, type CredentialBindings } from "./credentials.ts";
 import { CONFIG_PATH, CREDENTIALS_PATH, hostingConfig } from "../enrollment.ts";
 import { PEERS_PATH } from "../peers/gossip.ts";
+import { AUDIENCE_PATH } from "../peers/presence.ts";
 import { createProxy, siteHeaders } from "./proxy.ts";
 import { ARTIFACT_PREFIX, RELEASE_PATH, contentType, releaseSchema } from "../release.ts";
 
@@ -26,6 +27,7 @@ app.get(RELEASE_PATH, (c) => {
 app.get(PEERS_PATH, (c) =>
   proxy.peers(c.req.raw, c.env.SHARED_HOST, (work) => c.executionCtx.waitUntil(work)),
 );
+app.get(AUDIENCE_PATH, (c) => proxy.audience(c.req.raw, (work) => c.executionCtx.waitUntil(work)));
 app.post(CREDENTIALS_PATH, (c) =>
   credentials(c.req.raw, release.id, c.env, (signal) =>
     proxy.peers(new Request(new URL(PEERS_PATH, c.req.url), { signal }), c.env.SHARED_HOST),

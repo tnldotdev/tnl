@@ -1,7 +1,13 @@
 import { sameRun, type Host } from "../peers/gossip.ts";
 import { readPeers } from "../peers/http.ts";
-import { heartbeatSchema, HEARTBEAT_MS, PRESENCE_PATH } from "../peers/presence.ts";
-import { presenceSummary } from "../peers/view.ts";
+import {
+  AUDIENCE_PATH,
+  heartbeatSchema,
+  HEARTBEAT_MS,
+  PRESENCE_PATH,
+  sampledTab,
+} from "../peers/presence.ts";
+import { audienceSnapshot, presenceSummary } from "../peers/view.ts";
 import type * as z from "zod";
 import { MAX_MANIFEST_BYTES, parseRelease, readJSON, RELEASE_PATH } from "../release.ts";
 
@@ -43,6 +49,7 @@ export async function observeVisitors(
   update: (observation: Observation | undefined) => void,
 ) {
   const tab = crypto.randomUUID();
+  let checkAudience = !sampledTab(tab);
   let releaseID: string | undefined;
   let host: Host | undefined;
   let alternates: Host[] = [];
@@ -56,6 +63,22 @@ export async function observeVisitors(
         const deadline = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
         const response = await fetch(RELEASE_PATH, { cache: "no-store", signal: deadline });
         releaseID = (await parseRelease(await readJSON(response, MAX_MANIFEST_BYTES, deadline))).id;
+      }
+      if (checkAudience) {
+        const deadline = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
+        const summary = await fetch(AUDIENCE_PATH, { cache: "no-store", signal: deadline })
+          .then(async (r) =>
+            r.status === 204
+              ? undefined
+              : audienceSnapshot.parse(await readJSON(r, 4096, deadline)),
+          )
+          .catch(() => undefined);
+        signal.throwIfAborted();
+        if (summary?.releaseID === releaseID && summary.sampling) {
+          update(summary);
+          return;
+        }
+        // a missing, stale or small estimate resumes counting on this tick.
       }
       if (host === undefined) {
         const report = await readPeers(location.origin, releaseID, signal);
@@ -73,6 +96,7 @@ export async function observeVisitors(
       }
       if (host === undefined) throw new Error("No counting host.");
       const { fallback, ...observation } = await renewPresence(host, tab, releaseID, signal);
+      checkAudience = !sampledTab(tab) && observation.sampling === true;
       alternates = fallback.filter((candidate) => !sameRun(candidate, observation.host));
       if (!signal.aborted) update(observation);
     } catch {

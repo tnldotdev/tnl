@@ -142,3 +142,66 @@ it("carries a joined service run and its stop through two HTTP peers", async () 
     vi.unstubAllGlobals();
   }
 });
+
+it("weights just the stable sample at a surge and counts all reporters again after a departure", async () => {
+  const lifetime = new AbortController();
+  const now = Date.now(),
+    local = host(1);
+  const peer = peerServer(release, [pageOrigin], async () => new Response(), lifetime.signal);
+  vi.stubGlobal("fetch", async () => new Response(null, { status: 503 }));
+  let gossip: Gossip | undefined;
+  const remotes = Array.from({ length: 40 }, (_, i) => new Gossip(release, host(i + 2), now));
+  function crowd(perHost: number) {
+    if (!gossip) throw new Error("counting host is not ready");
+    for (const remote of remotes) {
+      remote.observeTabs(perHost, now);
+      gossip.receive(remote.message(now), now);
+    }
+  }
+  const beat = async (suffix: string) => {
+    const res = await peer.fetch(
+      new Request(new URL(PRESENCE_PATH, local.origin), {
+        method: "POST",
+        headers: { Origin: pageOrigin },
+        body: JSON.stringify({
+          tab: "00000000-0000-4000-8000-00000000000" + suffix,
+          releaseID: release,
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    return presenceSummary.parse(await res.json());
+  };
+  try {
+    await peer.start(
+      local,
+      now,
+      undefined,
+      undefined,
+      (v) => {
+        gossip = v;
+      },
+      () => false,
+    );
+    for (const suffix of ["0", "1", "2", "3"]) await beat(suffix);
+    crowd(500);
+    expect(await beat("0")).toMatchObject({ tabs: 20004, sampling: true });
+    crowd(350);
+    expect(await beat("0")).toMatchObject({ tabs: 14004, sampling: true });
+    expect(await beat("1")).toMatchObject({ tabs: 14004, sampling: true });
+    expect(await beat("4")).toMatchObject({ tabs: 14008, sampling: true });
+    // a returning full-count tab renews a single lease, including across the switch.
+    crowd(200);
+    expect(await beat("5")).toMatchObject({ tabs: 8006, sampling: false });
+    expect(await beat("0")).toMatchObject({ tabs: 8006, sampling: false });
+    const peers = await peer.fetch(new Request(new URL(PEERS_PATH, local.origin)));
+    expect(parseMessage(await peers.json(), release, Date.now())?.audience).toMatchObject({
+      tabs: 8006,
+      sampling: false,
+    });
+  } finally {
+    lifetime.abort();
+    await peer.stop();
+    vi.unstubAllGlobals();
+  }
+});

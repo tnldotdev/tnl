@@ -123,8 +123,19 @@ applying the Worker migration that retires its old reservations.
 
 Volunteer selection uses finite requests with 5–15 second retry jitter. Peer
 responses request connection closure, including HTTP/2 GOAWAY, so random probes
-and 20-second presence reports do not retain idle relay streams. If a presence
-request loses its connection before headers arrive, the tab tries the same
+and presence reports do not retain idle relay streams. Tabs report on arrival
+and renew about every 40 seconds. If a tab closes, its counting host drops
+the lease within two minutes; other hosts can see an older count.
+
+At an estimated 20,000 tabs, hosts start counting a stable one-in-four
+sample. They count each sampled tab as four and return to counting every
+tab when their estimate drops to 10,000. Tabs outside the sample can still
+volunteer. They read the latest count at the edge instead of opening a tunnel
+for each renewal. If the edge has no fresh estimate, they contact a counting
+host. The estimate can be high or low; it also affects how many volunteers
+are invited.
+
+If a presence request loses its connection before headers arrive, the tab tries the same
 host once more within the original five seconds. Both attempts refresh one
 tab lease. Startup allows three minutes; replacement begins four minutes before
 the turn ends.

@@ -1,5 +1,13 @@
 import * as z from "zod";
-import { hostDetailsSchema, hostOrigin, hostSchema, runIDSchema, type Change } from "./gossip.ts";
+import {
+  audienceSchema,
+  hostDetailsSchema,
+  hostOrigin,
+  hostSchema,
+  releaseIDSchema,
+  runIDSchema,
+  type Change,
+} from "./gossip.ts";
 import { readJSON } from "../release.ts";
 
 const visibleHost = hostSchema.refine(({ origin }) => hostOrigin(origin));
@@ -12,7 +20,13 @@ export const presenceSummary = z.strictObject({
   tabs: z.int().nonnegative(),
   hosts: z.int().positive(),
   saturated: z.boolean(),
+  sampling: z.boolean().optional(),
   fallback: z.array(visibleHost).max(MAX_FALLBACK_HOSTS),
+});
+export const audienceSnapshot = audienceSchema.extend({
+  releaseID: releaseIDSchema,
+  host: visibleHost,
+  startedAt: z.int().nonnegative(),
 });
 export const treeHost = hostDetailsSchema
   .pick({
