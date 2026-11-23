@@ -109,7 +109,7 @@ func (d *Database) CreateServiceCertificateIssuance(ctx context.Context, service
 		return result, err
 	}
 	defer rollback(ctx, tx, "create managed certificate issuance", &retErr)()
-	if err = lockServiceForPublication(ctx, tx, service); err != nil {
+	if err = lockServiceForRun(ctx, tx, service); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
@@ -249,7 +249,7 @@ func (d *Database) MarkServiceCertificateInstalled(ctx context.Context, service,
 		return err
 	}
 	defer rollback(ctx, tx, "install managed certificate", &retErr)()
-	if err = lockServiceForPublication(ctx, tx, service); err != nil {
+	if err = lockServiceForRun(ctx, tx, service); err != nil {
 		return err
 	}
 	q := controlstatedb.New(tx)
@@ -293,6 +293,9 @@ func (d *Database) MarkServiceCertificateInstalled(ctx context.Context, service,
 	}
 	if _, err = serviceRunPublisherPermission(ctx, tx, run, clock.current()); err != nil {
 		return err
+	}
+	if !notAfter.After(clock.current()) {
+		return ErrCertificateIssuanceInvalid
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return err
