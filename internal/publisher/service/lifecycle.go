@@ -227,12 +227,12 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}()
 	var dialer muxsession.QUICDialer
 	var udpErr error
+	network := "udp"
+	if config.RelayIPv4Only {
+		network = "udp4"
+	}
 	if peer.HostUDP && config.RelayQUIC == nil {
 		var transport *muxsession.QUICTransport
-		network := "udp"
-		if config.RelayIPv4Only {
-			network = "udp4"
-		}
 		transport, udpErr = muxsession.ListenQUICTransport(network, ":0")
 		if udpErr == nil {
 			dialer = transport
@@ -406,18 +406,21 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	bound.telemetry = telemetry
 	bound.connectivityOptions = telemetry.Connectivity(config.Connectivity)
 	if peer.HostUDP && !config.Connectivity.DisableDirect {
-		bound.peerSocket = config.PeerSocket
+		// a borrowed socket has no family guarantee. guest relay claims must
+		// use the same address family as admission, including after ICE setup.
+		if !config.RelayIPv4Only {
+			bound.peerSocket = config.PeerSocket
+		}
 		if bound.peerSocket == nil {
 			// UDP is an optimization; a blocked socket leaves relay WSS usable.
 			// relay slots retain admitted visitors through caller cancellation.
 			// the deferred close follows their bounded drain and joined cleanup.
-			bound.peerSocket, _ = peer.ListenSocket(context.WithoutCancel(ctx), "udp", ":0")
+			bound.peerSocket, _ = peer.ListenSocket(context.WithoutCancel(ctx), network, ":0")
 			if bound.peerSocket != nil {
 				defer bound.peerSocket.Close()
 			}
 		}
-		if bound.peerSocket != nil && config.RelayQUIC == nil {
-			connector := connectOptions.QUIC.(muxsession.QUICConnector)
+		if connector, ok := connectOptions.QUIC.(muxsession.QUICConnector); ok && bound.peerSocket != nil && config.RelayQUIC == nil {
 			connector.Dialer = bound.peerSocket
 			connectOptions.QUIC = connector
 		}
