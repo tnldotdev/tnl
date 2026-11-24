@@ -10,10 +10,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/browserpage"
 )
 
-func TestDemoUsesMintOnDarkBranding(t *testing.T) {
-	for _, want := range []string{"color-scheme: dark", "--paper: #0d1117", "--primary: #86ead4", "color: var(--primary)"} {
+func TestDemoUsesWhiteOnDarkBranding(t *testing.T) {
+	for _, want := range []string{"color-scheme: dark", "--paper: #0d1117", "--ink: #ffffff", "--primary: #86ead4", browserpage.FaviconLink()} {
 		if !strings.Contains(string(page), want) {
 			t.Errorf("demo page missing %q", want)
 		}
@@ -69,6 +71,7 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 		strings.Contains(string(data), "fonts.googleapis.com") ||
 		strings.Contains(page.Header.Get("Content-Security-Policy"), "fonts.gstatic.com") ||
 		!strings.Contains(page.Header.Get("Content-Security-Policy"), "font-src 'self'") ||
+		!strings.Contains(page.Header.Get("Content-Security-Policy"), "img-src data:") ||
 		!strings.Contains(page.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatalf("demo page = %d, %v, %q", page.StatusCode, err, data)
 	}

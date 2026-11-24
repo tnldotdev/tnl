@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>local demo - tnl</title>
+    <!-- favicon -->
     <style>
       @font-face {
         font-family: "Fira Code Variable";
@@ -26,7 +27,7 @@
       :root {
         color-scheme: dark;
         --paper: #0d1117;
-        --ink: #c9d1d9;
+        --ink: #ffffff;
         --muted: #8b949e;
         --rule: #30363d;
         --subtle: #161b22;
@@ -47,7 +48,7 @@
           monospace;
       }
       a {
-        color: inherit;
+        color: var(--primary);
       }
       a:hover,
       button:hover {
@@ -74,7 +75,11 @@
       }
       header a {
         padding: 8px;
+        color: var(--ink);
         text-decoration: none;
+      }
+      header a:not(.brand):hover {
+        text-decoration: underline;
       }
       header .brand {
         display: inline-flex;
@@ -83,7 +88,6 @@
         align-items: center;
         justify-content: center;
         padding: 0;
-        color: var(--primary);
       }
       header .brand svg {
         display: block;

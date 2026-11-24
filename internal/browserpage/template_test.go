@@ -32,6 +32,9 @@ func TestTemplatesEscapeDynamicValues(t *testing.T) {
 	if !strings.Contains(body, "&lt;script&gt;") || !strings.Contains(body, "#ZgotmplZ") {
 		t.Fatal("template did not escape text and reject an executable link")
 	}
+	if !strings.Contains(body, FaviconLink()) {
+		t.Fatal("templated page is missing the bundled favicon")
+	}
 }
 
 type failedWriter struct{ err error }

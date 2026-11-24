@@ -2,6 +2,7 @@
 package demo
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -13,10 +14,13 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/browserfonts"
+	"github.com/tnldotdev/tnl/internal/browserpage"
 )
 
 //go:embed page.html
-var page []byte
+var pageTemplate []byte
+
+var page = bytes.Replace(pageTemplate, []byte("<!-- favicon -->"), []byte(browserpage.FaviconLink()), 1)
 
 type State struct {
 	PublicURL    string `json:"public_url"`
@@ -84,7 +88,7 @@ func (d *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src data:; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 	switch {
 	case r.URL.Path == "/" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -19,8 +19,9 @@ type Page struct {
 // pass data through Page.Content so html/template escapes it in context. the
 // portable pages do not use this renderer.
 func New(body string) *Template {
-	const shell = shellHead + `
+	shell := shellHead + `
 <title>{{.Title}} - tnl</title>
+` + faviconLink + `
 <style>{{styles}}</style>` + shellBody + `{{template "content" .Content}}` + shellEnd
 	return &Template{template.Must(template.New("page").Funcs(template.FuncMap{
 		"styles": func() template.CSS { return template.CSS(styles) },

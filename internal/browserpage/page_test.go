@@ -16,10 +16,11 @@ func TestSharedShellAndBundledFont(t *testing.T) {
 	for _, fragment := range []string{
 		`<html lang="en">`, `<title>target unavailable - tnl</title>`,
 		`name="viewport"`, `name="color-scheme" content="dark"`,
-		`aria-label="tnl home"`, `#0d1117`, `#86ead4`,
+		`aria-label="tnl home"`, `--background: #0d1117`, `--foreground: #ffffff`, `--primary: #86ead4`,
 		`font-family:"Fira Code"`, `@media (max-width: 480px)`,
 		`outline: 2px dashed`, `<h1>target unavailable</h1>`,
 		`data:font/woff2;base64,` + base64.StdEncoding.EncodeToString(browserfonts.Latin),
+		FaviconLink(),
 	} {
 		if !strings.Contains(body, fragment) {
 			t.Fatalf("shared page is missing %q", fragment[:min(len(fragment), 80)])
