@@ -222,6 +222,7 @@
         "server.invalid_role",
         "server.listen_address_invalid",
         "server.migration_failed",
+        "server.not_ready",
         "server.oidc_invalid",
         "server.output_unavailable",
         "server.relay_failed",
