@@ -126,6 +126,8 @@ type RunConfig struct {
 	RelayWebSocket muxsession.Connector
 	// WebSocketOnly avoids native UDP resources, including direct discovery.
 	WebSocketOnly bool
+	// guest trial admission and both relay claims must see the same IPv4.
+	RelayIPv4Only bool
 	Connectivity  peer.ConnectivityOptions
 	// PeerSocket is borrowed by qualification; the default service run owns one.
 	PeerSocket       *peer.Socket
@@ -227,7 +229,11 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	var udpErr error
 	if peer.HostUDP && config.RelayQUIC == nil {
 		var transport *muxsession.QUICTransport
-		transport, udpErr = muxsession.ListenQUICTransport("udp", ":0")
+		network := "udp"
+		if config.RelayIPv4Only {
+			network = "udp4"
+		}
+		transport, udpErr = muxsession.ListenQUICTransport(network, ":0")
 		if udpErr == nil {
 			dialer = transport
 			defer func() { result = errors.Join(result, transport.Close()) }()
@@ -952,7 +958,9 @@ func (config RunConfig) connectionOptions(dialer muxsession.QUICDialer, udpErr e
 		}
 	}
 	if options.WebSocket == nil {
-		options.WebSocket = muxsession.WebSocketConnector{TLSConfig: roots}
+		options.WebSocket = muxsession.WebSocketConnector{TLSConfig: roots, Config: muxsession.WebSocketConfig{
+			IPv4Only: config.RelayIPv4Only, DisableProxy: config.RelayIPv4Only,
+		}}
 	}
 	return options, nil
 }

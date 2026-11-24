@@ -24,6 +24,7 @@ type WebSocketConfig struct {
 	MaxIncomingStreams int
 	Dialer             *net.Dialer
 	DisableProxy       bool
+	IPv4Only           bool
 }
 
 // WebSocketConnector uses native TLS policy or, on js/wasm, host-managed WSS.

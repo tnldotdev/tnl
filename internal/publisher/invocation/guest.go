@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"net/netip"
 	"sync"
 	"time"
@@ -23,14 +25,16 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func guestForDemo(
-	ctx context.Context, state *clientstate.Database, serverURL string, flags PublicOptions,
-) (*clientstate.GuestSession, error) {
-	control, err := clientcontrol.New(serverURL, nil, "")
-	if err != nil {
-		return nil, err
-	}
-	return guestForDemoWithControl(ctx, state, serverURL, flags, control)
+func guestHTTPClient() *http.Client {
+	// a proxy or a different address family can change the IP observed at
+	// admission relative to the publisher's two direct UDP connections.
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	return &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "tcp4", address)
+		},
+		ForceAttemptHTTP2: true, TLSHandshakeTimeout: 10 * time.Second, IdleConnTimeout: 90 * time.Second,
+	}}
 }
 
 type guestDemoControlClient interface {
@@ -93,7 +97,7 @@ func guestForDemoWithControl(
 // trial management owns allocation and deletion; the returned native identity
 // can only publish its exact service. cleanup remains usable after an uncertain
 // allocation error and never substitutes another request or extends trial time.
-func prepareGuestDemoService(ctx context.Context, state *clientstate.Database, server string, guest clientstate.GuestSession, flags PublicOptions, target string, deadline func() time.Time) (*publisheridentity.Native, controlv1.Service, func() error, error) {
+func prepareGuestDemoService(ctx context.Context, state *clientstate.Database, server string, guest clientstate.GuestSession, flags PublicOptions, target string, deadline func() time.Time, httpClient *http.Client) (*publisheridentity.Native, controlv1.Service, func() error, error) {
 	if !opaqueid.Valid(guest.GuestID, opaqueid.GuestPrefix) || !guest.ExpiresAt.After(time.Now()) {
 		return nil, controlv1.Service{}, nil, publisheridentity.ErrScope
 	}
@@ -107,7 +111,7 @@ func prepareGuestDemoService(ctx context.Context, state *clientstate.Database, s
 	if err != nil || !address.IsLoopback() || location.Scheme != "http" {
 		return nil, controlv1.Service{}, nil, publisheridentity.ErrScope
 	}
-	bootstrap, err := clientcontrol.New(server, nil, credentials.AccessToken(guest.AccessToken))
+	bootstrap, err := clientcontrol.New(server, httpClient, credentials.AccessToken(guest.AccessToken))
 	if err != nil {
 		return nil, controlv1.Service{}, nil, err
 	}
@@ -131,7 +135,7 @@ func prepareGuestDemoService(ctx context.Context, state *clientstate.Database, s
 	if err != nil {
 		return nil, saved, cleanup, err
 	}
-	native, err := enrollGuestNative(ctx, profile, saved, bootstrap)
+	native, err := enrollGuestNative(ctx, profile, saved, bootstrap, httpClient)
 	return native, saved, cleanup, err
 }
 
@@ -229,12 +233,12 @@ func validateGuestService(saved controlv1.Service, guest clientstate.GuestSessio
 
 // the trial credential only bootstraps one exact service. publication uses its
 // own key and service grant, never the trial credential or a namespace grant.
-func enrollGuestNative(ctx context.Context, store *clientstate.Store, saved controlv1.Service, bootstrap *clientcontrol.Client) (*publisheridentity.Native, error) {
-	control, err := clientcontrol.New(bootstrap.ControlURL(), nil, "")
+func enrollGuestNative(ctx context.Context, store *clientstate.Store, saved controlv1.Service, bootstrap *clientcontrol.Client, httpClient *http.Client) (*publisheridentity.Native, error) {
+	control, err := clientcontrol.New(bootstrap.ControlURL(), httpClient, "")
 	if err != nil {
 		return nil, err
 	}
-	authority, err := clientauthority.New(bootstrap.ControlURL(), nil, "")
+	authority, err := clientauthority.New(bootstrap.ControlURL(), httpClient, "")
 	if err != nil {
 		return nil, err
 	}

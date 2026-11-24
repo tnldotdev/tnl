@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -37,6 +38,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	var recorder *clientstate.InspectionRecorder
 	var localDemo *demo.Server
 	var cleanup func() error
+	var guestHTTP *http.Client
 	ctx, shutdownDeadline, shutdownContext, joinShutdown := publicationShutdown(ctx)
 	defer joinShutdown()
 	var stopIntegrations func() error
@@ -53,6 +55,9 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		}
 		if cleanup != nil {
 			result = errors.Join(result, cleanup())
+		}
+		if guestHTTP != nil {
+			guestHTTP.CloseIdleConnections()
 		}
 		if localDemo != nil {
 			result = errors.Join(result, localDemo.Close(finish))
@@ -106,7 +111,12 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	}
 	var guest *clientstate.GuestSession
 	if flags.Demo {
-		guest, err = guestForDemo(ctx, state, server, flags)
+		guestHTTP = guestHTTPClient()
+		discovery, err := clientcontrol.New(server, guestHTTP, "")
+		if err != nil {
+			return err
+		}
+		guest, err = guestForDemoWithControl(ctx, state, server, flags, discovery)
 		if err != nil {
 			return err
 		}
@@ -131,7 +141,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	var selectedTeam string
 	if guest != nil {
 		output.configureBrowser(false)
-		native, saved, cleanup, err = prepareGuestDemoService(ctx, state, server, *guest, flags, address, shutdownDeadline)
+		native, saved, cleanup, err = prepareGuestDemoService(ctx, state, server, *guest, flags, address, shutdownDeadline, guestHTTP)
 		// cleanup is retained even if the allocation reply was lost.
 		if err != nil {
 			return err
@@ -279,7 +289,8 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	if flags.Demo {
 		cfg.Demo, cfg.Feedback, cfg.ProjectService = true, true, "demo"
 		if guest != nil {
-			trial, err := clientcontrol.New(server, nil, credentials.AccessToken(guest.AccessToken))
+			cfg.RelayIPv4Only = true
+			trial, err := clientcontrol.New(server, guestHTTP, credentials.AccessToken(guest.AccessToken))
 			if err != nil {
 				return err
 			}
