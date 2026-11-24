@@ -9,8 +9,8 @@ if (!document.querySelector("[data-tnl-feedback]")) {
   host.setAttribute("data-tnl-feedback", "");
   const root = host.attachShadow({ mode: "open" });
   if ("FontFace" in window) {
-    const font = new FontFace("tnl Fira Code", "url('/__tnl/feedback/fira-code.woff2')", {
-      weight: "300 700",
+    const font = new FontFace("tnl JetBrains Mono", "url('/__tnl/feedback/jetbrains-mono.woff2')", {
+      weight: "100 800",
     });
     void font
       .load()

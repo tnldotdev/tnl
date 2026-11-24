@@ -62,7 +62,7 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 	page := get("/")
 	data, err := io.ReadAll(page.Body)
 	page.Body.Close()
-	if err != nil || page.StatusCode != http.StatusOK || !strings.Contains(string(data), "fira-code-latin-wght-normal.woff2") ||
+	if err != nil || page.StatusCode != http.StatusOK || !strings.Contains(string(data), `font-family: "JetBrains Mono"`) ||
 		!strings.Contains(string(data), "tnl server") || !strings.Contains(string(data), "round trip") ||
 		!strings.Contains(string(data), "generated at") ||
 		page.Header.Get("Cache-Control") != "no-store" ||
@@ -75,7 +75,10 @@ func TestDemoPingUsesLocalStateAndStopsWithServer(t *testing.T) {
 		!strings.Contains(page.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatalf("demo page = %d, %v, %q", page.StatusCode, err, data)
 	}
-	for _, name := range []string{"fira-code-latin-wght-normal.woff2", "fira-code-symbols2-wght-normal.woff2"} {
+	for _, name := range []string{"jetbrains-mono-latin-wght-normal.woff2", "jetbrains-mono-symbols-wght-normal.woff2"} {
+		if !strings.Contains(string(data), "/fonts/"+name) {
+			t.Fatalf("demo page does not load %s", name)
+		}
 		font := get("/fonts/" + name)
 		data, err := io.ReadAll(font.Body)
 		font.Body.Close()

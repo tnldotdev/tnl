@@ -17,7 +17,7 @@ func TestSharedShellAndBundledFont(t *testing.T) {
 		`<html lang="en">`, `<title>target unavailable - tnl</title>`,
 		`name="viewport"`, `name="color-scheme" content="dark"`,
 		`aria-label="tnl home"`, `--background: #0d1117`, `--foreground: #ffffff`, `--primary: #86ead4`,
-		`font-family:"Fira Code"`, `@media (max-width: 480px)`,
+		`font-family:"JetBrains Mono"`, `@media (max-width: 480px)`,
 		`outline: 2px dashed`, `<h1>target unavailable</h1>`,
 		`data:font/woff2;base64,` + base64.StdEncoding.EncodeToString(browserfonts.Latin),
 		FaviconLink(),

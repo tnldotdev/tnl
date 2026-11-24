@@ -36,7 +36,7 @@ var faviconLink = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xm
 func FaviconLink() string { return faviconLink }
 
 // the style element contains only the embedded stylesheet and font, never request data.
-var styles = `@font-face{font-family:"Fira Code";font-style:normal;font-weight:300 700;font-display:swap;src:url("data:font/woff2;base64,` + base64.StdEncoding.EncodeToString(browserfonts.Latin) + `") format("woff2")}` + stylesheet
+var styles = `@font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:100 800;font-display:swap;src:url("data:font/woff2;base64,` + base64.StdEncoding.EncodeToString(browserfonts.Latin) + `") format("woff2")}` + stylesheet
 
 func Headers(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
