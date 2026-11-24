@@ -78,7 +78,7 @@ func (w *Worker) advanceServiceEndpoint(ctx context.Context, store serviceEndpoi
 	observeDNS(ctx, w.config.Observer, "service", "advance", started, ready, err)
 	if err != nil {
 		work.LastError = storedFailureReason(err)
-		work.AvailableAt = w.retryAvailableAt(uint64(work.Attempts), w.now())
+		work.AvailableAt = w.retryAvailableAt(uint64(work.ConsecutiveErrors)+1, w.now())
 		var terminal *terminalError
 		if errors.As(err, &terminal) {
 			work.State, work.AvailableAt = controlstate.ServiceEndpointDNSFailed, time.Time{}

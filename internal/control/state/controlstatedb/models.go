@@ -1064,6 +1064,7 @@ type ControlServiceEndpoint struct {
 	CreatedAt             pgtype.Timestamptz
 	RetiredAt             pgtype.Timestamptz
 	ReusableAfter         pgtype.Timestamptz
+	DnsConsecutiveErrors  int64
 }
 
 type ControlServiceHttpBrowserHandoff struct {

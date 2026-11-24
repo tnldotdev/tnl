@@ -72,7 +72,7 @@ func TestIntegrationPrivateServiceMigrationPreservesReservations(t *testing.T) {
 			old.Close()
 		}
 		rejected("open", err)
-		if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != 1 || snapshot() != before {
+		if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != schemaVersion || snapshot() != before {
 			t.Fatal("rejection changed the version, service, or reservation", err)
 		}
 	}

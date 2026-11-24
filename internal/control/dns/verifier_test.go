@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"context"
 	"errors"
 	"net"
 	"sync/atomic"
@@ -61,6 +62,87 @@ func TestAuthoritativeVerifierChecksExactRouteAddresses(t *testing.T) {
 	)
 	if err != nil || valid {
 		t.Fatalf("mismatched address = valid %v, error %v", valid, err)
+	}
+}
+
+func TestVerifyNameserverAddressesDistinguishesPropagationFromFailure(t *testing.T) {
+	const hostname = "api.example.test"
+	addresses := []net.IPAddr{{IP: net.ParseIP("192.0.2.53")}, {IP: net.ParseIP("2001:db8::53")}}
+	const ipv4, ipv6 = "192.0.2.53:53", "[2001:db8::53]:53"
+	expected := map[uint16][]string{dns.TypeA: {"192.0.2.10"}, dns.TypeAAAA: {"2001:db8::10"}}
+	unreachable := &net.OpError{Op: "dial", Net: "udp6", Err: syscall.ENETUNREACH}
+	for _, test := range []struct {
+		name   string
+		a, b   string
+		ready  bool
+		failed bool
+	}{
+		{name: "incident: IPv4 NXDOMAIN and IPv6 unreachable", a: "absent", b: "unreachable"},
+		{name: "unreachable first does not hide mismatch", a: "unreachable", b: "absent"},
+		{name: "exact A and AAAA wins without IPv6 transport", a: "exact", b: "unreachable", ready: true},
+		{name: "exact A on one address and AAAA on another is not enough", a: "only-a", b: "only-aaaa"},
+		{name: "exact alternate wins", a: "absent", b: "exact", ready: true},
+		{name: "all addresses unreachable", a: "unreachable", b: "unreachable", failed: true},
+		{name: "no useful DNS responses", a: "referral", b: "unreachable", failed: true},
+		{name: "NXDOMAIN does not hide REFUSED", a: "absent", b: "refused", failed: true},
+		{name: "NXDOMAIN does not hide SERVFAIL", a: "servfail", b: "absent", failed: true},
+		{name: "NXDOMAIN does not hide a non-authoritative answer", a: "absent", b: "referral", failed: true},
+		{name: "NXDOMAIN does not hide a still-truncated answer", a: "absent", b: "truncated", failed: true},
+		{name: "NXDOMAIN does not hide a fatal exchange error", a: "absent", b: "malformed", failed: true},
+		{name: "NXDOMAIN does not hide permission errors", a: "absent", b: "denied", failed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixtures := map[string]string{}
+			for server, mode := range map[string]string{ipv4: test.a, ipv6: test.b} {
+				switch mode {
+				case "unreachable", "malformed", "denied":
+					continue
+				}
+				fixtures[server] = verifierDNS(t, func(_ string, request *dns.Msg) *dns.Msg {
+					q := request.Question[0]
+					switch mode {
+					case "absent":
+						return verifierResponse(t, request, true, dns.RcodeNameError)
+					case "refused":
+						return verifierResponse(t, request, false, dns.RcodeRefused)
+					case "servfail":
+						return verifierResponse(t, request, false, dns.RcodeServerFailure)
+					case "referral":
+						return verifierResponse(t, request, false, dns.RcodeSuccess)
+					case "truncated":
+						response := verifierResponse(t, request, true, dns.RcodeSuccess)
+						response.Truncated = true
+						return response
+					}
+					if mode == "only-a" && q.Qtype == dns.TypeAAAA || mode == "only-aaaa" && q.Qtype == dns.TypeA {
+						return verifierResponse(t, request, true, dns.RcodeSuccess)
+					}
+					return verifierResponse(t, request, true, dns.RcodeSuccess,
+						q.Name+" 60 IN "+dns.TypeToString[q.Qtype]+" "+expected[q.Qtype][0])
+				})
+			}
+			v := &AuthoritativeVerifier{}
+			ready, err := verifyNameserverAddresses(t.Context(), hostname, addresses, expected,
+				func(ctx context.Context, server, name string, recordType uint16, values []string) (bool, error) {
+					mode := test.a
+					if server == ipv6 {
+						mode = test.b
+					}
+					switch mode {
+					case "unreachable":
+						return false, unreachable
+					case "malformed":
+						return false, dns.ErrBuf
+					case "denied":
+						return false, &net.OpError{Op: "dial", Net: "udp6", Err: syscall.EACCES}
+					default:
+						return v.queryAddresses(ctx, fixtures[server], name, recordType, values)
+					}
+				})
+			if ready != test.ready || (err != nil) != test.failed {
+				t.Fatalf("ready=%t error=%v, want ready=%t, error=%t", ready, err, test.ready, test.failed)
+			}
+		})
 	}
 }
 

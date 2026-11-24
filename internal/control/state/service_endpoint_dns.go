@@ -54,7 +54,12 @@ func reconcileServiceEndpoint(ctx context.Context, tx pgx.Tx, endpoint serviceEn
 	            OR control.service_endpoints.dns_automation AND NOT EXCLUDED.dns_automation) THEN $10
 	        WHEN control.service_endpoints.service_id=EXCLUDED.service_id AND control.service_endpoints.public=EXCLUDED.public
 	          AND control.service_endpoints.dns_automation=EXCLUDED.dns_automation
-	          AND control.service_endpoints.retired_at IS NULL AND control.service_endpoints.dns_state NOT IN('unmanaged','removed','failed') THEN control.service_endpoints.dns_available_at
+	          AND control.service_endpoints.retired_at IS NULL AND control.service_endpoints.dns_state NOT IN('unmanaged','removed','failed') THEN
+	          CASE WHEN control.service_endpoints.dns_available_at IS NOT NULL
+	            AND (control.service_endpoints.deployment_id,control.service_endpoints.domain_id,
+	                 control.service_endpoints.ingress_pool_id,control.service_endpoints.dns_authority_reference)
+	              IS DISTINCT FROM (EXCLUDED.deployment_id,EXCLUDED.domain_id,EXCLUDED.ingress_pool_id,EXCLUDED.dns_authority_reference)
+	            THEN $10 ELSE control.service_endpoints.dns_available_at END
 	        ELSE EXCLUDED.dns_available_at END,
 	      dns_revision=control.service_endpoints.dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL
 	    WHERE control.service_endpoints.service_run_id IS NULL AND (control.service_endpoints.service_id=EXCLUDED.service_id
@@ -82,7 +87,7 @@ type ServiceEndpointDNSWork struct {
 	Hostname, ServiceID, OwnerID, DomainID, PoolID, AuthorityReference string
 	Public                                                             bool
 	State                                                              ServiceEndpointDNSState
-	Revision, Epoch, Attempts                                          int64
+	Revision, Epoch, Attempts, ConsecutiveErrors                       int64
 	Worker                                                             string
 	ExpiresAt, AvailableAt                                             time.Time
 	LastError                                                          string
@@ -93,7 +98,7 @@ func managedDNSWork(row controlstatedb.ControlServiceEndpoint) ServiceEndpointDN
 	if row.DeploymentID.Valid {
 		owner = row.DeploymentID.String
 	}
-	return ServiceEndpointDNSWork{Hostname: row.Hostname, ServiceID: row.ServiceID, OwnerID: owner, DomainID: row.DomainID, PoolID: row.IngressPoolID, AuthorityReference: row.DnsAuthorityReference.String, Public: row.Public, State: ServiceEndpointDNSState(row.DnsState), Revision: row.DnsRevision, Epoch: row.DnsWorkEpoch, Attempts: row.DnsAttempts, Worker: row.DnsWorkOwner.String, ExpiresAt: row.DnsWorkExpiresAt.Time, AvailableAt: row.DnsAvailableAt.Time, LastError: row.DnsLastError.String}
+	return ServiceEndpointDNSWork{Hostname: row.Hostname, ServiceID: row.ServiceID, OwnerID: owner, DomainID: row.DomainID, PoolID: row.IngressPoolID, AuthorityReference: row.DnsAuthorityReference.String, Public: row.Public, State: ServiceEndpointDNSState(row.DnsState), Revision: row.DnsRevision, Epoch: row.DnsWorkEpoch, Attempts: row.DnsAttempts, ConsecutiveErrors: row.DnsConsecutiveErrors, Worker: row.DnsWorkOwner.String, ExpiresAt: row.DnsWorkExpiresAt.Time, AvailableAt: row.DnsAvailableAt.Time, LastError: row.DnsLastError.String}
 }
 
 func (d *Database) ClaimServiceEndpointDNSWork(ctx context.Context, worker string, now time.Time, duration time.Duration) (ServiceEndpointDNSWork, bool, error) {
