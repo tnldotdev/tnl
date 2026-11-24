@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { credentials } from "../src/edge/credentials.ts";
 import { READY_HEADER } from "../src/enrollment.ts";
+import { HOST_PARENT } from "../src/peers/gossip.ts";
 
 const mint = vi.hoisted(() => vi.fn());
 vi.mock("@tnldotdev/tnl/control", () => ({ control: () => ({}), createPublisherEnrollment: mint }));
@@ -13,7 +14,7 @@ const env = {
   MANAGEMENT_TOKEN: "fixture",
 };
 const requestID = crypto.randomUUID();
-const donor = `https://p-${"a".repeat(26)}.hosts.keepthisalive.com`;
+const donor = `https://p-${"a".repeat(26)}.${HOST_PARENT}`;
 const call = (origin: string, bootstrap: boolean, peers = vi.fn(), inviter = donor) =>
   credentials(
     new Request(origin, {

@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { observeInfrastructure } from "./infra-samples.ts";
 import { copyTransfers, distribution, periodic, probeHost } from "./measure.ts";
+import { HOST_PARENT } from "../src/peers/gossip.ts";
 import { digest } from "../src/release.ts";
 
 const host = {
-  origin: `https://p-${"a".repeat(26)}.hosts.keepthisalive.com`,
+  origin: `https://p-${"a".repeat(26)}.${HOST_PARENT}`,
   publisherID: `pub_${"b".repeat(22)}`,
   runID: `srun_${"c".repeat(22)}`,
   runNumber: "2",

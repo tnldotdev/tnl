@@ -4,7 +4,7 @@ import { BOOTSTRAP_TURN_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "../policy.ts";
 import { MAX_TABS_PER_HOST, REMOTE_TAB_REPORT_MS, SAMPLE_WEIGHT } from "./presence.ts";
 import { certificateReport, newerCertificate } from "../hosting/certificate.ts";
 
-export const HOST_PARENT = "hosts.keepthisalive.com";
+export const HOST_PARENT = "live.hosts.keepthisalive.com";
 export const SHARED_HOST = `https://prod.${HOST_PARENT}`;
 export const PEERS_PATH = "/__keepalive/peers";
 export const MAX_MESSAGE_BYTES = 24 * 1024;
