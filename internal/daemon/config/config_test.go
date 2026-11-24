@@ -17,6 +17,7 @@ const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 func TestSplitControlRequiresInternalTLSMaterial(t *testing.T) {
 	base := []string{"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey}
 	if _, err := Parse(base); err == nil {
@@ -35,6 +36,7 @@ func TestParseStandaloneDerivesAddresses(t *testing.T) {
 		"--role", "standalone",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com",
 		"--acme-accept-terms",
@@ -72,6 +74,7 @@ func TestParseServiceCertificateWorkers(t *testing.T) {
 		"--route53-server-zone-id", "ZSERVER",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com",
 		"--acme-accept-terms",
@@ -129,6 +132,7 @@ func TestParseProjectPublisherLimits(t *testing.T) {
 		"--role", "standalone", "--route53-server-zone-id", "ZSERVER",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms",
 		"--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey,
 	})
@@ -145,6 +149,7 @@ func TestParseDomainPolicy(t *testing.T) {
 	t.Setenv("TNLD_ROUTE53_SERVER_ZONE_ID", "ZSERVER")
 	base := []string{"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey}
 	if _, err := Parse(append(base, "--managed-domain-max-member-child-labels=-1")); err == nil {
 		t.Fatal("negative managed-domain depth accepted")
@@ -169,6 +174,7 @@ func TestParseBrandedDelegation(t *testing.T) {
 	t.Setenv("TNLD_ROUTE53_SERVER_ZONE_ID", "ZSERVER")
 	base := []string{"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey}
 	for _, flags := range [][]string{
 		{"--nameserver-domain=dns.example.com"},
@@ -196,6 +202,7 @@ func TestParseRequiresValidStorageKey(t *testing.T) {
 		"--role", "standalone",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--managed-domain", "tunnels.example.com",
 		"--acme-email", "operator@example.com",
 		"--acme-accept-terms",
@@ -216,6 +223,7 @@ func TestParseSplitRoles(t *testing.T) {
 	control, err := Parse([]string{
 		"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 		"--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key",
@@ -271,6 +279,7 @@ func TestConfigPrivateControlAddressRequiresSplitDialAddress(t *testing.T) {
 	if _, err := Parse([]string{
 		"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 		"--private-control-address", "control.internal:9443",
@@ -289,6 +298,7 @@ func TestParseDNSAutomation(t *testing.T) {
 	config, err := Parse([]string{
 		"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 		"--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key",
@@ -312,6 +322,7 @@ func TestParseDNSAutomation(t *testing.T) {
 		base := []string{
 			"--role", "control", "--database-url", "postgres://tnl:secret@database.example/tnl",
 			"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+			"--control-proxy-provider", "single-xff",
 			"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
 			"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
 			"--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key",
@@ -508,6 +519,7 @@ func validCertificateConfig(t *testing.T, role Role, flags ...string) Config {
 	if role.RunsControl() {
 		args = append(args, "--database-url", "postgres://tnl:secret@database.example/tnl",
 			"--server-domain", "infra.example.test", "--managed-domain", "routes.other.test",
+			"--control-proxy-provider", "single-xff",
 			"--acme-email", "operator@example.test", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey)
 	} else {
 		args = append(args, "--control-hostname", "control.infra.example.test")

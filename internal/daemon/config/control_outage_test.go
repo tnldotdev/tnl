@@ -14,6 +14,7 @@ func controlOutageArguments() []string {
 		"--role", "standalone", "--route53-server-zone-id", "ZSERVER",
 		"--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
+		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms",
 		"--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey,
 	}

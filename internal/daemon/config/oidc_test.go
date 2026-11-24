@@ -8,7 +8,7 @@ import (
 
 func TestOIDCRequiredAndExplicitIdentitySeeds(t *testing.T) {
 	t.Setenv("TNLD_ROUTE53_SERVER_ZONE_ID", "ZSERVER")
-	config, err := Parse([]string{"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl", "--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com", "--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey, "--initial-administrator", "operator-subject", "--initial-team-owner", "studio=owner-subject", "--default-team", "studio", "--default-team-member", "member-subject"})
+	config, err := Parse([]string{"--role", "standalone", "--control-proxy-provider", "single-xff", "--database-url", "postgres://tnl:secret@database.example/tnl", "--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com", "--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey, "--initial-administrator", "operator-subject", "--initial-team-owner", "studio=owner-subject", "--default-team", "studio", "--default-team-member", "member-subject"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -98,7 +98,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if _, err = controlauthority.Register(h, controlauthority.Config{ControlURL: server}, d); err != nil {
 		t.Fatal(err)
 	}
-	proxy, err := (controlProxy.Config{Origin: server, TrustedPeers: []string{"10.0.0.0/24"}, ClientIPHeader: "X-Forwarded-For"}).Handler(h)
+	proxy, err := (controlProxy.Config{Origin: server, TrustedPeers: []string{"10.0.0.0/24"}, Provider: "single-xff"}).Handler(h)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2994,11 +2994,10 @@
           "description": "Exact trusted control HTTPS proxy peer CIDRs.",
           "default": "127.0.0.1/32,::1/128"
         },
-        "control_client_ip_header": {
+        "control_proxy_provider": {
           "type": "string",
-          "enum": ["X-Forwarded-For", "Fly-Client-IP"],
-          "description": "Source header overwritten by the trusted control HTTPS proxy.",
-          "default": "X-Forwarded-For"
+          "enum": ["single-xff", "fly", "aws-alb"],
+          "description": "Client address policy of the trusted control HTTPS proxy: single-xff (overwritten X-Forwarded-For), fly (Fly-Client-IP), or aws-alb (appended X-Forwarded-For without ports)."
         },
         "private_control_listen": {
           "type": "string",

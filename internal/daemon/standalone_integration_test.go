@@ -35,7 +35,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		ServicePortRanges: serviceListeners.inventory(),
 		Role:              daemonconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
 		ControlListen: controlListener.Addr().String(), PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
-		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
+		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlProxyProvider: "single-xff",
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDP.LocalAddr().String(), InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: "tnl.test", ManagedDomain: "tunnels.test",
 		ManagedURLMode:            naming.ManagedURLModeGenerated,

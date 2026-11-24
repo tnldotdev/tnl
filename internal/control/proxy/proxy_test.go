@@ -1,16 +1,28 @@
 package proxy
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
+func TestHTTPSRequiresKnownProvider(t *testing.T) {
+	for _, provider := range []Provider{"", "Fly-Client-IP", "unknown"} {
+		err := (Config{Origin: "https://control.example", TrustedPeers: []string{"192.0.2.8/32"}, Provider: provider}).Validate()
+		if reason, _ := failure.ReasonOf(err); reason != failure.ServerConfigInvalid || !errors.Is(err, errProxyProvider) {
+			t.Fatalf("provider %q: %v", provider, err)
+		}
+	}
+}
+
 func TestTrustedHTTPSMetadata(t *testing.T) {
-	for _, header := range []string{"X-Forwarded-For", "Fly-Client-IP"} {
-		t.Run(header, func(t *testing.T) {
+	for provider, header := range map[Provider]string{SingleXFF: "X-Forwarded-For", Fly: "Fly-Client-IP"} {
+		t.Run(string(provider), func(t *testing.T) {
 			calls := 0
-			handler, err := (Config{Origin: "https://control.example", TrustedPeers: []string{"192.0.2.8/32"}, ClientIPHeader: header}).Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler, err := (Config{Origin: "https://control.example", TrustedPeers: []string{"192.0.2.8/32"}, Provider: provider}).Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				if r.RemoteAddr != "198.51.100.4:0" || r.URL.Scheme != "https" || r.URL.Host != "control.example" || r.TLS != nil {
 					t.Errorf("unexpected backend request: %s %s TLS=%v", r.RemoteAddr, r.URL, r.TLS)
@@ -43,6 +55,8 @@ func TestTrustedHTTPSMetadata(t *testing.T) {
 				t.Run(test.name, func(t *testing.T) {
 					r := httptest.NewRequest("GET", "http://control.example/", nil)
 					r.RemoteAddr = "192.0.2.8:1234"
+					r.Header.Set("X-Forwarded-For", "192.0.2.101")
+					r.Header.Set("Fly-Client-IP", "192.0.2.102")
 					r.Header.Set(header, "198.51.100.4")
 					r.Header.Set("X-Forwarded-Proto", "https")
 					r.Header.Set("X-Forwarded-Host", "evil.example")
@@ -100,7 +114,7 @@ func TestLocalHTTPDoesNotRequireOrTrustProxyHeaders(t *testing.T) {
 func TestTrustedProxyAppendsClientIP(t *testing.T) {
 	var observed string
 	handler, err := (Config{Origin: "https://control.example", TrustedPeers: []string{"10.74.0.0/24"},
-		ClientIPHeader: "X-Forwarded-For", AppendsIP: true}).Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		Provider: AWSALB}).Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		observed = r.RemoteAddr
 		if len(r.Header.Values("X-Forwarded-For")) != 0 {
 			t.Fatal("unverified forwarding chain reached control")

@@ -35,6 +35,7 @@ func TestWebhookSecretEnvironmentAndFlag(t *testing.T) {
 	t.Setenv("TNLD_ROUTE53_SERVER_ZONE_ID", "ZSERVER")
 	args := []string{"--role", "standalone", "--database-url", "postgres://tnl:secret@database.example/tnl",
 		"--server-domain", "infra.example.test", "--managed-domain", "routes.example.test",
+		"--control-proxy-provider", "single-xff",
 		"--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server", "--storage-key", testStorageKey,
 		"--acme-email", "operator@example.test", "--acme-accept-terms",
 		"--email-url", "https://mail.example.test"}

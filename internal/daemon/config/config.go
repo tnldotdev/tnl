@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	controlproxy "github.com/tnldotdev/tnl/internal/control/proxy"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	ingresspool "github.com/tnldotdev/tnl/internal/naming/ingresspool"
@@ -48,17 +49,16 @@ type Config struct {
 
 	ProjectPublisherLimits map[string]int `name:"project-publisher-limit" env:"TNLD_PROJECT_PUBLISHER_LIMITS" help:"Set a publisher identity quota for a project (TEAM_ID/PROJECT_KEY=LIMIT). Omit to use no project quota."`
 
-	ControlListen         string   `name:"control-listen" env:"TNLD_CONTROL_LISTEN" help:"Private HTTP backend for the deployment's control HTTPS proxy."`
-	ControlTrustedProxies []string `name:"control-trusted-proxies" env:"TNLD_CONTROL_TRUSTED_PROXIES" default:"127.0.0.1/32,::1/128" help:"Exact trusted control HTTPS proxy peer CIDRs."`
-	ControlClientIPHeader string   `name:"control-client-ip-header" env:"TNLD_CONTROL_CLIENT_IP_HEADER" default:"X-Forwarded-For" enum:"X-Forwarded-For,Fly-Client-IP" help:"Source header overwritten by the trusted control HTTPS proxy."`
-	ControlProxyAppendsIP bool     `name:"control-proxy-appends-ip" env:"TNLD_CONTROL_PROXY_APPENDS_IP" help:"Use the last X-Forwarded-For address appended by a trusted HTTPS proxy."`
-	PrivateControlListen  string   `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private control API listen address for ingress and relays."`
-	IngressListen         string   `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
-	RelayTCPListen        string   `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public WSS publisher-connection listen address."`
-	RelayUDPListen        string   `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
-	RelayQUICProfile      string   `name:"relay-quic-profile" env:"TNLD_RELAY_QUIC_PROFILE" default:"standard" help:"Relay QUIC listener profile: standard or fly."`
-	InternalRelayListen   string   `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address (QUIC/UDP and WSS/TCP)."`
-	DNSServer             string   `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used to verify custom domains. Defaults to the system resolver."`
+	ControlListen         string                `name:"control-listen" env:"TNLD_CONTROL_LISTEN" help:"Private HTTP backend for the deployment's control HTTPS proxy."`
+	ControlTrustedProxies []string              `name:"control-trusted-proxies" env:"TNLD_CONTROL_TRUSTED_PROXIES" default:"127.0.0.1/32,::1/128" help:"Exact trusted control HTTPS proxy peer CIDRs."`
+	ControlProxyProvider  controlproxy.Provider `name:"control-proxy-provider" env:"TNLD_CONTROL_PROXY_PROVIDER" enum:"single-xff,fly,aws-alb" help:"Client address policy of the trusted control HTTPS proxy: single-xff (overwritten X-Forwarded-For), fly (Fly-Client-IP), or aws-alb (appended X-Forwarded-For without ports)."`
+	PrivateControlListen  string                `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private control API listen address for ingress and relays."`
+	IngressListen         string                `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
+	RelayTCPListen        string                `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public WSS publisher-connection listen address."`
+	RelayUDPListen        string                `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
+	RelayQUICProfile      string                `name:"relay-quic-profile" env:"TNLD_RELAY_QUIC_PROFILE" default:"standard" help:"Relay QUIC listener profile: standard or fly."`
+	InternalRelayListen   string                `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address (QUIC/UDP and WSS/TCP)."`
+	DNSServer             string                `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used to verify custom domains. Defaults to the system resolver."`
 
 	ServerDomain                      string                `name:"server-domain" env:"TNLD_SERVER_DOMAIN" help:"Infrastructure DNS suffix used to derive control, ingress, and relay hostnames."`
 	ControlURL                        string                `name:"control-url" env:"TNLD_CONTROL_URL" help:"External HTTPS origin of the control deployment proxy; defaults to https://control.<server-domain>."`
