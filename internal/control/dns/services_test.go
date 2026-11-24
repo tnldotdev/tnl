@@ -76,11 +76,11 @@ func TestServiceEndpointDNSUsesOwnedExactRecords(t *testing.T) {
 			if provider.record.Owner != ServiceOwner(store.work.OwnerID) || provider.record.CanonicalHostname != store.work.Hostname || store.saves != 1 {
 				t.Fatal("managed endpoint used another DNS owner or a broad wildcard", provider.record, store.saved)
 			}
+			removing := test.state == controlstate.ServiceEndpointDNSRemoving
 			if provider.record.ZoneID != "Z123" || provider.record.ZoneDomain != "tunnels.example.test" || provider.record.CustomZone ||
-				verifier.addressCalls != 1 || verifier.addressHostname != store.work.Hostname {
+				verifier.addressCalls+verifier.removalCalls != 1 || (verifier.removalCalls == 1) != removing || verifier.addressHostname != store.work.Hostname {
 				t.Fatal("managed endpoint changed its zone or verification count", provider.record, verifier)
 			}
-			removing := test.state == controlstate.ServiceEndpointDNSRemoving
 			response := httptest.NewRecorder()
 			metrics.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 			for _, phase := range []string{"claim", "provider", "verify", "advance", "save"} {
@@ -252,7 +252,7 @@ func TestServiceEndpointDNSExactHostnameAuthority(t *testing.T) {
 				wantSaved := work
 				wantSaved.State = state
 				if !reflect.DeepEqual(provider.record, wantRecord) || !reflect.DeepEqual(store.authorityReferences, wantReferences) ||
-					provider.publishCalls != 1 || provider.removeCalls != removes || verifier.addressCalls != calls ||
+					provider.publishCalls != 1 || provider.removeCalls != removes || verifier.addressCalls != 1 || verifier.removalCalls != removes ||
 					verifier.addressHostname != work.Hostname || !reflect.DeepEqual(verifier.addressNameservers, wantNameservers) ||
 					!reflect.DeepEqual(verifier.routeIPv4, wantRecord.IngressIPv4Addresses) ||
 					!reflect.DeepEqual(verifier.routeIPv6, wantRecord.IngressIPv6Addresses) ||

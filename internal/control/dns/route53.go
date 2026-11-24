@@ -98,28 +98,28 @@ func (p *Route53Provider) PublishAddress(ctx context.Context, record AddressReco
 	return zone, nil
 }
 
-func (p *Route53Provider) RemoveAddress(ctx context.Context, record AddressRecord) (Zone, error) {
+func (p *Route53Provider) RemoveAddress(ctx context.Context, record AddressRecord) (AddressRemoval, error) {
 	marker := record.Owner.marker()
 	if marker == "" {
-		return Zone{}, terminalf("DNS address record has an invalid owner")
+		return AddressRemoval{}, terminalf("DNS address record has an invalid owner")
 	}
 	zone, err := p.addressZone(ctx, record)
 	if err != nil {
-		return Zone{}, err
+		return AddressRemoval{}, err
 	}
 	addressRecords, owner, err := p.addressRecords(ctx, record)
 	if err != nil {
-		return Zone{}, err
+		return AddressRemoval{}, err
 	}
 	if owner == nil {
 		if len(addressRecords) == 0 {
-			return zone, nil
+			return AddressRemoval{Zone: zone, ExactRecordsAbsent: true}, nil
 		}
-		return Zone{}, terminalf("service endpoint hostname has address records without an ownership marker")
+		return AddressRemoval{}, terminalf("service endpoint hostname has address records without an ownership marker")
 	}
 	if !plainRecordSet(owner) || len(owner.ResourceRecords) != 1 ||
 		aws.ToString(owner.ResourceRecords[0].Value) != marker {
-		return Zone{}, terminalf("service endpoint DNS ownership marker does not match")
+		return AddressRemoval{}, terminalf("service endpoint DNS ownership marker does not match")
 	}
 	changes := make([]types.Change, 0, len(addressRecords)+1)
 	for _, recordType := range []types.RRType{types.RRTypeA, types.RRTypeAaaa} {
@@ -132,9 +132,9 @@ func (p *Route53Provider) RemoveAddress(ctx context.Context, record AddressRecor
 		HostedZoneId: aws.String(zone.ID),
 		ChangeBatch:  &types.ChangeBatch{Comment: aws.String("remove tnl " + record.Owner.kind + " " + record.Owner.id), Changes: changes},
 	}); err != nil {
-		return Zone{}, fmt.Errorf("dnscontroller: remove Route 53 service address records: %w", err)
+		return AddressRemoval{}, fmt.Errorf("dnscontroller: remove Route 53 service address records: %w", err)
 	}
-	return zone, nil
+	return AddressRemoval{Zone: zone}, nil
 }
 
 func (p *Route53Provider) ReconcileChallenge(ctx context.Context, record ChallengeRecord) (Zone, error) {

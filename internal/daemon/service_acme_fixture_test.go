@@ -96,11 +96,11 @@ func (f *privateFixtureDNS) PublishAddress(_ context.Context, r controldns.Addre
 	f.ip[dns.Fqdn(r.CanonicalHostname)] = slices.Clone(r.IngressIPv4Addresses)
 	return controldns.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-address"}, nil
 }
-func (f *privateFixtureDNS) RemoveAddress(_ context.Context, r controldns.AddressRecord) (controldns.Zone, error) {
+func (f *privateFixtureDNS) RemoveAddress(_ context.Context, r controldns.AddressRecord) (controldns.AddressRemoval, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.ip, dns.Fqdn(r.CanonicalHostname))
-	return controldns.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-remove"}, nil
+	return controldns.AddressRemoval{Zone: controldns.Zone{ID: r.ZoneID, Nameservers: []string{f.address}}, ExactRecordsAbsent: true}, nil
 }
 func (f *privateFixtureDNS) EnsureCustomZone(context.Context, controlstate.DNSAuthorityWork) (controldns.Zone, error) {
 	return controldns.Zone{}, errors.New("fixture supports its managed domain only")
@@ -128,6 +128,10 @@ func (f *privateFixtureDNS) VerifyAddress(ctx context.Context, name string, ipv4
 	expected := slices.Clone(ipv4)
 	slices.Sort(expected)
 	return len(ipv6) == 0 && slices.Equal(addresses, expected), nil
+}
+
+func (f *privateFixtureDNS) VerifyAddressRemoval(ctx context.Context, record controldns.AddressRecord, nameservers []string) (bool, error) {
+	return f.VerifyAddress(ctx, record.CanonicalHostname, nil, nil, nameservers)
 }
 
 func privateFixtureACME(t *testing.T, owner *runtimeTopology, d *controlstate.Database, cfg *daemonconfig.Config) (integrationPebble, *privateFixtureDNS) {

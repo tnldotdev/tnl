@@ -294,6 +294,7 @@ type providerStub struct {
 	releaseCalls            int
 	publishCalls            int
 	removeCalls             int
+	exactRecordsRemain      bool
 	record                  AddressRecord
 	ensureWork, releaseWork controlstate.DNSAuthorityWork
 	beforeCall              func()
@@ -326,13 +327,13 @@ func (p *providerStub) PublishAddress(_ context.Context, record AddressRecord) (
 	return p.zone, p.err
 }
 
-func (p *providerStub) RemoveAddress(_ context.Context, record AddressRecord) (Zone, error) {
+func (p *providerStub) RemoveAddress(_ context.Context, record AddressRecord) (AddressRemoval, error) {
 	p.removeCalls++
 	p.record = record
 	if p.beforeCall != nil {
 		p.beforeCall()
 	}
-	return p.zone, p.err
+	return AddressRemoval{Zone: p.zone, ExactRecordsAbsent: !p.exactRecordsRemain}, p.err
 }
 
 type verifierStub struct {
@@ -342,8 +343,16 @@ type verifierStub struct {
 	domain                                   string
 	addressVerified                          bool
 	addressCalls                             int
+	removalCalls                             int
 	addressHostname                          string
 	routeIPv4, routeIPv6, addressNameservers []string
+}
+
+func (v *verifierStub) VerifyAddressRemoval(_ context.Context, record AddressRecord, nameservers []string) (bool, error) {
+	v.removalCalls++
+	v.addressHostname, v.addressNameservers = record.CanonicalHostname, nameservers
+	v.routeIPv4, v.routeIPv6 = nil, nil
+	return v.addressVerified, v.err
 }
 
 func (v *verifierStub) VerifyAddress(
@@ -416,7 +425,7 @@ func TestWorkerReconcilesCustomServiceEndpointPublicationAndRemoval(t *testing.T
 			if test.removing {
 				wantIPv4, wantIPv6 = nil, nil
 			}
-			if verifier.addressCalls != 1 || verifier.addressHostname != "api.claimed.example.test" ||
+			if verifier.addressCalls+verifier.removalCalls != 1 || (verifier.removalCalls == 1) != test.removing || verifier.addressHostname != "api.claimed.example.test" ||
 				!reflect.DeepEqual(verifier.routeIPv4, wantIPv4) || !reflect.DeepEqual(verifier.routeIPv6, wantIPv6) || !reflect.DeepEqual(verifier.addressNameservers, wantNameservers) {
 				t.Fatalf("verification = %#v", verifier)
 			}
@@ -613,8 +622,8 @@ func TestWorkerServiceFailuresPreserveLifecycleOrFailTerminally(t *testing.T) {
 				if test.providerErr == nil {
 					wantVerifications = 1
 				}
-				if verifier.addressCalls != wantVerifications {
-					t.Fatalf("verification calls = %d", verifier.addressCalls)
+				if verifier.addressCalls+verifier.removalCalls != wantVerifications {
+					t.Fatalf("verification calls = %d address, %d removal", verifier.addressCalls, verifier.removalCalls)
 				}
 			})
 		}
