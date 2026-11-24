@@ -61,6 +61,20 @@ func TestFlyMachineIdentityUsesExactMachineAndApp(t *testing.T) {
 	}
 }
 
+func TestSlotCredentialsOnlyAppearRedactedOnTheirRole(t *testing.T) {
+	for name, owner := range map[string]Role{
+		"relay_slots_file": RoleControl, "relay_slot_credential": RoleRelay, "forwarding_credential": RoleIngress,
+	} {
+		for _, role := range []Role{RoleControl, RoleRelay, RoleIngress, RoleStandalone} {
+			values := Inspect(Config{Role: role, RelaySlotsFile: "private", RelaySlotCredential: "private", ForwardingCredential: "private"}, nil)
+			v, found := values[name]
+			if found != (role == owner) || found && v.Value != "[redacted]" {
+				t.Fatalf("incorrect role or redaction for %s on %s", name, role)
+			}
+		}
+	}
+}
+
 func TestPublisherConnectionStreamLimit(t *testing.T) {
 	base := []string{"--role=relay", "--control-hostname=control.example.test", "--cluster-secret=" + testClusterSecret,
 		"--relay-service-id=relay-a", "--relay-id=relay-a-1", "--relay-address=relay.example.test:443", "--internal-relay-address=relay.internal:9445"}

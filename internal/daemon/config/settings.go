@@ -19,7 +19,11 @@ func SettingApplies(name string, role Role) bool {
 		return role != RoleStandalone
 	case name == "fly_machine_identity" || name == "control_hostname" || name == "private_control_address":
 		return role == RoleIngress || role == RoleRelay
-	case name == "relay_id_prefix":
+	case name == "relay_slots_file":
+		return role == RoleControl
+	case name == "forwarding_credential":
+		return role == RoleIngress
+	case name == "relay_id_prefix" || name == "relay_slot_credential":
 		return role == RoleRelay
 	case name == "service_port_ranges":
 		return role.RunsControl() || role.RunsIngress()
@@ -80,7 +84,7 @@ func Inspect(c Config, sources map[string]string) map[string]SettingValue {
 		"storage_key", "storage_key_previous", "web_service_secret", "webhook_secret",
 		"oidc_client_secret", "oidc_admission_file", "initial_administrator",
 		"initial_team_owner", "default_team_member", "private_control_tls_private_key_file",
-		"relay_tls_private_key_file"}
+		"relay_tls_private_key_file", "relay_slots_file", "relay_slot_credential", "forwarding_credential"}
 	for i := range typ.NumField() {
 		field := typ.Field(i)
 		name := strings.ReplaceAll(field.Tag.Get("name"), "-", "_")
