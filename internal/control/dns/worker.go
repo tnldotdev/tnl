@@ -29,6 +29,12 @@ type Zone struct {
 	ChangeID    string
 }
 
+type AddressRemoval struct {
+	Zone Zone
+	// exact absence comes from a provider listing, not an accepted delete.
+	ExactRecordsAbsent bool
+}
+
 type AddressRecord struct {
 	ZoneID               string
 	ZoneDomain           string
@@ -48,12 +54,13 @@ type Provider interface {
 	EnsureCustomZone(context.Context, controlstate.DNSAuthorityWork) (Zone, error)
 	ReleaseCustomZone(context.Context, controlstate.DNSAuthorityWork) error
 	PublishAddress(context.Context, AddressRecord) (Zone, error)
-	RemoveAddress(context.Context, AddressRecord) (Zone, error)
+	RemoveAddress(context.Context, AddressRecord) (AddressRemoval, error)
 }
 
 type DNSVerifier interface {
 	Verify(context.Context, string, []string) (bool, error)
 	VerifyAddress(context.Context, string, []string, []string, []string) (bool, error)
+	VerifyAddressRemoval(context.Context, AddressRecord, []string) (bool, error)
 }
 
 type BrandedDelegationProvider interface {

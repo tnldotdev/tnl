@@ -120,6 +120,20 @@ func verifyNameserverAddresses(
 	ctx context.Context, hostname string, addresses []net.IPAddr, expected map[uint16][]string,
 	query func(context.Context, string, string, uint16, []string) (bool, error),
 ) (bool, error) {
+	return verifyNameserver(ctx, addresses, func(ctx context.Context, server string) (bool, error) {
+		for _, recordType := range []uint16{dns.TypeA, dns.TypeAAAA} {
+			match, err := query(ctx, server, hostname, recordType, expected[recordType])
+			if err != nil || !match || ctx.Err() != nil {
+				return false, err
+			}
+		}
+		return true, nil
+	})
+}
+
+func verifyNameserver(
+	ctx context.Context, addresses []net.IPAddr, query func(context.Context, string) (bool, error),
+) (bool, error) {
 	if len(addresses) == 0 {
 		return false, errors.New("no nameserver addresses")
 	}
@@ -127,25 +141,17 @@ func verifyNameserverAddresses(
 	var queryErr error
 	for _, address := range addresses {
 		server := net.JoinHostPort(address.IP.String(), "53")
-		matches := true
-		for _, recordType := range []uint16{dns.TypeA, dns.TypeAAAA} {
-			match, err := query(ctx, server, hostname, recordType, expected[recordType])
-			if ctx.Err() != nil {
-				return false, errors.Join(queryErr, err, context.Cause(ctx))
-			}
-			if err != nil {
-				queryErr = errors.Join(queryErr, err)
-				hardFailure = hardFailure || !addressTransportUnavailable(err)
-			} else if !match {
-				pending = true
-			}
-			if err != nil || !match {
-				matches = false
-				break
-			}
+		matches, err := query(ctx, server)
+		if ctx.Err() != nil {
+			return false, errors.Join(queryErr, err, context.Cause(ctx))
 		}
-		if matches {
+		if err != nil {
+			queryErr = errors.Join(queryErr, err)
+			hardFailure = hardFailure || !addressTransportUnavailable(err)
+		} else if matches {
 			return true, nil
+		} else {
+			pending = true
 		}
 	}
 	// an authoritative mismatch is useful evidence of propagation lag. an

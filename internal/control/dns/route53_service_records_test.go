@@ -137,6 +137,8 @@ func TestRoute53ProviderExactEndpointRemovalPreservesForeignRecordsAndBlocksZone
 	client.recordSets[dnsName(addressOwnerName(hostname))] = []types.ResourceRecordSet{owner}
 	client.recordSets[dnsName(foreignHostname)] = []types.ResourceRecordSet{foreign}
 	client.recordSets[dnsName(addressOwnerName(foreignHostname))] = []types.ResourceRecordSet{foreignOwner}
+	wildcard := "*." + work.CanonicalDomain
+	client.recordSets[dnsName(wildcard)] = []types.ResourceRecordSet{*simpleRecordSet(wildcard, types.RRTypeA, []string{"192.0.2.30"})}
 	var changes []types.Change
 	client.changeRecords = func(_ context.Context, input *route53.ChangeResourceRecordSetsInput) (*route53.ChangeResourceRecordSetsOutput, error) {
 		if aws.ToString(input.HostedZoneId) != "Z123" {
@@ -159,8 +161,11 @@ func TestRoute53ProviderExactEndpointRemovalPreservesForeignRecordsAndBlocksZone
 		}
 		return &route53.ChangeResourceRecordSetsOutput{}, nil
 	}
-	if _, err := provider.RemoveAddress(t.Context(), record); err != nil {
-		t.Fatal(err)
+	if removed, err := provider.RemoveAddress(t.Context(), record); err != nil || removed.ExactRecordsAbsent {
+		t.Fatal("accepted delete was treated as readback", removed, err)
+	}
+	if removed, err := provider.RemoveAddress(t.Context(), record); err != nil || !removed.ExactRecordsAbsent {
+		t.Fatal("provider did not confirm exact removal under a wildcard", removed, err)
 	}
 	wantChanges := []types.Change{
 		{Action: types.ChangeActionDelete, ResourceRecordSet: &owned[0]},
@@ -175,6 +180,7 @@ func TestRoute53ProviderExactEndpointRemovalPreservesForeignRecordsAndBlocksZone
 	var nonempty *types.HostedZoneNotEmpty
 	if !errors.As(err, &nonempty) || client.deleteCalls != 1 || client.deleteZoneID != "Z123" || client.deletedZoneID != "" ||
 		!reflect.DeepEqual(changes, wantChanges) ||
+		len(client.recordSets[dnsName(wildcard)]) != 1 ||
 		!reflect.DeepEqual(client.recordSets[dnsName(foreignHostname)], []types.ResourceRecordSet{foreign}) ||
 		!reflect.DeepEqual(client.recordSets[dnsName(addressOwnerName(foreignHostname))], []types.ResourceRecordSet{foreignOwner}) {
 		t.Fatalf("release changed foreign exact records: error %v, changes %#v, records %#v", err, changes, client.recordSets)
