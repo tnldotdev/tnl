@@ -17,6 +17,7 @@ tnld:
   role: standalone
   database_url: postgres://tnl:secret@database.example/tnl
   server_domain: tnl.example.com
+  control_proxy_provider: single-xff
   managed_domain: tunnels.example.com
   route53_server_zone_id: ZSERVER
   acme_email: operator@example.com

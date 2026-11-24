@@ -103,6 +103,7 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		"TNLD_REFRESH_TOKEN_LIFETIME": "1h",
 		"TNLD_RELAY_LEASE_DURATION":   "5s",
 		"TNLD_SERVER_DOMAIN":          serverDomain,
+		"TNLD_CONTROL_PROXY_PROVIDER": "single-xff",
 		"TNLD_STORAGE_KEY":            testStorageKey,
 	})
 	owner := newBinaryTopology(t)

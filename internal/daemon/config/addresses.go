@@ -82,12 +82,9 @@ func (c Config) ControlOrigin() string {
 }
 
 func (c Config) ControlProxy() controlProxy.Config {
-	peers, header := c.ControlTrustedProxies, c.ControlClientIPHeader
+	peers := c.ControlTrustedProxies
 	if peers == nil {
 		peers = []string{"127.0.0.1/32", "::1/128"}
 	}
-	if header == "" {
-		header = "X-Forwarded-For"
-	}
-	return controlProxy.Config{Origin: c.ControlOrigin(), TrustedPeers: peers, ClientIPHeader: header}
+	return controlProxy.Config{Origin: c.ControlOrigin(), TrustedPeers: peers, Provider: c.ControlProxyProvider}
 }

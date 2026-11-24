@@ -101,7 +101,7 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 		ServicePortRanges: serviceListeners.inventory(),
 		Role:              daemonconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: listeners.metrics.Addr().String(),
 		ControlListen: listeners.control.Addr().String(), PrivateControlListen: "127.0.0.1:1", IngressListen: publicListener.Addr().String(),
-		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
+		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlProxyProvider: "single-xff",
 		Route53ManagedZoneID: "fixture-zone", Route53ServerZoneID: "fixture-zone", Route53Region: "us-east-1", IngressIPv4Addresses: []string{"127.0.0.1"},
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDP.LocalAddr().String(), InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: serverDomain, ManagedDomain: "routes." + serverDomain,

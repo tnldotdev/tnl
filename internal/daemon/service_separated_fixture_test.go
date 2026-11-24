@@ -125,7 +125,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	if err := database.ConfigureIngressServicePorts(t.Context(), controlstate.PrimaryIngressPoolID, ports.Ranges()); err != nil {
 		t.Fatal(err)
 	}
-	config.ControlTrustedProxies, config.ControlClientIPHeader = []string{"127.0.0.1/32"}, "X-Forwarded-For"
+	config.ControlTrustedProxies, config.ControlProxyProvider = []string{"127.0.0.1/32"}, "single-xff"
 	publicControlListener := serviceRuntimeListener(t, owner)
 	publicControlAddress := publicControlListener.Addr().String()
 	serveIntegrationControlProxy(t, owner, publicControlListener, config.ControlListen, controlTLS)

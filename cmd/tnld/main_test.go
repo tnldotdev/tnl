@@ -228,6 +228,7 @@ tnld:
   role: control
   database_url: postgres://tnl:secret@database.example/tnl
   server_domain: tnl.example.com
+  control_proxy_provider: single-xff
   managed_domain: tunnels.example.com
   cluster_secret: 0123456789abcdef0123456789abcdef
   storage_key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
