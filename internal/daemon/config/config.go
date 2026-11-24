@@ -51,6 +51,7 @@ type Config struct {
 	ControlListen         string   `name:"control-listen" env:"TNLD_CONTROL_LISTEN" help:"Private HTTP backend for the deployment's control HTTPS proxy."`
 	ControlTrustedProxies []string `name:"control-trusted-proxies" env:"TNLD_CONTROL_TRUSTED_PROXIES" default:"127.0.0.1/32,::1/128" help:"Exact trusted control HTTPS proxy peer CIDRs."`
 	ControlClientIPHeader string   `name:"control-client-ip-header" env:"TNLD_CONTROL_CLIENT_IP_HEADER" default:"X-Forwarded-For" enum:"X-Forwarded-For,Fly-Client-IP" help:"Source header overwritten by the trusted control HTTPS proxy."`
+	ControlProxyAppendsIP bool     `name:"control-proxy-appends-ip" env:"TNLD_CONTROL_PROXY_APPENDS_IP" help:"Use the last X-Forwarded-For address appended by a trusted HTTPS proxy."`
 	PrivateControlListen  string   `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private control API listen address for ingress and relays."`
 	IngressListen         string   `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
 	RelayTCPListen        string   `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public WSS publisher-connection listen address."`

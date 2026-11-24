@@ -89,5 +89,5 @@ func (c Config) ControlProxy() controlProxy.Config {
 	if header == "" {
 		header = "X-Forwarded-For"
 	}
-	return controlProxy.Config{Origin: c.ControlOrigin(), TrustedPeers: peers, ClientIPHeader: header}
+	return controlProxy.Config{Origin: c.ControlOrigin(), TrustedPeers: peers, ClientIPHeader: header, AppendsIP: c.ControlProxyAppendsIP}
 }

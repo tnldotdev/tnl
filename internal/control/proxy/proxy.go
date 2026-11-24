@@ -18,6 +18,7 @@ type Config struct {
 	Origin         string
 	TrustedPeers   []string
 	ClientIPHeader string
+	AppendsIP      bool
 }
 
 func (c Config) Validate() error {
@@ -49,7 +50,7 @@ func (c Config) Handler(next http.Handler) (http.Handler, error) {
 	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
 		return nil, errors.New("control proxy requires a canonical external HTTPS origin")
 	}
-	if c.ClientIPHeader != "X-Forwarded-For" && c.ClientIPHeader != "Fly-Client-IP" {
+	if c.ClientIPHeader != "X-Forwarded-For" && (c.ClientIPHeader != "Fly-Client-IP" || c.AppendsIP) {
 		return nil, errors.New("control proxy client IP header must be X-Forwarded-For or Fly-Client-IP")
 	}
 	if len(c.TrustedPeers) == 0 {
@@ -75,11 +76,16 @@ func (c Config) Handler(next http.Handler) (http.Handler, error) {
 			serverhttp.WriteProblem(w, http.StatusForbidden, "forbidden", "control backend requires a trusted HTTPS proxy", "")
 			return
 		}
-		// require one overwritten source value, not an ambiguous proxy chain.
+		// in append mode only the last hop belongs to the trusted proxy. the
+		// rest is caller input and must never become an admission identity.
 		values := r.Header.Values(c.ClientIPHeader)
 		var source netip.Addr
 		if len(values) == 1 {
-			source, _ = netip.ParseAddr(values[0])
+			value := values[0]
+			if c.AppendsIP {
+				value = strings.Trim(value[strings.LastIndexByte(value, ',')+1:], " \t")
+			}
+			source, _ = netip.ParseAddr(value)
 		}
 		proto := r.Header.Values("X-Forwarded-Proto")
 		if !source.IsValid() || source.Zone() != "" || len(proto) != 1 || proto[0] != "https" || r.Host != origin.Host {

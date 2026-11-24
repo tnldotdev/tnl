@@ -96,3 +96,39 @@ func TestLocalHTTPDoesNotRequireOrTrustProxyHeaders(t *testing.T) {
 		t.Fatal("remote plaintext origin accepted")
 	}
 }
+
+func TestTrustedProxyAppendsClientIP(t *testing.T) {
+	var observed string
+	handler, err := (Config{Origin: "https://control.example", TrustedPeers: []string{"10.74.0.0/24"},
+		ClientIPHeader: "X-Forwarded-For", AppendsIP: true}).Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed = r.RemoteAddr
+		if len(r.Header.Values("X-Forwarded-For")) != 0 {
+			t.Fatal("unverified forwarding chain reached control")
+		}
+		w.WriteHeader(204)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		peer, chain, want string
+		status            int
+	}{
+		{"10.74.0.1:80", "198.51.100.1", "198.51.100.1:0", 204},
+		{"10.74.0.2:80", "192.0.2.1, 127.0.0.1,\t2001:db8::2", "[2001:db8::2]:0", 204},
+		{"10.74.0.1:80", "198.51.100.1,", "", 400},
+		{"10.74.0.1:80", "198.51.100.1, unknown", "", 400},
+		{"192.0.2.1:80", "127.0.0.1, 198.51.100.1", "", 403},
+	} {
+		observed = ""
+		r := httptest.NewRequest("GET", "http://control.example/", nil)
+		r.RemoteAddr = tc.peer
+		r.Header.Set("X-Forwarded-For", tc.chain)
+		r.Header.Set("X-Forwarded-Proto", "https")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != tc.status || observed != tc.want {
+			t.Fatalf("peer %q chain %q: got %d, %q", tc.peer, tc.chain, w.Code, observed)
+		}
+	}
+}
