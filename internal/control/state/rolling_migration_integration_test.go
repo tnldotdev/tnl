@@ -1,20 +1,41 @@
 package state
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationPostgresRollingMigration(t *testing.T) {
-	d, directURL, now := newControlStateIntegrationDatabaseWithURL(t, "rolling_migration")
+	owner, directURL, now := newControlStateIntegrationDatabaseWithURL(t, "rolling_migration")
 	ctx := t.Context()
-	actor := seedControlServiceAuthority(t, d, now, "rolling")
+	actor := seedControlServiceAuthority(t, owner, now, "rolling")
+	owner.Close()
+	cfg, err := parseDirectConfig(directURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB := stdlib.OpenDB(*cfg)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	pooledURL := rollingMigrationRuntimeURL(t, sqlDB, directURL, cfg.Database+"_runtime")
+	d, err := Open(ctx, pooledURL, testStorageKey, "", naming.ManagedURLModeGenerated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
 	create := func(name string) ServiceRecord {
 		t.Helper()
 		service, err := d.CreateServiceAt(ctx, actor.TeamID, actor.ActingIdentityID, name, name,
@@ -41,17 +62,12 @@ func TestIntegrationPostgresRollingMigration(t *testing.T) {
 
 	// apply a future migration over a separate direct connection. goose commits
 	// the additive DDL and its history entry together, as it does in tnld migrate.
-	cfg, err := parseDirectConfig(directURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB := stdlib.OpenDB(*cfg)
-	defer sqlDB.Close()
 	futureVersion := minimumSchemaVersion + 1
 	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, fstest.MapFS{
 		fmt.Sprintf("%05d_add_service_note.sql", futureVersion): {Data: []byte(`-- +goose Up
 SET LOCAL lock_timeout = '2s';
 ALTER TABLE control.services ADD COLUMN future_note text NOT NULL DEFAULT '';
+CREATE VIEW control.future_service_notes AS SELECT id, future_note FROM control.services;
 `)},
 	}, goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
 	if err != nil {
@@ -66,6 +82,11 @@ ALTER TABLE control.services ADD COLUMN future_note text NOT NULL DEFAULT '';
 	checkRead(d, before)
 	after := create("after-migration")
 	checkRead(d, after)
+	// readiness and old traffic do not prove that new queries have access.
+	var pgErr *pgconn.PgError
+	if _, err := d.pool.Exec(ctx, `SELECT id FROM control.future_service_notes WHERE id = $1`, after.ID); !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+		t.Fatalf("runtime accessed an ungranted view: %v", err)
+	}
 	if got := d.pool.Stat().NewConnsCount(); got != connections {
 		t.Fatalf("old queries did not survive on the existing connections: opened %d new connections", got-connections)
 	}
@@ -99,7 +120,7 @@ ALTER TABLE control.services ADD COLUMN future_note text NOT NULL DEFAULT '';
 	}
 
 	d.Close()
-	restarted, err := Open(ctx, directURL, testStorageKey, "", naming.ManagedURLModeGenerated)
+	restarted, err := Open(ctx, pooledURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal("older serving binary could not reopen newer schema", err)
 	}
@@ -118,7 +139,7 @@ ALTER TABLE control.services ADD COLUMN future_note text NOT NULL DEFAULT '';
 	if err := restarted.Readiness(ctx); err == nil || !strings.Contains(err.Error(), baselineError) {
 		t.Fatal("readiness did not reject the incompatible baseline", err)
 	}
-	if db, err := Open(ctx, directURL, testStorageKey, "", naming.ManagedURLModeGenerated); err == nil || !strings.Contains(err.Error(), baselineError) {
+	if db, err := Open(ctx, pooledURL, testStorageKey, "", naming.ManagedURLModeGenerated); err == nil || !strings.Contains(err.Error(), baselineError) {
 		db.Close()
 		t.Fatal("open did not reject the incompatible baseline", err)
 	}
@@ -128,4 +149,36 @@ ALTER TABLE control.services ADD COLUMN future_note text NOT NULL DEFAULT '';
 	if history() != newHistory {
 		t.Fatal("baseline rejection changed migration history")
 	}
+}
+
+func rollingMigrationRuntimeURL(t *testing.T, owner *sql.DB, directURL, role string) string {
+	t.Helper()
+	const password = "disposable-rolling-migration"
+	name := pgx.Identifier{role}.Sanitize()
+	if _, err := owner.ExecContext(t.Context(), `CREATE ROLE `+name+` LOGIN PASSWORD '`+password+`'`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := owner.ExecContext(ctx, `DROP OWNED BY `+name+`; DROP ROLE `+name); err != nil {
+			t.Errorf("drop rolling migration runtime role: %v", err)
+		}
+	})
+	// grant access to existing objects only, without ownership or default grants.
+	for _, grant := range []string{
+		`GRANT USAGE ON SCHEMA control TO `,
+		`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA control TO `,
+		`GRANT USAGE ON ALL SEQUENCES IN SCHEMA control TO `,
+	} {
+		if _, err := owner.ExecContext(t.Context(), grant+name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parsed, err := url.Parse(directURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.User = url.UserPassword(role, password)
+	return parsed.String()
 }

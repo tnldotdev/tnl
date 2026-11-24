@@ -64,6 +64,12 @@ THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
   batches. Do not drop, rename, retype, or tighten existing schema in a
   rolling-compatible migration. A breaking change needs the explicit approval
   and upgrade plan described above.
+- Preserve the pooled runtime role's effective grants. Test with separate
+  migration and runtime roles, not just the migration owner. Before enabling
+  code that uses new tables, views, sequences, or functions, make sure the
+  runtime role has only the permissions it needs and exercise the affected
+  workload through that role. Migration success and readiness do not prove
+  that a workload can use new objects.
 - Test the overlap on populated PostgreSQL: keep the previous serving pool
   open across migration, check readiness and old reads and writes, and reopen
   it on the newer schema. This guarantee starts only after every running
