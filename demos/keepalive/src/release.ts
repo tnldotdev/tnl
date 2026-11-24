@@ -14,6 +14,7 @@ const media = new Map([
   ["js", "text/javascript; charset=utf-8"],
   ["svg", "image/svg+xml"],
   ["wasm", "application/wasm"],
+  ["woff2", "font/woff2"],
 ]);
 const sha256Hex = /^[a-f0-9]{64}$/;
 

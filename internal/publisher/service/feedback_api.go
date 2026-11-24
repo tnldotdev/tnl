@@ -79,7 +79,7 @@ func (f *feedbackRuntime) handle(response http.ResponseWriter, request *http.Req
 		http.Error(response, "feedback requires a current share", http.StatusForbidden)
 		return true
 	}
-	if request.Method == http.MethodGet && request.URL.Path == "/__tnl/feedback/fira-code.woff2" {
+	if request.Method == http.MethodGet && request.URL.Path == "/__tnl/feedback/jetbrains-mono.woff2" {
 		response.Header().Set("Content-Type", "font/woff2")
 		response.Header().Set("Cache-Control", "public, max-age=3600")
 		_, _ = response.Write(browserfonts.Latin)

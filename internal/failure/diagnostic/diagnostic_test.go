@@ -216,7 +216,7 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 			if test.contentType == "text/html; charset=utf-8" && test.body {
 				body := response.Body.String()
 				if !strings.Contains(body, "<main>") || !strings.Contains(body, `<a href="https://tnl.dev/e/target">`) ||
-					!strings.Contains(body, `font-family:"Fira Code"`) {
+					!strings.Contains(body, `font-family:"JetBrains Mono"`) {
 					t.Fatalf("HTML body = %q", body)
 				}
 			}

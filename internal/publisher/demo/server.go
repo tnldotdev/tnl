@@ -93,10 +93,10 @@ func (d *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(page)
-	case r.URL.Path == "/fonts/fira-code-latin-wght-normal.woff2" && r.Method == http.MethodGet:
+	case r.URL.Path == "/fonts/jetbrains-mono-latin-wght-normal.woff2" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "font/woff2")
 		_, _ = w.Write(browserfonts.Latin)
-	case r.URL.Path == "/fonts/fira-code-symbols2-wght-normal.woff2" && r.Method == http.MethodGet:
+	case r.URL.Path == "/fonts/jetbrains-mono-symbols-wght-normal.woff2" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "font/woff2")
 		_, _ = w.Write(browserfonts.Symbols)
 	case r.URL.Path == "/state" && r.Method == http.MethodGet:

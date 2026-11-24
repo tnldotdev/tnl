@@ -2780,14 +2780,15 @@ License text: [MIT-1]
 bundled assets
 
 --------------------------------------------------------------------------------
-Package: @fontsource-variable/fira-code
+Package: @fontsource-variable/jetbrains-mono
 Version: 5.3.0
 License: OFL-1.1
-Source: https://www.npmjs.com/package/@fontsource-variable/fira-code/v/5.3.0
+Source: https://www.npmjs.com/package/@fontsource-variable/jetbrains-mono/v/5.3.0
+Source (symbols subset): https://github.com/google/fonts/tree/2e05c1cf00a6e4f40a4b931600a90881c26e15cd/ofl/jetbrainsmono
 
 OFL-1.1
 
-Copyright 2014-2020 The Fira Code Project Authors (https://github.com/tonsky/FiraCode)
+Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
