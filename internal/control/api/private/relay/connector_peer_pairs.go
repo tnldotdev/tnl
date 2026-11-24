@@ -38,6 +38,9 @@ func connectorLegProof(encoded string) (tunnelv1.ConnectorPairLegProof, bool) {
 }
 
 func (s *service) ClaimConnectorPeerPairLeg(ctx context.Context, pairID string, slot int, body relayv1.ConnectorPeerPairLegClaimRequest) (relayv1.ConnectorPeerPairLegClaim, error) {
+	if !allowedSlot(ctx, body.RelayLease.RelayServiceId, body.RelayLease.RelayId) {
+		return relayv1.ConnectorPeerPairLegClaim{}, slotDenied()
+	}
 	invalid := func() (relayv1.ConnectorPeerPairLegClaim, error) {
 		return relayv1.ConnectorPeerPairLegClaim{}, serverhttp.NewProblemError(http.StatusBadRequest, "invalid_request", "connector peer pair leg claim is invalid")
 	}

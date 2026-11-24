@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -69,7 +70,7 @@ func relayProcessSettingsFrom(cfg daemonconfig.Config) relayProcessSettings {
 	tlsServerName, _, _ := net.SplitHostPort(cfg.RelayAddress)
 	return relayProcessSettings{
 		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
-		clusterSecret:  cfg.ClusterSecret,
+		clusterSecret:  cmp.Or(cfg.RelaySlotCredential, cfg.ClusterSecret),
 		relayServiceID: cfg.RelayServiceID, relayID: cfg.RelayID,
 		relayAddress: cfg.RelayAddress, tlsServerName: tlsServerName,
 		internalListen:  cfg.InternalRelayListen,

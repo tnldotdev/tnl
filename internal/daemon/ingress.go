@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -55,21 +56,23 @@ func (d *daemon) publishIngressRuntime(runtime *ingressRuntime) {
 }
 
 type ingressProcessSettings struct {
-	controlEndpoint string
-	controlAddress  string
-	clusterSecret   string
-	ingressID       string
-	listen          string
-	listener        net.Listener
-	runtime         ingressSettings
-	expectedPorts   []tcpport.Range
+	controlEndpoint      string
+	controlAddress       string
+	clusterSecret        string
+	forwardingCredential string
+	ingressID            string
+	listen               string
+	listener             net.Listener
+	runtime              ingressSettings
+	expectedPorts        []tcpport.Range
 }
 
 func ingressProcessSettingsFrom(cfg daemonconfig.Config) ingressProcessSettings {
 	result := ingressProcessSettings{
 		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
-		clusterSecret: cfg.ClusterSecret,
-		ingressID:     cfg.IngressID, listen: cfg.IngressListen, runtime: ingressSettingsFrom(cfg),
+		clusterSecret:        cfg.ClusterSecret,
+		forwardingCredential: cmp.Or(cfg.ForwardingCredential, cfg.ClusterSecret),
+		ingressID:            cfg.IngressID, listen: cfg.IngressListen, runtime: ingressSettingsFrom(cfg),
 	}
 	if cfg.ServicePortRanges != nil {
 		inventory, _ := cfg.ServicePortInventory()
@@ -103,7 +106,7 @@ func (d *daemon) startIngress(startup, ctx context.Context, settings ingressProc
 		}
 	}
 	if err := d.startIngressRuntime(ctx, settings.runtime, metrics, ingressRuntimeConfig{
-		client: privateClient, ingressID: settings.ingressID, listener: listener, clusterSecret: settings.clusterSecret,
+		client: privateClient, ingressID: settings.ingressID, listener: listener, clusterSecret: settings.forwardingCredential,
 	}); err != nil {
 		_ = listener.Close()
 		return err

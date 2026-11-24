@@ -6,11 +6,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 )
@@ -19,6 +21,7 @@ type privateControlSettings struct {
 	ingressLeaseDuration time.Duration
 	relayLeaseDuration   time.Duration
 	listen               string
+	relaySlotsFile       string
 	listener             net.Listener
 }
 
@@ -27,6 +30,7 @@ func privateControlSettingsFrom(cfg daemonconfig.Config) privateControlSettings 
 		ingressLeaseDuration: cfg.IngressLeaseDuration,
 		relayLeaseDuration:   cfg.RelayLeaseDuration,
 		listen:               cfg.PrivateControlListen,
+		relaySlotsFile:       cfg.RelaySlotsFile,
 	}
 }
 
@@ -38,8 +42,20 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 	if err != nil {
 		return err
 	}
+	var slots controlrelay.Slots
+	if settings.relaySlotsFile != "" {
+		data, err := os.ReadFile(settings.relaySlotsFile)
+		if err != nil {
+			return failure.Wrap("read relay slot inventory", failure.ServerConfigInvalid, err)
+		}
+		slots, err = controlrelay.ParseSlots(data, d.clusterSecrets)
+		clear(data)
+		if err != nil {
+			return err
+		}
+	}
 	relayHandler, err := controlrelay.NewHandler(controlrelay.Config{
-		Store: d.database, ClusterSecrets: d.clusterSecrets,
+		Store: d.database, ClusterSecrets: d.clusterSecrets, Slots: slots,
 		LeaseDuration: settings.relayLeaseDuration,
 	})
 	if err != nil {

@@ -26,6 +26,7 @@ type Store interface {
 
 type Config struct {
 	Store          Store
+	Slots          Slots
 	ClusterSecrets serverhttp.BearerSecrets
 	LeaseDuration  time.Duration
 	Now            func() time.Time
@@ -34,6 +35,7 @@ type Config struct {
 
 type handler struct {
 	service        *service
+	slots          Slots
 	clusterSecrets serverhttp.BearerSecrets
 	mux            *http.ServeMux
 }
@@ -53,7 +55,7 @@ func NewHandler(config Config) (*handler, error) {
 		return nil, err
 	}
 	h := &handler{
-		service: service, clusterSecrets: config.ClusterSecrets, mux: http.NewServeMux(),
+		service: service, slots: config.Slots, clusterSecrets: config.ClusterSecrets, mux: http.NewServeMux(),
 	}
 	relayv1.HandlerWithOptions(generatedServer{handler: h}, relayv1.StdHTTPServerOptions{
 		BaseRouter: h.mux,
@@ -68,7 +70,16 @@ func NewHandler(config Config) (*handler, error) {
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	if !serverhttp.AuthenticateClusterRequest(response, request, h.clusterSecrets) {
+	if len(h.slots.entries) != 0 {
+		response.Header().Set("Cache-Control", "no-store")
+		authenticated, ok := h.slots.authenticate(request)
+		if !ok {
+			response.Header().Set("WWW-Authenticate", "Bearer")
+			serverhttp.WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "a relay slot credential is required", "")
+			return
+		}
+		request = authenticated
+	} else if !serverhttp.AuthenticateClusterRequest(response, request, h.clusterSecrets) {
 		return
 	}
 	h.mux.ServeHTTP(response, request)

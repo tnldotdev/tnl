@@ -78,6 +78,9 @@ func (h *handler) disconnectServicePublisherConnection(w http.ResponseWriter, r 
 // http and standalone share validation and error classification, not just the
 // database mutation. controllers never receive raw state error identities.
 func (s *service) ClaimServicePublisherConnection(ctx context.Context, id string, body relayv1.ServicePublisherConnectionClaim) (relayv1.ServicePublisherConnection, error) {
+	if !allowedProcess(ctx, body.RelayId) {
+		return relayv1.ServicePublisherConnection{}, slotDenied()
+	}
 	source, err := servicePublisherSource(body.ObservedSourceIp)
 	if err != nil || !opaqueid.Valid(id, opaqueid.PublisherConnectionPrefix) || !opaqueid.Valid(body.ServiceId, opaqueid.ServicePrefix) ||
 		!opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) || body.RunNumber <= 0 || body.ConnectionAssignmentRevision <= 0 || body.RelayLeaseRevision <= 0 ||
@@ -106,6 +109,9 @@ func (s *service) DisconnectServicePublisherConnection(ctx context.Context, id s
 }
 
 func (s *service) servicePublisherTransition(ctx context.Context, id string, body relayv1.ServicePublisherConnectionTransition, disconnect bool) (controlstate.ServicePublisherConnection, error) {
+	if !allowedProcess(ctx, body.RelayId) {
+		return controlstate.ServicePublisherConnection{}, slotDenied()
+	}
 	if !opaqueid.Valid(id, opaqueid.PublisherConnectionPrefix) || !opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) ||
 		body.RunNumber <= 0 || body.ConnectionAssignmentRevision <= 0 || body.RelayLeaseRevision <= 0 ||
 		!serverhttp.ValidIdentifiers(body.RelayId, body.RelayRunId) || disconnect != (body.Unexpected != nil) {

@@ -108,6 +108,9 @@ type Config struct {
 
 	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
+	RelaySlotsFile        string `name:"relay-slots-file" env:"TNLD_RELAY_SLOTS_FILE" type:"path" help:"Control's exact relay registrations and their distinct credentials (JSON)."`
+	RelaySlotCredential   string `name:"relay-slot-credential" env:"TNLD_RELAY_SLOT_CREDENTIAL" help:"Credential for this relay's private control requests."`
+	ForwardingCredential  string `name:"forwarding-credential" env:"TNLD_FORWARDING_CREDENTIAL" help:"Ingress-to-relay forwarding credential. Set it as the cluster secret on relays to keep the ingress control credential on ingress and control only."`
 	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
 	StorageKeyPrevious    string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
 
@@ -186,6 +189,22 @@ func (c Config) Validate() (retErr error) {
 	}
 	if c.Region != "" && !c.Region.Valid() {
 		return region.ErrPreference
+	}
+	if c.RelaySlotsFile != "" && c.Role != RoleControl || c.RelaySlotCredential != "" && c.Role != RoleRelay {
+		return failure.Wrap("select relay credentials", failure.ServerConfigInvalid, errors.New("slot inventory belongs to control and a slot credential belongs to one relay"))
+	}
+	if c.RelaySlotCredential != "" {
+		if _, err := serverhttp.NewBearerSecrets(c.RelaySlotCredential, c.ClusterSecret); err != nil || c.RelaySlotCredential == c.ClusterSecretPrevious {
+			return failure.Wrap("validate relay slot credential", failure.ServerClusterSecretInvalid, errors.Join(errors.New("relay slot requires a distinct credential"), err))
+		}
+	}
+	if c.ForwardingCredential != "" {
+		if c.Role != RoleIngress {
+			return failure.Wrap("select forwarding credential", failure.ServerConfigInvalid, errors.New("only ingress dials relay forwarding connections"))
+		}
+		if _, err := serverhttp.NewBearerSecrets(c.ForwardingCredential, c.ClusterSecret); err != nil || c.ForwardingCredential == c.ClusterSecretPrevious {
+			return failure.Wrap("validate forwarding credential", failure.ServerClusterSecretInvalid, errors.Join(errors.New("forwarding requires a distinct credential"), err))
+		}
 	}
 	if c.RelayQUICProfile != "" && c.RelayQUICProfile != "standard" && c.RelayQUICProfile != "fly" {
 		return failure.WrapSetting("validate relay QUIC profile", failure.ServerConfigInvalid,

@@ -39,6 +39,10 @@ func newService(config DirectConfig) (*service, error) {
 }
 
 func (s *service) RegisterRelay(ctx context.Context, body relayv1.RelayRegistration) (relayv1.RelayLease, error) {
+	if slot, scoped := ctx.Value(slotContext{}).(slot); scoped && (slot.ServiceID != body.RelayServiceId || slot.RelayID != body.RelayId ||
+		slot.Hostname != body.TlsServerName || slot.Hostname+":443" != body.RelayAddress || slot.InternalAddress != body.InternalRelayAddress) {
+		return relayv1.RelayLease{}, slotDenied()
+	}
 	if !region.ID(body.Region).Valid() {
 		return relayv1.RelayLease{}, serverhttp.NewProblemError(http.StatusBadRequest, "invalid_request", "relay region must be an exact catalog provider:region ID or local")
 	}
@@ -92,6 +96,9 @@ func (s *service) RenewRelay(
 	relayID relayv1.RelayID,
 	body relayv1.RelayRenewal,
 ) (relayv1.RelayLease, error) {
+	if !allowedSlot(ctx, body.RelayServiceId, body.RelayId) {
+		return relayv1.RelayLease{}, slotDenied()
+	}
 	if relayID != body.RelayId {
 		return relayv1.RelayLease{}, relayPathMismatchError()
 	}
@@ -117,6 +124,9 @@ func (s *service) DrainRelay(
 	relayID relayv1.RelayID,
 	body relayv1.RelayDrainRequest,
 ) (relayv1.RelayLease, error) {
+	if !allowedSlot(ctx, body.RelayServiceId, body.RelayId) {
+		return relayv1.RelayLease{}, slotDenied()
+	}
 	if relayID != body.RelayId {
 		return relayv1.RelayLease{}, relayPathMismatchError()
 	}
@@ -138,6 +148,9 @@ func (s *service) GetRelayTransportCertificate(
 	relayServiceID relayv1.RelayServiceID,
 	params relayv1.GetRelayTransportCertificateParams,
 ) (relayv1.RelayTransportCertificate, error) {
+	if !allowedSlot(ctx, relayServiceID, params.RelayId) {
+		return relayv1.RelayTransportCertificate{}, slotDenied()
+	}
 	identity, ok := relayLeaseIdentity(relayServiceID, params.RelayId, params.RelayRunId, params.RelayLeaseRevision)
 	if !ok {
 		return relayv1.RelayTransportCertificate{}, serverhttp.NewProblemError(
@@ -147,6 +160,9 @@ func (s *service) GetRelayTransportCertificate(
 	certificate, err := s.store.GetRelayTransportCertificate(ctx, identity, s.now())
 	if err != nil {
 		return relayv1.RelayTransportCertificate{}, s.storeError(ctx, err)
+	}
+	if slot, scoped := ctx.Value(slotContext{}).(slot); scoped && (slot.Hostname != certificate.TLSServerName || slot.ServiceID != certificate.RelayServiceID) {
+		return relayv1.RelayTransportCertificate{}, slotDenied()
 	}
 	return relayv1.RelayTransportCertificate{
 		RelayServiceId: certificate.RelayServiceID, TlsServerName: certificate.TLSServerName,
