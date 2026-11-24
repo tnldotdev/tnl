@@ -334,3 +334,47 @@ func TestWorkerClaimsServiceEndpointWhenOtherQueuesAreEmpty(t *testing.T) {
 		t.Fatalf("empty service queue = %t, %v; claims = %d, publishes = %d", found, err, store.serviceEndpointClaims, provider.publishCalls)
 	}
 }
+func TestServiceEndpointDNSBackoffUsesErrorStreakNotClaims(t *testing.T) {
+	now := time.Now().UTC()
+	transient := errors.New("DNS verification failed")
+	for _, test := range []struct {
+		name   string
+		errors int64
+		err    error
+		ready  bool
+		delay  time.Duration
+		state  controlstate.ServiceEndpointDNSState
+	}{
+		{name: "first error after many claims", err: transient, delay: time.Second, state: controlstate.ServiceEndpointDNSPending},
+		{name: "second consecutive error", errors: 1, err: transient, delay: 2 * time.Second, state: controlstate.ServiceEndpointDNSPending},
+		{name: "cap consecutive errors", errors: 20, err: transient, delay: time.Minute, state: controlstate.ServiceEndpointDNSPending},
+		{name: "pending uses poll cadence", errors: 20, delay: 5 * time.Second, state: controlstate.ServiceEndpointDNSPending},
+		{name: "success clears schedule", errors: 20, ready: true, state: controlstate.ServiceEndpointDNSPublished},
+		{name: "ownership conflict does not retry", errors: 20, err: terminalf("ownership conflict"), state: controlstate.ServiceEndpointDNSFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			work := testServiceDNSWork(now)
+			work.Attempts, work.ConsecutiveErrors = 100, test.errors
+			store := &dnsStoreStub{serviceEndpointWork: work}
+			worker, err := New(store, &providerStub{err: test.err}, &verifierStub{addressVerified: test.ready}, Config{
+				WorkerID: "dns-worker", ManagedDomain: "example.test", ManagedZoneID: "zone",
+				IngressIPv4Addresses: []string{"192.0.2.10"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			worker.now = func() time.Time { return now }
+			found, err := worker.processServiceEndpoint(t.Context(), now)
+			wantAvailable := time.Time{}
+			if test.delay != 0 {
+				wantAvailable = now.Add(test.delay)
+			}
+			saved := store.serviceEndpointSaved
+			if err != nil || !found || saved.State != test.state || saved.AvailableAt != wantAvailable ||
+				(saved.LastError != "") != (test.err != nil) {
+				t.Fatalf("saved %s at %s (%s), want %s at %s (failed=%t), found=%t, err=%v",
+					saved.State, saved.AvailableAt, saved.LastError, test.state, wantAvailable, test.err != nil, found, err)
+			}
+		})
+	}
+}

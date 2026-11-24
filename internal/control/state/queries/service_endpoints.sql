@@ -50,7 +50,9 @@ FROM candidate WHERE endpoint.hostname=candidate.hostname RETURNING endpoint.*;
 -- name: SaveServiceEndpointDNSWork :one
 UPDATE control.service_endpoints
 SET dns_state=sqlc.arg(state),dns_revision=dns_revision+1,dns_available_at=sqlc.narg(available_at),
-    dns_last_error=sqlc.narg(last_error),dns_work_owner=NULL,dns_work_expires_at=NULL
+    dns_last_error=sqlc.narg(last_error),dns_work_owner=NULL,dns_work_expires_at=NULL,
+    dns_consecutive_errors=CASE WHEN dns_state=sqlc.arg(state) AND sqlc.narg(last_error)::text IS NOT NULL
+        THEN dns_consecutive_errors+1 ELSE 0 END
 WHERE hostname=sqlc.arg(hostname) AND service_id=sqlc.arg(service_id) AND dns_revision=sqlc.arg(revision)
     AND dns_work_owner=sqlc.arg(worker) AND dns_work_epoch=sqlc.arg(epoch) AND dns_work_expires_at>sqlc.arg(now)
 RETURNING *;

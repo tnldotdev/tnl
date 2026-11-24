@@ -7,6 +7,7 @@ import (
 	"net"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/miekg/dns"
@@ -100,41 +101,67 @@ func (v *AuthoritativeVerifier) VerifyAddress(
 	for recordType := range expected {
 		slices.Sort(expected[recordType])
 	}
+	ready := true
 	for _, nameserver := range nameservers {
 		addresses, err := v.resolver.LookupIPAddr(ctx, nameserver)
 		if err != nil {
 			return false, fmt.Errorf("dnscontroller: resolve address nameserver %q: %w", nameserver, err)
 		}
-		verified := false
-		var queryErr error
-		for _, address := range addresses {
-			server := net.JoinHostPort(address.IP.String(), "53")
-			valid := true
-			for _, recordType := range []uint16{dns.TypeA, dns.TypeAAAA} {
-				matches, err := v.queryAddresses(ctx, server, hostname, recordType, expected[recordType])
-				if err != nil {
-					queryErr = errors.Join(queryErr, err)
-					valid = false
-					break
-				}
-				if !matches {
-					valid = false
-					break
-				}
+		verified, err := verifyNameserverAddresses(ctx, hostname, addresses, expected, v.queryAddresses)
+		if err != nil {
+			return false, fmt.Errorf("dnscontroller: query address nameserver %q: %w", nameserver, err)
+		}
+		ready = ready && verified
+	}
+	return ready, nil
+}
+
+func verifyNameserverAddresses(
+	ctx context.Context, hostname string, addresses []net.IPAddr, expected map[uint16][]string,
+	query func(context.Context, string, string, uint16, []string) (bool, error),
+) (bool, error) {
+	if len(addresses) == 0 {
+		return false, errors.New("no nameserver addresses")
+	}
+	pending, hardFailure := false, false
+	var queryErr error
+	for _, address := range addresses {
+		server := net.JoinHostPort(address.IP.String(), "53")
+		matches := true
+		for _, recordType := range []uint16{dns.TypeA, dns.TypeAAAA} {
+			match, err := query(ctx, server, hostname, recordType, expected[recordType])
+			if ctx.Err() != nil {
+				return false, errors.Join(queryErr, err, context.Cause(ctx))
 			}
-			if valid {
-				verified = true
+			if err != nil {
+				queryErr = errors.Join(queryErr, err)
+				hardFailure = hardFailure || !addressTransportUnavailable(err)
+			} else if !match {
+				pending = true
+			}
+			if err != nil || !match {
+				matches = false
 				break
 			}
 		}
-		if !verified {
-			if queryErr != nil {
-				return false, fmt.Errorf("dnscontroller: query address nameserver %q: %w", nameserver, queryErr)
-			}
-			return false, nil
+		if matches {
+			return true, nil
 		}
 	}
-	return true, nil
+	// an authoritative mismatch is useful evidence of propagation lag. an
+	// unreachable alternate address of the same nameserver doesn't erase it.
+	if pending && !hardFailure {
+		return false, nil
+	}
+	return false, queryErr
+}
+
+func addressTransportUnavailable(err error) bool {
+	var network *net.OpError
+	return errors.As(err, &network) && !errors.Is(err, context.DeadlineExceeded) && (network.Timeout() ||
+		errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.EADDRNOTAVAIL) ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET))
 }
 
 func (v *AuthoritativeVerifier) VerifyChallenge(
@@ -245,14 +272,14 @@ func (v *AuthoritativeVerifier) queryAddresses(
 	if err != nil {
 		return false, err
 	}
-	if response.Rcode == dns.RcodeNameError {
-		return len(expected) == 0 && response.Authoritative, nil
-	}
-	if response.Rcode != dns.RcodeSuccess {
+	if response.Rcode != dns.RcodeSuccess && response.Rcode != dns.RcodeNameError {
 		return false, fmt.Errorf("DNS response code is %s", dns.RcodeToString[response.Rcode])
 	}
-	if !response.Authoritative {
-		return false, nil
+	if response.Truncated || !response.Authoritative {
+		return false, errors.New("DNS address response is truncated or not authoritative")
+	}
+	if response.Rcode == dns.RcodeNameError {
+		return len(expected) == 0, nil
 	}
 	actual := make([]string, 0, len(response.Answer))
 	for _, answer := range response.Answer {

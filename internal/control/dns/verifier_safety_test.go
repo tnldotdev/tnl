@@ -19,6 +19,7 @@ func TestAuthoritativeVerifierRejectsNegativeAnswers(t *testing.T) {
 		rcode            int
 		expected         []string
 		want             bool
+		wantErr          bool
 	}{
 		{name: "NS_mismatch", kind: dns.TypeNS, answers: []string{"example.test. 60 IN NS foreign.test."}},
 		{name: "NS_wrong_owner", kind: dns.TypeNS, answers: []string{"other.test. 60 IN NS ns-1.example.test.", "other.test. 60 IN NS ns-2.example.test."}},
@@ -42,13 +43,13 @@ func TestAuthoritativeVerifierRejectsNegativeAnswers(t *testing.T) {
 		{name: "IPv6_missing", kind: dns.TypeAAAA, expected: []string{"2001:db8::10", "2001:db8::11"}, answers: []string{"example.test. 60 IN AAAA 2001:db8::10"}},
 		{name: "IPv4_exact_set", kind: dns.TypeA, expected: []string{"192.0.2.10", "192.0.2.11"}, answers: []string{"example.test. 60 IN A 192.0.2.11", "example.test. 60 IN A 192.0.2.10"}, want: true},
 		{name: "IPv6_exact_set", kind: dns.TypeAAAA, expected: []string{"2001:db8::10", "2001:db8::11"}, answers: []string{"example.test. 60 IN AAAA 2001:db8::11", "example.test. 60 IN AAAA 2001:db8::10"}, want: true},
-		{name: "IPv4_not_authoritative", kind: dns.TypeA, expected: []string{"192.0.2.10"}, nonAuthoritative: true, answers: []string{"example.test. 60 IN A 192.0.2.10"}},
-		{name: "IPv6_not_authoritative", kind: dns.TypeAAAA, expected: []string{"2001:db8::10"}, nonAuthoritative: true, answers: []string{"example.test. 60 IN AAAA 2001:db8::10"}},
+		{name: "IPv4_not_authoritative", kind: dns.TypeA, expected: []string{"192.0.2.10"}, nonAuthoritative: true, answers: []string{"example.test. 60 IN A 192.0.2.10"}, wantErr: true},
+		{name: "IPv6_not_authoritative", kind: dns.TypeAAAA, expected: []string{"2001:db8::10"}, nonAuthoritative: true, answers: []string{"example.test. 60 IN AAAA 2001:db8::10"}, wantErr: true},
 		{name: "IPv4_NXDOMAIN_required", kind: dns.TypeA, expected: []string{"192.0.2.10"}, rcode: dns.RcodeNameError},
 		{name: "IPv6_NXDOMAIN_required", kind: dns.TypeAAAA, expected: []string{"2001:db8::10"}, rcode: dns.RcodeNameError},
 		{name: "IPv4_NXDOMAIN_removed", kind: dns.TypeA, rcode: dns.RcodeNameError, want: true},
 		{name: "IPv6_NXDOMAIN_removed", kind: dns.TypeAAAA, rcode: dns.RcodeNameError, want: true},
-		{name: "NXDOMAIN_not_authoritative", kind: dns.TypeA, rcode: dns.RcodeNameError, nonAuthoritative: true},
+		{name: "NXDOMAIN_not_authoritative", kind: dns.TypeA, rcode: dns.RcodeNameError, nonAuthoritative: true, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			address := verifierDNS(t, func(_ string, request *dns.Msg) *dns.Msg {
@@ -68,7 +69,7 @@ func TestAuthoritativeVerifierRejectsNegativeAnswers(t *testing.T) {
 			default:
 				valid, err = v.queryAddresses(t.Context(), address, "example.test", test.kind, test.expected)
 			}
-			if err != nil || valid != test.want {
+			if (err != nil) != test.wantErr || valid != test.want {
 				t.Fatalf("valid = %v, want %v, error %v", valid, test.want, err)
 			}
 		})

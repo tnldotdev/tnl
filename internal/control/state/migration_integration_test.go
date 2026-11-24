@@ -139,7 +139,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		}
 	}
 	var version int64
-	if err := database.pool.QueryRow(ctx, `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&version); err != nil || version != 1 {
+	if err := database.pool.QueryRow(ctx, `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&version); err != nil || version != schemaVersion {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	// serving roles reject schema versions they have not been built to serve.

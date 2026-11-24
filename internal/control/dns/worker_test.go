@@ -116,7 +116,7 @@ func TestWorkerSchedulesRetryFromFailureCompletion(t *testing.T) {
 				store.work = testDNSWork(started)
 			} else {
 				store.serviceEndpointWork = testServiceDNSWork(started)
-				store.serviceEndpointWork.Attempts = 3
+				store.serviceEndpointWork.Attempts, store.serviceEndpointWork.ConsecutiveErrors = 30, 2
 			}
 			provider := &providerStub{err: errors.New("provider unavailable"), beforeCall: func() {
 				now = now.Add(5 * time.Second)
@@ -489,18 +489,18 @@ func TestWorkerServiceEndpointAuthorityBoundaries(t *testing.T) {
 func TestWorkerServiceEndpointAuthorityLookupRetryBackoff(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	for _, test := range []struct {
-		name     string
-		attempts int64
-		delay    time.Duration
+		name   string
+		streak int64
+		delay  time.Duration
 	}{
-		{"first attempt", 1, time.Second},
-		{"third attempt", 3, 4 * time.Second},
-		{"capped attempt", 20, time.Minute},
+		{"first error", 0, time.Second},
+		{"third consecutive error", 2, 4 * time.Second},
+		{"capped retry", 19, time.Minute},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			work := testServiceDNSWork(now)
 			work.Hostname, work.AuthorityReference = "api.claimed.example.test", testDNSWork(now).Reference
-			work.Attempts = test.attempts
+			work.Attempts, work.ConsecutiveErrors = 100, test.streak
 			authority := testDNSWork(now).DNSAuthority
 			authority.State, authority.ProviderZoneID = controlstate.DNSAuthorityReady, "ZCLAIMED"
 			store := &dnsStoreStub{
@@ -588,7 +588,7 @@ func TestWorkerServiceFailuresPreserveLifecycleOrFailTerminally(t *testing.T) {
 		} {
 			t.Run(string(state)+"/"+test.name, func(t *testing.T) {
 				work := testServiceDNSWork(now)
-				work.State, work.Attempts = state, 20
+				work.State, work.Attempts, work.ConsecutiveErrors = state, 100, 19
 				store := &dnsStoreStub{serviceEndpointWork: work}
 				provider, verifier := &providerStub{err: test.providerErr}, &verifierStub{err: test.verifierErr}
 				worker := testDNSWorker(t, store, provider, verifier, now)

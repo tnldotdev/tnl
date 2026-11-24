@@ -24,12 +24,13 @@ import (
 
 const (
 	// schema versions advance with numbered migrations.
-	schemaVersion       int64 = 1
+	schemaVersion       int64 = 2
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond
 )
 
-// check the objects that v1 needs, not a second schema identifier.
+// check the supported v1 baseline before upgrading. older layouts also
+// reported version 1.
 const schemaLayoutQuery = `
 	SELECT to_regclass('control.connector_peer_watch_versions') IS NOT NULL
 		AND to_regclass('control.registered_key_watch_versions') IS NOT NULL
@@ -71,8 +72,8 @@ type Database struct {
 	connections             *connectionActivity
 }
 
-// Migrate initializes the control schema through a direct PostgreSQL URL.
-// a persistent table lock allows only one initialization at a time.
+// Migrate initializes or upgrades the control schema through a direct PostgreSQL URL.
+// a persistent table lock allows only one migration at a time.
 func Migrate(ctx context.Context, directURL string) (retErr error) {
 	config, err := parseDirectConfig(directURL)
 	if err != nil {
@@ -159,6 +160,10 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 		if populated {
 			return errors.New("controlstate: incompatible version 0 control schema; use a fresh PostgreSQL database")
 		}
+	} else if err := checkSchemaLayout(lockTx.QueryRowContext(ctx, schemaLayoutQuery)); err != nil {
+		return err
+	}
+	if current < target {
 		if _, err := provider.Up(ctx); err != nil {
 			return fmt.Errorf("controlstate: migrate database: %w", err)
 		}
@@ -166,12 +171,12 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("controlstate: migrate: verify schema version: %w", err)
 		}
+		if err := checkSchemaLayout(lockTx.QueryRowContext(ctx, schemaLayoutQuery)); err != nil {
+			return err
+		}
 	}
 	if current != target || current != schemaVersion {
 		return fmt.Errorf("controlstate: migrate: database schema version %d does not match supported version %d", current, schemaVersion)
-	}
-	if err := checkSchemaLayout(lockTx.QueryRowContext(ctx, schemaLayoutQuery)); err != nil {
-		return err
 	}
 	if err := lockTx.Commit(); err != nil {
 		return fmt.Errorf("controlstate: migrate: release lock: %w", err)
