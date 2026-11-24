@@ -8,6 +8,7 @@ import type { HostUpdate } from "../hosting/messages.ts";
 import { turnLabel } from "../policy.ts";
 import {
   AlreadyHosting,
+  HostingInAnotherTab,
   HostingUnavailable,
   UploadTooSlow,
   hostTab,
@@ -267,11 +268,13 @@ function App({ bootstrap }: { bootstrap: boolean }) {
           setMessage(
             stop.signal.aborted
               ? "This tab stopped."
-              : error instanceof HostingUnavailable
-                ? "This tab couldn't start hosting. Try again later."
-                : error instanceof UploadTooSlow
-                  ? "This connection isn't fast enough to host right now."
-                  : "This tab couldn't host the site. Try again.",
+              : error instanceof HostingInAnotherTab
+                ? "Another tab in this browser profile is hosting or waiting to host."
+                : error instanceof HostingUnavailable
+                  ? "This tab couldn't start hosting. Try again later."
+                  : error instanceof UploadTooSlow
+                    ? "This connection isn't fast enough to host right now."
+                    : "This tab couldn't host the site. Try again.",
           );
         },
       )

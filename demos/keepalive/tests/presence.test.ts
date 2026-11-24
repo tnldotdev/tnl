@@ -6,6 +6,7 @@ import {
   FRESH_REPORT_MS,
   Gossip,
   HOST_PARENT,
+  PEERS_PATH,
   reportedTabs,
   type Host,
 } from "../src/peers/gossip.ts";
@@ -23,7 +24,20 @@ const now = Date.UTC(2026, 10, 19);
 const releaseID = "a".repeat(64);
 const tab = "0336c461-0342-45ba-865e-b813ec381839";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+async function fixtureRelease() {
+  const assets = ["/index.html", WORKER_PATH, WASM_PATH].map((path) => ({
+    path,
+    size: 1,
+    sha256: "a".repeat(64),
+  }));
+  return { id: await digest(new TextEncoder().encode(JSON.stringify(assets))), assets };
+}
 
 function host(label: "a" | "b" | "c", run: number): Host {
   return {
@@ -69,12 +83,7 @@ it("recovers a lost presence reply without counting the tab twice", async () => 
 
 it("a held-out visitor reads the edge estimate and resumes reporting on the first small snapshot", async () => {
   const h = host("a", 1);
-  const assets = ["/index.html", WORKER_PATH, WASM_PATH].map((path) => ({
-    path,
-    size: 1,
-    sha256: "a".repeat(64),
-  }));
-  const id = await digest(new TextEncoder().encode(JSON.stringify(assets)));
+  const { id, assets } = await fixtureRelease();
   const reported = {
     host: h,
     startedAt: now,
@@ -98,7 +107,7 @@ it("a held-out visitor reads the edge estimate and resumes reporting on the firs
     return Response.json({
       releaseID: id,
       startedAt: now,
-      from: { ...h, seq: 1, reportedAt: now, left: false, startingUntil: 0 },
+      from: { ...h, seq: 1, reportedAt: Date.now(), left: false, startingUntil: 0 },
       changes: [],
     });
   });
@@ -121,6 +130,101 @@ it("a held-out visitor reads the edge estimate and resumes reporting on the firs
     vi.useRealTimers();
   }
 });
+
+it("does not try an old host that still appears in the peer report", async () => {
+  vi.useFakeTimers({ now });
+  vi.spyOn(Math, "random").mockReturnValue(0.99);
+  const site = "https://keepthisalive.com";
+  const release = await fixtureRelease();
+  const a = new Gossip(release.id, host("a", 1), now - FRESH_REPORT_MS);
+  const b = new Gossip(release.id, host("b", 2), now);
+  b.receive(a.message(now - FRESH_REPORT_MS), now);
+  const message = b.message(now);
+  expect(message.changes).toHaveLength(1);
+  vi.stubGlobal("location", { origin: site });
+  const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
+    const url = new URL(String(input), site);
+    if (url.pathname === RELEASE_PATH) return Response.json(release);
+    if (url.pathname === AUDIENCE_PATH) return new Response(null, { status: 204 });
+    if (url.pathname === PEERS_PATH) return Response.json(message);
+    expect(url.href).toBe(b.self.origin + PRESENCE_PATH);
+    return Response.json({
+      host: b.self,
+      startedAt: now,
+      tabs: 1,
+      hosts: 1,
+      saturated: false,
+      fallback: [],
+    });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const owner = new AbortController();
+  const update = vi.fn();
+  try {
+    await observeVisitors(owner.signal, update);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ host: b.self }));
+    expect(fetch.mock.calls.some(([url]) => String(url) === a.self.origin + PRESENCE_PATH)).toBe(
+      false,
+    );
+  } finally {
+    owner.abort();
+  }
+});
+
+it.each([true, false])(
+  "moves presence to the replacement in the same heartbeat (known fallback: %s)",
+  async (hasFallback) => {
+    const release = await fixtureRelease();
+    const site = "https://keepthisalive.com";
+    const a = new Gossip(release.id, host("a", 1), now);
+    const b = new Gossip(release.id, host("b", 2), now);
+    vi.useFakeTimers({ now });
+    vi.stubGlobal("location", { origin: site });
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(tab);
+    const beats: Array<[string, number]> = [];
+    let replaced = false;
+    let discoveries = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), site);
+      if (url.pathname === RELEASE_PATH) return Response.json(release);
+      if (url.pathname === AUDIENCE_PATH) return new Response(null, { status: 204 });
+      if (url.pathname === PEERS_PATH) {
+        discoveries++;
+        return Response.json((replaced ? b : a).message(Date.now()));
+      }
+      expect(url.pathname).toBe(PRESENCE_PATH);
+      expect(init?.body).toBe(JSON.stringify({ tab, releaseID: release.id }));
+      beats.push([url.origin, Date.now()]);
+      if (url.origin === a.self.origin && replaced) return new Response(null, { status: 503 });
+      return Response.json({
+        host: (replaced ? b : a).self,
+        startedAt: now,
+        tabs: 1,
+        hosts: 1,
+        saturated: false,
+        fallback: hasFallback && !replaced ? [b.self] : [],
+      });
+    });
+    const owner = new AbortController();
+    const update = vi.fn();
+    try {
+      await observeVisitors(owner.signal, update);
+      expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ host: a.self }));
+      replaced = true;
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      expect(beats).toEqual([
+        [a.self.origin, now],
+        [a.self.origin, now + HEARTBEAT_MS],
+        [b.self.origin, now + HEARTBEAT_MS],
+      ]);
+      expect(discoveries).toBe(hasFallback ? 1 : 2);
+      expect(update).toHaveBeenCalledTimes(2);
+      expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ host: b.self }));
+    } finally {
+      owner.abort();
+    }
+  },
+);
 
 it("does not retry a refusal, changed run, or canceled presence request", async () => {
   for (const outcome of ["refused", "changed", "canceled"]) {

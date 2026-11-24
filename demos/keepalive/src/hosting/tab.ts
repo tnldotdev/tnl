@@ -23,6 +23,7 @@ export type HostState =
 
 export class HostingUnavailable extends Error {}
 export class AlreadyHosting extends Error {}
+export class HostingInAnotherTab extends Error {}
 export class UploadTooSlow extends Error {}
 
 async function waitForInvitation(releaseID: string, signal: AbortSignal) {
@@ -118,6 +119,24 @@ async function getJSON(path: string, limit: number, signal: AbortSignal, method 
 }
 
 export async function hostTab(
+  startupPage: boolean,
+  signal: AbortSignal,
+  update: (state: HostState) => void,
+  activity: (state: Extract<HostUpdate, { type: "activity" }>) => void,
+) {
+  signal.throwIfAborted();
+  const locks = navigator.locks;
+  if (locks === undefined) throw new HostingUnavailable();
+  // the publisher SDK holds its own instance lock for the whole turn. don't
+  // take an invitation if another tab in this profile would block startup.
+  return locks.request("keepalive-host", { ifAvailable: true }, async (lock) => {
+    signal.throwIfAborted();
+    if (lock === null) throw new HostingInAnotherTab();
+    return runHostTab(startupPage, signal, update, activity);
+  });
+}
+
+async function runHostTab(
   startupPage: boolean,
   signal: AbortSignal,
   update: (state: HostState) => void,
