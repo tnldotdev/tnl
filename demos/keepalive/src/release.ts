@@ -1,4 +1,5 @@
 import * as z from "zod";
+import { request, requireStatus, retryOnce, TransportFailure } from "./network.ts";
 
 export const RELEASE_PATH = "/__keepalive/release";
 export const ARTIFACT_PREFIX = "/__keepalive/artifact";
@@ -62,6 +63,15 @@ export async function parseRelease(value: unknown): Promise<Release> {
   return release;
 }
 
+export async function loadRelease(signal: AbortSignal) {
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
+  return retryOnce(deadline, async () => {
+    const attempt = AbortSignal.any([deadline, AbortSignal.timeout(2_000)]);
+    const response = await requireStatus(await request(RELEASE_PATH, { signal: attempt }));
+    return parseRelease(await readJSON(response, MAX_MANIFEST_BYTES, attempt));
+  });
+}
+
 export async function readBytes(
   response: Response,
   limit: number,
@@ -80,7 +90,11 @@ export async function readBytes(
     let offset = 0;
     for (;;) {
       signal?.throwIfAborted();
-      const { done, value } = await reader.read();
+      const { done, value } = await reader.read().catch((error: unknown) => {
+        signal?.throwIfAborted();
+        if (error instanceof TypeError) throw new TransportFailure(error);
+        throw error;
+      });
       signal?.throwIfAborted();
       if (done) break;
       if (value.byteLength > bytes.byteLength - offset) throw new Error("Response exceeds limit.");

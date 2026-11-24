@@ -2,13 +2,10 @@ import { browserHostName } from "../peers/host-names.ts";
 import type { Host } from "../peers/gossip.ts";
 import {
   ARTIFACT_PREFIX,
-  MAX_MANIFEST_BYTES,
-  RELEASE_PATH,
   WORKER_PATH,
-  parseRelease,
-  readBytes,
+  loadRelease,
+  readAssetResponse,
   readJSON,
-  verifyAsset,
   type Release,
 } from "../release.ts";
 import { CONFIG_PATH, hostingConfig } from "../enrollment.ts";
@@ -21,6 +18,7 @@ import {
   waitForWork,
 } from "../peers/http.ts";
 import { STARTUP_MS } from "../policy.ts";
+import { NoReachableHost, request, requireStatus, retryDelay, retryOnce } from "../network.ts";
 
 export type HostState =
   | { type: "waiting" | "checking" | "starting" | "stopping" }
@@ -35,10 +33,18 @@ export class UploadTooSlow extends Error {}
 async function waitForInvitation(releaseID: string, signal: AbortSignal) {
   for (;;) {
     signal.throwIfAborted();
-    const peers = await readPeers(location.origin, releaseID, signal).catch(() => undefined);
-    if (peers !== undefined) {
+    const peers = await readPeers(location.origin, releaseID, signal).catch((error: unknown) => {
+      signal.throwIfAborted();
+      if (retryDelay(error) === undefined) throw error;
+      return null;
+    });
+    if (peers === undefined) throw new HostingUnavailable();
+    if (peers !== null) {
       // try the host reached through the shared service first.
-      const candidates = [peers.from, ...peers.changes].filter((host) => !host.left).slice(0, 3);
+      const now = Date.now();
+      const candidates = [peers.from, ...peers.changes]
+        .filter((host) => !host.left && (host.endsAt ?? Infinity) > now)
+        .slice(0, 3);
       for (const host of candidates) {
         signal.throwIfAborted();
         try {
@@ -84,20 +90,24 @@ async function copySite(
   let verification = 0;
   update({ type: "copying", received, total, bootstrap });
   for (const asset of release.assets) {
-    const response = await fetch(source + asset.path, {
-      cache: "no-store",
-      credentials: "omit",
-      redirect: "error",
-      signal,
+    const bytes = await retryOnce(signal, async () => {
+      // restart only this file. earlier files have already been verified.
+      const response = await requireStatus(
+        await request(source + asset.path, {
+          credentials: "omit",
+          signal,
+        }),
+      );
+      let transferred = performance.now();
+      const bytes = await readAssetResponse(asset, response, signal, (bytes) => {
+        transferred = performance.now();
+        if (transferred - lastUpdate < 100 && received + bytes !== total) return;
+        lastUpdate = transferred;
+        update({ type: "copying", received: received + bytes, total, bootstrap });
+      });
+      verification += performance.now() - transferred;
+      return bytes;
     });
-    const bytes = await readBytes(response, asset.size, signal, asset.size, (bytes) => {
-      if (performance.now() - lastUpdate < 100 && received + bytes !== total) return;
-      lastUpdate = performance.now();
-      update({ type: "copying", received: received + bytes, total, bootstrap });
-    });
-    const verifying = performance.now();
-    await verifyAsset(asset, bytes);
-    verification += performance.now() - verifying;
     received += bytes.byteLength;
     files.set(asset.path, bytes.buffer);
   }
@@ -109,19 +119,20 @@ async function copySite(
 }
 
 async function getHostingConfig(signal: AbortSignal) {
-  return hostingConfig.parse(await getJSON(CONFIG_PATH, 4_096, signal, "POST"));
-}
-
-async function getJSON(path: string, limit: number, signal: AbortSignal, method = "GET") {
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
-  const response = await fetch(path, {
-    method,
-    cache: "no-store",
-    redirect: "error",
-    signal: deadline,
+  // this endpoint only reads configuration; enrollment is a separate request.
+  return retryOnce(deadline, async () => {
+    const attempt = AbortSignal.any([deadline, AbortSignal.timeout(4_000)]);
+    const response = await request(CONFIG_PATH, {
+      method: "POST",
+      signal: attempt,
+    });
+    if (response.status === 503) {
+      await response.body?.cancel().catch(() => {});
+      throw new HostingUnavailable();
+    }
+    return hostingConfig.parse(await readJSON(await requireStatus(response), 4_096, attempt));
   });
-  if (path === CONFIG_PATH && response.status === 503) throw new HostingUnavailable();
-  return readJSON(response, limit, deadline);
 }
 
 export async function hostTab(
@@ -153,15 +164,24 @@ async function runHostTab(
     performance.clearMarks(`keepalive ${name}`);
   for (const name of ["copy", "verify", "startup"]) performance.clearMeasures(`keepalive ${name}`);
   performance.mark("keepalive volunteered");
-  const release = await parseRelease(await getJSON(RELEASE_PATH, MAX_MANIFEST_BYTES, signal));
-  // the startup page provides the seed copy only if no host answers the proxy.
-  const report = startupPage
-    ? await readPeers(location.origin, release.id, signal).catch(() => undefined)
-    : undefined;
-  signal.throwIfAborted();
-  if (report !== undefined && !report.from.left && (report.from.endsAt ?? Infinity) > Date.now())
-    throw new AlreadyHosting();
-  if (startupPage) return serveTurn(release, undefined, signal, update, activity);
+  const release = await loadRelease(signal);
+  if (startupPage) {
+    // only the proxy can confirm there is no host to copy from.
+    try {
+      const report = await readPeers(location.origin, release.id, signal);
+      if (
+        report !== undefined &&
+        !report.from.left &&
+        (report.from.endsAt ?? Infinity) > Date.now()
+      )
+        throw new AlreadyHosting();
+      throw new HostingUnavailable();
+    } catch (error) {
+      signal.throwIfAborted();
+      if (!(error instanceof NoReachableHost)) throw error;
+    }
+    return serveTurn(release, undefined, signal, update, activity);
+  }
 
   update({ type: "waiting" });
   const selected = await waitForInvitation(release.id, signal);

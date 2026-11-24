@@ -238,11 +238,21 @@ try {
   await visitor.waitForFunction(
     async () => (await fetch("/", { cache: "no-store" })).status === 503,
   );
+  await visitor.getByText("No host is serving the site right now.", { exact: true }).waitFor({
+    timeout: 90_000,
+  });
+  await visitor.getByText("00h 00m 00s", { exact: true }).waitFor();
+  await visitor.getByText("0 reachable hosts", { exact: true }).waitFor();
+  assert.equal(await visitor.getByRole("button", { name: "i'll keep it alive" }).count(), 0);
+  assert.equal(await visitor.locator(`a[href^="${start.origin}"]`).count(), 0);
   const restartedAt = Date.now();
   emit("outage", { status: 503 });
   phase = "reseed";
   const reseed = await begin(first, "host again");
-  await openSite(visitor);
+  // the same loaded page notices the new start; no navigation or reload.
+  await visitor.getByRole("button", { name: "i'll keep it alive", exact: true }).waitFor({
+    timeout: 60_000,
+  });
   assert(
     (await currentReport()).startedAt >= restartedAt,
     "The clock should reset after all hosts stop.",

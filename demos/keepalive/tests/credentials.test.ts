@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { credentials, type CredentialBindings } from "../src/edge/credentials.ts";
 import { READY_HEADER } from "../src/enrollment.ts";
 import { HOST_PARENT } from "../src/peers/gossip.ts";
+import { NO_HOST_HEADER } from "../src/network.ts";
 
 const id = (prefix: string, suffix = "a") => `${prefix}_${suffix.repeat(22)}`;
 const release = "a".repeat(64);
@@ -181,9 +182,11 @@ it("only the restart site can seed, and only when no publisher answers", async (
   const peers = vi
     .fn<() => Promise<Response>>()
     .mockResolvedValueOnce(new Response("alive"))
-    .mockResolvedValueOnce(new Response(null, { status: 503 }));
+    .mockResolvedValueOnce(new Response(null, { status: 503 }))
+    .mockResolvedValueOnce(new Response(null, { status: 503, headers: { [NO_HOST_HEADER]: "1" } }));
   expect((await call("https://site.test", true, peers)).status).toBe(403);
   expect((await call("https://start.test", true, peers)).status).toBe(403);
+  expect((await call("https://start.test", true, peers)).status).toBe(503);
   expect(fetch).not.toHaveBeenCalled();
   expect((await call("https://start.test", true, peers)).status).toBe(200);
   expect(fetch).toHaveBeenCalledTimes(2);
@@ -246,7 +249,7 @@ it.each([
   const response = await call(
     "https://start.test",
     true,
-    () => new Response(null, { status: 503 }),
+    () => new Response(null, { status: 503, headers: { [NO_HOST_HEADER]: "1" } }),
   );
   expect(response.status).toBe(503);
   expect(await response.text()).toBe("");

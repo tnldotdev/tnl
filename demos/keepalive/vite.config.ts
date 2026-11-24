@@ -10,6 +10,16 @@ export default defineConfig({
     modulePreload: false,
     rolldownOptions: {
       output: { entryFileNames: "app.js", assetFileNames: "[name][extname]" },
+      onwarn(warning, warn) {
+        // this bundle only runs in the browser; it has no server components.
+        if (
+          warning.code === "MODULE_LEVEL_DIRECTIVE" &&
+          warning.id?.includes("/@tanstack/react-query/") &&
+          warning.message.includes('"use client"')
+        )
+          return;
+        warn(warning);
+      },
     },
   },
 });

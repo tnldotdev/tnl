@@ -8,6 +8,7 @@ import { hostCommand, type HostStart, type HostUpdate } from "./messages.ts";
 import { peerServer, readPeers } from "../peers/http.ts";
 import { startPublisher } from "./publish.ts";
 import { chooseCertificate, describeCertificate } from "./certificate.ts";
+import { request, requireStatus } from "../network.ts";
 
 const lifetime = new AbortController();
 const { signal } = lifetime;
@@ -80,7 +81,7 @@ async function host(command: HostStart) {
     running = await startPublisher(
       command.config,
       async (signal) => {
-        const response = await fetch(new URL(CREDENTIALS_PATH, command.pageOrigin), {
+        const response = await request(new URL(CREDENTIALS_PATH, command.pageOrigin), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -89,11 +90,9 @@ async function host(command: HostStart) {
             bootstrap: command.bootstrap,
             inviter: command.firstHostToContact?.origin,
           }),
-          redirect: "error",
           signal,
         });
-        if (!response.ok) throw new Error("Could not get permission to host.");
-        return enrollmentKey.parse(await readJSON(response, 1024, signal));
+        return enrollmentKey.parse(await readJSON(await requireStatus(response), 1024, signal));
       },
       peers.fetch,
       signal,
@@ -152,6 +151,7 @@ async function host(command: HostStart) {
         const tabs = gossip.tabSnapshot(now, hosts);
         if (
           departing() &&
+          !peers?.confirmingHandoff &&
           (peers?.replacementReady || gossip.canRetire(now, hostTarget(tabs.total), hosts))
         ) {
           endTurn();

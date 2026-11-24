@@ -9,6 +9,7 @@ import {
   type HostHistory,
 } from "./gossip.ts";
 import { readJSON } from "../release.ts";
+import { request, requireStatus } from "../network.ts";
 
 const visibleHost = hostSchema.refine(({ origin }) => hostOrigin(origin));
 export const MAX_FALLBACK_HOSTS = 3;
@@ -85,14 +86,13 @@ export function treeSample(roster: readonly HostHistory[], focus: string) {
 }
 
 export async function readTree(origin: string, hostRunID: string, signal: AbortSignal) {
-  if (!hostOrigin(origin)) return;
+  if (!hostOrigin(origin)) throw new Error("Invalid host address.");
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(4_000)]);
-  const response = await fetch(new URL(TREE_PATH, origin), {
-    cache: "no-store",
+  const response = await request(new URL(TREE_PATH, origin), {
     credentials: "omit",
-    redirect: "error",
     signal: deadline,
   });
-  const view = treeView.safeParse(await readJSON(response, 32_768, deadline));
-  return view.success && view.data.hostRunID === hostRunID ? view.data.hosts : undefined;
+  const view = treeView.parse(await readJSON(await requireStatus(response), 32_768, deadline));
+  if (view.hostRunID !== hostRunID) throw new Error("The host changed.");
+  return view.hosts;
 }

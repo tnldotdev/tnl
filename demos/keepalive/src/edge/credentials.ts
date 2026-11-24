@@ -1,6 +1,7 @@
 import { control, createPublisherEnrollment } from "@tnldotdev/tnl/control";
 import { INVITATION_PATH, READY_HEADER, credentialRequest, enrollmentKey } from "../enrollment.ts";
 import { readJSON } from "../release.ts";
+import { noReachableHost, PEER_DISCOVERY_MS } from "../network.ts";
 import {
   deploymentCredential,
   HOSTING_SERVICE,
@@ -26,9 +27,10 @@ export async function credentials(
   ) {
     return new Response(null, { status: 403, headers });
   }
-  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]);
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(PEER_DISCOVERY_MS + 8_000)]);
+  const bodyDeadline = AbortSignal.any([signal, AbortSignal.timeout(3_000)]);
   const body = credentialRequest.safeParse(
-    await readJSON(new Response(request.body), 1024, signal).catch(() => undefined),
+    await readJSON(new Response(request.body), 1024, bodyDeadline).catch(() => undefined),
   );
   if (!body.success || body.data.releaseID !== releaseID) {
     return new Response(null, { status: 400, headers });
@@ -51,7 +53,9 @@ export async function credentials(
           signal,
         });
     await check.body?.cancel();
-    if (body.data.bootstrap ? check.status !== 503 : check.status !== 204)
+    if (body.data.bootstrap && check.status === 503 && !noReachableHost(check))
+      return new Response(null, { status: 503, headers });
+    if (body.data.bootstrap ? !noReachableHost(check) : check.status !== 204)
       return new Response(null, { status: 403, headers });
     const result = await createPublisherEnrollment({
       client: control({

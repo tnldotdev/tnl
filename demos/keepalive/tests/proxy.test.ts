@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import { HOST_PARENT, PEERS_PATH, SHARED_HOST } from "../src/peers/gossip.ts";
 import { createProxy } from "../src/edge/proxy.ts";
 import { WASM_PATH, WORKER_PATH, digest, parseRelease } from "../src/release.ts";
+import { NO_HOST_HEADER } from "../src/network.ts";
 
 const script = "export const version = 1;";
 const fontPath = "/jetbrains-mono-latin-wght-normal.woff2";
@@ -120,11 +121,41 @@ it("uses the shared address only for discovery when hosts stop", async () => {
   expect(response.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
   expect(response.headers.get("Cache-Control")).toBe("no-store, no-transform");
   expect(response.headers.get("Location")).toBeNull();
+  expect(response.headers.get(NO_HOST_HEADER)).toBeNull();
   expect((await proxy.file(request(WORKER_PATH))).status).toBe(404);
   expect(fetchHost).toHaveBeenCalledExactlyOnceWith(
     new URL(PEERS_PATH, SHARED_HOST),
     expect.anything(),
   );
+});
+
+it("marks only completed peer searches and invalidates an older audience sample", async () => {
+  const { proxy, fetchHost, report } = await setup();
+  const message = {
+    ...(await report(aliases.slice(0, 1)).json()),
+    audience: { hosts: 1, tabs: 20_000, sampling: true, saturated: false },
+  };
+  fetchHost.mockResolvedValueOnce(Response.json(message));
+  expect((await proxy.peers(request(PEERS_PATH))).status).toBe(200);
+  const refresh = Promise.withResolvers<Response>();
+  fetchHost.mockReturnValueOnce(refresh.promise);
+  const tasks: Promise<void>[] = [];
+  const audience = () =>
+    proxy.audience(request("/__keepalive/audience"), (work) => tasks.push(work));
+  expect(audience().status).toBe(200);
+  fetchHost.mockImplementation(async () => new Response(null, { status: 503 }));
+  const canceled = await proxy.peers(request(PEERS_PATH, { signal: AbortSignal.abort() }));
+  expect(canceled.headers.get(NO_HOST_HEADER)).toBeNull();
+  const offline = await proxy.peers(request(PEERS_PATH));
+  expect(offline.status).toBe(503);
+  expect(offline.headers.get(NO_HOST_HEADER)).toBe("1");
+  refresh.resolve(Response.json(message));
+  await Promise.all(tasks);
+  expect(audience().status).toBe(204);
+  // a new search may learn about a replacement through the shared address.
+  fetchHost.mockResolvedValueOnce(Response.json(message));
+  expect((await proxy.peers(request(PEERS_PATH))).status).toBe(200);
+  expect(audience().status).toBe(200);
 });
 
 it("serves one recent audience observation to many tabs and expires it if refresh stalls", async () => {

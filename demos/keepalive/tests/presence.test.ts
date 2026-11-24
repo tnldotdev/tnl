@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { observeVisitors, renewPresence } from "../src/page/visitor.ts";
+import { createVisitorCheck, renewPresence } from "../src/page/visitor.ts";
+import { HTTPFailure, NO_HOST_HEADER, TransportFailure } from "../src/network.ts";
 import { digest, RELEASE_PATH, WASM_PATH, WORKER_PATH } from "../src/release.ts";
 import { REPLACE_BEFORE_MS, STARTUP_MS } from "../src/policy.ts";
 import {
@@ -111,19 +112,19 @@ it("a held-out visitor reads the edge estimate and resumes reporting on the firs
       changes: [],
     });
   });
-  const owner = new AbortController(),
-    update = vi.fn();
+  const owner = new AbortController();
+  const check = createVisitorCheck();
   try {
-    await observeVisitors(owner.signal, update);
-    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ tabs: 20000 }));
+    await expect(check(owner.signal)).resolves.toMatchObject({ tabs: 20000 });
     await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    await expect(check(owner.signal)).resolves.toMatchObject({ tabs: 20000 });
     expect(sent).toEqual([]);
     Object.assign(reported, { tabs: 300, hosts: 6, sampling: false });
     await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    await expect(check(owner.signal)).resolves.toMatchObject({ tabs: 300 });
     expect(sent).toEqual([JSON.stringify({ tab, releaseID: id })]);
-    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ tabs: 300 }));
     owner.abort();
-    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    await expect(check(owner.signal)).rejects.toMatchObject({ name: "AbortError" });
     expect(sent).toHaveLength(1);
   } finally {
     owner.abort();
@@ -159,10 +160,8 @@ it("does not try an old host that still appears in the peer report", async () =>
   });
   vi.stubGlobal("fetch", fetch);
   const owner = new AbortController();
-  const update = vi.fn();
   try {
-    await observeVisitors(owner.signal, update);
-    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ host: b.self }));
+    await expect(createVisitorCheck()(owner.signal)).resolves.toMatchObject({ host: b.self });
     expect(fetch.mock.calls.some(([url]) => String(url) === a.self.origin + PRESENCE_PATH)).toBe(
       false,
     );
@@ -206,20 +205,18 @@ it.each([true, false])(
       });
     });
     const owner = new AbortController();
-    const update = vi.fn();
+    const check = createVisitorCheck();
     try {
-      await observeVisitors(owner.signal, update);
-      expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ host: a.self }));
+      await expect(check(owner.signal)).resolves.toMatchObject({ host: a.self, startedAt: now });
       replaced = true;
       await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      await expect(check(owner.signal)).resolves.toMatchObject({ host: b.self, startedAt: now });
       expect(beats).toEqual([
         [a.self.origin, now],
         [a.self.origin, now + HEARTBEAT_MS],
         [b.self.origin, now + HEARTBEAT_MS],
       ]);
       expect(discoveries).toBe(hasFallback ? 1 : 2);
-      expect(update).toHaveBeenCalledTimes(2);
-      expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ host: b.self }));
     } finally {
       owner.abort();
     }
@@ -236,19 +233,22 @@ it.each([true, false])(
     const c = new Gossip(release.id, host("c", 3), now + 3 * HEARTBEAT_MS);
     vi.useFakeTimers({ now });
     vi.stubGlobal("location", { origin: site });
-    let state: "live" | "unknown" | "offline" | "reseeded" = "live";
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    let state: "live" | "unknown" | "unmarked" | "offline" | "reseeded" = "live";
+    const send = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), site);
       if (url.pathname === RELEASE_PATH) return Response.json(release);
       if (url.pathname === AUDIENCE_PATH) return new Response(null, { status: 204 });
       const current = state === "reseeded" ? c : a;
       if (url.pathname === PEERS_PATH) {
         if (state === "unknown") throw new TypeError("Could not reach the proxy.");
-        if (state === "offline") return new Response(null, { status: 503 });
+        if (state === "unmarked") return new Response(null, { status: 503 });
+        if (state === "offline")
+          return new Response(null, { status: 503, headers: { [NO_HOST_HEADER]: "1" } });
         return Response.json(current.message(Date.now()));
       }
       expect(url.pathname).toBe(PRESENCE_PATH);
-      if (state === "unknown" || state === "offline") return new Response(null, { status: 503 });
+      if (state === "unknown" || state === "offline" || state === "unmarked")
+        return new Response(null, { status: 503 });
       return Response.json({
         host: current.self,
         startedAt: current.startedAt,
@@ -258,26 +258,30 @@ it.each([true, false])(
         fallback: cached && state === "live" ? [b.self] : [],
       });
     });
+    vi.stubGlobal("fetch", send);
     const owner = new AbortController();
-    const update = vi.fn();
+    const check = createVisitorCheck();
     try {
-      await observeVisitors(owner.signal, update);
-      expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ startedAt: now }));
+      await expect(check(owner.signal)).resolves.toMatchObject({ startedAt: now });
       state = "unknown";
       await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
-      expect(update).toHaveBeenLastCalledWith(undefined);
+      await expect(check(owner.signal)).rejects.toBeInstanceOf(TransportFailure);
+      state = "unmarked";
+      await expect(check(owner.signal)).rejects.toBeInstanceOf(HTTPFailure);
       if (cached) {
         // recover the roster before checking that a cached, failed alternate
         // still lets the browser learn the site is down.
         state = "live";
         await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+        await expect(check(owner.signal)).resolves.toMatchObject({ startedAt: now });
       }
       state = "offline";
       await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
-      expect(update).toHaveBeenLastCalledWith(null);
+      await expect(check(owner.signal)).resolves.toBeNull();
       state = "reseeded";
       await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
-      expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ startedAt: c.startedAt }));
+      await expect(check(owner.signal)).resolves.toMatchObject({ startedAt: c.startedAt });
+      expect(send.mock.calls.filter(([input]) => input === RELEASE_PATH)).toHaveLength(1);
     } finally {
       owner.abort();
     }
