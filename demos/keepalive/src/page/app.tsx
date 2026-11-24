@@ -304,7 +304,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         <>
           <p>
             This site is served from people's browsers. Visitors copy it from each other and take
-            turns keeping it online. If the last host stops, the site goes down.
+            15min turns keeping it online. If the last host stops, the site goes down.
           </p>
           {lifetime === undefined && finished === undefined && !retry && (
             <p>Click below to volunteer, then keep this tab open. You can stop anytime.</p>
