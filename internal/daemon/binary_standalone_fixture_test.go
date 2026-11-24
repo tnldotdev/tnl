@@ -103,6 +103,7 @@ func startIntegrationBinaryStandaloneWithBind(t *testing.T, containerReachable b
 		"TNLD_ACME_EMAIL":              "integration@example.test",
 		"TNLD_ACME_PROFILE":            "tlsserver",
 		"TNLD_CONTROL_LISTEN":          controlBackend,
+		"TNLD_CONTROL_PROXY_PROVIDER":  "single-xff",
 		"TNLD_CONTROL_URL":             controlOrigin,
 		"TNLD_ROUTE53_MANAGED_ZONE_ID": "binary",
 		"TNLD_INGRESS_IPV4_ADDRESSES":  "127.0.0.1",
