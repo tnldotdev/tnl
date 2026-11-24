@@ -14,7 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/browserpage"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
 func TestDeviceProviderFailureIsOwnedAndSafe(t *testing.T) {
@@ -30,10 +29,6 @@ type devicePageStore struct {
 	approved bool
 }
 
-func (*devicePageStore) ReadDeviceBrowser(context.Context, string, time.Time) (controlstate.DeviceLogin, error) {
-	return controlstate.DeviceLogin{}, nil
-}
-
 func (s *devicePageStore) ApproveDeviceLogin(_ context.Context, code string, binding []byte, _ string, _, _ time.Duration, _ time.Time) error {
 	if code != "ABCDEF-GHIJKL" || string(binding) != strings.Repeat("b", 32) {
 		return controlstate.ErrDeviceLogin
@@ -45,19 +40,11 @@ func (s *devicePageStore) ApproveDeviceLogin(_ context.Context, code string, bin
 func TestDeviceBrowserPagesAndSuccess(t *testing.T) {
 	store := &devicePageStore{}
 	h := &handler{config: Config{ControlURL: "https://control.example.test"}, oidc: &oidc.Server{}, store: store}
-	team := httptest.NewRecorder()
-	h.BeginDeviceBrowser(team, httptest.NewRequest(http.MethodGet, "/v1/auth/device/approve?code=ABCDEF-GHIJKL", nil), authorityv1.BeginDeviceBrowserParams{})
-	if team.Code != http.StatusOK || team.Header().Get("Content-Security-Policy") != browserpage.FormSecurityPolicy ||
-		!strings.Contains(team.Body.String(), `name="code" value="ABCDEF-GHIJKL"`) ||
-		!strings.Contains(team.Body.String(), `aria-describedby="team-hint"`) ||
-		!strings.Contains(team.Body.String(), "data:font/woff2;base64,") {
-		t.Fatal("team selection lost its shared shell, form binding, or accessible label")
-	}
-	approval := approvalPage.HTML(browserpage.Page{Title: "approve tnl login", Content: struct{ Name, Code, Binding string }{`Sam <script>bad</script>`, "ABCDEF-GHIJKL", "binding"}})
-	if strings.Contains(approval, "<script>") || !strings.Contains(approval, "Sam &lt;script&gt;bad&lt;/script&gt;") ||
+	approval := approvalPage.HTML(browserpage.Page{Title: "approve tnl login", Content: struct{ Code, Binding string }{"ABCDEF-GHIJKL", "binding"}})
+	if !strings.Contains(approval, `name="code" value="ABCDEF-GHIJKL"`) ||
 		!strings.Contains(approval, `name="binding" value="binding"`) ||
 		!strings.Contains(approval, `<strong class="code">ABCDEF-GHIJKL</strong>`) {
-		t.Fatal("approval page lost escaping or confirmation fields")
+		t.Fatal("approval page lost its confirmation code or form fields")
 	}
 	binding := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("b", 32)))
 	for _, accept := range []string{"", "text/html"} {
