@@ -155,14 +155,8 @@ func (h *handler) BeginDeviceBrowser(w http.ResponseWriter, r *http.Request, _ a
 		return
 	}
 	team := l.TeamID
-	if team == "" {
-		if !r.URL.Query().Has("team") {
-			browserpage.Headers(w)
-			w.Header().Set("Content-Security-Policy", browserpage.FormSecurityPolicy)
-			_ = teamSelectionPage.Write(w, browserpage.Page{Title: "tnl sign-in", Content: code})
-			return
-		}
-		team, err = h.store.ResolveLoginTeam(r.Context(), r.URL.Query().Get("team"))
+	if selection := r.URL.Query().Get("team"); team == "" && selection != "" {
+		team, err = h.store.ResolveLoginTeam(r.Context(), selection)
 		if err != nil {
 			h.deviceError(r.Context(), w, err)
 			return
@@ -223,24 +217,12 @@ func (h *handler) deviceBinding(r *http.Request) ([]byte, error) {
 
 var approvalPage = browserpage.New(`<p class="eyebrow">[ terminal sign-in ]</p>
 <h1>approve tnl login</h1>
-<p class="intro">Signed in as {{.Name}}.</p>
-<p>Only approve if your terminal shows this code:</p>
+<p class="intro">Only approve if your terminal shows this code:</p>
 <strong class="code">{{.Code}}</strong>
 <form method="post" action="/v1/auth/device/approve">
 <input type="hidden" name="code" value="{{.Code}}">
 <input type="hidden" name="binding" value="{{.Binding}}">
 <button type="submit">approve login</button>
-</form>`)
-
-var teamSelectionPage = browserpage.New(`<p class="eyebrow">[ terminal sign-in ]</p>
-<h1>choose a team</h1>
-<p class="intro muted">Sign in to tnl from your terminal.</p>
-<form method="get" action="/v1/auth/device/approve">
-<input type="hidden" name="code" value="{{.}}">
-<label for="team">team name</label>
-<input id="team" name="team" maxlength="63" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="team-hint">
-<p class="hint" id="team-hint">Leave empty for personal sign-in.</p>
-<button type="submit">continue</button>
 </form>`)
 
 func (h *handler) CompleteDeviceBrowser(w http.ResponseWriter, r *http.Request, _ authorityv1.CompleteDeviceBrowserParams) {
@@ -293,7 +275,7 @@ func (h *handler) CompleteDeviceBrowser(w http.ResponseWriter, r *http.Request, 
 	}
 	browserpage.Headers(w)
 	w.Header().Set("Content-Security-Policy", browserpage.FormSecurityPolicy)
-	_ = approvalPage.Write(w, browserpage.Page{Title: "approve tnl login", Content: struct{ Name, Code, Binding string }{identity.DisplayName, l.UserCode, base64.RawURLEncoding.EncodeToString(binding)}})
+	_ = approvalPage.Write(w, browserpage.Page{Title: "approve tnl login", Content: struct{ Code, Binding string }{l.UserCode, base64.RawURLEncoding.EncodeToString(binding)}})
 }
 
 func (h *handler) ApproveDeviceBrowser(w http.ResponseWriter, r *http.Request) {

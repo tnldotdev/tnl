@@ -20,9 +20,6 @@ func Approve(ctx context.Context, base *http.Client, approvalURL string) error {
 	if err != nil {
 		return err
 	}
-	q := get.URL.Query()
-	q.Set("team", q.Get("team"))
-	get.URL.RawQuery = q.Encode()
 	response, err := client.Do(get)
 	if err != nil {
 		return err

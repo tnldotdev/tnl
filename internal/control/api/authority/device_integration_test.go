@@ -68,7 +68,7 @@ func TestIntegrationControlOwnedDeviceLogin(t *testing.T) {
 		t.Helper()
 		client := *control.Client()
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-		response, err := client.Get(approval + "&team=")
+		response, err := client.Get(approval)
 		if err != nil {
 			t.Fatal(err)
 		}
