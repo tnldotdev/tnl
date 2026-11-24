@@ -252,6 +252,7 @@ describe("tnl", () => {
       close,
       httpServer: { address: () => null },
       listen: vi.fn(async () => undefined),
+      printUrls: vi.fn(),
     };
     const configureServer = plugin.configureServer;
     if (typeof configureServer !== "function") {
@@ -270,7 +271,7 @@ describe("tnl", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  test("registers a restarted framework's replacement listener", async () => {
+  test("prints the preview URL only after registering the initial and restarted listeners", async () => {
     const bootstrap = await startTestBootstrap();
     const plugin = tnl();
     await withProcessEnvironment(bootstrap.environment, async () => {
@@ -278,8 +279,11 @@ describe("tnl", () => {
     });
     let port = 5200;
     const close = vi.fn(async () => {});
+    const info = vi.fn();
+    const printUrls = vi.fn(() => info("local URLs"));
     const server = {
       close,
+      config: { logger: { info } },
       httpServer: {
         listening: true,
         address: () => ({ address: "127.0.0.1", port }),
@@ -287,16 +291,27 @@ describe("tnl", () => {
         off: () => {},
         close: () => {},
       },
-      listen: vi.fn(async () => undefined),
+      listen: vi.fn(async () => {
+        server.printUrls();
+        expect(info.mock.calls).toEqual([["local URLs"]]);
+        info.mockClear();
+      }),
+      printUrls,
     };
     const configureServer = plugin.configureServer;
     if (typeof configureServer !== "function") throw new Error("missing Vite server hook");
     configureServer.call({} as never, server as never);
     await server.listen();
     expect(bootstrap.requests[1]?.body).toMatchObject({ target: "http://127.0.0.1:5200" });
+    server.printUrls();
+    expect(info.mock.calls).toEqual([["local URLs"], ["  ➜  tnl:     https://api.member.example"]]);
+    info.mockClear();
     port = 5201;
     await server.listen();
     expect(bootstrap.requests[2]?.body).toMatchObject({ target: "http://127.0.0.1:5201" });
+    server.printUrls();
+    expect(info.mock.calls).toEqual([["local URLs"], ["  ➜  tnl:     https://api.member.example"]]);
+    expect(printUrls).toHaveBeenCalledTimes(4);
     expect(close).not.toHaveBeenCalled();
   });
 });
@@ -328,11 +343,13 @@ test("disabled Vite preserves hosts and never prepares or wraps the listener", a
     expect(await runConfigHook(plugin, { server: { allowedHosts: ["existing.example"] } })).toEqual(
       localDefine(),
     );
-    const server = { listen: vi.fn() };
+    const server = { listen: vi.fn(), printUrls: vi.fn() };
     const original = server.listen;
+    const originalPrintUrls = server.printUrls;
     if (typeof plugin.configureServer !== "function") throw new Error("missing Vite server hook");
     plugin.configureServer.call({} as never, server as never);
     expect(server.listen).toBe(original);
+    expect(server.printUrls).toBe(originalPrintUrls);
   });
   expect(bootstrap.requests).toHaveLength(0);
 });
@@ -380,8 +397,11 @@ test("optional Vite registration failure does not close a working local listener
     await runConfigHook(plugin, {});
   });
   const close = vi.fn(async () => {});
+  const info = vi.fn();
+  const printUrls = vi.fn();
   const server = {
     close,
+    config: { logger: { info } },
     httpServer: {
       listening: true,
       address: () => ({ address: "127.0.0.1", port: 5200 }),
@@ -389,10 +409,14 @@ test("optional Vite registration failure does not close a working local listener
       off: () => {},
     },
     listen: vi.fn(async () => server),
+    printUrls,
   };
   if (typeof plugin.configureServer !== "function") throw new Error("missing Vite server hook");
   plugin.configureServer.call({} as never, server as never);
   expect(await server.listen()).toBe(server);
+  server.printUrls();
+  expect(printUrls).toHaveBeenCalledOnce();
+  expect(info).not.toHaveBeenCalled();
   expect(close).not.toHaveBeenCalled();
   expect(bootstrap.requests.at(-1)?.path).toBe("/v1/unregister");
 });
@@ -436,6 +460,7 @@ test.each([
       expect(fixture.requests.map(({ path }) => path)).toEqual(["/v1/prepare"]);
       expect(fixture.output()).toContain("continuing local development");
       expect(fixture.output()).not.toContain(bootstrapOptions.responseBody);
+      expect(fixture.output()).not.toContain("tnl:     https://");
     });
   },
 );
@@ -451,8 +476,30 @@ test("runs real Vite with tnl disabled and no login", { timeout: 60_000 }, async
     const page = await requestTestServer(port, { host: "localhost" });
     expect(page.status).toBe(200);
     expect(fixture.requests).toEqual([]);
+    expect(fixture.output()).not.toContain("tnl:     https://");
   });
 });
+
+test.each(["connector-only", "silent"] as const)(
+  "omits the public URL from %s Vite output",
+  { timeout: 60_000 },
+  async (mode) => {
+    const port = await findAvailableLoopbackPort();
+    const fixture = await startFrameworkFixture(
+      "vite",
+      mode === "silent" ? ["--logLevel", "silent"] : [],
+      { TNL_FIXTURE_PORT: String(port) },
+      mode === "connector-only" ? { responseBody: JSON.stringify(testPrivateAssignment()) } : {},
+    );
+    await fixture.diagnose(async () => {
+      expect((await fixture.request(1)).path).toBe("/v1/register");
+      const page = await requestTestServer(port, { host: "localhost" });
+      expect(page.status).toBe(200);
+      if (mode === "silent") expect(fixture.output()).toBe("");
+      else expect(fixture.output()).not.toContain("tnl:     https://");
+    });
+  },
+);
 
 function localDefine() {
   return {
@@ -489,6 +536,7 @@ test(
       expect(page.status).toBe(200);
       expect(page.body).toContain("Vite fixture");
       expect(page.headers["x-tnl-fixture"]).toBe("vite");
+      await expect.poll(fixture.output).toContain("  ➜  tnl:     https://api.member.example");
       const appModule = await requestTestServer(selectedPort, { path: "/src/main.ts" });
       expect(appModule.status).toBe(200);
       await expect(
@@ -534,6 +582,26 @@ test(
       });
       expect(updatedModule.status).toBe(200);
       expect(updatedModule.body).toContain("Vite fixture HMR");
+
+      const config = join(fixture.directory, "vite.config.ts");
+      const originalConfig = await readFile(config, "utf8");
+      const restartPort = await findAvailableLoopbackPort();
+      await writeFile(
+        config,
+        originalConfig.replace("Number(process.env.TNL_FIXTURE_PORT)", String(restartPort)),
+      );
+      await expect
+        .poll(() => fixture.output().split("  ➜  tnl:     https://api.member.example").length - 1, {
+          timeout: 30_000,
+        })
+        .toBe(2);
+      const restarted = fixture.requests.filter(({ path }) => path === "/v1/register");
+      expect(restarted).toHaveLength(2);
+      const restartedTarget = z
+        .object({ target: z.string().url() })
+        .parse(restarted[1]?.body).target;
+      const restartedPage = await requestTestServer(Number(new URL(restartedTarget).port));
+      expect(restartedPage.status).toBe(200);
     });
   },
 );

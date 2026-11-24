@@ -101,9 +101,18 @@ export default function tnl(options: FrameworkOptions = {}): Plugin {
         throw new TnlError("sdk.target_invalid");
       }
       const listener = server.httpServer;
+      let registered = false;
+      const originalPrintUrls = server.printUrls.bind(server);
+      server.printUrls = () => {
+        originalPrintUrls();
+        if (registered && configured.publicURL !== undefined) {
+          server.config.logger.info(`  ➜  tnl:     ${configured.publicURL}`);
+        }
+      };
       const originalListen = server.listen.bind(server);
       server.listen = (port, isRestart) =>
         operation(isRestart === true ? "vite.restart" : "vite.register", async () => {
+          registered = false;
           let listening;
           try {
             listening = await originalListen(port, isRestart);
@@ -119,6 +128,7 @@ export default function tnl(options: FrameworkOptions = {}): Plugin {
             await frameworkOperation(preview, async (signal) => {
               try {
                 await configured.register(listener, signal);
+                registered = true;
               } catch (error) {
                 await closeFramework(configured, error);
                 throw error;
