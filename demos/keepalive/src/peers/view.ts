@@ -6,13 +6,13 @@ import {
   hostSchema,
   releaseIDSchema,
   runIDSchema,
-  type Change,
+  type HostHistory,
 } from "./gossip.ts";
 import { readJSON } from "../release.ts";
 
 const visibleHost = hostSchema.refine(({ origin }) => hostOrigin(origin));
 export const MAX_FALLBACK_HOSTS = 3;
-export const MAX_TREE_HOSTS = 64;
+export const MAX_TREE_HOSTS = 96;
 export const TREE_PATH = "/__keepalive/tree";
 export const presenceSummary = z.strictObject({
   host: visibleHost,
@@ -37,33 +37,51 @@ export const treeHost = hostDetailsSchema
   .extend({
     runID: runIDSchema,
     left: z.boolean(),
+    unreachable: z.boolean().optional(),
   });
 const treeView = z.strictObject({
   hostRunID: runIDSchema,
   hosts: z.array(treeHost).max(MAX_TREE_HOSTS),
 });
 
-export function treeSample(roster: readonly Change[], focus: string) {
-  const runs = new Map(roster.map((host) => [host.runID, host]));
-  const selected = new Set<Change>();
-  // keep the branch around the counting host even when the roster is large.
-  for (let id: string | undefined = focus; id !== undefined && selected.size < MAX_TREE_HOSTS;) {
+export function treeSample(roster: readonly HostHistory[], focus: string) {
+  const runs = new Map<string, HostHistory>();
+  const children = new Map<string, string[]>();
+  for (const host of roster) {
+    if (runs.has(host.runID)) continue;
+    runs.set(host.runID, host);
+    if (host.copyFrom !== undefined) {
+      const group = children.get(host.copyFrom) ?? [];
+      group.push(host.runID);
+      children.set(host.copyFrom, group);
+    }
+  }
+  const selected = new Map<string, HostHistory>();
+  const add = (id: string) => {
     const host = runs.get(id);
-    if (host === undefined || selected.has(host)) break;
-    selected.add(host);
-    id = host.copyFrom;
+    if (host === undefined || selected.has(id)) return false;
+    selected.set(id, host);
+    return true;
+  };
+  // share the response budget between the path to this host and the tabs it seeded.
+  add(focus);
+  let ancestor = runs.get(focus)?.copyFrom;
+  const descendants = [...(children.get(focus) ?? [])];
+  for (
+    let i = 0;
+    selected.size < MAX_TREE_HOSTS && (ancestor !== undefined || i < descendants.length);
+    i++
+  ) {
+    if (ancestor !== undefined) ancestor = add(ancestor) ? runs.get(ancestor)?.copyFrom : undefined;
+    const child = descendants[i];
+    if (child !== undefined && selected.size < MAX_TREE_HOSTS && add(child))
+      descendants.push(...(children.get(child) ?? []));
   }
   for (const host of roster) {
     if (selected.size >= MAX_TREE_HOSTS) break;
-    selected.add(host);
+    add(host.runID);
   }
-  return [...selected].map(({ runID, name, endsAt, copyFrom, left }) => ({
-    runID,
-    name,
-    endsAt,
-    copyFrom,
-    left,
-  }));
+  return [...selected.values()];
 }
 
 export async function readTree(origin: string, hostRunID: string, signal: AbortSignal) {
@@ -75,6 +93,6 @@ export async function readTree(origin: string, hostRunID: string, signal: AbortS
     redirect: "error",
     signal: deadline,
   });
-  const view = treeView.safeParse(await readJSON(response, 16_384, deadline));
+  const view = treeView.safeParse(await readJSON(response, 32_768, deadline));
   return view.success && view.data.hostRunID === hostRunID ? view.data.hosts : undefined;
 }

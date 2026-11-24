@@ -271,7 +271,7 @@ export function peerServer(
   app.get(TREE_PATH, (c) => {
     if (gossip === undefined || signal.aborted) return c.body(null, 503);
     const hostRunID = gossip.self.runID;
-    return c.json({ hostRunID, hosts: treeSample(gossip.roster(Date.now()), hostRunID) });
+    return c.json({ hostRunID, hosts: treeSample(gossip.hostHistory(Date.now()), hostRunID) });
   });
   app.get(CERTIFICATE_PATH, async (c) => {
     const pending = promotion;

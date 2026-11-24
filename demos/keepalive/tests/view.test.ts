@@ -4,12 +4,21 @@ import {
   HOST_PARENT,
   MAX_CHANGES,
   PEERS_PATH,
+  SUSPECT_MS,
   parseMessage,
   type Host,
+  type HostHistory,
 } from "../src/peers/gossip.ts";
+import { hostBranches, visibleBranches, type Branch } from "../src/page/host-tree.ts";
 import { peerServer } from "../src/peers/http.ts";
 import { PRESENCE_PATH } from "../src/peers/presence.ts";
-import { MAX_TREE_HOSTS, TREE_PATH, presenceSummary, treeHost } from "../src/peers/view.ts";
+import {
+  MAX_TREE_HOSTS,
+  TREE_PATH,
+  presenceSummary,
+  treeHost,
+  treeSample,
+} from "../src/peers/view.ts";
 import * as z from "zod";
 
 const pageOrigin = "https://keepthisalive.com";
@@ -22,6 +31,77 @@ function host(n: number): Host {
     runNumber: String(n),
   };
 }
+
+it("retains an unreachable donor and archives a former run without counting it", async () => {
+  const now = Date.now();
+  const seed = new Gossip(release, host(1), now, { endsAt: now + 60_000 });
+  const relay = new Gossip(release, host(2), now, { copyFrom: seed.self.runID });
+  relay.receive(seed.message(now), now);
+  await relay.probe(
+    () => now,
+    () => 0,
+    async () => undefined,
+  );
+  expect(relay.presenceView(now + SUSPECT_MS).hosts).toBe(1);
+  expect(relay.hostHistory(now + SUSPECT_MS)).toContainEqual(
+    expect.objectContaining({ runID: seed.self.runID, unreachable: true, left: false }),
+  );
+  const restart = new Gossip(release, { ...seed.self, runID: host(3).runID, runNumber: "3" }, now);
+  relay.receive(restart.message(now + SUSPECT_MS), now + SUSPECT_MS);
+  expect(relay.hostHistory(now + SUSPECT_MS)).toContainEqual(
+    expect.objectContaining({ runID: seed.self.runID, left: true }),
+  );
+  expect(relay.message(now + SUSPECT_MS).changes.map(({ runID }) => runID)).not.toContain(
+    seed.self.runID,
+  );
+  const later = now + 10 * 60_000;
+  expect(relay.presenceView(later).hosts).toBe(1);
+  expect(relay.hostHistory(later)).toHaveLength(3);
+});
+
+it("shows the ancestry and children of the current host; expanding adds rows in place", () => {
+  const entry = (id: number, previous?: number): HostHistory => ({
+    runID: host(id).runID,
+    copyFrom: previous === undefined ? undefined : host(previous).runID,
+    left: id === 1,
+  });
+  const history = [
+    ...Array.from({ length: 105 }, (_, i) => entry(i + 100)),
+    ...Array.from({ length: 17 }, (_, i) => entry(i + 1, i || undefined)),
+    entry(18, 17),
+    entry(19, 17),
+    entry(20, 18),
+  ];
+  const focus = host(17).runID;
+  const sample = treeSample(history, focus);
+  expect(sample).toHaveLength(MAX_TREE_HOSTS);
+  const roots = hostBranches(sample, focus);
+  expect(roots[0]?.host.runID).toBe(host(1).runID);
+  const first = visibleBranches(roots, focus, 16);
+  const flatten = (branches: readonly Branch[]): string[] =>
+    branches.flatMap(({ host, children }) => [host.runID, ...flatten(children)]);
+  expect(flatten(first.branches)).toEqual(Array.from({ length: 19 }, (_, i) => host(i + 1).runID));
+  expect(first.more).toBe(true);
+  const full = visibleBranches(roots, focus, MAX_TREE_HOSTS);
+  expect(full.more).toBe(false);
+  expect(flatten(full.branches).slice(0, 20)).toEqual([
+    ...Array.from({ length: 18 }, (_, i) => host(i + 1).runID),
+    host(20).runID,
+    host(19).runID,
+  ]);
+  expect(new Set(flatten(full.branches)).size).toBe(MAX_TREE_HOSTS);
+});
+
+it("breaks cycles and keeps branches whose earlier host is missing", () => {
+  const a = { runID: host(1).runID, left: false, copyFrom: host(2).runID };
+  const b = { runID: host(2).runID, left: false, copyFrom: host(1).runID };
+  const c = { runID: host(3).runID, left: false, copyFrom: host(99).runID };
+  const branches = hostBranches([a, b, c], a.runID);
+  expect(branches).toEqual([
+    { host: b, children: [{ host: a, children: [] }] },
+    { host: c, children: [] },
+  ]);
+});
 
 it("counts more hosts than fit in gossip without sending the roster to the visitor", async () => {
   const lifetime = new AbortController();

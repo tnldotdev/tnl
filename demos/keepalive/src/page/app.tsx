@@ -1,7 +1,7 @@
 import "../validation.ts";
 import { render } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { hostBranches, type TreeHost } from "./host-tree.ts";
+import { hostBranches, visibleBranches, type Branch, type TreeHost } from "./host-tree.ts";
 import { PULSE_SECONDS, requestPulse } from "../hosting/activity.ts";
 import { turnSounds, turnWarning, protectHostingTab } from "./attention.ts";
 import type { HostUpdate } from "../hosting/messages.ts";
@@ -39,47 +39,36 @@ function age(since: number, now: number) {
   return days > 0 ? `${days}d ${clock}` : clock;
 }
 
-type Branch = ReturnType<typeof hostBranches>[number]["root"];
-
 function BranchRow({
   branch,
   now,
   self,
-  prefix = "",
-  edge = "",
-  next = "",
+  depth = 0,
 }: {
   branch: Branch;
   now: number;
   self: string | undefined;
-  prefix?: string;
-  edge?: string;
-  next?: string;
+  depth?: number;
 }) {
   const { host, children } = branch;
   const label = host.name ?? "unnamed host";
   const former = host.left || (host.endsAt !== undefined && host.endsAt <= now);
+  const state = former ? "former host" : host.unreachable ? "unreachable" : undefined;
   return (
     <li>
-      <span class="tree-edge" aria-hidden="true">
-        {prefix}
-        {edge}
-      </span>
-      <span class={former ? "former-host" : undefined}>
+      <span class={state !== undefined ? "former-host" : undefined}>
         {host.runID === self ? <strong>{label} (you)</strong> : label}
-        {former && <span class="visually-hidden"> (former host)</span>}
+        {state && <small> ({state})</small>}
       </span>
       {children.length > 0 && (
-        <ul class="host-tree">
-          {children.map((child, index) => (
+        <ul class={depth < 12 ? "host-tree" : "host-tree host-tree-deep"}>
+          {children.map((child) => (
             <BranchRow
               key={child.host.runID}
               branch={child}
               now={now}
               self={self}
-              prefix={prefix + next}
-              edge="+-- "
-              next={index === children.length - 1 ? "    " : "|   "}
+              depth={depth + 1}
             />
           ))}
         </ul>
@@ -87,6 +76,9 @@ function BranchRow({
     </li>
   );
 }
+
+const TREE_ROWS = 16;
+const TREE_REFRESH_MS = 15_000;
 
 function Hosts({
   origin,
@@ -99,51 +91,61 @@ function Hosts({
   self: string | undefined;
   focus: string | undefined;
 }) {
-  const [anchor, setAnchor] = useState<string>();
+  const [visibleRows, setVisibleRows] = useState(TREE_ROWS);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<{ origin: string; focus: string; hosts: readonly TreeHost[] }>();
   useEffect(() => {
     if (!open || origin === undefined || focus === undefined) return;
     const lifetime = new AbortController();
-    setAnchor(undefined);
-    void readTree(origin, focus, lifetime.signal)
-      .then((hosts) => {
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh(origin: string, focus: string) {
+      try {
+        const hosts = await readTree(origin, focus, lifetime.signal);
         if (!lifetime.signal.aborted && hosts !== undefined) setView({ origin, focus, hosts });
-      })
-      .catch(() => {});
-    return () => lifetime.abort();
+      } catch {
+        // retain the last view through a missed refresh.
+      } finally {
+        if (!lifetime.signal.aborted)
+          timer = setTimeout(() => void refresh(origin, focus), TREE_REFRESH_MS);
+      }
+    }
+    void refresh(origin, focus);
+    return () => {
+      lifetime.abort();
+      clearTimeout(timer);
+    };
   }, [open, origin, focus]);
   const roster =
     view?.origin === origin && view?.focus === focus ? (view?.hosts ?? emptyRoster) : emptyRoster;
-  const pages = useMemo(() => hostBranches(roster, focus), [roster, focus]);
-  const index = Math.max(
-    0,
-    pages.findIndex((page) => page.focusID === anchor),
+  const branches = useMemo(() => hostBranches(roster, focus), [roster, focus]);
+  const selected = useMemo(
+    () => visibleBranches(branches, focus, visibleRows),
+    [branches, focus, visibleRows],
   );
-  const page = pages[index];
   if (origin === undefined || focus === undefined) return null;
   return (
     <details class="host-details" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>hosts</summary>
-      <p class="tree-note">
-        <span>how it spread</span>
-        <br />
-        Each branch shows who copied from whom.
-      </p>
-      {page?.continued && <div aria-label="Earlier hosts not shown">...</div>}
-      {page !== undefined && (
-        <ul class="host-tree">
-          <BranchRow branch={page.root} now={now} self={self} />
-        </ul>
+      <p class="tree-note">Follow the site from one browser to the next.</p>
+      {selected.branches.some(({ host }) => host.copyFrom !== undefined) && (
+        <p class="tree-note">Earlier hosts aren’t shown.</p>
       )}
-      {page === undefined && <p>Waiting for a host report.</p>}
-      {page !== undefined && pages.length > 1 && (
+      {selected.branches.length > 0 ? (
+        <ul class="host-tree">
+          {selected.branches.map((branch) => (
+            <BranchRow key={branch.host.runID} branch={branch} now={now} self={self} />
+          ))}
+        </ul>
+      ) : (
+        <p>Waiting for a host report.</p>
+      )}
+      {selected.more && (
         <button
           class="text-action"
           type="button"
-          onClick={() => setAnchor(pages[index + 1]?.focusID)}
+          onClick={() => setVisibleRows((count) => count + TREE_ROWS)}
         >
-          {index === pages.length - 1 ? "back to first branch" : "show more"}
+          show more
         </button>
       )}
     </details>
@@ -305,10 +307,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             turns keeping it online. If the last host stops, the site goes down.
           </p>
           {lifetime === undefined && finished === undefined && !retry && (
-            <p>
-              Click below to volunteer, then keep this tab open. It'll host when needed, for up to{" "}
-              {label}. You can stop anytime.
-            </p>
+            <p>Click below to volunteer, then keep this tab open. You can stop anytime.</p>
           )}
         </>
       )}
@@ -329,9 +328,6 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             labels[host.type]
           )}
         </p>
-        {host?.type === "waiting" && (
-          <p>Your turn starts when hosting begins and lasts up to {turnLabel(false)}.</p>
-        )}
         {host?.type === "copying" && <CopyProgress received={host.received} total={host.total} />}
         {hosting && (
           <>
@@ -360,11 +356,11 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             <p>{pluralRequests(finished)} handled</p>
           </>
         )}
-        {!hosting && hosts > 0 && (
-          <p>
-            ~{visitors} {visitors === 1 ? "tab" : "tabs"} · {hosts} {hosts === 1 ? "host" : "hosts"}
-          </p>
-        )}
+        <p>
+          {hosts === 0
+            ? "— tabs · — hosts"
+            : `~${visitors.toLocaleString()} ${visitors === 1 ? "tab" : "tabs"} · ${hosts.toLocaleString()} ${hosts === 1 ? "host" : "hosts"}`}
+        </p>
         {(hosting?.saturated ?? observed?.saturated) && <p>Some hosts aren’t shown.</p>}
         <Hosts
           key={hosting?.runID}
@@ -402,7 +398,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             type="button"
             onClick={toggleSound}
             aria-pressed={sound}
-            title="Play a short invitation sound in the background and a warning with five minutes left"
+            title="Play an invitation sound in the background and a warning each minute in the final five minutes"
           >
             sound: {sound ? "on" : "off"}
           </button>

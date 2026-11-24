@@ -1,55 +1,68 @@
-import type { Change } from "../peers/gossip.ts";
+import type { HostHistory } from "../peers/gossip.ts";
 
-export type TreeHost = Pick<Change, "runID" | "name" | "copyFrom" | "left" | "endsAt">;
-type Branch = { host: TreeHost; children: Branch[] };
+export type TreeHost = HostHistory;
+export type Branch = { host: TreeHost; children: Branch[] };
 
 export function hostBranches(roster: readonly TreeHost[], focusID: string | undefined) {
-  const hosts = new Map(roster.map((host) => [host.runID, host]));
-  const ids = [...hosts.keys()].sort();
+  const hosts = new Map<string, Branch>(roster.map((host) => [host.runID, { host, children: [] }]));
   const parent = new Map<string, string>();
-  const children = new Map<string, string[]>();
-  for (const id of ids) {
-    const source = hosts.get(id)?.copyFrom;
+  for (const [id, branch] of hosts) {
+    const source = branch.host.copyFrom;
     // keep only known, acyclic links. every accepted link is reported by its child.
-    if (source === undefined || !hosts.has(source)) continue;
+    if (source === undefined) continue;
+    const donor = hosts.get(source);
+    if (donor === undefined) continue;
     let ancestor: string | undefined = source;
     while (ancestor !== undefined && ancestor !== id) ancestor = parent.get(ancestor);
     if (ancestor === id) continue;
     parent.set(id, source);
-    const siblings = children.get(source) ?? [];
-    siblings.push(id);
-    children.set(source, siblings);
+    donor.children.push(branch);
   }
 
-  const covered = new Set<string>();
-  const pages: { focusID: string; root: Branch; continued: boolean }[] = [];
-  const order = focusID === undefined ? ids : [focusID, ...ids];
-  for (const focus of order) {
-    if (covered.has(focus) || !hosts.has(focus)) continue;
-    const rootID = parent.get(focus) ?? focus;
-    const rootHost = hosts.get(rootID);
-    if (rootHost === undefined) continue;
-    const root: Branch = { host: rootHost, children: [] };
-    const added = new Map([[rootID, root]]);
-    covered.add(rootID);
-    function add(id: string, branch: Branch) {
-      if (added.size >= 8 || added.has(id)) return undefined;
-      const host = hosts.get(id);
-      if (host === undefined) return undefined;
-      const child: Branch = { host, children: [] };
-      added.set(id, child);
-      covered.add(id);
-      branch.children.push(child);
-      return child;
-    }
-    const freshChildren = (id: string) =>
-      (children.get(id) ?? []).filter((child) => !covered.has(child));
-    const focused = focus === rootID ? root : add(focus, root);
-    if (focused !== undefined) for (const child of freshChildren(focus)) add(child, focused);
-    if (focus !== rootID) for (const sibling of freshChildren(rootID)) add(sibling, root);
-    for (const branch of root.children)
-      for (const child of freshChildren(branch.host.runID)) add(child, branch);
-    pages.push({ focusID: focus, root, continued: rootHost.copyFrom !== undefined });
+  // prioritize the full handoff leading to this host, not the order of random run IDs.
+  let focusRoot = focusID;
+  for (let root = focusRoot && parent.get(focusRoot); root; root = parent.get(root)) {
+    focusRoot = root;
   }
-  return pages;
+  const roots = [...hosts.values()].filter(({ host }) => !parent.has(host.runID));
+  const focused = roots.findIndex(({ host }) => host.runID === focusRoot);
+  if (focused > 0) roots.unshift(...roots.splice(focused, 1));
+  return roots;
+}
+
+export function visibleBranches(
+  roots: readonly Branch[],
+  focusID: string | undefined,
+  limit: number,
+) {
+  const selected = new Set<Branch>();
+  function includePath(branch: Branch): boolean {
+    if (branch.host.runID === focusID) {
+      for (const child of branch.children.slice(0, 4)) selected.add(child);
+    } else if (!branch.children.some(includePath)) return false;
+    selected.add(branch);
+    return true;
+  }
+  if (focusID !== undefined) roots.some(includePath);
+
+  // always show the path to the current host. spend the remaining rows on
+  // nearby branches first, and keep them in place when more rows are revealed.
+  const queue = [...roots];
+  for (let i = 0; i < queue.length && selected.size < limit; i++) {
+    const branch = queue[i];
+    if (branch === undefined) continue;
+    selected.add(branch);
+    queue.push(...branch.children);
+  }
+  let more = false;
+  function visible(branches: readonly Branch[]): Branch[] {
+    return branches.flatMap((branch) => {
+      if (!selected.has(branch)) {
+        more = true;
+        return [];
+      }
+      return [{ host: branch.host, children: visible(branch.children) }];
+    });
+  }
+  return { branches: visible(roots), more };
 }
