@@ -9,6 +9,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/region"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -35,6 +36,10 @@ func serviceRunProblem(ctx context.Context, w http.ResponseWriter, operation str
 	}
 	if errors.Is(err, controlstate.ErrInsufficientRelayServices) {
 		writeProblem(w, 503, controlv1.Unavailable, "two live relay services are required")
+		return
+	}
+	if failure.Only(err, controlstate.ErrPublisherAliasWildcardBinding) {
+		writeProblem(w, http.StatusConflict, controlv1.Conflict, "publisher alias parent needs a ready DNS authority and one compatible ingress pool; ask the operator to check the saved service")
 		return
 	}
 	serviceVisitorError(ctx, w, operation, err)

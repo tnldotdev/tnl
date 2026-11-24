@@ -63,6 +63,8 @@ type DNSVerifier interface {
 	VerifyAddress(context.Context, string, []string, []string, []string) (bool, error)
 	VerifyAddressRemoval(context.Context, AddressRecord, []string) (bool, error)
 	VerifyPublisherAliasWildcardOwnership(context.Context, AddressRecord, []string) (bool, error)
+	VerifyPublisherAliasWildcardAddress(context.Context, string, []string, []string, []string) (bool, error)
+	VerifyPublisherAliasWildcardDelegation(context.Context, string, []string) (bool, error)
 	VerifyPublisherAliasWildcardRemoval(context.Context, AddressRecord, []string) (bool, error)
 }
 
@@ -82,7 +84,7 @@ type Store interface {
 	serviceEndpointStore
 	ClaimPublisherAliasWildcard(context.Context, string, time.Time, time.Duration) (controlstate.PublisherAliasWildcardWork, bool, error)
 	PinPublisherAliasWildcardZone(context.Context, controlstate.PublisherAliasWildcardWork, string, time.Time) error
-	SavePublisherAliasWildcard(context.Context, controlstate.PublisherAliasWildcardWork, []string, bool, bool, int64, time.Time, time.Time) error
+	SavePublisherAliasWildcard(context.Context, controlstate.PublisherAliasWildcardWork, []string, controlstate.PublisherAliasWildcardObservation, int64, time.Time, time.Time) error
 	ClaimDNSAuthorityWork(context.Context, string, time.Time, time.Duration) (controlstate.DNSAuthorityWork, bool, error)
 	SaveDNSAuthorityWork(context.Context, controlstate.DNSAuthorityWork, time.Time) (controlstate.DNSAuthorityWork, error)
 	DNSAuthorityReleaseReady(context.Context, string, time.Time) (bool, error)

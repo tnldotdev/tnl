@@ -26,11 +26,13 @@ CREATE TABLE control.publisher_alias_wildcards (
 );
 CREATE INDEX publisher_alias_wildcards_work ON control.publisher_alias_wildcards(available_at,parent);
 CREATE INDEX publisher_alias_wildcards_domain ON control.publisher_alias_wildcards(domain_id);
+CREATE INDEX services_run_alias_parent ON control.services(run_alias_parent) WHERE run_alias_parent<>'';
 
 -- source authority is the previously approved dedicated wildcard certificate
 -- scope, not a publisher's requested suffix or an arbitrary DNS response.
 CREATE VIEW control.publisher_alias_wildcard_facts AS
-SELECT DISTINCT service.run_alias_parent AS parent, service.team_id, domain.id AS domain_id,
+WITH candidates AS NOT MATERIALIZED (
+SELECT service.id AS service_id, service.run_alias_parent AS parent, service.team_id, domain.id AS domain_id,
     domain.authority_revision AS domain_revision, endpoint.ingress_pool_id,
     domain.canonical_domain, domain.dns_authority_reference
 FROM control.services service
@@ -42,7 +44,7 @@ JOIN control.service_endpoints endpoint ON endpoint.service_id=service.id AND en
     AND endpoint.public AND endpoint.dns_automation AND endpoint.ingress_pool_id=service.ingress_pool_id
     AND endpoint.namespace=endpoint.hostname
 JOIN control.deployments deployment ON deployment.id=endpoint.deployment_id AND deployment.deleted_at IS NULL
-    AND deployment.team_id=service.team_id AND deployment.domain_id=domain.id
+    AND deployment.team_id=service.team_id
 JOIN control.service_namespace_claims claim ON claim.namespace=service.run_alias_parent AND claim.domain_id=domain.id
     AND claim.deployment_id=deployment.id AND claim.retired_at IS NULL
 WHERE service.public AND service.enabled AND service.deleted_at IS NULL AND service.protocol='http'
@@ -52,7 +54,12 @@ WHERE service.public AND service.enabled AND service.deleted_at IS NULL AND serv
         SELECT 1 FROM control.dns_authorities authority WHERE authority.authority_reference=domain.dns_authority_reference
           AND authority.state='ready' AND authority.provider_zone_id IS NOT NULL
           AND authority.domain_id=domain.id AND authority.team_id=team.id
-          AND authority.canonical_domain=domain.canonical_domain);
+          AND authority.canonical_domain=domain.canonical_domain)
+)
+SELECT candidate.* FROM candidates candidate
+WHERE NOT EXISTS (SELECT 1 FROM candidates other WHERE other.parent=candidate.parent
+    AND (other.team_id,other.domain_id,other.domain_revision,other.ingress_pool_id)
+        <>(candidate.team_id,candidate.domain_id,candidate.domain_revision,candidate.ingress_pool_id));
 
 -- +goose StatementBegin
 CREATE FUNCTION control.publisher_alias_dns_until(endpoint control.service_endpoints, observed_at timestamptz)
@@ -75,7 +82,8 @@ RETURNS timestamptz LANGUAGE sql STABLE AS $$
                 AND proof.ingress_pool_id=endpoint.ingress_pool_id AND pool.state IN ('enabled','draining')
                 AND proof.verified_until>observed_at AND split_part(endpoint.hostname,'.',1)<>ALL(proof.shadowed_labels)
                 AND EXISTS (SELECT 1 FROM control.publisher_alias_wildcard_facts facts
-                    WHERE (facts.parent,facts.team_id,facts.domain_id,facts.domain_revision,facts.ingress_pool_id)=
+                    WHERE facts.service_id=endpoint.service_id
+                      AND (facts.parent,facts.team_id,facts.domain_id,facts.domain_revision,facts.ingress_pool_id)=
                         (proof.parent,proof.team_id,proof.domain_id,proof.domain_revision,proof.ingress_pool_id))
                 AND EXISTS (
                     SELECT 1 FROM control.dns_authorities authority WHERE authority.authority_reference=domain.dns_authority_reference

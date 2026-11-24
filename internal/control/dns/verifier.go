@@ -35,6 +35,14 @@ func NewAuthoritativeVerifier(server string) (*AuthoritativeVerifier, error) {
 }
 
 func (v *AuthoritativeVerifier) Verify(ctx context.Context, domain string, expected []string) (bool, error) {
+	return v.verifyDelegation(ctx, domain, expected, false)
+}
+
+func (v *AuthoritativeVerifier) VerifyPublisherAliasWildcardDelegation(ctx context.Context, domain string, expected []string) (bool, error) {
+	return v.verifyDelegation(ctx, domain, expected, true)
+}
+
+func (v *AuthoritativeVerifier) verifyDelegation(ctx context.Context, domain string, expected []string, wildcard bool) (bool, error) {
 	expected = normalizeDNSNames(expected)
 	if len(expected) < 2 {
 		return false, errors.New("dnscontroller: expected nameserver set is incomplete")
@@ -53,6 +61,19 @@ func (v *AuthoritativeVerifier) Verify(ctx context.Context, domain string, expec
 	}
 	if !slices.Equal(normalizeDNSNames(actual), expected) {
 		return false, nil
+	}
+	if wildcard {
+		return v.verifyWildcardNameservers(ctx, expected, func(ctx context.Context, server string) (bool, error) {
+			ok, err := v.query(ctx, server, domain, dns.TypeNS, expected)
+			if err == nil && !ok {
+				return false, nil
+			}
+			okSOA, errSOA := v.query(ctx, server, domain, dns.TypeSOA, expected)
+			if errSOA == nil && !okSOA {
+				return false, nil
+			}
+			return ok && okSOA, errors.Join(err, errSOA)
+		})
 	}
 	for _, nameserver := range expected {
 		addresses, err := v.resolver.LookupIPAddr(ctx, nameserver)
@@ -114,6 +135,68 @@ func (v *AuthoritativeVerifier) VerifyAddress(
 		ready = ready && verified
 	}
 	return ready, nil
+}
+
+func (v *AuthoritativeVerifier) VerifyPublisherAliasWildcardAddress(
+	ctx context.Context, hostname string, ipv4, ipv6, nameservers []string,
+) (bool, error) {
+	ipv4, ipv6 = slices.Clone(ipv4), slices.Clone(ipv6)
+	slices.Sort(ipv4)
+	slices.Sort(ipv6)
+	return v.verifyWildcardNameservers(ctx, nameservers, func(ctx context.Context, server string) (bool, error) {
+		ok, err := v.queryAddresses(ctx, server, hostname, dns.TypeA, ipv4)
+		if err == nil && !ok {
+			return false, nil
+		}
+		ok6, err6 := v.queryAddresses(ctx, server, hostname, dns.TypeAAAA, ipv6)
+		if err6 == nil && !ok6 {
+			return false, nil
+		}
+		return ok && ok6, errors.Join(err, err6)
+	})
+}
+
+// a negative answer from one named authority invalidates wildcard proof even
+// if another authority could not answer. try alternate IPs on transport error.
+func (v *AuthoritativeVerifier) verifyWildcardNameservers(
+	ctx context.Context, nameservers []string, query func(context.Context, string) (bool, error),
+) (bool, error) {
+	nameservers = normalizeDNSNames(nameservers)
+	if len(nameservers) < 2 {
+		return false, errors.New("dnscontroller: wildcard nameserver set is incomplete")
+	}
+	var incomplete error
+	for _, nameserver := range nameservers {
+		addresses, err := v.resolver.LookupIPAddr(ctx, nameserver)
+		if err != nil {
+			incomplete = errors.Join(incomplete, err)
+			continue
+		}
+		ok, err := verifyWildcardNameserver(ctx, addresses, query)
+		if err == nil && !ok {
+			return false, nil
+		}
+		incomplete = errors.Join(incomplete, err)
+	}
+	return incomplete == nil, incomplete
+}
+
+func verifyWildcardNameserver(ctx context.Context, addresses []net.IPAddr, query func(context.Context, string) (bool, error)) (bool, error) {
+	if len(addresses) == 0 {
+		return false, errors.New("dnscontroller: wildcard nameserver has no addresses")
+	}
+	var incomplete error
+	for _, address := range addresses {
+		ok, err := query(ctx, net.JoinHostPort(address.IP.String(), "53"))
+		if err == nil {
+			return ok, nil
+		}
+		incomplete = errors.Join(incomplete, err)
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return false, incomplete
 }
 
 func verifyNameserverAddresses(

@@ -30,20 +30,24 @@ func (v *AuthoritativeVerifier) verifyAddressMarker(ctx context.Context, name, z
 	if err != nil || len(nameservers) < 2 {
 		return false, errors.New("dnscontroller: address ownership marker proof is incomplete")
 	}
+	query := func(ctx context.Context, server string) (bool, error) {
+		response, err := v.exchange(ctx, server, name, dns.TypeTXT)
+		if err != nil {
+			return false, err
+		}
+		absent, err := verifyRemovedAddressMarker(response, name, zone, marker)
+		return absent == removing && err == nil, err
+	}
+	if !removing {
+		return v.verifyWildcardNameservers(ctx, nameservers, query)
+	}
 	ready := true
 	for _, nameserver := range nameservers {
 		addresses, err := v.resolver.LookupIPAddr(ctx, nameserver)
 		if err != nil {
 			return false, fmt.Errorf("dnscontroller: resolve ownership marker nameserver %q: %w", nameserver, err)
 		}
-		removed, err := verifyNameserver(ctx, addresses, func(ctx context.Context, server string) (bool, error) {
-			response, err := v.exchange(ctx, server, name, dns.TypeTXT)
-			if err != nil {
-				return false, err
-			}
-			absent, err := verifyRemovedAddressMarker(response, name, zone, marker)
-			return absent == removing && err == nil, err
-		})
+		removed, err := verifyNameserver(ctx, addresses, query)
 		if err != nil {
 			return false, fmt.Errorf("dnscontroller: query ownership marker nameserver %q: %w", nameserver, err)
 		}

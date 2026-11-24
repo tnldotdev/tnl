@@ -21,12 +21,14 @@ import (
 // only the DNS provider is local. Pebble performs DNS-01 validation against
 // records written by the real DNS and ACME workers, including cleanup receipts.
 type privateFixtureDNS struct {
-	mu           sync.Mutex
-	address      string
-	txt          map[string][]string
-	ip           map[string][]string
-	exactWrites  map[string]int
-	customDomain string
+	mu             sync.Mutex
+	address        string
+	txt            map[string][]string
+	ip             map[string][]string
+	exactWrites    map[string]int
+	customDomain   string
+	wildcardResult controldns.PublisherAliasWildcardRecords
+	wildcardError  error
 }
 
 func newPrivateFixtureDNS(t *testing.T, owner *runtimeTopology) *privateFixtureDNS {
@@ -125,6 +127,10 @@ func (f *privateFixtureDNS) Verify(_ context.Context, domain string, _ []string)
 	}
 	return false, errors.New("unexpected custom domain verification")
 }
+
+func (f *privateFixtureDNS) VerifyPublisherAliasWildcardDelegation(ctx context.Context, domain string, nameservers []string) (bool, error) {
+	return f.Verify(ctx, domain, nameservers)
+}
 func (f *privateFixtureDNS) VerifyAddress(ctx context.Context, name string, ipv4, ipv6, _ []string) (bool, error) {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(name), dns.TypeA)
@@ -148,11 +154,18 @@ func (f *privateFixtureDNS) VerifyAddressRemoval(ctx context.Context, record con
 	return f.VerifyAddress(ctx, record.CanonicalHostname, nil, nil, nameservers)
 }
 
+func (f *privateFixtureDNS) VerifyPublisherAliasWildcardAddress(ctx context.Context, name string, ipv4, ipv6, nameservers []string) (bool, error) {
+	return f.VerifyAddress(ctx, name, ipv4, ipv6, nameservers)
+}
+
 func (f *privateFixtureDNS) ReconcilePublisherAliasWildcard(_ context.Context, record controldns.AddressRecord, removing bool) (controldns.PublisherAliasWildcardRecords, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.customDomain == "" || record.ZoneDomain != f.customDomain || !record.CustomZone || record.ZoneID != "fixture-custom-zone" {
 		return controldns.PublisherAliasWildcardRecords{}, errors.New("unexpected wildcard work")
+	}
+	if f.wildcardError != nil {
+		return f.wildcardResult, f.wildcardError
 	}
 	name := dns.Fqdn("*." + record.CanonicalHostname)
 	if removing {

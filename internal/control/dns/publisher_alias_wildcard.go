@@ -10,11 +10,13 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/workerloop"
 )
 
 type PublisherAliasWildcardRecords struct {
 	Zone           Zone
 	Settled        bool
+	Invalid        bool
 	ShadowedLabels []string
 }
 
@@ -38,16 +40,29 @@ func (w *Worker) processPublisherAliasWildcard(ctx context.Context, now time.Tim
 		return found, err
 	}
 	err = w.store.WithDNSRecordLock(ctx, "*."+work.Parent, func() error {
-		var ready bool
+		var observation controlstate.PublisherAliasWildcardObservation
 		var shadowed []string
 		started := time.Now()
-		shadowed, ready, attemptErr = w.advancePublisherAliasWildcard(ctx, work)
+		shadowed, observation, attemptErr = w.advancePublisherAliasWildcard(ctx, work)
+		ready := observation == controlstate.PublisherAliasWildcardVerified || observation == controlstate.PublisherAliasWildcardRemoved
 		observeDNS(ctx, w.config.Observer, "alias_wildcard", "advance", started, ready, attemptErr)
 		if errors.Is(attemptErr, controlstate.ErrPublisherAliasWildcardStale) {
 			return attemptErr
 		}
+		saveCtx := ctx
 		if ctx.Err() != nil {
-			return errors.Join(attemptErr, context.Cause(ctx))
+			attemptErr = errors.Join(attemptErr, context.Cause(ctx))
+			if workerloop.LifetimeEnded(ctx) && observation != controlstate.PublisherAliasWildcardWithdrawn && len(shadowed) == 0 {
+				return attemptErr
+			}
+			if ready {
+				observation = controlstate.PublisherAliasWildcardInconclusive
+			}
+			// even if the last DNS query timed out, save any negative
+			// evidence already observed under the original, fenced work lease.
+			var cancel context.CancelFunc
+			saveCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
 		}
 		now := w.now()
 		var failures int64
@@ -60,7 +75,7 @@ func (w *Worker) processPublisherAliasWildcard(ctx context.Context, now time.Tim
 			next = now.Add(controlstate.PublisherAliasWildcardLifetime / 3)
 		}
 		started = time.Now()
-		err := w.store.SavePublisherAliasWildcard(ctx, work, shadowed, ready && !work.Removing, ready && work.Removing, failures, now, next)
+		err := w.store.SavePublisherAliasWildcard(saveCtx, work, shadowed, observation, failures, now, next)
 		observeDNS(ctx, w.config.Observer, "alias_wildcard", "save", started, err == nil, err)
 		return err
 	})
@@ -74,29 +89,33 @@ func (w *Worker) processPublisherAliasWildcard(ctx context.Context, now time.Tim
 	return true, err
 }
 
-func (w *Worker) advancePublisherAliasWildcard(ctx context.Context, work controlstate.PublisherAliasWildcardWork) ([]string, bool, error) {
+func (w *Worker) advancePublisherAliasWildcard(ctx context.Context, work controlstate.PublisherAliasWildcardWork) ([]string, controlstate.PublisherAliasWildcardObservation, error) {
+	inconclusive, withdrawn := controlstate.PublisherAliasWildcardInconclusive, controlstate.PublisherAliasWildcardWithdrawn
 	if work.Removing && work.ZoneID == "" {
-		return nil, true, nil
+		return nil, controlstate.PublisherAliasWildcardRemoved, nil
 	}
 	if !work.Removing && (!work.PoolUsable || work.IPv4 == nil && work.IPv6 == nil) {
-		return nil, false, nil
+		return nil, withdrawn, nil
 	}
 	record := AddressRecord{CanonicalHostname: work.Parent, Owner: wildcardOwner(work), ZoneDomain: work.Domain, TeamID: work.TeamID, DomainID: work.DomainID, AuthorityReference: work.AuthorityReference}
 	authority, err := w.store.GetDNSAuthority(ctx, work.AuthorityReference)
 	if err != nil {
-		return nil, false, err
+		if errors.Is(err, controlstate.ErrDNSAuthorityNotFound) || errors.Is(err, controlstate.ErrDNSAuthorityInvalid) {
+			return nil, withdrawn, err
+		}
+		return nil, inconclusive, err
 	}
 	if authority.DomainID != work.DomainID || authority.TeamID != work.TeamID || authority.CanonicalDomain != work.Domain ||
 		authority.State != controlstate.DNSAuthorityReady && !(work.Removing && authority.State == controlstate.DNSAuthorityReleasing) {
-		return nil, false, terminalf("publisher alias wildcard does not match current DNS authority")
+		return nil, withdrawn, terminalf("publisher alias wildcard does not match current DNS authority")
 	}
 	record.ZoneID, record.CustomZone = canonicalZoneID(authority.ProviderZoneID), true
 	record.Nameservers, record.DelegationSetID = authority.Nameservers, authority.DelegationSetID
 	if record.ZoneID == "" || work.ZoneID != "" && record.ZoneID != work.ZoneID {
-		return nil, false, terminalf("publisher alias wildcard does not match its pinned hosted zone")
+		return nil, withdrawn, terminalf("publisher alias wildcard does not match its pinned hosted zone")
 	}
 	if err := w.store.PinPublisherAliasWildcardZone(ctx, work, record.ZoneID, w.now()); err != nil {
-		return nil, false, err
+		return nil, inconclusive, err
 	}
 	if work.IPv4 != nil {
 		record.IngressIPv4Addresses = []string{work.IPv4.String()}
@@ -105,28 +124,50 @@ func (w *Worker) advancePublisherAliasWildcard(ctx context.Context, work control
 		record.IngressIPv6Addresses = []string{work.IPv6.String()}
 	}
 	result, err := w.provider.ReconcilePublisherAliasWildcard(ctx, record, work.Removing)
+	var terminal *terminalError
+	if result.Invalid || errors.As(err, &terminal) || isRoute53Error(err, "NoSuchHostedZone") {
+		return result.ShadowedLabels, withdrawn, err
+	}
 	if err != nil || !result.Settled {
-		return nil, false, err
+		return result.ShadowedLabels, inconclusive, err
 	}
 	if work.Removing {
 		removed, err := w.verifier.VerifyPublisherAliasWildcardRemoval(ctx, record, result.Zone.Nameservers)
-		return nil, removed, err
-	}
-	if ready, err := w.verifier.Verify(ctx, record.ZoneDomain, result.Zone.Nameservers); err != nil || !ready {
-		return nil, false, err
-	}
-	if owned, err := w.verifier.VerifyPublisherAliasWildcardOwnership(ctx, record, result.Zone.Nameservers); err != nil || !owned {
-		return nil, false, err
-	}
-	probe, err := naming.RandomHostname(naming.PublisherHostnameKind, work.Parent)
-	if err != nil {
-		return nil, false, err
-	}
-	for _, hostname := range []string{"*." + work.Parent, probe} {
-		ready, err := w.verifier.VerifyAddress(ctx, hostname, record.IngressIPv4Addresses, record.IngressIPv6Addresses, result.Zone.Nameservers)
-		if err != nil || !ready {
-			return nil, false, err
+		if err == nil && removed {
+			return nil, controlstate.PublisherAliasWildcardRemoved, nil
 		}
+		return nil, withdrawn, err
 	}
-	return result.ShadowedLabels, true, nil
+	checks := []func() (bool, error){
+		func() (bool, error) {
+			return w.verifier.VerifyPublisherAliasWildcardDelegation(ctx, record.ZoneDomain, result.Zone.Nameservers)
+		},
+		func() (bool, error) {
+			return w.verifier.VerifyPublisherAliasWildcardOwnership(ctx, record, result.Zone.Nameservers)
+		},
+		func() (bool, error) {
+			return w.verifier.VerifyPublisherAliasWildcardAddress(ctx, "*."+work.Parent, record.IngressIPv4Addresses, record.IngressIPv6Addresses, result.Zone.Nameservers)
+		},
+		func() (bool, error) {
+			probe, err := naming.RandomHostname(naming.PublisherHostnameKind, work.Parent)
+			if err != nil {
+				return false, err
+			}
+			return w.verifier.VerifyPublisherAliasWildcardAddress(ctx, probe, record.IngressIPv4Addresses, record.IngressIPv6Addresses, result.Zone.Nameservers)
+		},
+	}
+	for _, check := range checks {
+		if ctx.Err() != nil {
+			return result.ShadowedLabels, inconclusive, errors.Join(err, context.Cause(ctx))
+		}
+		ok, checkErr := check()
+		if checkErr == nil && !ok {
+			return result.ShadowedLabels, withdrawn, err
+		}
+		err = errors.Join(err, checkErr)
+	}
+	if err != nil {
+		return result.ShadowedLabels, inconclusive, err
+	}
+	return result.ShadowedLabels, controlstate.PublisherAliasWildcardVerified, nil
 }

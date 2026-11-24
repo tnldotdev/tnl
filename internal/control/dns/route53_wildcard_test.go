@@ -2,6 +2,7 @@ package dns
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -75,5 +76,34 @@ func TestRoute53WildcardInventoryCoversExactDescendantAndDelegatedShadows(t *tes
 	if err != nil || !proof.Settled || len(client.changes) != 0 ||
 		!slices.Equal(proof.ShadowedLabels, []string{"p-acme", "p-delegated", "p-exact", "p-receipt"}) {
 		t.Fatal("verified provider inventory lost an exact-name shadow", proof, err, client.changes)
+	}
+
+	// a failed second inventory page must not erase shadows from the first.
+	transport := errors.New("fixture Route 53 transport lost")
+	list := client.listRecords
+	client.listRecords = func(ctx context.Context, input *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error) {
+		if aws.ToString(input.StartRecordName) == aws.ToString(receipt.Name) {
+			return nil, transport
+		}
+		return list(ctx, input)
+	}
+	partial, err := provider.ReconcilePublisherAliasWildcard(t.Context(), record, false)
+	if !errors.Is(err, transport) || partial.Settled || partial.Invalid ||
+		!slices.Equal(partial.ShadowedLabels, []string{"p-delegated", "p-exact"}) {
+		t.Fatal("inconclusive inventory lost known shadows", partial, err)
+	}
+
+	// loss of the wildcard itself is known invalidity, even if the next
+	// Route 53 call fails before the worker can repair it.
+	delete(client.recordSets, dnsName("*."+parent))
+	client.listRecords = func(ctx context.Context, input *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error) {
+		if aws.ToString(input.StartRecordName) == dnsName(wildcardOwnerName(parent)) {
+			return nil, transport
+		}
+		return list(ctx, input)
+	}
+	drift, err := provider.ReconcilePublisherAliasWildcard(t.Context(), record, false)
+	if !errors.Is(err, transport) || drift.Settled || !drift.Invalid {
+		t.Fatal("transport failure erased known invalid wildcard", drift, err)
 	}
 }

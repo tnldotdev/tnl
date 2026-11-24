@@ -30,6 +30,22 @@ func (p *Route53Provider) ReconcilePublisherAliasWildcard(ctx context.Context, r
 	if err != nil {
 		return result, err
 	}
+	byType := make(map[types.RRType]*types.ResourceRecordSet, 2)
+	conflict := false
+	for i := range wildcardSets {
+		set := &wildcardSets[i]
+		if !plainRecordSet(set) || set.Type != types.RRTypeA && set.Type != types.RRTypeAaaa || byType[set.Type] != nil {
+			conflict = true
+			break
+		}
+		byType[set.Type] = set
+	}
+	if !removing {
+		// a later API or repair failure cannot erase record drift already
+		// observed in the hosted zone.
+		result.Invalid = conflict || !wildcardAddressesMatch(byType[types.RRTypeA], record.IngressIPv4Addresses) ||
+			!wildcardAddressesMatch(byType[types.RRTypeAaaa], record.IngressIPv6Addresses)
+	}
 	ownerSets, err := p.listRecordSets(ctx, zone.ID, ownerName)
 	if err != nil {
 		return result, err
@@ -45,19 +61,15 @@ func (p *Route53Provider) ReconcilePublisherAliasWildcard(ctx context.Context, r
 		}
 		return result, terminalf("publisher alias wildcard or its ownership name has unowned records")
 	}
-	byType := make(map[types.RRType]*types.ResourceRecordSet, 2)
-	for i := range wildcardSets {
-		set := &wildcardSets[i]
-		if !plainRecordSet(set) || set.Type != types.RRTypeA && set.Type != types.RRTypeAaaa || byType[set.Type] != nil {
-			return result, terminalf("publisher alias wildcard has conflicting record sets")
-		}
-		byType[set.Type] = set
+	if conflict {
+		return result, terminalf("publisher alias wildcard has conflicting record sets")
 	}
 	if removing && !owned {
 		result.Settled = true
 		return result, nil
 	}
 	if !removing {
+		result.Invalid = result.Invalid || !owned
 		// a child zone can share nameserver IPs with its parent, so an
 		// authoritative-looking reply does not by itself prove no zone cut.
 		for name := parent; name != record.ZoneDomain; {
@@ -72,8 +84,7 @@ func (p *Route53Provider) ReconcilePublisherAliasWildcard(ctx context.Context, r
 			}
 			_, name, _ = strings.Cut(name, ".")
 		}
-		if owned && wildcardAddressesMatch(byType[types.RRTypeA], record.IngressIPv4Addresses) &&
-			wildcardAddressesMatch(byType[types.RRTypeAaaa], record.IngressIPv6Addresses) {
+		if !result.Invalid {
 			result.ShadowedLabels, err = p.publisherAliasShadows(ctx, zone.ID, parent)
 			result.Settled = err == nil
 			return result, err
@@ -147,10 +158,10 @@ func (p *Route53Provider) publisherAliasShadows(ctx context.Context, zoneID, par
 	for range 50 {
 		output, err := p.client.ListResourceRecordSets(ctx, input)
 		if err != nil {
-			return nil, fmt.Errorf("dnscontroller: inventory Route 53 publisher alias parent: %w", err)
+			return mapKeys(shadows), fmt.Errorf("dnscontroller: inventory Route 53 publisher alias parent: %w", err)
 		}
 		if output == nil {
-			return nil, terminalf("publisher alias parent inventory has no response")
+			return mapKeys(shadows), fmt.Errorf("dnscontroller: publisher alias parent inventory has no response")
 		}
 		for _, set := range output.ResourceRecordSets {
 			name := route53RecordName(aws.ToString(set.Name))
@@ -169,5 +180,5 @@ func (p *Route53Provider) publisherAliasShadows(ctx context.Context, zoneID, par
 		}
 		input.StartRecordName, input.StartRecordType, input.StartRecordIdentifier = output.NextRecordName, output.NextRecordType, output.NextRecordIdentifier
 	}
-	return nil, terminalf("publisher alias parent inventory exceeds the work limit")
+	return mapKeys(shadows), fmt.Errorf("dnscontroller: publisher alias parent inventory exceeds the work limit")
 }

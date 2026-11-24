@@ -737,6 +737,7 @@ type ControlPublisherAliasWildcard struct {
 }
 
 type ControlPublisherAliasWildcardFact struct {
+	ServiceID             string
 	Parent                string
 	TeamID                pgtype.Text
 	DomainID              string

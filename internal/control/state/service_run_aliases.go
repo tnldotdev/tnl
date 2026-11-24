@@ -91,7 +91,7 @@ func (d *Database) configureServiceRunAliasParent(ctx context.Context, tx pgx.Tx
 	if err != nil || parent == "" {
 		return err
 	}
-	return queuePublisherAliasWildcard(ctx, tx, row.TeamID.String, row.DomainID.String, parent, now)
+	return queuePublisherAliasWildcard(ctx, tx, service, parent, now)
 }
 
 // the service lock serializes allocation and replacement for each publisher.
@@ -112,7 +112,8 @@ func bindServicePublisherAlias(ctx context.Context, tx pgx.Tx, service controlst
 	if hostname == "" {
 		return nil
 	}
-	rebound, err := tx.Exec(ctx, `UPDATE control.service_endpoints alias SET
+	var wildcard bool
+	err := tx.QueryRow(ctx, `UPDATE control.service_endpoints alias SET
 	    service_run_id=$2, public=canonical.public, retired_at=NULL, reusable_after=NULL,
 	    ingress_pool_id=canonical.ingress_pool_id, dns_automation=canonical.dns_automation AND NOT alias.wildcard_dns,
 	    dns_authority_reference=canonical.dns_authority_reference,
@@ -129,9 +130,16 @@ func bindServicePublisherAlias(ctx context.Context, tx pgx.Tx, service controlst
 	    WHERE alias.hostname=$3 AND alias.service_id=$1 AND alias.publisher_identity_id=$4 AND alias.publisher_alias_parent=$5
 	      AND canonical.service_id=alias.service_id AND canonical.domain_id=alias.domain_id
 	      AND canonical.hostname=$7 AND canonical.service_run_id IS NULL AND canonical.retired_at IS NULL AND canonical.public
-	      AND previous.id=alias.service_run_id AND next.id=$2 AND previous.run_number<next.run_number`,
-		service.ID, run, hostname, publisher, service.RunAliasParent, now, service.CertificateHostname)
-	if err != nil || rebound.RowsAffected() != 0 {
+	      AND previous.id=alias.service_run_id AND next.id=$2 AND previous.run_number<next.run_number
+	    RETURNING alias.wildcard_dns`,
+		service.ID, run, hostname, publisher, service.RunAliasParent, now, service.CertificateHostname).Scan(&wildcard)
+	if err == nil {
+		if wildcard {
+			return requirePublisherAliasWildcardBinding(ctx, tx, service.ID, service.RunAliasParent, now)
+		}
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
 	var reserved string
@@ -153,7 +161,6 @@ func bindServicePublisherAlias(ctx context.Context, tx pgx.Tx, service controlst
 	if err != nil {
 		return projectConstraintError(publisherLookupError(err, ErrServiceConflict))
 	}
-	var wildcard bool
 	err = tx.QueryRow(ctx, `INSERT INTO control.service_endpoints
 	    (hostname,service_id,service_run_id,publisher_identity_id,publisher_alias_parent,deployment_id,local_source_key,domain_id,namespace,ingress_pool_id,
 	     public,dns_automation,dns_authority_reference,dns_state,dns_available_at,created_at,wildcard_dns)
@@ -163,7 +170,7 @@ func bindServicePublisherAlias(ctx context.Context, tx pgx.Tx, service controlst
 	      CASE WHEN endpoint.public AND endpoint.dns_automation AND NOT mode.wildcard THEN $4::timestamptz ELSE NULL END,$4,mode.wildcard
 	    FROM control.service_endpoints endpoint
 	    JOIN control.service_runs run ON run.id=$2
-	    CROSS JOIN LATERAL (SELECT endpoint.dns_automation AND endpoint.dns_authority_reference IS NOT NULL
+	    CROSS JOIN LATERAL (SELECT endpoint.public AND endpoint.dns_automation
 	      AND endpoint.deployment_id IS NOT NULL AND endpoint.namespace=endpoint.hostname
 	      AND run.certificate_scope=$8
 	      AND ('*.'||$8)=ANY(run.certificate_identifiers) AS wildcard) mode
@@ -180,7 +187,7 @@ func bindServicePublisherAlias(ctx context.Context, tx pgx.Tx, service controlst
 		return projectConstraintError(publisherLookupError(err, ErrServiceConflict))
 	}
 	if wildcard {
-		return queuePublisherAliasWildcard(ctx, tx, service.TeamID.String, service.DomainID.String, service.RunAliasParent, now)
+		return requirePublisherAliasWildcardBinding(ctx, tx, service.ID, service.RunAliasParent, now)
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/netip"
@@ -36,6 +37,14 @@ func runAliasSnapshot(t *testing.T, count int) (Config, ingressv1.IngressLease, 
 
 func TestRunAliasSharesOneRunAndSourceSequenceWithCanonicalPool(t *testing.T) {
 	_, lease, snapshot := runAliasSnapshot(t, 3)
+	// older control sends the exact aliases without an alias DNS deadline.
+	wire, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(wire, &snapshot); err != nil {
+		t.Fatal(err)
+	}
 	routing := NewServiceRouting()
 	defer routing.Close()
 	if err := routing.apply(time.Now(), lease, snapshot); err != nil {
@@ -46,6 +55,9 @@ func TestRunAliasSharesOneRunAndSourceSequenceWithCanonicalPool(t *testing.T) {
 		t.Fatal("aliases changed the canonical pool")
 	}
 	for i, run := range snapshot.Runs {
+		if run.AliasDnsUntil != nil {
+			t.Fatal("fixture unexpectedly supplied a wildcard DNS deadline")
+		}
 		exact := routing.candidates(*run.RunHostname, 443, lease, time.Now())
 		if len(exact) != 1 || exact[0] != pool[i] || exact[0].sequence != pool[i].sequence {
 			t.Fatal("alias did not borrow the exact pooled run and source counter")

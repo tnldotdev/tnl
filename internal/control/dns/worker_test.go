@@ -227,7 +227,7 @@ func (*dnsStoreStub) PinPublisherAliasWildcardZone(context.Context, controlstate
 	return errors.New("unexpected wildcard work")
 }
 
-func (*dnsStoreStub) SavePublisherAliasWildcard(context.Context, controlstate.PublisherAliasWildcardWork, []string, bool, bool, int64, time.Time, time.Time) error {
+func (*dnsStoreStub) SavePublisherAliasWildcard(context.Context, controlstate.PublisherAliasWildcardWork, []string, controlstate.PublisherAliasWildcardObservation, int64, time.Time, time.Time) error {
 	return errors.New("unexpected wildcard work")
 }
 
@@ -370,6 +370,14 @@ func (v *verifierStub) VerifyPublisherAliasWildcardRemoval(context.Context, Addr
 
 func (v *verifierStub) VerifyPublisherAliasWildcardOwnership(context.Context, AddressRecord, []string) (bool, error) {
 	return false, errors.New("unexpected wildcard ownership check")
+}
+
+func (v *verifierStub) VerifyPublisherAliasWildcardAddress(ctx context.Context, hostname string, ipv4, ipv6, nameservers []string) (bool, error) {
+	return v.VerifyAddress(ctx, hostname, ipv4, ipv6, nameservers)
+}
+
+func (v *verifierStub) VerifyPublisherAliasWildcardDelegation(ctx context.Context, domain string, nameservers []string) (bool, error) {
+	return v.Verify(ctx, domain, nameservers)
 }
 
 func (v *verifierStub) VerifyAddressRemoval(_ context.Context, record AddressRecord, nameservers []string) (bool, error) {
