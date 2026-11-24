@@ -17,12 +17,23 @@ import (
 	"github.com/tnldotdev/tnl/internal/browserfonts"
 )
 
-// the bundled font needs no asset endpoint, third-party request, or live app.
-const ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
-const FormSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+// the bundled font and favicon need no asset endpoint, third-party request, or live app.
+const pageSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; frame-ancestors 'none'"
+const ContentSecurityPolicy = pageSecurityPolicy + "; form-action 'none'"
+const FormSecurityPolicy = pageSecurityPolicy + "; form-action 'self'"
 
 //go:embed page.css
 var stylesheet string
+
+// keep the bundled favicon in sync with tnl.dev's public favicon.svg.
+//
+//go:embed favicon.svg
+var favicon []byte
+
+var faviconLink = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,` + base64.StdEncoding.EncodeToString(favicon) + `">`
+
+// FaviconLink returns fixed markup for pages that allow data: images.
+func FaviconLink() string { return faviconLink }
 
 // the style element contains only the embedded stylesheet and font, never request data.
 var styles = `@font-face{font-family:"Fira Code";font-style:normal;font-weight:300 700;font-display:swap;src:url("data:font/woff2;base64,` + base64.StdEncoding.EncodeToString(browserfonts.Latin) + `") format("woff2")}` + stylesheet
@@ -139,7 +150,7 @@ func writeShell(page *strings.Builder, title, escapedRefresh string) {
 	if escapedRefresh != "" {
 		page.WriteString(`<meta http-equiv="refresh" content="0;url=` + escapedRefresh + `">`)
 	}
-	page.WriteString("\n<title>" + html.EscapeString(title) + " - tnl</title>\n<style>" + styles + "</style>" + shellBody)
+	page.WriteString("\n<title>" + html.EscapeString(title) + " - tnl</title>\n" + faviconLink + "\n<style>" + styles + "</style>" + shellBody)
 }
 
 // urlAttribute validates the destination before escaping it for a quoted HTML

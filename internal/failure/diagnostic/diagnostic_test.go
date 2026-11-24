@@ -203,7 +203,7 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 					t.Fatal("plain response has unexpected HTML headers")
 				}
 			} else {
-				if response.Header().Get("Content-Security-Policy") != "default-src 'none'; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" ||
+				if response.Header().Get("Content-Security-Policy") != "default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" ||
 					response.Header().Get("Referrer-Policy") != "no-referrer" {
 					t.Fatalf("HTML headers = %v", response.Header())
 				}
