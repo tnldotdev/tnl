@@ -166,6 +166,7 @@ const (
 	DirectDatabaseURLMissing              Reason = "server.direct_database_url_missing"
 	ServerMigrationFailed                 Reason = "server.migration_failed"
 	ServerStartupFailed                   Reason = "server.startup_failed"
+	ServerNotReady                        Reason = "server.not_ready"
 	ServerOutputUnavailable               Reason = "server.output_unavailable"
 	ServerWorkerFailed                    Reason = "server.worker_failed"
 	ServerIngressFailed                   Reason = "server.ingress_failed"
@@ -777,6 +778,10 @@ var definitions = map[Reason]Definition{
 	ServerStartupFailed: {
 		Class: Unavailable, Message: "tnld could not start the configured role",
 		Action: "check role listeners, control reachability, and required credentials", Retry: RetryAfterChange,
+	},
+	ServerNotReady: {
+		Class: Unavailable, Message: "the local server is not ready",
+		Action: "check the metrics listener and role status, then retry", Retry: RetryLater,
 	},
 	ServerOutputUnavailable: {
 		Class: Unavailable, Message: "tnld could not write the command output",

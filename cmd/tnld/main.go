@@ -82,7 +82,10 @@ type serveOptions struct {
 }
 type tnldCLI struct {
 	Serve, Show, Apply serveOptions
-	Check              struct {
+	Ready              struct {
+		Port int `name:"port" default:"9090" help:"Local metrics port serving /ready on IPv4 loopback."`
+	}
+	Check struct {
 		ConfigPath string `name:"config" env:"TNLD_CONFIG" type:"path" help:"Validate YAML or JSON process configuration."`
 	}
 }
@@ -113,6 +116,9 @@ func newServerCommand(flags *tnldCLI, stdout io.Writer) *cobra.Command {
 	}
 	configGroup := group("config", "Inspect process configuration.")
 	pool := group("ingress-pool", "Manage durable ingress pool allocation policy.")
+	add(root, "ready", "Check whether the local server is ready to serve traffic.", &flags.Ready, failure.ServerNotReady, func(cmd *cobra.Command) error {
+		return checkReady(cmd.Context(), flags.Ready.Port)
+	})
 	add(root, "migrate", "Apply control-state database migrations.", nil, failure.ServerMigrationFailed, func(cmd *cobra.Command) error {
 		directURL := os.Getenv("TNLD_DATABASE_DIRECT_URL")
 		if directURL == "" {
