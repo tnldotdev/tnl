@@ -163,6 +163,48 @@ func TestAuthoritativeVerifierFindsChallengeAmongTXTValues(t *testing.T) {
 	}
 }
 
+func TestWildcardVerificationDistinguishesNegativeAndInconclusiveAnswers(t *testing.T) {
+	resolver := verifierDNS(t, func(_ string, request *dns.Msg) *dns.Msg {
+		q := request.Question[0]
+		if q.Qtype == dns.TypeA {
+			address := "192.0.2.1"
+			if q.Name == "ns2.example.test." {
+				address = "192.0.2.2"
+			}
+			return verifierResponse(t, request, true, dns.RcodeSuccess, q.Name+" 60 IN A "+address)
+		}
+		return verifierResponse(t, request, true, dns.RcodeSuccess)
+	})
+	v, err := NewAuthoritativeVerifier(resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unavailable := errors.New("fixture nameserver unavailable")
+	for _, test := range []struct {
+		name          string
+		secondMatches bool
+		wantError     bool
+	}{
+		{name: "transport failure followed by negative answer"},
+		{name: "transport failure followed by positive answer", secondMatches: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			valid, err := v.verifyWildcardNameservers(t.Context(), []string{"ns1.example.test", "ns2.example.test"}, func(_ context.Context, server string) (bool, error) {
+				if server == "192.0.2.1:53" {
+					return false, unavailable
+				}
+				if server != "192.0.2.2:53" {
+					t.Fatalf("unexpected nameserver: %q", server)
+				}
+				return test.secondMatches, nil
+			})
+			if valid || (err != nil) != test.wantError || test.wantError && !errors.Is(err, unavailable) {
+				t.Fatalf("valid=%t, err=%v", valid, err)
+			}
+		})
+	}
+}
+
 func TestAuthoritativeVerifierWaitsForRecursiveChallengeAnswer(t *testing.T) {
 	var visible atomic.Bool
 	address := verifierDNS(t, func(_ string, request *dns.Msg) *dns.Msg {

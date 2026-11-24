@@ -61,7 +61,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(State, PolicyBounded, "closed per-instrument readiness or state-machine value")
 	add(Event, PolicyBounded, "closed lifecycle event; bound is an SDK listener, registered is a native registration transition, and publication_ready is native routability; company reconciliation uses busy, completed, and partial_failed; status/watch readers do not emit transitions", events[1:]...)
 	add(CertificateKind, PolicyBounded, "certificate worker domain", "relay", "service", "control", "service_queue")
-	add(DNSKind, PolicyBounded, "DNS worker domain", "authority", "service", "service_challenge", "relay_challenge")
+	add(DNSKind, PolicyBounded, "DNS worker domain", "authority", "service", "alias_wildcard", "service_challenge", "relay_challenge")
 	add(CleanupKind, PolicyBounded, "cleanup domain", "service_runs", "routing_floor", "routing_prune", "service_audit", "guest_private_state", "workloads")
 	add(CapacityResource, PolicyBounded, "admission capacity domain", admissionResources...)
 	add(HTTPMethod, PolicyBounded, "standard HTTP method; unknown methods normalize to _OTHER", "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH", "_OTHER")

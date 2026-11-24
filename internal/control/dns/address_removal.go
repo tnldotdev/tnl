@@ -13,27 +13,43 @@ import (
 // VerifyAddressRemoval checks the authoritative half of an exact removal.
 // callers must first check that the provider no longer lists the exact sets.
 func (v *AuthoritativeVerifier) VerifyAddressRemoval(ctx context.Context, record AddressRecord, nameservers []string) (bool, error) {
+	return v.verifyAddressMarker(ctx, addressOwnerName(record.CanonicalHostname), record.ZoneDomain, record.Owner, nameservers, true)
+}
+
+func (v *AuthoritativeVerifier) VerifyPublisherAliasWildcardOwnership(ctx context.Context, record AddressRecord, nameservers []string) (bool, error) {
+	return v.verifyAddressMarker(ctx, wildcardOwnerName(record.CanonicalHostname), record.ZoneDomain, record.Owner, nameservers, false)
+}
+
+func (v *AuthoritativeVerifier) VerifyPublisherAliasWildcardRemoval(ctx context.Context, record AddressRecord, nameservers []string) (bool, error) {
+	return v.verifyAddressMarker(ctx, wildcardOwnerName(record.CanonicalHostname), record.ZoneDomain, record.Owner, nameservers, true)
+}
+
+func (v *AuthoritativeVerifier) verifyAddressMarker(ctx context.Context, name, zone string, owner AddressOwner, nameservers []string, removing bool) (bool, error) {
 	nameservers = normalizeDNSNames(nameservers)
-	marker, err := strconv.Unquote(record.Owner.marker())
+	marker, err := strconv.Unquote(owner.marker())
 	if err != nil || len(nameservers) < 2 {
-		return false, errors.New("dnscontroller: address removal proof is incomplete")
+		return false, errors.New("dnscontroller: address ownership marker proof is incomplete")
 	}
-	name := addressOwnerName(record.CanonicalHostname)
+	query := func(ctx context.Context, server string) (bool, error) {
+		response, err := v.exchange(ctx, server, name, dns.TypeTXT)
+		if err != nil {
+			return false, err
+		}
+		absent, err := verifyRemovedAddressMarker(response, name, zone, marker)
+		return absent == removing && err == nil, err
+	}
+	if !removing {
+		return v.verifyWildcardNameservers(ctx, nameservers, query)
+	}
 	ready := true
 	for _, nameserver := range nameservers {
 		addresses, err := v.resolver.LookupIPAddr(ctx, nameserver)
 		if err != nil {
-			return false, fmt.Errorf("dnscontroller: resolve removal nameserver %q: %w", nameserver, err)
+			return false, fmt.Errorf("dnscontroller: resolve ownership marker nameserver %q: %w", nameserver, err)
 		}
-		removed, err := verifyNameserver(ctx, addresses, func(ctx context.Context, server string) (bool, error) {
-			response, err := v.exchange(ctx, server, name, dns.TypeTXT)
-			if err != nil {
-				return false, err
-			}
-			return verifyRemovedAddressMarker(response, name, record.ZoneDomain, marker)
-		})
+		removed, err := verifyNameserver(ctx, addresses, query)
 		if err != nil {
-			return false, fmt.Errorf("dnscontroller: query removal nameserver %q: %w", nameserver, err)
+			return false, fmt.Errorf("dnscontroller: query ownership marker nameserver %q: %w", nameserver, err)
 		}
 		ready = ready && removed
 	}

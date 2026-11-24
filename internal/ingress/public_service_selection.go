@@ -50,7 +50,7 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 			if err := context.Cause(ctx); err != nil {
 				return selected, err
 			}
-			if run.until.After(time.Now()) {
+			if run.hostnameUntil(hostname).After(time.Now()) {
 				available = true
 				break
 			}
@@ -79,13 +79,14 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 				return selected, err
 			}
 			run := runs[(first+attempt)%len(runs)]
-			if !run.until.After(time.Now()) {
+			until := run.hostnameUntil(hostname)
+			if !until.After(time.Now()) {
 				continue
 			}
 			selected = selectedServiceRun{
 				access:    httpRequestAccess,
 				serviceID: run.run.ServiceId, runID: run.run.ServiceRunId, number: run.run.RunNumber,
-				expiresAt: run.until, limits: run.traffic, anonymous: run.run.Anonymous, http: cloneServiceRoute(run),
+				expiresAt: until, limits: run.traffic, anonymous: run.run.Anonymous, http: cloneServiceRoute(run),
 				recoveryEpisodeID: run.run.RecoveryEpisodeId,
 				denialReason:      controlv1.ObservationUnavailable,
 			}
@@ -109,7 +110,7 @@ func (s *Server) selectPublicRun(ctx context.Context, lease ingressv1.IngressLea
 				continue
 			}
 			current, err := s.lease(time.Now())
-			if err != nil || !samePrivateLease(current, lease) || ctx.Err() != nil || !run.until.After(time.Now()) {
+			if err != nil || !samePrivateLease(current, lease) || ctx.Err() != nil || !until.After(time.Now()) {
 				return selected, ErrServiceAdmission
 			}
 			key := trafficKey{service: selected.serviceID, id: selected.runID, run: uint64(selected.number)}

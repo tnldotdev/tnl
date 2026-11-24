@@ -219,6 +219,18 @@ type dnsStoreStub struct {
 	savedAt                time.Time
 }
 
+func (*dnsStoreStub) ClaimPublisherAliasWildcard(context.Context, string, time.Time, time.Duration) (controlstate.PublisherAliasWildcardWork, bool, error) {
+	return controlstate.PublisherAliasWildcardWork{}, false, nil
+}
+
+func (*dnsStoreStub) PinPublisherAliasWildcardZone(context.Context, controlstate.PublisherAliasWildcardWork, string, time.Time) error {
+	return errors.New("unexpected wildcard work")
+}
+
+func (*dnsStoreStub) SavePublisherAliasWildcard(context.Context, controlstate.PublisherAliasWildcardWork, []string, controlstate.PublisherAliasWildcardObservation, int64, time.Time, time.Time) error {
+	return errors.New("unexpected wildcard work")
+}
+
 func (s *dnsStoreStub) ClaimServiceEndpointDNSWork(context.Context, string, time.Time, time.Duration) (controlstate.ServiceEndpointDNSWork, bool, error) {
 	s.serviceEndpointClaims++
 	work := s.serviceEndpointWork
@@ -300,6 +312,10 @@ type providerStub struct {
 	beforeCall              func()
 }
 
+func (p *providerStub) ReconcilePublisherAliasWildcard(context.Context, AddressRecord, bool) (PublisherAliasWildcardRecords, error) {
+	return PublisherAliasWildcardRecords{}, errors.New("unexpected wildcard work")
+}
+
 func (p *providerStub) EnsureCustomZone(_ context.Context, work controlstate.DNSAuthorityWork) (Zone, error) {
 	p.ensureCalls++
 	p.ensureWork = work
@@ -346,6 +362,22 @@ type verifierStub struct {
 	removalCalls                             int
 	addressHostname                          string
 	routeIPv4, routeIPv6, addressNameservers []string
+}
+
+func (v *verifierStub) VerifyPublisherAliasWildcardRemoval(context.Context, AddressRecord, []string) (bool, error) {
+	return false, errors.New("unexpected wildcard withdrawal")
+}
+
+func (v *verifierStub) VerifyPublisherAliasWildcardOwnership(context.Context, AddressRecord, []string) (bool, error) {
+	return false, errors.New("unexpected wildcard ownership check")
+}
+
+func (v *verifierStub) VerifyPublisherAliasWildcardAddress(ctx context.Context, hostname string, ipv4, ipv6, nameservers []string) (bool, error) {
+	return v.VerifyAddress(ctx, hostname, ipv4, ipv6, nameservers)
+}
+
+func (v *verifierStub) VerifyPublisherAliasWildcardDelegation(ctx context.Context, domain string, nameservers []string) (bool, error) {
+	return v.Verify(ctx, domain, nameservers)
 }
 
 func (v *verifierStub) VerifyAddressRemoval(_ context.Context, record AddressRecord, nameservers []string) (bool, error) {

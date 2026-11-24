@@ -153,6 +153,8 @@ type IngressRenewal struct {
 
 // IngressServiceRun defines model for IngressServiceRun.
 type IngressServiceRun struct {
+	// AliasDnsUntil Shorter expiry for a run hostname backed by wildcard DNS. Does not apply to the canonical hostname.
+	AliasDnsUntil     *time.Time                    `json:"alias_dns_until,omitempty"`
 	Anonymous         bool                          `json:"anonymous"`
 	ConnectedRelays   []ServiceRelay                `json:"connected_relays"`
 	EndpointRevision  int64                         `json:"endpoint_revision"`

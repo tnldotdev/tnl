@@ -9,7 +9,7 @@ SELECT EXISTS(
       AND endpoint.ingress_pool_id=sqlc.arg(ingress_pool_id)::text
       AND endpoint.public AND endpoint.retired_at IS NULL
       AND (endpoint.service_run_id IS NULL OR endpoint.service_run_id=sqlc.arg(service_run_id)::text)
-      AND (endpoint.dns_state='published' OR endpoint.dns_state='unmanaged' AND NOT endpoint.dns_automation)
+      AND control.publisher_alias_dns_until(endpoint,sqlc.arg(now)::timestamptz) IS NOT NULL
       AND (pool.state IN('enabled','draining') OR pool.id=sqlc.arg(primary_ingress_pool_id)::text AND pool.state='disabled')
       AND EXISTS(SELECT 1 FROM control.service_connection_slots slot
         JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id

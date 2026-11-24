@@ -21,10 +21,14 @@ import (
 // only the DNS provider is local. Pebble performs DNS-01 validation against
 // records written by the real DNS and ACME workers, including cleanup receipts.
 type privateFixtureDNS struct {
-	mu      sync.Mutex
-	address string
-	txt     map[string][]string
-	ip      map[string][]string
+	mu             sync.Mutex
+	address        string
+	txt            map[string][]string
+	ip             map[string][]string
+	exactWrites    map[string]int
+	customDomain   string
+	wildcardResult controldns.PublisherAliasWildcardRecords
+	wildcardError  error
 }
 
 func newPrivateFixtureDNS(t *testing.T, owner *runtimeTopology) *privateFixtureDNS {
@@ -34,7 +38,7 @@ func newPrivateFixtureDNS(t *testing.T, owner *runtimeTopology) *privateFixtureD
 		t.Fatal(err)
 	}
 	owner.cleanupResource(t, func() { _ = listener.Close(); _ = packet.Close() })
-	f := &privateFixtureDNS{address: packet.LocalAddr().String(), txt: map[string][]string{}, ip: map[string][]string{}}
+	f := &privateFixtureDNS{address: packet.LocalAddr().String(), txt: map[string][]string{}, ip: map[string][]string{}, exactWrites: map[string]int{}}
 	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 		answer := new(dns.Msg)
 		answer.SetReply(r)
@@ -94,22 +98,38 @@ func (f *privateFixtureDNS) PublishAddress(_ context.Context, r controldns.Addre
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ip[dns.Fqdn(r.CanonicalHostname)] = slices.Clone(r.IngressIPv4Addresses)
+	f.exactWrites[dns.Fqdn(r.CanonicalHostname)]++
 	return controldns.Zone{ID: r.ZoneID, Nameservers: []string{f.address}, ChangeID: "fixture-address"}, nil
 }
 func (f *privateFixtureDNS) RemoveAddress(_ context.Context, r controldns.AddressRecord) (controldns.AddressRemoval, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.ip, dns.Fqdn(r.CanonicalHostname))
+	f.exactWrites[dns.Fqdn(r.CanonicalHostname)]++
 	return controldns.AddressRemoval{Zone: controldns.Zone{ID: r.ZoneID, Nameservers: []string{f.address}}, ExactRecordsAbsent: true}, nil
 }
-func (f *privateFixtureDNS) EnsureCustomZone(context.Context, controlstate.DNSAuthorityWork) (controldns.Zone, error) {
+func (f *privateFixtureDNS) EnsureCustomZone(_ context.Context, work controlstate.DNSAuthorityWork) (controldns.Zone, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if work.CanonicalDomain == f.customDomain && f.customDomain != "" {
+		return controldns.Zone{ID: "fixture-custom-zone", Nameservers: []string{"ns1.fixture.test", "ns2.fixture.test"}}, nil
+	}
 	return controldns.Zone{}, errors.New("fixture supports its managed domain only")
 }
 func (f *privateFixtureDNS) ReleaseCustomZone(context.Context, controlstate.DNSAuthorityWork) error {
 	return errors.New("unexpected custom domain release")
 }
-func (f *privateFixtureDNS) Verify(context.Context, string, []string) (bool, error) {
+func (f *privateFixtureDNS) Verify(_ context.Context, domain string, _ []string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if domain == f.customDomain && f.customDomain != "" {
+		return true, nil
+	}
 	return false, errors.New("unexpected custom domain verification")
+}
+
+func (f *privateFixtureDNS) VerifyPublisherAliasWildcardDelegation(ctx context.Context, domain string, nameservers []string) (bool, error) {
+	return f.Verify(ctx, domain, nameservers)
 }
 func (f *privateFixtureDNS) VerifyAddress(ctx context.Context, name string, ipv4, ipv6, _ []string) (bool, error) {
 	m := new(dns.Msg)
@@ -132,6 +152,38 @@ func (f *privateFixtureDNS) VerifyAddress(ctx context.Context, name string, ipv4
 
 func (f *privateFixtureDNS) VerifyAddressRemoval(ctx context.Context, record controldns.AddressRecord, nameservers []string) (bool, error) {
 	return f.VerifyAddress(ctx, record.CanonicalHostname, nil, nil, nameservers)
+}
+
+func (f *privateFixtureDNS) VerifyPublisherAliasWildcardAddress(ctx context.Context, name string, ipv4, ipv6, nameservers []string) (bool, error) {
+	return f.VerifyAddress(ctx, name, ipv4, ipv6, nameservers)
+}
+
+func (f *privateFixtureDNS) ReconcilePublisherAliasWildcard(_ context.Context, record controldns.AddressRecord, removing bool) (controldns.PublisherAliasWildcardRecords, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.customDomain == "" || record.ZoneDomain != f.customDomain || !record.CustomZone || record.ZoneID != "fixture-custom-zone" {
+		return controldns.PublisherAliasWildcardRecords{}, errors.New("unexpected wildcard work")
+	}
+	if f.wildcardError != nil {
+		return f.wildcardResult, f.wildcardError
+	}
+	name := dns.Fqdn("*." + record.CanonicalHostname)
+	if removing {
+		delete(f.ip, name)
+	} else {
+		f.ip[name] = slices.Clone(record.IngressIPv4Addresses)
+	}
+	return controldns.PublisherAliasWildcardRecords{Zone: controldns.Zone{ID: record.ZoneID, Nameservers: record.Nameservers}, Settled: true}, nil
+}
+
+func (f *privateFixtureDNS) VerifyPublisherAliasWildcardRemoval(context.Context, controldns.AddressRecord, []string) (bool, error) {
+	return true, nil
+}
+
+func (f *privateFixtureDNS) VerifyPublisherAliasWildcardOwnership(_ context.Context, record controldns.AddressRecord, _ []string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.ip[dns.Fqdn("*."+record.CanonicalHostname)]) != 0, nil
 }
 
 func privateFixtureACME(t *testing.T, owner *runtimeTopology, d *controlstate.Database, cfg *daemonconfig.Config) (integrationPebble, *privateFixtureDNS) {

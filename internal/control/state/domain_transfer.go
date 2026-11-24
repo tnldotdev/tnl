@@ -177,6 +177,7 @@ func domainTransferBlockers(ctx context.Context, tx pgx.Tx, q *controlstatedb.Qu
 	      WHERE domain_id=$1 AND deleted_at IS NULL
 	    UNION ALL SELECT 'endpoint: '||hostname FROM control.service_endpoints
 	      WHERE domain_id=$1 AND (retired_at IS NULL OR dns_state NOT IN ('unmanaged','removed'))
+	    UNION ALL SELECT 'wildcard DNS: *.'||parent FROM control.publisher_alias_wildcards WHERE domain_id=$1
 	    UNION ALL SELECT 'publisher grant: '||namespace FROM control.publisher_grants
 	      WHERE domain_id=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>$2)
 	    UNION ALL SELECT 'publisher enrollment: '||namespace FROM control.publisher_enrollments

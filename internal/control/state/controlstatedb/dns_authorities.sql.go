@@ -88,6 +88,7 @@ SELECT
         SELECT 1 FROM control.service_endpoints endpoint
         WHERE endpoint.domain_id=$1 AND endpoint.dns_state NOT IN('unmanaged','removed')
     )
+    AND NOT EXISTS (SELECT 1 FROM control.publisher_alias_wildcards WHERE domain_id=$1)
     AND NOT EXISTS (
         SELECT 1 FROM control.acme_orders issuance
         WHERE issuance.certificate_domain_id=$1

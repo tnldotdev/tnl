@@ -311,8 +311,9 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 					return errors.Join(ErrServiceAdmission, openingErr, refreshErr)
 				}
 				relays = append(relays, replacementRelays(selected.relays, replacement.run.ConnectedRelays)...)
-				deadline = privateMinTime(deadline, replacement.until)
-				selected.expiresAt = privateMinTime(selected.expiresAt, replacement.until)
+				replacementUntil := replacement.hostnameUntil(selected.http.selectedHostname)
+				deadline = privateMinTime(deadline, replacementUntil)
+				selected.expiresAt = privateMinTime(selected.expiresAt, replacementUntil)
 				selected.recoveryEpisodeID = replacement.run.RecoveryEpisodeId
 			}
 			continue

@@ -75,9 +75,9 @@ func (d *Database) configureServiceRunAliasParent(ctx context.Context, tx pgx.Tx
 	// restoring endpoint authority can restore the same publisher alias.
 	_, err = tx.Exec(ctx, `UPDATE control.service_endpoints alias SET public=true,
 	    retired_at=NULL,reusable_after=NULL,ingress_pool_id=canonical.ingress_pool_id,
-	    dns_automation=canonical.dns_automation,dns_authority_reference=canonical.dns_authority_reference,
-	    dns_state=CASE WHEN canonical.dns_automation THEN 'pending' ELSE 'unmanaged' END,
-	    dns_available_at=CASE WHEN canonical.dns_automation THEN $2::timestamptz ELSE NULL END,
+	    dns_automation=canonical.dns_automation AND NOT alias.wildcard_dns,dns_authority_reference=canonical.dns_authority_reference,
+	    dns_state=CASE WHEN canonical.dns_automation AND NOT alias.wildcard_dns THEN 'pending' ELSE 'unmanaged' END,
+	    dns_available_at=CASE WHEN canonical.dns_automation AND NOT alias.wildcard_dns THEN $2::timestamptz ELSE NULL END,
 	    dns_revision=alias.dns_revision+1,dns_work_owner=NULL,dns_work_expires_at=NULL
 	    FROM control.service_runs run JOIN control.services current ON current.id=run.service_id
 	    JOIN control.service_endpoints canonical ON canonical.service_id=current.id
@@ -88,7 +88,10 @@ func (d *Database) configureServiceRunAliasParent(ctx context.Context, tx pgx.Tx
 	      AND run.run_alias_parent=current.run_alias_parent AND run.certificate_hostname=current.certificate_hostname
 	      AND run.certificate_domain_id IS NOT DISTINCT FROM current.domain_id
 	      AND (alias.retired_at IS NOT NULL OR NOT alias.public OR alias.ingress_pool_id<>canonical.ingress_pool_id)`, service, now)
-	return err
+	if err != nil || parent == "" {
+		return err
+	}
+	return queuePublisherAliasWildcard(ctx, tx, service, parent, now)
 }
 
 // the service lock serializes allocation and replacement for each publisher.
@@ -109,15 +112,16 @@ func bindServicePublisherAlias(ctx context.Context, tx pgx.Tx, service controlst
 	if hostname == "" {
 		return nil
 	}
-	rebound, err := tx.Exec(ctx, `UPDATE control.service_endpoints alias SET
+	var wildcard bool
+	err := tx.QueryRow(ctx, `UPDATE control.service_endpoints alias SET
 	    service_run_id=$2, public=canonical.public, retired_at=NULL, reusable_after=NULL,
-	    ingress_pool_id=canonical.ingress_pool_id, dns_automation=canonical.dns_automation,
+	    ingress_pool_id=canonical.ingress_pool_id, dns_automation=canonical.dns_automation AND NOT alias.wildcard_dns,
 	    dns_authority_reference=canonical.dns_authority_reference,
-	    dns_state=CASE WHEN NOT canonical.dns_automation THEN 'unmanaged'
+	    dns_state=CASE WHEN NOT canonical.dns_automation OR alias.wildcard_dns THEN 'unmanaged'
 	      WHEN alias.retired_at IS NULL AND alias.ingress_pool_id=canonical.ingress_pool_id
 	        AND alias.dns_authority_reference IS NOT DISTINCT FROM canonical.dns_authority_reference
 	        AND alias.dns_state='published' THEN 'published' ELSE 'pending' END,
-	    dns_available_at=CASE WHEN NOT canonical.dns_automation OR
+	    dns_available_at=CASE WHEN NOT canonical.dns_automation OR alias.wildcard_dns OR
 	      alias.retired_at IS NULL AND alias.ingress_pool_id=canonical.ingress_pool_id
 	        AND alias.dns_authority_reference IS NOT DISTINCT FROM canonical.dns_authority_reference
 	        AND alias.dns_state='published' THEN NULL ELSE $6::timestamptz END,
@@ -126,9 +130,16 @@ func bindServicePublisherAlias(ctx context.Context, tx pgx.Tx, service controlst
 	    WHERE alias.hostname=$3 AND alias.service_id=$1 AND alias.publisher_identity_id=$4 AND alias.publisher_alias_parent=$5
 	      AND canonical.service_id=alias.service_id AND canonical.domain_id=alias.domain_id
 	      AND canonical.hostname=$7 AND canonical.service_run_id IS NULL AND canonical.retired_at IS NULL AND canonical.public
-	      AND previous.id=alias.service_run_id AND next.id=$2 AND previous.run_number<next.run_number`,
-		service.ID, run, hostname, publisher, service.RunAliasParent, now, service.CertificateHostname)
-	if err != nil || rebound.RowsAffected() != 0 {
+	      AND previous.id=alias.service_run_id AND next.id=$2 AND previous.run_number<next.run_number
+	    RETURNING alias.wildcard_dns`,
+		service.ID, run, hostname, publisher, service.RunAliasParent, now, service.CertificateHostname).Scan(&wildcard)
+	if err == nil {
+		if wildcard {
+			return requirePublisherAliasWildcardBinding(ctx, tx, service.ID, service.RunAliasParent, now)
+		}
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
 	var reserved string
@@ -152,12 +163,17 @@ func bindServicePublisherAlias(ctx context.Context, tx pgx.Tx, service controlst
 	}
 	err = tx.QueryRow(ctx, `INSERT INTO control.service_endpoints
 	    (hostname,service_id,service_run_id,publisher_identity_id,publisher_alias_parent,deployment_id,local_source_key,domain_id,namespace,ingress_pool_id,
-	     public,dns_automation,dns_authority_reference,dns_state,dns_available_at,created_at)
+	     public,dns_automation,dns_authority_reference,dns_state,dns_available_at,created_at,wildcard_dns)
 	    SELECT $3,endpoint.service_id,$2,$7,$8,endpoint.deployment_id,endpoint.local_source_key,endpoint.domain_id,
-	      $3,endpoint.ingress_pool_id,endpoint.public,endpoint.dns_automation,endpoint.dns_authority_reference,
-	      CASE WHEN endpoint.public AND endpoint.dns_automation THEN 'pending' ELSE 'unmanaged' END,
-	      CASE WHEN endpoint.public AND endpoint.dns_automation THEN $4::timestamptz ELSE NULL END,$4
+	      $3,endpoint.ingress_pool_id,endpoint.public,endpoint.dns_automation AND NOT mode.wildcard,endpoint.dns_authority_reference,
+	      CASE WHEN endpoint.public AND endpoint.dns_automation AND NOT mode.wildcard THEN 'pending' ELSE 'unmanaged' END,
+	      CASE WHEN endpoint.public AND endpoint.dns_automation AND NOT mode.wildcard THEN $4::timestamptz ELSE NULL END,$4,mode.wildcard
 	    FROM control.service_endpoints endpoint
+	    JOIN control.service_runs run ON run.id=$2
+	    CROSS JOIN LATERAL (SELECT endpoint.public AND endpoint.dns_automation
+	      AND endpoint.deployment_id IS NOT NULL AND endpoint.namespace=endpoint.hostname
+	      AND run.certificate_scope=$8
+	      AND ('*.'||$8)=ANY(run.certificate_identifiers) AS wildcard) mode
 	    WHERE endpoint.service_id=$1 AND endpoint.hostname=$5 AND endpoint.domain_id=$6 AND endpoint.retired_at IS NULL
 	      AND endpoint.service_run_id IS NULL
 	      AND NOT EXISTS(SELECT 1 FROM control.service_namespace_claims claim
@@ -165,7 +181,13 @@ func bindServicePublisherAlias(ctx context.Context, tx pgx.Tx, service controlst
 	          AND (claim.domain_id<>endpoint.domain_id OR claim.deployment_id IS DISTINCT FROM endpoint.deployment_id
 	            OR claim.local_source_key<>endpoint.local_source_key))
 	      AND NOT EXISTS(SELECT 1 FROM control.services other WHERE other.certificate_hostname=$3 AND other.deleted_at IS NULL)
-	    ON CONFLICT(hostname) DO NOTHING RETURNING hostname`,
-		service.ID, run, hostname, now, service.CertificateHostname, service.DomainID, publisher, service.RunAliasParent).Scan(&reserved)
-	return projectConstraintError(publisherLookupError(err, ErrServiceConflict))
+	    ON CONFLICT(hostname) DO NOTHING RETURNING wildcard_dns`,
+		service.ID, run, hostname, now, service.CertificateHostname, service.DomainID, publisher, service.RunAliasParent).Scan(&wildcard)
+	if err != nil {
+		return projectConstraintError(publisherLookupError(err, ErrServiceConflict))
+	}
+	if wildcard {
+		return requirePublisherAliasWildcardBinding(ctx, tx, service.ID, service.RunAliasParent, now)
+	}
+	return nil
 }

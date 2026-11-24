@@ -82,13 +82,17 @@ const listIngressServiceRuns = `-- name: ListIngressServiceRuns :many
 SELECT service.id, service.team_id, service.guest_id, service.name, service.name_scope, service.placement_worktree_key, service.placement_worktree_label, service.protocol, service.tls_metadata, service.configuration_ciphertext, service.storage_key_id, service.trust_revision, service.endpoint_revision, service.service_revision, service.visitor_revision, service.publisher_pool, service.ephemeral, service.expires_at, service.require_post_quantum, service.domain_id, service.certificate_hostname, service.certificate_scope, service.run_alias_parent, service.service_port, service.ingress_pool_id, service.public, service.created_by_identity_id, service.idempotency_key, service.request_digest, service.enabled, service.next_run_number, service.created_at, service.updated_at, service.deleted_at,run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.guest_id, run.protocol, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_namespace, run.run_hostname, run.run_alias_parent, run.require_post_quantum, run.certificate_issuance_id, run.supplied_certificate_sha256, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.serving_observed_at, run.serving_until, run.ready_at, run.closed_at, run.assignments_open,
     LEAST(run.serving_until,run.certificate_expires_at,permission.expires_at)::timestamptz AS valid_until,
     policy.revision AS visitor_policy_revision,recovery.id AS recovery_episode_id,
-    COALESCE((SELECT alias.hostname FROM control.service_endpoints alias
-      WHERE alias.service_run_id=run.id AND alias.service_id=service.id AND alias.hostname=run.run_hostname
-        AND run.run_alias_parent=service.run_alias_parent AND alias.domain_id=service.domain_id
-        AND alias.ingress_pool_id=service.ingress_pool_id AND alias.public AND alias.retired_at IS NULL
-        AND (alias.dns_state='published' OR alias.dns_state='unmanaged' AND NOT alias.dns_automation)),'')::text AS alias_hostname
+    CASE WHEN alias.dns_until IS NOT NULL THEN alias.hostname ELSE '' END::text AS alias_hostname,
+    NULLIF(alias.dns_until,'infinity'::timestamptz)::timestamptz AS alias_dns_until
 FROM control.services service
 JOIN control.service_runs run ON run.service_id=service.id
+LEFT JOIN LATERAL (
+    SELECT endpoint.hostname,control.publisher_alias_dns_until(endpoint,$1::timestamptz) AS dns_until
+    FROM control.service_endpoints endpoint
+    WHERE endpoint.service_run_id=run.id AND endpoint.service_id=service.id AND endpoint.hostname=run.run_hostname
+      AND run.run_alias_parent=service.run_alias_parent AND endpoint.domain_id=service.domain_id
+      AND endpoint.ingress_pool_id=service.ingress_pool_id AND endpoint.public AND endpoint.retired_at IS NULL
+) alias ON true
 JOIN control.visitor_policies policy ON policy.resource_id=service.id
 LEFT JOIN control.service_recovery_episodes recovery ON recovery.service_run_id=run.id AND recovery.state='open'
 JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,service.id,$1) permission ON true
@@ -120,6 +124,7 @@ type ListIngressServiceRunsRow struct {
 	VisitorPolicyRevision int64
 	RecoveryEpisodeID     pgtype.Int8
 	AliasHostname         string
+	AliasDnsUntil         pgtype.Timestamptz
 }
 
 // routing is read from one snapshot, never changed by a visitor connection.
@@ -212,6 +217,7 @@ func (q *Queries) ListIngressServiceRuns(ctx context.Context, arg ListIngressSer
 			&i.VisitorPolicyRevision,
 			&i.RecoveryEpisodeID,
 			&i.AliasHostname,
+			&i.AliasDnsUntil,
 		); err != nil {
 			return nil, err
 		}
