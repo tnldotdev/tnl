@@ -1,8 +1,8 @@
 securitySchemes:
-  clusterAuth:
+  relaySlotAuth:
     type: http
     scheme: bearer
-    bearerFormat: tnl cluster secret
+    bearerFormat: tnl relay slot credential
 parameters:
   RelayID:
     name: relay_id

@@ -7,7 +7,7 @@ import (
 
 func TestIndependentAdmissionLimits(t *testing.T) {
 	base := []string{"--role", "ingress", "--control-hostname", "control.example.test",
-		"--cluster-secret", testClusterSecret, "--ingress-id", "ingress-1"}
+		"--ingress-control-credential", testClusterSecret, "--forwarding-credential", testForwarding, "--ingress-id", "ingress-1"}
 	for _, test := range []struct {
 		flag  string
 		value func(Config) int
@@ -39,7 +39,7 @@ func TestIndependentAdmissionLimits(t *testing.T) {
 
 func TestAutomaticAndExplicitConnectionCapacities(t *testing.T) {
 	base := []string{"--role", "ingress", "--control-hostname", "control.example.test",
-		"--cluster-secret", testClusterSecret, "--ingress-id", "ingress-1"}
+		"--ingress-control-credential", testClusterSecret, "--forwarding-credential", testForwarding, "--ingress-id", "ingress-1"}
 	for _, test := range []struct {
 		flag  string
 		value func(Config) int64
@@ -69,7 +69,7 @@ func TestAutomaticAndExplicitConnectionCapacities(t *testing.T) {
 		})
 	}
 	t.Setenv("TNLD_PUBLISHER_CONNECTION_LIMIT", "91")
-	relay := []string{"--role=relay", "--control-hostname=control.example.test", "--cluster-secret=" + testClusterSecret,
+	relay := []string{"--role=relay", "--control-hostname=control.example.test", "--relay-slot-credential", testSlot, "--forwarding-credential", testForwarding,
 		"--relay-service-id=relay-a", "--relay-id=relay-a-1", "--relay-address=relay.example.test:443", "--internal-relay-address=relay.internal:9445"}
 	fromEnvironment, err := Parse(relay)
 	if err != nil || fromEnvironment.PublisherConnectionLimit != 91 {

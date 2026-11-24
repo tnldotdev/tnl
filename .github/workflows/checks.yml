@@ -411,6 +411,11 @@ jobs:
         shell: bash
         env:
           TNL_ENV_FILE: .env.example
+          TNL_CONTROL_ENV_FILE: control.env.example
+          TNL_INGRESS_CONTROL_CREDENTIAL: fixture-only-ingress-control-credential
+          TNL_FORWARDING_CREDENTIAL: fixture-only-forwarding-credential
+          TNL_RELAY_A_CREDENTIAL: fixture-only-first-relay-slot-credential
+          TNL_RELAY_B_CREDENTIAL: fixture-only-second-relay-slot-credential
         run: |
           for directory in deploy/self-hosting/standalone deploy/self-hosting/split; do
             docker compose --env-file "$directory/.env.example" --file "$directory/compose.yaml" config --format json |

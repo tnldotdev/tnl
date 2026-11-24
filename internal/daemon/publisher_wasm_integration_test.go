@@ -100,8 +100,7 @@ func TestIntegrationPublisherWASMFixture(t *testing.T) {
 	if err := validateWASMFixturePath(file); err != nil {
 		t.Fatal(err)
 	}
-	f := newServiceRuntimeFixture(t, false, nil)
-	_, relays, pins := wasmFixtureRelays(t, f)
+	f, _, _, relays, pins := wasmFixtureRelays(t)
 	ingress := startSeparatedPrivateIngress(t, f, 0, "wss", nil)
 	mode, restricted, protocol := controlv1.Anonymous, controlv1.Restricted, controlv1.ServiceProtocolHTTP
 	const project, deployment = "portable-publisher", "portable"

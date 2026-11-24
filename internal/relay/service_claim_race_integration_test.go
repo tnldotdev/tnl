@@ -18,13 +18,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	"github.com/jackc/pgx/v5"
 	yamux "github.com/libp2p/go-yamux/v5"
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
-	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -62,12 +63,7 @@ func testPrivateClaimCompetingTransports(t *testing.T, firstTransport tunnel.Tra
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret := strings.Repeat("s", 32)
-	secrets, err := serverhttp.NewBearerSecrets(secret, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler, err := controlrelay.NewHandler(controlrelay.Config{Store: fixture.database, ClusterSecrets: secrets, LeaseDuration: time.Minute})
+	handler, err := controlrelay.NewHandler(controlrelay.Config{Store: fixture.database, Slots: claimTestSlots(t, first, second, fixture.leases[fixture.run.Connections[1].RelayServiceID]), LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,17 +117,6 @@ func testPrivateClaimCompetingTransports(t *testing.T, firstTransport tunnel.Tra
 		_, _ = w.Write(committed.Body.Bytes())
 	}))
 	t.Cleanup(server.Close)
-	generated, err := relayv1.NewClientWithResponses(server.URL, relayv1.WithHTTPClient(server.Client()), relayv1.WithRequestEditorFn(func(_ context.Context, r *http.Request) error {
-		r.Header.Set("Authorization", "Bearer "+secret)
-		return nil
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := NewHTTPControlClient(generated)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	// lock the actual admission row, not an http callback. both claim
 	// transactions must be observed behind this lock before either can win.
@@ -172,7 +157,7 @@ func testPrivateClaimCompetingTransports(t *testing.T, firstTransport tunnel.Tra
 		secondTransport = tunnel.TransportWSS
 	}
 	candidates := []*privateClaimCandidate{
-		startPrivateClaimCandidate(t, ctx, firstTransport, first, client, hello, serverTLS, clientTLS),
+		startPrivateClaimCandidate(t, ctx, firstTransport, first, claimClient(t, server, first.RelayID), hello, serverTLS, clientTLS),
 	}
 	if err := relayAwait(t, candidates[0].peer); err != nil {
 		t.Fatal(err)
@@ -180,7 +165,7 @@ func testPrivateClaimCompetingTransports(t *testing.T, firstTransport tunnel.Tra
 	// postgres's real lock queue, not transport timing, selects the winner in
 	// each ordering. both transactions still overlap before the lock is released.
 	waitForPrivateClaimTransactions(t, ctx, fixture.inspect, int32(blocker.PgConn().PID()), decisions, candidates)
-	candidates = append(candidates, startPrivateClaimCandidate(t, ctx, secondTransport, second, client, hello, serverTLS, clientTLS))
+	candidates = append(candidates, startPrivateClaimCandidate(t, ctx, secondTransport, second, claimClient(t, server, second.RelayID), hello, serverTLS, clientTLS))
 	if err := relayAwait(t, candidates[1].peer); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +225,7 @@ func testPrivateClaimCompetingTransports(t *testing.T, firstTransport tunnel.Tra
 		t.Fatal(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+secret)
+	request.Header.Set("Authorization", "Bearer "+relayslots.Token(winner.lease.RelayID))
 	replayed, err := server.Client().Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -292,7 +277,7 @@ func testPrivateClaimCompetingTransports(t *testing.T, firstTransport tunnel.Tra
 	} {
 		claim := a.claim
 		test.change(&claim)
-		response, err := generated.ClaimServicePublisherConnectionWithResponse(ctx, slot.PublisherConnectionID, claim)
+		response, err := claimWire(t, server, claim.RelayId).ClaimServicePublisherConnectionWithResponse(ctx, slot.PublisherConnectionID, claim)
 		if err != nil || response.StatusCode() != http.StatusConflict || response.ApplicationproblemJSONDefault == nil ||
 			response.ApplicationproblemJSONDefault.Code != relayv1.StaleConnectionAssignment {
 			t.Fatalf("%s did not reject a non-exact replay: %v, %v", test.name, response, err)
@@ -308,7 +293,7 @@ func testPrivateClaimCompetingTransports(t *testing.T, firstTransport tunnel.Tra
 	snapshot = fixture.assertClaimOwner(t, slot, winner.lease, "ready")
 	winner.assertLocalOwnership(t, 1, 1)
 	loser.assertLocalOwnership(t, 0, 0)
-	reclaim, err := generated.ClaimServicePublisherConnectionWithResponse(ctx, slot.PublisherConnectionID, a.claim)
+	reclaim, err := claimWire(t, server, winner.lease.RelayID).ClaimServicePublisherConnectionWithResponse(ctx, slot.PublisherConnectionID, a.claim)
 	if err != nil || reclaim.StatusCode() != http.StatusConflict || reclaim.ApplicationproblemJSONDefault == nil ||
 		reclaim.ApplicationproblemJSONDefault.Code != relayv1.StaleConnectionAssignment {
 		t.Fatal("ready claim was not rejected as a stale assignment", err)
@@ -316,7 +301,7 @@ func testPrivateClaimCompetingTransports(t *testing.T, firstTransport tunnel.Tra
 	transition := relayv1.ServicePublisherConnectionTransition{ServiceRunId: fixture.run.RunID, RunNumber: fixture.run.RunNumber,
 		ConnectionAssignmentRevision: slot.Revision, RelayId: loser.lease.RelayID, RelayRunId: loser.lease.RelayRunID,
 		RelayLeaseRevision: int64(loser.lease.RelayLeaseRevision), Unexpected: new(false)}
-	response, err := generated.DisconnectServicePublisherConnectionWithResponse(ctx, slot.PublisherConnectionID, transition)
+	response, err := claimWire(t, server, loser.lease.RelayID).DisconnectServicePublisherConnectionWithResponse(ctx, slot.PublisherConnectionID, transition)
 	if err != nil || response.StatusCode() != http.StatusConflict {
 		t.Fatal("losing process could disconnect the winner", err)
 	}

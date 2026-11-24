@@ -11,6 +11,8 @@ import (
 )
 
 const testOIDCIssuer = "https://identity.example.test"
+const testForwarding = "test-forwarding-private-012345678901"
+const testSlot = "test-slot-private-credential-0123456789"
 const testClusterSecret = "0123456789abcdef0123456789abcdef"
 const testStorageKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
@@ -19,7 +21,7 @@ func TestSplitControlRequiresInternalTLSMaterial(t *testing.T) {
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
-		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey}
+		"--ingress-control-credential", testClusterSecret, "--relay-slots-file", "slots.json", "--storage-key", testStorageKey}
 	if _, err := Parse(base); err == nil {
 		t.Fatal("split control accepted without required internal TLS files")
 	} else if typed, ok := failure.Of(err); !ok || typed.Reason() != failure.ServerConfigInvalid || string(typed.Setting()) != "TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE" {
@@ -225,7 +227,7 @@ func TestParseSplitRoles(t *testing.T) {
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
-		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
+		"--ingress-control-credential", testClusterSecret, "--relay-slots-file", "slots.json", "--storage-key", testStorageKey,
 		"--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key",
 	})
 	if err != nil {
@@ -243,7 +245,7 @@ func TestParseSplitRoles(t *testing.T) {
 	ingress, err := Parse([]string{
 		"--role", "ingress", "--control-hostname", "control.tnl.example.com",
 		"--private-control-address", "control.internal:9443",
-		"--cluster-secret", testClusterSecret, "--ingress-id", "ingress-1",
+		"--ingress-control-credential", testClusterSecret, "--forwarding-credential", testForwarding, "--ingress-id", "ingress-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -254,7 +256,7 @@ func TestParseSplitRoles(t *testing.T) {
 
 	relay, err := Parse([]string{
 		"--role", "relay", "--control-hostname", "control.tnl.example.com",
-		"--cluster-secret", testClusterSecret, "--relay-service-id", "relay-a", "--relay-id", "relay-1",
+		"--relay-slot-credential", testSlot, "--forwarding-credential", testForwarding, "--relay-service-id", "relay-a", "--relay-id", "relay-1",
 		"--relay-address", "relay-a.tnl.example.com:443",
 		"--internal-relay-address", "relay-1.internal:9445",
 	})
@@ -271,7 +273,7 @@ func TestConfigPrivateControlAddressRequiresSplitDialAddress(t *testing.T) {
 		if _, err := Parse([]string{
 			"--role", "ingress", "--control-hostname", "control.tnl.example.com",
 			"--private-control-address", value,
-			"--cluster-secret", testClusterSecret, "--ingress-id", "ingress-1",
+			"--ingress-control-credential", testClusterSecret, "--forwarding-credential", testForwarding, "--ingress-id", "ingress-1",
 		}); err == nil {
 			t.Fatalf("private control address %q was accepted", value)
 		}
@@ -281,7 +283,7 @@ func TestConfigPrivateControlAddressRequiresSplitDialAddress(t *testing.T) {
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
-		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
+		"--ingress-control-credential", testClusterSecret, "--relay-slots-file", "slots.json", "--storage-key", testStorageKey,
 		"--private-control-address", "control.internal:9443",
 	}); err == nil {
 		t.Fatal("private control address was accepted by control")
@@ -300,7 +302,7 @@ func TestParseDNSAutomation(t *testing.T) {
 		"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 		"--control-proxy-provider", "single-xff",
 		"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
-		"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
+		"--ingress-control-credential", testClusterSecret, "--relay-slots-file", "slots.json", "--storage-key", testStorageKey,
 		"--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key",
 		"--route53-managed-zone-id", "Z0123456789ABC", "--ingress-ipv4-address", "192.0.2.10",
 		"--ingress-ipv6-address", "2001:db8::10", "--route53-server-zone-id", "ZSERVER123",
@@ -324,7 +326,7 @@ func TestParseDNSAutomation(t *testing.T) {
 			"--server-domain", "tnl.example.com", "--managed-domain", "tunnels.example.com",
 			"--control-proxy-provider", "single-xff",
 			"--acme-email", "operator@example.com", "--acme-accept-terms", "--oidc-issuer", testOIDCIssuer, "--oidc-client-id", "server",
-			"--cluster-secret", testClusterSecret, "--storage-key", testStorageKey,
+			"--ingress-control-credential", testClusterSecret, "--relay-slots-file", "slots.json", "--storage-key", testStorageKey,
 			"--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key",
 		}
 		if _, err := Parse(append(base, args...)); err == nil {
@@ -336,7 +338,7 @@ func TestParseDNSAutomation(t *testing.T) {
 func TestConfigControlHostnameRejectsURLAndPort(t *testing.T) {
 	base := Config{
 		Role: RoleIngress, ControlHostname: "control.tnl.example.com",
-		ClusterSecret: testClusterSecret, IngressID: "ingress-1",
+		IngressControlCredential: testClusterSecret, ForwardingCredential: testForwarding, IngressID: "ingress-1",
 		IngressListen: ":443", MetricsListen: "127.0.0.1:9090",
 		VisitorConnectionLimit: 1, PublisherConnectionLimit: 1,
 		ClientHelloConnectionLimit:       1024,
@@ -524,8 +526,13 @@ func validCertificateConfig(t *testing.T, role Role, flags ...string) Config {
 	} else {
 		args = append(args, "--control-hostname", "control.infra.example.test")
 	}
-	if role != RoleStandalone {
-		args = append(args, "--cluster-secret", testClusterSecret)
+	switch role {
+	case RoleControl:
+		args = append(args, "--ingress-control-credential", testClusterSecret, "--relay-slots-file", "slots.json")
+	case RoleIngress:
+		args = append(args, "--ingress-control-credential", testClusterSecret, "--forwarding-credential", testForwarding)
+	case RoleRelay:
+		args = append(args, "--relay-slot-credential", testSlot, "--forwarding-credential", testForwarding)
 	}
 	if role == RoleIngress {
 		args = append(args, "--ingress-id", "ingress-1")

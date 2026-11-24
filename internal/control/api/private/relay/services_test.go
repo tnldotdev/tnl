@@ -47,7 +47,7 @@ func TestServiceClaimRequiresCanonicalObservedPublisherSource(t *testing.T) {
 			body := relayv1.ServicePublisherConnectionClaim{ServiceId: "svc_" + strings.Repeat("a", 22),
 				ServiceRunId: "srun_" + strings.Repeat("b", 22), RunNumber: 3,
 				ConnectionAssignmentRevision: 7, Credential: credential.String(),
-				RelayId: "relay-a-1", RelayRunId: "relay-run", RelayLeaseRevision: 2}
+				RelayId: "relay-1", RelayRunId: "relay-run", RelayLeaseRevision: 2}
 			store := &publisherSourceStore{relayStoreStub: &relayStoreStub{}, t: t, body: body, id: "pc_" + strings.Repeat("c", 22)}
 			client, err := NewDirectClient(DirectConfig{Store: store, LeaseDuration: time.Minute})
 			if err != nil {
@@ -133,7 +133,7 @@ func TestServiceConnectionErrorsMatchHTTPAndStandalone(t *testing.T) {
 					id := "pc_" + strings.Repeat("a", 22)
 					transition := relayv1.ServicePublisherConnectionTransition{
 						ServiceRunId: "srun_" + strings.Repeat("b", 22), RunNumber: 1,
-						ConnectionAssignmentRevision: 2, RelayId: "relay-a", RelayRunId: "relay-run", RelayLeaseRevision: 3,
+						ConnectionAssignmentRevision: 2, RelayId: "relay-1", RelayRunId: "relay-run", RelayLeaseRevision: 3,
 					}
 					if operation == "disconnect" {
 						transition.Unexpected = new(true)
@@ -201,7 +201,7 @@ func TestServiceConnectionTransitionRequiresExplicitDisconnectClassification(t *
 					store := &serviceConnectionErrorStore{relayStoreStub: &relayStoreStub{}, err: controlstate.ErrServiceAccess}
 					body := relayv1.ServicePublisherConnectionTransition{
 						ServiceRunId: "srun_" + strings.Repeat("b", 22), RunNumber: 1,
-						ConnectionAssignmentRevision: 2, RelayId: "relay-a", RelayRunId: "relay-run", RelayLeaseRevision: 3,
+						ConnectionAssignmentRevision: 2, RelayId: "relay-1", RelayRunId: "relay-run", RelayLeaseRevision: 3,
 						Unexpected: classification.value,
 					}
 					id := "pc_" + strings.Repeat("a", 22)

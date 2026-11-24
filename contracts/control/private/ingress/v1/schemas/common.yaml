@@ -1,8 +1,8 @@
 securitySchemes:
-  clusterAuth:
+  ingressControlAuth:
     type: http
     scheme: bearer
-    bearerFormat: tnl cluster secret
+    bearerFormat: tnl ingress control credential
 parameters:
   IngressID:
     name: ingress_id

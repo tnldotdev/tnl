@@ -15,11 +15,19 @@ func SettingApplies(name string, role Role) bool {
 	switch {
 	case name == "role" || name == "metrics_listen" || name == "region" || name == "drain_timeout":
 		return true
-	case name == "cluster_secret" || name == "cluster_secret_previous":
-		return role != RoleStandalone
+	case name == "ingress_control_credential":
+		return role == RoleControl || role == RoleIngress
+	case name == "ingress_control_credential_previous":
+		return role == RoleControl
 	case name == "fly_machine_identity" || name == "control_hostname" || name == "private_control_address":
 		return role == RoleIngress || role == RoleRelay
-	case name == "relay_id_prefix":
+	case name == "relay_slots_file":
+		return role == RoleControl
+	case name == "forwarding_credential":
+		return role == RoleIngress || role == RoleRelay
+	case name == "forwarding_credential_previous":
+		return role == RoleRelay
+	case name == "relay_id_prefix" || name == "relay_slot_credential":
 		return role == RoleRelay
 	case name == "service_port_ranges":
 		return role.RunsControl() || role.RunsIngress()
@@ -76,11 +84,11 @@ type SettingValue struct {
 func Inspect(c Config, sources map[string]string) map[string]SettingValue {
 	result := map[string]SettingValue{}
 	typ, value := reflect.TypeFor[Config](), reflect.ValueOf(c)
-	private := []string{"database_url", "cluster_secret", "cluster_secret_previous",
+	private := []string{"database_url", "ingress_control_credential", "ingress_control_credential_previous", "forwarding_credential_previous",
 		"storage_key", "storage_key_previous", "web_service_secret", "webhook_secret",
 		"oidc_client_secret", "oidc_admission_file", "initial_administrator",
 		"initial_team_owner", "default_team_member", "private_control_tls_private_key_file",
-		"relay_tls_private_key_file"}
+		"relay_tls_private_key_file", "relay_slots_file", "relay_slot_credential", "forwarding_credential"}
 	for i := range typ.NumField() {
 		field := typ.Field(i)
 		name := strings.ReplaceAll(field.Tag.Get("name"), "-", "_")

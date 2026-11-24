@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -52,7 +54,8 @@ func TestIntegrationRuntimeProvisionsPrimaryIngressPool(t *testing.T) {
 				controlCertificate := ca.issueServer(t, cfg.ServerHostname(), owner)
 				cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile = controlCertificate.certificateFile, controlCertificate.privateKeyFile
 				if role == daemonconfig.RoleControl {
-					cfg.ClusterSecret = testClusterSecret
+					cfg.IngressControlCredential = testClusterSecret
+					cfg.RelaySlotsFile = relayslots.File(t, relayslots.New("relay-a", "relay-1", "relay.example.test", "relay.example.test:443", "relay-a:9445"))
 					listeners.privateControl = serviceRuntimeListener(t, owner)
 					cfg.PrivateControlListen = listeners.privateControl.Addr().String()
 				} else {

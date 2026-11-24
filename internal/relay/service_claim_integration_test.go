@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	"github.com/jackc/pgx/v5"
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
@@ -127,7 +129,7 @@ func newPrivateClaimFixture(t *testing.T) privateClaimFixture {
 			t.Fatal(err)
 		}
 		lease, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayID: id, RelayServiceID: id, RelayRunID: runID, RelayAddress: id + ".example.test:443", TLSServerName: id + ".example.test",
-			InternalRelayAddress: "127.0.0.1:9443", ProtocolVersion: 1, ConnectionCapacity: 1, StreamCapacity: 8}, now, time.Minute)
+			InternalRelayAddress: id + ":9443", ProtocolVersion: 1, ConnectionCapacity: 1, StreamCapacity: 8}, now, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -152,12 +154,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 	fixture := newPrivateClaimFixture(t)
 	d, inspect, now, service, run, leases := fixture.database, fixture.inspect, fixture.now, fixture.service, fixture.run, fixture.leases
 	ctx := t.Context()
-	secret := strings.Repeat("s", 32)
-	secrets, err := serverhttp.NewBearerSecrets(secret, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler, err := controlrelay.NewHandler(controlrelay.Config{Store: d, ClusterSecrets: secrets, LeaseDuration: time.Minute})
+	handler, err := controlrelay.NewHandler(controlrelay.Config{Store: d, Slots: claimTestSlots(t, leases["relay-a"], leases["relay-b"]), LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,17 +194,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		_, _ = w.Write(committed.Body.Bytes())
 	}))
 	t.Cleanup(server.Close)
-	generated, err := relayv1.NewClientWithResponses(server.URL, relayv1.WithHTTPClient(server.Client()), relayv1.WithRequestEditorFn(func(_ context.Context, r *http.Request) error {
-		r.Header.Set("Authorization", "Bearer "+secret)
-		return nil
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := NewHTTPControlClient(generated)
-	if err != nil {
-		t.Fatal(err)
-	}
+
 	for _, slot := range run.Connections {
 		lease := leases[slot.RelayServiceID]
 		// a live sibling process in the assigned service still cannot adopt a
@@ -249,7 +236,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 				t.Fatalf("exact owner changed: %s %s %s %d %v", state, owner, ownerRun, revision, err)
 			}
 		}
-		controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
+		controller := &Controller{client: claimClient(t, server, lease.RelayID), now: time.Now, lease: relayv1.RelayLease{RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
 			RelayLeaseRevision: int64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt, ServingUntil: lease.ServingUntil, ConnectionCapacity: 1}}
 		registry := NewServiceRegistry()
 		acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Select: func(string) (ServicePublisherTarget, bool) {
@@ -324,4 +311,36 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 			t.Fatal("recovery changed the exact claim or duplicate reached control")
 		}
 	}
+}
+
+func claimTestSlots(t *testing.T, leases ...controlstate.RelayLease) controlrelay.Slots {
+	t.Helper()
+	var slots []relayslots.Slot
+	for _, l := range leases {
+		slots = append(slots, relayslots.New(l.RelayServiceID, l.RelayID, l.TLSServerName, l.RelayAddress, l.InternalRelayAddress))
+	}
+	parsed, err := controlrelay.ParseSlots(relayslots.Data(t, slots...), serverhttp.BearerSecrets{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
+}
+func claimWire(t *testing.T, server *httptest.Server, id string) *relayv1.ClientWithResponses {
+	t.Helper()
+	generated, err := relayv1.NewClientWithResponses(server.URL, relayv1.WithHTTPClient(server.Client()), relayv1.WithRequestEditorFn(func(_ context.Context, r *http.Request) error {
+		r.Header.Set("Authorization", "Bearer "+relayslots.Token(id))
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return generated
+}
+func claimClient(t *testing.T, server *httptest.Server, id string) *HTTPControlClient {
+	t.Helper()
+	client, err := NewHTTPControlClient(claimWire(t, server, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
 }

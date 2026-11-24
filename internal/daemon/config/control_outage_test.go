@@ -77,7 +77,7 @@ func TestControlOutageToleranceControlAndStandaloneUseSameDurationRules(t *testi
 		t.Run(role, func(t *testing.T) {
 			args := append(controlOutageArguments(), "--role", role)
 			if role == "control" {
-				args = append(args, "--cluster-secret", testClusterSecret,
+				args = append(args, "--ingress-control-credential", testClusterSecret, "--relay-slots-file", "slots.json",
 					"--private-control-tls-certificate-file", "control.pem", "--private-control-tls-private-key-file", "control.key")
 			}
 			for _, value := range []string{"1ns", "250ms", "1m", "24h", "2562047h47m16.854775807s"} {

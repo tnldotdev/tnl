@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
@@ -73,7 +75,11 @@ func TestPrivateAPISurfacesFollowTheirRouters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay, err := controlrelay.NewHandler(controlrelay.Config{Store: unusedRelayStore{}, ClusterSecrets: secrets, LeaseDuration: time.Minute})
+	slots, err := controlrelay.ParseSlots(relayslots.Data(t, relayslots.New("slot-a", "relay-a", "a.example.test", "a.example.test:443", "relay-a:9445")), secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay, err := controlrelay.NewHandler(controlrelay.Config{Store: unusedRelayStore{}, Slots: slots, LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,8 +94,11 @@ func TestPrivateAPISurfacesFollowTheirRouters(t *testing.T) {
 		{http.MethodGet, "/internal/v1/relays/register", "private_relay", http.StatusNotFound},
 		{http.MethodGet, "/internal/v1/ingresses/unknown", "", http.StatusNotFound},
 	} {
-		request := httptest.NewRequest(test.method, test.path, strings.NewReader(`{}`))
+		request := httptest.NewRequest(test.method, test.path, strings.NewReader(`{`))
 		request.Header.Set("Authorization", "Bearer cluster-secret-012345678901234567890123")
+		if test.surface == "private_relay" {
+			request.Header.Set("Authorization", "Bearer "+relayslots.Token("relay-a"))
+		}
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)

@@ -281,6 +281,9 @@ func assertWorkloadRuntimeInventory(t *testing.T, job *workload.Client, services
 }
 
 func newWorkloadTransportFixture(t *testing.T, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) (*privateSeparatedFixture, *githubtest.Issuer) {
+	return newWorkloadTransportFixtureWithPlan(t, nil, configure...)
+}
+func newWorkloadTransportFixtureWithPlan(t *testing.T, plan fixtureRelayPlan, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) (*privateSeparatedFixture, *githubtest.Issuer) {
 	t.Helper()
 	issuer := githubtest.New(t)
 	options := []func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority){func(_ *daemonconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
@@ -293,7 +296,7 @@ func newWorkloadTransportFixture(t *testing.T, configure ...func(*daemonconfig.C
 			return base.RoundTrip(r)
 		}))
 	}}
-	f := newServiceRuntimeFixtureTiming(t, false, nil, true, append(options, configure...)...)
+	f := newServiceRuntimeFixturePlan(t, false, nil, true, nil, plan, append(options, configure...)...)
 	return f, issuer
 }
 

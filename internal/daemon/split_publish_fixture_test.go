@@ -8,9 +8,12 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
 
 	quic "github.com/quic-go/quic-go"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
@@ -99,7 +102,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	controlConfig.ControlListen = controlSockets.control.Addr().String()
 	controlConfig.MetricsListen = controlSockets.metrics.Addr().String()
 	controlConfig.PrivateControlListen = privateControlAddress
-	controlConfig.ClusterSecret = testClusterSecret
+	controlConfig.IngressControlCredential = testClusterSecret
 	controlConfig.ServerDomain = serverDomain
 	controlConfig.ManagedDomain = "routes." + serverDomain
 	controlConfig.ControlTLSCertificateFile = controlCertificate.certificateFile
@@ -125,15 +128,12 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 	if options.configureProcess != nil {
 		options.configureProcess(&controlConfig)
 	}
-	if err := controlConfig.Validate(); err != nil {
-		t.Fatal(err)
-	}
 	ingressConfig := splitPublishConfig(t, daemonconfig.RoleIngress)
 	ingressSockets := runtimeListeners{ingress: ingressListener, metrics: serviceRuntimeListener(t, owner)}
 	ingressConfig.MetricsListen = ingressSockets.metrics.Addr().String()
 	ingressConfig.ServicePortRanges = controlConfig.ServicePortRanges
 	ingressConfig.ControlHostname = controlHostname
-	ingressConfig.ClusterSecret = testClusterSecret
+	ingressConfig.IngressControlCredential, ingressConfig.ForwardingCredential = testClusterSecret, relayslots.Forwarding
 	ingressConfig.IngressID = "ingress-split"
 	ingressConfig.IngressListen = ingressAddress
 	ingressConfig.RequireProxyHeader, ingressConfig.IngressTrustedProxies = true, []string{"127.0.0.1/32"}
@@ -143,6 +143,11 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		relayAConfig.ControlRetryInterval = 100 * time.Millisecond
 		relayBConfig.ControlRetryInterval = 100 * time.Millisecond
 	}
+	controlConfig.RelaySlotsFile = relayslots.File(t, relayslots.New(relayAConfig.RelayServiceID, relayAConfig.RelayID, strings.Split(relayAConfig.RelayAddress, ":")[0], relayAConfig.RelayAddress, relayAConfig.InternalRelayAddress), relayslots.New(relayBConfig.RelayServiceID, relayBConfig.RelayID, strings.Split(relayBConfig.RelayAddress, ":")[0], relayBConfig.RelayAddress, relayBConfig.InternalRelayAddress))
+	if err := controlConfig.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
 	for _, cfg := range []*daemonconfig.Config{&ingressConfig, &relayAConfig, &relayBConfig} {
 		if options.configureProcess != nil {
 			options.configureProcess(cfg)
@@ -311,7 +316,7 @@ func splitPublishRelayConfig(t *testing.T, controlHostname, serverDomain, relayS
 	t.Helper()
 	cfg := splitPublishConfig(t, daemonconfig.RoleRelay)
 	cfg.ControlHostname = controlHostname
-	cfg.ClusterSecret = testClusterSecret
+	cfg.RelaySlotCredential, cfg.ForwardingCredential = relayslots.Token(relayID), relayslots.Forwarding
 	cfg.RelayServiceID = relayServiceID
 	cfg.RelayID = relayID
 	cfg.RelayAddress = relayServiceID + "." + serverDomain + ":443"

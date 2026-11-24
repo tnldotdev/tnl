@@ -256,20 +256,21 @@ TLS negotiation are separate concepts.
 
 ## internal security
 
-| Term                            | Definition                                                                                                                   |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **cluster authentication**      | Authentication with a shared secret for private communication among control, ingress, and relays in one deployment.          |
-| **cluster secret**              | The current secret configured as `TNLD_CLUSTER_SECRET`; split ingress and relay processes use it to authenticate to control. |
-| **website credential**          | The secret the website sends to control for identity and invitation requests.                                                |
-| **webhook credential**          | The separate secret control sends to a mailer for invitation emails.                                                         |
-| **storage key**                 | The symmetric key available only to control and standalone for encrypting recoverable secrets in PostgreSQL.                 |
-| **control session**             | A login session that can be revoked and has an access token and refresh token.                                               |
-| **access token**                | A short-lived credential that authorizes control API and authority API requests for a control session.                       |
-| **refresh token**               | A longer-lived credential used to rotate a control session's access and refresh tokens.                                      |
-| **ingress identity**            | The configured ingress process identity bound to ingress leases and internal-forwarding sessions.                            |
-| **relay identity**              | The configured relay process identity bound to relay leases and publisher connection claims.                                 |
-| **relay transport certificate** | The exact-hostname WebPKI certificate shared by a relay service and managed by control.                                      |
-| **relay transport TLS**         | Server-authenticated TLS on a relay address using the relay transport certificate.                                           |
+| Term                            | Definition                                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **ingress control credential**  | Credential for ingress to use the private ingress API on control.                                            |
+| **relay slot credential**       | Credential for one configured relay process to register, renew, and request its own service certificate.     |
+| **forwarding credential**       | Credential for ingress to forward visitor streams to relays.                                                 |
+| **website credential**          | The secret the website sends to control for identity and invitation requests.                                |
+| **webhook credential**          | The separate secret control sends to a mailer for invitation emails.                                         |
+| **storage key**                 | The symmetric key available only to control and standalone for encrypting recoverable secrets in PostgreSQL. |
+| **control session**             | A login session that can be revoked and has an access token and refresh token.                               |
+| **access token**                | A short-lived credential that authorizes control API and authority API requests for a control session.       |
+| **refresh token**               | A longer-lived credential used to rotate a control session's access and refresh tokens.                      |
+| **ingress identity**            | The configured ingress process identity bound to ingress leases and internal-forwarding sessions.            |
+| **relay identity**              | The configured relay process identity bound to relay leases and publisher connection claims.                 |
+| **relay transport certificate** | The exact-hostname WebPKI certificate shared by a relay service and managed by control.                      |
+| **relay transport TLS**         | Server-authenticated TLS on a relay address using the relay transport certificate.                           |
 
 ## teams and domains
 
@@ -326,7 +327,7 @@ TLS negotiation are separate concepts.
 | Recovery episode ID             | `recovery_episode_id`                                |
 | DNS authority reference         | `dns_authority_reference`                            |
 | Transport                       | `transport`                                          |
-| Cluster secret                  | `cluster_secret`                                     |
+| Relay slot credential           | `relay_slot_credential`                              |
 
 # cli human output
 

@@ -69,7 +69,7 @@ func relayProcessSettingsFrom(cfg daemonconfig.Config) relayProcessSettings {
 	tlsServerName, _, _ := net.SplitHostPort(cfg.RelayAddress)
 	return relayProcessSettings{
 		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
-		clusterSecret:  cfg.ClusterSecret,
+		clusterSecret:  cfg.RelaySlotCredential,
 		relayServiceID: cfg.RelayServiceID, relayID: cfg.RelayID,
 		relayAddress: cfg.RelayAddress, tlsServerName: tlsServerName,
 		internalListen:  cfg.InternalRelayListen,

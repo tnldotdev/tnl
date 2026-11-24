@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
@@ -109,7 +111,7 @@ func startSeparatedPrivateIngressRuntime(t *testing.T, f *privateSeparatedFixtur
 	}
 	id := fmt.Sprintf("private-ingress-%d", index)
 	if err := d.startIngressRuntime(ctx, ingressSettingsFrom(f.controlConfig), metrics, ingressRuntimeConfig{
-		client: client, ingressID: id, listener: listener, clusterSecret: serviceRuntimeClusterSecret,
+		client: client, ingressID: id, listener: listener, clusterSecret: relayslots.Forwarding,
 		configure: func(config *ingress.Config) {
 			if !f.defaultTiming {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second

@@ -82,7 +82,10 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 	if options.acmeHTTPClient == nil || options.serviceHTTPClient == nil {
 		return errors.New("ACME and service HTTP clients are required")
 	}
-	clusterSecret := cfg.ClusterSecret
+	clusterSecret, previous := cfg.IngressControlCredential, cfg.IngressControlCredentialPrevious
+	if cfg.Role == daemonconfig.RoleRelay {
+		clusterSecret, previous = cfg.ForwardingCredential, cfg.ForwardingCredentialPrevious
+	}
 	if cfg.Role == daemonconfig.RoleStandalone {
 		random := make([]byte, 32)
 		if _, err := rand.Read(random); err != nil {
@@ -90,7 +93,7 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 		}
 		clusterSecret = base64.RawURLEncoding.EncodeToString(random)
 	}
-	clusterSecrets, err := serverhttp.NewBearerSecrets(clusterSecret, cfg.ClusterSecretPrevious)
+	clusterSecrets, err := serverhttp.NewBearerSecrets(clusterSecret, previous)
 	if err != nil {
 		return err
 	}

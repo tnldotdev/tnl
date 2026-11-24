@@ -1,0 +1,18 @@
+[
+  {
+    "service_id": "relay-a",
+    "relay_id": "relay-a-1",
+    "hostname": "relay-a.example.com",
+    "relay_address": "relay-a.example.com:443",
+    "internal_address": "relay-a:9445",
+    "credential": "replace-with-TNL_RELAY_A_CREDENTIAL"
+  },
+  {
+    "service_id": "relay-b",
+    "relay_id": "relay-b-1",
+    "hostname": "relay-b.example.com",
+    "relay_address": "relay-b.example.com:443",
+    "internal_address": "relay-b:9445",
+    "credential": "replace-with-TNL_RELAY_B_CREDENTIAL"
+  }
+]

@@ -37,7 +37,7 @@ func TestConnectorPeerClaimProblemPreservesCauseAndSafeOutput(t *testing.T) {
 	proof := tunnelv1.ConnectorPairLegProof{PairID: "cpp_1234567890123456789012", DeliveryGeneration: 1,
 		ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 1,
 		PublisherIdentityID: "pub_1234567890123456789012", ConnectionSlot: 0, PublisherConnectionID: "pc_1234567890123456789012",
-		AssignmentRevision: 1, RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "process-a", RelayLeaseRevision: 1,
+		AssignmentRevision: 1, RelayServiceID: "relay-service-1", RelayID: "relay-1", RelayRunID: "process-a", RelayLeaseRevision: 1,
 		RequestedAt: now, Nonce: bytes.Repeat([]byte{1}, 32), Signature: bytes.Repeat([]byte{2}, 64)}
 	lease := relayv1.RelayLease{RelayServiceId: proof.RelayServiceID, RelayId: proof.RelayID, RelayRunId: proof.RelayRunID, RelayLeaseRevision: 1}
 	body, err := relayv1.NewConnectorPeerPairLegClaimRequest(lease, netip.MustParseAddr("192.0.2.10"), proof, bytes.Repeat([]byte{3}, 64))

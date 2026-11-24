@@ -2,7 +2,6 @@ package relay
 
 import (
 	"bytes"
-	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
 
 	"github.com/jackc/pgx/v5"
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
@@ -88,7 +89,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		}
 		lease, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: id, RelayID: id, RelayRunID: runID,
 			PeerSigningPublicKey: public, ProtocolVersion: tunnelv1.Version, RelayAddress: id + ".example.test:443",
-			TLSServerName: id + ".example.test", InternalRelayAddress: "127.0.0.1:8443", ConnectionCapacity: 20, StreamCapacity: 20}, now, time.Hour)
+			TLSServerName: id + ".example.test", InternalRelayAddress: id + ":8443", ConnectionCapacity: 20, StreamCapacity: 20}, now, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -193,30 +194,16 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		}
 	}
 	checkDelivery(pair.PairId, pair.DeliveryId)
-	secret := strings.Repeat("s", 32)
-	secrets, err := serverhttp.NewBearerSecrets(secret, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	privateHandler, err := controlrelay.NewHandler(controlrelay.Config{Store: d, ClusterSecrets: secrets, LeaseDuration: time.Hour, Now: func() time.Time { return now }})
+	privateHandler, err := controlrelay.NewHandler(controlrelay.Config{Store: d, Slots: claimTestSlots(t, leases["peer-a"], leases["peer-b"]), LeaseDuration: time.Hour, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(privateHandler)
 	t.Cleanup(server.Close)
-	generated, err := relayv1.NewClientWithResponses(server.URL, relayv1.WithHTTPClient(server.Client()), relayv1.WithRequestEditorFn(func(_ context.Context, r *http.Request) error {
-		r.Header.Set("Authorization", "Bearer "+secret)
-		return nil
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	httpClient, err := NewHTTPControlClient(generated)
-	if err != nil {
-		t.Fatal(err)
-	}
+
 	t.Run("process key registration through HTTP", func(t *testing.T) {
 		for id, assigned := range leases {
+			httpClient := claimClient(t, server, assigned.RelayID)
 			encoded := base64.RawURLEncoding.EncodeToString(keys[id].Public().(ed25519.PublicKey))
 			body := relayv1.RelayRegistration{Region: "local", RelayServiceId: id, RelayId: assigned.RelayID, RelayRunId: assigned.RelayRunID, PeerSigningPublicKey: &encoded,
 				ProtocolVersion: int64(tunnelv1.Version), RelayAddress: assigned.RelayAddress, TlsServerName: assigned.TLSServerName, InternalRelayAddress: assigned.InternalRelayAddress, InternalNetworks: []string{}, ConnectionCapacity: 20, StreamCapacity: 20}
@@ -269,6 +256,8 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		return wireLease, proof, ed25519.Sign(keys[assigned.RelayServiceID], claimMessage)
 	}
 	lease0, proof0, signed0 := proofFor(pair, 0)
+	secret := relayslots.Token(lease0.RelayId)
+	httpClient := claimClient(t, server, lease0.RelayId)
 	claimBody, err := relayv1.NewConnectorPeerPairLegClaimRequest(lease0, source, proof0, signed0)
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +328,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 	assertParity := func(name string, lease relayv1.RelayLease, proof tunnelv1.ConnectorPairLegProof, signature []byte) {
 		t.Helper()
 		t.Run(name, func(t *testing.T) {
-			_, httpErr := httpClient.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease, source, proof, signature)
+			_, httpErr := claimClient(t, server, lease.RelayId).ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease, source, proof, signature)
 			_, directErr := direct.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease, source, proof, signature)
 			var remote, local *serverhttp.ProblemError
 			if !errors.As(httpErr, &remote) || !errors.As(directErr, &local) ||
@@ -492,7 +481,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 	}
 	assertRejected("signed stale pair generation", 0, staleBody, secret, http.StatusForbidden)
 	assertParity("stale pair parity", lease0, staleProof, ed25519.Sign(keys[lease0.RelayServiceId], staleMessage))
-	if _, err := httpClient.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease1, source, proof1, signed1); err == nil {
+	if _, err := claimClient(t, server, lease1.RelayId).ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease1, source, proof1, signed1); err == nil {
 		t.Fatal("HTTP sibling replay recovered key")
 	}
 }
