@@ -28,7 +28,7 @@ import {
 import { MAX_FALLBACK_HOSTS, TREE_PATH, treeSample } from "./view.ts";
 import { readBytes, readJSON } from "../release.ts";
 import { INVITATION_PATH, READY_HEADER, invitationSchema } from "../enrollment.ts";
-import { hostTarget, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "../policy.ts";
+import { hostTarget, INVITATION_ACK_MS, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "../policy.ts";
 import type { ExportedCertificate } from "@tnldotdev/tnl";
 import {
   CERTIFICATE_PATH,
@@ -97,6 +97,15 @@ export async function checkUpload(host: Host, invitation: string, signal: AbortS
   return false;
 }
 
+export async function releaseInvitation(host: Host, invitation: string, releaseID: string) {
+  const response = await fetch(new URL(INVITATION_PATH, host.origin), {
+    ...options(undefined, 2_000),
+    method: "POST",
+    headers: { [READY_HEADER]: invitation, "X-Keepalive-Release": releaseID },
+  }).catch(() => undefined);
+  await response?.body?.cancel().catch(() => {});
+}
+
 function options(signal: AbortSignal | undefined, timeout: number): RequestInit {
   const deadline = AbortSignal.timeout(timeout);
   return {
@@ -147,6 +156,15 @@ export function peerServer(
   let pendingCertificateProof: { donor: Host; nonce: string; answered: boolean } | undefined;
   let checkingCertificate = false;
   let isReplacing = () => false;
+
+  function cancelPromotion() {
+    promotion = undefined;
+    gossip?.cancelStart();
+  }
+
+  function expirePromotion(now: number) {
+    if (promotion !== undefined && promotion.endsAt <= now) cancelPromotion();
+  }
 
   function reportMessage(now: number, requesterMessage?: GossipMessage) {
     if (gossip === undefined) throw new Error("No peer view yet.");
@@ -203,7 +221,7 @@ export function peerServer(
     cors({
       origin: allowed,
       allowMethods: ["GET", "POST", "OPTIONS"],
-      allowHeaders: ["Content-Type", READY_HEADER],
+      allowHeaders: ["Content-Type", READY_HEADER, "X-Keepalive-Release"],
     }),
   );
   app.use("*", async (c, next) => {
@@ -369,8 +387,12 @@ export function peerServer(
     try {
       const deadline = AbortSignal.any([signal, c.req.raw.signal, AbortSignal.timeout(UPLOAD_MS)]);
       await readBytes(new Response(c.req.raw.body), UPLOAD_BYTES, deadline, UPLOAD_BYTES);
-      if (promotion !== pending || pending.endsAt <= Date.now()) return c.body(null, 409);
+      const now = Date.now();
+      if (promotion !== pending || pending.endsAt <= now || deadline.aborted)
+        return c.body(null, 409);
       pending.uploadPassed = true;
+      pending.endsAt = now + STARTUP_MS;
+      gossip?.confirmStart(pending.endsAt);
       return c.body(null, 204);
     } catch {
       return c.body(null, 422);
@@ -452,18 +474,31 @@ export function peerServer(
       c.req.header("X-Keepalive-Release") === releaseID;
     return c.body(null, valid ? 204 : 403);
   });
+  app.post(INVITATION_PATH, (c) => {
+    expirePromotion(Date.now());
+    if (
+      signal.aborted ||
+      !allowed(c.req.header("Origin") ?? "") ||
+      c.req.header("X-Keepalive-Release") !== releaseID ||
+      promotion === undefined ||
+      promotion.invitation !== c.req.header(READY_HEADER)
+    )
+      return c.body(null, 403);
+    cancelPromotion();
+    return c.body(null, 204);
+  });
   app.post(WAIT_PATH, (c) => {
     if (!allowed(c.req.header("Origin") ?? "")) return c.body(null, 403);
     if (gossip === undefined || signal.aborted) return c.body(null, 503);
     const now = Date.now();
     let selected: string | null = null;
-    if (promotion !== undefined && promotion.endsAt <= now) promotion = undefined;
+    expirePromotion(now);
     if (promotion === undefined)
       gossip.maybeStart(now, hostTarget(gossip.tabs(now)), () => {
         selected = crypto.randomUUID();
         promotion = {
           invitation: selected,
-          endsAt: now + STARTUP_MS,
+          endsAt: now + INVITATION_ACK_MS,
           replacing: isReplacing(),
           uploadPassed: false,
           uploads: 0,
@@ -559,7 +594,7 @@ export function peerServer(
         peers.update({ departing });
         updateSampling(peers, now);
         peers.observeTabs(leases.count(now, sampling), now);
-        if (promotion !== undefined && promotion.endsAt <= now) promotion = undefined;
+        expirePromotion(now);
         if (probe === undefined) {
           const operation = AbortSignal.any([signal, probing.signal]);
           probe = peers

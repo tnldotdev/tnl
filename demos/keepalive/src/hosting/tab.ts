@@ -13,7 +13,13 @@ import {
 } from "../release.ts";
 import { CONFIG_PATH, hostingConfig } from "../enrollment.ts";
 import { hostUpdate, type HostStart, type HostUpdate } from "./messages.ts";
-import { checkUpload, readInviterCertificate, readPeers, waitForWork } from "../peers/http.ts";
+import {
+  checkUpload,
+  readInviterCertificate,
+  readPeers,
+  releaseInvitation,
+  waitForWork,
+} from "../peers/http.ts";
 import { STARTUP_MS } from "../policy.ts";
 
 export type HostState =
@@ -155,18 +161,41 @@ async function runHostTab(
   signal.throwIfAborted();
   if (report !== undefined && !report.from.left && (report.from.endsAt ?? Infinity) > Date.now())
     throw new AlreadyHosting();
-  const bootstrap = startupPage;
-  let source = ARTIFACT_PREFIX;
-  let firstHostToContact: Host | undefined;
-  let invitation: string | undefined;
-  if (!bootstrap) {
-    update({ type: "waiting" });
-    const selected = await waitForInvitation(release.id, signal);
-    signal.throwIfAborted();
-    firstHostToContact = selected.host;
-    invitation = selected.invitation;
-    source = selected.host.origin;
+  if (startupPage) return serveTurn(release, undefined, signal, update, activity);
+
+  update({ type: "waiting" });
+  const selected = await waitForInvitation(release.id, signal);
+  let hosted = false;
+  try {
+    return await serveTurn(
+      release,
+      selected,
+      signal,
+      (state) => {
+        if (state.type === "hosting") hosted = true;
+        update(state);
+      },
+      activity,
+    );
+  } finally {
+    if (!hosted) await releaseInvitation(selected.host, selected.invitation, release.id);
   }
+}
+
+async function serveTurn(
+  release: Release,
+  selected: { host: Host; invitation: string } | undefined,
+  signal: AbortSignal,
+  update: (state: HostState) => void,
+  activity: (state: Extract<HostUpdate, { type: "activity" }>) => void,
+) {
+  signal.throwIfAborted();
+  const bootstrap = selected === undefined;
+  const firstHostToContact = selected?.host;
+  const invitation = selected?.invitation;
+  const source = firstHostToContact?.origin ?? ARTIFACT_PREFIX;
+  // begin measuring before upload, so the local deadline cannot outlive the
+  // donor's full startup window even if the upload reply has to be retried.
   const startupEndsAt = Date.now() + STARTUP_MS - 2_000;
   if (!bootstrap) performance.mark("keepalive invited");
   const preparing = AbortSignal.any([signal, AbortSignal.timeout(startupEndsAt - Date.now())]);

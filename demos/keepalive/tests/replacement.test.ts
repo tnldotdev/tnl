@@ -1,6 +1,12 @@
 import { expect, it, vi } from "vitest";
-import { checkUpload, peerServer, readInviterCertificate, waitForWork } from "../src/peers/http.ts";
-import { STARTUP_MS, UPLOAD_BYTES } from "../src/policy.ts";
+import {
+  checkUpload,
+  peerServer,
+  readInviterCertificate,
+  releaseInvitation,
+  waitForWork,
+} from "../src/peers/http.ts";
+import { INVITATION_ACK_MS, STARTUP_MS, UPLOAD_BYTES } from "../src/policy.ts";
 import { INVITATION_PATH, READY_HEADER } from "../src/enrollment.ts";
 import { HOST_PARENT, type Host } from "../src/peers/gossip.ts";
 
@@ -42,9 +48,11 @@ it("offers one invitation without a network check and verifies the exact replace
     throw new Error("unexpected request outside peers");
   });
   try {
+    const offeredAt = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(offeredAt);
     await first.start(
       a,
-      Date.now(),
+      offeredAt,
       undefined,
       undefined,
       () => {},
@@ -52,7 +60,9 @@ it("offers one invitation without a network check and verifies the exact replace
     );
     const abandoned = await waitForWork(a, lifetime.signal);
     expect(abandoned).not.toBeNull();
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + STARTUP_MS + 1);
+    clock.mockReturnValue(offeredAt + INVITATION_ACK_MS - 1);
+    expect(await waitForWork(a, lifetime.signal)).toBeNull();
+    clock.mockReturnValue(offeredAt + INVITATION_ACK_MS + 1);
     const offers = await Promise.all([
       waitForWork(a, lifetime.signal),
       waitForWork(a, lifetime.signal),
@@ -82,6 +92,9 @@ it("offers one invitation without a network check and verifies the exact replace
     expect(first.replacementReady).toBe(false);
     expect(await checkUpload(a, invitation, lifetime.signal)).toBe(true);
     expect((await confirm()).status).toBe(204);
+    clock.mockReturnValue(offeredAt + 2 * INVITATION_ACK_MS + 2);
+    expect((await confirm()).status).toBe(204);
+    expect(await waitForWork(a, lifetime.signal)).toBeNull();
     await expect(readInviterCertificate(a, crypto.randomUUID(), lifetime.signal)).rejects.toThrow();
     await expect(readInviterCertificate(a, invitation, lifetime.signal)).resolves.toEqual({
       bundle,
@@ -108,3 +121,82 @@ it("offers one invitation without a network check and verifies the exact replace
     vi.unstubAllGlobals();
   }
 }, 8_000);
+
+it("releases only the matching invitation and reoffers without waiting for startup", async () => {
+  const release = "a".repeat(64);
+  const page = "https://keepthisalive.com";
+  const lifetime = new AbortController();
+  const host: Host = {
+    origin: `https://p-${"a".repeat(26)}.${HOST_PARENT}`,
+    publisherID: `pub_${"a".repeat(22)}`,
+    runID: `srun_${"a".repeat(22)}`,
+    runNumber: "1",
+  };
+  const donor = peerServer(release, [page], async () => new Response(), lifetime.signal);
+  vi.stubGlobal("fetch", (url: URL, init: RequestInit) => {
+    const headers = new Headers(init.headers);
+    headers.set("Origin", page);
+    return donor.fetch(new Request(url, { ...init, headers }));
+  });
+  try {
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    await donor.start(
+      host,
+      now,
+      undefined,
+      undefined,
+      () => {},
+      () => false,
+    );
+    const invitation = await waitForWork(host, lifetime.signal);
+    if (!invitation) throw new Error("No invitation.");
+    const preflight = await donor.fetch(
+      new Request(new URL(INVITATION_PATH, host.origin), {
+        method: "OPTIONS",
+        headers: {
+          Origin: page,
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": `${READY_HEADER}, X-Keepalive-Release`,
+        },
+      }),
+    );
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("Access-Control-Allow-Origin")).toBe(page);
+    expect(preflight.headers.get("Access-Control-Allow-Headers")).toContain("X-Keepalive-Release");
+    await releaseInvitation(host, crypto.randomUUID(), release);
+    await releaseInvitation(host, invitation, "b".repeat(64));
+    const crossOrigin = new Request(new URL(INVITATION_PATH, host.origin), {
+      method: "POST",
+      headers: {
+        Origin: "https://other.test",
+        [READY_HEADER]: invitation,
+        "X-Keepalive-Release": release,
+      },
+    });
+    expect((await donor.fetch(crossOrigin)).status).toBe(403);
+    expect(await waitForWork(host, lifetime.signal)).toBeNull();
+    expect(await checkUpload(host, invitation, lifetime.signal)).toBe(true);
+    clock.mockReturnValue(now + INVITATION_ACK_MS + 1);
+    expect(await checkUpload(host, invitation, lifetime.signal)).toBe(true);
+    expect(await waitForWork(host, lifetime.signal)).toBeNull();
+    await releaseInvitation(host, invitation, release);
+    const next = await waitForWork(host, lifetime.signal);
+    expect(next).not.toBeNull();
+    expect(next).not.toBe(invitation);
+    await releaseInvitation(host, invitation, release);
+    expect(await waitForWork(host, lifetime.signal)).toBeNull();
+    if (!next) throw new Error("No replacement invitation.");
+    expect(await checkUpload(host, next, lifetime.signal)).toBe(true);
+    clock.mockReturnValue(Date.now() + STARTUP_MS - 1);
+    expect(await checkUpload(host, next, lifetime.signal)).toBe(true);
+    clock.mockReturnValue(Date.now() + 1);
+    expect(await checkUpload(host, next, lifetime.signal)).toBe(false);
+    expect(await waitForWork(host, lifetime.signal)).not.toBeNull();
+  } finally {
+    lifetime.abort();
+    await donor.stop();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  }
+});

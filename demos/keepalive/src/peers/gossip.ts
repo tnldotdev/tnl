@@ -1,6 +1,6 @@
 import * as z from "zod";
 import { hostNameSchema } from "./host-names.ts";
-import { BOOTSTRAP_TURN_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "../policy.ts";
+import { BOOTSTRAP_TURN_MS, INVITATION_ACK_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "../policy.ts";
 import { MAX_TABS_PER_HOST, REMOTE_TAB_REPORT_MS, SAMPLE_WEIGHT } from "./presence.ts";
 import { certificateReport, newerCertificate } from "../hosting/certificate.ts";
 
@@ -648,13 +648,22 @@ export class Gossip {
     const peers = this.#countedPeers(now);
     const starting = peers.filter(({ change }) => change.startingUntil > now).length;
     if (this.readyBeyondWindow(now) + starting >= target || !offer()) return false;
-    this.#self = { ...this.#self, startingUntil: now + STARTUP_MS };
+    this.#self = { ...this.#self, startingUntil: now + INVITATION_ACK_MS };
     this.#nextStart = now + COOLDOWN_MS + Math.floor(random() * 5_000);
     return true;
   }
 
   finishStart() {
     this.#self = { ...this.#self, startingUntil: 0 };
+  }
+
+  confirmStart(startingUntil: number) {
+    this.#self = { ...this.#self, startingUntil };
+  }
+
+  cancelStart() {
+    this.finishStart();
+    this.#nextStart = 0;
   }
 }
 

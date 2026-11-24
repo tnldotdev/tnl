@@ -2,6 +2,7 @@ const MINUTE_MS = 60_000;
 export const HOST_TURN_MS = 15 * MINUTE_MS;
 export const TURN_WARNING_MS = 5 * MINUTE_MS;
 export const BOOTSTRAP_TURN_MS = 60 * MINUTE_MS;
+export const INVITATION_ACK_MS = 15_000;
 export const STARTUP_MS = 3 * MINUTE_MS;
 export const REPLACE_BEFORE_MS = STARTUP_MS + MINUTE_MS;
 export const UPLOAD_BYTES = 1024 * 1024;
