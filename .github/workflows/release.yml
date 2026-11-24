@@ -96,8 +96,15 @@ jobs:
           pnpm: true
 
       - name: Build draft release
-        run: goreleaser release --clean
+        run: |
+          args=(release --clean)
+          notes="release-notes/v${VERSION}.md"
+          if [[ -f "$notes" ]]; then
+            args+=(--release-header "$notes")
+          fi
+          goreleaser "${args[@]}"
         env:
+          VERSION: ${{ needs.validate.outputs.version }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify release artifacts
