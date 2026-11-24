@@ -43,6 +43,9 @@ func (c WebSocketConnector) Connect(ctx context.Context, endpoint Endpoint) (Ses
 		TLSClientConfig: trust, ForceAttemptHTTP2: false,
 		MaxResponseHeaderBytes: 16 << 10,
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if c.Config.IPv4Only {
+				network = "tcp4"
+			}
 			if address == logical {
 				address = endpoint.Address
 			}

@@ -121,7 +121,13 @@ func TestServiceAssignmentStateOnlyUpdateRetainsSlots(t *testing.T) {
 }
 
 func TestServiceJoinedStopPhysicallyReleasesSharedUDP(t *testing.T) {
+	t.Run("default", func(t *testing.T) { testSharedUDPLifetime(t, false) })
+	t.Run("guest IPv4", func(t *testing.T) { testSharedUDPLifetime(t, true) })
+}
+
+func testSharedUDPLifetime(t *testing.T, ipv4Only bool) {
 	cfg, control := lifecycleFixture(t)
+	cfg.RelayIPv4Only = ipv4Only
 	serverTLS, cfgTLS := privateTransportTLS(t)
 	cfg.TransportTLS = cfgTLS
 	listener, err := muxsession.ListenQUIC("127.0.0.1:0", serverTLS, muxsession.QUICConfig{})
@@ -177,12 +183,19 @@ func TestServiceJoinedStopPhysicallyReleasesSharedUDP(t *testing.T) {
 		t.Fatal("publisher did not become ready")
 	}
 	first, second := <-addresses, <-addresses
+	network := "udp"
+	if ipv4Only {
+		network = "udp4"
+	}
+	if ipv4Only && (first.IP.To4() == nil || second.IP.To4() == nil) {
+		t.Fatal("guest relay QUIC borrowed a non-IPv4 peer socket", first, second)
+	}
 	if first.String() != second.String() {
 		t.Fatal("relay slots did not share one physical UDP socket", first, second)
 	}
 	assertHeld := func() {
 		t.Helper()
-		socket, err := net.ListenUDP("udp", first)
+		socket, err := net.ListenUDP(network, first)
 		if err == nil {
 			_ = socket.Close()
 			t.Fatal("live run released the shared UDP socket before joined stop")
@@ -213,7 +226,7 @@ func TestServiceJoinedStopPhysicallyReleasesSharedUDP(t *testing.T) {
 		t.Fatal("publisher did not join its shared-socket owner")
 	}
 	<-joined
-	socket, err := net.ListenUDP("udp", first)
+	socket, err := net.ListenUDP(network, first)
 	if err != nil {
 		t.Fatal("joined stop did not physically release the shared UDP port", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -23,6 +24,41 @@ import (
 type guestDemoControlStub struct {
 	created int
 	token   string
+}
+
+func TestGuestControlUsesDirectIPv4(t *testing.T) {
+	guest := guestHTTPClient()
+	guest.Timeout = time.Second
+	defer guest.CloseIdleConnections()
+	t.Setenv("HTTP_PROXY", "http://192.0.2.1:9")
+	listener, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skip("no IPv6 loopback")
+	}
+	v6 := httptest.NewUnstartedServer(http.NotFoundHandler())
+	v6.Listener.Close()
+	v6.Listener = listener
+	v6.Start()
+	defer v6.Close()
+	if response, err := guest.Get(v6.URL); err == nil {
+		response.Body.Close()
+		t.Fatal("guest admission used IPv6")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if addr, _, err := net.SplitHostPort(r.RemoteAddr); err != nil || addr != "127.0.0.1" {
+			t.Errorf("unexpected guest source: %s", r.RemoteAddr)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	response, err := guest.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatal("guest admission did not reach control")
+	}
 }
 
 type guestEnrollmentStub struct {
