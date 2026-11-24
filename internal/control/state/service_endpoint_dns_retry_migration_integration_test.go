@@ -122,11 +122,15 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 	if version, err := readSchemaVersion(ctx, pool); err != nil || version != priorVersion {
 		t.Fatal("fixture is not on the previous schema", version, err)
 	}
+	versionError := fmt.Sprintf("incompatible database schema version %d", priorVersion)
+	if err := (&Database{pool: pool}).Readiness(ctx); err == nil || !strings.Contains(err.Error(), versionError) {
+		t.Fatal("readiness accepted the unmigrated database", err)
+	}
 	prior, err := Open(ctx, url, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if prior != nil {
 		prior.Close()
 	}
-	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("incompatible database schema version %d", priorVersion)) {
+	if err == nil || !strings.Contains(err.Error(), versionError) {
 		t.Fatal("serving accepted the unmigrated database", err)
 	}
 	if _, err := pool.Exec(ctx, `ALTER TABLE control.operator_nameserver_hostnames RENAME TO unsupported_nameserver_layout`); err != nil {
