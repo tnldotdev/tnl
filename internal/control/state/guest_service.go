@@ -23,6 +23,7 @@ type AllocateGuestDemoServiceRequest struct {
 	IdempotencyKey     string
 	Target             string
 	RequirePostQuantum bool
+	DNSAutomation      bool
 	Now                time.Time
 }
 
@@ -124,10 +125,10 @@ func (d *Database) AllocateGuestDemoService(ctx context.Context, request Allocat
 	if count != 0 || trial.ActiveServiceRunID.Valid || trial.ServingUntil.Valid && trial.ServingUntil.Time.After(clock.current()) {
 		return result, ErrServiceConflict
 	}
-	var domain, authority string
-	err = tx.QueryRow(ctx, `SELECT canonical_domain,COALESCE(dns_authority_reference,'')
+	var domain string
+	err = tx.QueryRow(ctx, `SELECT canonical_domain
 		FROM control.domains WHERE id=$1 AND kind='managed' AND state='ready' AND released_at IS NULL
-		FOR SHARE`, trial.DomainID).Scan(&domain, &authority)
+		FOR SHARE`, trial.DomainID).Scan(&domain)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
@@ -170,7 +171,7 @@ func (d *Database) AllocateGuestDemoService(ctx context.Context, request Allocat
 	}
 	if err = reconcileServiceEndpoint(ctx, tx, serviceEndpoint{
 		ServiceID: id, DomainID: trial.DomainID, Hostname: hostname, Namespace: hostname, PoolID: pool,
-		Public: true, Automation: authority != "",
+		Public: true, Automation: request.DNSAutomation,
 	}, clock.current()); err != nil {
 		return result, err
 	}

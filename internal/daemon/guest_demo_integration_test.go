@@ -128,7 +128,7 @@ func redeemIntegrationGuestShare(t *testing.T, client *http.Client, address stri
 }
 
 func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedService(t *testing.T) {
-	databaseURL, _ := standaloneTestDatabase(t)
+	databaseURL, inspect := standaloneTestDatabase(t)
 	state, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
@@ -190,6 +190,11 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedService(t *testing.
 	}
 	if service.GuestId != guest.GuestId || service.TeamId != "" || !service.Ephemeral || service.Endpoint == nil || !service.Endpoint.Public || !strings.HasPrefix(service.Endpoint.Hostname, "demo-1.guest-") {
 		t.Fatalf("guest allocation did not retain its real trial and assigned endpoint: %+v", service)
+	}
+	var managedDNSPending bool
+	if err := inspect.QueryRowContext(t.Context(), `SELECT dns_automation AND dns_state='pending' AND dns_authority_reference IS NULL
+		FROM control.service_endpoints WHERE service_id=$1`, service.Id).Scan(&managedDNSPending); err != nil || !managedDNSPending {
+		t.Fatal("guest allocation did not schedule managed DNS", err)
 	}
 	for _, name := range []string{"guest-relay-a", "guest-relay-b"} {
 		if _, err := state.RegisterRelay(t.Context(), controlstate.RelayRegistration{

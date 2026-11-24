@@ -92,7 +92,7 @@ func (h *handler) AllocateGuestDemoService(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	record, err := h.guests.AllocateGuestDemoService(r.Context(), controlstate.AllocateGuestDemoServiceRequest{
-		Credential: credential, IdempotencyKey: key, Target: body.Target,
+		Credential: credential, IdempotencyKey: key, Target: body.Target, DNSAutomation: h.config.DNSAutomation,
 		RequirePostQuantum: body.RequirePostQuantum != nil && *body.RequirePostQuantum, Now: time.Now(),
 	})
 	if err != nil {
