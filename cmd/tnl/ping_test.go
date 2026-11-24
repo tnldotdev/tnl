@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,9 @@ import (
 )
 
 func TestPingDoesNotLoadProjectOrSendCredentials(t *testing.T) {
+	if _, err := commandForTest(&cli{}, io.Discard)([]string{"ping", "https://example.com", "--protocol", "http"}); err == nil {
+		t.Fatal("ping still accepts a redundant protocol override")
+	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(output http.ResponseWriter, request *http.Request) {
 		requests++

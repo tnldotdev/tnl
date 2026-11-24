@@ -324,14 +324,20 @@ type namespaceSubcommands struct {
 
 func (a *commandApp) newDeploymentCommand() *cobra.Command {
 	f := a.flags
-	cDeployment := &cobra.Command{Use: "deployment", Short: "Manage saved deployments and selected target bindings.", GroupID: "manage"}
+	cDeployment := &cobra.Command{
+		Use: "deployment", Short: "Manage saved deployments and their service targets.", GroupID: "deploy",
+		Long: "Inspect a deployment or change where its services connect. Use tnl apply to save a deployment from project configuration.",
+	}
 	cDeploymentRename := &cobra.Command{Use: "rename", Short: "Rename a deployment selector without changing endpoints."}
 	a.leaf(cDeploymentRename, &f.Deployment.Rename, func(call commandCall) error {
 		return runDeploymentRename(call.ctx, f.Deployment.Rename, call.project, a.out, a.errOut)
 	})
 	cDeployment.AddCommand(cDeploymentRename)
 	cDeploymentNamespace := &cobra.Command{Use: "namespace", Short: "Manage a deployment's DNS namespace separately from its selector."}
-	cDeploymentNamespaceRename := &cobra.Command{Use: "rename", Short: "Replace the DNS namespace and retire the old publication authority."}
+	cDeploymentNamespaceRename := &cobra.Command{
+		Use: "rename", Short: "Move the deployment's service hostnames to a new namespace.",
+		Long: "This changes the service hostnames. Get the current applied revision from tnl status. After a lost reply, retry with the same revision, request ID, and arguments.",
+	}
 	a.leaf(cDeploymentNamespaceRename, &f.Deployment.Namespace.Rename, func(call commandCall) error {
 		return runDeploymentNamespaceRename(call.ctx, f.Deployment.Namespace.Rename, call.project, a.out, a.errOut)
 	})
@@ -352,12 +358,12 @@ func (a *commandApp) newDeploymentCommand() *cobra.Command {
 		return runDeployment(call.ctx, "deployment show <deployment>", *f, call.project, a.out, a.errOut)
 	})
 	cDeployment.AddCommand(cDeploymentShow)
-	cDeploymentUpdate := &cobra.Command{Use: "update", Short: "Change selected existing target bindings with a revision condition."}
+	cDeploymentUpdate := &cobra.Command{Use: "update", Short: "Change the target addresses of existing services."}
 	a.leaf(cDeploymentUpdate, &f.Deployment.Update, func(call commandCall) error {
 		return runDeployment(call.ctx, "deployment update <deployment>", *f, call.project, a.out, a.errOut)
 	})
 	cDeployment.AddCommand(cDeploymentUpdate)
-	cDeploymentDelete := &cobra.Command{Use: "delete", Short: "Delete one deployment with its current revision condition."}
+	cDeploymentDelete := &cobra.Command{Use: "delete", Short: "Delete a saved deployment."}
 	a.leaf(cDeploymentDelete, &f.Deployment.Delete, func(call commandCall) error {
 		return runDeployment(call.ctx, "deployment delete <deployment>", *f, call.project, a.out, a.errOut)
 	})

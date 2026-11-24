@@ -1,7 +1,7 @@
 {
   "name": "@tnldotdev/tnl",
   "version": "1.0.0-development",
-  "description": "take a shortcut through the internet.",
+  "description": "tunnels for local apps and private services.",
   "keywords": [
     "git-worktree",
     "local-development",

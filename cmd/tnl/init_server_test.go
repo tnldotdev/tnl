@@ -8,6 +8,33 @@ import (
 	"testing"
 )
 
+func TestInitDryRunPrintsPlanWithoutEdits(t *testing.T) {
+	root := t.TempDir()
+	const manifest = `{"packageManager":"pnpm@11.0.0","devDependencies":{"vite":"*"}}`
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	t.Setenv("TNL_STATE_DIR", filepath.Join(root, "state"))
+	var out, diag bytes.Buffer
+	if err := run(t.Context(), []string{"init", "--dry-run"}, &out, &diag); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []string{"tnl.config.ts", "vite.config.ts", "pnpm add --save-dev @tnldotdev/tnl", "no changes made"} {
+		if !strings.Contains(out.String(), step) {
+			t.Fatalf("missing plan step %q:\n%s", step, &out)
+		}
+	}
+	files, err := os.ReadDir(root)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("dry run changed project: %v (%v)", files, err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil || string(data) != manifest {
+		t.Fatal("dry run changed package.json", err)
+	}
+}
+
 func TestInitWritesHonoBunEntrypointWithoutAConfiguredPort(t *testing.T) {
 	root := apiInitFixture(t, "hono", "bun --hot src/index.ts", "module", "import { Hono } from 'hono'\nconst app = new Hono()\nexport default app\n")
 	t.Chdir(root)

@@ -15,6 +15,7 @@ import (
 )
 
 type initCommand struct {
+	DryRun    bool `name:"dry-run" help:"Preview setup without writing files or installing packages."`
 	NoInstall bool `name:"no-install" help:"Print the dependency command instead of running it."`
 }
 
@@ -30,6 +31,9 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	plan, err := projectinit.NewPlan(ctx, cwd, func(err error) string { return presentFailure(err).action })
 	if err != nil {
 		return err
+	}
+	if flags.DryRun {
+		return writeInitPlan(stdout, plan, flags.NoInstall)
 	}
 	result, err := plan.Apply(ctx, projectinit.Options{
 		NoInstall: flags.NoInstall,
@@ -75,9 +79,45 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	return writeHumanFrame(stdout, "tnl init", state, footer, blocks...)
 }
 
+func writeInitPlan(output io.Writer, plan projectinit.Plan, noInstall bool) error {
+	configLabel := "use config"
+	if len(plan.NewConfiguration) != 0 {
+		configLabel = "create config"
+	}
+	fields := []clioutput.Field{{Label: "project", Value: plan.Root}, {Label: configLabel, Value: plan.ConfigurationPath}}
+	if len(plan.NewFrameworkConfig) != 0 {
+		fields = append(fields, clioutput.Field{Label: "create", Value: plan.FrameworkPath})
+	}
+	if len(plan.ServerReplacement) != 0 {
+		fields = append(fields, clioutput.Field{Label: "update", Value: plan.ServerPath})
+	}
+	if command := plan.InstallRecommendation(); command != "" {
+		label := "install"
+		if noInstall || plan.PackageManager == "" {
+			label = "manual install"
+		}
+		fields = append(fields, clioutput.Field{Label: label, Value: command})
+	}
+	python, err := plan.PythonInstallCommand()
+	if err != nil {
+		return err
+	}
+	if len(python) != 0 {
+		fields = append(fields, clioutput.Field{Label: "Python dependency", Value: strings.Join(python, " ")})
+	}
+	blocks := []clioutput.Block{clioutput.Fields(fields...), clioutput.Text("Generate files under .tnl/generated and check Git ignore rules and project type bindings.")}
+	for _, action := range plan.Actions {
+		blocks = append(blocks, clioutput.Section("action", clioutput.Text(action)))
+	}
+	return writeHumanFrame(output, "tnl init", "dry run", "no changes made", blocks...)
+}
+
 func (a *commandApp) newInitCommand() *cobra.Command {
 	f := a.flags
-	cInit := &cobra.Command{Use: "init", Short: "Set up tnl for the current project.", GroupID: "start"}
+	cInit := &cobra.Command{
+		Use: "init", Short: "Set up tnl in this project.", GroupID: "start",
+		Long: "Set up project configuration and the framework integration for your app. Start the app with its usual development command. Sign in with tnl auth login for a shareable HTTPS URL.",
+	}
 	a.leaf(cInit, &f.Init, func(call commandCall) error {
 		return runInit(call.ctx, f.Init, a.out, a.errOut)
 	})

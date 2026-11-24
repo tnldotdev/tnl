@@ -36,11 +36,11 @@ func TestPingHTTPVisitorBoundary(t *testing.T) {
 
 func TestPingAddressRequiresPublicHTTPAndNoCredentials(t *testing.T) {
 	for _, address := range []string{"db.example:5432", "postgres://db.example:5432", "https://user:pass@site.example", "https://site.example/#token"} {
-		if _, _, err := PingAddress(address, ""); err == nil {
+		if _, _, err := PingAddress(address); err == nil {
 			t.Fatalf("accepted %q", address)
 		}
 	}
-	if address, protocol, err := PingAddress("https://site.example/health", "http"); err != nil || address != "https://site.example/health" || protocol != "https" {
+	if address, protocol, err := PingAddress("https://site.example/health"); err != nil || address != "https://site.example/health" || protocol != "https" {
 		t.Fatalf("address=%s protocol=%s err=%v", address, protocol, err)
 	}
 }
@@ -52,9 +52,6 @@ func TestPingRequiresVerifiedPublicTLS(t *testing.T) {
 		t.Fatalf("untrusted public certificate accepted: %+v", result)
 	}
 	for _, protocol := range []string{"postgres", "mysql", "redis", "ssh", "tcp"} {
-		if _, _, err := PingAddress("db.example:5432", protocol); err == nil {
-			t.Fatalf("accepted retired public protocol %s", protocol)
-		}
 		if result := Ping(t.Context(), "127.0.0.1:1", protocol); result.State != "invalid protocol" {
 			t.Fatalf("retired protocol %s: %+v", protocol, result)
 		}

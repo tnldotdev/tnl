@@ -294,8 +294,8 @@ func validInspectionMethod(method string) bool {
 
 func (a *commandApp) newInspectCommand() *cobra.Command {
 	f := a.flags
-	cInspect := &cobra.Command{Use: "inspect", Short: "Inspect recent local HTTP activity.", GroupID: "manage"}
-	cInspectList := &cobra.Command{Use: "list", Short: "List recent local HTTP activity for this project."}
+	cInspect := &cobra.Command{Use: "inspect", Short: "Inspect recorded HTTP and database activity.", GroupID: "observe"}
+	cInspectList := &cobra.Command{Use: "list", Short: "List HTTP requests and database operations recorded locally."}
 	a.leaf(cInspectList, &f.Inspect.List, func(call commandCall) error {
 		root, err := projectRoot(call.ctx, *f)
 		if err != nil {

@@ -412,8 +412,8 @@ func mutateDomain(ctx context.Context, flags remoteFlags, command, value string,
 
 func (a *commandApp) newDomainCommand() *cobra.Command {
 	f := a.flags
-	cDomain := &cobra.Command{Use: "domain", Short: "Manage team domains.", GroupID: "manage"}
-	cDomainClaim := &cobra.Command{Use: "claim", Short: "Claim a team domain; use tnl domain status to check its DNS records."}
+	cDomain := &cobra.Command{Use: "domain", Short: "Set up a custom domain for your team's services.", GroupID: "access"}
+	cDomainClaim := &cobra.Command{Use: "claim", Short: "Claim a domain and show the required DNS setup."}
 	a.leaf(cDomainClaim, &f.Domain.Claim, func(call commandCall) error {
 		return runDomainClaim(call.ctx, f.Domain.Claim, a.out, a.errOut)
 	})

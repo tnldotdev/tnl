@@ -415,7 +415,7 @@ func savedTeamFooter(projectTeam, selectedID, selectedName string) string {
 
 func (a *commandApp) newTeamCommand() *cobra.Command {
 	f := a.flags
-	cTeam := &cobra.Command{Use: "team", Short: "Manage teams and memberships.", GroupID: "manage"}
+	cTeam := &cobra.Command{Use: "team", Short: "Select a team, invite people, or manage membership.", GroupID: "access"}
 	cTeamFeedback := &cobra.Command{Use: "feedback", Short: "Manage who may write team feedback."}
 	cTeamFeedbackGet := &cobra.Command{Use: "get", Short: "Read the feedback author policy."}
 	a.leaf(cTeamFeedbackGet, &f.Team.Feedback.Get, func(call commandCall) error {

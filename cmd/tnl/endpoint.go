@@ -70,8 +70,11 @@ func runEndpointRelease(ctx context.Context, flags endpointReleaseCommand, outpu
 
 func (a *commandApp) newEndpointCommand() *cobra.Command {
 	f := a.flags
-	cEndpoint := &cobra.Command{Use: "endpoint", Short: "Manage saved services' public endpoint reservations.", GroupID: "manage"}
-	cEndpointRelease := &cobra.Command{Use: "release", Short: "Retire a disabled service's public port reservation without deleting the service."}
+	cEndpoint := &cobra.Command{Use: "endpoint", Short: "Manage public port reservations for saved services.", GroupID: "deploy"}
+	cEndpointRelease := &cobra.Command{
+		Use: "release", Short: "Release a service's disabled public port.",
+		Long: "Disable public access in the service binding and apply it first. Then release the exact reserved port with the service ID. Connector access stays available.",
+	}
 	a.leaf(cEndpointRelease, &f.Endpoint.Release, func(call commandCall) error {
 		return runEndpointRelease(call.ctx, f.Endpoint.Release, a.out, a.errOut)
 	})

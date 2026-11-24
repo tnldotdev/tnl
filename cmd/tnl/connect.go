@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
@@ -87,7 +88,7 @@ func (flags connectStartCommand) options() connector.StartOptions {
 		Name: flags.Name, Client: flags.Client, ClientArgs: flags.clientArgs, Listen: flags.Listen, Protocol: flags.Protocol, Kubeconfig: flags.Kubeconfig, Namespace: flags.Namespace, KubeUserConfig: flags.KubeUserConfig, KubeUser: flags.KubeUser, KubeTokenFile: flags.KubeTokenFile,
 		Foreground: flags.Foreground, Detach: flags.Detach, Install: flags.Install, System: flags.System, SystemStateDir: flags.SystemStateDir, DetachedChild: flags.DetachedChild, Stdio: flags.Stdio, Output: string(flags.Output), DetachLaunch: flags.detach,
 		Ready: func(destination io.Writer, profile connector.Profile, listen string) error {
-			return writeNativeConnection(destination, profile, flags.Output, listen)
+			return writeNativeConnection(destination, profile, flags.Output, listen, flags.StateDir)
 		}, Starting: detached.Starting, PublicationReady: detached.Ready, Prepared: func(ctx context.Context, profile connector.Profile) { detached.SetConnection(ctx, profile) }}
 }
 
@@ -209,14 +210,23 @@ func runConnectAvailable(ctx context.Context, command connectAvailableCommand, o
 
 func (a *commandApp) newConnectCommand() *cobra.Command {
 	f := a.flags
-	cConnect := &cobra.Command{Use: "connect", Short: "Make an approved service available locally using the current identity.", GroupID: "start"}
-	cConnectStart := &cobra.Command{Use: "start", Short: "Make an approved service available locally until stopped; start is optional and disambiguates command names."}
+	cConnect := &cobra.Command{
+		Use: "connect", Short: "Connect to a private service from this machine.", GroupID: "start",
+		Long: "Reach a service by its configured name or service ID. By default, tnl prints local connection settings and runs in this terminal until you stop it. Use your usual database or cluster credentials.",
+	}
+	cConnectStart := &cobra.Command{
+		Use: "start", Short: "Start a local connector for one service.",
+		Long: "Start a local connector. You can omit start unless the service name is also a command, such as list.",
+	}
 	a.leaf(cConnectStart, &f.Connect.Start, func(call commandCall) error {
 		return a.startConnector(call)
 	})
 	cConnect.AddCommand(cConnectStart)
 	bind := cConnectStart.Args
 	cConnectStart.Args = func(cmd *cobra.Command, args []string) error {
+		if cmd == cConnect && len(args) == 0 && cmd.Flags().NFlag() == 0 && cmd.ArgsLenAtDash() < 0 {
+			return pflag.ErrHelp
+		}
 		// before the service selector, -- is still the flag terminator.
 		if n := cmd.ArgsLenAtDash(); n > 0 {
 			if n == len(args) && f.Connect.Start.Client == "" {
@@ -236,7 +246,7 @@ func (a *commandApp) newConnectCommand() *cobra.Command {
 		panic(err)
 	}
 	a.useDefault(cConnect, cConnectStart)
-	cConnectAvailable := &cobra.Command{Use: "available", Short: "List services this identity can visit."}
+	cConnectAvailable := &cobra.Command{Use: "available", Short: "List services you can connect to."}
 	a.leaf(cConnectAvailable, &f.Connect.Available, func(call commandCall) error {
 		return runConnectAvailable(call.ctx, f.Connect.Available, a.out, a.errOut)
 	})

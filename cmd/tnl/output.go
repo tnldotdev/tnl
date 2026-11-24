@@ -232,8 +232,8 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
 					clioutput.Fields(
 						clioutput.Field{Label: "URL", Value: url},
-						clioutput.Field{Label: "reason", Value: presented.message},
-						clioutput.Field{Label: "next step", Value: presented.action},
+						clioutput.Field{Label: "reason", Value: presented.message, Prose: true},
+						clioutput.Field{Label: "next step", Value: presented.action, Prose: true},
 						clioutput.Field{Label: "code", Value: string(failure.BrowserOpenFailed)},
 						clioutput.Field{Label: "help", Value: failure.HelpURL(failure.BrowserOpenFailed, "")},
 					),
@@ -250,8 +250,8 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
 				clioutput.Fields(
 					clioutput.Field{Label: "URL", Value: url},
-					clioutput.Field{Label: "reason", Value: presented.message},
-					clioutput.Field{Label: "next step", Value: presented.action},
+					clioutput.Field{Label: "reason", Value: presented.message, Prose: true},
+					clioutput.Field{Label: "next step", Value: presented.action, Prose: true},
 					clioutput.Field{Label: "code", Value: string(failure.BrowserOpenFailed)},
 					clioutput.Field{Label: "help", Value: failure.HelpURL(failure.BrowserOpenFailed, "")},
 				),

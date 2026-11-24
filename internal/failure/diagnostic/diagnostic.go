@@ -162,19 +162,22 @@ func Codes() []Code {
 }
 
 func Text(code Code) string {
-	definition := definitionFor(code)
-	return renderText("tnl", code, "", definition.Summary)
+	return renderText(textFrame("tnl", code, "", definitionFor(code).Summary))
 }
 
 func TextForError(err error) (string, bool) {
-	return TextForCommandError("tnl", err)
+	f, ok := FrameForCommandError("tnl", err)
+	if !ok {
+		return "", false
+	}
+	return renderText(f), true
 }
 
-// TextForCommandError renders a classified error for one canonical command.
-func TextForCommandError(command string, err error) (string, bool) {
+// FrameForCommandError describes a classified error for one canonical command.
+func FrameForCommandError(command string, err error) (clioutput.Frame, bool) {
 	classified, ok := errors.AsType[*Error](err)
 	if !ok || classified == nil {
-		return "", false
+		return clioutput.Frame{}, false
 	}
 	code := classified.code
 	definition := definitionFor(code)
@@ -188,17 +191,12 @@ func TextForCommandError(command string, err error) (string, bool) {
 	} else {
 		details = append(details, detail)
 	}
-	return renderText(command, code, KnownCase(err), details...), true
+	return textFrame(command, code, KnownCase(err), details...), true
 }
 
 // WriteWarning renders a non-terminal diagnostic through the shared diagram renderer.
 func WriteWarning(output io.Writer, command string, code Code) error {
-	text := renderText(command, code, "", definitionFor(code).Summary) + "\n"
-	written, err := io.WriteString(output, text)
-	if err == nil && written != len(text) {
-		err = io.ErrShortWrite
-	}
-	return err
+	return clioutput.Write(output, textFrame(command, code, "", definitionFor(code).Summary))
 }
 
 func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, caseID string) {
@@ -210,7 +208,7 @@ func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, c
 	if caseFor(code, caseID) != nil {
 		variant = caseID
 	}
-	body := renderText("tnl", code, variant, definitionFor(code).Summary)
+	body := renderText(textFrame("tnl", code, variant, definitionFor(code).Summary))
 	contentType := "text/plain; charset=utf-8"
 	if browserpage.AcceptsHTML(request.Header.Get("Accept")) {
 		body = renderHTML(code, variant)
@@ -229,7 +227,7 @@ func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, c
 	}
 }
 
-func renderText(command string, code Code, caseID string, details ...string) string {
+func textFrame(command string, code Code, caseID string, details ...string) clioutput.Frame {
 	definition := definitionFor(code)
 	blocks := make([]clioutput.Block, 0, len(details)+2)
 	for _, detail := range details {
@@ -247,12 +245,16 @@ func renderText(command string, code Code, caseID string, details ...string) str
 	}
 	blocks = append(blocks, clioutput.Flow(flow...),
 		clioutput.Fields(clioutput.Field{Label: "help", Value: HelpURL(code, caseID)}))
-	text, err := clioutput.Render(clioutput.Frame{
+	return clioutput.Frame{
 		Command: command,
 		State:   definition.Title,
 		Blocks:  blocks,
 		Footer:  string(code),
-	})
+	}
+}
+
+func renderText(frame clioutput.Frame) string {
+	text, err := clioutput.Render(frame)
 	if err != nil {
 		panic(err)
 	}

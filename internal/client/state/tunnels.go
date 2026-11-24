@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -363,23 +364,42 @@ func (d *Database) snapshot(ctx context.Context, projectRoot string) (TunnelSnap
 	}
 	for _, row := range records {
 		info := tunnelInfo(row, observedAt)
-		state := info.State
 		snapshot.Tunnels = append(snapshot.Tunnels, info)
-		snapshot.Summary.Total++
-		switch state {
+	}
+	snapshot.Summary = summarizeTunnels(snapshot.Tunnels)
+	return snapshot, nil
+}
+
+// SelectService narrows a snapshot to publications, aliases and webhook endpoints
+// for one named service. project-wide integration URLs have no service selector.
+func (snapshot *TunnelSnapshot) SelectService(name string) {
+	snapshot.Tunnels = slices.DeleteFunc(snapshot.Tunnels, func(t TunnelInfo) bool { return t.Service != name })
+	snapshot.Summary = summarizeTunnels(snapshot.Tunnels)
+	snapshot.Aliases = slices.DeleteFunc(snapshot.Aliases, func(a AliasInfo) bool { return a.Service != name })
+	for i := range snapshot.IntegrationURLs {
+		u := &snapshot.IntegrationURLs[i]
+		u.Endpoints = slices.DeleteFunc(u.Endpoints, func(e WebhookEndpointInfo) bool { return e.Service != name })
+	}
+	snapshot.IntegrationURLs = slices.DeleteFunc(snapshot.IntegrationURLs, func(u IntegrationURLInfo) bool { return len(u.Endpoints) == 0 })
+}
+
+func summarizeTunnels(tunnels []TunnelInfo) TunnelSummary {
+	summary := TunnelSummary{Total: len(tunnels)}
+	for _, t := range tunnels {
+		switch t.State {
 		case TunnelStateStarting:
-			snapshot.Summary.Starting++
+			summary.Starting++
 		case TunnelStateProvisioning:
-			snapshot.Summary.Provisioning++
+			summary.Provisioning++
 		case TunnelStateReady:
-			snapshot.Summary.Ready++
+			summary.Ready++
 		case TunnelStateDraining:
-			snapshot.Summary.Draining++
+			summary.Draining++
 		case TunnelStateStale:
-			snapshot.Summary.Stale++
+			summary.Stale++
 		}
 	}
-	return snapshot, nil
+	return summary
 }
 
 func (t *Tunnel) heartbeat(ctx context.Context) {

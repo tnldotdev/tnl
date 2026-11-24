@@ -60,6 +60,34 @@ func TestAuthLoginWorksWithoutTerminalInput(t *testing.T) {
 	}
 }
 
+func TestLoginPresentsCopyableApprovalAndResumeInOrder(t *testing.T) {
+	const host = "https://control.example.test"
+	op := clientstate.AuthOperation{
+		ID: "auth_01234567890123456789012345678901", Server: host,
+		Phase: clientstate.AuthPending, UserCode: "ABCDEF-123456",
+		ApprovalURL: host + "/v1/auth/device/approve?user_code=ABCDEF-123456", Private: []byte("polling-secret"),
+	}
+	var out bytes.Buffer
+	config, err := authLoginConfig(loginCommand{Open: true, StateDir: "/some user/state"}, host, nil, strings.NewReader(""), &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.ObserveLogin(op); err != nil {
+		t.Fatal(err)
+	}
+	remainder := out.String()
+	for _, value := range []string{op.ApprovalURL, op.UserCode, "tnl auth login wait " + op.ID + " --server=" + host + " --state-dir='/some user/state'"} {
+		var found bool
+		_, remainder, found = strings.Cut(remainder, "\n"+value+"\n")
+		if !found {
+			t.Fatalf("missing copyable line %q:\n%s", value, &out)
+		}
+	}
+	if strings.Contains(out.String(), "polling-secret") {
+		t.Fatal("login printed the private checkpoint")
+	}
+}
+
 func TestAuthStatusLocalJSONDoesNotExposeSavedCredentials(t *testing.T) {
 	clientstate.UseMemoryKeychainForTesting()
 	root := filepath.Join(t.TempDir(), "state")

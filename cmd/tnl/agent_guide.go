@@ -10,7 +10,7 @@ import (
 )
 
 func (a *commandApp) newAgentGuideCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "agent-guide", Short: "Print the automation guide for this binary.", GroupID: "manage", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "agent-guide", Short: "Print the automation guide for this binary.", GroupID: "tools", Args: cobra.NoArgs}
 	skill := cmd.Flags().Bool("skill", false, "Print Markdown with skill front matter for a SKILL.md file.")
 	cmd.RunE = func(*cobra.Command, []string) error {
 		version := buildinfo.Line("tnl")
@@ -33,7 +33,7 @@ func (a *commandApp) newAgentGuideCommand() *cobra.Command {
 		}
 		blocks := []clioutput.Block{clioutput.Text(version)}
 		for _, s := range sections {
-			blocks = append(blocks, clioutput.Section(s.command, clioutput.Text(s.use)))
+			blocks = append(blocks, clioutput.Text(s.use), clioutput.Literal(s.command))
 		}
 		return writeHumanFrame(a.out, "tnl agent-guide", "automation", "tnl agent-guide --skill prints an installable SKILL.md", blocks...)
 	}

@@ -66,7 +66,7 @@ func authLoginConfig(flags loginCommand, server string, state *clientstate.Datab
 		LoginTimeout:         flags.Timeout,
 		AuthenticationPrompt: authenticationPrompt(diagnostics, "tnl auth login")}
 	config.ObserveLogin = func(op clientstate.AuthOperation) error {
-		return writeAuthOperation(diagnostics, "tnl auth login", op, flags.Output)
+		return writeAuthOperation(diagnostics, "tnl auth login", op, flags)
 	}
 	if flags.Open && flags.Output != statusOutputJSON {
 		config.OpenURL = interactiveBrowserOpener(input)
@@ -116,7 +116,7 @@ func runAuthLoginStart(ctx context.Context, flags loginCommand, input io.Reader,
 	if err != nil {
 		return err
 	}
-	return writeAuthOperation(output, "tnl auth login start", op, flags.Output)
+	return writeAuthOperation(output, "tnl auth login start", op, flags)
 }
 
 func runAuthLoginOperation(ctx context.Context, flags loginCommand, id, action string, output, diagnostics io.Writer) error {
@@ -135,7 +135,7 @@ func runAuthLoginOperation(ctx context.Context, flags loginCommand, id, action s
 				return inspectErr
 			}
 			if pending.Phase == clientstate.AuthPending {
-				if err := writeAuthOperation(diagnostics, "tnl auth login wait", pending, statusOutputHuman); err != nil {
+				if err := writeAuthOperation(diagnostics, "tnl auth login wait", pending, flags); err != nil {
 					return err
 				}
 				if flags.Open {
@@ -154,7 +154,7 @@ func runAuthLoginOperation(ctx context.Context, flags loginCommand, id, action s
 	if err != nil {
 		return err
 	}
-	return writeAuthOperation(output, "tnl auth login "+action, op, flags.Output)
+	return writeAuthOperation(output, "tnl auth login "+action, op, flags)
 }
 
 func runAuthStatus(ctx context.Context, flags authStatusCommand, output, diagnostics io.Writer) error {
@@ -184,23 +184,26 @@ func writeAuthStatus(output io.Writer, command string, status auth.StatusResult,
 	return writeHumanFrame(output, command, strings.ReplaceAll(status.Status, "_", " "), "", clioutput.Fields(fields...))
 }
 
-func writeAuthOperation(output io.Writer, command string, op clientstate.AuthOperation, mode statusOutputMode) error {
-	if mode == statusOutputJSON {
+func writeAuthOperation(output io.Writer, command string, op clientstate.AuthOperation, flags loginCommand) error {
+	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(struct {
 			SchemaVersion int `json:"schema_version"`
 			clientstate.AuthOperation
 		}{1, op})
 	}
-	fields := []clioutput.Field{{Label: "operation", Value: op.ID}, {Label: "control", Value: op.Server}, {Label: "method", Value: op.Method}}
+	blocks := []clioutput.Block{}
 	if op.Phase == clientstate.AuthPending {
-		fields = append(fields, clioutput.Field{Label: "approve", Value: op.ApprovalURL}, clioutput.Field{Label: "code", Value: op.UserCode},
-			clioutput.Field{Label: "expires", Value: op.ExpiresAt.UTC().Format(time.RFC3339)}, clioutput.Field{Label: "interval", Value: op.Interval.String()})
+		blocks = approvalBlocks(op.ApprovalURL, op.UserCode)
+		resume := "tnl auth login wait " + shellWord(op.ID) + " --server=" + shellWord(op.Server)
+		if flags.StateDir != "" {
+			resume += " --state-dir=" + shellWord(flags.StateDir)
+		}
+		blocks = append(blocks, clioutput.Section("resume login", clioutput.Literal(resume)),
+			clioutput.Fields(clioutput.Field{Label: "expires", Value: op.ExpiresAt.UTC().Format(time.RFC3339)}))
+	} else {
+		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "operation", Value: op.ID}, clioutput.Field{Label: "control", Value: op.Server}, clioutput.Field{Label: "method", Value: op.Method}))
 	}
-	footer := ""
-	if op.Phase == clientstate.AuthPending {
-		footer = "resume: tnl auth login wait " + op.ID
-	}
-	return writeHumanFrame(output, command, strings.ReplaceAll(string(op.Phase), "_", " "), footer, clioutput.Fields(fields...))
+	return writeHumanFrame(output, command, strings.ReplaceAll(string(op.Phase), "_", " "), "", blocks...)
 }
 
 func interactiveBrowserOpener(input io.Reader) func(string) error {
@@ -240,20 +243,23 @@ func runLogout(ctx context.Context, flags logoutCommand, output io.Writer, diagn
 
 func (a *commandApp) newAuthCommand() *cobra.Command {
 	f := a.flags
-	cAuth := &cobra.Command{Use: "auth", Short: "Inspect credentials and explicitly log in or out.", GroupID: "manage"}
+	cAuth := &cobra.Command{Use: "auth", Short: "Sign in, check your session, or sign out.", GroupID: "start"}
 	cAuthCredential := &cobra.Command{Use: "credential", Short: "Create a scoped signing credential for a deployment backend."}
-	cAuthCredentialCreate := &cobra.Command{Use: "create", Short: "Approve independent deployment management, connection, and publication capabilities."}
+	cAuthCredentialCreate := &cobra.Command{Use: "create", Short: "Issue a credential for the services and actions you select."}
 	a.leaf(cAuthCredentialCreate, &f.Auth.Credential.Create, func(call commandCall) error {
 		return runAuthCredentialCreate(call.ctx, f.Auth.Credential.Create, call.project, a.out, a.errOut)
 	})
 	cAuthCredential.AddCommand(cAuthCredentialCreate)
 	cAuth.AddCommand(cAuthCredential)
-	cAuthStatus := &cobra.Command{Use: "status", Short: "Show local credentials; --check silently validates with the server."}
+	cAuthStatus := &cobra.Command{Use: "status", Short: "Show your sign-in status. Use --check to contact the server."}
 	a.leaf(cAuthStatus, &f.Auth.Status, func(call commandCall) error {
 		return runAuthStatus(call.ctx, f.Auth.Status, a.out, a.errOut)
 	})
 	cAuth.AddCommand(cAuthStatus)
-	cAuthLogin := &cobra.Command{Use: "login", Short: "Log in explicitly, or manage a resumable login operation."}
+	cAuthLogin := &cobra.Command{
+		Use: "login", Short: "Sign in to the tnl server.",
+		Long: "Follow the approval URL to sign in. For scripts, use start to get an operation ID, then wait with that ID to save the approved session.",
+	}
 	cliflags.Bind(cAuthLogin, &f.Auth.Login.loginCommand, true)
 	cAuthLoginRun := &cobra.Command{Use: "run", Short: "", Hidden: true}
 	a.leaf(cAuthLoginRun, &f.Auth.Login.Run, func(call commandCall) error {
@@ -261,7 +267,7 @@ func (a *commandApp) newAuthCommand() *cobra.Command {
 	})
 	cAuthLogin.AddCommand(cAuthLoginRun)
 	a.useDefault(cAuthLogin, cAuthLoginRun)
-	cAuthLoginStart := &cobra.Command{Use: "start", Short: "Return a pending device login operation immediately."}
+	cAuthLoginStart := &cobra.Command{Use: "start", Short: "Print an approval URL and operation ID without waiting."}
 	a.leaf(cAuthLoginStart, &f.Auth.Login.Start, func(call commandCall) error {
 		return runAuthLoginStart(call.ctx, f.Auth.Login.loginCommand, os.Stdin, a.out, a.errOut)
 	})

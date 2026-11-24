@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -32,6 +34,8 @@ type Block interface {
 type Field struct {
 	Label string
 	Value string
+	// prose may wrap at spaces. other values are printed intact.
+	Prose bool
 }
 
 // FlowNode is one node in a vertical flow. Detail and Failure describe the
@@ -52,9 +56,11 @@ type TreeNode struct {
 type row struct {
 	text    string
 	section bool
+	plain   bool
 }
 
 type textBlock string
+type literalBlock string
 type fieldBlock []Field
 type flowBlock []FlowNode
 type treeBlock TreeNode
@@ -104,6 +110,11 @@ func CommandOf(err error) (string, bool) {
 // Text renders wrapped prose.
 func Text(value string) Block { return textBlock(value) }
 
+// Literal prints one copyable line without a border or padding.
+func Literal(value string) Block { return literalBlock(value) }
+
+func (b literalBlock) render(int) []row { return []row{{text: sanitize(string(b)), plain: true}} }
+
 // Fields renders aligned label-value pairs.
 func Fields(values ...Field) Block { return fieldBlock(values) }
 
@@ -125,7 +136,7 @@ func Section(title string, blocks ...Block) Block {
 
 // Write renders frame to output with a blank line after its closing rail.
 func Write(output io.Writer, frame Frame) error {
-	text, err := Render(frame)
+	text, err := render(frame, TerminalWidth(output, 0))
 	if err != nil {
 		return err
 	}
@@ -139,6 +150,20 @@ func Write(output io.Writer, frame Frame) error {
 
 // Render returns a complete frame ending in one newline.
 func Render(frame Frame) (string, error) {
+	return render(frame, 0)
+}
+
+// TerminalWidth uses the destination's terminal size, or fallback for pipes and files.
+func TerminalWidth(output io.Writer, fallback int) int {
+	if file, ok := output.(interface{ Fd() uintptr }); ok {
+		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 0 {
+			return width
+		}
+	}
+	return fallback
+}
+
+func render(frame Frame, columns int) (string, error) {
 	if hasLineBreak(frame.Command) || hasLineBreak(frame.State) || hasLineBreak(frame.Footer) {
 		return "", errors.New("clioutput: frame rails must be single-line values")
 	}
@@ -154,30 +179,62 @@ func Render(frame Frame) (string, error) {
 	if footer != "" {
 		bottomPrefix = "+-- " + footer + " "
 	}
-	width := max(defaultWidth, len(topPrefix)+2, len(bottomPrefix)+2)
-	if width > maxWidth {
+	if len(topPrefix)+2 > maxWidth {
 		return "", fmt.Errorf("clioutput: frame rail exceeds %d columns", maxWidth)
 	}
+	// redirected output keeps the compact frame, expanding for short rails.
+	width := min(maxWidth, max(12, columns))
+	if columns == 0 {
+		width = min(maxWidth, max(defaultWidth, len(topPrefix)+2, len(bottomPrefix)+2))
+	}
 	contentWidth := width - 2 - 2*framePadding
-
-	var result strings.Builder
-	result.WriteString(topPrefix)
-	result.WriteString(strings.Repeat("-", width-len(topPrefix)-1))
-	result.WriteString("+\n")
-	writeBodyRow(&result, width, "")
+	var rows []row
+	plain := len(topPrefix)+2 > width || len(bottomPrefix)+2 > width
 	for index, block := range frame.Blocks {
 		if err := validateBlock(block); err != nil {
 			return "", err
 		}
 		if index > 0 {
-			writeBodyRow(&result, width, "")
+			rows = append(rows, row{})
 		}
 		for _, rendered := range block.render(contentWidth) {
-			if rendered.section {
-				writeSectionRow(&result, width, rendered.text)
-				continue
+			plain = plain || rendered.plain || len(rendered.text) > contentWidth
+			rows = append(rows, rendered)
+		}
+	}
+	var result strings.Builder
+	if len(topPrefix)+2 <= width {
+		result.WriteString(topPrefix)
+		result.WriteString(strings.Repeat("-", width-len(topPrefix)-1))
+		result.WriteString("+\n")
+	} else {
+		fmt.Fprintf(&result, "%s\n%s\n", command, state)
+	}
+	if plain {
+		// use an open layout for this result. the terminal can soft-wrap values;
+		// copying or redirecting them gets the original logical line.
+		for _, r := range rows {
+			result.WriteString(r.text)
+			if r.section {
+				result.WriteByte(':')
 			}
-			writeBodyRow(&result, width, rendered.text)
+			result.WriteByte('\n')
+		}
+		if footer != "" {
+			if len(bottomPrefix)+2 <= width {
+				result.WriteString(bottomPrefix + strings.Repeat("-", width-len(bottomPrefix)-1) + "+\n")
+			} else {
+				result.WriteString(footer + "\n")
+			}
+		}
+		return strings.TrimRight(result.String(), "\n") + "\n", nil
+	}
+	writeBodyRow(&result, width, "")
+	for _, r := range rows {
+		if r.section {
+			writeSectionRow(&result, width, r.text)
+		} else {
+			writeBodyRow(&result, width, r.text)
 		}
 	}
 	writeBodyRow(&result, width, "")
@@ -207,22 +264,19 @@ func (b fieldBlock) render(width int) []row {
 	for _, field := range b {
 		labelWidth = max(labelWidth, len(sanitize(field.Label)))
 	}
-	stacked := labelWidth+2 >= width
-	if stacked {
-		var result []row
-		for _, field := range b {
-			for _, line := range wrap(field.Label, width) {
-				result = append(result, row{text: line})
-			}
-			for _, line := range wrap(field.Value, width-2) {
-				result = append(result, row{text: "  " + line})
-			}
-		}
-		return result
-	}
 	var result []row
 	for _, field := range b {
 		label := sanitize(field.Label)
+		value := sanitize(field.Value)
+		if labelWidth+2 >= width || !field.Prose && labelWidth+2+len(value) > width {
+			result = append(result, row{text: label})
+			if field.Prose {
+				result = append(result, textBlock(field.Value).render(width)...)
+			} else {
+				result = append(result, row{text: value, plain: true})
+			}
+			continue
+		}
 		valueWidth := width
 		prefix := ""
 		if labelWidth > 0 {
@@ -244,7 +298,7 @@ func (b fieldBlock) render(width int) []row {
 func (b flowBlock) render(width int) []row {
 	var result []row
 	for index, node := range b {
-		lines := wrap(node.Label, width)
+		lines := []string{sanitize(node.Label)}
 		for _, line := range lines {
 			// short labels sit beneath the fixed connector at content column three.
 			if len(lines) == 1 && len(line) > 0 && len(line) < 7 {
@@ -280,7 +334,7 @@ func (b flowBlock) render(width int) []row {
 func (b treeBlock) render(width int) []row {
 	root := TreeNode(b)
 	result := make([]row, 0)
-	for _, line := range wrap(treeLabel(root), width) {
+	for _, line := range treeLines(root, width) {
 		result = append(result, row{text: line})
 	}
 	return appendTreeChildren(result, root.Children, "", width)
@@ -315,7 +369,7 @@ func appendTreeChildren(result []row, children []TreeNode, parentPrefix string, 
 			parentPrefix = parentPrefix[:maxParentWidth]
 		}
 		prefix := parentPrefix + branch
-		lines := wrap(treeLabel(child), width-len(prefix))
+		lines := treeLines(child, width-len(prefix))
 		for lineIndex, line := range lines {
 			if lineIndex == 0 {
 				result = append(result, row{text: prefix + line})
@@ -331,11 +385,15 @@ func appendTreeChildren(result []row, children []TreeNode, parentPrefix string, 
 	return result
 }
 
-func treeLabel(node TreeNode) string {
+func treeLines(node TreeNode, width int) []string {
 	if node.Value == "" {
-		return node.Label
+		return wrap(node.Label, width)
 	}
-	return node.Label + "  " + node.Value
+	label, value := sanitize(node.Label), sanitize(node.Value)
+	if len(label)+2+len(value) <= width {
+		return []string{label + "  " + value}
+	}
+	return append(wrap(node.Label, width), value)
 }
 
 func writeBodyRow(output *strings.Builder, width int, text string) {
@@ -364,7 +422,11 @@ func wrap(value string, width int) []string {
 	for len(value) > width {
 		cut := strings.LastIndexByte(value[:width+1], ' ')
 		if cut <= 0 {
-			cut = width
+			next := strings.IndexByte(value[width:], ' ')
+			if next < 0 {
+				break
+			}
+			cut = width + next
 		}
 		result = append(result, strings.TrimRight(value[:cut], " "))
 		value = strings.TrimLeft(value[cut:], " ")

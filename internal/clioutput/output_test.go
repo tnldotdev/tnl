@@ -123,33 +123,34 @@ func TestRenderWrapsAndEscapesWithoutExceedingLimit(t *testing.T) {
 	assertFrameInvariants(t, got)
 }
 
-func TestRenderPreservesLongUniqueValueAcrossWrapping(t *testing.T) {
-	var value strings.Builder
-	for index := range 80 {
-		fmt.Fprintf(&value, "%03dabcdef", index)
-	}
-	for name, block := range map[string]Block{
-		"text":  Text(value.String()),
-		"field": Fields(Field{Label: "hostname", Value: value.String()}),
-		"flow":  Flow(FlowNode{Label: value.String()}),
-		"tree":  Tree(TreeNode{Label: "hostname", Value: value.String()}),
-	} {
-		t.Run(name, func(t *testing.T) {
-			got, err := Render(Frame{Command: "tnl status", State: "result", Blocks: []Block{block}})
-			if err != nil {
-				t.Fatal(err)
+func TestCopyableLines(t *testing.T) {
+	url := "https://control.example.test/v1/auth/device/approve?user_code=ABCDEF-123456"
+	path := "/var/data/my project/" + strings.Repeat("long-path/", 8) + "client.pem"
+	command := "tnl connect orders --server=https://control.example.test -- 'two words'"
+	for _, width := range []int{0, 20, 40, 64, 72, 160} {
+		for _, tc := range []struct {
+			block Block
+			value string
+		}{
+			{Text("Visit " + url), url},
+			{Fields(Field{Label: "help", Value: url}), url},
+			{Fields(Field{Label: "CA file", Value: path}), path},
+			{Flow(FlowNode{Label: url}), url},
+			{Tree(TreeNode{Label: "CA file", Value: path}), path},
+			{Section("client command", Literal(command)), command},
+		} {
+			frame := Frame{Command: "tnl", State: "result", Blocks: []Block{tc.block}}
+			got, err := render(frame, width)
+			if err != nil || !strings.Contains(got, "\n"+tc.value+"\n") {
+				t.Fatalf("width %d: missing literal line %q:\n%s\n%v", width, tc.value, got, err)
 			}
-			assertFrameInvariants(t, got)
-			var unwrapped strings.Builder
-			for _, line := range strings.Split(got, "\n") {
-				if strings.HasPrefix(line, "|") {
-					unwrapped.WriteString(strings.TrimSpace(strings.Trim(line, "|")))
+			if width == 0 {
+				var buf bytes.Buffer
+				if err := Write(&buf, frame); err != nil || buf.String() != got+"\n" {
+					t.Fatalf("redirected output: %q, %v", &buf, err)
 				}
 			}
-			if !strings.Contains(unwrapped.String(), value.String()) {
-				t.Fatalf("wrapped %s lost or reordered value bytes:\n%s", name, got)
-			}
-		})
+		}
 	}
 }
 
@@ -174,9 +175,9 @@ func TestRenderRightBorderIsAligned(t *testing.T) {
 			Blocks: []Block{
 				Text("long text " + strings.Repeat("word ", 30)),
 				Fields(Field{Label: "escaped", Value: "tab\t caf\x11"}),
-				Flow(FlowNode{Label: strings.Repeat("publisher-", 10), Detail: strings.Repeat("failure ", 20), Failure: true}, FlowNode{Label: "local service"}),
+				Flow(FlowNode{Label: "publisher", Detail: strings.Repeat("failure ", 20), Failure: true}, FlowNode{Label: "local service"}),
 				Transition("old state", strings.Repeat("changing ", 20), "new state"),
-				Tree(TreeNode{Label: "route", Children: []TreeNode{{Label: "hostname", Value: strings.Repeat("a", 100)}}}),
+				Tree(TreeNode{Label: "service", Children: []TreeNode{{Label: "hostname", Value: "app.example"}}}),
 				Section(strings.Repeat("section ", 20), Fields(Field{Label: "state", Value: "ready"})),
 			},
 			Footer: "complete",
@@ -184,7 +185,7 @@ func TestRenderRightBorderIsAligned(t *testing.T) {
 		"maximum width": {
 			Command: "tnl",
 			State:   strings.Repeat("s", maxWidth-len("+--[ tnl ]-- ")-3),
-			Blocks:  []Block{Text(strings.Repeat("x", 200))},
+			Blocks:  []Block{Text(strings.Repeat("three words here ", 15))},
 		},
 	}
 	for name, frame := range tests {
@@ -415,7 +416,7 @@ func frameInvariants(frame string) error {
 		return fmt.Errorf("frame has invalid trailing newline: %q", frame)
 	}
 	lines := strings.Split(strings.TrimSuffix(frame, "\n"), "\n")
-	if len(lines) < 3 {
+	if len(lines) < 2 {
 		return fmt.Errorf("frame has only %d lines", len(lines))
 	}
 	width := len(lines[0])
@@ -423,20 +424,23 @@ func frameInvariants(frame string) error {
 		return fmt.Errorf("frame width = %d", width)
 	}
 	for index, line := range lines {
-		if len(line) != width {
-			return fmt.Errorf("line %d width = %d, want %d: %q", index, len(line), width, line)
-		}
 		for _, character := range line {
 			if character < 0x20 || character > 0x7e {
 				return fmt.Errorf("line %d is not ASCII: %q", index, line)
 			}
 		}
 	}
-	if lines[0][0] != '+' || lines[0][width-1] != '+' || lines[len(lines)-1][0] != '+' || lines[len(lines)-1][width-1] != '+' {
-		return errors.New("frame rails do not have corners")
+	if lines[0][0] != '+' || lines[0][width-1] != '+' {
+		return errors.New("top rail does not have corners")
+	}
+	if lines[1] != "|"+strings.Repeat(" ", width-2)+"|" {
+		return nil // an open layout has no side rails.
+	}
+	if last := lines[len(lines)-1]; len(last) != width || last[0] != '+' || last[width-1] != '+' {
+		return errors.New("bottom rail does not have corners")
 	}
 	for index, line := range lines[1 : len(lines)-1] {
-		if line[0] != '|' || line[width-1] != '|' {
+		if len(line) != width || line[0] != '|' || line[width-1] != '|' {
 			return fmt.Errorf("body line %d does not have sides: %q", index+1, line)
 		}
 	}

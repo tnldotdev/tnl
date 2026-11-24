@@ -28,7 +28,7 @@ func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, fragment := range []string{"needs action", test.action, "complete the actions above, then start your app normally"} {
-					if !strings.Contains(stdout.String(), fragment) {
+					if !strings.Contains(strings.Join(strings.Fields(strings.ReplaceAll(stdout.String(), "|", " ")), " "), fragment) {
 						t.Fatalf("run %d missing %q: %q", run, fragment, stdout.String())
 					}
 				}

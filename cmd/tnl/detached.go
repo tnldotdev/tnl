@@ -73,7 +73,7 @@ func writeDetachedConnection(root, id string, mode statusOutputMode, output io.W
 		return failure.Wrap("read detached connection", failure.ServerResponseInvalid, errors.New("invalid prepared connection"))
 	}
 	profile.DetachedID = id
-	return writeNativeConnection(output, profile, mode, net.JoinHostPort(profile.Host, strconv.Itoa(profile.Port)))
+	return writeNativeConnection(output, profile, mode, net.JoinHostPort(profile.Host, strconv.Itoa(profile.Port)), root)
 }
 
 func runDetachedList(flags detachedListCommand, output io.Writer) error {
@@ -106,7 +106,7 @@ func runDetachedStop(flags detachedStopCommand, output io.Writer) error {
 
 func (a *commandApp) newDetachedCommand() *cobra.Command {
 	f := a.flags
-	cDetached := &cobra.Command{Use: "detached", Short: "Inspect and stop detached publications.", GroupID: "operate"}
+	cDetached := &cobra.Command{Use: "detached", Short: "List or stop tunnels started with --detach.", GroupID: "deploy"}
 	cDetachedList := &cobra.Command{Use: "list", Short: "List detached publications for this client state."}
 	a.leaf(cDetachedList, &f.Detached.List, func(call commandCall) error {
 		return runDetachedList(f.Detached.List, a.out)

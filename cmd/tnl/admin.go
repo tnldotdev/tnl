@@ -203,7 +203,7 @@ func adminTime(value time.Time) string { return value.UTC().Format(time.RFC3339)
 
 func (a *commandApp) newAdminCommand() *cobra.Command {
 	f := a.flags
-	cAdmin := &cobra.Command{Use: "admin", Short: "Administer a self-hosted tnl server.", GroupID: "operate"}
+	cAdmin := &cobra.Command{Use: "admin", Short: "Check or maintain a self-hosted tnl server.", GroupID: "observe"}
 	cAdminServer := &cobra.Command{Use: "server", Short: "Inspect a tnl server."}
 	cAdminServerStatus := &cobra.Command{Use: "status", Short: "Show control, ingress, and relay status."}
 	a.leaf(cAdminServerStatus, &f.Admin.Server.Status, func(call commandCall) error {

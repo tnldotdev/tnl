@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"io"
 	"strings"
 
@@ -25,30 +24,31 @@ type commandCall struct {
 }
 
 func (a *commandApp) root() *cobra.Command {
+	const tagline = "tunnels for local apps and private services."
 	root := &cobra.Command{
-		Use: "tnl", Short: "take a shortcut through the internet.",
-		Long:          "take a shortcut through the internet.\n\nPublish local services at stable public URLs. Start your app normally with its tnl integration, try tnl publish --demo, or run tnl publish 3000 for an already-running service. By default, visitors need a current sign-in, link, or token.",
+		Use: "tnl", Short: tagline,
+		Long:          tagline + "\n\nGive your local app an HTTPS URL you can share, or connect to a service on a private network.",
 		SilenceErrors: true, SilenceUsage: true,
 	}
 	root.SetOut(a.out)
 	root.SetErr(a.errOut)
-	root.SetHelpCommandGroupID("operate")
-	root.SetCompletionCommandGroupID("operate")
-	root.AddGroup(&cobra.Group{ID: "start", Title: "Start here:"}, &cobra.Group{ID: "manage", Title: "Manage:"}, &cobra.Group{ID: "operate", Title: "Operate:"})
+	root.SetHelpCommandGroupID("tools")
+	root.SetCompletionCommandGroupID("tools")
+	root.AddGroup(
+		&cobra.Group{ID: "start", Title: "Start here:"},
+		&cobra.Group{ID: "project", Title: "Projects and worktrees:"},
+		&cobra.Group{ID: "access", Title: "Sharing and access:"},
+		&cobra.Group{ID: "deploy", Title: "Deployments and publishers:"},
+		&cobra.Group{ID: "observe", Title: "Diagnostics:"},
+		&cobra.Group{ID: "tools", Title: "Tools:"},
+	)
 	cliflags.Bind(root, a.flags, true)
 	root.AddCommand(a.newInitCommand(), a.newApplyCommand(), a.newDeploymentCommand(), a.newGenerateCommand(), a.newCheckCommand(), a.newAuditCommand(), a.newRuntimeCommand(), a.newWaitCommand(), a.newWatchCommand(), a.newPublishCommand(), a.newConnectCommand(), a.newPublisherCommand(), a.newServiceCommand(), a.newEndpointCommand(), a.newDetachedCommand(), a.newStatusCommand(), a.newPingCommand(), a.newInspectCommand(), a.newTelemetryCommand(), a.newAuthCommand(), a.newTeamCommand(), a.newDomainCommand(), a.newURLCommand(), a.newShareCommand(), a.newFeedbackCommand(), a.newWebhookCommand(), a.newAliasCommand(), a.newAdminCommand(), a.newVersionCommand())
 	root.AddCommand(a.newAgentGuideCommand())
-	var requireCommand func(*cobra.Command)
-	requireCommand = func(cmd *cobra.Command) {
-		if cmd.RunE == nil {
-			cmd.Args = cobra.NoArgs
-			cmd.RunE = func(*cobra.Command, []string) error { return errors.New("command is required") }
-		}
-		for _, sub := range cmd.Commands() {
-			requireCommand(sub)
-		}
-	}
-	requireCommand(root)
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	addClientHelpContent(root)
+	configureClientHelp(root)
 	registerProjectCompletions(root)
 	return root
 }

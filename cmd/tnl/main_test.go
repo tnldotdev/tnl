@@ -573,8 +573,7 @@ func TestClientErrorFramesHaveBoundedHelpAndStableCodes(t *testing.T) {
 		var output bytes.Buffer
 		writeCommandError(&output, failure.Wrap("test client failure", entry.Code, errors.New("secret-token")))
 		text := output.String()
-		unwrapped := strings.NewReplacer(" ", "", "\n", "", "|", "").Replace(text)
-		if !strings.Contains(unwrapped, failure.HelpURL(entry.Code, "")) {
+		if !strings.Contains(text, failure.HelpURL(entry.Code, "")) {
 			// each client error must be reachable even when its internal cause is not.
 			t.Fatalf("missing help for %s: %q", entry.Code, text)
 		}

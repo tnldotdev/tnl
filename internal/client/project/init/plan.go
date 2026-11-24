@@ -218,6 +218,13 @@ func commandForRecommendation(manager string, packages []string) []string {
 	return append([]string{"npm", "install", "--save-dev"}, packages...)
 }
 
+func (plan Plan) InstallRecommendation() string {
+	if plan.InstallBlocked || len(plan.MissingPackages) == 0 {
+		return ""
+	}
+	return shellCommand(commandForRecommendation(plan.PackageManager, plan.MissingPackages))
+}
+
 func shellCommand(arguments []string) string {
 	return strings.Join(arguments, " ")
 }

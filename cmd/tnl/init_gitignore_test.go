@@ -160,9 +160,7 @@ func TestInitGitignoreNestedProjectRoot(t *testing.T) {
 	if err := runInit(t.Context(), initCommand{NoInstall: true}, &output, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	// the renderer can wrap the filename and line number independently.
-	unwrapped := strings.NewReplacer(" ", "", "\n", "", "|", "").Replace(output.String())
-	if !strings.Contains(unwrapped, ".gitignore:1") {
+	if !strings.Contains(output.String(), ".gitignore:1") {
 		t.Fatalf("ancestor conflict not diagnosed: %s", output.String())
 	}
 }

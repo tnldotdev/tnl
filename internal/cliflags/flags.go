@@ -49,9 +49,17 @@ func Bind(cmd *cobra.Command, options any, persistent bool) {
 			if choices := tag.Get("enum"); choices != "" {
 				val.choices = strings.Split(choices, ",")
 			}
+			usage := strings.ReplaceAll(tag.Get("help"), "${enum}", strings.Join(val.choices, ", "))
 			if _, ok := tag.Lookup("arg"); ok {
 				_, optional := tag.Lookup("optional")
 				arguments = append(arguments, argument{name, tag.Get("env"), optional, val})
+				if cmd.Annotations == nil {
+					cmd.Annotations = make(map[string]string)
+				}
+				cmd.Annotations["cliflags:arg:"+name] = usage
+				if len(val.choices) > 0 {
+					cmd.Annotations["cliflags:enum:"+name] = tag.Get("enum")
+				}
 				if optional {
 					cmd.Use += " [" + name + "]"
 				} else {
@@ -64,9 +72,10 @@ func Bind(cmd *cobra.Command, options any, persistent bool) {
 				if err := val.Set(fallback); err != nil {
 					panic("invalid default for --" + name + ": " + err.Error())
 				}
+				val.declaredDefault = fallback
 				val.replace = true
 			}
-			f := flags.VarPF(val, name, "", strings.ReplaceAll(tag.Get("help"), "${enum}", strings.Join(val.choices, ", ")))
+			f := flags.VarPF(val, name, "", usage)
 			if val.Type() == "bool" {
 				f.NoOptDefVal = "true"
 			}
@@ -136,10 +145,37 @@ func Resolve(flags *pflag.FlagSet) error {
 }
 
 type setting struct {
-	value   reflect.Value
-	path    bool
-	choices []string
-	replace bool
+	value           reflect.Value
+	path            bool
+	choices         []string
+	declaredDefault string
+	replace         bool
+}
+
+// Help describes a declared input without consulting its current value.
+type Help struct {
+	Usage, Default string
+	Choices        []string
+	Path, Required bool
+}
+
+// ArgumentHelp returns the metadata for a positional argument added by Bind.
+func ArgumentHelp(cmd *cobra.Command, name string) (Help, bool) {
+	usage, ok := cmd.Annotations["cliflags:arg:"+name]
+	h := Help{Usage: usage}
+	if enum := cmd.Annotations["cliflags:enum:"+name]; enum != "" {
+		h.Choices = strings.Split(enum, ",")
+	}
+	return h, ok
+}
+
+// FlagHelp preserves the literal default, even for paths and durations.
+func FlagHelp(f *pflag.Flag) Help {
+	h := Help{Usage: f.Usage, Default: f.DefValue, Required: f.Annotations["required"] != nil || f.Annotations[cobra.BashCompOneRequiredFlag] != nil}
+	if s, ok := f.Value.(*setting); ok {
+		h.Default, h.Choices, h.Path = s.declaredDefault, s.choices, s.path
+	}
+	return h
 }
 
 func (s *setting) Type() string {

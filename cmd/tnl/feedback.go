@@ -220,7 +220,7 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 			clioutput.Field{Label: "service", Value: thread.Scope.Service},
 			clioutput.Field{Label: "page", Value: thread.Scope.PagePath},
 			clioutput.Field{Label: "author", Value: feedbackAuthorLabel(thread.Report.Author)},
-			clioutput.Field{Label: "report", Value: thread.Report.Text},
+			clioutput.Field{Label: "report", Value: thread.Report.Text, Prose: true},
 		)))
 	}
 	blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "watch after", Value: strconv.FormatUint(cursor, 10)}))
@@ -333,7 +333,7 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 			clioutput.Field{Label: "service", Value: thread.Scope.Service},
 			clioutput.Field{Label: "page", Value: thread.Scope.PagePath},
 			clioutput.Field{Label: "author", Value: feedbackAuthorLabel(thread.Report.Author)},
-			clioutput.Field{Label: "report", Value: thread.Report.Text},
+			clioutput.Field{Label: "report", Value: thread.Report.Text, Prose: true},
 			clioutput.Field{Label: "element", Value: feedbackElementLabel(thread.Evidence.Element)},
 			clioutput.Field{Label: "source", Value: result.LocalProject.Comparison},
 			clioutput.Field{Label: "event cursor", Value: strconv.FormatUint(cursor, 10)},
@@ -346,7 +346,7 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 		}
 		blocks = append(blocks, clioutput.Section(strconv.FormatInt(event.Cursor, 10)+" "+string(event.Type), clioutput.Fields(
 			clioutput.Field{Label: "by", Value: feedbackEventAuthorLabel(event)},
-			clioutput.Field{Label: "message", Value: text},
+			clioutput.Field{Label: "message", Value: text, Prose: true},
 		)))
 	}
 	return writeHumanFrame(output, "tnl feedback inspect", string(thread.State), "", blocks...)
@@ -418,7 +418,7 @@ func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, preview
 				clioutput.Field{Label: "feedback ID", Value: event.FeedbackId},
 				clioutput.Field{Label: "cursor", Value: strconv.FormatInt(event.Cursor, 10)},
 				clioutput.Field{Label: "by", Value: feedbackEventAuthorLabel(event)},
-				clioutput.Field{Label: "message", Value: text},
+				clioutput.Field{Label: "message", Value: text, Prose: true},
 			))
 		}
 		if err != nil {
@@ -541,7 +541,10 @@ func feedbackMutationName(kind string) string {
 
 func (a *commandApp) newFeedbackCommand() *cobra.Command {
 	f := a.flags
-	cFeedback := &cobra.Command{Use: "feedback", Short: "Read and follow up on preview feedback.", GroupID: "manage"}
+	cFeedback := &cobra.Command{
+		Use: "feedback", Short: "Read and reply to feedback on a preview.", GroupID: "access",
+		Long: "Run from the worktree that published the preview. List threads to find a feedback ID, then inspect the report, reply, or mark it resolved.",
+	}
 	cFeedbackList := &cobra.Command{Use: "list", Short: "List feedback for this project's preview."}
 	a.leaf(cFeedbackList, &f.Feedback.List, func(call commandCall) error {
 		return runFeedbackList(call.ctx, f.Feedback.List, call.project, a.out, a.errOut)

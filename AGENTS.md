@@ -351,7 +351,7 @@ Frames follow this general form:
 ```
 
 - Use short, lowercase, concrete states and ASCII-only frame syntax. Use `v` for healthy flow and `x` for the exact failure boundary.
-- Keep human output deterministic and at most 72 columns. Do not truncate meaningful values or emit ANSI control sequences.
+- Keep frames at most 72 columns. Wrap explanations at spaces. When a URL, code, path, or command does not fit, print it on a plain logical line and let the terminal soft-wrap. Do not truncate values or emit ANSI control sequences.
 - Keep JSON and NDJSON contracts unchanged. `tnl version` and one-time credentials remain exact raw values; generated help remains unframed.
 - Finite results go to stdout; prompts, lifecycle output, warnings, and errors go to stderr. Applications own their terminal output.
 - Render errors once at the top level through the same renderer. Preserve stable diagnostic codes, help URLs, HTTP behavior, and HTML negotiation.

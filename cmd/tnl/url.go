@@ -278,7 +278,10 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 
 func (a *commandApp) newURLCommand() *cobra.Command {
 	f := a.flags
-	cURL := &cobra.Command{Use: "url", Short: "Manage public URLs.", GroupID: "manage"}
+	cURL := &cobra.Command{
+		Use: "url", Short: "Find public URLs and manage visitor access.", GroupID: "access",
+		Long: "Use list for URLs you can visit. Use inventory for public service endpoints owned by your team, including ones you manage but cannot visit.",
+	}
 	cURLList := &cobra.Command{Use: "list", Short: "List public URLs you may visit; --team filters the results."}
 	a.leaf(cURLList, &f.URL.List, func(call commandCall) error {
 		return runURLList(call.ctx, f.URL.List, a.out, a.errOut)
@@ -300,7 +303,10 @@ func (a *commandApp) newURLCommand() *cobra.Command {
 		return runURLAccessShow(call.ctx, f.URL.Access.Show, a.out, a.errOut)
 	})
 	cURLAccess.AddCommand(cURLAccessShow)
-	cURLAccessSet := &cobra.Command{Use: "set", Short: "Replace the complete visitor access policy, including its IP list, without stopping the publisher."}
+	cURLAccessSet := &cobra.Command{
+		Use: "set", Short: "Replace the access mode and the entire IP allowlist.",
+		Long: "Set restricted to require a tnl visitor credential or anonymous to allow visitors without one. Repeat --ip for every allowed network; omitting it clears the IP filter. The publisher keeps running.",
+	}
 	a.leaf(cURLAccessSet, &f.URL.Access.Set, func(call commandCall) error {
 		return runURLAccessSet(call.ctx, f.URL.Access.Set, a.out, a.errOut)
 	})

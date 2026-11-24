@@ -533,7 +533,7 @@ func runServiceShareHTTPCreate(ctx context.Context, f serviceShareHTTPCreateComm
 
 func createServiceShareHTTP(ctx context.Context, control *clientcontrol.Client, service controlv1.Service, mode statusOutputMode, token bool, at time.Time, o io.Writer) error {
 	if service.Protocol != controlv1.ServiceProtocolHTTP || service.Endpoint == nil || !service.Endpoint.Public {
-		return serviceShareInput("HTTP links and tokens require a publicly reachable service HTTP service; use an identity invitation for connector access")
+		return serviceShareInput("links and tokens require a public HTTP service; use an identity invitation for connector access")
 	}
 	return createShareCredential(ctx, control, controlv1.CreateShareRequest{ServiceIds: []string{service.Id}, EntryServiceId: service.Id, ExpiresAt: at},
 		nil, service.TeamId, *service.Endpoint, token, mode, nil, o)

@@ -51,9 +51,34 @@ func TestStatusSnapshotIncludesDirectAndNamedPublicationCursor(t *testing.T) {
 	if len(snapshot.Publications) != 2 || len(snapshot.Services) != 1 || snapshot.Cursor == "" {
 		t.Fatalf("status=%s", output.String())
 	}
+	output.Reset()
+	if err := runStatus(t.Context(), statusCommand{Service: "web", Output: "json", Scope: "local", StateDir: root, Project: projectRoot, Configuration: project}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	local := result.Projects[0].Local
+	if len(local.Snapshot.Publications) != 1 || local.Snapshot.Publications[0].Service != "web" ||
+		local.Tunnels.Summary.Total != 1 || len(local.Tunnels.Tunnels) != 1 || local.Tunnels.Tunnels[0].Service != "web" {
+		t.Fatalf("service filter mixed direct and named publications: %s", &output)
+	}
 	events, err := publisherapp.EventsAfterFrom(t.Context(), state, projectRoot, snapshot.Cursor)
 	if err != nil || len(events) != 0 {
 		t.Fatalf("status cursor is not native exclusive cursor: %v", err)
+	}
+}
+
+func TestStatusServiceSelectsAppliedBindingsByNameAndInventoryByID(t *testing.T) {
+	id := "svc_web"
+	project := projectStatus{Server: &statusServer{
+		Applied:  &controlv1.AppliedProjectConfiguration{Services: []controlv1.AppliedProjectService{{Service: "web", ServiceId: &id}, {Service: "other"}}},
+		Services: []statusServerService{{ServiceID: id, Name: "web-myworktree"}, {ServiceID: "svc_other", Name: "other"}},
+	}}
+	project.Server.selectService("web", clientstate.TunnelSnapshot{})
+	if s := project.Server; s.Applied != nil || len(s.AppliedServices) != 1 || s.AppliedServices[0].Service != "web" ||
+		len(s.Services) != 1 || s.Services[0].ServiceID != id {
+		t.Fatalf("filtered status = %+v", s)
 	}
 }
 

@@ -512,8 +512,11 @@ type grantSubcommands struct {
 
 func (a *commandApp) newPublisherCommand() *cobra.Command {
 	f := a.flags
-	cPublisher := &cobra.Command{Use: "publisher", Short: "Enroll publishers and manage their scoped grants.", GroupID: "manage"}
-	cPublisherServe := &cobra.Command{Use: "serve", Short: "Run this replica's assigned services with a saved or portable deployment identity."}
+	cPublisher := &cobra.Command{
+		Use: "publisher", Short: "Authorize publishers to serve specific services.", GroupID: "deploy",
+		Long: "Use setup to approve a publisher for a deployment's services. On a machine that can reach their targets, use serve to enroll and run that publisher.",
+	}
+	cPublisherServe := &cobra.Command{Use: "serve", Short: "Run the services assigned to a deployment publisher."}
 	a.leaf(cPublisherServe, &f.Publisher.Serve, func(call commandCall) error {
 		return a.servePublisher(call)
 	})
@@ -523,7 +526,7 @@ func (a *commandApp) newPublisherCommand() *cobra.Command {
 		return runPublisherCurrent(call.ctx, f.Publisher.Current, a.out)
 	})
 	cPublisher.AddCommand(cPublisherCurrent)
-	cPublisherSetup := &cobra.Command{Use: "setup", Short: "Approve scoped deployment publisher enrollment or set up a local publisher."}
+	cPublisherSetup := &cobra.Command{Use: "setup", Short: "Approve deployment enrollment or set up a local publisher."}
 	a.leaf(cPublisherSetup, &f.Publisher.Setup, func(call commandCall) error {
 		return runPublisherSetup(call.ctx, f.Publisher.Setup, call.project, a.out, a.errOut)
 	})

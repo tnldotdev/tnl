@@ -357,8 +357,8 @@ func writeCommandError(output io.Writer, err error) {
 	if contextual, ok := clioutput.CommandOf(err); ok {
 		command = contextual
 	}
-	if text, ok := diagnostic.TextForCommandError(command, err); ok {
-		_, _ = io.WriteString(output, text+"\n")
+	if frame, ok := diagnostic.FrameForCommandError(command, err); ok {
+		_ = clioutput.Write(output, frame)
 		return
 	}
 	presented := presentHumanFailure(err)
@@ -455,7 +455,7 @@ func (a *commandApp) execute(parsed *cobra.Command, handle func(commandCall) err
 	factories := a.factories
 	parsedCommand := commandID(parsed)
 	applyTunnelCLIUnits(parsed, flags)
-	if parsedCommand == "version" || parsedCommand == "generate" || parsedCommand == "check" {
+	if parsedCommand == "version" || parsedCommand == "generate" || parsedCommand == "check" || parsedCommand == "init" && flags.Init.DryRun {
 		return handle(commandCall{ctx: ctx})
 	}
 	var err error

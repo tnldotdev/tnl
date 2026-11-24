@@ -346,8 +346,11 @@ func displayJobName(job installedjobs.Job) string {
 
 func (a *commandApp) newServiceCommand() *cobra.Command {
 	f := a.flags
-	cService := &cobra.Command{Use: "service", Short: "Manage installed publications.", GroupID: "operate"}
-	cServiceInstall := &cobra.Command{Use: "install", Short: "Install or refresh the user-login publisher supervisor (or system publisher supervisor with --system)."}
+	cService := &cobra.Command{
+		Use: "service", Short: "Manage publications installed on this machine.", GroupID: "deploy",
+		Long: "Manage background jobs created with --install. Use tnl detached for publications started with --detach, or tnl connect list for installed connectors.",
+	}
+	cServiceInstall := &cobra.Command{Use: "install", Short: "Install or refresh the supervisor that runs local jobs."}
 	a.leaf(cServiceInstall, &f.Service.Install, func(call commandCall) error {
 		return runServiceInstall(call.ctx, f.Service.Install, a.out, nil)
 	})

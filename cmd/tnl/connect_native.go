@@ -11,7 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/connector"
 )
 
-func writeNativeConnection(output io.Writer, profile connector.Profile, mode statusOutputMode, listen string) error {
+func writeNativeConnection(output io.Writer, profile connector.Profile, mode statusOutputMode, listen, stateDir string) error {
 	if mode == statusOutputJSON {
 		return json.NewEncoder(output).Encode(profile)
 	}
@@ -29,7 +29,7 @@ func writeNativeConnection(output io.Writer, profile connector.Profile, mode sta
 	}
 	if profile.DetachedID != "" {
 		fields = append(fields, clioutput.Field{Label: "detached ID", Value: profile.DetachedID})
-		footer = "stop with tnl detached stop " + profile.DetachedID
+		footer = ""
 	}
 	if profile.ServerCAFile != "" {
 		fields = append(fields, clioutput.Field{Label: "server CA", Value: profile.ServerCAFile})
@@ -52,7 +52,14 @@ func writeNativeConnection(output io.Writer, profile connector.Profile, mode sta
 		blocks = append(blocks, clioutput.Text(instruction))
 	}
 	if len(command) != 0 {
-		blocks = append(blocks, clioutput.Section("client command", clioutput.Text(strings.Join(command, " "))))
+		blocks = append(blocks, clioutput.Section("client command", clioutput.Literal(strings.Join(command, " "))))
+	}
+	if profile.DetachedID != "" {
+		stop := "tnl detached stop " + shellWord(profile.DetachedID)
+		if stateDir != "" {
+			stop += " --state-dir=" + shellWord(stateDir)
+		}
+		blocks = append(blocks, clioutput.Section("stop", clioutput.Literal(stop)))
 	}
 	return writeHumanFrame(output, "tnl connect", "ready", footer, blocks...)
 }

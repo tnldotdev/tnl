@@ -36,7 +36,7 @@ func TestNativeHTTPOutputQualifiesURLAndLocalListener(t *testing.T) {
 	for _, listen := range []string{"127.0.0.1:25443", "127.0.0.1:15432", "[::1]:15432"} {
 		profile := connector.Profile{Protocol: config.ProtocolHTTP, ServiceID: "svc_0123456789ABCDEFGHIJKL", Hostname: "orders.example.test", Port: 15432, URL: "https://orders.example.test/"}
 		var output bytes.Buffer
-		if err := writeNativeConnection(&output, profile, statusOutputHuman, listen); err != nil {
+		if err := writeNativeConnection(&output, profile, statusOutputHuman, listen, ""); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(output.String(), "curl url") || !strings.Contains(output.String(), listen) {
@@ -48,7 +48,7 @@ func TestNativeHTTPOutputQualifiesURLAndLocalListener(t *testing.T) {
 func TestNativeProfileWithoutCommandKeepsClientGuidance(t *testing.T) {
 	profile := connector.Profile{Protocol: config.ProtocolMySQL, Instructions: []string{"use the SDK mysql2 connection factory"}}
 	var output bytes.Buffer
-	if err := writeNativeConnection(&output, profile, statusOutputHuman, "127.0.0.1:13306"); err != nil {
+	if err := writeNativeConnection(&output, profile, statusOutputHuman, "127.0.0.1:13306", ""); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), "client command") || !strings.Contains(output.String(), profile.Instructions[0]) {
@@ -61,7 +61,7 @@ func TestNativeProfileOutputUsesSharedRendererWidth(t *testing.T) {
 		for _, protocol := range []config.ProtocolName{config.ProtocolHTTP, config.ProtocolPostgres, config.ProtocolMySQL, config.ProtocolTCP, config.ProtocolKubernetes} {
 			profile := connector.Profile{Schema: 1, ServiceID: "svc_0123456789ABCDEFGHIJKL", Protocol: protocol, Hostname: "orders.production.example.test", Public: public, Host: "127.0.0.1", Port: 15432, TLS: "service hostname verification", Command: []string{"client", "orders.production.example.test:15432"}}
 			var output bytes.Buffer
-			if err := writeNativeConnection(&output, profile, statusOutputHuman, "127.0.0.1:15432"); err != nil {
+			if err := writeNativeConnection(&output, profile, statusOutputHuman, "127.0.0.1:15432", ""); err != nil {
 				t.Fatal(err)
 			}
 			for _, line := range strings.Split(output.String(), "\n") {
@@ -69,6 +69,23 @@ func TestNativeProfileOutputUsesSharedRendererWidth(t *testing.T) {
 					t.Fatal("output exceeds shared renderer width")
 				}
 			}
+		}
+	}
+}
+
+func TestDetachedConnectionPrintsCopyableCommands(t *testing.T) {
+	var out bytes.Buffer
+	dir := "/path with a space/client state"
+	profile := connector.Profile{DetachedID: "detached-123", Command: []string{"psql", "host=db.example sslrootcert=/path with spaces/team's cert.pem"}}
+	if err := writeNativeConnection(&out, profile, statusOutputHuman, "", dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		`'psql' 'host=db.example sslrootcert=/path with spaces/team'\''s cert.pem'`,
+		`tnl detached stop detached-123 --state-dir='/path with a space/client state'`,
+	} {
+		if !strings.Contains(out.String(), "\n"+line+"\n") {
+			t.Fatalf("missing command %q:\n%s", line, &out)
 		}
 	}
 }

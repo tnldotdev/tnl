@@ -72,7 +72,7 @@ func pingWithTransport(ctx context.Context, address, protocol string, transport 
 	return result
 }
 
-func PingAddress(value, protocol string) (string, string, error) {
+func PingAddress(value string) (string, string, error) {
 	if strings.Contains(value, "://") {
 		parsed, err := url.Parse(value)
 		if err != nil || parsed.User != nil || parsed.Fragment != "" || parsed.Hostname() == "" || parsed.Opaque != "" {
@@ -80,9 +80,6 @@ func PingAddress(value, protocol string) (string, string, error) {
 		}
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
 			return "", "", errors.New("expected an HTTP or HTTPS public URL")
-		}
-		if protocol != "" && protocol != "http" && protocol != parsed.Scheme {
-			return "", "", errors.New("protocol does not match URL scheme")
 		}
 		return value, parsed.Scheme, nil
 	}

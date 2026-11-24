@@ -109,13 +109,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 
 func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []clioutput.Block {
 	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "project key", Value: applied.ProjectKey}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(applied.Revision, 10)})}
-	for _, service := range applied.Services {
-		id := ""
-		if service.ServiceId != nil {
-			id = *service.ServiceId
-		}
-		blocks = append(blocks, clioutput.Section(service.Service, clioutput.Fields(clioutput.Field{Label: "deployment", Value: service.Deployment}, clioutput.Field{Label: "service ID", Value: id}, clioutput.Field{Label: "assignment", Value: string(service.ServiceKind)}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(service.DesiredRevision, 10)})))
-	}
+	blocks = append(blocks, appliedServiceBlocks(applied.Services)...)
 	for _, member := range applied.Members {
 		fields := []clioutput.Field{{Label: "publisher ID", Value: member.PublisherIdentityId}, {Label: "observed revision", Value: strconv.FormatInt(member.ObservedRevision, 10)}, {Label: "healthy", Value: strconv.FormatBool(member.Healthy)}}
 		fields = append(fields, publisherRuntimeFields(member.Runtime)...)
@@ -124,9 +118,24 @@ func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []cliou
 	return blocks
 }
 
+func appliedServiceBlocks(services []controlv1.AppliedProjectService) []clioutput.Block {
+	var blocks []clioutput.Block
+	for _, service := range services {
+		id := ""
+		if service.ServiceId != nil {
+			id = *service.ServiceId
+		}
+		blocks = append(blocks, clioutput.Section(service.Service, clioutput.Fields(clioutput.Field{Label: "deployment", Value: service.Deployment}, clioutput.Field{Label: "service ID", Value: id}, clioutput.Field{Label: "assignment", Value: string(service.ServiceKind)}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(service.DesiredRevision, 10)})))
+	}
+	return blocks
+}
+
 func (a *commandApp) newApplyCommand() *cobra.Command {
 	f := a.flags
-	cApply := &cobra.Command{Use: "apply", Short: "Reconcile this project's declared services and deployments with control.", GroupID: "manage"}
+	cApply := &cobra.Command{
+		Use: "apply", Short: "Save a configured deployment on the server.", GroupID: "deploy",
+		Long: "Apply the project's service declarations and the selected deployment's targets and workloads. Use --diff to review changes before applying them. The default deployment is local.",
+	}
 	a.leaf(cApply, &f.Apply, func(call commandCall) error {
 		return runApply(call.ctx, f.Apply, call.project, a.out, a.errOut)
 	})

@@ -328,7 +328,10 @@ func writeAppWatchEvent(output io.Writer, mode string, event publisherapp.Event)
 
 func (a *commandApp) newWaitCommand() *cobra.Command {
 	f := a.flags
-	cWait := &cobra.Command{Use: "wait", Short: "Wait for fresh public readiness checks of configured services.", GroupID: "start"}
+	cWait := &cobra.Command{
+		Use: "wait", Short: "Wait until configured services are ready.", GroupID: "observe",
+		Long: "Ask this worktree's running tnl process to check readiness. Wait for all local services, or repeat --service to select which ones must be ready.",
+	}
 	a.leaf(cWait, &f.Wait, func(call commandCall) error {
 		return runAppObservation(call.ctx, *f, "wait", a.out)
 	})
@@ -337,7 +340,10 @@ func (a *commandApp) newWaitCommand() *cobra.Command {
 
 func (a *commandApp) newWatchCommand() *cobra.Command {
 	f := a.flags
-	cWatch := &cobra.Command{Use: "watch", Short: "Follow local app and TCP publication events.", GroupID: "start"}
+	cWatch := &cobra.Command{
+		Use: "watch", Short: "Follow this worktree's service events.", GroupID: "observe",
+		Long: "Follow local publication events as they happen. To resume, use the last event cursor from the same worktree and client state directory.",
+	}
 	a.leaf(cWatch, &f.Watch, func(call commandCall) error {
 		return runAppObservation(call.ctx, *f, "watch", a.out)
 	})

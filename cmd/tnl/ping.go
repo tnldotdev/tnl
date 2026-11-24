@@ -15,13 +15,12 @@ import (
 )
 
 type pingCommand struct {
-	URL      string           `arg:"" name:"url" help:"Public HTTPS URL to check from this machine."`
-	Protocol string           `name:"protocol" enum:"http" default:"http" help:"Public URL protocol: http."`
-	Output   statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	URL    string           `arg:"" name:"url" help:"HTTP or HTTPS URL to check from this machine."`
+	Output statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 func runPing(ctx context.Context, flags pingCommand, output io.Writer) error {
-	address, protocol, err := publisherapp.PingAddress(flags.URL, flags.Protocol)
+	address, protocol, err := publisherapp.PingAddress(flags.URL)
 	if err != nil {
 		return failure.Wrap("select visitor address", failure.InvalidCommand, err)
 	}
@@ -56,7 +55,10 @@ func pingStatus(status int) string {
 
 func (a *commandApp) newPingCommand() *cobra.Command {
 	f := a.flags
-	cPing := &cobra.Command{Use: "ping", Short: "Check a public URL from this machine as an unauthenticated visitor.", GroupID: "start"}
+	cPing := &cobra.Command{
+		Use: "ping", Short: "Check an HTTP or HTTPS URL without signing in.", GroupID: "observe",
+		Long: "Send a GET request from this machine and report the result without following redirects. Use the full URL, including http:// or https://.",
+	}
 	a.leaf(cPing, &f.Ping, func(call commandCall) error {
 		return runPing(call.ctx, f.Ping, a.out)
 	})

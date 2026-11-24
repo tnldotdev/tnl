@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -20,14 +21,26 @@ func writeHumanFrame(output io.Writer, command, state, footer string, blocks ...
 
 func authenticationPrompt(output io.Writer, command string) func(auth.Prompt) error {
 	return func(prompt auth.Prompt) error {
-		fields := []clioutput.Field{{Label: "open", Value: prompt.URL}}
-		if prompt.Code != "" {
-			fields = append(fields, clioutput.Field{Label: "code", Value: prompt.Code})
-		}
 		return writeHumanFrame(output, command, "authentication required", "waiting for authentication",
-			clioutput.Fields(fields...),
+			approvalBlocks(prompt.URL, prompt.Code)...,
 		)
 	}
+}
+
+func approvalBlocks(url, code string) []clioutput.Block {
+	blocks := []clioutput.Block{clioutput.Section("open this URL", clioutput.Literal(url))}
+	if code != "" {
+		blocks = append(blocks, clioutput.Section("match this code", clioutput.Literal(code)))
+	}
+	return blocks
+}
+
+func shellWord(word string) string {
+	const safe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:@%+=,-"
+	if word != "" && strings.Trim(word, safe) == "" {
+		return word
+	}
+	return "'" + strings.ReplaceAll(word, "'", "'\\''") + "'"
 }
 
 func writeHumanTransition(

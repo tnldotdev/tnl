@@ -187,7 +187,7 @@ func renderServiceAudit(output io.Writer, page controlv1.ServiceAuditPage) error
 
 func (a *commandApp) newAuditCommand() *cobra.Command {
 	f := a.flags
-	cAudit := &cobra.Command{Use: "audit", Short: "Read team service audit history.", GroupID: "manage"}
+	cAudit := &cobra.Command{Use: "audit", Short: "Read audit events for your team's services.", GroupID: "observe"}
 	cAuditList := &cobra.Command{Use: "list", Short: "Read service audit events with team-manager access."}
 	a.leaf(cAuditList, &f.Audit.List, func(call commandCall) error {
 		return runAuditList(call.ctx, f.Audit.List, a.out, a.errOut)

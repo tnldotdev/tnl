@@ -207,7 +207,10 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 
 func (a *commandApp) newPublishCommand() *cobra.Command {
 	f := a.flags
-	cPublish := &cobra.Command{Use: "publish", Short: "Publish a local service or try the built-in demo.", GroupID: "start"}
+	cPublish := &cobra.Command{
+		Use: "publish", Short: "Publish a local port or configured service.", GroupID: "start",
+		Long: "Give a running HTTP server an HTTPS URL, or publish a service by its name in the project configuration. For HTTP, visitors normally need a sign-in, share link, or token. The built-in demo also works without a local app.",
+	}
 	a.leaf(cPublish, &f.Publish, func(call commandCall) error {
 		return a.publish(call)
 	})

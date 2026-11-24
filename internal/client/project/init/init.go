@@ -45,7 +45,7 @@ func (plan Plan) Apply(ctx context.Context, options Options) (Result, error) {
 	if len(plan.MissingPackages) != 0 && !plan.InstallBlocked {
 		command := packageInstallCommand(plan.PackageManager, plan.MissingPackages)
 		if options.NoInstall || command == nil {
-			result.Actions = append(result.Actions, "Run: "+shellCommand(commandForRecommendation(plan.PackageManager, plan.MissingPackages)))
+			result.Actions = append(result.Actions, "Run: "+plan.InstallRecommendation())
 		} else {
 			if err := runInitInstall(ctx, plan.Root, command); err != nil {
 				return Result{}, err
