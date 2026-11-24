@@ -63,6 +63,31 @@ func TestResolveVisitorAccessNeverAddsAnImplicitIP(t *testing.T) {
 	}
 }
 
+func TestSignedInPublishAccessDefaultsOnlyDemoToAnonymous(t *testing.T) {
+	lookup := &testClientIPLookup{err: errors.New("unexpected IP lookup")}
+	for _, tc := range []struct {
+		name     string
+		flags    PublicOptions
+		mode     controlv1.VisitorAccessMode
+		prefixes []string
+		explicit bool
+	}{
+		{name: "ordinary", mode: controlv1.Restricted},
+		{name: "demo", flags: PublicOptions{Demo: true}, mode: controlv1.Anonymous, explicit: true},
+		{name: "demo with filter", flags: PublicOptions{Demo: true, IP: []string{"192.0.2.3/24"}},
+			mode: controlv1.Anonymous, prefixes: []string{"192.0.2.0/24"}, explicit: true},
+		{name: "restricted demo", flags: PublicOptions{Demo: true, Access: &config.Access{Mode: "restricted"}},
+			mode: controlv1.Restricted, explicit: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			access, err := resolveSignedInPublishAccess(t.Context(), lookup, tc.flags)
+			if err != nil || access.access != tc.mode || access.explicit != tc.explicit || !slices.Equal(access.prefixes, tc.prefixes) || lookup.calls != 0 {
+				t.Fatalf("unexpected publish access: %+v, %v", access, err)
+			}
+		})
+	}
+}
+
 func TestResolveVisitorAccessUsesCurrentIPOnlyWhenExplicit(t *testing.T) {
 	lookup := &testClientIPLookup{response: controlv1.ClientIPResponse{Ip: "192.0.2.4"}}
 	policy, err := resolveVisitorAccess(t.Context(), lookup, nil, false, []string{"current", "::ffff:192.0.2.4", "198.51.100.8/24"})

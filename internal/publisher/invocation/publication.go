@@ -142,7 +142,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 			return err
 		}
 		output.configureBrowser(authenticated.Discovery.DnsAutomation)
-		policy, err := resolveVisitorAccess(ctx, authenticated.Control, flags.Access, flags.Anonymous, flags.IP)
+		policy, err := resolveSignedInPublishAccess(ctx, authenticated.Control, flags)
 		if err != nil {
 			return err
 		}

@@ -35,7 +35,7 @@ func New(seed []byte) (*Issuer, error) {
 	key := ed25519.NewKeyFromSeed(seed)
 	digest := sha256.Sum256(append([]byte("tnl service client issuer v1\x00"), key.Public().(ed25519.PublicKey)...))
 	digest[0] &= 0x7f
-	template := &x509.Certificate{SerialNumber: new(big.Int).SetBytes(digest[:]), Subject: pkix.Name{CommonName: "tnl service client issuer"},
+	template := &x509.Certificate{SerialNumber: new(big.Int).SetBytes(digest[:]), Subject: pkix.Name{CommonName: visitorcert.IssuerCommonName},
 		NotBefore: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), NotAfter: time.Date(2044, 1, 1, 0, 0, 0, 0, time.UTC),
 		IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)

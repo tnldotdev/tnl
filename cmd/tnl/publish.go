@@ -38,7 +38,7 @@ type publishCommand struct {
 	PublisherIdentityID     string            `name:"publisher-identity" env:"TNL_PUBLISHER_IDENTITY_ID" help:"Saved scoped publisher identity ID."`
 	PublisherCredentialFile string            `name:"publisher-credential-file" env:"TNL_PUBLISHER_CREDENTIAL_FILE" type:"path" help:"Portable scoped publisher identity file; no login session is used."`
 	Output                  publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
-	Demo                    bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
+	Demo                    bool              `name:"demo" help:"Publish a built-in local demo; anonymous when signed in unless --anonymous=false."`
 
 	serverFromConfig  bool
 	selectedTeam      string

@@ -65,6 +65,42 @@ func TestAllocationRequestUsesCanonicalServiceDeclarationAndCopiesInput(t *testi
 	}
 }
 
+func TestAllocationRequestAnonymousIPWireShape(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		ip   []string
+		want string
+	}{
+		{name: "not supplied", want: `{"mode":"anonymous"}`},
+		{name: "resolved without a filter", ip: []string{}, want: `{"mode":"anonymous"}`},
+		{name: "explicit filter", ip: []string{"192.0.2.9/24", "192.0.2.1"}, want: `{"ip":["192.0.2.0/24","192.0.2.1/32"],"mode":"anonymous"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body, _, _, err := allocationRequest(Options{Target: "http://127.0.0.1:3000", AccessMode: controlv1.Anonymous, IP: test.ip})
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire struct {
+				Configuration struct {
+					HTTP struct {
+						Access json.RawMessage
+					}
+				}
+			}
+			if err := json.Unmarshal(data, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if got := string(wire.Configuration.HTTP.Access); got != test.want {
+				t.Fatalf("access in allocation request = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
 func TestAllocationRequestRejectsInvalidInputs(t *testing.T) {
 	for _, modify := range []func(*Options){
 		func(o *Options) { o.Target = "http://localhost:3000" },

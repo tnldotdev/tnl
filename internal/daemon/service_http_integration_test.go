@@ -216,7 +216,14 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if targetConnection.Load() != firstConnection {
 		t.Fatal("HTTP keepalive selected more than one upstream")
 	}
-	wrongCertificate := &http.Client{Transport: newTransport(&target.TLS.Certificates[0]), Timeout: 10 * time.Second}
+	unrelated := &target.TLS.Certificates[0]
+	defaultSelection := &http.Client{Transport: newTransport(unrelated), Timeout: 10 * time.Second}
+	closeResponse(request(defaultSelection, "/", "Tnl-Visitor-Token", token.Permission.VisitorToken, 200))
+	forceCertificate := newTransport(nil)
+	forceCertificate.TLSClientConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		return unrelated, nil
+	}
+	wrongCertificate := &http.Client{Transport: forceCertificate, Timeout: 10 * time.Second}
 	beforeCertificateDenial := requests.Load()
 	closeResponse(request(wrongCertificate, "/", "", "", 403))
 	// a supplied TLS credential is final, even when an HTTP token is valid.
