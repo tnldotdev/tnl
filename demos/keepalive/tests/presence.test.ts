@@ -226,6 +226,64 @@ it.each([true, false])(
   },
 );
 
+it.each([true, false])(
+  "reports a confirmed outage and learns a new start after reseeding (cached fallback: %s)",
+  async (cached) => {
+    const release = await fixtureRelease();
+    const site = "https://keepthisalive.com";
+    const a = new Gossip(release.id, host("a", 1), now);
+    const b = new Gossip(release.id, host("b", 2), now);
+    const c = new Gossip(release.id, host("c", 3), now + 3 * HEARTBEAT_MS);
+    vi.useFakeTimers({ now });
+    vi.stubGlobal("location", { origin: site });
+    let state: "live" | "unknown" | "offline" | "reseeded" = "live";
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), site);
+      if (url.pathname === RELEASE_PATH) return Response.json(release);
+      if (url.pathname === AUDIENCE_PATH) return new Response(null, { status: 204 });
+      const current = state === "reseeded" ? c : a;
+      if (url.pathname === PEERS_PATH) {
+        if (state === "unknown") throw new TypeError("Could not reach the proxy.");
+        if (state === "offline") return new Response(null, { status: 503 });
+        return Response.json(current.message(Date.now()));
+      }
+      expect(url.pathname).toBe(PRESENCE_PATH);
+      if (state === "unknown" || state === "offline") return new Response(null, { status: 503 });
+      return Response.json({
+        host: current.self,
+        startedAt: current.startedAt,
+        tabs: 1,
+        hosts: 1,
+        saturated: false,
+        fallback: cached && state === "live" ? [b.self] : [],
+      });
+    });
+    const owner = new AbortController();
+    const update = vi.fn();
+    try {
+      await observeVisitors(owner.signal, update);
+      expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ startedAt: now }));
+      state = "unknown";
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      expect(update).toHaveBeenLastCalledWith(undefined);
+      if (cached) {
+        // recover the roster before checking that a cached, failed alternate
+        // still lets the browser learn the site is down.
+        state = "live";
+        await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      }
+      state = "offline";
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      expect(update).toHaveBeenLastCalledWith(null);
+      state = "reseeded";
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ startedAt: c.startedAt }));
+    } finally {
+      owner.abort();
+    }
+  },
+);
+
 it("does not retry a refusal, changed run, or canceled presence request", async () => {
   for (const outcome of ["refused", "changed", "canceled"]) {
     const owner = new AbortController();

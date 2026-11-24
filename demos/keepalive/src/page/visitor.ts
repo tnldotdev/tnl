@@ -1,5 +1,5 @@
 import { FRESH_REPORT_MS, sameRun, type Change, type Host } from "../peers/gossip.ts";
-import { readPeers } from "../peers/http.ts";
+import { PeersUnavailable, readPeers } from "../peers/http.ts";
 import {
   AUDIENCE_PATH,
   heartbeatSchema,
@@ -63,7 +63,7 @@ export async function renewPresence(
 
 export async function observeVisitors(
   signal: AbortSignal,
-  update: (observation: Observation | undefined) => void,
+  update: (observation: Observation | null | undefined) => void,
 ) {
   const tab = crypto.randomUUID();
   let checkAudience = !sampledTab(tab);
@@ -109,19 +109,28 @@ export async function observeVisitors(
       ).catch(async (error: unknown) => {
         deadline.throwIfAborted();
         // try only one different run in this heartbeat, with the same tab ID.
-        host = alternates.pop() ?? (await findCountingHost(currentRelease, deadline, selected));
+        const alternate = alternates.pop();
+        host = alternate ?? (await findCountingHost(currentRelease, deadline, selected));
         if (host === undefined) throw error;
-        return renewPresence(host, tab, currentRelease, deadline);
+        try {
+          return await renewPresence(host, tab, currentRelease, deadline);
+        } catch (error) {
+          // dead cached hosts do not prove the site is down. ask the proxy.
+          if (alternate !== undefined) await readPeers(location.origin, currentRelease, deadline);
+          throw error;
+        }
       });
       checkAudience = !sampledTab(tab) && observation.sampling === true;
       alternates = fallback.filter((candidate) => !sameRun(candidate, observation.host));
       if (!signal.aborted) update(observation);
-    } catch {
+    } catch (error) {
       // a newer release may be active after a deployment.
       host = undefined;
       alternates = [];
       releaseID = undefined;
-      if (!signal.aborted) update(undefined);
+      // null is the proxy's explicit no-host response. network errors and bad
+      // responses are unknown and don't erase the last known start time.
+      if (!signal.aborted) update(error instanceof PeersUnavailable ? null : undefined);
     } finally {
       if (!signal.aborted) timer = setTimeout(() => void beat(), HEARTBEAT_MS);
     }

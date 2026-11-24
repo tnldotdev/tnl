@@ -166,14 +166,14 @@ function App({ bootstrap }: { bootstrap: boolean }) {
   const [alreadyHosting, setAlreadyHosting] = useState(false);
   const [now, setNow] = useState(Date.now);
   const [observed, setObserved] = useState<Observation>();
-  const [lastStart, setLastStart] = useState<number>();
+  const [lastStart, setLastStart] = useState<number | null>();
   const [sound, setSound] = useState(true);
   const chirp = useRef<ReturnType<typeof turnSounds>>(undefined);
   const shouldWarn = useMemo(turnWarning, []);
   const label = turnLabel(bootstrap);
   const hosting = host?.type === "hosting" ? host : undefined;
   const startedAt = hosting?.startedAt ?? observed?.startedAt ?? lastStart;
-  const ticking = startedAt !== undefined || hosting !== undefined;
+  const ticking = typeof startedAt === "number";
   const active = hosting !== undefined;
   useEffect(() => {
     if (
@@ -196,8 +196,8 @@ function App({ bootstrap }: { bootstrap: boolean }) {
   useEffect(() => {
     const lifetime = new AbortController();
     void observeVisitors(lifetime.signal, (next) => {
-      setObserved(next);
-      if (next !== undefined) setLastStart(next.startedAt);
+      setObserved(next ?? undefined);
+      if (next !== undefined) setLastStart(next === null ? null : next.startedAt);
     });
     return () => lifetime.abort();
   }, []);
@@ -293,7 +293,9 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       <h1>{bootstrap ? "start keepalive" : "can we keep this alive?"}</h1>
       <p class="experiment-age">
         <span>alive for</span>
-        <strong>{startedAt === undefined ? "—" : age(startedAt, now)}</strong>
+        <strong>
+          {startedAt === null ? "00h 00m 00s" : startedAt === undefined ? "—" : age(startedAt, now)}
+        </strong>
       </p>
       {bootstrap ? (
         <p>

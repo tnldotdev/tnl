@@ -49,6 +49,8 @@ const checkSchema = z.strictObject({ target: hostSchema, message: z.unknown() })
 const certificateRequest = z.strictObject({ requester: hostSchema, nonce: z.uuid() });
 const certificateProof = z.strictObject({ donor: hostSchema, run: runIDSchema, nonce: z.uuid() });
 
+export class PeersUnavailable extends Error {}
+
 export async function readPeers(
   origin: string,
   releaseID: string,
@@ -60,6 +62,10 @@ export async function readPeers(
     ...request,
     ...(invitation === undefined ? {} : { headers: { [READY_HEADER]: invitation } }),
   });
+  if (response.status === 503) {
+    await response.body?.cancel().catch(() => {});
+    throw new PeersUnavailable("No reachable hosts.");
+  }
   return parseMessage(
     await readJSON(response, MAX_MESSAGE_BYTES, request.signal ?? undefined),
     releaseID,
