@@ -21,6 +21,7 @@ import (
 type IngressServiceRun struct {
 	ServiceID, RunID, Protocol, Hostname string
 	RunHostname                          *string
+	AliasDNSUntil                        *time.Time
 	RunNumber, EndpointRevision          int64
 	Port                                 int
 	ValidUntil                           time.Time
@@ -126,6 +127,9 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 			EndpointRevision: service.EndpointRevision, ValidUntil: until, Relays: connected}
 		if row.AliasHostname != "" {
 			entry.RunHostname = &row.AliasHostname
+			if row.AliasDnsUntil.Valid {
+				entry.AliasDNSUntil = new(minTime(until, row.AliasDnsUntil.Time))
+			}
 		}
 		if row.RecoveryEpisodeID.Valid {
 			entry.RecoveryEpisodeID = &row.RecoveryEpisodeID.Int64

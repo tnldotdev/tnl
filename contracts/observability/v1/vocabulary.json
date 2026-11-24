@@ -468,6 +468,7 @@
       "values": [
         "authority",
         "service",
+        "alias_wildcard",
         "service_challenge",
         "relay_challenge"
       ],

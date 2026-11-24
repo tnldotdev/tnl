@@ -55,12 +55,15 @@ type Provider interface {
 	ReleaseCustomZone(context.Context, controlstate.DNSAuthorityWork) error
 	PublishAddress(context.Context, AddressRecord) (Zone, error)
 	RemoveAddress(context.Context, AddressRecord) (AddressRemoval, error)
+	ReconcilePublisherAliasWildcard(context.Context, AddressRecord, bool) (PublisherAliasWildcardRecords, error)
 }
 
 type DNSVerifier interface {
 	Verify(context.Context, string, []string) (bool, error)
 	VerifyAddress(context.Context, string, []string, []string, []string) (bool, error)
 	VerifyAddressRemoval(context.Context, AddressRecord, []string) (bool, error)
+	VerifyPublisherAliasWildcardOwnership(context.Context, AddressRecord, []string) (bool, error)
+	VerifyPublisherAliasWildcardRemoval(context.Context, AddressRecord, []string) (bool, error)
 }
 
 type BrandedDelegationProvider interface {
@@ -77,6 +80,9 @@ type BrandedDelegationVerifier interface {
 
 type Store interface {
 	serviceEndpointStore
+	ClaimPublisherAliasWildcard(context.Context, string, time.Time, time.Duration) (controlstate.PublisherAliasWildcardWork, bool, error)
+	PinPublisherAliasWildcardZone(context.Context, controlstate.PublisherAliasWildcardWork, string, time.Time) error
+	SavePublisherAliasWildcard(context.Context, controlstate.PublisherAliasWildcardWork, []string, bool, bool, int64, time.Time, time.Time) error
 	ClaimDNSAuthorityWork(context.Context, string, time.Time, time.Duration) (controlstate.DNSAuthorityWork, bool, error)
 	SaveDNSAuthorityWork(context.Context, controlstate.DNSAuthorityWork, time.Time) (controlstate.DNSAuthorityWork, error)
 	DNSAuthorityReleaseReady(context.Context, string, time.Time) (bool, error)
@@ -119,12 +125,13 @@ func observeDNS(ctx context.Context, observer DNSObserver, kind, phase string, s
 }
 
 type Worker struct {
-	store       Store
-	provider    Provider
-	verifier    DNSVerifier
-	config      Config
-	now         func() time.Time
-	managedNext bool
+	store        Store
+	provider     Provider
+	verifier     DNSVerifier
+	config       Config
+	now          func() time.Time
+	managedNext  bool
+	wildcardNext bool
 }
 
 func New(store Store, provider Provider, verifier DNSVerifier, config Config) (*Worker, error) {
@@ -174,6 +181,12 @@ func finishDNSAttempt(ctx context.Context, finish func(error), err error) {
 
 func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	now := w.now()
+	w.wildcardNext = !w.wildcardNext
+	if w.wildcardNext {
+		if found, err := w.processPublisherAliasWildcard(ctx, now); found || err != nil {
+			return found, err
+		}
+	}
 	if w.managedNext {
 		w.managedNext = false
 		if found, err := w.processServiceEndpoint(ctx, now); found || err != nil {
@@ -181,7 +194,10 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 		}
 	}
 	w.managedNext = true
-	return w.processExisting(ctx, now)
+	if found, err := w.processExisting(ctx, now); found || err != nil || w.wildcardNext {
+		return found, err
+	}
+	return w.processPublisherAliasWildcard(ctx, now)
 }
 
 func (w *Worker) processExisting(ctx context.Context, now time.Time) (bool, error) {

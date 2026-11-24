@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -14,6 +15,15 @@ import (
 )
 
 func TestIntegrationServiceEndpointDNSRetryMigration(t *testing.T) {
+	for _, prior := range []int64{1, 2} {
+		t.Run(fmt.Sprintf("from-v%d", prior), func(t *testing.T) {
+			checkPopulatedDNSSchemaUpgrade(t, prior)
+		})
+	}
+}
+
+func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
+	t.Helper()
 	ctx := t.Context()
 	url := newDisposableControlStateDatabaseURL(t, "dns_retry_migration")
 	cfg, err := parseDirectConfig(url)
@@ -34,7 +44,7 @@ func TestIntegrationServiceEndpointDNSRetryMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 1); err != nil {
+	if _, err := provider.UpTo(ctx, priorVersion); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := pgxpool.New(ctx, url)
@@ -70,26 +80,53 @@ func TestIntegrationServiceEndpointDNSRetryMigration(t *testing.T) {
 		serviceID, now, retiredHost, now.Add(time.Minute), now.Add(7*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
+	const aliasHost = "p-aaaaaaaaaaaaaaaaaaaaaaaaaa.live.example.test"
+	if _, err := pool.Exec(ctx, `
+	    INSERT INTO control.publisher_identities(id,team_id,name,kind,created_by_identity_id,ownership,created_at)
+	        VALUES ('publisher','team','browser','run','actor','team',now());
+	    INSERT INTO control.publisher_identity_keys(id,publisher_identity_id,public_key,revision,created_at)
+	        VALUES ('signing-key','publisher',sha256('key'::bytea),1,now());
+	    INSERT INTO control.publisher_grants(id,publisher_identity_id,team_id,created_by_identity_id,kind,service_id,protocols,created_at)
+	        VALUES ('grant','publisher','team','actor','service','svc_0123456789ABCDEFGHIJKL',ARRAY['http'],now());
+	    INSERT INTO control.service_runs
+	        (id,service_id,team_id,protocol,run_number,publisher_identity_id,publisher_grant_id,publisher_key_id,
+	         idempotency_key,request_digest,preparation_expires_at,assignment_seed_ciphertext,assignment_seed_storage_key_id,
+	         state,traffic_limits,certificate_cache_key,certificate_scope,certificate_identifiers,certificate_domain_id,
+	         certificate_hostname,certificate_namespace,run_hostname,run_alias_parent,created_at,publisher_expires_at,
+	         serving_observed_at,serving_until)
+	        VALUES ('srun_0123456789ABCDEFGHIJKL','svc_0123456789ABCDEFGHIJKL','team','http',1,'publisher','grant','signing-key',
+	                'legacy',sha256('legacy'::bytea),now()+interval '1 minute','legacy-seed'::bytea,'legacy-key',
+	                'prepared','{}','legacy-cache-key','app.example.test',ARRAY['app.example.test','p-aaaaaaaaaaaaaaaaaaaaaaaaaa.live.example.test'],
+	                'domain','app.example.test','app.example.test','p-aaaaaaaaaaaaaaaaaaaaaaaaaa.live.example.test',
+	                'live.example.test',now(),now()+interval '1 minute',now(),now()+interval '1 minute');
+	    INSERT INTO control.service_endpoints
+	        (hostname,service_id,service_run_id,publisher_identity_id,publisher_alias_parent,domain_id,namespace,
+	         ingress_pool_id,public,dns_automation,dns_state,created_at)
+	        VALUES ('p-aaaaaaaaaaaaaaaaaaaaaaaaaa.live.example.test','svc_0123456789ABCDEFGHIJKL',
+	                'srun_0123456789ABCDEFGHIJKL','publisher','live.example.test','domain',
+	                'p-aaaaaaaaaaaaaaaaaaaaaaaaaa.live.example.test','ingress-a',true,true,'published',now());`); err != nil {
+		t.Fatal(err)
+	}
 	snapshot := func() string {
 		t.Helper()
 		var value string
 		if err := pool.QueryRow(ctx, `SELECT jsonb_build_array(
 		    (SELECT to_jsonb(s) FROM control.services s WHERE id=$1),
-		    (SELECT jsonb_agg(to_jsonb(e)-'dns_consecutive_errors' ORDER BY hostname)
+		    (SELECT jsonb_agg(to_jsonb(e)-'dns_consecutive_errors'-'wildcard_dns' ORDER BY hostname)
 		     FROM control.service_endpoints e WHERE service_id=$1))::text`, serviceID).Scan(&value); err != nil {
 			t.Fatal(err)
 		}
 		return value
 	}
 	before := snapshot()
-	if version, err := readSchemaVersion(ctx, pool); err != nil || version != 1 {
-		t.Fatal("fixture is not on the released v1 schema", version, err)
+	if version, err := readSchemaVersion(ctx, pool); err != nil || version != priorVersion {
+		t.Fatal("fixture is not on the previous schema", version, err)
 	}
 	prior, err := Open(ctx, url, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if prior != nil {
 		prior.Close()
 	}
-	if err == nil || !strings.Contains(err.Error(), "incompatible database schema version 1") {
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("incompatible database schema version %d", priorVersion)) {
 		t.Fatal("serving accepted the unmigrated database", err)
 	}
 	if _, err := pool.Exec(ctx, `ALTER TABLE control.operator_nameserver_hostnames RENAME TO unsupported_nameserver_layout`); err != nil {
@@ -98,7 +135,7 @@ func TestIntegrationServiceEndpointDNSRetryMigration(t *testing.T) {
 	if err := Migrate(ctx, url); err == nil || !strings.Contains(err.Error(), "incompatible version 1 database schema") {
 		t.Fatal("migration accepted an older database marked v1", err)
 	}
-	if version, err := readSchemaVersion(ctx, pool); err != nil || version != 1 || snapshot() != before {
+	if version, err := readSchemaVersion(ctx, pool); err != nil || version != priorVersion || snapshot() != before {
 		t.Fatal("rejection changed migration history or saved state", version, err)
 	}
 	if _, err := pool.Exec(ctx, `ALTER TABLE control.unsupported_nameserver_layout RENAME TO operator_nameserver_hostnames`); err != nil {
@@ -117,6 +154,11 @@ func TestIntegrationServiceEndpointDNSRetryMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
+	var legacyExact bool
+	if err := pool.QueryRow(ctx, `SELECT NOT wildcard_dns AND dns_automation AND dns_state='published'
+	    FROM control.service_endpoints WHERE hostname=$1 AND publisher_identity_id='publisher'`, aliasHost).Scan(&legacyExact); err != nil || !legacyExact {
+		t.Fatal("migration converted a legacy publisher hostname", err)
+	}
 	if _, found, err := d.ClaimServiceEndpointDNSWork(ctx, "next-worker", now, time.Minute); found || err != nil {
 		t.Fatal("upgrade discarded the current work lease", found, err)
 	}

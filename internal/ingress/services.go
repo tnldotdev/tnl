@@ -32,6 +32,7 @@ type serviceRoute struct {
 	// selectedHostname is local connection context, never a second routing grant.
 	selectedHostname      string
 	until                 time.Time
+	aliasUntil            time.Time
 	ip                    *ippolicy.Policy
 	source                tunnelv1.VisitorSourceAuthority
 	sourceKey             [32]byte
@@ -198,6 +199,12 @@ func (r *ServiceRouting) apply(started time.Time, lease ingressv1.IngressLease, 
 		until := started.Add(time.Unix(source.ValidUntil, 0).Sub(snapshot.ObservedAt))
 		route := cloneServiceRoute(&serviceRoute{run: run, selectedHostname: run.Hostname, source: source, traffic: traffic, until: privateMinTime(until, lease.ServingUntil),
 			observedAt: snapshot.ObservedAt, startedAt: started})
+		if run.AliasDnsUntil != nil {
+			if run.RunHostname == nil || !run.AliasDnsUntil.After(snapshot.ObservedAt) || run.AliasDnsUntil.After(run.ValidUntil) {
+				return ErrServiceAdmission
+			}
+			route.aliasUntil = started.Add(run.AliasDnsUntil.Sub(snapshot.ObservedAt))
+		}
 		copy(route.sourceKey[:], run.SourceKey)
 		route.run.SourceKey, route.run.SourceAuthority, route.run.Ip = nil, nil, nil
 		if route.sourceKey == [32]byte{} {
@@ -302,6 +309,9 @@ func cloneServiceRoute(route *serviceRoute) *serviceRoute {
 	result := *route
 	if route.run.RunHostname != nil {
 		result.run.RunHostname = new(*route.run.RunHostname)
+	}
+	if route.run.AliasDnsUntil != nil {
+		result.run.AliasDnsUntil = new(*route.run.AliasDnsUntil)
 	}
 	result.run.ConnectedRelays = slices.Clone(route.run.ConnectedRelays)
 	result.run.SourceAuthority = slices.Clone(route.run.SourceAuthority)
@@ -421,7 +431,7 @@ func (r *ServiceRouting) lookupLocked(hostname string, port int, lease ingressv1
 	}
 	var result []*serviceRoute
 	for _, route := range r.endpoints[serviceEndpoint{hostname: hostname, port: port}] {
-		if route.until.After(now) {
+		if route.hostnameUntil(hostname).After(now) {
 			result = append(result, route)
 		}
 	}
@@ -437,7 +447,7 @@ func (r *ServiceRouting) reserveHTTP(route *serviceRoute, relay ingressv1.Servic
 	current := r.runs[route.run.ServiceRunId]
 	if r.closed || !samePrivateLease(r.lease, lease) || lease.Draining || !lease.ServingUntil.After(now) ||
 		current == nil || current.run.ServiceId != route.run.ServiceId || current.run.RunNumber != route.run.RunNumber ||
-		current.run.EndpointRevision != route.run.EndpointRevision || !route.until.After(now) || !current.until.After(now) ||
+		current.run.EndpointRevision != route.run.EndpointRevision || !route.hostnameUntil(route.selectedHostname).After(now) || !current.hostnameUntil(route.selectedHostname).After(now) ||
 		!current.servesHostname(route.selectedHostname) ||
 		current.ip != nil && !current.ip.Allows(source) || !relay.ServingUntil.After(now) {
 		return ErrServiceAdmission
@@ -464,7 +474,7 @@ func (r *ServiceRouting) waitForEndpoint(ctx context.Context, hostname string, l
 				if ctx.Err() != nil {
 					break
 				}
-				if route.until.After(now) {
+				if route.hostnameUntil(hostname).After(now) {
 					available = true
 					break
 				}
@@ -500,7 +510,7 @@ func (r *ServiceRouting) waitForRelayReplacement(ctx context.Context, previous *
 		now := time.Now()
 		current := r.runs[previous.run.ServiceRunId]
 		valid := !r.closed && samePrivateLease(r.lease, lease) && !lease.Draining && lease.ServingUntil.After(now) &&
-			previous.until.After(now) && current != nil && current.until.After(now) &&
+			previous.hostnameUntil(previous.selectedHostname).After(now) && current != nil && current.hostnameUntil(previous.selectedHostname).After(now) &&
 			current.run.ServiceId == previous.run.ServiceId && current.run.RunNumber == previous.run.RunNumber &&
 			current.run.EndpointRevision == previous.run.EndpointRevision && (current.ip == nil || current.ip.Allows(source)) &&
 			current.servesHostname(previous.selectedHostname)
@@ -556,12 +566,13 @@ func (r *ServiceRouting) bind(route *serviceRoute, source netip.Addr, stop func(
 	if r.closed || current == nil || current.run.ServiceId != route.run.ServiceId || current.run.RunNumber != route.run.RunNumber ||
 		current.run.EndpointRevision != route.run.EndpointRevision || stop == nil ||
 		!current.servesHostname(route.selectedHostname) ||
-		!route.until.After(now) || !current.until.After(now) || current.ip != nil && !current.ip.Allows(source) {
+		!route.hostnameUntil(route.selectedHostname).After(now) || !current.hostnameUntil(route.selectedHostname).After(now) ||
+		current.ip != nil && !current.ip.Allows(source) {
 		r.mu.Unlock()
 		return nil, ErrServiceAdmission
 	}
 	visitor := &routedVisitor{serviceID: route.run.ServiceId, runID: route.run.ServiceRunId, runNumber: route.run.RunNumber, endpointRevision: route.run.EndpointRevision,
-		hostname: route.selectedHostname, source: source, until: current.until, stop: stop}
+		hostname: route.selectedHostname, source: source, until: current.hostnameUntil(route.selectedHostname), stop: stop}
 	r.visitors[visitor] = struct{}{}
 	r.wake()
 	r.mu.Unlock()
@@ -608,11 +619,11 @@ func (r *ServiceRouting) expireVisitorsLocked(now time.Time) []*routedVisitor {
 		if !visitor.until.After(now) || current == nil || current.run.ServiceId != visitor.serviceID || current.run.RunNumber != visitor.runNumber ||
 			current.run.EndpointRevision != visitor.endpointRevision ||
 			!current.servesHostname(visitor.hostname) ||
-			!current.until.After(now) || current.ip != nil && !current.ip.Allows(visitor.source) {
+			!current.hostnameUntil(visitor.hostname).After(now) || current.ip != nil && !current.ip.Allows(visitor.source) {
 			delete(r.visitors, visitor)
 			stopped = append(stopped, visitor)
 		} else {
-			visitor.until = current.until
+			visitor.until = current.hostnameUntil(visitor.hostname)
 		}
 	}
 	return stopped
@@ -623,6 +634,13 @@ func (r *ServiceRouting) expireVisitorsLocked(now time.Time) []*routedVisitor {
 func (r *serviceRoute) servesHostname(hostname string) bool {
 	return hostname == r.run.Hostname ||
 		r.run.RunHostname != nil && hostname == *r.run.RunHostname
+}
+
+func (r *serviceRoute) hostnameUntil(hostname string) time.Time {
+	if !r.aliasUntil.IsZero() && r.run.RunHostname != nil && hostname == *r.run.RunHostname {
+		return privateMinTime(r.until, r.aliasUntil)
+	}
+	return r.until
 }
 
 // one worker owns expiry and connection stops. Close wakes it and waits for it;

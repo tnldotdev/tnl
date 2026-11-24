@@ -166,6 +166,9 @@ func dnsChallengeContext(ctx context.Context, queries *controlstatedb.Queries, s
 func (d *Database) WithDNSRecordLock(ctx context.Context, recordName string, run func() error) (retErr error) {
 	recordName = strings.TrimSuffix(strings.ToLower(recordName), ".")
 	base := strings.TrimPrefix(recordName, "_acme-challenge.")
+	if parent, wildcard := strings.CutPrefix(recordName, "*."); wildcard {
+		base = parent
+	}
 	if canonical, err := naming.CanonicalizeHostname(base); err != nil || canonical != base || run == nil {
 		return errors.New("controlstate: invalid DNS challenge lock")
 	}

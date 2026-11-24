@@ -718,6 +718,34 @@ type ControlPublisherAccessToken struct {
 	ExpiresAt           pgtype.Timestamptz
 }
 
+type ControlPublisherAliasWildcard struct {
+	Parent            string
+	TeamID            string
+	DomainID          string
+	DomainRevision    int64
+	IngressPoolID     string
+	ZoneID            string
+	Ipv4Address       *netip.Addr
+	Ipv6Address       *netip.Addr
+	ShadowedLabels    []string
+	VerifiedUntil     pgtype.Timestamptz
+	AvailableAt       pgtype.Timestamptz
+	WorkOwner         pgtype.Text
+	WorkEpoch         int64
+	WorkExpiresAt     pgtype.Timestamptz
+	ConsecutiveErrors int64
+}
+
+type ControlPublisherAliasWildcardFact struct {
+	Parent                string
+	TeamID                pgtype.Text
+	DomainID              string
+	DomainRevision        int64
+	IngressPoolID         string
+	CanonicalDomain       string
+	DnsAuthorityReference pgtype.Text
+}
+
 type ControlPublisherAssertion struct {
 	PublisherIdentityID string
 	AssertionID         string
@@ -1065,6 +1093,7 @@ type ControlServiceEndpoint struct {
 	RetiredAt             pgtype.Timestamptz
 	ReusableAfter         pgtype.Timestamptz
 	DnsConsecutiveErrors  int64
+	WildcardDns           bool
 }
 
 type ControlServiceHttpBrowserHandoff struct {

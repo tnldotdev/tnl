@@ -90,6 +90,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadHTTPPublicStreamRenewal$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
+  runtime:publisher-alias-wildcard:
+    desc: Verify generated publisher alias DNS and public traffic through separated ingress and relays
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationPublisherAliasWildcardPublicTraffic$' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
   connector-direct:
     desc: Check relay-first ICE upgrades, repeated direct fallback, and retained application sessions with disposable PostgreSQL
     cmds:

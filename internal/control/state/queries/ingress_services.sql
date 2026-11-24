@@ -3,13 +3,17 @@
 SELECT sqlc.embed(service),sqlc.embed(run),
     LEAST(run.serving_until,run.certificate_expires_at,permission.expires_at)::timestamptz AS valid_until,
     policy.revision AS visitor_policy_revision,recovery.id AS recovery_episode_id,
-    COALESCE((SELECT alias.hostname FROM control.service_endpoints alias
-      WHERE alias.service_run_id=run.id AND alias.service_id=service.id AND alias.hostname=run.run_hostname
-        AND run.run_alias_parent=service.run_alias_parent AND alias.domain_id=service.domain_id
-        AND alias.ingress_pool_id=service.ingress_pool_id AND alias.public AND alias.retired_at IS NULL
-        AND (alias.dns_state='published' OR alias.dns_state='unmanaged' AND NOT alias.dns_automation)),'')::text AS alias_hostname
+    CASE WHEN alias.dns_until IS NOT NULL THEN alias.hostname ELSE '' END::text AS alias_hostname,
+    NULLIF(alias.dns_until,'infinity'::timestamptz)::timestamptz AS alias_dns_until
 FROM control.services service
 JOIN control.service_runs run ON run.service_id=service.id
+LEFT JOIN LATERAL (
+    SELECT endpoint.hostname,control.publisher_alias_dns_until(endpoint,sqlc.arg(now)::timestamptz) AS dns_until
+    FROM control.service_endpoints endpoint
+    WHERE endpoint.service_run_id=run.id AND endpoint.service_id=service.id AND endpoint.hostname=run.run_hostname
+      AND run.run_alias_parent=service.run_alias_parent AND endpoint.domain_id=service.domain_id
+      AND endpoint.ingress_pool_id=service.ingress_pool_id AND endpoint.public AND endpoint.retired_at IS NULL
+) alias ON true
 JOIN control.visitor_policies policy ON policy.resource_id=service.id
 LEFT JOIN control.service_recovery_episodes recovery ON recovery.service_run_id=run.id AND recovery.state='open'
 JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,service.id,sqlc.arg(now)) permission ON true

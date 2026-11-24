@@ -50,6 +50,7 @@ type privateSeparatedFixture struct {
 	publicHTTP                  *http.Client
 	databaseURL                 string
 	database                    *controlstate.Database
+	dns                         *privateFixtureDNS
 	certificateAuthority        *testCertificateAuthority
 	inspect                     *sql.DB
 	roots                       *tls.Config
@@ -247,7 +248,7 @@ func newServiceRuntimeFixturePlan(t *testing.T, standalone bool, opened chan<- p
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &privateSeparatedFixture{owner: owner, relayTransport: owner.quicTransport(t), publicControlAddress: publicControlAddress, publicHTTP: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, databaseURL: databaseURL, inspect: inspect, roots: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, controlConfig: config, serviceHTTP: serviceHTTP,
+	f := &privateSeparatedFixture{owner: owner, relayTransport: owner.quicTransport(t), publicControlAddress: publicControlAddress, publicHTTP: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, databaseURL: databaseURL, dns: dnsProvider, inspect: inspect, roots: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, controlConfig: config, serviceHTTP: serviceHTTP,
 		database: database, certificateAuthority: ca,
 		identity: serviceRuntimeIdentity{teamID: identity.PersonalTeamId, state: profile, routes: authenticated.Control, authority: authenticated.Authority}, tcpAddresses: make(map[string]string), quicAddresses: make(map[string]string)}
 	f.defaultTiming = defaults

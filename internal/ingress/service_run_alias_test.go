@@ -65,6 +65,41 @@ func TestRunAliasSharesOneRunAndSourceSequenceWithCanonicalPool(t *testing.T) {
 	}
 }
 
+func TestWildcardAliasDeadlineExpiresWithoutShorteningCanonicalAuthority(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, lease, snapshot := runAliasSnapshot(t, 1)
+		run := &snapshot.Runs[0]
+		run.AliasDnsUntil = new(snapshot.ObservedAt.Add(time.Second))
+		routing := NewServiceRouting()
+		defer routing.Close()
+		if err := routing.apply(time.Now(), lease, snapshot); err != nil {
+			t.Fatal(err)
+		}
+		alias := *run.RunHostname
+		found := routing.lookup(alias, 443, lease, time.Now())
+		if len(found) != 1 {
+			t.Fatal("fresh alias is not routable")
+		}
+		stopped := make(chan struct{})
+		unbind, err := routing.bind(found[0], netip.MustParseAddr("192.0.2.1"), func() { close(stopped) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unbind()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		select {
+		case <-stopped:
+		default:
+			t.Fatal("stale wildcard proof retained the alias visitor")
+		}
+		if len(routing.lookup(alias, 443, lease, time.Now())) != 0 ||
+			len(routing.lookup(run.Hostname, 443, lease, time.Now())) != 1 {
+			t.Fatal("expired alias remained routable or shortened the canonical route")
+		}
+	})
+}
+
 func TestRunAliasRejectsAmbiguousAndInvalidSnapshotsAtomically(t *testing.T) {
 	for _, mode := range []string{"empty", "wildcard", "uppercase", "port", "native", "own canonical", "other canonical", "duplicate alias"} {
 		for _, reverse := range []bool{false, true} {

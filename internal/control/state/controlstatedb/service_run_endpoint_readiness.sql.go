@@ -48,19 +48,19 @@ SELECT EXISTS(
       AND endpoint.ingress_pool_id=$4::text
       AND endpoint.public AND endpoint.retired_at IS NULL
       AND (endpoint.service_run_id IS NULL OR endpoint.service_run_id=$5::text)
-      AND (endpoint.dns_state='published' OR endpoint.dns_state='unmanaged' AND NOT endpoint.dns_automation)
-      AND (pool.state IN('enabled','draining') OR pool.id=$6::text AND pool.state='disabled')
+      AND control.publisher_alias_dns_until(endpoint,$6::timestamptz) IS NOT NULL
+      AND (pool.state IN('enabled','draining') OR pool.id=$7::text AND pool.state='disabled')
       AND EXISTS(SELECT 1 FROM control.service_connection_slots slot
         JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
           AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
         WHERE slot.service_run_id=$5::text AND slot.state='ready' AND slot.session_open
-          AND NOT relay.draining AND relay.lease_expires_at>$7::timestamptz)
+          AND NOT relay.draining AND relay.lease_expires_at>$6::timestamptz)
       AND EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=$4::text
         AND (CASE WHEN $8::text='http' THEN ingress.https ELSE $9::integer <@ ingress.service_port_ranges END)
-        AND NOT ingress.draining AND ingress.lease_expires_at>$7::timestamptz)
+        AND NOT ingress.draining AND ingress.lease_expires_at>$6::timestamptz)
       AND NOT EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=$4::text
         AND NOT (CASE WHEN $8::text='http' THEN ingress.https ELSE $9::integer <@ ingress.service_port_ranges END)
-        AND NOT ingress.draining AND ingress.lease_expires_at>$7::timestamptz)
+        AND NOT ingress.draining AND ingress.lease_expires_at>$6::timestamptz)
 ) AS ready
 `
 
@@ -70,8 +70,8 @@ type ServiceRunPublicEndpointReadyParams struct {
 	DomainID             string
 	IngressPoolID        string
 	ServiceRunID         string
-	PrimaryIngressPoolID string
 	Now                  pgtype.Timestamptz
+	PrimaryIngressPoolID string
 	Protocol             string
 	ServicePort          int32
 }
@@ -85,8 +85,8 @@ func (q *Queries) ServiceRunPublicEndpointReady(ctx context.Context, arg Service
 		arg.DomainID,
 		arg.IngressPoolID,
 		arg.ServiceRunID,
-		arg.PrimaryIngressPoolID,
 		arg.Now,
+		arg.PrimaryIngressPoolID,
 		arg.Protocol,
 		arg.ServicePort,
 	)
