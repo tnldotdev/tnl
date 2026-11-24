@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/controloutage"
@@ -158,7 +160,7 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	controlConfig.DatabaseURL = databaseURL
 	controlConfig.ControlListen = controlAddress
 	controlConfig.PrivateControlListen = privateControlAddress
-	controlConfig.ClusterSecret = testClusterSecret
+	controlConfig.IngressControlCredential = testClusterSecret
 	controlConfig.ServerDomain = serverDomain
 	controlConfig.ManagedDomain = "tunnels.test"
 	controlConfig.ControlTLSCertificateFile = controlCertificate.certificateFile
@@ -171,17 +173,12 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	controlConfig.StorageKey = testStorageKey
 	controlConfig.AccessTokenLifetime = 5 * time.Minute
 	controlConfig.RefreshTokenLifetime = time.Hour
-	if err := controlConfig.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	control := startIntegrationProcessWithOptions(t, controlConfig, integrationProcessOptions{owner: owner, acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: controlSockets})
-	waitForProcessReady(t, control)
 
 	ingressSockets := runtimeListeners{ingress: serviceRuntimeListener(t, owner), metrics: serviceRuntimeListener(t, owner)}
 	ingressConfig := splitTestConfig(daemonconfig.RoleIngress, ingressSockets.metrics.Addr().String())
 	ingressConfig.ServicePortRanges = controlConfig.ServicePortRanges
 	ingressConfig.ControlHostname = controlHostname
-	ingressConfig.ClusterSecret = testClusterSecret
+	ingressConfig.IngressControlCredential, ingressConfig.ForwardingCredential = testClusterSecret, relayslots.Forwarding
 	ingressConfig.IngressID = "ingress-split"
 	ingressConfig.IngressListen = ingressSockets.ingress.Addr().String()
 	ingressSockets.ingress = combineIngressListeners(append([]net.Listener{ingressSockets.ingress}, serviceListeners...))
@@ -194,6 +191,12 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 		t, controlHostname, "relay-b", "relay-b-1",
 		relayBCertificate.certificateFile, relayBCertificate.privateKeyFile, owner,
 	)
+	controlConfig.RelaySlotsFile = relayslots.File(t, relayslots.New(relayAConfig.RelayServiceID, relayAConfig.RelayID, strings.Split(relayAConfig.RelayAddress, ":")[0], relayAConfig.RelayAddress, relayAConfig.InternalRelayAddress), relayslots.New(relayBConfig.RelayServiceID, relayBConfig.RelayID, strings.Split(relayBConfig.RelayAddress, ":")[0], relayBConfig.RelayAddress, relayBConfig.InternalRelayAddress))
+	if err := controlConfig.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	control := startIntegrationProcessWithOptions(t, controlConfig, integrationProcessOptions{owner: owner, acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: controlSockets})
+	waitForProcessReady(t, control)
 	for _, cfg := range []daemonconfig.Config{ingressConfig, relayAConfig, relayBConfig} {
 		if err := cfg.Validate(); err != nil {
 			t.Fatal(err)
@@ -219,10 +222,8 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitUntilIntegrationTime(t, relayAExpiresAt.Add(100*time.Millisecond))
-	relayAReplacementConfig, replacementListeners := splitTestRelayConfig(
-		t, controlHostname, "relay-a", "relay-a-1",
-		relayACertificate.certificateFile, relayACertificate.privateKeyFile, owner,
-	)
+	relayAReplacementConfig := relayAConfig
+	replacementListeners := runtimeListeners{}
 	relayAReplacement := startIntegrationProcessWithOptions(t, relayAReplacementConfig, integrationProcessOptions{owner: owner, acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: replacementListeners})
 	waitForProcessReady(t, relayAReplacement)
 	var replacementRunID string

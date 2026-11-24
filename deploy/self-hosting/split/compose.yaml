@@ -28,7 +28,7 @@ services:
       migrate:
         condition: service_completed_successfully
     env_file:
-      - ${TNL_ENV_FILE:-.env}
+      - ${TNL_CONTROL_ENV_FILE:-control.env}
     environment:
       TNLD_DATABASE_DIRECT_URL: ""
       TNLD_CONTROL_LISTEN: :8080
@@ -39,9 +39,13 @@ services:
       TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE: /etc/tnl/cluster.key
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
       TNLD_ROLE: control
+      TNLD_INGRESS_CONTROL_CREDENTIAL: ${TNL_INGRESS_CONTROL_CREDENTIAL:?set the ingress control credential}
+      TNLD_RELAY_SLOTS_FILE: /etc/tnl/relay-slots.json
+      TNLD_SERVER_DOMAIN: ${TNLD_SERVER_DOMAIN:?set the server domain}
       TNLD_PRIVATE_CONTROL_LISTEN: :9443
       TNLD_ROUTE53_SERVER_ZONE_ID: ${TNL_SERVER_ZONE_ID:?set TNL_SERVER_ZONE_ID}
     volumes:
+      - ${TNL_RELAY_SLOTS_FILE:?set the relay slot inventory}:/etc/tnl/relay-slots.json:ro
       - ${TNL_PRIVATE_CONTROL_CERTIFICATE_FILE:?set the internal control certificate}:/etc/tnl/cluster.crt:ro
       - ${TNL_PRIVATE_CONTROL_KEY_FILE:?set the internal control key}:/etc/tnl/cluster.key:ro
     expose:
@@ -57,8 +61,8 @@ services:
     environment:
       TNLD_CONTROL_HOSTNAME: ${TNL_CONTROL_HOSTNAME:?set TNL_CONTROL_HOSTNAME}
       TNLD_PRIVATE_CONTROL_ADDRESS: control:9443
-      TNLD_CLUSTER_SECRET: ${TNLD_CLUSTER_SECRET:?set TNLD_CLUSTER_SECRET}
-      TNLD_CLUSTER_SECRET_PREVIOUS: ${TNLD_CLUSTER_SECRET_PREVIOUS:-}
+      TNLD_INGRESS_CONTROL_CREDENTIAL: ${TNL_INGRESS_CONTROL_CREDENTIAL:?set the ingress control credential}
+      TNLD_FORWARDING_CREDENTIAL: ${TNL_FORWARDING_CREDENTIAL:?set the forwarding credential}
       TNLD_INGRESS_ID: ingress-a
       TNLD_INGRESS_LISTEN: :443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
@@ -80,8 +84,8 @@ services:
     environment:
       TNLD_CONTROL_HOSTNAME: ${TNL_CONTROL_HOSTNAME:?set TNL_CONTROL_HOSTNAME}
       TNLD_PRIVATE_CONTROL_ADDRESS: control:9443
-      TNLD_CLUSTER_SECRET: ${TNLD_CLUSTER_SECRET:?set TNLD_CLUSTER_SECRET}
-      TNLD_CLUSTER_SECRET_PREVIOUS: ${TNLD_CLUSTER_SECRET_PREVIOUS:-}
+      TNLD_INGRESS_CONTROL_CREDENTIAL: ${TNL_INGRESS_CONTROL_CREDENTIAL:?set the ingress control credential}
+      TNLD_FORWARDING_CREDENTIAL: ${TNL_FORWARDING_CREDENTIAL:?set the forwarding credential}
       TNLD_INGRESS_ID: ingress-b
       TNLD_INGRESS_LISTEN: :443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
@@ -105,8 +109,8 @@ services:
     environment:
       TNLD_CONTROL_HOSTNAME: ${TNL_CONTROL_HOSTNAME:?set TNL_CONTROL_HOSTNAME}
       TNLD_PRIVATE_CONTROL_ADDRESS: control:9443
-      TNLD_CLUSTER_SECRET: ${TNLD_CLUSTER_SECRET:?set TNLD_CLUSTER_SECRET}
-      TNLD_CLUSTER_SECRET_PREVIOUS: ${TNLD_CLUSTER_SECRET_PREVIOUS:-}
+      TNLD_RELAY_SLOT_CREDENTIAL: ${TNL_RELAY_A_CREDENTIAL:?set slot A's credential}
+      TNLD_FORWARDING_CREDENTIAL: ${TNL_FORWARDING_CREDENTIAL:?set the forwarding credential}
       TNLD_INTERNAL_RELAY_ADDRESS: relay-a:9445
       TNLD_INTERNAL_RELAY_LISTEN: :9445
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
@@ -135,8 +139,8 @@ services:
     environment:
       TNLD_CONTROL_HOSTNAME: ${TNL_CONTROL_HOSTNAME:?set TNL_CONTROL_HOSTNAME}
       TNLD_PRIVATE_CONTROL_ADDRESS: control:9443
-      TNLD_CLUSTER_SECRET: ${TNLD_CLUSTER_SECRET:?set TNLD_CLUSTER_SECRET}
-      TNLD_CLUSTER_SECRET_PREVIOUS: ${TNLD_CLUSTER_SECRET_PREVIOUS:-}
+      TNLD_RELAY_SLOT_CREDENTIAL: ${TNL_RELAY_B_CREDENTIAL:?set slot B's credential}
+      TNLD_FORWARDING_CREDENTIAL: ${TNL_FORWARDING_CREDENTIAL:?set the forwarding credential}
       TNLD_INTERNAL_RELAY_ADDRESS: relay-b:9445
       TNLD_INTERNAL_RELAY_LISTEN: :9445
       TNLD_METRICS_LISTEN: 0.0.0.0:9090

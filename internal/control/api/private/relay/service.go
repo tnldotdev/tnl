@@ -40,7 +40,7 @@ func newService(config DirectConfig) (*service, error) {
 
 func (s *service) RegisterRelay(ctx context.Context, body relayv1.RelayRegistration) (relayv1.RelayLease, error) {
 	if slot, scoped := ctx.Value(slotContext{}).(slot); scoped && (slot.ServiceID != body.RelayServiceId || slot.RelayID != body.RelayId ||
-		slot.Hostname != body.TlsServerName || slot.Hostname+":443" != body.RelayAddress || slot.InternalAddress != body.InternalRelayAddress) {
+		slot.Hostname != body.TlsServerName || slot.RelayAddress != body.RelayAddress || slot.InternalAddress != body.InternalRelayAddress) {
 		return relayv1.RelayLease{}, slotDenied()
 	}
 	if !region.ID(body.Region).Valid() {

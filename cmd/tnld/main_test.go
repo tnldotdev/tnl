@@ -30,7 +30,8 @@ func TestConfigShowUsesFileAndRedactsCredentials(t *testing.T) {
 tnld:
   role: relay
   control_hostname: control.example.com
-  cluster_secret: 0123456789abcdef0123456789abcdef
+  relay_slot_credential: 0123456789abcdef0123456789abcdef
+  forwarding_credential: abcdef0123456789abcdef0123456789
   relay_service_id: relay-a
   relay_id: relay-a-1
   relay_address: relay.example.com:443
@@ -109,7 +110,7 @@ func TestRelayQUICFlyWildcardDiagnostic(t *testing.T) {
 	var output bytes.Buffer
 	err := run(t.Context(), []string{
 		"serve", "--role=relay", "--relay-quic-profile=fly",
-		"--control-hostname=control.example.com", "--cluster-secret=0123456789abcdef0123456789abcdef",
+		"--control-hostname=control.example.com", "--relay-slot-credential=0123456789abcdef0123456789abcdef", "--forwarding-credential=abcdef0123456789abcdef0123456789",
 		"--relay-service-id=relay-a", "--relay-id=relay-a-1", "--relay-address=relay.example.com:443",
 		"--internal-relay-address=relay.internal:9445",
 	}, &output)
@@ -149,7 +150,8 @@ func TestRunConfigCheckIsSilentAndDoesNotStartServices(t *testing.T) {
 tnld:
   role: relay
   control_hostname: control.example.com
-  cluster_secret: 0123456789abcdef0123456789abcdef
+  relay_slot_credential: 0123456789abcdef0123456789abcdef
+  forwarding_credential: abcdef0123456789abcdef0123456789
   relay_service_id: relay-test
   relay_id: relay-test
   relay_address: relay.example.com:443
@@ -176,7 +178,7 @@ func TestResolveConfigFileRespectsEnvironmentAndFlags(t *testing.T) {
 	t.Setenv("TNLD_METRICS_LISTEN", "env:2")
 	base := daemonconfig.Config{
 		Role: daemonconfig.RoleRelay, MetricsListen: "env:2", RelayStreamCapacity: 99, ServiceCertificateWorkers: 4,
-		ControlHostname: "control.example.com", ClusterSecret: "0123456789abcdef0123456789abcdef",
+		ControlHostname: "control.example.com", RelaySlotCredential: "0123456789abcdef0123456789abcdef", ForwardingCredential: "abcdef0123456789abcdef0123456789",
 		RelayServiceID: "relay-test", RelayID: "relay-test", RelayAddress: "relay.example.com:443",
 		InternalRelayAddress: "relay.internal:9443", RelayTCPListen: ":443", RelayUDPListen: ":443",
 		VisitorConnectionLimit: 1, PublisherConnectionLimit: 1, PublisherConnectionStreamLimit: 1,
@@ -230,7 +232,8 @@ tnld:
   server_domain: tnl.example.com
   control_proxy_provider: single-xff
   managed_domain: tunnels.example.com
-  cluster_secret: 0123456789abcdef0123456789abcdef
+  ingress_control_credential: 0123456789abcdef0123456789abcdef
+  relay_slots_file: slots.json
   storage_key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
   acme_email: operator@example.com
   acme_accept_terms: true

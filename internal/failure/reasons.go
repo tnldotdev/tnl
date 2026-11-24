@@ -756,7 +756,7 @@ var definitions = map[Reason]Definition{
 	},
 	ServerClusterSecretInvalid: {
 		Class: Invalid, Message: "cluster secret configuration is invalid for this role",
-		Action: "check TNLD_CLUSTER_SECRET and the selected role", Retry: RetryAfterChange,
+		Action: "check the private credentials required by the selected role", Retry: RetryAfterChange,
 	},
 	ServerConfigFileInvalid: {
 		Class: Invalid, Message: "tnld could not read the configuration file",

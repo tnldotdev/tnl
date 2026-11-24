@@ -42,20 +42,17 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 	if err != nil {
 		return err
 	}
-	var slots controlrelay.Slots
-	if settings.relaySlotsFile != "" {
-		data, err := os.ReadFile(settings.relaySlotsFile)
-		if err != nil {
-			return failure.Wrap("read relay slot inventory", failure.ServerConfigInvalid, err)
-		}
-		slots, err = controlrelay.ParseSlots(data, d.clusterSecrets)
-		clear(data)
-		if err != nil {
-			return err
-		}
+	data, err := os.ReadFile(settings.relaySlotsFile)
+	if err != nil {
+		return failure.Wrap("read relay slot inventory", failure.ServerConfigInvalid, err)
+	}
+	slots, err := controlrelay.ParseSlots(data, d.clusterSecrets)
+	clear(data)
+	if err != nil {
+		return err
 	}
 	relayHandler, err := controlrelay.NewHandler(controlrelay.Config{
-		Store: d.database, ClusterSecrets: d.clusterSecrets, Slots: slots,
+		Store: d.database, Slots: slots,
 		LeaseDuration: settings.relayLeaseDuration,
 	})
 	if err != nil {

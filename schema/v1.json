@@ -3220,13 +3220,29 @@
           "type": "array",
           "description": "One stable public IPv6 address for the primary ingress pool."
         },
-        "cluster_secret": {
+        "ingress_control_credential": {
           "type": "string",
-          "description": "Current shared secret for private communication among control, ingress, and relays."
+          "description": "Credential ingress uses for its private control API."
         },
-        "cluster_secret_previous": {
+        "ingress_control_credential_previous": {
           "type": "string",
-          "description": "Previous cluster secret accepted only during rotation."
+          "description": "Previous ingress control credential accepted by control during rotation."
+        },
+        "relay_slots_file": {
+          "type": "string",
+          "description": "Control's exact relay registrations and their distinct credentials (JSON)."
+        },
+        "relay_slot_credential": {
+          "type": "string",
+          "description": "Credential for this relay's private control requests."
+        },
+        "forwarding_credential": {
+          "type": "string",
+          "description": "Credential for ingress-to-relay visitor forwarding."
+        },
+        "forwarding_credential_previous": {
+          "type": "string",
+          "description": "Previous forwarding credential accepted by relays during rotation."
         },
         "storage_key": {
           "type": "string",

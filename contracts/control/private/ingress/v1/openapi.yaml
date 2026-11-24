@@ -9,7 +9,7 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://ingress-control.internal
 security:
-  - clusterAuth: []
+  - ingressControlAuth: []
 paths:
   /internal/v1/ingress-pools/{pool_id}/ports:
     $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1ingress-pools~1{pool_id}~1ports"
@@ -37,8 +37,8 @@ paths:
     $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1service-recovery~1{recovery_episode_id}~1observed"
 components:
   securitySchemes:
-    clusterAuth:
-      $ref: "./schemas/common.yaml#/securitySchemes/clusterAuth"
+    ingressControlAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/ingressControlAuth"
   parameters:
     IngressID:
       $ref: "./schemas/common.yaml#/parameters/IngressID"

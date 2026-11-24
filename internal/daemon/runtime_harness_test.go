@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/controloutage"
@@ -377,7 +379,7 @@ func splitTestRelayConfig(t *testing.T, controlHostname, relayServiceID, relayID
 	listeners := runtimeListeners{metrics: serviceRuntimeListener(t, owner), relayTCP: serviceRuntimeListener(t, owner), relayUDP: integrationPacketListener(t, owner), relayInternal: serviceRuntimeListener(t, owner)}
 	cfg := splitTestConfig(daemonconfig.RoleRelay, listeners.metrics.Addr().String())
 	cfg.ControlHostname = controlHostname
-	cfg.ClusterSecret = testClusterSecret
+	cfg.RelaySlotCredential, cfg.ForwardingCredential = relayslots.Token(relayID), relayslots.Forwarding
 	cfg.RelayServiceID = relayServiceID
 	cfg.RelayID = relayID
 	cfg.RelayAddress = relayServiceID + ".127.0.0.1.nip.io:443"

@@ -94,8 +94,7 @@ func TestIntegrationNativePublisherRelayTraffic(t *testing.T) {
 		t.Fatal("unexpected native relay test arguments")
 	}
 	testutil.UseClientKeychain(t)
-	f := newServiceRuntimeFixture(t, false, nil)
-	wasmFixtureRelays(t, f) // name and certificate both resolve on loopback, without hosts-file changes.
+	f, _, _, _, _ := wasmFixtureRelays(t)
 	ingress := startSeparatedPrivateIngress(t, f, 0, "wss", nil)
 	visitorTransport := &http.Transport{
 		TLSClientConfig:   f.visitorRoots.Clone(),

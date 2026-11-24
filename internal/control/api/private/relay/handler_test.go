@@ -20,7 +20,7 @@ import (
 
 const testRelayClusterSecret = "test-relay-cluster-secret-012345678901"
 
-func TestHandlerRequiresClusterSecret(t *testing.T) {
+func TestHandlerRequiresSlotCredential(t *testing.T) {
 	h := testRelayHandler(t, &relayStoreStub{}, time.Now(), nil)
 	tests := []struct {
 		name          string
@@ -72,7 +72,7 @@ func TestRegisterRelayAuthorizesAndConvertsRequest(t *testing.T) {
 	body := relayv1.RelayRegistration{
 		Region:         "fly:sjc",
 		RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1", ProtocolVersion: 1,
-		RelayAddress: "relay.example:443", TlsServerName: "relay.example",
+		RelayAddress: "relay.example.test:443", TlsServerName: "relay.example.test",
 		InternalRelayAddress: "10.0.0.10:8443", InternalNetworks: []string{"10.0.0.0/24", "2001:db8::/64"},
 		ConnectionCapacity: 100, StreamCapacity: 1000,
 	}
@@ -247,8 +247,12 @@ func TestRelayStoreErrorsHaveStableProblems(t *testing.T) {
 
 func testRelayHandler(t *testing.T, store Store, now time.Time, report func(error)) http.Handler {
 	t.Helper()
+	slots, err := ParseSlots([]byte(`[{"service_id":"relay-service-1","relay_id":"relay-1","hostname":"relay.example.test","relay_address":"relay.example.test:443","internal_address":"10.0.0.10:8443","credential":"`+slotToken+`"}]`), testRelaySecrets(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	h, err := NewHandler(Config{
-		Store: store, ClusterSecrets: testRelaySecrets(t), LeaseDuration: 30 * time.Second,
+		Store: store, Slots: slots, LeaseDuration: 30 * time.Second,
 		Now: func() time.Time { return now }, Report: report,
 	})
 	if err != nil {
@@ -279,7 +283,7 @@ func serveRelayJSON(
 	}
 	request := httptest.NewRequest(method, target, bytes.NewReader(encoded))
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+testRelayClusterSecret)
+	request.Header.Set("Authorization", "Bearer "+slotToken)
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
 	return response

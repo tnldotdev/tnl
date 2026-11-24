@@ -5,13 +5,14 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	quic "github.com/quic-go/quic-go"
@@ -66,6 +67,7 @@ type privateSeparatedFixture struct {
 	processContext              func(string) context.Context
 	publisherConnections        chan<- *publisherservice.Claimed
 	publisherTCPOnly            bool
+	plannedRelays               map[string]relayProcessSettings
 	relayProcesses              map[string]*privateRelayFixture
 	ingressAddresses            map[int]string
 }
@@ -88,6 +90,12 @@ func newServiceRuntimeFixtureTiming(t *testing.T, standalone bool, opened chan<-
 }
 
 func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
+	return newServiceRuntimeFixturePlan(t, standalone, opened, defaults, processContext, nil, configure...)
+}
+
+type fixtureRelayPlan func(*runtimeTopology, daemonconfig.Config, *testCertificateAuthority) []relayProcessSettings
+
+func newServiceRuntimeFixturePlan(t *testing.T, standalone bool, opened chan<- privateObservation, defaults bool, processContext func(string) context.Context, plan fixtureRelayPlan, configure ...func(*daemonconfig.Config, *http.Transport, *testCertificateAuthority)) *privateSeparatedFixture {
 	t.Helper()
 	databaseURL := testutil.NewDisposablePostgresDatabaseURL(t, "service-runtime")
 	owner := newRuntimeTopology(t)
@@ -167,6 +175,21 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		t.Fatal(err)
 	}
 	startPrivateFixtureWorkers(t, ctx, control, database, config, pebble, dnsProvider)
+	var planned []relayProcessSettings
+	if !standalone {
+		if plan != nil {
+			planned = plan(owner, config, ca)
+		} else {
+			for _, id := range []string{"private-relay-0", "private-relay-1", "private-relay-spare"} {
+				planned = append(planned, planFixtureRelay(t, owner, config, ca, id))
+			}
+		}
+		var slots []relayslots.Slot
+		for _, p := range planned {
+			slots = append(slots, relayslots.New(p.relayServiceID, p.relayID, p.tlsServerName, p.relayAddress, p.internalAddress))
+		}
+		config.RelaySlotsFile = relayslots.File(t, slots...)
+	}
 	if standalone {
 		settings := standaloneSettingsFrom(config)
 		settings.control.listener = controlListener
@@ -240,22 +263,32 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		return f
 	}
 	f.serviceListeners = serviceListeners
-	for index := 0; index < 2; index++ {
-		f.startFixtureRelay(t, fmt.Sprintf("private-relay-%d", index))
+	f.plannedRelays = map[string]relayProcessSettings{}
+	for _, p := range planned {
+		f.plannedRelays[p.relayID] = p
+	}
+	for _, p := range planned[:2] {
+		f.startFixtureRelay(t, p.relayID)
 	}
 	return f
 }
 
 func (f *privateSeparatedFixture) startFixtureRelay(t *testing.T, id string) *privateRelayFixture {
 	t.Helper()
+	p, ok := f.plannedRelays[id]
+	if !ok {
+		t.Fatalf("no fixture slot for %s", id)
+	}
+	return f.runFixtureRelay(t, p)
+}
+func planFixtureRelay(t *testing.T, owner *runtimeTopology, config daemonconfig.Config, ca *testCertificateAuthority, id string) relayProcessSettings {
 	name := id + ".private.integration.test"
-	internal, forwarding := fixtureRelaySockets(t, f.owner)
+	internal, forwarding := fixtureRelaySockets(t, owner)
 	// relay discovery uses the same advertised address for TCP, QUIC and STUN.
-	publisher, packet := fixtureRelaySockets(t, f.owner)
-	settings := relayProcessSettings{controlEndpoint: f.controlConfig.PrivateControlEndpoint(), controlAddress: f.controlConfig.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
-		relayServiceID: id, relayID: id, relayAddress: publisher.Addr().String(), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, f.certificateAuthority, name), internalListener: internal, internalPacket: forwarding, internalAddress: internal.Addr().String(),
-		tcpListener: publisher, udpPacket: packet, udpListen: packet.LocalAddr().String(), quic: f.controlConfig.RelayQUICConfig(), runtime: relaySettingsFrom(f.controlConfig)}
-	return f.runFixtureRelay(t, settings)
+	publisher, packet := fixtureRelaySockets(t, owner)
+	return relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: relayslots.Token(id),
+		relayServiceID: id, relayID: id, relayAddress: publisher.Addr().String(), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, ca, name), internalListener: internal, internalPacket: forwarding, internalAddress: internal.Addr().String(),
+		tcpListener: publisher, udpPacket: packet, udpListen: packet.LocalAddr().String(), quic: config.RelayQUICConfig(), runtime: relaySettingsFrom(config)}
 }
 
 func fixtureRelaySockets(t *testing.T, owner *runtimeTopology) (net.Listener, net.PacketConn) {
@@ -276,12 +309,12 @@ func (f *privateSeparatedFixture) runFixtureRelay(t *testing.T, settings relayPr
 		lifetime = observability.WithMetrics(lifetime, observability.FromContext(f.processContext("relay")))
 		metrics = observability.FromContext(lifetime)
 	}
-	secrets, err := serverhttp.NewBearerSecrets(serviceRuntimeClusterSecret, "")
+	secrets, err := serverhttp.NewBearerSecrets(relayslots.Forwarding, "")
 	if err != nil {
 		cancel()
 		t.Fatal(err)
 	}
-	relay := &daemon{serviceHTTP: f.serviceHTTP, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now()}
+	relay := &daemon{serviceHTTP: f.serviceHTTP, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now()}
 	fixture := &privateRelayFixture{process: relay, settings: settings, stop: f.owner.ownDaemon(daemonconfig.RoleRelay, relay)}
 	if err := relay.startRelay(lifetime, settings, metrics); err != nil {
 		t.Fatal(err)

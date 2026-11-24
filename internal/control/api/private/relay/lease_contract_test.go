@@ -17,7 +17,7 @@ import (
 func TestRelayLeaseMutationContracts(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	deadline := now.Add(20 * time.Second)
-	wantIdentity := controlstate.RelayLeaseIdentity{RelayServiceID: "service-1", RelayID: "relay-1", RelayRunID: "run-1", RelayLeaseRevision: 7}
+	wantIdentity := controlstate.RelayLeaseIdentity{RelayServiceID: "relay-service-1", RelayID: "relay-1", RelayRunID: "run-1", RelayLeaseRevision: 7}
 	// the store result deliberately differs from the submitted identity and counters.
 	lease := controlstate.RelayLease{
 		Region:             "aws:us-west-1",
@@ -64,7 +64,7 @@ func TestRelayLeaseMutationContracts(t *testing.T) {
 				var result *relayv1.RelayLease
 				var status int
 				if operation == "renew" {
-					body := relayv1.RelayRenewal{RelayServiceId: "service-1", RelayId: "relay-1", RelayRunId: "run-1", RelayLeaseRevision: 7, ReportedConnections: 3, ReportedStreams: 4}
+					body := relayv1.RelayRenewal{RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1", RelayLeaseRevision: 7, ReportedConnections: 3, ReportedStreams: 4}
 					if transport == "direct" {
 						lease, directErr := client.RenewRelay(t.Context(), "relay-1", body)
 						err = directErr
@@ -82,7 +82,7 @@ func TestRelayLeaseMutationContracts(t *testing.T) {
 						t.Fatalf("renewal = %#v, duration %v", renewal, duration)
 					}
 				} else {
-					body := relayv1.RelayDrainRequest{RelayServiceId: "service-1", RelayId: "relay-1", RelayRunId: "run-1", RelayLeaseRevision: 7, Deadline: deadline}
+					body := relayv1.RelayDrainRequest{RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1", RelayLeaseRevision: 7, Deadline: deadline}
 					if transport == "direct" {
 						lease, directErr := client.DrainRelay(t.Context(), "relay-1", body)
 						err = directErr
@@ -118,7 +118,7 @@ func TestDirectRenewRejectsMismatchedPathBeforeStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = client.RenewRelay(t.Context(), "path-relay", relayv1.RelayRenewal{
-		RelayServiceId: "service-1", RelayId: "body-relay", RelayRunId: "run-1", RelayLeaseRevision: 7,
+		RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1", RelayLeaseRevision: 7,
 	})
 	var problem *serverhttp.ProblemError
 	if !errors.As(err, &problem) || problem.Status != http.StatusBadRequest || calls != 0 {
@@ -133,7 +133,7 @@ func TestHTTPRenewRejectsMismatchedPathBeforeStore(t *testing.T) {
 		return controlstate.RelayLease{}, nil
 	}}
 	response := serveRelayJSON(t, testRelayHandler(t, store, time.Now(), nil), http.MethodPost, "/internal/v1/relays/path-relay/renew", relayv1.RelayRenewal{
-		RelayServiceId: "service-1", RelayId: "body-relay", RelayRunId: "run-1", RelayLeaseRevision: 7,
+		RelayServiceId: "relay-service-1", RelayId: "relay-1", RelayRunId: "run-1", RelayLeaseRevision: 7,
 	})
 	if response.Code != http.StatusBadRequest || calls != 0 {
 		t.Fatalf("response = %d: %s; calls %d", response.Code, response.Body.String(), calls)

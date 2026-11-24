@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
@@ -204,7 +206,6 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 	}
 	cfg.ServiceCertificateWorkers = *runtimeLoadCertificateWorkers
 	cfg.QUICIdleTimeout = 45 * time.Second
-	cfg.ClusterSecret = testClusterSecret
 	if *runtimeLoadWorkload == "connect" || *runtimeLoadWorkload == "postgres" {
 		// the echo target is private; these ports only allocate its managed TLS identity.
 		cfg.ServicePortRanges = []string{"20000-20127"}
@@ -226,6 +227,14 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 	}
 	switch role {
 	case daemonconfig.RoleControl:
+		cfg.IngressControlCredential = testClusterSecret
+		var slots []relayslots.Slot
+		for _, name := range separatedNames("relays") {
+			service, id := separatedPlan(t)["relay-service."+name][0], separatedPlan(t)["relay-id."+name][0]
+			host := service + "." + separatedDomain
+			slots = append(slots, relayslots.New(service, id, host, host+":443", name+":8443"))
+		}
+		cfg.RelaySlotsFile = relayslots.File(t, slots...)
 		cfg.DatabaseURL = testutil.PostgresURL(t)
 		cfg.ControlListen, cfg.PrivateControlListen = "127.0.0.1:8080", "0.0.0.0:9443"
 		cfg.ServerDomain, cfg.ManagedDomain = separatedDomain, "routes."+separatedDomain
@@ -237,6 +246,7 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 		cfg.Route53ManagedZoneID, cfg.Route53Region, cfg.DNSServer = "local", "us-east-1", "dns:53"
 		cfg.IngressIPv4Addresses = []string{ingressAddress}
 	case daemonconfig.RoleIngress:
+		cfg.IngressControlCredential, cfg.ForwardingCredential = testClusterSecret, relayslots.Forwarding
 		cfg.ControlHostname, cfg.IngressID = "control."+separatedDomain, component+"-separated"
 		cfg.IngressListen = "0.0.0.0:443"
 		cfg.RequireProxyHeader, cfg.IngressTrustedProxies = true, []string{ingressAddress + "/32"}
@@ -244,6 +254,7 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 		cfg.ControlHostname = "control." + separatedDomain
 		serviceID := separatedPlan(t)["relay-service."+component][0]
 		cfg.RelayServiceID, cfg.RelayID = serviceID, separatedPlan(t)["relay-id."+component][0]
+		cfg.RelaySlotCredential, cfg.ForwardingCredential = relayslots.Token(cfg.RelayID), relayslots.Forwarding
 		cfg.RelayAddress = serviceID + "." + separatedDomain + ":443"
 		cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = "/load/"+serviceID+".pem", "/load/"+serviceID+".key"
 		cfg.RelayTCPListen, cfg.RelayUDPListen = "0.0.0.0:443", "0.0.0.0:443"

@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
@@ -73,6 +75,10 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		t.Fatal(err)
 	}
 	serveIntegrationControlProxy(t, dependencies, controlProxy, controlBackend, controlTLS)
+	relayAPort := unusedTCPAndUDPPortOn(t, "127.0.0.2")
+	relayBPort := unusedTCPAndUDPPortOn(t, "127.0.0.2")
+	internalA, internalB := unusedTCPAddressOn(t, "127.0.0.2"), unusedTCPAddressOn(t, "127.0.0.2")
+	slots := relayslots.File(t, relayslots.New("relay-a", "relay-a-binary", relayAHost, net.JoinHostPort(relayAHost, relayAPort), internalA), relayslots.New("relay-b", "relay-b-binary", relayBHost, net.JoinHostPort(relayBHost, relayBPort), internalB))
 	controlEnvironment := integrationBinaryEnvironment(map[string]string{
 		"SSL_CERT_FILE":                             trustFile,
 		"TNLD_ACCESS_TOKEN_LIFETIME":                "5m",
@@ -80,7 +86,8 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 		"TNLD_ACME_DIRECTORY_URL":                   pebble.directoryURL,
 		"TNLD_ACME_EMAIL":                           "integration@example.test",
 		"TNLD_ACME_PROFILE":                         "tlsserver",
-		"TNLD_CLUSTER_SECRET":                       testClusterSecret,
+		"TNLD_INGRESS_CONTROL_CREDENTIAL":           testClusterSecret,
+		"TNLD_RELAY_SLOTS_FILE":                     slots,
 		"TNLD_CONTROL_LISTEN":                       controlBackend,
 		"TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE": controlCertificate.certificateFile,
 		"TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE": controlCertificate.privateKeyFile,
@@ -112,8 +119,8 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 
 	ingressMetrics := unusedTCPAddress(t)
 	ingressEnvironment := integrationBinaryEnvironment(map[string]string{
-		"SSL_CERT_FILE":               trustFile,
-		"TNLD_CLUSTER_SECRET":         testClusterSecret,
+		"SSL_CERT_FILE":                   trustFile,
+		"TNLD_INGRESS_CONTROL_CREDENTIAL": testClusterSecret, "TNLD_FORWARDING_CREDENTIAL": relayslots.Forwarding,
 		"TNLD_CONTROL_HOSTNAME":       controlHost,
 		"TNLD_CONTROL_RETRY_INTERVAL": "50ms",
 		"TNLD_DRAIN_TIMEOUT":          "3s",
@@ -126,13 +133,11 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 	ingress := owner.start(t, daemonconfig.RoleIngress, repositoryRoot, ingressEnvironment, tnldPath, "serve")
 	waitForIntegrationBinaryReady(t, ingress, ingressMetrics, databaseURL)
 
-	relayAPort := unusedTCPAndUDPPortOn(t, "127.0.0.2")
 	relayA, relayAMetrics := startIntegrationBinaryRelay(t, owner, repositoryRoot, tnldPath, trustFile,
-		controlHost, "relay-a", "relay-a-binary", relayAHost, relayAPort, relayACertificate)
+		controlHost, "relay-a", "relay-a-binary", relayAHost, relayAPort, internalA, relayACertificate)
 	waitForIntegrationBinaryReady(t, relayA, relayAMetrics, databaseURL)
-	relayBPort := unusedTCPAndUDPPortOn(t, "127.0.0.2")
 	relayB, relayBMetrics := startIntegrationBinaryRelay(t, owner, repositoryRoot, tnldPath, trustFile,
-		controlHost, "relay-b", "relay-b-binary", relayBHost, relayBPort, relayBCertificate)
+		controlHost, "relay-b", "relay-b-binary", relayBHost, relayBPort, internalB, relayBCertificate)
 	waitForIntegrationBinaryReady(t, relayB, relayBMetrics, databaseURL)
 
 	stateDirectory := binaryStateDirectory(t)
@@ -151,15 +156,14 @@ func startIntegrationBinarySplit(t *testing.T) *integrationBinarySplit {
 func startIntegrationBinaryRelay(
 	t *testing.T,
 	owner *binaryTopology,
-	repositoryRoot, tnldPath, trustFile, controlHost, serviceID, relayID, relayHost, relayPort string,
+	repositoryRoot, tnldPath, trustFile, controlHost, serviceID, relayID, relayHost, relayPort, internalAddress string,
 	certificate integrationCertificate,
 ) (*integrationBinaryProcess, string) {
 	t.Helper()
 	metricsAddress := unusedTCPAddress(t)
-	internalAddress := unusedTCPAddressOn(t, "127.0.0.2")
 	environment := integrationBinaryEnvironment(map[string]string{
-		"SSL_CERT_FILE":                   trustFile,
-		"TNLD_CLUSTER_SECRET":             testClusterSecret,
+		"SSL_CERT_FILE":              trustFile,
+		"TNLD_RELAY_SLOT_CREDENTIAL": relayslots.Token(relayID), "TNLD_FORWARDING_CREDENTIAL": relayslots.Forwarding,
 		"TNLD_CONTROL_HOSTNAME":           controlHost,
 		"TNLD_CONTROL_RETRY_INTERVAL":     "50ms",
 		"TNLD_DRAIN_TIMEOUT":              "3s",

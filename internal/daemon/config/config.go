@@ -18,6 +18,36 @@ import (
 
 const defaultACMEDirectoryURL = "https://acme-v02.api.letsencrypt.org/directory"
 
+func (c Config) validateCredentials() error {
+	// Each receiver accepts only its own credential. Ingress and relay each
+	// know two credentials; those credentials must not be interchangeable.
+	for _, p := range []struct {
+		current, previous string
+		required, rotates bool
+		op                failure.Operation
+	}{
+		{c.IngressControlCredential, c.IngressControlCredentialPrevious, c.Role == RoleControl || c.Role == RoleIngress, c.Role == RoleControl, "configure ingress control credential"},
+		{c.ForwardingCredential, c.ForwardingCredentialPrevious, c.Role == RoleIngress || c.Role == RoleRelay, c.Role == RoleRelay, "configure forwarding credential"},
+		{c.RelaySlotCredential, "", c.Role == RoleRelay, false, "configure relay slot credential"},
+	} {
+		if !p.required && p.current != "" || !p.rotates && p.previous != "" {
+			return failure.Wrap(p.op, failure.ServerClusterSecretInvalid, errors.New("credential does not belong to this role"))
+		}
+		if p.required {
+			if _, err := serverhttp.NewBearerSecrets(p.current, p.previous); err != nil {
+				return failure.Wrap(p.op, failure.ServerClusterSecretInvalid, err)
+			}
+		}
+	}
+	if c.ForwardingCredential != "" && (c.ForwardingCredential == c.IngressControlCredential || c.ForwardingCredential == c.RelaySlotCredential || c.RelaySlotCredential != "" && c.ForwardingCredentialPrevious == c.RelaySlotCredential) {
+		return failure.Wrap("configure split credentials", failure.ServerClusterSecretInvalid, errors.New("control and forwarding credentials must be distinct"))
+	}
+	if (c.RelaySlotsFile != "") != (c.Role == RoleControl) {
+		return failure.Wrap("configure relay slot inventory", failure.ServerConfigInvalid, errors.New("only split control requires a relay slots file"))
+	}
+	return nil
+}
+
 // Role selects the role hosted by one tnld process.
 type Role string
 
@@ -106,13 +136,14 @@ type Config struct {
 	IngressIPv4Addresses   []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"One stable public IPv4 address for the primary ingress pool."`
 	IngressIPv6Addresses   []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"One stable public IPv6 address for the primary ingress pool."`
 
-	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
-	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
-	RelaySlotsFile        string `name:"relay-slots-file" env:"TNLD_RELAY_SLOTS_FILE" type:"path" help:"Control's exact relay registrations and their distinct credentials (JSON)."`
-	RelaySlotCredential   string `name:"relay-slot-credential" env:"TNLD_RELAY_SLOT_CREDENTIAL" help:"Credential for this relay's private control requests."`
-	ForwardingCredential  string `name:"forwarding-credential" env:"TNLD_FORWARDING_CREDENTIAL" help:"Ingress-to-relay forwarding credential. Set it as the cluster secret on relays to keep the ingress control credential on ingress and control only."`
-	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
-	StorageKeyPrevious    string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
+	IngressControlCredential         string `name:"ingress-control-credential" env:"TNLD_INGRESS_CONTROL_CREDENTIAL" help:"Credential ingress uses for its private control API."`
+	IngressControlCredentialPrevious string `name:"ingress-control-credential-previous" env:"TNLD_INGRESS_CONTROL_CREDENTIAL_PREVIOUS" help:"Previous ingress control credential accepted by control during rotation."`
+	RelaySlotsFile                   string `name:"relay-slots-file" env:"TNLD_RELAY_SLOTS_FILE" type:"path" help:"Control's exact relay registrations and their distinct credentials (JSON)."`
+	RelaySlotCredential              string `name:"relay-slot-credential" env:"TNLD_RELAY_SLOT_CREDENTIAL" help:"Credential for this relay's private control requests."`
+	ForwardingCredential             string `name:"forwarding-credential" env:"TNLD_FORWARDING_CREDENTIAL" help:"Credential for ingress-to-relay visitor forwarding."`
+	ForwardingCredentialPrevious     string `name:"forwarding-credential-previous" env:"TNLD_FORWARDING_CREDENTIAL_PREVIOUS" help:"Previous forwarding credential accepted by relays during rotation."`
+	StorageKey                       string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
+	StorageKeyPrevious               string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
 
 	TrafficDefaultConnections        int           `name:"traffic-default-connections" env:"TNLD_TRAFFIC_DEFAULT_CONNECTIONS" default:"1024" help:"Default concurrent visitor connections per service run on each ingress process."`
 	TrafficDefaultRate               int           `name:"traffic-default-rate" env:"TNLD_TRAFFIC_DEFAULT_RATE" default:"1000" help:"Default new visitor connections per traffic rate period."`
@@ -190,22 +221,6 @@ func (c Config) Validate() (retErr error) {
 	if c.Region != "" && !c.Region.Valid() {
 		return region.ErrPreference
 	}
-	if c.RelaySlotsFile != "" && c.Role != RoleControl || c.RelaySlotCredential != "" && c.Role != RoleRelay {
-		return failure.Wrap("select relay credentials", failure.ServerConfigInvalid, errors.New("slot inventory belongs to control and a slot credential belongs to one relay"))
-	}
-	if c.RelaySlotCredential != "" {
-		if _, err := serverhttp.NewBearerSecrets(c.RelaySlotCredential, c.ClusterSecret); err != nil || c.RelaySlotCredential == c.ClusterSecretPrevious {
-			return failure.Wrap("validate relay slot credential", failure.ServerClusterSecretInvalid, errors.Join(errors.New("relay slot requires a distinct credential"), err))
-		}
-	}
-	if c.ForwardingCredential != "" {
-		if c.Role != RoleIngress {
-			return failure.Wrap("select forwarding credential", failure.ServerConfigInvalid, errors.New("only ingress dials relay forwarding connections"))
-		}
-		if _, err := serverhttp.NewBearerSecrets(c.ForwardingCredential, c.ClusterSecret); err != nil || c.ForwardingCredential == c.ClusterSecretPrevious {
-			return failure.Wrap("validate forwarding credential", failure.ServerClusterSecretInvalid, errors.Join(errors.New("forwarding requires a distinct credential"), err))
-		}
-	}
 	if c.RelayQUICProfile != "" && c.RelayQUICProfile != "standard" && c.RelayQUICProfile != "fly" {
 		return failure.WrapSetting("validate relay QUIC profile", failure.ServerConfigInvalid,
 			failure.SettingRelayQUICProfile, errors.New("relay QUIC profile must be standard or fly"))
@@ -272,9 +287,6 @@ func (c Config) Validate() (retErr error) {
 				return fmt.Errorf("private control address: %w", err)
 			}
 		}
-		if _, err := serverhttp.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
-			return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
-		}
 		if c.EmailURL != "" || c.WebhookSecret != "" || c.WebServiceSecret != "" || c.StorageKey != "" || c.StorageKeyPrevious != "" ||
 			c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" || c.Route53DelegationSetID != "" || c.NameserverDomain != "" ||
 			len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0 {
@@ -339,7 +351,7 @@ func (c Config) Validate() (retErr error) {
 		c.DrainTimeout <= 0 || c.Role.RunsRelay() && c.QUICIdleTimeout <= 0 {
 		return errors.New("lease, transport, or drain timing is invalid")
 	}
-	return nil
+	return c.validateCredentials()
 }
 
 // ServingRegion supplies the explicit unlocated default for embedded callers.

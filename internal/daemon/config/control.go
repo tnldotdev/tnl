@@ -94,14 +94,6 @@ func (c Config) validateControl() error {
 	if c.ControlHostname != "" || c.PrivateControlAddress != "" || c.IngressID != "" || c.RelayServiceID != "" || c.RelayID != "" || c.RelayAddress != "" || c.InternalRelayAddress != "" {
 		return errors.New("split-process configuration is invalid for control and standalone")
 	}
-	if c.Role == RoleStandalone {
-		if c.ClusterSecret != "" || c.ClusterSecretPrevious != "" {
-			return failure.Wrap("validate standalone cluster secret", failure.ServerClusterSecretInvalid,
-				errors.New("standalone does not accept a configured cluster secret"))
-		}
-	} else if _, err := serverhttp.NewBearerSecrets(c.ClusterSecret, c.ClusterSecretPrevious); err != nil {
-		return failure.Wrap("validate cluster secret", failure.ServerClusterSecretInvalid, err)
-	}
 	if err := c.validateOIDC(); err != nil {
 		return err
 	}

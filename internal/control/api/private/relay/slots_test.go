@@ -17,7 +17,7 @@ import (
 )
 
 const slotToken = "private-test-slot-credential-abcdef0123456789"
-const testInventory = `[{"service_id":"slot-a","relay_id":"relay-a","hostname":"a.relay.example","internal_address":"10.74.0.7:9445","credential":"` + slotToken + `"}]`
+const testInventory = `[{"service_id":"slot-a","relay_id":"relay-a","hostname":"a.relay.example","relay_address":"a.relay.example:443","internal_address":"10.74.0.7:9445","credential":"` + slotToken + `"}]`
 
 func TestSlotOwnsRegistrationRenewalAndCertificate(t *testing.T) {
 	cluster := testRelaySecrets(t)
@@ -41,7 +41,7 @@ func TestSlotOwnsRegistrationRenewalAndCertificate(t *testing.T) {
 			return controlstate.RelayTransportCertificate{RelayServiceID: "slot-a", TLSServerName: host, PrivateKeyPEM: "fixture-key"}, nil
 		},
 	}
-	h, err := NewHandler(Config{Store: store, Slots: slots, ClusterSecrets: cluster, LeaseDuration: time.Minute})
+	h, err := NewHandler(Config{Store: store, Slots: slots, LeaseDuration: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +96,10 @@ func TestSlotOwnsRegistrationRenewalAndCertificate(t *testing.T) {
 }
 
 func TestInvalidSlotInventoryFailsClosed(t *testing.T) {
+	_, emptyErr := NewHandler(Config{Store: &relayStoreStub{}, LeaseDuration: time.Minute})
+	if reason, _ := failure.ReasonOf(emptyErr); reason != failure.ServerConfigInvalid || !errors.Is(emptyErr, errEmptySlots) {
+		t.Fatal("private relay API accepted a missing inventory or lost the cause", emptyErr)
+	}
 	for _, data := range []string{"[]", strings.Replace(testInventory, slotToken, testRelayClusterSecret, 1), testInventory[:len(testInventory)-1] + "," + testInventory[1:]} {
 		slots, err := ParseSlots([]byte(data), testRelaySecrets(t))
 		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerConfigInvalid || len(slots.entries) != 0 {

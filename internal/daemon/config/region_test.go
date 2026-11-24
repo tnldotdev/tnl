@@ -8,7 +8,7 @@ import (
 )
 
 func TestProviderRegionConfig(t *testing.T) {
-	base := []string{"--role=ingress", "--ingress-id=ingress-a", "--control-hostname=control.example.test", "--cluster-secret=" + testClusterSecret}
+	base := []string{"--role=ingress", "--ingress-id=ingress-a", "--control-hostname=control.example.test", "--ingress-control-credential", testClusterSecret, "--forwarding-credential", testForwarding}
 	for _, id := range []string{"local", "fly:sjc", "aws:us-west-1", "gcp:us-west1"} {
 		cfg, err := Parse(append(base, "--region="+id))
 		if err != nil || string(cfg.ServingRegion()) != id {

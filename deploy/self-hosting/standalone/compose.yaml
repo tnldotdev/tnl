@@ -33,8 +33,6 @@ services:
     stop_grace_period: 45s
     environment:
       TNLD_DATABASE_DIRECT_URL: ""
-      TNLD_CLUSTER_SECRET: ""
-      TNLD_CLUSTER_SECRET_PREVIOUS: ""
       TNLD_CONTROL_LISTEN: :8080
       TNLD_CONTROL_TRUSTED_PROXIES: ${TNLD_CONTROL_TRUSTED_PROXIES:?set the HTTPS edge peer CIDRs}
       TNLD_CONTROL_PROXY_PROVIDER: ${TNLD_CONTROL_PROXY_PROVIDER:?select the HTTPS proxy provider}

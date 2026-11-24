@@ -32,6 +32,9 @@ import (
 	"testing"
 	"time"
 
+	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/client/auth"
@@ -117,8 +120,7 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 	if host, _, err := net.SplitHostPort(*wasmRedisAddress); err != nil || (host != "localhost" && !net.ParseIP(host).IsLoopback()) {
 		t.Fatal("portable SDK fixture requires a loopback Redis fixture")
 	}
-	f, issuer := newWorkloadTransportFixture(t)
-	proxies, relays, pins := wasmFixtureRelays(t, f)
+	f, issuer, proxies, relays, pins := wasmFixtureRelays(t)
 	pgConfig, observer := wasmPostgresTarget(t, f)
 	tcpTarget := startPrivateEchoTarget(t, f.owner)
 	httpTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -291,52 +293,41 @@ func TestIntegrationConnectorWASMFixture(t *testing.T) {
 	}
 }
 
-func wasmFixtureRelays(t *testing.T, f *privateSeparatedFixture) (map[string]*wasmCarrierProxy, []wasmFixtureRelay, []string) {
+func wasmFixtureRelays(t *testing.T) (*privateSeparatedFixture, *githubtest.Issuer, map[string]*wasmCarrierProxy, []wasmFixtureRelay, []string) {
 	t.Helper()
-	// native fixtures allow an independent dial address and tls hostname. browser
-	// WebSocket requires one real hostname, so replace the initial two relays
-	// before starting publishers. their old leases must actually retire first.
-	for _, relay := range f.relayProcesses {
-		if err := relay.stop(); err != nil {
-			t.Fatal("stop initial native fixture relay", err)
-		}
-	}
-	privateWait(t, 10*time.Second, func(ctx context.Context) (bool, error) {
-		var count int
-		err := f.inspect.QueryRowContext(ctx, "SELECT count(*) FROM control.relay_leases WHERE lease_expires_at>now() AND NOT draining").Scan(&count)
-		return count == 0, err
-	})
-	f.relayProcesses = make(map[string]*privateRelayFixture)
-	f.tcpAddresses, f.quicAddresses = make(map[string]string), make(map[string]string)
 	proxies := make(map[string]*wasmCarrierProxy)
 	var relays []wasmFixtureRelay
 	var pins []string
-	for index := range 2 {
-		listener, packets := fixtureRelaySockets(t, f.owner)
-		proxy := newWASMCarrierProxy(t, f.owner, listener.Addr().String())
-		_, port, err := net.SplitHostPort(proxy.listener.Addr().String())
-		if err != nil {
-			t.Fatal(err)
+	f, issuer := newWorkloadTransportFixtureWithPlan(t, func(owner *runtimeTopology, config daemonconfig.Config, ca *testCertificateAuthority) []relayProcessSettings {
+		var planned []relayProcessSettings
+		for index, host := range []string{"localhost", "relay-b.127.0.0.1.nip.io"} {
+			listener, packets := fixtureRelaySockets(t, owner)
+			proxy := newWASMCarrierProxy(t, owner, listener.Addr().String())
+			_, port, err := net.SplitHostPort(proxy.listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			address := net.JoinHostPort(host, port)
+			id := fmt.Sprintf("portable-relay-%d", index)
+			internal, forwarding := fixtureRelaySockets(t, owner)
+			settings := relayProcessSettings{
+				controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: relayslots.Token(id),
+				relayServiceID: id, relayID: id, relayAddress: address, tlsServerName: host, transportTLS: serviceRuntimeTLS(t, ca, host),
+				internalListener: internal, internalPacket: forwarding, internalAddress: internal.Addr().String(), tcpListener: listener, udpPacket: packets, udpListen: packets.LocalAddr().String(),
+				quic: config.RelayQUICConfig(), runtime: relaySettingsFrom(config),
+			}
+			planned = append(planned, settings)
+			proxies[address] = proxy
+			relays = append(relays, wasmFixtureRelay{Address: address, DialAddress: proxy.listener.Addr().String(), TLSServerName: host})
+			leaf, err := x509.ParseCertificate(settings.transportTLS.Certificates[0].Certificate[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+			pins = append(pins, base64.StdEncoding.EncodeToString(digest[:]))
 		}
-		address := net.JoinHostPort("localhost", port)
-		id := fmt.Sprintf("portable-relay-%d", index)
-		internal, forwarding := fixtureRelaySockets(t, f.owner)
-		settings := relayProcessSettings{
-			controlEndpoint: f.controlConfig.PrivateControlEndpoint(), controlAddress: f.controlConfig.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
-			relayServiceID: id, relayID: id, relayAddress: address, tlsServerName: "localhost", transportTLS: serviceRuntimeTLS(t, f.certificateAuthority, "localhost"),
-			internalListener: internal, internalPacket: forwarding, internalAddress: internal.Addr().String(), tcpListener: listener, udpPacket: packets, udpListen: packets.LocalAddr().String(),
-			quic: f.controlConfig.RelayQUICConfig(), runtime: relaySettingsFrom(f.controlConfig),
-		}
-		f.runFixtureRelay(t, settings)
-		proxies[address] = proxy
-		relays = append(relays, wasmFixtureRelay{Address: address, DialAddress: proxy.listener.Addr().String(), TLSServerName: "localhost"})
-		leaf, err := x509.ParseCertificate(settings.transportTLS.Certificates[0].Certificate[0])
-		if err != nil {
-			t.Fatal(err)
-		}
-		digest := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
-		pins = append(pins, base64.StdEncoding.EncodeToString(digest[:]))
-	}
+		return planned
+	})
 	control := f.roots.Clone()
 	control.ServerName = strings.TrimPrefix(f.controlConfig.ControlOrigin(), "https://")
 	connection, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", f.publicControlAddress, control)
@@ -350,7 +341,7 @@ func wasmFixtureRelays(t *testing.T, f *privateSeparatedFixture) (map[string]*wa
 	}
 	sort.Slice(relays, func(i, j int) bool { return relays[i].Address < relays[j].Address })
 	sort.Strings(pins)
-	return proxies, relays, pins
+	return f, issuer, proxies, relays, pins
 }
 
 func validateWASMFixturePath(path string) error {

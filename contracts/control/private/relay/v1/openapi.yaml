@@ -9,7 +9,7 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://relay-control.internal
 security:
-  - clusterAuth: []
+  - relaySlotAuth: []
 paths:
   /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim:
     $ref: "./paths/connector-peer-pairs.yaml#/paths/~1internal~1v1~1connector-peer-pairs~1{pair_id}~1legs~1{connection_slot}~1claim"
@@ -29,8 +29,8 @@ paths:
     $ref: "./paths/certs.yaml#/paths/~1internal~1v1~1relay-services~1{relay_service_id}~1certificate"
 components:
   securitySchemes:
-    clusterAuth:
-      $ref: "./schemas/common.yaml#/securitySchemes/clusterAuth"
+    relaySlotAuth:
+      $ref: "./schemas/common.yaml#/securitySchemes/relaySlotAuth"
   parameters:
     RelayID:
       $ref: "./schemas/common.yaml#/parameters/RelayID"

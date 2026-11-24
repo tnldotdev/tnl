@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"cmp"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -70,8 +69,8 @@ type ingressProcessSettings struct {
 func ingressProcessSettingsFrom(cfg daemonconfig.Config) ingressProcessSettings {
 	result := ingressProcessSettings{
 		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
-		clusterSecret:        cfg.ClusterSecret,
-		forwardingCredential: cmp.Or(cfg.ForwardingCredential, cfg.ClusterSecret),
+		clusterSecret:        cfg.IngressControlCredential,
+		forwardingCredential: cfg.ForwardingCredential,
 		ingressID:            cfg.IngressID, listen: cfg.IngressListen, runtime: ingressSettingsFrom(cfg),
 	}
 	if cfg.ServicePortRanges != nil {

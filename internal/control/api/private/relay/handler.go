@@ -10,6 +10,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
@@ -25,25 +26,23 @@ type Store interface {
 }
 
 type Config struct {
-	Store          Store
-	Slots          Slots
-	ClusterSecrets serverhttp.BearerSecrets
-	LeaseDuration  time.Duration
-	Now            func() time.Time
-	Report         func(error)
+	Store         Store
+	Slots         Slots
+	LeaseDuration time.Duration
+	Now           func() time.Time
+	Report        func(error)
 }
 
 type handler struct {
-	service        *service
-	slots          Slots
-	clusterSecrets serverhttp.BearerSecrets
-	mux            *http.ServeMux
+	service *service
+	slots   Slots
+	mux     *http.ServeMux
 }
 
 // NewHandler constructs the private relay service.
 func NewHandler(config Config) (*handler, error) {
-	if config.Store == nil || !config.ClusterSecrets.Valid() {
-		return nil, errors.New("relayapi: store and cluster secrets are required")
+	if len(config.Slots.entries) == 0 {
+		return nil, failure.Wrap("configure private relay API", failure.ServerConfigInvalid, errEmptySlots)
 	}
 	if config.LeaseDuration <= 0 {
 		return nil, errors.New("relayapi: relay lease duration must be positive")
@@ -55,7 +54,7 @@ func NewHandler(config Config) (*handler, error) {
 		return nil, err
 	}
 	h := &handler{
-		service: service, slots: config.Slots, clusterSecrets: config.ClusterSecrets, mux: http.NewServeMux(),
+		service: service, slots: config.Slots, mux: http.NewServeMux(),
 	}
 	relayv1.HandlerWithOptions(generatedServer{handler: h}, relayv1.StdHTTPServerOptions{
 		BaseRouter: h.mux,
@@ -70,19 +69,14 @@ func NewHandler(config Config) (*handler, error) {
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	if len(h.slots.entries) != 0 {
-		response.Header().Set("Cache-Control", "no-store")
-		authenticated, ok := h.slots.authenticate(request)
-		if !ok {
-			response.Header().Set("WWW-Authenticate", "Bearer")
-			serverhttp.WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "a relay slot credential is required", "")
-			return
-		}
-		request = authenticated
-	} else if !serverhttp.AuthenticateClusterRequest(response, request, h.clusterSecrets) {
+	response.Header().Set("Cache-Control", "no-store")
+	authenticated, ok := h.slots.authenticate(request)
+	if !ok {
+		response.Header().Set("WWW-Authenticate", "Bearer")
+		serverhttp.WriteProblem(response, http.StatusUnauthorized, "unauthenticated", "a relay slot credential is required", "")
 		return
 	}
-	h.mux.ServeHTTP(response, request)
+	h.mux.ServeHTTP(response, authenticated)
 }
 
 // MatchedPattern is safe to call before authentication; it never returns an ID.

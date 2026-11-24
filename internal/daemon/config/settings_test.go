@@ -2,12 +2,15 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 func TestExplicitSettingsRejectUnusedRolesFromEverySource(t *testing.T) {
-	base := []string{"--role=ingress", "--control-hostname=control.example.test", "--cluster-secret=" + testClusterSecret, "--ingress-id=ingress-1"}
+	base := []string{"--role=ingress", "--control-hostname=control.example.test", "--ingress-control-credential", testClusterSecret, "--forwarding-credential", testForwarding, "--ingress-id=ingress-1"}
 	for _, flag := range []string{"relay-stream-capacity=10", "traffic-default-connections=1024", "ingress-lease-duration=30s", "service-certificate-workers=8"} {
 		if _, err := Parse(append(append([]string{}, base...), "--"+flag)); err == nil {
 			t.Fatal("accepted unused flag", flag)
@@ -68,15 +71,49 @@ func TestSlotCredentialsOnlyAppearRedactedOnTheirRole(t *testing.T) {
 		for _, role := range []Role{RoleControl, RoleRelay, RoleIngress, RoleStandalone} {
 			values := Inspect(Config{Role: role, RelaySlotsFile: "private", RelaySlotCredential: "private", ForwardingCredential: "private"}, nil)
 			v, found := values[name]
-			if found != (role == owner) || found && v.Value != "[redacted]" {
+			if found != (role == owner || name == "forwarding_credential" && role == RoleRelay) || found && v.Value != "[redacted]" {
 				t.Fatalf("incorrect role or redaction for %s on %s", name, role)
 			}
 		}
 	}
 }
 
+func TestSplitCredentialsRequiredAndDistinct(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		role   Role
+		change func(*Config)
+		reason failure.Reason
+	}{
+		{"missing inventory", RoleControl, func(c *Config) { c.RelaySlotsFile = "" }, failure.ServerConfigInvalid},
+		{"missing ingress credential", RoleControl, func(c *Config) { c.IngressControlCredential = "" }, failure.ServerClusterSecretInvalid},
+		{"missing slot credential", RoleRelay, func(c *Config) { c.RelaySlotCredential = "" }, failure.ServerClusterSecretInvalid},
+		{"missing forwarding credential", RoleIngress, func(c *Config) { c.ForwardingCredential = "" }, failure.ServerClusterSecretInvalid},
+		{"shared forwarding and slot credential", RoleRelay, func(c *Config) { c.ForwardingCredential = c.RelaySlotCredential }, failure.ServerClusterSecretInvalid},
+		{"previous forwarding matches slot", RoleRelay, func(c *Config) { c.ForwardingCredentialPrevious = c.RelaySlotCredential }, failure.ServerClusterSecretInvalid},
+		{"shared forwarding and ingress credential", RoleIngress, func(c *Config) { c.ForwardingCredential = c.IngressControlCredential }, failure.ServerClusterSecretInvalid},
+		{"ingress control credential on relay", RoleRelay, func(c *Config) { c.IngressControlCredential = testClusterSecret }, failure.ServerClusterSecretInvalid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := validCertificateConfig(t, tc.role)
+			tc.change(&c)
+			err := c.Validate()
+			reason, def, ok := failure.Describe(err)
+			if !ok || reason != tc.reason || def.Retry != failure.RetryAfterChange || errors.Unwrap(err) == nil {
+				t.Fatalf("unexpected failure: %v", err)
+			}
+			message := failure.SafeMessage(err, failure.Unexpected)
+			for _, token := range []string{testSlot, testForwarding, testClusterSecret} {
+				if strings.Contains(message, token) {
+					t.Fatal("diagnostic included a credential")
+				}
+			}
+		})
+	}
+}
+
 func TestPublisherConnectionStreamLimit(t *testing.T) {
-	base := []string{"--role=relay", "--control-hostname=control.example.test", "--cluster-secret=" + testClusterSecret,
+	base := []string{"--role=relay", "--control-hostname=control.example.test", "--relay-slot-credential", testSlot, "--forwarding-credential", testForwarding,
 		"--relay-service-id=relay-a", "--relay-id=relay-a-1", "--relay-address=relay.example.test:443", "--internal-relay-address=relay.internal:9445"}
 	c, err := Parse(append(append([]string{}, base...), "--publisher-connection-stream-limit=123"))
 	if err != nil || c.PublisherConnectionStreamLimit != 123 || c.RelayQUICConfig().Config.MaxIncomingStreams != 123 {

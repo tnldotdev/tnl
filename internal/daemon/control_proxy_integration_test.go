@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/relayslots"
+
 	clientAuth "github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
@@ -28,7 +30,8 @@ func TestIntegrationControlProxyDeviceBrowserFlow(t *testing.T) {
 	acme := standaloneTestACMEServer(t, owner)
 	listeners := runtimeListeners{control: serviceRuntimeListener(t, owner), privateControl: serviceRuntimeListener(t, owner), metrics: serviceRuntimeListener(t, owner)}
 	cfg := splitTestConfig(daemonconfig.RoleControl, listeners.metrics.Addr().String())
-	cfg.DatabaseURL, cfg.StorageKey, cfg.ClusterSecret = databaseURL, testStorageKey, testClusterSecret
+	cfg.DatabaseURL, cfg.StorageKey, cfg.IngressControlCredential = databaseURL, testStorageKey, testClusterSecret
+	cfg.RelaySlotsFile = relayslots.File(t, relayslots.New("relay-a", "relay-1", "relay.example.test", "relay.example.test:443", "relay-a:9445"))
 	cfg.ServerDomain, cfg.ManagedDomain = "proxy.test", "apps.proxy.test"
 	cfg.ControlListen, cfg.PrivateControlListen = listeners.control.Addr().String(), listeners.privateControl.Addr().String()
 	cfg.ControlTLSCertificateFile, cfg.ControlTLSPrivateKeyFile = certificate.certificateFile, certificate.privateKeyFile
