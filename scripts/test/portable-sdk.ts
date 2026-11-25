@@ -352,8 +352,23 @@ async function workerdSmoke(configuration: PortableFixture) {
             ),
           })
           .safeParse(body);
+        const details = failure.success
+          ? [
+              ...failure.data.failures.map((item) => JSON.stringify(item)),
+              ...(failure.data.diagnostics === undefined
+                ? []
+                : [`diagnostics: ${JSON.stringify(failure.data.diagnostics)}`]),
+              ...(failure.data.network ?? []).map((entry) => `network: ${entry}`),
+            ]
+          : [`HTTP ${response.status}`];
         throw new Error(
-          `workerd SDK ${route.split("?")[0]} failed: ${failure.success ? JSON.stringify(failure.data) : `HTTP ${response.status}`}${unsupported.length === 0 ? "" : `; host platform: ${JSON.stringify(Object.fromEntries(unsupported))}`}`,
+          [
+            `workerd SDK ${route.split("?")[0]} failed`,
+            ...details,
+            ...(unsupported.length === 0
+              ? []
+              : [`host platform: ${JSON.stringify(Object.fromEntries(unsupported))}`]),
+          ].join("\n"),
         );
       }
       return body;
