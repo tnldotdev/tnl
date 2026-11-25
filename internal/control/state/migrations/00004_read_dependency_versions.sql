@@ -52,6 +52,20 @@ BEGIN
         EXECUTE format('GRANT SELECT ON control.read_dependency_versions TO %s',
             CASE WHEN reader.grantee=0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(reader.grantee)) END);
     END LOOP;
+    -- a runtime provisioned before v3 may lack the wildcard DNS reads used by
+    -- endpoint readiness. limit this to existing endpoint writers that already
+    -- read the corresponding DNS, deployment and service authorities.
+    FOR reader IN SELECT DISTINCT acl.grantee FROM pg_class c,
+        LATERAL aclexplode(c.relacl) acl WHERE c.oid='control.service_endpoints'::regclass
+        AND acl.privilege_type='UPDATE' AND acl.grantee NOT IN (0,c.relowner)
+        AND NOT EXISTS (SELECT 1 FROM unnest(ARRAY['services','service_runs','teams','domains','deployments',
+            'service_namespace_claims','ingress_pools','dns_authorities','service_endpoints']) source
+            WHERE NOT has_table_privilege(acl.grantee,'control.'||source,'SELECT')) LOOP
+        EXECUTE format('GRANT SELECT ON control.publisher_alias_wildcards, control.publisher_alias_wildcard_facts TO %I',
+            pg_get_userbyid(reader.grantee));
+        EXECUTE format('GRANT EXECUTE ON FUNCTION control.publisher_alias_dns_until(control.service_endpoints,timestamptz) TO %I',
+            pg_get_userbyid(reader.grantee));
+    END LOOP;
 END;
 $$;
 -- +goose StatementEnd

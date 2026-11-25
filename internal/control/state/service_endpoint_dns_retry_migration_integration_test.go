@@ -203,6 +203,10 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 	if err != nil || len(changes) != 1 || changes[0].Revision != -1 {
 		t.Fatal("watch on prepared run after migration", changes, err)
 	}
+	if err := reopened.pool.QueryRow(ctx, `SELECT control.publisher_alias_dns_until(e,$2) IS NOT NULL
+		FROM control.service_endpoints e WHERE e.hostname=$1`, aliasHost, now).Scan(&recorded); err != nil || !recorded {
+		t.Fatal("older runtime cannot check alias DNS after migration", err)
+	}
 	var legacyExact bool
 	if err := pool.QueryRow(ctx, `SELECT NOT wildcard_dns AND dns_automation AND dns_state='published'
 	    FROM control.service_endpoints WHERE hostname=$1 AND publisher_identity_id='publisher'`, aliasHost).Scan(&legacyExact); err != nil || !legacyExact {
