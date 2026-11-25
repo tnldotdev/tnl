@@ -60,6 +60,13 @@ tasks:
       - task: keepalive:build
       - wrangler dev --config demos/keepalive/wrangler.jsonc --ip 127.0.0.1 {{.FLAGS}}
 
+  keepalive:deploy:
+    desc: Build and deploy Keepalive to production
+    cmds:
+      - task: build
+      - node demos/keepalive/scripts/build.ts
+      - wrangler deploy --config demos/keepalive/wrangler.jsonc
+
   keepalive:preview:
     desc: Preview the Keepalive page with Vite (no host connections)
     cmds:

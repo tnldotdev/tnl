@@ -13,7 +13,7 @@ browser handoffs, certificate reuse, final-host outage, and restart.
 
 `task js:keepalive:restart` closes Chrome and reopens its saved profile on
 the ramp fleet. It checks that the seed and its next volunteer reuse the
-certificate. See [operations](../operations.md#prove-certificate-reuse).
+certificate. See [operations](../operations.md#load-tests).
 
 ### measure a handoff
 

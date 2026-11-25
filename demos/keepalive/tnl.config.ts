@@ -22,19 +22,5 @@ export default defineConfig({
   deployments: {
     prod: deployment(fleets.prod.parent),
     ramp: deployment(fleets.ramp.parent),
-    // keep the previous deployment addressable during the cutover.
-    keepalive: {
-      domain: "hosts.keepthisalive.com",
-      targets: {
-        production: {
-          type: "app",
-          public: true,
-          http: { access: "anonymous" },
-          hostname: "prod.live.hosts.keepthisalive.com",
-          publisherAliasParent: "live.hosts.keepthisalive.com",
-          certificateScope: "live.hosts.keepthisalive.com",
-        },
-      },
-    },
   },
 });
