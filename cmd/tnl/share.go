@@ -229,7 +229,7 @@ func runShareCheckout(ctx context.Context, flags shareCheckoutCommand, project p
 		if !found || !checkoutShareEligible(service) {
 			message := "Select a configured public HTTP service."
 			guidance := &commandGuidance{
-				error:   failure.Wrap("select share service", failure.ShareInputInvalid, errors.New(message)),
+				error:   failure.Wrap("select share service", failure.ShareInputInvalid, errors.New("not a configured public HTTP service")),
 				message: message,
 			}
 			// do not redirect a correctly spelled private or non-HTTP service
