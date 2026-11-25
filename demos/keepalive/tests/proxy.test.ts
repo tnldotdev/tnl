@@ -219,6 +219,25 @@ it("does not give an old forwarded alias a fresh lifetime", async () => {
   ]);
 });
 
+it("gives a publisher more than one second for headers even when there are alternatives", async () => {
+  const { proxy, fetchHost, report } = await setup();
+  vi.useFakeTimers();
+  try {
+    fetchHost.mockResolvedValueOnce(report());
+    fetchHost.mockImplementationOnce(async (_input, init) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      init?.signal?.throwIfAborted();
+      return new Response(script);
+    });
+    const result = proxy.file(request("/app.js"));
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(await (await result).text()).toBe(script);
+    expect(fetchHost).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("switches away from a host silent before headers and lets the next body finish", async () => {
   const { proxy, fetchHost, report } = await setup();
   vi.useFakeTimers();
@@ -247,7 +266,7 @@ it("switches away from a host silent before headers and lets the next body finis
       );
     });
     const result = proxy.file(request("/app.js"));
-    await vi.advanceTimersByTimeAsync(999);
+    await vi.advanceTimersByTimeAsync(1999);
     expect(fetchHost).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1);
     expect(fetchHost).toHaveBeenCalledTimes(3);

@@ -35,6 +35,7 @@ function unavailable(discoveredNoHost = false) {
 }
 
 const ATTEMPTS = 3;
+const ALTERNATE_HEADERS_MS = 2_000;
 const REFRESH_MS = 10_000;
 const STALE_MS = 60_000;
 const COOLDOWN_MS = 5_000;
@@ -291,7 +292,7 @@ export function createProxy(release: Release, fetchHost = fetch) {
               selected.seenAt = Date.now();
             return new Response(bytes, { headers: siteHeaders(contentType(asset.path)) });
           },
-          alternate ? 1_000 : undefined,
+          alternate ? ALTERNATE_HEADERS_MS : undefined,
         );
       });
     },
