@@ -53,7 +53,7 @@ func readAppSnapshotFrom(ctx context.Context, project projectConfiguration, stat
 				configured[index].Ready, configured[index].Observation = false, nil
 			}
 			for _, publication := range snapshot.Publications {
-				if publication.Service == saved.Name && publication.Target == saved.Target && publication.State == clientstate.TunnelStateStale {
+				if saved.TunnelID != "" && publication.ID == saved.TunnelID && publication.State == clientstate.TunnelStateStale {
 					configured[index].Registered, configured[index].Routable, configured[index].Ready = false, false, false
 					configured[index].Observation, configured[index].Failure = nil, "runtime.manager_unavailable"
 				}
@@ -197,36 +197,44 @@ func publicationRow(t clientstate.TunnelInfo) observationRow {
 }
 
 type snapshotObservation struct {
-	key      string
-	row      observationRow
-	canWait  bool
-	lastSeen time.Time
+	key     string
+	service *publisherapp.Service
+	tunnel  *clientstate.TunnelInfo
 }
 
-// show an app and its current tunnel once. a stale lease or a draining tunnel
-// takes precedence over a saved app check; other publications stand alone.
+// pair an app with its own tunnel, leaving other publications independent.
 func snapshotObservations(services []publisherapp.Service, tunnels []clientstate.TunnelInfo) []snapshotObservation {
 	var rows []snapshotObservation
-	unmatched := make(map[string]clientstate.TunnelInfo, len(tunnels))
-	for _, t := range tunnels {
-		unmatched[t.ID] = t
+	unmatched := make(map[string]*clientstate.TunnelInfo, len(tunnels))
+	for i := range tunnels {
+		unmatched[tunnels[i].ID] = &tunnels[i]
 	}
-	for _, s := range services {
-		entry := snapshotObservation{key: s.Name, row: appServiceRow(s), canWait: s.Registered && !s.Ready}
-		if t, linked := unmatched[s.TunnelID]; linked && s.TunnelID != "" {
-			if t.State == clientstate.TunnelStateStale || t.State == clientstate.TunnelStateDraining {
-				entry.row.state, entry.canWait, entry.lastSeen = string(t.State), false, t.HeartbeatAt
-			}
+	for i := range services {
+		s := &services[i]
+		entry := snapshotObservation{key: s.Name, service: s}
+		if s.TunnelID != "" {
+			entry.tunnel = unmatched[s.TunnelID]
 			delete(unmatched, s.TunnelID)
 		}
 		rows = append(rows, entry)
 	}
 	for _, t := range tunnels {
-		if _, show := unmatched[t.ID]; show {
-			rows = append(rows, snapshotObservation{key: "publication:" + t.ID, row: publicationRow(t), lastSeen: t.HeartbeatAt})
+		if tunnel, show := unmatched[t.ID]; show {
+			rows = append(rows, snapshotObservation{key: "publication:" + t.ID, tunnel: tunnel})
 		}
 	}
 	return rows
+}
+
+func (entry snapshotObservation) watchRow() observationRow {
+	if entry.service == nil {
+		return publicationRow(*entry.tunnel)
+	}
+	row := appServiceRow(*entry.service)
+	if t := entry.tunnel; t != nil && (t.State == clientstate.TunnelStateStale || t.State == clientstate.TunnelStateDraining) {
+		row.state = string(t.State)
+	}
+	return row
 }
 
 func runAppObservation(ctx context.Context, flags cli, command string, output io.Writer) error {
@@ -261,7 +269,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 	for _, name := range flags.Service {
 		_, found := project.Config.Services[name]
 		if !found {
-			return failure.Wrap("wait for service", failure.ServiceNotConfigured, errors.New("service is not configured"))
+			return unconfiguredService(name)
 		}
 	}
 	if len(flags.Service) == 0 {
@@ -387,18 +395,8 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 			}{"snapshot", snapshot}); err != nil {
 				return err
 			}
-		} else {
-			var blocks []clioutput.Block
-			for _, entry := range snapshotObservations(snapshot.Services, snapshot.Publications) {
-				watch[entry.key] = entry.row
-				blocks = append(blocks, entry.row.blocks()...)
-			}
-			if len(blocks) == 0 {
-				blocks = append(blocks, clioutput.Text("No local services to watch."))
-			}
-			if err := writeResult(output, blocks...); err != nil {
-				return err
-			}
+		} else if err := watch.writeSnapshot(output, snapshot); err != nil {
+			return err
 		}
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -433,6 +431,19 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 }
 
 type humanWatch map[string]observationRow
+
+func (w humanWatch) writeSnapshot(output io.Writer, snapshot publisherapp.Snapshot) error {
+	var blocks []clioutput.Block
+	for _, entry := range snapshotObservations(snapshot.Services, snapshot.Publications) {
+		row := entry.watchRow()
+		w[entry.key] = row
+		blocks = append(blocks, row.blocks()...)
+	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, clioutput.Text("No local services to watch."))
+	}
+	return writeResult(output, blocks...)
+}
 
 func (w humanWatch) writeEvent(output io.Writer, mode string, event publisherapp.Event) error {
 	if mode == "ndjson" {

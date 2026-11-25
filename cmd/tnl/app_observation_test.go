@@ -140,3 +140,24 @@ func TestWatchReportsOnlyChangesAndNDJSONRetainsEveryEvent(t *testing.T) {
 		}
 	}
 }
+
+func TestWatchSnapshotDistinguishesTwoPublicationsOfOneService(t *testing.T) {
+	app := publisherapp.Service{Name: "web", TunnelID: "tunnel-new", Registered: true, Routable: true, Ready: true, PublicURL: "https://new.example"}
+	old := clientstate.TunnelInfo{ID: "tunnel-old", Service: "web", State: clientstate.TunnelStateStale, PublicURL: "https://old.example"}
+	watch := make(humanWatch)
+	var output bytes.Buffer
+	if err := watch.writeSnapshot(&output, publisherapp.Snapshot{Services: []publisherapp.Service{app}, Publications: []clientstate.TunnelInfo{
+		old, {ID: app.TunnelID, Service: app.Name, PublicURL: app.PublicURL, State: clientstate.TunnelStateReady},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []publisherapp.Event{{Type: "service.readiness", Service: &app}, {Type: "publication.changed", Publication: &old}} {
+		if err := watch.writeEvent(&output, "human", e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "web: ready  https://new.example\nweb publication: stale  https://old.example\n"
+	if got := output.String(); got != want {
+		t.Fatalf("snapshot and first events:\n%swant:\n%s", got, want)
+	}
+}
