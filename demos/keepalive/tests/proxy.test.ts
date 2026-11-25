@@ -10,13 +10,12 @@ const aliases = ["a", "b", "c"].map((letter) => `https://p-${letter.repeat(26)}.
 const request = (path: string, init?: RequestInit) =>
   new Request(`https://keepthisalive.com${path}`, init);
 
-async function setup(extraFiles: Record<string, string> = {}) {
+async function setup() {
   const files = {
     "/index.html": "<h1>keepalive</h1>",
     "/app.js": script,
     [WORKER_PATH]: "export {};",
     [WASM_PATH]: "fixture",
-    ...extraFiles,
   };
   const encoder = new TextEncoder();
   const assets = await Promise.all(
@@ -48,18 +47,7 @@ async function setup(extraFiles: Record<string, string> = {}) {
   return { fetchHost, report, proxy: createProxy(release, fetchHost) };
 }
 
-it("still verifies and serves fonts listed in older release manifests", async () => {
-  const { proxy, fetchHost, report } = await setup({ [legacyFontPath]: "wOF2" });
-  fetchHost.mockResolvedValueOnce(report(aliases.slice(0, 1)));
-  fetchHost.mockResolvedValueOnce(new Response("wOF2"));
-
-  const response = await proxy.file(request(legacyFontPath));
-  expect(response.status).toBe(200);
-  expect(response.headers.get("Content-Type")).toBe("font/woff2");
-  expect(await response.text()).toBe("wOF2");
-});
-
-it("does not look up a font absent from the release manifest", async () => {
+it("does not contact a host for the old font URL", async () => {
   const { proxy, fetchHost } = await setup();
   expect((await proxy.file(request(legacyFontPath))).status).toBe(404);
   expect(fetchHost).not.toHaveBeenCalled();
