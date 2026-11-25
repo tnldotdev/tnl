@@ -38,6 +38,7 @@ const (
 	InvalidCommand                        Reason = "TNL_CLIENT_INVALID_COMMAND"
 	AppReadinessTimeout                   Reason = "TNL_CLIENT_APP_READINESS_TIMEOUT"
 	AppCursorExpired                      Reason = "TNL_CLIENT_APP_CURSOR_EXPIRED"
+	AppWatchTimeout                       Reason = "TNL_CLIENT_APP_WATCH_TIMEOUT"
 	AppConfigurationConflict              Reason = "TNL_CLIENT_APP_CONFIGURATION_CONFLICT"
 	AppRemoteService                      Reason = "TNL_CLIENT_APP_REMOTE_SERVICE"
 	NamedPublishOverrides                 Reason = "TNL_CLIENT_NAMED_PUBLISH_OVERRIDES"
@@ -225,8 +226,9 @@ var definitions = map[Reason]Definition{
 		Class: Unavailable, Message: "the publisher could not reach the target",
 		Action: "check the target listener and publisher network connection, then retry", Retry: RetryLater,
 	},
-	AppReadinessTimeout: {Class: Unavailable, Message: "public readiness checks timed out", Action: "check tnl status and the app response, then run tnl wait again", Retry: RetryLater},
+	AppReadinessTimeout: {Class: Unavailable, Message: "readiness checks timed out", Action: "check tnl status and the app response, then run tnl wait again", Retry: RetryLater},
 	AppCursorExpired:    {Class: Invalid, Message: "the local event cursor has expired", Action: "run tnl watch without --after to follow current events", Retry: RetryAfterChange},
+	AppWatchTimeout:     {Class: Unavailable, Message: "timed out watching local events", Action: "use the last emitted cursor with --after to resume", Retry: RetryLater},
 	InvalidControlURL: {
 		Class: Invalid, Message: "server must be an HTTPS origin",
 		Action: "use an HTTPS control URL with --server or TNL_SERVER", Retry: RetryAfterChange,

@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 )
@@ -50,7 +54,7 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	t.Setenv("TNL_STATE_DIR", stateRoot)
 	var stdout, stderr bytes.Buffer
 	r := recordTelemetry(t)
-	if err := run(t.Context(), []string{"inspect", "list", "--output=json"}, &stdout, &stderr, r.factory); err != nil {
+	if err := run(t.Context(), []string{"inspect", "accounts", "--since", "10m", "--limit", "5", "--output=json"}, &stdout, &stderr, r.factory); err != nil {
 		t.Fatal(err)
 	}
 	events := r.events()
@@ -83,6 +87,100 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	}
 	if err := run(t.Context(), []string{"requests", "list"}, &stdout, &stderr, r.factory); err == nil {
 		t.Fatal("retired requests command is still accepted")
+	}
+}
+
+func TestInspectServiceSelectorKeepsLocalActivityNarrow(t *testing.T) {
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	t.Setenv("TNL_STATE_DIR", stateRoot)
+	database, err := clientstate.Open(t.Context(), stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	primary, shared, err := invocation.InspectionRoots(t.Context(), project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for service, ages := range map[string][]time.Duration{
+		"accounts": {time.Hour, 9 * time.Minute, 8 * time.Minute, 7 * time.Minute, 6 * time.Minute, 5 * time.Minute, 4 * time.Minute},
+		"billing":  {time.Minute},
+	} {
+		tunnel, err := database.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+			Command: clientstate.TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: project, Service: service,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tunnel.Finish(context.Background(), nil)
+		recorder := tunnel.NewInspectionRecorder(primary, project, shared, service, inspection.Policy{Retention: 24 * time.Hour, MaxBytes: 64 << 20})
+		for _, age := range ages {
+			recorder.Observe(clientstate.InspectionRecord{
+				Protocol: inspection.HTTP, ReceivedAt: now.Add(-age), Method: "GET", Path: "/" + age.String(),
+				Status: 200, Origin: "local_service", Result: inspection.ResultOK,
+			})
+		}
+		if err := recorder.Close(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, test := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"inspect", "accounts", "--since", "10m", "--limit", "5"}, []string{"/4m0s", "/5m0s", "/6m0s", "/7m0s", "/8m0s"}},
+		{[]string{"inspect", "list", "--service=accounts", "--since=5m30s", "--limit=1"}, []string{"/4m0s"}},
+		{[]string{"inspect", "list", "accounts", "--since=5m30s"}, []string{"/4m0s", "/5m0s"}},
+		{[]string{"inspect", "accounts", "--since=5m30s"}, []string{"/4m0s", "/5m0s"}},
+		{[]string{"inspect", "account"}, nil},
+		{[]string{"inspect", "list", "--service=account"}, nil},
+	} {
+		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
+			var output bytes.Buffer
+			args := append([]string{"--no-config", "--no-telemetry"}, test.args...)
+			args = append(args, "--output=json")
+			if err := run(t.Context(), args, &output, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			var list struct {
+				SchemaVersion int                `json:"schema_version"`
+				Inspections   []inspectionRecord `json:"inspections"`
+			}
+			if err := json.Unmarshal(output.Bytes(), &list); err != nil || list.SchemaVersion != 1 {
+				t.Fatalf("list = %s, %v", output.String(), err)
+			}
+			got := make([]string, 0, len(list.Inspections))
+			for _, item := range list.Inspections {
+				if item.Service != "accounts" || item.HTTP == nil {
+					t.Fatalf("service filter leaked another record: %+v", item)
+				}
+				got = append(got, item.HTTP.Path)
+			}
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("paths = %q, want %q", got, test.want)
+			}
+		})
+	}
+	for _, args := range [][]string{
+		{"inspect", ""},
+		{"inspect", " "},
+		{"inspect", "accounts.example.test"},
+		{"inspect", "--service="},
+		{"inspect", "list", "--service="},
+		{"inspect", "accounts", "--service=billing"},
+		{"inspect", "accounts", "billing"},
+	} {
+		var output bytes.Buffer
+		err := run(t.Context(), append([]string{"--no-config", "--no-telemetry"}, args...), &output, io.Discard)
+		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.InvalidCommand || output.Len() != 0 {
+			t.Errorf("inspect %q widened or misclassified: output=%q error=%v", args, output.String(), err)
+		}
 	}
 }
 

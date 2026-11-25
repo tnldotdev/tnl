@@ -10,6 +10,24 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
+func TestIntegrationCLIRejectsRetiredStatusScope(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	dir := t.TempDir()
+	got := runBuiltCLI(t, dir, nil, "status", "--scope", "local", "--output=json")
+	var problem struct {
+		Code, Message string
+	}
+	if got.exit != 1 || got.stdout != "" || json.Unmarshal([]byte(got.stderr), &problem) != nil ||
+		problem.Code != "TNL_CLIENT_INVALID_COMMAND" || problem.Message != "Unknown flag: --scope" {
+		t.Fatalf("retired status flag: %+v", got)
+	}
+	for _, flag := range []string{"--last-known", "--server-only"} {
+		if text := runBuiltCLI(t, dir, nil, "help", "status"); !strings.Contains(text.stdout, flag) || strings.Contains(text.stdout, "--scope") {
+			t.Fatalf("incorrect status help for %s: %+v", flag, text)
+		}
+	}
+}
+
 func TestIntegrationCLIOutputPreference(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

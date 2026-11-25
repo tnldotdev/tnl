@@ -111,7 +111,7 @@ func TestBinaryIntegrationManualComposePublisherPublicHTTPAndPostgres(t *testing
 		if output, err := command.CombinedOutput(); err == nil {
 			t.Logf("Compose publisher and app output:\n%s", output)
 		}
-		status := exec.CommandContext(diagnostic, "docker", append(append([]string{}, args...), "exec", "--no-TTY", "publisher", "tnl", "status", "--scope", "local", "--output=json")...)
+		status := exec.CommandContext(diagnostic, "docker", append(append([]string{}, args...), "exec", "--no-TTY", "publisher", "tnl", "status", "--last-known", "--output=json")...)
 		status.Dir = root
 		if output, err := status.Output(); err == nil {
 			var result struct {

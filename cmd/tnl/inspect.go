@@ -13,6 +13,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 )
@@ -23,6 +24,7 @@ type inspectCommand struct {
 }
 
 type inspectListCommand struct {
+	ServiceName  string        `arg:"" name:"service" optional:"" help:"Show activity for this project service instead of all activity."`
 	StateDir     string        `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
 	Output       string        `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 	Since        time.Duration `name:"since" help:"Only activity within this time; defaults to all retained inspections."`
@@ -292,7 +294,9 @@ func (a *commandApp) newInspectCommand() *cobra.Command {
 		}
 		return runInspectList(call.ctx, f.Inspect.List, root, a.out)
 	})
+	useProjectServiceArgument(cInspectList, &f.Inspect.List.ServiceName, &f.Inspect.List.Service, failure.InvalidCommand)
 	cInspect.AddCommand(cInspectList)
+	a.useDefault(cInspect, cInspectList)
 	cInspectShow := &cobra.Command{Use: "show", Short: "Show one locally recorded inspection."}
 	a.leaf(cInspectShow, &f.Inspect.Show, func(call commandCall) error {
 		root, err := projectRoot(call.ctx, *f)

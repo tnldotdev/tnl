@@ -53,9 +53,15 @@ func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
 	// the owner reports a fresh check; the CLI must count only local services.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request publisherprotocol.Check
-		_ = json.NewDecoder(r.Body).Decode(&request)
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Services == nil || len(*request.Services) != 1 || (*request.Services)[0] != "web" {
+			t.Error("owner did not receive the exact service selection", request.Services, err)
+		}
 		s := manager.Snapshot()
 		s.Services[0].Ready = true
+		s.Services[0].Observation = &publisherapp.Observation{
+			Ready: true, CheckedAt: time.Now().UTC(), RegistrationID: s.Services[0].RegistrationID,
+			RunNumber: s.Services[0].RunNumber, Readiness: s.Services[0].Readiness,
+		}
 		_ = json.NewEncoder(w).Encode(s)
 	}))
 	defer server.Close()

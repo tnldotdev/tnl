@@ -9,6 +9,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -24,7 +25,11 @@ type ServiceReader interface {
 
 // Select resolves the visitor's exact local/applied binding before inventory.
 func Select(ctx context.Context, control ServiceReader, project clientproject.Project, name, team string) (controlv1.ServiceSummary, error) {
-	key, err := ConfiguredService(project, name)
+	selector, err := parseConnectSelector(name)
+	if err != nil {
+		return controlv1.ServiceSummary{}, err
+	}
+	key, err := configuredService(project, selector)
 	if err != nil {
 		return controlv1.ServiceSummary{}, err
 	}
@@ -73,12 +78,47 @@ func Select(ctx context.Context, control ServiceReader, project clientproject.Pr
 		}
 		return service, err
 	}
-	return SelectService(services, name, team)
+	return selectInventoryService(services, selector, team)
 }
 
 // ConfiguredService resolves a configured key or unique saved-name override.
-// reject overlapping aliases rather than choosing a map iteration's first match.
+// IDs and addresses select directly from visitor inventory.
 func ConfiguredService(project clientproject.Project, name string) (string, error) {
+	selector, err := parseConnectSelector(name)
+	if err != nil {
+		return "", err
+	}
+	return configuredService(project, selector)
+}
+
+func parseConnectSelector(raw string) (naming.ServiceSelector, error) {
+	selector, err := naming.ParseServiceSelector(raw)
+	if err == nil {
+		switch {
+		case selector.Kind == naming.SelectorOmitted:
+			err = errors.New("a service name, ID or saved endpoint address is required")
+		case selector.Resource:
+			err = errors.New("use the saved service address without a resource path or query")
+		}
+	}
+	if err != nil {
+		return naming.ServiceSelector{}, failure.Wrap("select service", failure.InvalidTunnelFlags, err)
+	}
+	return selector, nil
+}
+
+func configuredService(project clientproject.Project, selector naming.ServiceSelector) (string, error) {
+	if selector.Kind != naming.SelectorName {
+		return "", nil
+	}
+	name := selector.Name
+	if project.Declared != nil {
+		_, declared := project.Declared.Services[name]
+		_, bound := project.Config.Services[name]
+		if declared && !bound {
+			return "", publisherCLIError(fmt.Sprintf("service %q has no binding in deployment %q", name, config.SelectedDeployment(project.Config)))
+		}
+	}
 	selected := ""
 	for key, service := range project.Config.Services {
 		if key != name && config.ServiceName(key, service) != name {
@@ -89,29 +129,44 @@ func ConfiguredService(project clientproject.Project, name string) (string, erro
 		}
 		selected = key
 	}
-	if selected == "" && project.Declared != nil {
-		if _, declared := project.Declared.Services[name]; declared {
-			return "", publisherCLIError(fmt.Sprintf("service %q has no binding in deployment %q", name, config.SelectedDeployment(project.Config)))
-		}
-	}
 	return selected, nil
 }
 
-// SelectService selects an exact ID before considering unambiguous names.
+// SelectService matches an exact ID, unambiguous saved name, or saved endpoint.
 func SelectService(services []controlv1.ServiceSummary, name, team string) (controlv1.ServiceSummary, error) {
-	for _, service := range services {
-		if service.Id == name && (team == "" || team == service.TeamId) {
-			return service, nil
-		}
+	selector, err := parseConnectSelector(name)
+	if err != nil {
+		return controlv1.ServiceSummary{}, err
+	}
+	return selectInventoryService(services, selector, team)
+}
+
+func selectInventoryService(services []controlv1.ServiceSummary, selector naming.ServiceSelector, team string) (controlv1.ServiceSummary, error) {
+	if selector.Kind == naming.SelectorID {
+		return serviceIDSelection(services, selector.ID, team)
+	}
+	// only a port the user supplied constrains the saved endpoint. scheme
+	// defaults are dial settings, not assigned service ports.
+	if !selector.ExplicitPort {
+		selector.Port = 0
 	}
 	var selected controlv1.ServiceSummary
 	for _, service := range services {
-		if (service.Id == name || service.Name == name) && (team == "" || team == service.TeamId) {
-			if selected.Id != "" && selected.Id != service.Id {
-				return selected, publisherCLIError("service name is ambiguous; pass its ID or select --team")
-			}
-			selected = service
+		if service.Id == "" || team != "" && team != service.TeamId {
+			continue
 		}
+		matchesName := selector.Kind == naming.SelectorName && service.Name == selector.Name
+		matchesAddress := service.Endpoint != nil && selector.MatchesEndpoint(string(service.Protocol), service.Endpoint.Hostname, service.Endpoint.Port)
+		if !matchesName && !matchesAddress {
+			continue
+		}
+		if selected.Id != "" && selected.Id != service.Id {
+			if selector.Kind == naming.SelectorName {
+				return controlv1.ServiceSummary{}, publisherCLIError("service name is ambiguous; pass its ID or select --team")
+			}
+			return controlv1.ServiceSummary{}, publisherCLIError("service selector is ambiguous; pass its ID or select --team")
+		}
+		selected = service
 	}
 	if selected.Id == "" {
 		return selected, failure.Wrap("select service", failure.ServerResourceNotFound, errors.New("service is not available to this identity; run tnl connect available"))

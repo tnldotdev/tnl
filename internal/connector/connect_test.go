@@ -20,17 +20,18 @@ func TestConnectListenRejectsNonLoopbackAndInvalidPorts(t *testing.T) {
 }
 
 func TestConnectSelectionRequiresExactIdentityInventoryAndTeam(t *testing.T) {
-	services := []controlv1.ServiceSummary{{Id: "first", Name: "orders", TeamId: "one"}, {Id: "second", Name: "orders", TeamId: "two"}}
+	const second = "svc_0123456789abcdefghijkl"
+	services := []controlv1.ServiceSummary{{Id: "svc_0123456789ABCDEFGHIJKL", Name: "orders", TeamId: "one"}, {Id: second, Name: "orders", TeamId: "two"}}
 	if _, err := SelectService(services, "orders", ""); err == nil {
 		t.Fatal("ambiguous name accepted")
 	}
-	for _, selection := range [][2]string{{"orders", "two"}, {"second", ""}} {
+	for _, selection := range [][2]string{{"orders", "two"}, {second, ""}} {
 		got, err := SelectService(services, selection[0], selection[1])
-		if err != nil || got.Id != "second" {
+		if err != nil || got.Id != second {
 			t.Fatalf("selection = %+v, %v", got, err)
 		}
 	}
-	if _, err := SelectService(services, "second", "one"); err == nil {
+	if _, err := SelectService(services, second, "one"); err == nil {
 		t.Fatal("exact ID bypassed team selection")
 	}
 	if _, err := SelectService(services, "absent", ""); err == nil {

@@ -158,7 +158,7 @@ func TestIntegrationCLIMemberOwnPublicationWithoutInventory(t *testing.T) {
 		t.Fatal("built member publication returned the wrong namespace or lifecycle tuple")
 	}
 	var status statusResult
-	if err := json.Unmarshal(call("status", "--scope", "local", "--output", "json"), &status); err != nil {
+	if err := json.Unmarshal(call("status", "--last-known", "--output", "json"), &status); err != nil {
 		t.Fatal(err)
 	}
 	if status.SchemaVersion != 1 || status.Scope != "local" || len(status.Projects) != 1 ||

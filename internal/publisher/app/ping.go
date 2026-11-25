@@ -2,12 +2,13 @@ package app
 
 import (
 	"context"
-	"errors"
+	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
+
+const pingTimeout = 5 * time.Second
 
 // PingResult records only what the invoking machine could verify as a visitor.
 type PingResult struct {
@@ -24,10 +25,27 @@ func Ping(ctx context.Context, address, protocol string) PingResult {
 	return pingWithTransport(ctx, address, protocol, nil)
 }
 
+// PingTCP checks TCP reachability without sending application or TLS bytes.
+func PingTCP(ctx context.Context, address, dialAddress string) PingResult {
+	result := PingResult{Address: address, Protocol: "tcp", CheckedAt: time.Now().UTC(), State: "unavailable"}
+	ctx, cancel := context.WithTimeout(ctx, pingTimeout)
+	defer cancel()
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "tcp", dialAddress)
+	if err != nil {
+		result.Note = "TCP connection failed"
+		return result
+	}
+	_ = conn.Close()
+	result.State = "tcp connected"
+	return result
+}
+
 // pingWithTransport permits an HTTP transport to be supplied by local tests.
 func pingWithTransport(ctx context.Context, address, protocol string, transport http.RoundTripper) PingResult {
 	result := PingResult{Address: address, Protocol: protocol, CheckedAt: time.Now().UTC(), State: "unavailable"}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, pingTimeout)
 	defer cancel()
 	if protocol == "http" || protocol == "https" {
 		parsed, err := url.Parse(address)
@@ -45,6 +63,7 @@ func pingWithTransport(ctx context.Context, address, protocol string, transport 
 			// a visitor probe measures this machine, not an environment proxy.
 			direct := http.DefaultTransport.(*http.Transport).Clone()
 			direct.Proxy = nil
+			defer direct.CloseIdleConnections()
 			transport = direct
 		}
 		client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -70,18 +89,4 @@ func pingWithTransport(ctx context.Context, address, protocol string, transport 
 	}
 	result.State = "invalid protocol"
 	return result
-}
-
-func PingAddress(value string) (string, string, error) {
-	if strings.Contains(value, "://") {
-		parsed, err := url.Parse(value)
-		if err != nil || parsed.User != nil || parsed.Fragment != "" || parsed.Hostname() == "" || parsed.Opaque != "" {
-			return "", "", errors.New("invalid public URL")
-		}
-		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return "", "", errors.New("expected an HTTP or HTTPS public URL")
-		}
-		return value, parsed.Scheme, nil
-	}
-	return "", "", errors.New("expected an HTTP or HTTPS public URL; use tnl connect for services")
 }

@@ -12,10 +12,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -33,7 +33,7 @@ type publicURLCommand struct {
 
 type publicURLUpdateCommand struct {
 	scopedTeamFlags `embed:""`
-	Service         string `arg:"" name:"service-or-address" required:"" help:"Service ID, public hostname, or HTTPS origin."`
+	Service         string `arg:"" name:"service-or-address" required:"" help:"Service name, service ID, hostname, host:port, or service URL."`
 	Target          string `name:"target" help:"New HTTP or HTTPS target origin; no connection is made from this command."`
 }
 
@@ -48,8 +48,9 @@ type publicURLInventoryCommand struct {
 
 type publicURLDeleteCommand struct {
 	scopedTeamFlags `embed:""`
-	Service         string `arg:"" name:"service-or-address" required:"" help:"Service ID, public hostname, or HTTPS origin to delete."`
+	Service         string `arg:"" name:"service-or-address" required:"" help:"Service name, service ID, hostname, host:port, or service URL to delete."`
 	Unconditional   bool   `name:"unconditional" help:"Delete despite concurrent saved-service changes; current management permission is still required."`
+	selector        naming.ServiceSelector
 }
 
 func runURLList(ctx context.Context, command publicURLListCommand, output, diagnostics io.Writer) error {
@@ -110,6 +111,14 @@ func servicePublicAddress(protocol controlv1.ServiceProtocol, endpoint *controlv
 }
 
 func resolveManagedService(ctx context.Context, session *clientteam.Session, selector string) (controlv1.ServiceSummary, error) {
+	input, err := parseWholeService(selector, failure.InvalidCommand)
+	if err != nil {
+		return controlv1.ServiceSummary{}, err
+	}
+	return lookupManagedService(ctx, session, input)
+}
+
+func lookupManagedService(ctx context.Context, session *clientteam.Session, input naming.ServiceSelector) (controlv1.ServiceSummary, error) {
 	current, err := session.Current(ctx)
 	if err != nil {
 		return controlv1.ServiceSummary{}, err
@@ -120,14 +129,8 @@ func resolveManagedService(ctx context.Context, session *clientteam.Session, sel
 	if err != nil {
 		return controlv1.ServiceSummary{}, err
 	}
-	item, err := selectShareService(selector, items)
-	if err != nil {
-		return item, err
-	}
-	if item.TeamId != current.Team().Id {
-		return controlv1.ServiceSummary{}, clientcontrol.ErrNotFound
-	}
-	return item, nil
+	items = slices.DeleteFunc(items, func(item controlv1.ServiceSummary) bool { return item.TeamId != current.Team().Id })
+	return matchInventory(input, items, failure.InvalidCommand)
 }
 
 func runURLInventory(ctx context.Context, command publicURLInventoryCommand, output, diagnostics io.Writer) error {
@@ -163,12 +166,15 @@ func runURLInventory(ctx context.Context, command publicURLInventoryCommand, out
 }
 
 func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, diagnostics io.Writer) error {
+	if command.selector.Kind == naming.SelectorOmitted {
+		return serviceInputError(failure.InvalidCommand, "Select a service to delete.")
+	}
 	session, err := openTeamSession(ctx, command.selection(), "tnl url delete", diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	selected, err := resolveManagedService(ctx, session, command.Service)
+	selected, err := lookupManagedService(ctx, session, command.selector)
 	if err != nil {
 		return err
 	}
@@ -302,6 +308,18 @@ func (a *commandApp) newURLCommand() *cobra.Command {
 	a.leaf(cURLDelete, &f.URL.Delete, func(call commandCall) error {
 		return runURLDelete(call.ctx, f.URL.Delete, a.out, a.errOut)
 	})
+	bind := cURLDelete.Args
+	cURLDelete.Args = func(cmd *cobra.Command, args []string) error {
+		if err := bind(cmd, args); err != nil {
+			return err
+		}
+		input, err := parseWholeService(f.URL.Delete.Service, failure.InvalidCommand)
+		f.URL.Delete.selector = input
+		if err == nil && input.Kind == naming.SelectorOmitted {
+			return serviceInputError(failure.InvalidCommand, "Select a service to delete.")
+		}
+		return err
+	}
 	cURL.AddCommand(cURLDelete)
 	return cURL
 }

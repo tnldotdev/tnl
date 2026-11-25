@@ -19,6 +19,7 @@ import (
 )
 
 func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) {
+	const boundID = "svc_0123456789abcdefghijkl"
 	root := t.TempDir()
 	for _, args := range [][]string{{"init", "--quiet", root}, {"-C", root, "remote", "add", "origin", "https://example.test/connect/project.git"}} {
 		if output, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput(); err != nil {
@@ -51,12 +52,15 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 		noConfig         bool
 		wantReason       failure.Reason
 	}{
-		{name: "orders", team: "team_one", want: "svc_bound"},
-		{name: alias, team: "team_one", want: "svc_bound"},
+		{name: "orders", team: "team_one", want: boundID},
+		{name: alias, team: "team_one", want: boundID},
 		{name: "remote", team: "team_one", want: "svc_remote"},
 		{name: group, team: "team_one", want: "svc_remote"},
 		{name: "remote", team: "team_one", status: 404, wantReason: failure.ServerResourceNotFound},
-		{name: "svc_bound", want: "svc_bound"},
+		{name: group, team: "team_one", omitID: true, wantReason: failure.ServerResourceNotFound},
+		{name: boundID, want: boundID},
+		{name: boundID, omitID: true, wantReason: failure.ServerResourceNotFound},
+		{name: boundID, team: "team_other", wantReason: failure.ServerResourceNotFound},
 		{name: "orders", noConfig: true, want: "svc_unrelated"},
 		{name: "orders", team: "team_one", status: 404, wantReason: failure.LocalServiceUnavailable},
 		{name: alias, team: "team_one", omitID: true, wantReason: failure.LocalServiceUnavailable},
@@ -103,15 +107,17 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 					if test.corrupt {
 						worktree = "other-worktree"
 					}
-					_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "orders", WorktreeKey: worktree, ServiceId: "svc_bound", Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP}})
+					_ = json.NewEncoder(w).Encode(controlv1.LocalProjectService{Service: "orders", WorktreeKey: worktree, ServiceId: boundID, Metadata: &controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocolHTTP}})
 				case "/v1/visitor/services":
 					inventory++
 					if r.URL.Query().Get("access_path") != "connector" {
 						t.Error("native selection requested public endpoint discovery")
 					}
-					services := []controlv1.ServiceSummary{{Id: "svc_unrelated", Name: "orders", TeamId: "team_one"}, {Id: "svc_alias", Name: alias, TeamId: "team_one"}, {Id: "svc_remote", Name: group, TeamId: "team_one"}, {Id: "svc_worktree_b", Name: "orders-other-worktree", TeamId: "team_one"}, {Id: "svc_spoof", Name: "svc_bound", TeamId: "team_one"}}
+					services := []controlv1.ServiceSummary{{Id: "svc_unrelated", Name: "orders", TeamId: "team_one"}, {Id: "svc_alias", Name: alias, TeamId: "team_one"}, {Id: "svc_other_production", Name: group, TeamId: "team_one"}, {Id: "svc_worktree_b", Name: "orders-other-worktree", TeamId: "team_one"}, {Id: "svc_spoof", Name: boundID, TeamId: "team_other"}}
 					if !test.omitID {
-						services = append(services, controlv1.ServiceSummary{Id: "svc_bound", Name: "database-scoped", TeamId: "team_one"})
+						services = append(services,
+							controlv1.ServiceSummary{Id: boundID, Name: "database-scoped", TeamId: "team_one"},
+							controlv1.ServiceSummary{Id: "svc_remote", Name: group, TeamId: "team_one"})
 					}
 					_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: services})
 				default:
@@ -183,5 +189,89 @@ func TestConnectConfiguredNameCollisionIsRejected(t *testing.T) {
 	definition, ok := failure.DefinitionFor(failure.LocalServiceUnavailable)
 	if !ok || !strings.Contains(definition.Action, "tnl publish") || definition.Retry != failure.RetryAfterChange {
 		t.Fatal("missing realization has no actionable publisher diagnostic")
+	}
+}
+
+func TestConnectAddressSelectsOnlyAnExactVisitorInventoryEndpoint(t *testing.T) {
+	const host = "orders.example.test"
+	project := clientproject.Project{Config: config.TNL{Services: config.Services{"orders": {Hostname: new(host)}}}}
+	services := []controlv1.ServiceSummary{
+		{Id: "svc_db", Name: "orders", TeamId: "team_one", Protocol: controlv1.Postgres, Endpoint: &controlv1.ServiceEndpoint{Hostname: host, Port: 45432}},
+		{Id: "svc_tcp", Name: "raw", TeamId: "team_one", Protocol: controlv1.Tcp, Endpoint: &controlv1.ServiceEndpoint{Hostname: host, Port: 5432}},
+		{Id: "svc_http", Name: "web", TeamId: "team_one", Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Hostname: host, Port: 443}},
+		{Id: "svc_other_team", Name: "orders", TeamId: "team_two", Protocol: controlv1.Postgres, Endpoint: &controlv1.ServiceEndpoint{Hostname: host, Port: 45432}},
+		{Id: "svc_only_connector", Name: "private", TeamId: "team_one", Protocol: controlv1.Postgres, Endpoint: &controlv1.ServiceEndpoint{Hostname: "private.example.test"}},
+		{Id: "svc_no_endpoint", Name: "missing.example.test", TeamId: "team_one", Protocol: controlv1.Postgres},
+		{Id: "svc_suffix", Name: "suffix", TeamId: "team_one", Protocol: controlv1.Postgres, Endpoint: &controlv1.ServiceEndpoint{Hostname: "other." + host, Port: 15432}},
+	}
+	for _, test := range []struct {
+		address, team, want string
+		wantReason          failure.Reason
+		rejectBeforeLookup  bool
+	}{
+		{address: "ORDERS.Example.Test.:45432", team: "team_one", want: "svc_db"},
+		{address: "postgres://orders.example.test:45432/", team: "team_one", want: "svc_db"},
+		{address: "postgresql://orders.example.test", team: "team_one", want: "svc_db"},
+		{address: "postgresql://private.example.test", want: "svc_only_connector"},
+		{address: "private.example.test", want: "svc_only_connector"},
+		{address: "https://orders.example.test/", want: "svc_http"},
+		{address: "tcp://orders.example.test:5432", want: "svc_tcp"},
+		{address: "orders.example.test:45432", team: "team_two", want: "svc_other_team"},
+		{address: "orders.example.test:45432", team: "team_three", wantReason: failure.ServerResourceNotFound},
+		{address: "orders.example.test:45432", wantReason: failure.InvalidTunnelFlags},
+		{address: "orders.example.test", team: "team_one", wantReason: failure.InvalidTunnelFlags},
+		{address: "postgresql://orders.example.test:5432", team: "team_one", wantReason: failure.ServerResourceNotFound},
+		{address: "https://orders.example.test:45432", team: "team_one", wantReason: failure.ServerResourceNotFound},
+		{address: "orders.example.test:15432", team: "team_one", wantReason: failure.ServerResourceNotFound},
+		{address: "private.example.test:5432", wantReason: failure.ServerResourceNotFound},
+		{address: "missing.example.test", wantReason: failure.ServerResourceNotFound},
+		{address: "https://orders/", wantReason: failure.ServerResourceNotFound},
+		{address: "https://orders.example.test/api", wantReason: failure.InvalidTunnelFlags, rejectBeforeLookup: true},
+		{address: "https://orders.example.test/?", wantReason: failure.InvalidTunnelFlags, rejectBeforeLookup: true},
+		{address: "postgresql://orders.example.test:45432/database", wantReason: failure.InvalidTunnelFlags, rejectBeforeLookup: true},
+	} {
+		t.Run(test.address+"/"+test.team, func(t *testing.T) {
+			reader := &deploymentSelectionReader{services: services}
+			service, err := Select(t.Context(), reader, project, test.address, test.team)
+			if reason, _ := failure.ReasonOf(err); service.Id != test.want || reason != test.wantReason {
+				t.Fatalf("selected %q, %v (%s); want %q (%s)", service.Id, err, reason, test.want, test.wantReason)
+			}
+			wantCalls := 1
+			if test.rejectBeforeLookup {
+				wantCalls = 0
+			}
+			if reader.calls != wantCalls {
+				t.Fatalf("visitor inventory calls = %d, want %d", reader.calls, wantCalls)
+			}
+		})
+	}
+}
+
+func TestConnectDoesNotTreatGeneratedPsqlURLAsASavedEndpoint(t *testing.T) {
+	service := controlv1.ServiceSummary{
+		Id: "svc_0123456789abcdefghijkl", Name: "orders", TeamId: "team_one", Protocol: controlv1.Postgres, Enabled: true,
+		Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.example.test", Port: 45432},
+	}
+	profile, err := serviceConnectionProfile(service, "127.0.0.1:15432")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, err := clientArgv(profile, "psql", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		address string
+		reason  failure.Reason
+		calls   int
+	}{
+		{address: argv[1], reason: failure.InvalidTunnelFlags},
+		{address: "postgresql://orders.example.test:15432/", reason: failure.ServerResourceNotFound, calls: 1},
+	} {
+		reader := &deploymentSelectionReader{services: []controlv1.ServiceSummary{service}}
+		selected, err := Select(t.Context(), reader, clientproject.Project{}, test.address, service.TeamId)
+		if reason, _ := failure.ReasonOf(err); reason != test.reason || selected.Id != "" || reader.calls != test.calls {
+			t.Fatalf("local dial address %q selected %q (%v); %d inventory calls", test.address, selected.Id, err, reader.calls)
+		}
 	}
 }

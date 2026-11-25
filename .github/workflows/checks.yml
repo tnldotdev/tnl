@@ -373,7 +373,7 @@ jobs:
           test "$(docker run --rm --network none tnl:ci version)" = "tnl ci (ci)"
           test "$(docker run --rm --network none --entrypoint /usr/local/bin/tnld tnl:ci version)" = "tnld ci (ci)"
           test "$(docker image inspect tnl:ci --format '{{ .Config.User }}')" = "65532:65532"
-          docker run --rm --network none tnl:ci --no-telemetry status --all --scope local --output json |
+          docker run --rm --network none tnl:ci --no-telemetry status --all --last-known --output json |
             jq -e '.schema_version == 1 and .scope == "local" and .projects == []' > /dev/null
 
           status=0

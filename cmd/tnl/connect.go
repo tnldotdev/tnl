@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/connector"
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
+	"github.com/tnldotdev/tnl/internal/naming"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -34,7 +35,7 @@ type connectStartCommand struct {
 	telemetry         *clienttelemetry.Collector
 	telemetryDisabled bool
 	scopedTeamFlags   `embed:""`
-	Name              string `arg:"" name:"name" help:"Configured service name or exact service ID."`
+	Name              string `arg:"" name:"name" help:"Configured service name, exact service ID, or saved endpoint address."`
 	Deployment        string `name:"deployment" help:"Select this configured deployment; defaults to local."`
 	Listen            string `name:"listen" help:"Loopback IP and port; defaults to 127.0.0.1 and the allocated service port."`
 	Protocol          string `name:"protocol" help:"Require an exact match: http, tcp, mysql, postgres, or kubernetes."`
@@ -243,7 +244,7 @@ func (a *commandApp) newConnectCommand() *cobra.Command {
 	f := a.flags
 	cConnect := &cobra.Command{
 		Use: "connect", Short: "Connect to a private service from this machine.", GroupID: "start",
-		Long: "Reach a service by its configured name or service ID. By default, tnl prints local connection settings and runs in this terminal until you stop it. Use your usual database or cluster credentials.",
+		Long: "Reach a service by its configured name, ID, hostname, host:port, or service URL. Use the saved endpoint address, not the local listener URL. By default, tnl prints local connection settings and runs in this terminal until you stop it. Use your usual database or cluster credentials.",
 	}
 	cConnectStart := &cobra.Command{
 		Use: "start", Short: "Start a local connector for one service.",
@@ -266,15 +267,18 @@ func (a *commandApp) newConnectCommand() *cobra.Command {
 			f.Connect.Start.clientArgs = args[n:]
 			args = args[:n]
 		}
-		return bind(cmd, args)
-	}
-	if err := cConnectStart.RegisterFlagCompletionFunc("client", func(cmd *cobra.Command, args []string, prefix string) ([]string, cobra.ShellCompDirective) {
-		if len(args) != 1 {
-			return nil, cobra.ShellCompDirectiveNoFileComp
+		if err := bind(cmd, args); err != nil {
+			return err
 		}
-		return completeNames(connector.ClientNames(completionFacts(cmd).Services[args[0]]), prefix)
-	}); err != nil {
-		panic(err)
+		selector, err := naming.ParseServiceSelector(f.Connect.Start.Name)
+		switch {
+		case err != nil || selector.Kind == naming.SelectorOmitted:
+			return serviceInputError(failure.InvalidTunnelFlags, "Use a service name, ID, hostname, host:port, or service URL.")
+		case selector.Resource:
+			return serviceInputError(failure.InvalidTunnelFlags, "Use the saved service address without a path or query. A local client URL is not a saved address.")
+		default:
+			return nil
+		}
 	}
 	a.useDefault(cConnect, cConnectStart)
 	cConnectAvailable := &cobra.Command{Use: "available", Short: "List services you can connect to."}

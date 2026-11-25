@@ -294,7 +294,7 @@ func TestStatusAllServerIncludesStoppedServiceJournal(t *testing.T) {
 	}
 	var output bytes.Buffer
 	if err := runStatus(t.Context(), statusCommand{
-		Output: statusOutputJSON, Scope: "server", All: true, StateDir: state.Root(), ServerURL: server, AccessToken: token,
+		Output: statusOutputJSON, ServerOnly: true, All: true, StateDir: state.Root(), ServerURL: server, AccessToken: token,
 	}, &output); err != nil {
 		t.Fatal(err)
 	}

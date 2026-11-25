@@ -2,6 +2,7 @@ package app
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,14 +35,15 @@ func TestPingHTTPVisitorBoundary(t *testing.T) {
 	}
 }
 
-func TestPingAddressRequiresPublicHTTPAndNoCredentials(t *testing.T) {
-	for _, address := range []string{"db.example:5432", "postgres://db.example:5432", "https://user:pass@site.example", "https://site.example/#token"} {
-		if _, _, err := PingAddress(address); err == nil {
-			t.Fatalf("accepted %q", address)
+func TestPingHTTPDoesNotSendCredentialsOrFragments(t *testing.T) {
+	for _, address := range []string{"https://user:pass@site.example", "https://site.example/#token"} {
+		result := pingWithTransport(t.Context(), address, "https", roundTrip(func(*http.Request) (*http.Response, error) {
+			t.Fatalf("attempted HTTP request for %q", address)
+			return nil, nil
+		}))
+		if result.State != "invalid address" {
+			t.Fatalf("accepted %q: %+v", address, result)
 		}
-	}
-	if address, protocol, err := PingAddress("https://site.example/health"); err != nil || address != "https://site.example/health" || protocol != "https" {
-		t.Fatalf("address=%s protocol=%s err=%v", address, protocol, err)
 	}
 }
 
@@ -55,5 +57,41 @@ func TestPingRequiresVerifiedPublicTLS(t *testing.T) {
 		if result := Ping(t.Context(), "127.0.0.1:1", protocol); result.State != "invalid protocol" {
 			t.Fatalf("retired protocol %s: %+v", protocol, result)
 		}
+	}
+}
+
+func TestPingTCPConnectsWithoutSendingBytes(t *testing.T) {
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	dialAddress := listener.Addr().String()
+	address := "postgres://" + dialAddress
+	result := PingTCP(t.Context(), address, dialAddress)
+	if result.Address != address || result.Protocol != "tcp" || result.State != "tcp connected" || result.Status != 0 || result.Note != "" {
+		t.Fatalf("TCP probe: %+v", result)
+	}
+	deadline := time.Now().Add(time.Second)
+	if err := listener.SetDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := listener.AcceptTCP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+	var data [1]byte
+	if n, err := conn.Read(data[:]); n != 0 || err != io.EOF {
+		t.Fatalf("TCP probe sent data or did not close: bytes=%d, err=%v", n, err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if result := PingTCP(t.Context(), address, dialAddress); result.State != "unavailable" || result.Note != "TCP connection failed" {
+		t.Fatalf("TCP failure: %+v", result)
 	}
 }

@@ -102,7 +102,7 @@ func TestTeamScopedCommandsAcceptExplicitTeam(t *testing.T) {
 		{"domain", "list"}, {"domain", "claim", "example.test"},
 		{"domain", "default", "example.test"}, {"domain", "status", "example.test"},
 		{"domain", "release", "example.test"},
-		{"url", "list"}, {"url", "delete", "url_1"},
+		{"url", "list"}, {"url", "delete", "svc_0123456789abcdefghijkl"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var flags cli

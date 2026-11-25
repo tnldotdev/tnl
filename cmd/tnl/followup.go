@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"strconv"
 
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -57,14 +58,26 @@ func observationFollowup(err error, flags cli) error {
 	var stateDir, output string
 	if reason == failure.AppCursorExpired {
 		args = append(args, "watch")
+		if flags.Watch.Service != "" {
+			args = append(args, "--service", flags.Watch.Service)
+		}
+		if flags.Watch.Count > 0 {
+			args = append(args, "--count", strconv.Itoa(flags.Watch.Count))
+		}
+		if flags.Watch.Timeout > 0 {
+			args = append(args, "--timeout", flags.Watch.Timeout.String())
+		}
 		stateDir, output = flags.Watch.StateDir, flags.Watch.Output
 	} else {
 		stateDir, output = flags.Wait.StateDir, flags.Wait.Output
 		if len(flags.Wait.Service) <= 1 {
-			args = append(args, "status", "--scope", "local")
+			args = append(args, "status", "--last-known")
 		} else {
 			// status accepts one service. retry an exact multi-service wait.
 			args = append(args, "wait")
+			if flags.Wait.Timeout > 0 {
+				args = append(args, "--timeout", flags.Wait.Timeout.String())
+			}
 		}
 		for _, service := range flags.Wait.Service {
 			args = append(args, "--service", service)

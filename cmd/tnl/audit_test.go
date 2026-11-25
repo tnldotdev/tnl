@@ -47,6 +47,10 @@ func TestAuditListParsesRequestedWorkflowAndProjectTeam(t *testing.T) {
 	if selected := flags.Audit.List.selection(); selected.SelectedTeam != "shop" || selected.ProjectTeam != configured {
 		t.Fatalf("audit team precedence: %+v", selected)
 	}
+	parsed, err = parser([]string{"audit", "accounts", "--since", "1h", "--limit", "5"})
+	if err != nil || commandID(parsed) != "audit list" || flags.Audit.List.Selector != "accounts" || flags.Audit.List.Limit != 5 {
+		t.Fatalf("audit shorthand: %+v, %v", flags.Audit.List, err)
+	}
 }
 
 func TestAuditSinceUsesOneUTCInstantAndRejectsInvalidInput(t *testing.T) {
@@ -90,6 +94,10 @@ func TestAuditSelectsOnlyServiceIDsNamesAndHostnames(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(authorityv1.IdentityContext{Memberships: []authorityv1.Membership{{TeamId: team}}})
 		case "/v1/teams/" + team:
 			_ = json.NewEncoder(w).Encode(authorityv1.Team{Id: team})
+		case "/v1/services":
+			_ = json.NewEncoder(w).Encode(controlv1.ServicePage{Services: []controlv1.ServiceSummary{
+				{Id: "svc_0123456789abcdefghijkl", TeamId: team, Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443, Public: true}},
+			}})
 		case "/v1/teams/" + team + "/service-audit":
 			filters <- r.URL.Query()
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceAuditPage{Events: []controlv1.ServiceAuditEvent{}})
@@ -102,7 +110,7 @@ func TestAuditSelectsOnlyServiceIDsNamesAndHostnames(t *testing.T) {
 	original := http.DefaultTransport
 	http.DefaultTransport = server.Client().Transport
 	t.Cleanup(func() { http.DefaultTransport = original })
-	for _, selector := range []string{"svc_0123456789abcdefghijkl", "api", "api.example.test"} {
+	for _, selector := range []string{"svc_0123456789abcdefghijkl", "api", "api.example.test", "https://API.example.test:443/"} {
 		t.Run(selector, func(t *testing.T) {
 			flags := auditListCommand{Service: selector, Limit: 1, Output: statusOutputJSON,
 				scopedTeamFlags: scopedTeamFlags{remoteFlags: remoteFlags{ServerURL: server.URL, AccessToken: access.String(), StateDir: filepath.Join(t.TempDir(), "state")}, teamSelectionFlags: teamSelectionFlags{Team: team}}}
@@ -119,13 +127,16 @@ func TestAuditSelectsOnlyServiceIDsNamesAndHostnames(t *testing.T) {
 			if strings.HasPrefix(selector, "svc_") {
 				id = selector
 				selector = ""
+			} else if strings.HasPrefix(selector, "https://") {
+				id = "svc_0123456789abcdefghijkl"
+				selector = ""
 			}
 			if got.Get("service_id") != id || got.Get("service") != selector {
 				t.Fatalf("audit changed service selection: %v", got)
 			}
 		})
 	}
-	for _, selector := range []string{"url_0123456789abcdefghijkl", "svc_invalid", " api", "api/path", "https://api.example.test", "api\n", "api\x00", strings.Repeat("a", 254)} {
+	for _, selector := range []string{"url_0123456789abcdefghijkl", "svc_invalid", " api", "api/path", "https://api.example.test/billing", "api\n", "api\x00", strings.Repeat("a", 254)} {
 		t.Run(selector, func(t *testing.T) {
 			before := requests.Load()
 			state := filepath.Join(t.TempDir(), "state")

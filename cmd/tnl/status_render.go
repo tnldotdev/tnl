@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -54,8 +55,13 @@ func writeStatus(output io.Writer, flags statusCommand, projects []projectStatus
 			if !local.Available && local.readErr == nil {
 				warnings = append(warnings, statusNotice(label, "Local status unavailable."))
 			}
-			for _, entry := range snapshotObservations(local.Snapshot.Services, local.Tunnels.Tunnels) {
+			for _, entry := range statusObservations(local.Snapshot.Services, local.Tunnels.Tunnels) {
 				item := publicationStatus(entry, local.CheckedAt)
+				if flags.Service != "" && !flags.All && item.service != nil && strings.HasPrefix(item.ready, "Unknown") {
+					if i := slices.IndexFunc(local.recorded, func(saved publisherapp.Service) bool { return saved.Name == item.key }); i >= 0 {
+						item.addRecordedFailure(local.recorded[i], local.CheckedAt)
+					}
+				}
 				localRows = append(localRows, item)
 			}
 			for _, u := range local.Tunnels.IntegrationURLs {
@@ -72,8 +78,12 @@ func writeStatus(output io.Writer, flags statusCommand, projects []projectStatus
 			}
 			if local.Available && len(localRows)+len(local.Tunnels.IntegrationURLs)+len(local.Tunnels.Aliases) == 0 {
 				message := "No local publications."
-				switch deployment := config.SelectedDeployment(flags.Configuration.Config); {
-				case !flags.All && deployment != "local":
+				configuration := flags.Configuration
+				if flags.All {
+					configuration = project.configuration
+				}
+				switch deployment := config.SelectedDeployment(configuration.Config); {
+				case deployment != "local":
 					message = "Deployment " + deployment + " is remote. No local publications."
 				case flags.Service != "":
 					message = "No local publication for " + flags.Service + "."
@@ -200,9 +210,23 @@ func statusValue(value string) string {
 
 type statusPublication struct {
 	snapshotObservation
-	name, ready, url, lastError, lastSeen, server string
-	confirmed                                     bool
-	serverFields                                  []clioutput.Field
+	name, ready, url, lastError, lastSeen, lastChecked, server string
+	confirmed                                                  bool
+	serverFields                                               []clioutput.Field
+}
+
+func statusObservations(services []publisherapp.Service, tunnels []clientstate.TunnelInfo) []snapshotObservation {
+	// retain a stale record if it is still the app's own record or if it has
+	// no replacement. a loose match by name alone could hide another service.
+	return slices.DeleteFunc(snapshotObservations(services, tunnels), func(entry snapshotObservation) bool {
+		t := entry.tunnel
+		return entry.service == nil && t != nil && t.State == clientstate.TunnelStateStale && t.Service != "" &&
+			slices.ContainsFunc(tunnels, func(other clientstate.TunnelInfo) bool {
+				return other.ID != t.ID && other.Service == t.Service && other.Server == t.Server &&
+					(other.ServiceID == t.ServiceID || other.ServiceID == "" || t.ServiceID == "") &&
+					other.State != clientstate.TunnelStateStale && !other.StartedAt.Before(t.StartedAt)
+			})
+	})
 }
 
 func publicationStatus(entry snapshotObservation, at time.Time) statusPublication {
@@ -222,7 +246,10 @@ func publicationStatus(entry snapshotObservation, at time.Time) statusPublicatio
 		}
 	}
 	if t != nil && t.State == clientstate.TunnelStateStale {
-		item.ready, item.lastError = "Unknown (stale)", ""
+		item.ready = "Unknown (stale)"
+		if s != nil && s.Failure == "runtime.manager_unavailable" {
+			item.lastError = statusError(t.Failure)
+		}
 		if !t.HeartbeatAt.IsZero() && !at.Before(t.HeartbeatAt) {
 			item.lastSeen = statusAge(at.Sub(t.HeartbeatAt))
 		}
@@ -265,6 +292,30 @@ func publicationStatus(entry snapshotObservation, at time.Time) statusPublicatio
 	return item
 }
 
+func (item *statusPublication) addRecordedFailure(saved publisherapp.Service, at time.Time) {
+	s := item.service
+	if s.RegistrationID != saved.RegistrationID || s.RunNumber != saved.RunNumber || s.TunnelID != saved.TunnelID {
+		return
+	}
+	if saved.Failure != "" && saved.Failure != "runtime.manager_unavailable" {
+		item.lastError = statusError(saved.Failure)
+	}
+	o := saved.Observation
+	if o == nil || o.Ready || o.CheckedAt.IsZero() || at.Before(o.CheckedAt) ||
+		o.RegistrationID != saved.RegistrationID || o.RunNumber != saved.RunNumber {
+		return
+	}
+	item.lastChecked = statusAge(at.Sub(o.CheckedAt))
+	if saved.Failure != "" && saved.Failure != "runtime.manager_unavailable" {
+		return
+	}
+	if o.Status != 0 {
+		item.lastError = "The readiness check returned HTTP " + strconv.Itoa(o.Status) + "."
+	} else if o.Reason != "" {
+		item.lastError = statusError(o.Reason)
+	}
+}
+
 func statusAge(age time.Duration) string {
 	switch {
 	case age >= 24*time.Hour:
@@ -290,6 +341,9 @@ func (item statusPublication) detail(flags statusCommand) []clioutput.Block {
 	if item.lastSeen != "" {
 		fields = append(fields, clioutput.Field{Label: "Last seen", Value: item.lastSeen})
 	}
+	if item.lastChecked != "" {
+		fields = append(fields, clioutput.Field{Label: "Last checked", Value: item.lastChecked})
+	}
 	if item.lastError != "" {
 		fields = append(fields, clioutput.Field{Label: "Last error", Value: item.lastError, Prose: true})
 	}
@@ -299,8 +353,8 @@ func (item statusPublication) detail(flags statusCommand) []clioutput.Block {
 	fields = append(fields, item.serverFields...)
 	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	if _, ok := flags.Configuration.Config.Services[item.key]; !item.confirmed && item.service != nil && ok && config.SelectedDeployment(flags.Configuration.Config) == "local" {
-		cmd := (commandScope{configArgs: flags.configArgs, stateDir: flags.StateDir}).command("wait", "--service", item.key)
-		blocks = appendStatusSection(blocks, clioutput.Section("Check readiness", clioutput.Literal(cmd)))
+		cmd := (commandScope{configArgs: flags.configArgs, stateDir: flags.StateDir}).command("wait", item.key)
+		blocks = appendStatusSection(blocks, clioutput.Literal(cmd))
 	}
 	return blocks
 }

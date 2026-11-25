@@ -61,7 +61,7 @@
       "code": "TNL_CLIENT_APP_READINESS_TIMEOUT",
       "slug": "app-readiness-timeout",
       "class": "unavailable",
-      "message": "public readiness checks timed out",
+      "message": "readiness checks timed out",
       "action": "check tnl status and the app response, then run tnl wait again"
     },
     {
@@ -70,6 +70,13 @@
       "class": "invalid",
       "message": "readiness checks require a local configured service",
       "action": "select a local service with --service; use tnl status for applied deployments"
+    },
+    {
+      "code": "TNL_CLIENT_APP_WATCH_TIMEOUT",
+      "slug": "app-watch-timeout",
+      "class": "unavailable",
+      "message": "timed out watching local events",
+      "action": "use the last emitted cursor with --after to resume"
     },
     {
       "code": "TNL_CLIENT_AUTHENTICATION_REQUIRED",

@@ -144,17 +144,17 @@ func TestShareTeamSSHUserIsRejectedBeforeAuthentication(t *testing.T) {
 
 func TestShareSelectsOnlyConfiguredPublicURLFromProject(t *testing.T) {
 	webID := "svc_0123456789abcdefghijkl"
-	routes := []controlv1.ServiceSummary{{Id: webID, Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test"}}, {Id: "svc_abcdefghijkl0123456789", Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test"}}}
-	for _, selector := range []string{webID, "web.example.test", "https://web.example.test"} {
+	routes := []controlv1.ServiceSummary{{Id: webID, Name: "web", Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443}}, {Id: "svc_abcdefghijkl0123456789", Name: "api", Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443}}}
+	for _, selector := range []string{"web", webID, "web.example.test", "https://web.example.test", "https://Web.example.test:443/", "web.example.test:443"} {
 		got, err := selectShareService(selector, routes)
 		if err != nil || got.Id != webID {
 			t.Fatalf("selector %q = %+v, %v", selector, got, err)
 		}
 	}
-	if _, err := selectShareService("", routes); err == nil || !strings.Contains(err.Error(), "select the public URL") {
+	if _, err := selectShareService("", routes); err == nil || !strings.Contains(err.Error(), "Select the public URL") {
 		t.Fatalf("ambiguous preview page: %v", err)
 	}
-	for _, selector := range []string{"https://web.example.test/path", "http://web.example.test", "web.example.test:443", "https://web.example.test?secret=yes"} {
+	for _, selector := range []string{"https://web.example.test/path", "http://web.example.test", "web.example.test:444", "https://web.example.test?secret=yes"} {
 		if _, err := selectShareService(selector, routes); err == nil {
 			t.Fatalf("invalid page %q was accepted", selector)
 		}

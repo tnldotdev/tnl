@@ -26,13 +26,16 @@ import (
 type waitCommand struct {
 	StateDir string        `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
 	Service  []string      `name:"service" help:"Check this service; repeat to select several. Defaults to every configured service."`
-	Timeout  time.Duration `name:"timeout" default:"2m" help:"Time to wait for fresh public readiness checks."`
+	Timeout  time.Duration `name:"timeout" default:"2m" help:"Time to wait for fresh readiness checks."`
 	Output   string        `name:"output" enum:"human,json" default:"human"`
 }
 type watchCommand struct {
-	StateDir string `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
-	After    string `name:"after" help:"Resume exclusively after this opaque local event cursor."`
-	Output   string `name:"output" enum:"human,ndjson" default:"human"`
+	StateDir string        `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
+	Service  string        `name:"service" help:"Follow only this configured service."`
+	After    string        `name:"after" help:"Resume exclusively after this opaque local event cursor."`
+	Count    int           `name:"count" help:"Exit successfully after this many matching events. The initial snapshot does not count."`
+	Timeout  time.Duration `name:"timeout" help:"Exit with a timeout error after this duration if still watching."`
+	Output   string        `name:"output" enum:"human,ndjson" default:"human"`
 }
 
 func readAppSnapshotFrom(ctx context.Context, project projectConfiguration, state *clientstate.Database) (publisherapp.Snapshot, error) {
@@ -266,22 +269,22 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 	if config.SelectedDeployment(project.Config) != "local" {
 		return failure.Wrap("wait for local service", failure.AppRemoteService, errors.New("the selected deployment is remote"))
 	}
+	configured := configuredRuntimeServices(project)
 	for _, name := range flags.Service {
-		_, found := project.Config.Services[name]
-		if !found {
+		if !slices.ContainsFunc(configured, func(s publisherapp.Service) bool { return s.Name == name }) {
 			return unconfiguredService(name)
 		}
 	}
-	if len(flags.Service) == 0 {
-		for _, service := range configuredRuntimeServices(project) {
-			flags.Service = append(flags.Service, service.Name)
-		}
-	}
-	if len(flags.Service) == 0 {
+	selected := slices.DeleteFunc(configured, func(s publisherapp.Service) bool {
+		return len(flags.Service) > 0 && !slices.Contains(flags.Service, s.Name)
+	})
+	if len(selected) == 0 {
 		return failure.Wrap("wait for local services", failure.AppRemoteService, errors.New("no local services are configured"))
 	}
-	slices.Sort(flags.Service)
-	flags.Service = slices.Compact(flags.Service)
+	names := make([]string, 0, len(selected))
+	for _, service := range selected {
+		names = append(names, service.Name)
+	}
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
 		return err
@@ -294,56 +297,43 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 	ctx, cancel := context.WithTimeout(ctx, flags.Timeout)
 	defer cancel()
 	label := "Checking services"
-	if len(flags.Service) == 1 {
-		label = "Checking " + flags.Service[0]
+	if len(names) == 1 {
+		label = "Checking " + names[0]
 	}
 	stopProgress := clioutput.StartProgress(ctx, output, diagnostics, flags.Output != "json", label)
 	defer stopProgress()
-	var latest publisherapp.Snapshot
+	latest := publisherapp.Snapshot{SchemaVersion: 1, Project: project.Root}
 	checkSource := "local publisher process unavailable"
+	latest.Services, _ = waitObservations(selected, latest.Services, time.Time{})
 	for attempt := 0; ; attempt++ {
-		snapshot, err := readAppSnapshotFrom(context.WithoutCancel(ctx), project, state)
-		if err != nil {
-			return err
-		}
-		checked := false
+		var current publisherapp.Snapshot
+		var checkStarted time.Time
 		if endpoint, err := publisherprotocol.ReadEndpoint(path); err == nil {
-			request := publisherprotocol.Check{}
-			if len(flags.Service) != 0 {
-				request.Services = &flags.Service
+			started := time.Now()
+			if err := publisherprotocol.Call(ctx, endpoint, "POST", "/v1/check", publisherprotocol.Check{Services: &names}, &current); err == nil {
+				checkStarted = started
 			}
-			var current publisherapp.Snapshot
-			if err := publisherprotocol.Call(ctx, endpoint, "POST", "/v1/check", request, &current); err == nil {
-				snapshot, checked = current, true
-				checkSource = "selected local publisher process (fresh public-path check)"
-			} else {
-				checkSource = "selected local publisher process unavailable"
-			}
-		}
-		snapshot.Services = slices.DeleteFunc(snapshot.Services, func(s publisherapp.Service) bool {
-			if len(flags.Service) != 0 {
-				return !slices.Contains(flags.Service, s.Name)
-			}
-			_, configured := project.Config.Services[s.Name]
-			return !configured
-		})
-		want := len(flags.Service)
-		ready := checked && len(snapshot.Services) == want
-		for index := range snapshot.Services {
-			if !checked {
-				snapshot.Services[index].Ready = false
-				snapshot.Services[index].Observation = nil
-				snapshot.Services[index].Failure = "runtime.manager_unavailable"
-			}
-			ready = ready && snapshot.Services[index].Registered && snapshot.Services[index].Routable && snapshot.Services[index].Ready
-		}
-		latest = snapshot
-		if ready {
-			stopProgress()
-			return writeAppWait(output, flags.Output, latest, "ready", checkSource)
 		}
 		if ctx.Err() != nil {
 			break
+		}
+		if checkStarted.IsZero() {
+			current, err = readAppSnapshotFrom(ctx, project, state)
+			if err != nil {
+				if ctx.Err() != nil && failure.Only(err, ctx.Err()) {
+					break
+				}
+				return err
+			}
+		}
+		current.Services, checkSource = waitObservations(selected, current.Services, checkStarted)
+		current.Publications = slices.DeleteFunc(current.Publications, func(p clientstate.TunnelInfo) bool {
+			return !slices.Contains(names, p.Service)
+		})
+		latest = current
+		if !slices.ContainsFunc(latest.Services, func(s publisherapp.Service) bool { return !s.Ready }) {
+			stopProgress()
+			return writeAppWait(output, flags.Output, latest, "ready", checkSource)
 		}
 		timer := time.NewTimer(publisherapp.RetryDelay(attempt))
 		select {
@@ -356,10 +346,55 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 		}
 	}
 	stopProgress()
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return context.Cause(ctx)
+	}
 	if err := writeAppWait(output, flags.Output, latest, "timed out", checkSource); err != nil {
 		return err
 	}
 	return failure.Wrap("wait for public readiness", failure.AppReadinessTimeout, ctx.Err())
+}
+
+func waitObservations(selected, current []publisherapp.Service, started time.Time) ([]publisherapp.Service, string) {
+	byName := make(map[string]publisherapp.Service, len(current))
+	for _, service := range current {
+		byName[service.Name] = service
+	}
+	services := make([]publisherapp.Service, 0, len(selected))
+	var public, target bool
+	for _, definition := range selected {
+		s, found := byName[definition.Name]
+		if !found {
+			s = definition
+		}
+		o := s.Observation
+		if started.IsZero() {
+			s.Ready, s.Observation, s.Failure = false, nil, "runtime.manager_unavailable"
+		} else if !s.Registered || !s.Routable || s.Readiness != definition.Readiness || s.ServiceProtocol != definition.ServiceProtocol ||
+			o == nil || o.CheckedAt.Before(started) || o.RegistrationID != s.RegistrationID || o.RunNumber != s.RunNumber || o.Readiness != s.Readiness {
+			s.Ready, s.Observation = false, nil
+		} else {
+			s.Ready = s.Ready && o.Ready
+			if s.PublicURL != "" {
+				public = true
+			} else {
+				target = true
+			}
+		}
+		services = append(services, s)
+	}
+	switch {
+	case started.IsZero():
+		return services, "local publisher process unavailable"
+	case public && target:
+		return services, "selected local publisher process (fresh public-path and target checks)"
+	case public:
+		return services, "selected local publisher process (fresh public-path check)"
+	case target:
+		return services, "selected local publisher process (fresh target check)"
+	default:
+		return services, "selected local publisher process (no fresh check result)"
+	}
 }
 
 func writeAppWait(output io.Writer, mode string, snapshot publisherapp.Snapshot, state, checkedBy string) error {
@@ -380,11 +415,36 @@ func writeAppWait(output io.Writer, mode string, snapshot publisherapp.Snapshot,
 	return writeResult(output, blocks...)
 }
 
+var errAppWatchDeadline = errors.New("watch deadline reached")
+
+func appWatchEnd(ctx context.Context) error {
+	if context.Cause(ctx) == errAppWatchDeadline {
+		return failure.Wrap("follow local events", failure.AppWatchTimeout, context.DeadlineExceeded)
+	}
+	if failure.Only(context.Cause(ctx), context.Canceled) {
+		return nil
+	}
+	return context.Cause(ctx)
+}
+
 func runAppWatch(ctx context.Context, project projectConfiguration, root string, flags watchCommand, output io.Writer) (result error) {
 	ctx, finish := observability.ClientOperation(ctx, "client.watch.startup")
 	defer func() { finish(result) }()
+	if flags.Service != "" {
+		if _, found := project.Config.Services[flags.Service]; !found {
+			return unconfiguredService(flags.Service)
+		}
+	}
+	if flags.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeoutCause(ctx, flags.Timeout, errAppWatchDeadline)
+		defer cancel()
+	}
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
+		if ctx.Err() != nil && failure.Only(err, ctx.Err()) {
+			return appWatchEnd(ctx)
+		}
 		return err
 	}
 	defer state.Close()
@@ -393,9 +453,19 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 	if cursor == "" {
 		snapshot, err := readAppSnapshotFrom(ctx, project, state)
 		if err != nil {
+			if ctx.Err() != nil && failure.Only(err, ctx.Err()) {
+				return appWatchEnd(ctx)
+			}
 			return err
 		}
+		if ctx.Err() != nil {
+			return appWatchEnd(ctx)
+		}
 		cursor = snapshot.Cursor
+		if flags.Service != "" {
+			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(s publisherapp.Service) bool { return s.Name != flags.Service })
+			snapshot.Publications = slices.DeleteFunc(snapshot.Publications, func(p clientstate.TunnelInfo) bool { return p.Service != flags.Service })
+		}
 		if flags.Output == "ndjson" {
 			if err := json.NewEncoder(output).Encode(struct {
 				Type     string                `json:"type"`
@@ -411,31 +481,55 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 	finish(nil)
 	ctx = observability.Independent(ctx)
 	defer ticker.Stop()
+	matched := 0
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return appWatchEnd(ctx)
 		}
 		poll, finishPoll := observability.ClientOperation(ctx, "client.watch.poll")
 		events, err := publisherapp.EventsAfterFrom(poll, state, project.Root, cursor)
 		finishPoll(err)
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil
+			if ctx.Err() != nil && failure.Only(err, ctx.Err()) {
+				return appWatchEnd(ctx)
 			}
-			return failure.Wrap("resume local events", failure.AppCursorExpired, err)
+			if errors.Is(err, publisherapp.ErrCursorExpired) {
+				return err
+			}
+			return failure.Wrap("read local events", failure.ClientStateUnavailable, err)
 		}
 		for _, event := range events {
-			if err := watch.writeEvent(output, flags.Output, event); err != nil {
-				return err
+			if ctx.Err() != nil {
+				return appWatchEnd(ctx)
+			}
+			if watchMatches(flags.Service, event) {
+				if err := watch.writeEvent(output, flags.Output, event, flags.Count > 0); err != nil {
+					return err
+				}
+				if flags.Count > 0 {
+					matched++
+					if matched == flags.Count {
+						return nil
+					}
+				}
 			}
 			cursor = event.Cursor
 		}
 		select {
 		case <-ctx.Done():
-			return nil
+			return appWatchEnd(ctx)
 		case <-ticker.C:
 		}
 	}
+}
+
+func watchMatches(service string, event publisherapp.Event) bool {
+	if service == "" {
+		return true
+	}
+	// process snapshots may include the service even though it did not change.
+	return event.Service != nil && event.Service.Name == service ||
+		event.Publication != nil && event.Publication.Service == service
 }
 
 type humanWatch map[string]observationRow
@@ -453,7 +547,7 @@ func (w humanWatch) writeSnapshot(output io.Writer, snapshot publisherapp.Snapsh
 	return writeResult(output, blocks...)
 }
 
-func (w humanWatch) writeEvent(output io.Writer, mode string, event publisherapp.Event) error {
+func (w humanWatch) writeEvent(output io.Writer, mode string, event publisherapp.Event, counted bool) error {
 	if mode == "ndjson" {
 		return json.NewEncoder(output).Encode(event)
 	}
@@ -499,7 +593,7 @@ func (w humanWatch) writeEvent(output io.Writer, mode string, event publisherapp
 		}
 	}
 	previous := w[key]
-	if previous == row {
+	if !counted && previous == row {
 		return nil
 	}
 	if terminal {
@@ -507,7 +601,7 @@ func (w humanWatch) writeEvent(output io.Writer, mode string, event publisherapp
 	} else {
 		w[key] = row
 	}
-	if row.lastError == previous.lastError {
+	if !counted && row.lastError == previous.lastError {
 		row.lastError = ""
 	}
 	return writeResult(output, row.blocks()...)
@@ -516,23 +610,65 @@ func (w humanWatch) writeEvent(output io.Writer, mode string, event publisherapp
 func (a *commandApp) newWaitCommand() *cobra.Command {
 	f := a.flags
 	cWait := &cobra.Command{
-		Use: "wait", Short: "Wait until configured services are ready.", GroupID: "observe",
-		Long: "Ask this worktree's running tnl process to check readiness. Wait for all local services, or repeat --service to select which ones must be ready.",
+		Use: "wait [service...]", Short: "Wait until configured services are ready.", GroupID: "observe",
+		Long:        "Ask this worktree's running tnl process to check readiness. Name the services that must be ready, or omit names to check all configured local services. Checks may verify only the local target.",
+		Annotations: map[string]string{"cliflags:arg:service...": "Configured local service names."},
 	}
 	a.leaf(cWait, &f.Wait, func(call commandCall) error {
 		return runAppObservation(call.ctx, *f, "wait", a.out, a.errOut)
 	})
+	parseWaitFlags := cWait.Args
+	cWait.Args = func(cmd *cobra.Command, args []string) error {
+		if err := parseWaitFlags(cmd, nil); err != nil {
+			return err
+		}
+		if cmd.Flags().Changed("service") && len(f.Wait.Service) == 0 {
+			return invalidCommandInput(cmd, errors.New("empty service"), "--service requires a service name.")
+		}
+		f.Wait.Service = append(f.Wait.Service, args...)
+		if slices.Contains(f.Wait.Service, "") {
+			return invalidCommandInput(cmd, errors.New("empty service"), "Service names must not be empty.")
+		}
+		if f.Wait.Timeout <= 0 {
+			return invalidCommandInput(cmd, errors.New("nonpositive timeout"), "--timeout must be positive.")
+		}
+		return nil
+	}
 	return cWait
 }
 
 func (a *commandApp) newWatchCommand() *cobra.Command {
 	f := a.flags
 	cWatch := &cobra.Command{
-		Use: "watch", Short: "Follow this worktree's service events.", GroupID: "observe",
-		Long: "Follow local publication events as they happen. To resume, use the last event cursor from the same worktree and client state directory.",
+		Use: "watch [service]", Short: "Follow this worktree's service events.", GroupID: "observe",
+		Long:        "Follow all local publication events or name a single configured service. To resume without a snapshot, use the last event cursor from the same worktree and client state directory.",
+		Annotations: map[string]string{"cliflags:arg:service": "Configured local service name."},
 	}
 	a.leaf(cWatch, &f.Watch, func(call commandCall) error {
 		return runAppObservation(call.ctx, *f, "watch", a.out, a.errOut)
 	})
+	parseWatchFlags := cWatch.Args
+	cWatch.Args = func(cmd *cobra.Command, args []string) error {
+		if err := parseWatchFlags(cmd, nil); err != nil {
+			return err
+		}
+		hasFlag := cmd.Flags().Changed
+		switch {
+		case len(args) > 1 || len(args) == 1 && hasFlag("service"):
+			return invalidCommandInput(cmd, errors.New("multiple service names"), "Watch accepts one service name. Use a positional name or --service, not both.")
+		case len(args) == 1 && args[0] == "" || hasFlag("service") && f.Watch.Service == "":
+			return invalidCommandInput(cmd, errors.New("empty service"), "The service name must not be empty.")
+		case hasFlag("count") && f.Watch.Count <= 0:
+			return invalidCommandInput(cmd, errors.New("nonpositive count"), "--count must be positive.")
+		case hasFlag("timeout") && f.Watch.Timeout <= 0:
+			return invalidCommandInput(cmd, errors.New("nonpositive timeout"), "--timeout must be positive.")
+		case hasFlag("after") && f.Watch.After == "":
+			return invalidCommandInput(cmd, errors.New("empty cursor"), "--after requires a local event cursor.")
+		}
+		if len(args) == 1 {
+			f.Watch.Service = args[0]
+		}
+		return nil
+	}
 	return cWatch
 }

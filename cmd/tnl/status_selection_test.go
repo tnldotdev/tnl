@@ -19,6 +19,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -48,7 +49,7 @@ func TestStatusSelectsStoppedServiceByConfiguredSourceName(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	flags := statusCommand{Scope: "server", Project: project, StateDir: state.Root(), ServerURL: origin, AccessToken: token, Service: "web", Output: statusOutputJSON}
+	flags := statusCommand{ServerOnly: true, Project: project, StateDir: state.Root(), ServerURL: origin, AccessToken: token, Service: "web", Output: statusOutputJSON}
 	if err := runStatus(t.Context(), flags, &output); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func TestStatusAllFetchesTheRecordedProjectsSelectedDeployment(t *testing.T) {
 	// a local tunnel on a different server must not override project configuration.
 	statusTestTunnel(t, state, "https://127.0.0.1:2", root, statusTestSavedID)
 	var output bytes.Buffer
-	if err := runStatus(t.Context(), statusCommand{Scope: "server", All: true, StateDir: state.Root(), Deployment: "staging", Output: statusOutputJSON}, &output); err != nil {
+	if err := runStatus(t.Context(), statusCommand{ServerOnly: true, All: true, StateDir: state.Root(), Deployment: "staging", Output: statusOutputJSON}, &output); err != nil {
 		t.Fatal(err)
 	}
 	var result statusResult
@@ -240,9 +241,172 @@ func TestStatusPreservesPartialReadAndWriteErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeErr := errors.New("partial result write failed")
-	err = runStatus(t.Context(), statusCommand{Scope: "both", StateDir: state.Root(), Project: project, ServerURL: origin}, errorWriter{writeErr})
+	err = runStatus(t.Context(), statusCommand{StateDir: state.Root(), Project: project, ServerURL: origin}, errorWriter{writeErr})
 	var readErr *json.UnmarshalTypeError
 	if !errors.As(err, &readErr) || !errors.Is(err, writeErr) {
 		t.Fatalf("missing independent read or write failure: %v", err)
+	}
+}
+
+func TestStatusAddressAndIDSelectOnlyExactLocalRecords(t *testing.T) {
+	const secondID = "svc_0000000000000000000002"
+	state := statusTestDatabase(t)
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range []struct{ id, url string }{
+		{statusTestSavedID, "https://accounts.example.test"},
+		{secondID, "https://accounts-preview.example.test"},
+	} {
+		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+			Command: clientstate.TunnelCommandPublish, Server: "https://control.example", Project: directory,
+			Service: "accounts", ServiceID: fixture.id, Target: "http://127.0.0.1:3000",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
+		if err := tunnel.SetReady(t.Context(), fixture.url, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	flags := statusCommand{Project: directory, StateDir: state.Root(), LastKnown: true, Output: statusOutputJSON}
+	for selector, want := range map[string]string{
+		"HTTPS://ACCOUNTS.EXAMPLE.TEST:443/": statusTestSavedID,
+		"accounts-preview.example.test:443":  secondID,
+		statusTestSavedID:                    statusTestSavedID,
+	} {
+		t.Run(selector, func(t *testing.T) {
+			var out bytes.Buffer
+			flags.Service = selector
+			if err := runStatus(t.Context(), flags, &out); err != nil {
+				t.Fatal(err)
+			}
+			var result statusResult
+			if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			local := result.Projects[0].Local
+			if len(local.Tunnels.Tunnels) != 1 || len(local.Snapshot.Publications) != 1 || local.Tunnels.Summary.Total != 1 ||
+				local.Tunnels.Tunnels[0].ServiceID != want || local.Snapshot.Publications[0].ServiceID != want {
+				t.Fatalf("exact selection widened: %s", &out)
+			}
+		})
+	}
+	for selector, reason := range map[string]failure.Reason{
+		"acounts":                            failure.ServiceNotConfigured,
+		"accounts.example.test:4430":         failure.ServiceNotConfigured,
+		"https://accounts.example.test/path": failure.InvalidCommand,
+	} {
+		t.Run(selector, func(t *testing.T) {
+			var out bytes.Buffer
+			flags.Service = selector
+			err := runStatus(t.Context(), flags, &out)
+			if got, _ := failure.ReasonOf(err); got != reason || out.Len() != 0 {
+				t.Fatalf("bad selector widened or returned the wrong error: %v, %s", err, &out)
+			}
+		})
+	}
+}
+
+func TestStatusServerEndpointMatchesProtocolAndExactPort(t *testing.T) {
+	const secondID = "svc_0000000000000000000002"
+	for raw, want := range map[string]string{
+		"postgres://DATABASE.EXAMPLE.TEST/":       statusTestSavedID,
+		"postgresql://database.example.test:5432": statusTestSavedID,
+		"database.example.test:15432":             secondID,
+		"database.example.test":                   "ambiguous",
+		"https://database.example.test:5432":      "",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			project := projectStatus{Server: &statusServer{Services: []statusServerService{
+				{ServiceID: statusTestSavedID, Protocol: controlv1.Postgres, Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 5432}},
+				{ServiceID: secondID, Protocol: controlv1.Postgres, Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 15432}},
+			}}}
+			selector, err := naming.ParseServiceSelector(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			matched, err := selectStatusService(&project, selector, clientstate.TunnelSnapshot{})
+			if want == "ambiguous" {
+				if reason, _ := failure.ReasonOf(err); reason != failure.InvalidCommand {
+					t.Fatalf("expected an ambiguous endpoint error, got %v", err)
+				}
+				message := presentHumanFailure(err).message
+				if !strings.Contains(message, statusTestSavedID) || !strings.Contains(message, secondID) {
+					t.Fatalf("ambiguous endpoint did not identify its choices: %s", message)
+				}
+			} else if err != nil || matched != (want != "") || matched && (len(project.Server.Services) != 1 || project.Server.Services[0].ServiceID != want) {
+				t.Fatalf("exact endpoint selection failed: %+v, %v, %v", project.Server.Services, matched, err)
+			}
+		})
+	}
+}
+
+func TestStatusNameKeepsAppliedIDsAndRejectsConflictingSavedNames(t *testing.T) {
+	project := projectStatus{Server: &statusServer{
+		Applied: &controlv1.AppliedProjectConfiguration{Services: []controlv1.AppliedProjectService{
+			{Service: "accounts", ServiceId: new("svc_selected")},
+			{Service: "api", ServiceId: new("svc_unrelated")},
+		}},
+		Services: []statusServerService{
+			{ServiceID: "svc_selected", Name: "accounts-worktree"},
+			{ServiceID: "svc_unrelated", Name: "accounts", sourceName: "accounts"},
+		},
+	}}
+	matched, err := selectStatusService(&project, naming.ServiceSelector{Kind: naming.SelectorName, Name: "accounts"}, clientstate.TunnelSnapshot{})
+	if err != nil || !matched || project.Server.Applied != nil || len(project.Server.AppliedServices) != 1 ||
+		len(project.Server.Services) != 1 || project.Server.Services[0].ServiceID != "svc_selected" {
+		t.Fatalf("selection crossed applied binding: %+v, %v", project.Server, err)
+	}
+}
+
+func TestStatusAllDoesNotInferServerFromOnlySelectedService(t *testing.T) {
+	state, directory := statusTestDatabase(t), t.TempDir()
+	origin, token, requests := statusTestControl(t, []string{statusTestTeamOne}, func(http.ResponseWriter, *http.Request) {
+		t.Error("mixed checkout must not query the selected service's server implicitly")
+	})
+	for name, server := range map[string]string{"accounts": origin, "api": "https://another.example.test"} {
+		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
+			Command: clientstate.TunnelCommandPublish, Server: server, Project: directory, Service: name,
+			ServiceID: statusTestSavedID, Target: "http://127.0.0.1:3000",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = tunnel.Finish(context.Background(), nil) })
+	}
+	if err := state.SaveServer(t.Context(), origin); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runStatus(t.Context(), statusCommand{
+		StateDir: state.Root(), All: true, Service: "accounts", AccessToken: token, Output: statusOutputJSON,
+	}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests()) != 0 || !strings.Contains(out.String(), "multiple local servers") || strings.Contains(out.String(), `"service":"api"`) {
+		t.Fatalf("inferred a server from a filtered checkout: %s (requests %v)", &out, requests())
+	}
+}
+
+func TestStatusDoesNotSendExplicitTokenToInferredServer(t *testing.T) {
+	state, directory := statusTestDatabase(t), t.TempDir()
+	origin, token, requests := statusTestControl(t, []string{statusTestTeamOne}, func(http.ResponseWriter, *http.Request) {
+		t.Error("inferred server must not receive the explicit token")
+	})
+	if err := state.SaveServer(t.Context(), "https://selected.example.test"); err != nil {
+		t.Fatal(err)
+	}
+	statusTestTunnel(t, state, origin, directory, statusTestSavedID)
+	var out bytes.Buffer
+	if err := runStatus(t.Context(), statusCommand{
+		Project: directory, StateDir: state.Root(), AccessToken: token, Output: statusOutputJSON,
+	}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests()) != 0 || !strings.Contains(out.String(), "select the project server with --server to use an explicit access token") {
+		t.Fatalf("read the inferred server with an unbound explicit token: %s (requests %v)", &out, requests())
 	}
 }

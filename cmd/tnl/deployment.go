@@ -345,7 +345,7 @@ func (a *commandApp) newDeploymentCommand() *cobra.Command {
 	cDeploymentNamespace := &cobra.Command{Use: "namespace", Short: "Manage a deployment's DNS namespace separately from its selector."}
 	cDeploymentNamespaceRename := &cobra.Command{
 		Use: "rename", Short: "Move the deployment's service hostnames to a new namespace.",
-		Long: "This changes the service hostnames. Get the current applied revision from tnl status --scope server --output json. After a lost reply, retry with the same revision, request ID, and arguments.",
+		Long: "This changes the service hostnames. Get the current applied revision from tnl status --server-only --deployment NAME --output json. After a lost reply, retry with the same revision, request ID, and arguments.",
 	}
 	a.leaf(cDeploymentNamespaceRename, &f.Deployment.Namespace.Rename, func(call commandCall) error {
 		return runDeploymentNamespaceRename(call.ctx, f.Deployment.Namespace.Rename, call.project, a.out, a.errOut)
