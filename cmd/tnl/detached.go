@@ -26,7 +26,15 @@ type detachedListCommand struct {
 }
 type detachedStopCommand struct {
 	detachedListCommand `embed:""`
-	ID                  string `arg:"" name:"id" help:"Detached publication ID."`
+	ID                  string `arg:"" name:"id" help:"Detached publication or connector ID."`
+}
+
+func detachedStopCommandLine(id, stateDir string) string {
+	stop := "tnl detached stop " + shellWord(id)
+	if stateDir != "" {
+		stop += " --state-dir=" + shellWord(stateDir)
+	}
+	return stop
 }
 
 func detachPublish(ctx context.Context, args []string, stateDir string, output io.Writer, title string) error {
@@ -59,11 +67,7 @@ func detachPublish(ctx context.Context, args []string, stateDir string, output i
 			}
 			return writeDetachedConnection(root, id, mode, output)
 		}
-		stop := "tnl detached stop " + shellWord(id)
-		if stateDir != "" {
-			stop += " --state-dir=" + shellWord(stateDir)
-		}
-		return writeResult(output, clioutput.Text("Publishing in the background. To stop:"), clioutput.Literal(stop))
+		return writeResult(output, clioutput.Text("Publishing in the background. To stop:"), clioutput.Literal(detachedStopCommandLine(id, stateDir)))
 	})
 }
 
@@ -89,7 +93,7 @@ func runDetachedList(flags detachedListCommand, output io.Writer) error {
 	for _, entry := range entries {
 		rows = append(rows, []string{entry.ID, entry.State})
 	}
-	return writeResult(output, clioutput.Table([]string{"ID", "STATE"}, rows, "No detached tunnels."))
+	return writeResult(output, clioutput.Table([]string{"ID", "STATE"}, rows, "No detached publications or connectors."))
 }
 
 func runDetachedStop(flags detachedStopCommand, output io.Writer) error {
@@ -101,13 +105,13 @@ func runDetachedStop(flags detachedStopCommand, output io.Writer) error {
 
 func (a *commandApp) newDetachedCommand() *cobra.Command {
 	f := a.flags
-	cDetached := &cobra.Command{Use: "detached", Short: "List or stop tunnels started with --detach.", GroupID: "deploy"}
-	cDetachedList := &cobra.Command{Use: "list", Short: "List detached publications for this client state."}
+	cDetached := &cobra.Command{Use: "detached", Short: "List or stop publications and connectors started with --detach.", GroupID: "deploy"}
+	cDetachedList := &cobra.Command{Use: "list", Short: "List detached publications and connectors for this client state."}
 	a.leaf(cDetachedList, &f.Detached.List, func(call commandCall) error {
 		return runDetachedList(f.Detached.List, a.out)
 	})
 	cDetached.AddCommand(cDetachedList)
-	cDetachedStop := &cobra.Command{Use: "stop", Short: "Stop a detached publication."}
+	cDetachedStop := &cobra.Command{Use: "stop", Short: "Stop a detached publication or connector."}
 	a.leaf(cDetachedStop, &f.Detached.Stop, func(call commandCall) error {
 		return runDetachedStop(f.Detached.Stop, a.out)
 	})

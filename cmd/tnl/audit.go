@@ -99,7 +99,7 @@ func runAuditList(ctx context.Context, flags auditListCommand, output, diagnosti
 	if flags.Output == statusOutputJSON {
 		return failure.Wrap("write service audit", failure.OutputUnavailable, json.NewEncoder(output).Encode(page))
 	}
-	return renderServiceAudit(output, page)
+	return renderServiceAudit(output, page, flags, since, flags.followupScope(ctx, session, current.Team().Id))
 }
 
 // readServiceAudit bounds the finite result and rejects stalled, cycling or
@@ -151,7 +151,7 @@ func readServiceAudit(ctx context.Context, reader serviceAuditReader, team strin
 	return result, nil
 }
 
-func renderServiceAudit(output io.Writer, page controlv1.ServiceAuditPage) error {
+func renderServiceAudit(output io.Writer, page controlv1.ServiceAuditPage, flags auditListCommand, since time.Time, scope commandScope) error {
 	var rows [][]string
 	for _, event := range page.Events {
 		var detail []string
@@ -164,7 +164,14 @@ func renderServiceAudit(output io.Writer, page controlv1.ServiceAuditPage) error
 	}
 	blocks := []clioutput.Block{clioutput.Table([]string{"TIME", "EVENT", "SERVICE", "OUTCOME"}, rows, "No matching audit events.")}
 	if page.NextCursor != nil {
-		blocks = append(blocks, clioutput.Line("continue with --after "+*page.NextCursor))
+		args := []string{"--since=" + since.Format(time.RFC3339Nano)}
+		if flags.Service != "" {
+			args = append(args, "--service="+flags.Service)
+		}
+		if flags.Limit != 100 {
+			args = append(args, "--limit="+strconv.Itoa(flags.Limit))
+		}
+		blocks = append(blocks, scope.nextPage("audit list", *page.NextCursor, args...))
 	}
 	return writeResult(output, blocks...)
 }

@@ -144,6 +144,18 @@ func TestFeedbackWatchResumesAfterInvisibleEventsAndPagination(t *testing.T) {
 	}
 }
 
+func TestFeedbackWatchNamesAuthorThreadAndChange(t *testing.T) {
+	fixture := feedbackReadFixture{teamPages: map[uint64]controlv1.FeedbackEventPage{
+		41: {EventCursor: 42, Events: []controlv1.FeedbackEvent{{Cursor: 42, FeedbackId: "fb_mine", Type: "thread.reopened",
+			Author: &controlv1.FeedbackAuthor{DisplayName: "Ada", Verified: true}, Text: new("Still seeing this.")}}},
+	}}
+	var out bytes.Buffer
+	cursor, _, err := pollFeedbackEvents(t.Context(), fixture, "", 41, &out, feedbackHuman)
+	if err != nil || cursor != 42 || out.String() != "Ada reopened fb_mine: Still seeing this.\n" {
+		t.Fatalf("watch = %q, cursor = %d, error = %v", &out, cursor, err)
+	}
+}
+
 func TestFeedbackInspectKeepsReportAndAddsLocalComparison(t *testing.T) {
 	thread := controlv1.FeedbackThread{
 		SchemaVersion: 1,

@@ -173,6 +173,9 @@ func runConnectJobs(ctx context.Context, flags connectListCommand, name, action 
 		if len(jobs) == 0 {
 			return installedjobs.ErrJobNotFound
 		}
+		if flags.Output != statusOutputJSON {
+			return writeJobStopResult(output, jobs[0])
+		}
 		return renderSystemJobs(output, "tnl connect stop", jobs, jobs[0].ID)
 	}
 	if flags.Output == statusOutputJSON {
@@ -197,15 +200,21 @@ func runConnectAvailable(ctx context.Context, command connectAvailableCommand, o
 		}
 		return json.NewEncoder(output).Encode(services)
 	}
+	return writeAvailableConnectServices(output, services)
+}
+
+func writeAvailableConnectServices(output io.Writer, services []controlv1.ServiceSummary) error {
 	rows := make([][]string, 0, len(services))
 	for _, service := range services {
-		state := "offline"
-		if service.Enabled && service.ServiceRunId != nil && service.RunNumber != nil {
-			state = "ready"
+		state := "run not reported"
+		if !service.Enabled {
+			state = "disabled"
+		} else if service.ServiceRunId != nil && *service.ServiceRunId != "" && service.RunNumber != nil && *service.RunNumber > 0 {
+			state = "ready run reported"
 		}
 		rows = append(rows, []string{service.Name, service.TeamName, state, service.Id})
 	}
-	return writeResult(output, clioutput.Table([]string{"SERVICE", "TEAM", "STATE", "SERVICE ID"}, rows, "No services available to connect to."))
+	return writeResult(output, clioutput.Table([]string{"SERVICE", "TEAM", "STATUS", "SERVICE ID"}, rows, "No services available to connect to."))
 }
 
 func (a *commandApp) newConnectCommand() *cobra.Command {

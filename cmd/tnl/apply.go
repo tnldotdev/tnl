@@ -78,7 +78,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 		if err != nil {
 			return err
 		}
-		return diff.write(output, flags.Output)
+		return diff.write(output, flags.Output, current.Team().DisplayName)
 	}
 	applied, err := session.Authenticated().Control.ApplyProjectConfiguration(ctx, source.Key, controlv1.ApplyProjectConfigurationRequest{
 		TeamId: current.Team().Id, Source: &controlv1.GitProjectSource{GitOrigin: source.Source.GitOrigin, ConfigurationPath: source.Source.ConfigurationPath}, ExpectedRevision: revision, Configuration: declaration,
@@ -103,7 +103,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(applied)
 	}
-	return writeResult(output, clioutput.Line("Applied "+applied.Deployment+" ("+countState(len(applied.Services), "service", "services")+")."))
+	return writeResult(output, clioutput.Line("Applied "+applied.Deployment+" for team "+current.Team().DisplayName+" ("+countState(len(applied.Services), "service", "services")+")."))
 }
 
 func (a *commandApp) newApplyCommand() *cobra.Command {

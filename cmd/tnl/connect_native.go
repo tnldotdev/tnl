@@ -26,47 +26,41 @@ func writeConnectorReady(output io.Writer, profile connector.Profile, mode statu
 		}
 		blocks = append(blocks, clioutput.Literal(strings.Join(command, " ")))
 	} else if profile.Protocol == config.ProtocolHTTP && profile.URL != "" {
-		blocks = append(blocks, clioutput.Text("Use a client dial override for this HTTPS URL:"), clioutput.Literal(profile.URL))
+		blocks = append(blocks, clioutput.Literal(profile.URL))
 	}
-	for _, instruction := range profile.Instructions {
-		if profile.Protocol == config.ProtocolHTTP {
-			instruction = strings.Replace(instruction, "curl below", "curl", 1)
-		}
-		blocks = append(blocks, clioutput.Text(instruction))
+	lifetime := "Ctrl+C to stop."
+	if profile.DetachedID != "" {
+		lifetime = "Running detached."
+	} else if installed {
+		lifetime = "Installed; running in the background."
 	}
 	if listen != "" {
-		blocks = append(blocks, clioutput.Line("Listening on "+listen))
+		blocks = append(blocks, clioutput.Line("Listening on "+listen+". "+lifetime))
 	}
-	if (profile.Protocol == config.ProtocolTCP || profile.Protocol == config.ProtocolKubernetes) && profile.Hostname != "" {
-		blocks = append(blocks, clioutput.Line("TLS hostname: "+profile.Hostname))
-	}
-	if profile.TLS != "" {
-		blocks = append(blocks, clioutput.Text("TLS: "+profile.TLS))
-	}
-	if profile.ServerCAFile != "" {
-		blocks = append(blocks, clioutput.Line("Server CA: "+profile.ServerCAFile))
+	switch profile.Protocol {
+	case config.ProtocolHTTP:
+		blocks = append(blocks, clioutput.Text("Use a dial override to reach the local listener. Keep the URL's HTTPS hostname."))
+		if profile.Public {
+			blocks = append(blocks, clioutput.Text("Opening the URL in a browser uses the public endpoint."))
+		}
+	case config.ProtocolMySQL:
+		blocks = append(blocks, clioutput.Text("Dial the listener with the SDK mysql2 connection factory or a compatible driver."), clioutput.Fields(
+			clioutput.Field{Label: "Verify TLS hostname", Value: profile.Hostname},
+			clioutput.Field{Label: "Server CA", Value: profile.ServerCAFile},
+		))
+	case config.ProtocolTCP:
+		blocks = append(blocks, clioutput.Line("tnl verifies TLS for "+profile.Hostname+"."))
 	}
 	if kube := profile.Kubeconfig; kube != nil {
 		if kube.Namespace != "" {
 			blocks = append(blocks, clioutput.Line("Namespace: "+kube.Namespace))
 		}
 		if kube.Qualified {
-			blocks = append(blocks, clioutput.Text("The context name was qualified to preserve an existing installation."))
+			blocks = append(blocks, clioutput.Text("The context name includes a suffix because the original name is in use."))
 		}
 	}
-	footer := "Keep this terminal open while using the service."
 	if profile.DetachedID != "" {
-		stop := "tnl detached stop " + shellWord(profile.DetachedID)
-		if stateDir != "" {
-			stop += " --state-dir=" + shellWord(stateDir)
-		}
-		blocks = append(blocks, clioutput.Text("Stop the detached connector:"), clioutput.Literal(stop))
-		footer = ""
-	} else if installed {
-		footer = "The installed connector runs in the background."
-	}
-	if footer != "" {
-		blocks = append(blocks, clioutput.Text(footer))
+		blocks = append(blocks, clioutput.Text("To stop:"), clioutput.Literal(detachedStopCommandLine(profile.DetachedID, stateDir)))
 	}
 	return writeResult(output, blocks...)
 }

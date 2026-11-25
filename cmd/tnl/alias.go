@@ -35,9 +35,9 @@ func runAliasChoice(ctx context.Context, flags aliasChoiceCommand, project proje
 	if err != nil {
 		return err
 	}
-	status := "selected"
+	status := "Selected worktree"
 	if !use {
-		status = "default restored"
+		status = "Restored default worktree"
 	}
-	return writeResult(stdout, clioutput.Line("https://"+selected.Hostname), clioutput.Line(status+": "+selected.Project))
+	return writeResult(stdout, clioutput.Literal("https://"+selected.Hostname), clioutput.Line(status+": "+selected.Project))
 }

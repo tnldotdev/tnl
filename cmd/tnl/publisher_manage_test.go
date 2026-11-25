@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
@@ -20,6 +21,27 @@ import (
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestPublisherListKeepsGrantsWithTheirPublisherIDs(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	identities := []controlv1.PublisherIdentity{
+		{Name: "worker", Id: "pub_a", Grants: []controlv1.PublisherGrant{{Id: "grant_a", Namespace: new("dev.example"), ExpiresAt: &now}}},
+		{Name: "worker", Id: "pub_b", RevokedAt: &now, Grants: []controlv1.PublisherGrant{{Id: "grant_b", ServiceId: new("svc_db")}}},
+	}
+	var out bytes.Buffer
+	if err := writeResult(&out, publisherListTables(identities, now)...); err != nil {
+		t.Fatal(err)
+	}
+	rows := map[string]bool{}
+	for _, line := range strings.Split(out.String(), "\n") {
+		rows[strings.Join(strings.Fields(line), " ")] = true
+	}
+	for _, want := range []string{"worker enrolled pub_a", "worker revoked pub_b", "pub_a grant_a dev.example expired", "pub_b grant_b svc_db publisher revoked"} {
+		if !rows[want] {
+			t.Fatalf("missing row %q in:\n%s", want, &out)
+		}
+	}
+}
 
 func TestPortablePublisherCommandFlags(t *testing.T) {
 	for _, tc := range []struct {

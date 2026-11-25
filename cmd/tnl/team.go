@@ -162,9 +162,11 @@ func runTeamUse(ctx context.Context, command teamUseCommand, output, diagnostics
 	if err := session.Store().SaveSelectedTeam(ctx, membership.TeamId); err != nil {
 		return err
 	}
-	return writeWithHint(output, savedTeamFooter(command.ProjectTeam, membership.TeamId, membership.TeamDisplayName),
-		clioutput.Line("Selected "+membership.TeamDisplayName+"."),
-	)
+	message := savedTeamOverride(command.ProjectTeam, membership.TeamId, membership.TeamDisplayName, session.Identity().Memberships)
+	if message == "" {
+		message = "Selected " + membership.TeamDisplayName + "."
+	}
+	return writeResult(output, clioutput.Text(message))
 }
 
 func runTeamCreate(ctx context.Context, command teamCreateCommand, output, diagnostics io.Writer) error {
@@ -195,7 +197,7 @@ func runTeamCreate(ctx context.Context, command teamCreateCommand, output, diagn
 	if err := session.Store().SaveSelectedTeam(ctx, team.Id); err != nil {
 		return err
 	}
-	return writeWithHint(output, savedTeamFooter(command.ProjectTeam, team.Id, team.DisplayName),
+	return writeWithHint(output, savedTeamOverride(command.ProjectTeam, team.Id, team.DisplayName, session.Identity().Memberships),
 		clioutput.Line("Created team "+team.DisplayName+"."),
 	)
 }
@@ -310,7 +312,7 @@ func runTeamJoin(ctx context.Context, command teamJoinCommand, output, diagnosti
 	if err := session.Store().SaveSelectedTeam(ctx, membership.TeamId); err != nil {
 		return err
 	}
-	return writeWithHint(output, savedTeamFooter(command.ProjectTeam, membership.TeamId, membership.TeamDisplayName),
+	return writeWithHint(output, savedTeamOverride(command.ProjectTeam, membership.TeamId, membership.TeamDisplayName, session.Identity().Memberships),
 		clioutput.Line("Joined "+membership.TeamDisplayName+" as "+string(membership.Role)+"."),
 	)
 }
@@ -350,11 +352,17 @@ func runTeamMemberRemove(ctx context.Context, command teamMemberRemoveCommand, o
 
 func openapiEmail(value string) openapi_types.Email { return openapi_types.Email(value) }
 
-func savedTeamFooter(projectTeam, selectedID, selectedName string) string {
-	if projectTeam != "" && projectTeam != selectedID && projectTeam != selectedName {
-		return "saved; project team still takes precedence here"
+func savedTeamOverride(projectTeam, selectedID, selectedName string, memberships []authorityv1.Membership) string {
+	if projectTeam == "" || projectTeam == selectedID || projectTeam == selectedName {
+		return ""
 	}
-	return ""
+	for _, membership := range memberships {
+		if projectTeam == membership.TeamId && membership.TeamDisplayName != "" {
+			projectTeam = membership.TeamDisplayName
+			break
+		}
+	}
+	return "Saved " + selectedName + " as your default team. This project still uses " + projectTeam + "."
 }
 
 func (a *commandApp) newTeamCommand() *cobra.Command {

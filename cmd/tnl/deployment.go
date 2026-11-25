@@ -199,7 +199,12 @@ func runDeployment(ctx context.Context, command string, flags cli, project proje
 		}
 		blocks := []clioutput.Block{clioutput.Table([]string{"DEPLOYMENT", "SERVICES"}, rows, "No deployments.")}
 		if page.NextCursor != nil {
-			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "next cursor", Value: *page.NextCursor}))
+			args := []string{"--project-key=" + key}
+			if limit := flags.Deployment.List.Limit; limit != 50 {
+				args = append(args, "--limit="+strconv.Itoa(limit))
+			}
+			scope := selected.followupScope(ctx, session, team)
+			blocks = append(blocks, scope.nextPage("deployment list", *page.NextCursor, args...))
 		}
 		return writeResult(output, blocks...)
 	}
@@ -312,7 +317,7 @@ func deploymentBlock(deployment controlv1.Deployment) clioutput.Block {
 			fields = append(fields, clioutput.Field{Label: "target", Value: "publisher-side discovery"})
 		}
 		if target.Tls != nil {
-			fields = append(fields, clioutput.Field{Label: "target TLS", Value: "verified"})
+			fields = append(fields, clioutput.Field{Label: "target TLS", Value: "verification enabled"})
 			if target.Tls.Hostname != nil {
 				fields = append(fields, clioutput.Field{Label: "TLS hostname", Value: *target.Tls.Hostname})
 			}

@@ -178,10 +178,12 @@ func TestAuditProductionClientPaginatesWithoutChangingFilters(t *testing.T) {
 		t.Fatalf("audit page: %+v %v", page, err)
 	}
 	var human bytes.Buffer
-	if err := renderServiceAudit(&human, page); err != nil {
+	scope := commandScope{configArgs: "--no-config ", server: server.URL, team: "team-shop", stateDir: "/client state"}
+	if err := renderServiceAudit(&human, page, auditListCommand{Service: service, Limit: 3}, since, scope); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(human.String(), "visitor.admit") != 3 || !strings.Contains(human.String(), "continue with --after 3") {
+	want := "\ntnl --no-config audit list --since=2026-10-16T12:00:00Z --service=eks-api --limit=3 --after=3 --server=" + server.URL + " --team=team-shop --state-dir='/client state'\n"
+	if strings.Count(human.String(), "visitor.admit") != 3 || !strings.HasSuffix(human.String(), want) {
 		t.Fatalf("audit presentation: %s", human.String())
 	}
 }

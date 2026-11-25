@@ -20,11 +20,11 @@ func TestDomainClaimPresentation(t *testing.T) {
 	}{
 		{
 			name: "provisioning", domain: authorityv1.Domain{State: authorityv1.DomainStatePending},
-			state: "provisioning", footer: "run tnl domain status to check DNS setup",
+			state: "provisioning",
 		},
 		{
 			name: "provisioning_default", domain: authorityv1.Domain{State: authorityv1.DomainStatePending}, makeDefault: true,
-			state: "provisioning", footer: "will become default; run tnl domain status",
+			state: "provisioning",
 		},
 		{
 			name: "verification", domain: authorityv1.Domain{State: authorityv1.DomainStatePending, RequiredRecords: records},
@@ -97,7 +97,7 @@ func TestDomainClaimTimeoutPresentation(t *testing.T) {
 func TestDomainClaimFollowupRetainsServerAndTeam(t *testing.T) {
 	var output bytes.Buffer
 	claimed := authorityv1.Domain{CanonicalDomain: "studio.example.test", Id: "dom_1", State: authorityv1.DomainStatePending}
-	if err := writeDomainClaimWithContext(&output, claimed, false, true, domainFollowup{server: "https://control.example.test", team: "tm_studio"}); err != nil {
+	if err := writeDomainClaimWithContext(&output, claimed, false, true, commandScope{server: "https://control.example.test", team: "tm_studio"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, value := range []string{"--server=https://control.example.test", "--team=tm_studio", "studio.example.test"} {

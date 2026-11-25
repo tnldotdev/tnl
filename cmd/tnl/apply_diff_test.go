@@ -20,10 +20,12 @@ func TestApplyDiffReviewsPublicAccessAndWorkloadRemoval(t *testing.T) {
 		t.Fatal(d, err)
 	}
 	var out bytes.Buffer
-	if err := d.write(&out, statusOutputHuman); err != nil {
+	if err := d.write(&out, statusOutputHuman, "studio"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "connector-only -> public endpoint requested") || !strings.Contains(out.String(), "workload migration") {
+	text := strings.Join(strings.Fields(out.String()), " ")
+	if !strings.HasPrefix(text, "Proposed changes to production (team studio): RESOURCE FIELD BEFORE AFTER") || !strings.Contains(text, "binding orders reachability connector-only public endpoint requested") ||
+		!strings.Contains(text, `workload migration allowed services ["orders"] (absent)`) {
 		t.Fatal(out.String())
 	}
 	var removal bool

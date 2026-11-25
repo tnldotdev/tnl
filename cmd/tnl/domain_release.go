@@ -12,7 +12,7 @@ func domainReleaseConfirmed(domain authorityv1.Domain) bool {
 		!domain.Release.CompletionUnknown && domain.Release.ReleasedAt != nil && !domain.Release.ReleasedAt.IsZero() && len(domain.Release.Blockers) == 0
 }
 
-func domainReleaseBlocks(domain authorityv1.Domain, followup domainFollowup) []clioutput.Block {
+func domainReleaseBlocks(domain authorityv1.Domain, followup commandScope) []clioutput.Block {
 	if domainReleaseConfirmed(domain) {
 		return nil
 	}
@@ -34,7 +34,7 @@ func domainReleaseBlocks(domain authorityv1.Domain, followup domainFollowup) []c
 		}
 	}
 	return append(blocks, clioutput.Text("Release completion is unknown. Check again after DNS cleanup:"),
-		clioutput.Line(followup.status(domain.Id)))
+		clioutput.Literal(followup.command("domain status", domain.Id)))
 }
 
 func domainReleaseBlockerText(blocker authorityv1.DomainReleaseBlocker) string {

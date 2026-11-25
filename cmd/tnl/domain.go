@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -90,7 +89,7 @@ func runDomainClaim(ctx context.Context, command domainClaimCommand, output, dia
 	if err != nil {
 		return err
 	}
-	return writeDomainClaimWithContext(output, claimed, command.Default, timedOut, command.domainFollowup(ctx, session, teamID))
+	return writeDomainClaimWithContext(output, claimed, command.Default, timedOut, command.followupScope(ctx, session, teamID))
 }
 
 func runDomainTransfer(ctx context.Context, command domainTransferCommand, output, diagnostics io.Writer) error {
@@ -119,8 +118,6 @@ func runDomainTransfer(ctx context.Context, command domainTransferCommand, outpu
 	if err != nil {
 		return err
 	}
-	blocks := []clioutput.Block{clioutput.Line(result.Domain + "  " + string(result.State))}
-	hint := "existing DNS delegation kept"
 	switch result.State {
 	case authorityv1.Blocked:
 		if result.Blockers == nil || len(*result.Blockers) == 0 {
@@ -131,14 +128,17 @@ func runDomainTransfer(ctx context.Context, command domainTransferCommand, outpu
 		if result.ExpiresAt == nil {
 			return failure.Wrap("transfer domain", failure.ServerResponseInvalid, errors.New("missing transfer offer expiry"))
 		}
-		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "expires", Value: result.ExpiresAt.Format(time.RFC3339)},
-			clioutput.Field{Label: "accept", Value: "tnl domain transfer " + result.Domain + " --to-team " + destination + " --accept"}))
-		hint = "send the accept command to the destination owner"
+		// the recipient uses their own client state, on this server.
+		scope := commandScope{configArgs: "--no-config ", server: session.Authenticated().ServerEndpoint}
+		return writeResult(output, clioutput.Line("Offered transfer of "+result.Domain+"."),
+			clioutput.Fields(clioutput.Field{Label: "expires", Value: result.ExpiresAt.Format(time.RFC3339)}),
+			clioutput.Text("Send this command to the destination owner:"),
+			clioutput.Literal(scope.command("domain transfer", command.Domain, "--to-team="+destination, "--accept")))
 	case authorityv1.Transferred:
+		return writeResult(output, clioutput.Line("Transferred "+result.Domain+". Existing DNS delegation kept."))
 	default:
 		return failure.Wrap("transfer domain", failure.ServerResponseInvalid, errors.New("unknown transfer outcome"))
 	}
-	return writeWithHint(output, hint, blocks...)
 }
 
 func defaultDomainClaimWait() clientteam.DomainClaimWait {
@@ -155,45 +155,23 @@ func defaultDomainClaimWait() clientteam.DomainClaimWait {
 }
 
 func writeDomainClaim(output io.Writer, claimed authorityv1.Domain, makeDefault, timedOut bool) error {
-	return writeDomainClaimWithContext(output, claimed, makeDefault, timedOut, domainFollowup{})
+	return writeDomainClaimWithContext(output, claimed, makeDefault, timedOut, commandScope{})
 }
 
-type domainFollowup struct{ configArgs, server, team, stateDir string }
-
-func (flags remoteFlags) domainFollowup(ctx context.Context, session *clientteam.Session, team string) domainFollowup {
-	pin := suggestedServer(ctx, session.Authenticated().ServerEndpoint, flags.projectServer, os.Getenv("TNL_ACCESS_TOKEN"), flags.StateDir, session.Database())
-	return domainFollowup{flags.configArgs, pin, team, flags.StateDir}
-}
-
-func (f domainFollowup) status(domain string) string {
-	cmd := "tnl " + f.configArgs + "domain status " + shellWord(domain)
-	if f.server != "" {
-		cmd += " --server=" + shellWord(f.server)
-	}
-	if f.team != "" {
-		cmd += " --team=" + shellWord(f.team)
-	}
-	if f.stateDir != "" {
-		cmd += " --state-dir=" + shellWord(f.stateDir)
-	}
-	return cmd
-}
-
-func writeDomainClaimWithContext(output io.Writer, claimed authorityv1.Domain, makeDefault, timedOut bool, followup domainFollowup) error {
+func writeDomainClaimWithContext(output io.Writer, claimed authorityv1.Domain, makeDefault, timedOut bool, followup commandScope) error {
 	if claimed.State == authorityv1.DomainStateReleasing || claimed.State == authorityv1.DomainStateReleased {
 		return writeDomainObservation(output, claimed, false, followup)
 	}
 	blocks := domainClaimDNSBlocks(claimed)
-	if makeDefault && claimed.State == authorityv1.DomainStatePending && claimed.ClaimStage != nil {
+	if makeDefault && claimed.State == authorityv1.DomainStatePending && (claimed.ClaimStage != nil || len(claimed.RequiredRecords) == 0) {
 		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "default", Value: "when ready"}))
 	}
 	state, hint := domainClaimPresentation(claimed, makeDefault)
 	if timedOut {
 		blocks = append(blocks, clioutput.Text("Domain claim saved. DNS records not yet available."))
-		hint = followup.status(claimed.CanonicalDomain)
-		if makeDefault && claimed.ClaimStage == nil {
-			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "default", Value: "when ready"}))
-		}
+	}
+	if timedOut || claimed.State == authorityv1.DomainStatePending && claimed.ClaimStage == nil && len(claimed.RequiredRecords) == 0 {
+		hint = followup.command("domain status", claimed.CanonicalDomain)
 	}
 	blocks = append([]clioutput.Block{clioutput.Line(claimed.CanonicalDomain + "  " + state)}, blocks...)
 	return writeWithHint(output, hint, blocks...)
@@ -243,14 +221,14 @@ func runDomainStatus(ctx context.Context, command domainStatusCommand, output, d
 	if err != nil {
 		return err
 	}
-	return writeDomainObservation(output, domain, domain.Id == current.Team().DefaultDomainId, command.domainFollowup(ctx, session, current.Team().Id))
+	return writeDomainObservation(output, domain, domain.Id == current.Team().DefaultDomainId, command.followupScope(ctx, session, current.Team().Id))
 }
 
 func writeDomainStatus(output io.Writer, domain authorityv1.Domain, isDefault bool) error {
-	return writeDomainObservation(output, domain, isDefault, domainFollowup{})
+	return writeDomainObservation(output, domain, isDefault, commandScope{})
 }
 
-func writeDomainObservation(output io.Writer, domain authorityv1.Domain, isDefault bool, followup domainFollowup) error {
+func writeDomainObservation(output io.Writer, domain authorityv1.Domain, isDefault bool, followup commandScope) error {
 	state, hint := domainStatusPresentation(domain)
 	description := domain.CanonicalDomain + "  " + state
 	if isDefault {
@@ -339,11 +317,7 @@ func domainClaimPresentation(domain authorityv1.Domain, makeDefault bool) (strin
 			return domainStatusPresentation(domain)
 		}
 		if len(domain.RequiredRecords) == 0 {
-			state, footer = "provisioning", "run tnl domain status to check DNS setup"
-			if makeDefault {
-				footer = "will become default; run tnl domain status"
-			}
-			return state, footer
+			return "provisioning", ""
 		}
 		state, footer = "verification required", "add the DNS records to continue"
 		if makeDefault {
@@ -379,12 +353,12 @@ func runDomainRelease(ctx context.Context, command domainReleaseCommand, output,
 		if readErr != nil {
 			// the mutation was acknowledged, but missing status is not completion.
 			domain.State, domain.Release = authorityv1.DomainStateReleasing, nil
-			return errors.Join(readErr, writeDomainObservation(output, domain, false, command.domainFollowup(ctx, session, current.Team().Id)))
+			return errors.Join(readErr, writeDomainObservation(output, domain, false, command.followupScope(ctx, session, current.Team().Id)))
 		}
 		if observed.State != authorityv1.DomainStateReleasing && observed.State != authorityv1.DomainStateReleased {
 			return failure.Wrap("read domain release", failure.ServerResponseInvalid, errors.New("domain release acknowledgement was not followed by release state"))
 		}
-		return writeDomainObservation(output, observed, false, command.domainFollowup(ctx, session, current.Team().Id))
+		return writeDomainObservation(output, observed, false, command.followupScope(ctx, session, current.Team().Id))
 	})
 }
 

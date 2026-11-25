@@ -150,15 +150,10 @@ func runDeploymentPublisherList(ctx context.Context, flags publisherListCommand,
 	if flags.Output == statusOutputJSON {
 		return failure.Wrap("write deployment publishers", failure.OutputUnavailable, json.NewEncoder(output).Encode(page))
 	}
-	blocks := []clioutput.Block{}
-	for _, publisher := range page.Publishers {
-		blocks = append(blocks, deploymentPublisherBlock(publisher))
-	}
-	if len(blocks) == 0 {
-		blocks = append(blocks, clioutput.Text("No enrolled publishers."))
-	}
+	blocks := []clioutput.Block{deploymentPublisherTable(page.Publishers)}
 	if page.NextCursor != nil {
-		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "next cursor", Value: *page.NextCursor}))
+		scope := flags.followupScope(ctx, session, deployment.TeamId)
+		blocks = append(blocks, flags.nextPage(scope, *page.NextCursor, deployment.ProjectKey))
 	}
 	return writeResult(output, blocks...)
 }
@@ -174,15 +169,19 @@ func validateDeploymentPublisher(publisher controlv1.DeploymentPublisher, deploy
 	return nil
 }
 
-func deploymentPublisherBlock(publisher controlv1.DeploymentPublisher) clioutput.Block {
-	state := "acknowledgement or lease not current"
-	if publisher.Healthy {
-		state = "acknowledged with current lease"
+func deploymentPublisherTable(publishers []controlv1.DeploymentPublisher) clioutput.Block {
+	var rows [][]string
+	for _, publisher := range publishers {
+		state := "acknowledgement or lease not current"
+		if publisher.Healthy {
+			state = "acknowledged with current lease"
+		}
+		if publisher.RevokedAt != nil {
+			state = "revoked"
+		}
+		rows = append(rows, []string{publisher.PublisherIdentityId, state, strings.Join(slices.Sorted(maps.Keys(publisher.Services)), ", ")})
 	}
-	if publisher.RevokedAt != nil {
-		state = "revoked"
-	}
-	return clioutput.Line(publisher.PublisherIdentityId + "  " + state + "  " + strings.Join(slices.Sorted(maps.Keys(publisher.Services)), ", "))
+	return clioutput.Table([]string{"PUBLISHER ID", "STATE", "SERVICES"}, rows, "No enrolled publishers.")
 }
 
 func runDeploymentPublisherRevoke(ctx context.Context, flags publisherRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {

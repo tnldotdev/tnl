@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -320,37 +321,57 @@ func runPublisherList(ctx context.Context, f publisherListCommand, project proje
 	if f.Output == statusOutputJSON {
 		return failure.Wrap("write publishers", failure.OutputUnavailable, json.NewEncoder(output).Encode(page))
 	}
-	blocks := []clioutput.Block{}
-	for _, p := range page.Identities {
-		state := "active"
+	blocks := publisherListTables(page.Identities, time.Now())
+	if page.NextCursor != nil {
+		scope := f.followupScope(ctx, session, current.Team().Id)
+		blocks = append(blocks, f.nextPage(scope, *page.NextCursor, ""))
+	}
+	return writeResult(output, blocks...)
+}
+
+func publisherListTables(identities []controlv1.PublisherIdentity, now time.Time) []clioutput.Block {
+	var publishers, grants [][]string
+	for _, p := range identities {
+		state := "enrolled"
 		if p.RevokedAt != nil {
 			state = "revoked"
 		}
-		blocks = append(blocks, clioutput.Line(p.Name+"  "+state+"  "+p.Id))
+		publishers = append(publishers, []string{p.Name, state, p.Id})
 		for _, g := range p.Grants {
-			value := g.Id
+			scope := string(g.Kind)
 			if g.Namespace != nil {
-				value += " " + *g.Namespace
+				scope = *g.Namespace
 			}
 			if g.ServiceId != nil {
-				value += " " + *g.ServiceId
+				scope = *g.ServiceId
 			}
+			state := "granted"
 			if g.RevokedAt != nil {
-				value += " (revoked)"
-			} else if g.ExpiresAt != nil && !g.ExpiresAt.After(time.Now()) {
-				value += " (expired)"
+				state = "revoked"
+			} else if g.ExpiresAt != nil && !g.ExpiresAt.After(now) {
+				state = "expired"
+			} else if p.RevokedAt != nil {
+				state = "publisher revoked"
 			}
-			blocks = append(blocks, clioutput.Line("  grant: "+value))
+			grants = append(grants, []string{p.Id, g.Id, scope, state})
 		}
 	}
-	if len(blocks) == 0 {
-		blocks = append(blocks, clioutput.Text("No publishers."))
+	blocks := []clioutput.Block{clioutput.Table([]string{"PUBLISHER", "STATE", "PUBLISHER ID"}, publishers, "No publishers.")}
+	if len(grants) != 0 {
+		blocks = append(blocks, clioutput.Section("Grants", clioutput.Table([]string{"PUBLISHER ID", "GRANT ID", "SCOPE", "STATE"}, grants, "")))
 	}
-	footer := ""
-	if page.NextCursor != nil {
-		footer = "next: tnl publisher list --after " + *page.NextCursor
+	return blocks
+}
+
+func (f publisherListCommand) nextPage(scope commandScope, cursor, projectKey string) clioutput.Block {
+	var args []string
+	if f.Deployment != "" {
+		args = append(args, "--deployment="+f.Deployment, "--project-key="+projectKey)
+		if f.Limit != 50 {
+			args = append(args, "--limit="+strconv.Itoa(f.Limit))
+		}
 	}
-	return writeWithHint(output, footer, blocks...)
+	return scope.nextPage("publisher list", cursor, args...)
 }
 
 func runPublisherRevoke(ctx context.Context, f publisherRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {

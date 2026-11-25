@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"math"
-	"strconv"
 	"strings"
 	"time"
 
@@ -331,15 +330,12 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 			clioutput.Field{Label: "source", Value: result.LocalProject.Comparison},
 		),
 	}
-	for _, event := range events {
-		text := ""
-		if event.Text != nil {
-			text = *event.Text
+	if len(events) > 0 {
+		var history []clioutput.Block
+		for _, event := range events {
+			history = append(history, feedbackEventLine(event, "this thread"))
 		}
-		blocks = append(blocks, clioutput.Section(strconv.FormatInt(event.Cursor, 10)+" "+string(event.Type), clioutput.Fields(
-			clioutput.Field{Label: "by", Value: feedbackEventAuthorLabel(event)},
-			clioutput.Field{Label: "message", Value: text, Prose: true},
-		)))
+		blocks = append(blocks, clioutput.Section("History", history...))
 	}
 	return writeResult(output, blocks...)
 }
@@ -366,6 +362,31 @@ func feedbackEventAuthorLabel(event controlv1.FeedbackEvent) string {
 		return feedbackAuthorLabel(event.Author)
 	}
 	return string(event.Actor)
+}
+
+func feedbackVerb(kind controlv1.FeedbackEventType) string {
+	switch kind {
+	case controlv1.FeedbackEventTypeThreadCreated:
+		return "Reported"
+	case controlv1.FeedbackEventTypeReply:
+		return "Replied to"
+	case controlv1.FeedbackEventTypeUpdate:
+		return "Updated"
+	case controlv1.FeedbackEventTypeThreadResolved:
+		return "Resolved"
+	case controlv1.FeedbackEventTypeThreadReopened:
+		return "Reopened"
+	default:
+		return "Changed"
+	}
+}
+
+func feedbackEventLine(event controlv1.FeedbackEvent, thread string) clioutput.Block {
+	line := feedbackEventAuthorLabel(event) + " " + strings.ToLower(feedbackVerb(event.Type)) + " " + thread
+	if event.Text != nil && *event.Text != "" {
+		return clioutput.Text(line + ": " + *event.Text)
+	}
+	return clioutput.Text(line + ".")
 }
 
 type feedbackEventReader interface {
@@ -402,11 +423,7 @@ func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, preview
 		if mode == feedbackNDJSON {
 			err = encoder.Encode(event)
 		} else {
-			text := ""
-			if event.Text != nil {
-				text = *event.Text
-			}
-			err = writeResult(output, clioutput.Line(strings.TrimSpace(event.FeedbackId+"  "+string(event.Type)+"  "+feedbackEventAuthorLabel(event)+"  "+text)))
+			err = writeResult(output, feedbackEventLine(event, event.FeedbackId))
 		}
 		if err != nil {
 			return cursor, false, failure.Wrap("write feedback event", failure.OutputUnavailable, err)
@@ -507,7 +524,7 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 	if flags.Output == feedbackJSON {
 		return failure.Wrap("write feedback event", failure.OutputUnavailable, json.NewEncoder(output).Encode(event))
 	}
-	return writeResult(output, clioutput.Line(flags.FeedbackID+"  "+string(event.Type)))
+	return writeResult(output, clioutput.Line(feedbackVerb(event.Type)+" feedback "+flags.FeedbackID+"."))
 }
 
 func feedbackMutationName(kind string) string {

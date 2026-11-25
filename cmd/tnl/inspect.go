@@ -230,7 +230,7 @@ func runInspectShow(ctx context.Context, flags inspectShowCommand, project strin
 		}{1, record})
 	}
 	fields := []clioutput.Field{
-		clioutput.Field{Label: "time", Value: record.ReceivedAt.Format(time.RFC3339Nano)},
+		clioutput.Field{Label: "time", Value: record.ReceivedAt.Format(time.RFC3339)},
 		clioutput.Field{Label: "protocol", Value: string(record.Protocol)},
 		clioutput.Field{Label: "result", Value: string(record.Result)},
 		clioutput.Field{Label: "duration", Value: fmt.Sprintf("%d ms", record.DurationMS)},
@@ -239,9 +239,13 @@ func runInspectShow(ctx context.Context, flags inspectShowCommand, project strin
 		clioutput.Field{Label: "tunnel", Value: record.TunnelID},
 	}
 	if record.HTTP != nil {
+		origin := record.HTTP.Origin
+		if origin == "local_service" {
+			origin = "local service"
+		}
 		fields = append(fields, clioutput.Field{Label: "method", Value: record.HTTP.Method},
 			clioutput.Field{Label: "path", Value: record.HTTP.Path}, clioutput.Field{Label: "status", Value: fmt.Sprint(record.HTTP.Status)},
-			clioutput.Field{Label: "from", Value: record.HTTP.Origin})
+			clioutput.Field{Label: "response from", Value: origin})
 	} else if record.Redis != nil {
 		fields = append(fields, clioutput.Field{Label: "command", Value: record.Redis.Command})
 	} else {

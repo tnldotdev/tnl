@@ -177,14 +177,15 @@ func displayDiffValue(v json.RawMessage) string {
 	}
 	return string(v)
 }
-func (d applyDiff) write(out io.Writer, mode statusOutputMode) error {
+func (d applyDiff) write(out io.Writer, mode statusOutputMode, teamName string) error {
 	if mode == statusOutputJSON {
 		return json.NewEncoder(out).Encode(d)
 	}
+	scope := d.Deployment + " (team " + teamName + ")"
 	if len(d.Changes) == 0 {
-		return writeResult(out, clioutput.Line("No changes to "+d.Deployment+"."))
+		return writeResult(out, clioutput.Line("No changes to "+scope+"."))
 	}
-	blocks := []clioutput.Block{clioutput.Line("Proposed changes to " + d.Deployment + ":")}
+	rows := make([][]string, 0, len(d.Changes))
 	for _, c := range d.Changes {
 		label := strings.ReplaceAll(c.Field, "_", " ")
 		switch c.Field {
@@ -195,7 +196,7 @@ func (d applyDiff) write(out io.Writer, mode statusOutputMode) error {
 		case "access":
 			label = "visitor access"
 		}
-		blocks = append(blocks, clioutput.Line(strings.TrimSpace(c.Resource+" "+c.Name)+"  "+label+": "+displayDiffValue(c.Before)+" -> "+displayDiffValue(c.After)))
+		rows = append(rows, []string{strings.TrimSpace(c.Resource + " " + c.Name), label, displayDiffValue(c.Before), displayDiffValue(c.After)})
 	}
-	return writeResult(out, blocks...)
+	return writeResult(out, clioutput.Line("Proposed changes to "+scope+":"), clioutput.Table([]string{"RESOURCE", "FIELD", "BEFORE", "AFTER"}, rows, ""))
 }

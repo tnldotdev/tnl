@@ -117,6 +117,15 @@ func TestFeedbackCommandsUseOnlyLocalContentAndDeleteWholeThread(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.Reset()
+	if err = runFeedbackMutation(t.Context(), feedbackMutationCommand{scopedTeamFlags: flags, FeedbackID: thread.Id, Message: "fixed", Output: feedbackHuman}, project, "thread.resolved", &output, io.Discard); err != nil || output.String() != "Resolved feedback "+thread.Id+".\n" {
+		t.Fatal("CLI resolution failed", output.String(), err)
+	}
+	output.Reset()
+	if err = runFeedbackInspect(t.Context(), feedbackInspectCommand{scopedTeamFlags: flags, FeedbackID: thread.Id, Output: feedbackHuman}, project, &output, io.Discard); err != nil ||
+		!strings.Contains(output.String(), "History:\nReviewer reported this thread.\nCLI author replied to this thread: private local reply\nCLI author resolved this thread: fixed\n") {
+		t.Fatal("missing human history", output.String(), err)
+	}
+	output.Reset()
 	if err = runFeedbackInspect(t.Context(), feedbackInspectCommand{scopedTeamFlags: flags, FeedbackID: thread.Id, Output: feedbackJSON}, project, &output, io.Discard); err != nil || !strings.Contains(output.String(), "private local reply") {
 		t.Fatal("CLI did not read complete local history", output.String(), err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -88,11 +89,19 @@ func runURLAccessSet(ctx context.Context, flags urlAccessSetCommand, out, diagno
 	if err != nil {
 		return err
 	}
-	updated, declaration, err := replaceServiceHTTPAccess(ctx, session.Authenticated().Control, item, flags.Mode, ips)
+	updated, _, err := replaceServiceHTTPAccess(ctx, session.Authenticated().Control, item, flags.Mode, ips)
 	if err != nil {
 		return err
 	}
-	return writeAccessPolicy(out, updated.Id, updated.Endpoint, declaration)
+	service := updated.Id
+	if updated.Endpoint != nil && updated.Endpoint.Hostname != "" {
+		service = updated.Endpoint.Hostname
+	}
+	filter := "none"
+	if len(ips) > 0 {
+		filter = strings.Join(ips, ", ")
+	}
+	return writeResult(out, clioutput.Line("Set "+string(flags.Mode)+" access for "+service+"."), clioutput.Text("IP filter: "+filter))
 }
 
 func replaceServiceHTTPAccess(ctx context.Context, control serviceDeclarationClient, item controlv1.ServiceSummary, mode controlv1.VisitorAccessMode, ips []string) (controlv1.Service, *controlv1.ProjectServiceConfiguration, error) {

@@ -117,7 +117,10 @@ func runServiceInstall(ctx context.Context, flags serviceInstallCommand, output 
 	if err := installedjobs.InstallService(ctx, options, executor); err != nil {
 		return err
 	}
-	return writeResult(output, clioutput.Text("Installed the tnl system service."))
+	if options.User {
+		return writeResult(output, clioutput.Text("Installed the tnl user supervisor."))
+	}
+	return writeResult(output, clioutput.Text("Installed the tnl system supervisor."))
 }
 
 func runServiceStart(ctx context.Context, flags serviceJobCommand, output io.Writer, executor installedjobs.Executor) error {
@@ -299,6 +302,16 @@ func renderSystemJobs(output io.Writer, command string, jobs []installedjobs.Job
 		if selected != "" && selected != job.ID {
 			continue
 		}
+		if command == "tnl service stop" {
+			return writeJobStopResult(output, job)
+		}
+		if command == "tnl service start" {
+			blocks := []clioutput.Block{clioutput.Line("Requested start for " + displayJobName(job) + "."), clioutput.Line("State: " + string(job.Status.State))}
+			if job.Status.Failure != "" {
+				blocks = append(blocks, clioutput.Text(job.Status.Failure))
+			}
+			return writeResult(output, blocks...)
+		}
 		state := string(job.Status.State)
 		detail := job.Status.Address
 		if job.Kind == installedjobs.KindConnector {
@@ -311,12 +324,18 @@ func renderSystemJobs(output io.Writer, command string, jobs []installedjobs.Job
 			state += " (stop requested)"
 		}
 		if command == "tnl service status" {
-			fields := []clioutput.Field{{Label: "job", Value: job.ID}, {Label: "state", Value: state}}
+			fields := []clioutput.Field{{Label: "state", Value: state}, {Label: "job ID", Value: job.ID}}
 			if job.ServiceID != "" {
 				fields = append(fields, clioutput.Field{Label: "service ID", Value: job.ServiceID}, clioutput.Field{Label: "protocol", Value: string(job.Protocol)})
 			}
 			if detail != "" {
-				fields = append(fields, clioutput.Field{Label: "detail", Value: detail})
+				label := "address"
+				if job.Status.Failure != "" {
+					label = "failure"
+				} else if job.Kind == installedjobs.KindConnector {
+					label = "local address"
+				}
+				fields = append(fields, clioutput.Field{Label: label, Value: detail, Prose: job.Status.Failure != ""})
 			}
 			return writeResult(output, clioutput.Section(displayJobName(job), clioutput.Fields(fields...)))
 		}
@@ -325,7 +344,18 @@ func renderSystemJobs(output io.Writer, command string, jobs []installedjobs.Job
 	if selected != "" && len(rows) == 0 {
 		return installedjobs.ErrJobNotFound
 	}
-	return writeResult(output, clioutput.Table([]string{"NAME", "JOB ID", "STATE", "DETAIL"}, rows, "No installed jobs."))
+	empty := "No installed jobs."
+	if command == "tnl connect list" {
+		empty = "No installed connectors."
+	}
+	return writeResult(output, clioutput.Table([]string{"NAME", "JOB ID", "STATE", "DETAIL"}, rows, empty))
+}
+
+func writeJobStopResult(output io.Writer, job installedjobs.Job) error {
+	if job.Status.State == installedjobs.JobStopped {
+		return writeResult(output, clioutput.Line("Stopped "+displayJobName(job)+"."))
+	}
+	return writeResult(output, clioutput.Line("Requested stop for "+displayJobName(job)+"."))
 }
 
 func displayJobName(job installedjobs.Job) string {
