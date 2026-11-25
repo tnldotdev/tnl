@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,6 +18,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+	"github.com/tnldotdev/tnl/internal/cliflags"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connector"
@@ -28,7 +30,8 @@ import (
 )
 
 type cli struct {
-	ConfigPath  string `name:"config" help:"Use a project configuration file; put this flag before the command." type:"path"`
+	Cwd         string `name:"cwd" type:"path" help:"Select a checkout directory without changing the shell's working directory."`
+	ConfigPath  string `name:"config" help:"Use a project configuration file; put this flag before the command." type:"relative-path"`
 	NoConfig    bool   `name:"no-config" help:"Skip project configuration; put this flag before the command."`
 	NoProgress  bool   `name:"no-progress" help:"Do not show terminal progress."`
 	NoTelemetry bool   `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
@@ -361,7 +364,7 @@ func writeCommandError(output io.Writer, err error) {
 	if !ok {
 		message = humanFailureMessage(err, followup != nil)
 	}
-	if followup != nil {
+	if followup != nil && followup.block != nil {
 		message.Blocks = append(message.Blocks, followup.block)
 	}
 	_ = clioutput.Write(output, message)
@@ -464,6 +467,22 @@ func (a *commandApp) execute(parsed *cobra.Command, handle func(commandCall) err
 	ctx, flags := parsed.Context(), a.flags
 	if err := a.selectOutput(parsed); err != nil {
 		return err
+	}
+	if flags.Cwd != "" || parsed.Flags().Changed("cwd") {
+		if flags.Cwd == "" {
+			return invalidCommandInput(parsed, errors.New("empty checkout directory"), "Pass a directory to --cwd.")
+		}
+		root, err := resolveCheckout(flags.Cwd)
+		if err != nil {
+			return err
+		}
+		flags.Cwd = root
+		ctx = withCheckout(ctx, root)
+	}
+	if flags.ConfigPath != "" && flags.Cwd != "" && !filepath.IsAbs(flags.ConfigPath) {
+		flags.ConfigPath = filepath.Join(flags.Cwd, flags.ConfigPath)
+	} else {
+		flags.ConfigPath = cliflags.ExpandPath(flags.ConfigPath)
 	}
 	if flags.NoProgress {
 		ctx = clioutput.WithoutProgress(ctx)

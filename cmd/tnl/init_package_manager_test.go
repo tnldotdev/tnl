@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	projectinit "github.com/tnldotdev/tnl/internal/client/project/init"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 )
 
 func TestInitInstallsMissingPackageWithDetectedManager(t *testing.T) {
@@ -51,9 +52,9 @@ func TestRunInitInstallCancellationHasSuccessfulTerminalResult(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = plan.Apply(ctx, projectinit.Options{Generate: func(context.Context, string, string) error {
+	_, err = plan.Apply(ctx, projectinit.Options{Generate: func(context.Context, string, string) ([]meta.ArtifactOutcome, error) {
 		t.Fatal("generated after canceled installation")
-		return nil
+		return nil, nil
 	}})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("install error = %v", err)

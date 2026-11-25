@@ -21,7 +21,8 @@ import (
 type applyCommand struct {
 	scopedTeamFlags `embed:""`
 	Deployment      string           `name:"deployment" default:"local" help:"Apply only this configured deployment's targets and workloads."`
-	Diff            bool             `name:"diff" help:"Compare the resolved declaration with the saved revision without applying it."`
+	DryRun          bool             `name:"dry-run" help:"Compare the resolved declaration with the saved revision without applying it."`
+	Diff            bool             `name:"diff" help:"Alias for --dry-run."`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human"`
 }
 
@@ -69,7 +70,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	if err = bindProjectWorkloads(ctx, project, session.Authenticated().ServerEndpoint, &declaration, existing.Configuration); err != nil {
 		return err
 	}
-	if flags.Diff {
+	if flags.DryRun || flags.Diff {
 		saved, err := resolve.ApplyComparisonBase(ctx, session.Authenticated().Control, current.Team().Id, source.Key, project.Deployment, existing)
 		if err != nil {
 			return err
@@ -110,7 +111,7 @@ func (a *commandApp) newApplyCommand() *cobra.Command {
 	f := a.flags
 	cApply := &cobra.Command{
 		Use: "apply", Short: "Save a configured deployment on the server.", GroupID: "deploy",
-		Long: "Apply the project's service declarations and the selected deployment's targets and workloads. Use --diff to review changes before applying them. The default deployment is local.",
+		Long: "Apply the project's service declarations and the selected deployment's targets and workloads. Use --dry-run to review changes before applying them. The default deployment is local.",
 	}
 	a.leaf(cApply, &f.Apply, func(call commandCall) error {
 		return runApply(call.ctx, f.Apply, call.project, a.out, a.errOut)

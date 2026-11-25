@@ -13,6 +13,12 @@ import (
 
 const maxArtifactBytes = 1 << 20
 
+// ArtifactOutcome reports the result of comparing and writing one owned file.
+type ArtifactOutcome struct {
+	Path   string
+	Status string
+}
+
 // generatedFiles is the complete set of portable outputs owned by tnl.
 var generatedFiles = [...]string{
 	"project.d.ts",
@@ -26,6 +32,10 @@ var generatedFiles = [...]string{
 // writeArtifacts compares or atomically replaces fixed tool-owned outputs.
 // a nil entry means the optional output must be absent; other files are untouched.
 func writeArtifacts(directory string, files map[string][]byte, check bool) error {
+	return writeArtifactOutcomes(directory, files, check, nil)
+}
+
+func writeArtifactOutcomes(directory string, files map[string][]byte, check bool, outcomes *[]ArtifactOutcome) error {
 	root, err := openDirectory(directory, !check)
 	if err != nil {
 		return err
@@ -40,10 +50,13 @@ func writeArtifacts(directory string, files map[string][]byte, check bool) error
 		if err != nil {
 			return err
 		}
-		err = writeArtifact(parent, filepath.Base(name), content, check)
+		status, err := writeArtifact(parent, filepath.Base(name), content, check)
 		parent.Close()
 		if err != nil {
 			return fmt.Errorf("generated artifact %s: %w", name, err)
+		}
+		if outcomes != nil && status != "" {
+			*outcomes = append(*outcomes, ArtifactOutcome{Path: filepath.Join(directory, name), Status: status})
 		}
 	}
 	return nil
@@ -104,53 +117,57 @@ func descend(root *os.Root, directory string, create bool) (*os.Root, error) {
 	return current, nil
 }
 
-func writeArtifact(parent *os.Root, name string, content []byte, check bool) error {
+func writeArtifact(parent *os.Root, name string, content []byte, check bool) (string, error) {
 	info, err := parent.Lstat(name)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return "", err
 	}
 	if err == nil {
 		if !info.Mode().IsRegular() || info.Size() > maxArtifactBytes {
-			return errors.New("output must be a bounded regular file, not a symlink")
+			return "", errors.New("output must be a bounded regular file, not a symlink")
 		}
 		file, err := parent.Open(name)
 		if err != nil {
-			return err
+			return "", err
 		}
 		opened, statErr := file.Stat()
 		if statErr != nil || !os.SameFile(info, opened) {
 			file.Close()
-			return errors.New("generated file changed while opening it")
+			return "", errors.New("generated file changed while opening it")
 		}
 		previous, readErr := io.ReadAll(io.LimitReader(file, maxArtifactBytes+1))
 		err = errors.Join(readErr, file.Close())
 		if err != nil {
-			return err
+			return "", err
 		}
 		if len(previous) > maxArtifactBytes {
-			return errors.New("output exceeds its size bound")
+			return "", errors.New("output exceeds its size bound")
 		}
 		if content != nil && bytes.Equal(previous, content) {
-			return nil
+			return "unchanged", nil
 		}
 	} else if content == nil {
-		return nil
+		return "", nil
 	}
 	if check {
-		return errors.New("output is stale; run tnl generate")
+		return "", errors.New("output is stale; run tnl generate")
 	}
 	if content == nil {
-		return parent.Remove(name)
+		return "removed", parent.Remove(name)
 	}
 	temporary := ".tnl-" + rand.Text() + ".tmp"
 	file, err := parent.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer parent.Remove(temporary)
 	_, writeErr := file.Write(content)
 	if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
-		return err
+		return "", err
 	}
-	return parent.Rename(temporary, name)
+	status := "created"
+	if info != nil {
+		status = "updated"
+	}
+	return status, parent.Rename(temporary, name)
 }

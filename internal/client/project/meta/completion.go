@@ -22,6 +22,10 @@ type Completion struct {
 const completionName = "completion.json"
 
 func WriteCompletion(ctx context.Context, project clientproject.Project) error {
+	return writeCompletion(ctx, project, nil)
+}
+
+func writeCompletion(ctx context.Context, project clientproject.Project, outcomes *[]ArtifactOutcome) error {
 	if project.Declared == nil {
 		return nil
 	}
@@ -33,7 +37,7 @@ func WriteCompletion(ctx context.Context, project clientproject.Project) error {
 	if err != nil {
 		return err
 	}
-	return writeLocalJSON(ctx, project.Root, completionName, data)
+	return writeLocalJSON(ctx, project.Root, completionName, data, outcomes)
 }
 
 // ReadCompletion reads only regular, bounded worktree files. Older worktrees

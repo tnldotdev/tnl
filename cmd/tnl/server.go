@@ -50,6 +50,17 @@ func configArgs(noConfig bool, path string) string {
 	return ""
 }
 
+func scopedConfigArgs(flags cli) string {
+	prefix := ""
+	if selected := checkoutFlags(flags.Cwd); len(selected) != 0 {
+		prefix = guidanceCommand(selected) + " "
+		if flags.ConfigPath == "" {
+			flags.ConfigPath = os.Getenv("TNL_CONFIG")
+		}
+	}
+	return prefix + configArgs(flags.NoConfig, flags.ConfigPath)
+}
+
 func resolveServer(ctx context.Context, root, value string) (string, *clientstate.Database, error) {
 	return clientserver.Open(ctx, root, value)
 }

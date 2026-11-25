@@ -13,6 +13,30 @@ import (
 // Generate writes portable artifacts, or compares them without writing when
 // check is true. the caller evaluates the project with a zero installation salt.
 func Generate(ctx context.Context, project clientproject.Project, directory string, check bool) error {
+	return generate(ctx, project, directory, check, nil)
+}
+
+// GenerateWithOutcomes writes portable artifacts and local completion facts.
+// it reports project-relative paths from the writers.
+func GenerateWithOutcomes(ctx context.Context, project clientproject.Project) ([]ArtifactOutcome, error) {
+	var outcomes []ArtifactOutcome
+	if err := generate(ctx, project, GeneratedDirectoryName, false, &outcomes); err != nil {
+		return nil, err
+	}
+	if err := writeCompletion(ctx, project, &outcomes); err != nil {
+		return nil, err
+	}
+	for i := range outcomes {
+		path, err := filepath.Rel(project.Root, outcomes[i].Path)
+		if err != nil {
+			return nil, err
+		}
+		outcomes[i].Path = filepath.ToSlash(path)
+	}
+	return outcomes, nil
+}
+
+func generate(ctx context.Context, project clientproject.Project, directory string, check bool, outcomes *[]ArtifactOutcome) error {
 	if !project.Found() {
 		return failure.Wrap("generate project", failure.ProjectConfigMissing, errors.New("project configuration is required"))
 	}
@@ -50,7 +74,7 @@ func Generate(ctx context.Context, project clientproject.Project, directory stri
 			return failure.Wrap("render workload metadata", failure.ProjectConfigInvalid, err)
 		}
 	}
-	if err := writeArtifacts(directory, files, check); err != nil {
+	if err := writeArtifactOutcomes(directory, files, check, outcomes); err != nil {
 		reason := failure.ProjectArtifactsWriteFailed
 		if check {
 			reason = failure.ProjectArtifactsInvalid

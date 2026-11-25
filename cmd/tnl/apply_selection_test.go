@@ -34,3 +34,24 @@ func TestDeploymentCommandsLoadOnlyTheSelectedProjectBindings(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyPreviewFlags(t *testing.T) {
+	for _, test := range []struct {
+		args         []string
+		dryRun, diff bool
+	}{
+		{args: []string{"--dry-run"}, dryRun: true},
+		{args: []string{"--diff"}, diff: true},
+		{args: []string{"--dry-run", "--diff"}, dryRun: true, diff: true},
+		{args: []string{"--dry-run=false"}},
+	} {
+		var flags cli
+		parse := commandForTest(&flags, io.Discard)
+		if _, err := parse(append([]string{"apply"}, test.args...)); err != nil {
+			t.Fatal(err)
+		}
+		if flags.Apply.DryRun != test.dryRun || flags.Apply.Diff != test.diff {
+			t.Errorf("apply %v: flags are dry-run %t, diff %t", test.args, flags.Apply.DryRun, flags.Apply.Diff)
+		}
+	}
+}

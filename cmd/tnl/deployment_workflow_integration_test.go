@@ -152,6 +152,9 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	apply := []string{"--config", configuration, "apply", "--deployment", "cluster", "--state-dir", person, "--output", "json"}
 	diffArgs := append(slices.Clone(apply), "--diff")
 	rawDiff := cliCall(t, t.Context(), diffArgs)
+	if dryRun := cliCall(t, t.Context(), append(slices.Clone(apply), "--dry-run")); !bytes.Equal(dryRun, rawDiff) {
+		t.Fatalf("preview aliases differ:\n--dry-run: %s\n--diff: %s", dryRun, rawDiff)
+	}
 	var plan applyDiff
 	if err := json.Unmarshal(rawDiff, &plan); err != nil || plan.Base != applied.Revision ||
 		len(plan.Changes) != 2 || plan.Changes[0].Field != "target" || string(plan.Changes[0].Before) != `"`+replacement+`"` ||
@@ -162,6 +165,10 @@ func TestIntegrationCLIApplyDeploymentServeConnect(t *testing.T) {
 	liveAfterDiff, err := control.GetDeployment(t.Context(), team, applied.ProjectKey, live.Id)
 	if err != nil || liveAfterDiff.Targets["api"].Address == nil || *liveAfterDiff.Targets["api"].Address != replacement {
 		t.Fatal("diff changed the saved deployment target", err)
+	}
+	savedAfterPreview, err := control.GetProjectConfiguration(t.Context(), team, applied.ProjectKey, "cluster")
+	if err != nil || savedAfterPreview.Revision != plan.Base {
+		t.Fatalf("preview changed the saved revision: got %d, want %d (%v)", savedAfterPreview.Revision, plan.Base, err)
 	}
 	if err := json.Unmarshal(cliCall(t, t.Context(), apply), &applied); err != nil {
 		t.Fatal(err)

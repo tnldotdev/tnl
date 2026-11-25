@@ -26,13 +26,13 @@ type projectTSConfig struct {
 	} `json:"references"`
 }
 
-func wireProjectTypeIncludes(root string) (projectTypeIncludeResult, error) {
-	return projectTypeIncludesAt(root, filepath.Join(root, "tsconfig.json"), map[string]bool{})
+func visitProjectTypeIncludes(root string, visit func(fileEdit) error) (projectTypeIncludeResult, error) {
+	return projectTypeIncludesAt(root, filepath.Join(root, "tsconfig.json"), map[string]bool{}, visit)
 }
 
 // use the jsonc syntax tree for edits; preserve every existing comment and byte.
 // solution-only roots keep their references and defer includes to their leaves.
-func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectTypeIncludeResult, error) {
+func projectTypeIncludesAt(root, path string, visited map[string]bool, visit func(fileEdit) error) (projectTypeIncludeResult, error) {
 	var result projectTypeIncludeResult
 	if visited[path] {
 		return result, nil
@@ -44,8 +44,12 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 	relative = filepath.ToSlash(relative)
 	name := RelativePath(root, path)
 	action := fmt.Sprintf("Add %q to the include array in %s.", relative, name)
+	existing := false
 	manual := func() (projectTypeIncludeResult, error) {
 		result.actions = append(result.actions, action)
+		if existing {
+			return result, visit(fileEdit{path: path})
+		}
 		return result, nil
 	}
 	if len(visited) >= 32 || !safeProjectTypeParents(root, path) {
@@ -67,6 +71,7 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 	if err != nil {
 		return result, err
 	}
+	existing = true
 	ast, err := hujson.Parse(data)
 	if err != nil || ast.Value.Kind() != '{' {
 		return manual()
@@ -92,7 +97,7 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 		if !strings.HasSuffix(selected, ".json") {
 			selected = filepath.Join(selected, "tsconfig.json")
 		}
-		additional, err := projectTypeIncludesAt(root, selected, visited)
+		additional, err := projectTypeIncludesAt(root, selected, visited, visit)
 		if err != nil {
 			return result, err
 		}
@@ -100,10 +105,10 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 		result.updated = append(result.updated, additional.updated...)
 	}
 	if len(document.References) != 0 && document.Files != nil && len(document.Files) == 0 && document.Include == nil {
-		return result, nil
+		return result, visit(fileEdit{path: path})
 	}
 	if slices.Contains(document.Include, relative) || slices.Contains(document.Files, relative) {
-		return result, nil
+		return result, visit(fileEdit{path: path})
 	}
 	var replacement []byte
 	if include := ast.Find("/include"); include != nil {
@@ -136,7 +141,7 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 	if !slices.Contains(updated.Include, relative) && !slices.Contains(updated.Files, relative) {
 		return result, fmt.Errorf("project declarations were not included")
 	}
-	if err := replaceRecognizedInitFile(path, data, replacement); err != nil {
+	if err := visit(fileEdit{path: path, before: data, replacement: replacement}); err != nil {
 		return result, err
 	}
 	result.updated = append(result.updated, path)

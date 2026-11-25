@@ -57,23 +57,23 @@ func TestTeamSelectionDoesNotRequireDomains(t *testing.T) {
 		},
 	}}
 	current, err := session.Current(t.Context())
-	if err != nil || current.team.Id != "personal" || api.domainCalls != 0 {
+	if err != nil || current.Team().Id != "personal" || current.Source() != SourceInitial || api.domainCalls != 0 {
 		t.Fatalf("stale saved team: %#v, %v; domain reads %d", current, err, api.domainCalls)
 	}
 	selected, _, err := store.SelectedTeam(t.Context())
-	if err != nil || selected != "personal" {
+	if err != nil || selected != "removed-team" {
 		t.Fatalf("saved team = %q, %v", selected, err)
 	}
 	session.selectedTeam, session.projectTeam = "studio", "stale-project"
 	current, err = session.Current(t.Context())
-	if err != nil || current.team.Id != "studio-id" || api.domainCalls != 0 {
+	if err != nil || current.Team().Id != "studio-id" || current.Source() != SourceFlag || api.domainCalls != 0 {
 		t.Fatalf("explicit slug selection: %#v, %v; domain reads %d", current, err, api.domainCalls)
 	}
 	if _, err := session.CurrentWithDomains(t.Context()); err == nil || api.domainCalls != 1 {
 		t.Fatalf("domain-dependent selection: %v; domain reads %d", err, api.domainCalls)
 	}
 	selected, _, err = store.SelectedTeam(t.Context())
-	if err != nil || selected != "personal" {
+	if err != nil || selected != "removed-team" {
 		t.Fatalf("one-command override changed saved team: %q, %v", selected, err)
 	}
 	if _, err := session.ResolveMembership(t.Context(), "missing"); err == nil {
@@ -101,14 +101,17 @@ func TestTeamConfiguredInitialSelection(t *testing.T) {
 	}
 	session := Session{store: store, api: &selectedTeamAPI{}, identity: authorityv1.IdentityContext{PersonalTeamId: "personal", DefaultTeamId: new("studio"), Memberships: []authorityv1.Membership{{TeamId: "personal"}, {TeamId: "studio"}}}}
 	current, err := session.Current(t.Context())
-	if err != nil || current.team.Id != "studio" {
+	if err != nil || current.Team().Id != "studio" || current.Source() != SourceInitial {
 		t.Fatalf("initial team: %#v %v", current, err)
+	}
+	if selected, found, err := store.SelectedTeam(t.Context()); err != nil || found {
+		t.Fatalf("reading the initial team saved %q: %v", selected, err)
 	}
 	if err := store.SaveSelectedTeam(t.Context(), "personal"); err != nil {
 		t.Fatal(err)
 	}
 	current, err = session.Current(t.Context())
-	if err != nil || current.team.Id != "personal" {
+	if err != nil || current.Team().Id != "personal" || current.Source() != SourceSaved {
 		t.Fatalf("saved selection lost precedence: %#v %v", current, err)
 	}
 }
@@ -126,22 +129,25 @@ func TestTeamMembershipPriorityAndDiagnostics(t *testing.T) {
 	if err := store.SaveSelectedTeam(t.Context(), "saved"); err != nil {
 		t.Fatal(err)
 	}
-	session := Session{store: store, identity: authorityv1.IdentityContext{
+	session := Session{store: store, api: &selectedTeamAPI{}, identity: authorityv1.IdentityContext{
 		PersonalTeamId: "personal", DefaultTeamId: new("initial"), Memberships: []authorityv1.Membership{
 			{TeamId: "personal"}, {TeamId: "initial"}, {TeamId: "saved"},
 			{TeamId: "studio", TeamDisplayName: "id-wins"},
 			{TeamId: "project", TeamDisplayName: "studio"},
 		},
 	}}
-	for _, test := range []struct{ explicit, project, want string }{
-		{explicit: "studio", project: "missing", want: "studio"},
-		{project: "studio", want: "studio"},
-		{project: "project", want: "project"},
-		{want: "saved"},
+	for _, test := range []struct {
+		explicit, project, want string
+		source                  SelectionSource
+	}{
+		{explicit: "studio", project: "missing", want: "studio", source: SourceFlag},
+		{project: "studio", want: "studio", source: SourceProject},
+		{project: "project", want: "project", source: SourceProject},
+		{want: "saved", source: SourceSaved},
 	} {
 		session.selectedTeam, session.projectTeam = test.explicit, test.project
-		got, err := session.CurrentMembership(t.Context())
-		if err != nil || got.TeamId != test.want {
+		got, err := session.Current(t.Context())
+		if err != nil || got.Membership().TeamId != test.want || got.Source() != test.source {
 			t.Fatalf("selection %+v: %+v, %v", test, got, err)
 		}
 		if saved, _, err := store.SelectedTeam(t.Context()); err != nil || saved != "saved" {

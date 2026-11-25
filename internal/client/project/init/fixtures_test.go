@@ -14,6 +14,18 @@ func planInit(ctx context.Context, root string) (Plan, error) {
 	return NewPlan(ctx, root, func(err error) string { return err.Error() })
 }
 
+func ensureTnlGitignore(root string) (bool, error) {
+	edit, err := planTnlGitignore(root)
+	if err != nil {
+		return false, err
+	}
+	return edit.replacement != nil, edit.apply()
+}
+
+func wireProjectTypeIncludes(root string) (projectTypeIncludeResult, error) {
+	return visitProjectTypeIncludes(root, fileEdit.apply)
+}
+
 func copyInitFixture(t *testing.T, name string) string {
 	t.Helper()
 	return projectinittest.CopyFixture(t, filepath.Join("testdata", name))

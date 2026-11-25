@@ -311,7 +311,7 @@ func oneServiceNameTypo(a, b string) bool {
 }
 
 func checkoutShareCorrection(parent *cobra.Command, call commandCall, flags shareCheckoutCommand, name string) []string {
-	args := []string{"tnl"}
+	args := checkoutArgv(call.ctx)
 	if selection := call.project.Selection; selection.Explicit && selection.Path != "" {
 		args = append(args, "--config", selection.Path)
 	}
