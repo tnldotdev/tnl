@@ -68,7 +68,7 @@ func bindExactJobID(command *cobra.Command, id func() string) {
 
 func requireJobID() error {
 	const message = "Pass an exact job ID."
-	return &commandGuidance{error: failure.Wrap("select job", failure.InvalidCommand, errors.New(message)), message: message,
+	return &commandGuidance{error: failure.Wrap("select job", failure.InvalidCommand, errors.New("invalid job ID")), message: message,
 		help: []string{"tnl", "status", "--bg"}}
 }
 
