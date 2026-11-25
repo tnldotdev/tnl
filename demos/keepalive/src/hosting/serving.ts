@@ -1,7 +1,16 @@
-import { contentType, type Release } from "../release.ts";
+import { contentType, WASM_PATH, type Release } from "../release.ts";
+
+// opt in only on an explicit gzip offer with a nonzero quality.
+function acceptsGzip(request: Request) {
+  return (request.headers.get("Accept-Encoding") ?? "").split(",").some((item) => {
+    const offer = /^gzip(?:\s*;\s*q=(0(?:\.\d{0,3})?|1(?:\.0{0,3})?))?$/i.exec(item.trim());
+    return offer !== null && Number(offer[1] ?? 1) > 0;
+  });
+}
 
 export function serveRelease(release: Release, files: ReadonlyMap<string, ArrayBuffer>) {
   const assets = new Map(release.assets.map((asset) => [asset.path, asset]));
+  let gzip: Promise<ArrayBuffer | undefined> | undefined;
   return async (request: Request): Promise<Response> => {
     const { pathname, search } = new URL(request.url);
     const asset = assets.get(pathname === "/" ? "/index.html" : pathname);
@@ -10,11 +19,24 @@ export function serveRelease(release: Release, files: ReadonlyMap<string, ArrayB
     }
     const bytes = files.get(asset.path);
     if (bytes === undefined) return new Response(null, { status: 503 });
-    return new Response(bytes, {
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Type": contentType(asset.path) ?? "application/octet-stream",
-      },
+    const headers = new Headers({
+      "Cache-Control": "no-store",
+      "Content-Type": contentType(asset.path) ?? "application/octet-stream",
     });
+    if (asset.path === WASM_PATH) {
+      headers.set("Vary", "Accept-Encoding");
+      if (typeof CompressionStream !== "undefined" && acceptsGzip(request)) {
+        // share one compressed copy for this turn, including concurrent readers.
+        gzip ??= new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")))
+          .arrayBuffer()
+          .catch(() => undefined);
+        const encoded = await gzip;
+        if (encoded !== undefined && encoded.byteLength < bytes.byteLength) {
+          headers.set("Content-Encoding", "gzip");
+          return new Response(encoded, { headers });
+        }
+      }
+    }
+    return new Response(bytes, { headers });
   };
 }

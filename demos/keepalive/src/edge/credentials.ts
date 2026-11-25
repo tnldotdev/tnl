@@ -1,7 +1,13 @@
 import { control, createPublisherEnrollment } from "@tnldotdev/tnl/control";
 import { INVITATION_PATH, READY_HEADER, credentialRequest, enrollmentKey } from "../enrollment.ts";
 import { readJSON } from "../release.ts";
-import { noReachableHost, PEER_DISCOVERY_MS } from "../network.ts";
+import {
+  HTTPFailure,
+  noReachableHost,
+  PEER_DISCOVERY_MS,
+  request as sendRequest,
+  retryOnce,
+} from "../network.ts";
 import {
   deploymentCredential,
   HOSTING_SERVICE,
@@ -44,19 +50,36 @@ export async function credentials(
       return new Response(null, { status: 403, headers });
     // the donor confirms its own invitation. only the separate restart origin
     // may seed an empty site without a donor.
-    const check = body.data.bootstrap
-      ? await peers(signal)
-      : await fetch(new URL(INVITATION_PATH, body.data.inviter), {
+    if (body.data.bootstrap) {
+      const check = await peers(signal);
+      await check.body?.cancel();
+      if (!noReachableHost(check))
+        return new Response(null, { status: check.status === 503 ? 503 : 403, headers });
+    } else {
+      const url = new URL(INVITATION_PATH, body.data.inviter);
+      const confirmed = await retryOnce(signal, async () => {
+        const attempt = AbortSignal.any([signal, AbortSignal.timeout(4_000)]);
+        const check = await sendRequest(url, {
           headers: { [READY_HEADER]: body.data.requestID, "X-Keepalive-Release": releaseID },
-          redirect: "manual",
-          cache: "no-store",
-          signal,
+          signal: attempt,
+        }).catch((error: unknown) => {
+          if (!signal.aborted)
+            console.warn("keepalive invitation check", attempt.aborted ? "timeout" : "transport");
+          throw error;
         });
-    await check.body?.cancel();
-    if (body.data.bootstrap && check.status === 503 && !noReachableHost(check))
-      return new Response(null, { status: 503, headers });
-    if (body.data.bootstrap ? !noReachableHost(check) : check.status !== 204)
-      return new Response(null, { status: 403, headers });
+        await check.body?.cancel();
+        if (check.status === 204) return true;
+        // the outer response must not reveal the inviter's upstream failure.
+        console.warn("keepalive invitation check", check.status);
+        if (check.status === 408 || check.status === 429 || check.status >= 500) {
+          // cloudflare can answer for an unreachable origin before its handler runs.
+          const status = check.status >= 520 && check.status <= 524 ? 502 : check.status;
+          throw new HTTPFailure(status, check.headers.get("Retry-After") ?? undefined);
+        }
+        return false;
+      });
+      if (!confirmed) return new Response(null, { status: 403, headers });
+    }
     const result = await createPublisherEnrollment({
       client: control({
         baseUrl: deployment.controlURL,

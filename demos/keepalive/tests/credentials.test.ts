@@ -192,6 +192,29 @@ it("only the restart site can seed, and only when no publisher answers", async (
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
+it.each([204, 403, 503])(
+  "rechecks the same donor after a 502 (second reply: %s)",
+  async (status) => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 502 }))
+      .mockResolvedValueOnce(new Response(null, { status }))
+      .mockResolvedValueOnce(Response.json(token))
+      .mockResolvedValueOnce(enrolled());
+    vi.stubGlobal("fetch", fetch);
+    const reply = await call("https://site.test", false);
+    expect(reply.status).toBe(status === 204 ? 200 : status);
+    expect(fetch).toHaveBeenCalledTimes(status === 204 ? 4 : 2);
+    for (const [input, init] of fetch.mock.calls.slice(0, 2)) {
+      const check = new Request(input, init);
+      expect(check.url).toBe(`${donor}/__keepalive/invitation`);
+      expect(check.redirect).toBe("manual");
+      expect(check.headers.get(READY_HEADER)).toBe(requestID);
+      expect(check.headers.get("X-Keepalive-Release")).toBe(release);
+    }
+  },
+);
+
 it.each([
   ["missing", ""],
   ["malformed", "tnc_abc"],

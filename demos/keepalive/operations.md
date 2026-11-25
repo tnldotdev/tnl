@@ -18,6 +18,12 @@ access token or add connection or publication permissions. When the Worker
 checks an invitation or an allowed seed, it exchanges the credential for a
 short-lived access token. The browser receives only a one-use enrollment key.
 
+If a volunteer copies the site but cannot start, inspect the Worker's
+`keepalive invitation check` event. It records the upstream HTTP status,
+`timeout`, or `transport`. An upstream response can come from the network
+before the donor handles the request. Only `204` from the exact inviter
+allows enrollment; no invitation value is logged.
+
 ## rotate the Worker credential
 
 Signing credentials expire after at most 30 days (`720h`). Rotate around day 25. Expiry blocks new browser enrollments, not already-running hosts.

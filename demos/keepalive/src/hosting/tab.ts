@@ -49,8 +49,7 @@ async function waitForInvitation(releaseID: string, signal: AbortSignal) {
         signal.throwIfAborted();
         try {
           const invitation = await waitForWork(host, signal);
-          if (invitation === null) break;
-          return { host, invitation };
+          if (invitation !== null) return { host, invitation };
         } catch {
           // this tab can wait with a different host.
         }

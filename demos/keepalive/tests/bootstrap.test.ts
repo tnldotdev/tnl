@@ -59,6 +59,7 @@ it.each([false, true])("gives back an invitation on upload failure or Stop (%s)"
   const owner = new AbortController();
   const origin = "https://keepthisalive.com";
   const host = `https://p-${"a".repeat(26)}.${HOST_PARENT}`;
+  const busy = `https://p-${"b".repeat(26)}.${HOST_PARENT}`;
   const invitation = crypto.randomUUID();
   const assets = ["/index.html", WORKER_PATH, WASM_PATH].map((path) => ({
     path,
@@ -73,22 +74,29 @@ it.each([false, true])("gives back an invitation on upload failure or Stop (%s)"
     if (url.pathname === RELEASE_PATH) return Response.json({ id, assets });
     if (url.pathname === PEERS_PATH) {
       const now = Date.now();
+      const available = {
+        origin: host,
+        publisherID: `pub_${"A".repeat(22)}`,
+        runID: `srun_${"A".repeat(22)}`,
+        runNumber: "1",
+        seq: 1,
+        reportedAt: now,
+        left: false,
+        startingUntil: 0,
+      };
       return Response.json({
         releaseID: id,
         startedAt: now,
         from: {
-          origin: host,
-          publisherID: `pub_${"A".repeat(22)}`,
-          runID: `srun_${"A".repeat(22)}`,
-          runNumber: "1",
-          seq: 1,
-          reportedAt: now,
-          left: false,
-          startingUntil: 0,
+          ...available,
+          origin: busy,
+          publisherID: `pub_${"B".repeat(22)}`,
+          runID: `srun_${"B".repeat(22)}`,
         },
-        changes: [],
+        changes: [available],
       });
     }
+    if (url.origin === busy && url.pathname === "/__keepalive/wait") return Response.json(null);
     expect(url.origin).toBe(host);
     if (url.pathname === "/__keepalive/wait") return Response.json(invitation);
     if (url.pathname === "/__keepalive/upload") return new Response(null, { status: 422 });
