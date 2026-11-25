@@ -55,6 +55,26 @@ THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
 - The approved PostgreSQL-only v1 replacement includes verified domain
   transfers and hosted preview allocations. Earlier PostgreSQL layouts have no
   upgrade path to this baseline, even if they report v1. Client SQLite is unchanged.
+- Write PostgreSQL migrations to run while the previous control or standalone
+  binary still serves. Add tables or columns without invalidating old reads,
+  writes, prepared statements, or result row shapes. New columns must allow
+  `NULL` or provide a compatible default for old inserts. Both binaries must
+  be able to read the data written during overlap. Keep DDL transactions short,
+  use a bounded `lock_timeout`, and run large backfills separately in bounded
+  batches. Do not drop, rename, retype, or tighten existing schema in a
+  rolling-compatible migration. A breaking change needs the explicit approval
+  and upgrade plan described above.
+- Preserve the pooled runtime role's effective grants. Test with separate
+  migration and runtime roles, not just the migration owner. Before enabling
+  code that uses new tables, views, sequences, or functions, make sure the
+  runtime role has only the permissions it needs and exercise the affected
+  workload through that role. Migration success and readiness do not prove
+  that a workload can use new objects.
+- Test the overlap on populated PostgreSQL: keep the previous serving pool
+  open across migration, check readiness and old reads and writes, and reopen
+  it on the newer schema. This guarantee starts only after every running
+  control or standalone process checks a minimum schema version. Builds with
+  an exact version check, including rc.48, cannot gain this behavior retroactively.
 - Test schema changes against populated older databases, including skipped
   releases within the supported upgrade path. Preserve data and credentials;
   migrate data before retiring storage. Document required upgrade order and
@@ -369,7 +389,7 @@ operational procedures and current capability limits in
 - The six HTTP OpenAPI contracts under `contracts/{control,publisher}` generate one Go package per contract under the matching `pkg/api` serving-owner path. Edit their `paths/` and `schemas/` fragments and generator configuration, then regenerate. The local publisher contract is native app/CLI registration; the browser contract also generates validators in `internal/publisher/browserapi`. Reference control schemas for identical wire shapes. Shared components, if needed, contain only byte-identical referenced schemas and generate no Go package.
 - `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
 - PostgreSQL sources are `internal/control/state/{migrations,queries,sqlc.yaml}`; their committed output is `internal/control/state/controlstatedb`. SQLite sources are `internal/client/state/{migrations,queries,sqlc.yaml}`; their output is `internal/client/state/clientstatedb`. Edit sources and generator configuration, not generated Go files. `task generate` is the single ordered entrypoint for committed generation, starting with Go APIs and browser validators; `task format` formats the resulting tree.
-- `tnld migrate` is the server migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and check their supported schema version. Client state lives in `v1.db`; writable opens apply pending migrations and read-only opens require the supported version. Add upgrade paths in the owning state package; never bypass schema checks.
+- `tnld migrate` is the server migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. It validates the baseline and leaves a newer, compatible schema and its history unchanged. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and check their required minimum schema version and baseline. Raise the minimum with the embedded migrations. Client state lives in `v1.db`; writable opens apply pending migrations and read-only opens require the supported version. Add upgrade paths in the owning state package; never bypass schema checks.
 
 ## place implementation with its owner
 

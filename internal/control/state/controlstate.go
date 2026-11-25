@@ -23,11 +23,16 @@ import (
 )
 
 const (
-	// schema versions advance with numbered migrations.
-	schemaVersion       int64 = 3
-	versionTable              = "control.goose_db_version"
-	bootstrapRetryDelay       = 25 * time.Millisecond
+	// serving roles require the latest embedded migration or a newer schema.
+	minimumSchemaVersion int64 = 3
+	versionTable               = "control.goose_db_version"
+	bootstrapRetryDelay        = 25 * time.Millisecond
 )
+
+const schemaVersionQuery = `
+	SELECT COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0)
+	FROM control.goose_db_version
+`
 
 // check the supported v1 baseline before upgrading. older layouts also
 // reported version 1.
@@ -73,7 +78,8 @@ type Database struct {
 }
 
 // Migrate initializes or upgrades the control schema through a direct PostgreSQL URL.
-// a persistent table lock allows only one migration at a time.
+// a persistent table lock allows only one migration at a time. a newer schema
+// with the supported baseline is left unchanged.
 func Migrate(ctx context.Context, directURL string) (retErr error) {
 	config, err := parseDirectConfig(directURL)
 	if err != nil {
@@ -147,11 +153,8 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("controlstate: migrate: read schema version: %w", err)
 	}
-	if target != schemaVersion {
-		return fmt.Errorf("controlstate: migrate: embedded schema version %d does not match supported version %d", target, schemaVersion)
-	}
-	if current > target {
-		return fmt.Errorf("controlstate: migrate: database schema version %d is newer than supported version %d; use a fresh PostgreSQL database", current, target)
+	if target != minimumSchemaVersion {
+		return fmt.Errorf("controlstate: migrate: embedded schema version %d does not match required minimum %d", target, minimumSchemaVersion)
 	}
 	if current == 0 {
 		if err := lockTx.QueryRowContext(ctx, `SELECT `+hasControlTables).Scan(&populated); err != nil {
@@ -167,16 +170,19 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 		if _, err := provider.Up(ctx); err != nil {
 			return fmt.Errorf("controlstate: migrate database: %w", err)
 		}
-		current, target, err = provider.GetVersions(ctx)
-		if err != nil {
-			return fmt.Errorf("controlstate: migrate: verify schema version: %w", err)
-		}
+		current = target
 		if err := checkSchemaLayout(lockTx.QueryRowContext(ctx, schemaLayoutQuery)); err != nil {
 			return err
 		}
 	}
-	if current != target || current != schemaVersion {
-		return fmt.Errorf("controlstate: migrate: database schema version %d does not match supported version %d", current, schemaVersion)
+	// goose reports the highest recorded version. verify it is applied before
+	// returning success, including when this binary has no newer SQL to run.
+	var applied int64
+	if err := lockTx.QueryRowContext(ctx, schemaVersionQuery).Scan(&applied); err != nil {
+		return fmt.Errorf("controlstate: migrate: verify schema version: %w", err)
+	}
+	if applied != current {
+		return fmt.Errorf("controlstate: migrate: expected applied schema version %d, found %d", current, applied)
 	}
 	if err := lockTx.Commit(); err != nil {
 		return fmt.Errorf("controlstate: migrate: release lock: %w", err)
@@ -271,14 +277,14 @@ func (d *Database) Readiness(ctx context.Context) error {
 	return checkSchemaVersion(ctx, d.pool)
 }
 
-// serving roles require the schema version they were built to serve.
+// newer migrations must keep queries and row shapes used by older binaries valid.
 func checkSchemaVersion(ctx context.Context, database schemaVersionQuerier) error {
 	version, err := readSchemaVersion(ctx, database)
 	if err != nil {
 		return err
 	}
-	if version != schemaVersion {
-		return fmt.Errorf("controlstate: incompatible database schema version %d; required version is %d", version, schemaVersion)
+	if version < minimumSchemaVersion {
+		return fmt.Errorf("controlstate: incompatible database schema version %d; required minimum is %d", version, minimumSchemaVersion)
 	}
 	return checkSchemaLayout(database.QueryRow(ctx, schemaLayoutQuery))
 }
@@ -300,10 +306,7 @@ type schemaVersionQuerier interface {
 
 func readSchemaVersion(ctx context.Context, database schemaVersionQuerier) (int64, error) {
 	var version int64
-	if err := database.QueryRow(ctx, `
-		SELECT COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0)
-		FROM control.goose_db_version
-	`).Scan(&version); err != nil {
+	if err := database.QueryRow(ctx, schemaVersionQuery).Scan(&version); err != nil {
 		return 0, fmt.Errorf("controlstate: read schema version: %w", err)
 	}
 	return version, nil

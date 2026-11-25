@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,25 +140,17 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		}
 	}
 	var version int64
-	if err := database.pool.QueryRow(ctx, `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&version); err != nil || version != schemaVersion {
+	if err := database.pool.QueryRow(ctx, `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&version); err != nil || version != minimumSchemaVersion {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
-	// serving roles reject schema versions they have not been built to serve.
-	if _, err := database.pool.Exec(ctx, `ALTER TABLE control.services ADD COLUMN future_note text`); err != nil {
+	if _, err := database.pool.Exec(ctx, `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES ($1, false)`, minimumSchemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(ctx, `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES (5, true)`); err != nil {
-		t.Fatal(err)
+	if err := database.Readiness(ctx); err != nil {
+		t.Fatal("an unapplied migration does not change the serving schema", err)
 	}
-	if err := database.Readiness(ctx); err == nil {
-		t.Fatal("readiness accepted a newer database schema")
-	}
-	if newer, err := Open(ctx, databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated); err == nil {
-		newer.Close()
-		t.Fatal("open accepted a newer database schema")
-	}
-	if err := Migrate(ctx, databaseURL); err == nil {
-		t.Fatal("migration accepted a newer database schema")
+	if err := Migrate(ctx, databaseURL); err == nil || !strings.Contains(err.Error(), "expected applied schema version") {
+		t.Fatal("migration treated an unapplied version as a newer schema", err)
 	}
 	// rejection must not bootstrap a lock or migration history in an older,
 	// populated control schema, even when it predates those objects.

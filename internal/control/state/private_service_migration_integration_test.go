@@ -31,7 +31,7 @@ func TestIntegrationPrivateServiceMigrationPreservesReservations(t *testing.T) {
 		return value
 	}
 	before := snapshot()
-	if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != schemaVersion {
+	if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != minimumSchemaVersion {
 		t.Fatal("fixture did not initialize the current schema", version, err)
 	}
 	for range 2 {
@@ -72,7 +72,7 @@ func TestIntegrationPrivateServiceMigrationPreservesReservations(t *testing.T) {
 			old.Close()
 		}
 		rejected("open", err)
-		if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != schemaVersion || snapshot() != before {
+		if version, err := readSchemaVersion(ctx, d.pool); err != nil || version != minimumSchemaVersion || snapshot() != before {
 			t.Fatal("rejection changed the version, service, or reservation", err)
 		}
 	}
