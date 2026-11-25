@@ -21,6 +21,22 @@ type Bindings = CredentialBindings & {
 const app = new Hono<{ Bindings: Bindings }>();
 const proxy = createProxy(release);
 
+app.use("*", async (c, next) => {
+  const url = new URL(c.req.url);
+  if (url.protocol === "http:") {
+    const site = new URL(c.env.SITE_ORIGIN);
+    if (
+      site.protocol === "https:" &&
+      (url.hostname === site.hostname || url.hostname === c.env.START_HOST)
+    ) {
+      url.protocol = "https:";
+      url.port = "";
+      return Response.redirect(url, 308);
+    }
+  }
+  return next();
+});
+
 app.get(RELEASE_PATH, (c) => {
   if (c.req.method !== "GET" || new URL(c.req.url).search !== "") return c.body(null, 404);
   return c.json(release, 200, siteHeaders("application/json"));

@@ -6,6 +6,11 @@ discovers browser hosts through `prod.live.hosts.keepthisalive.com`. Each
 publisher gets its own address under `live.hosts.keepthisalive.com`, covered
 by the wildcard certificate `*.live.hosts.keepthisalive.com`.
 
+The Worker redirects plain HTTP on both public hostnames to HTTPS on the same
+hostname, path, and query. For a Worker-only rollout, compare the new release
+ID with `https://keepthisalive.com/__keepalive/release` before deploying. A
+different release ID can exclude currently serving browsers.
+
 The Worker reads the team, project, and deployment ID from `wrangler.jsonc`.
 Set `DEPLOYMENT_CREDENTIAL` as a Worker secret. It can manage only the
 `production` service on the `keepalive` deployment. Don't use a personal
