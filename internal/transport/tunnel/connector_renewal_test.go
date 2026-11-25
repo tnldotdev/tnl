@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	yamux "github.com/libp2p/go-yamux/v5"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -42,13 +43,18 @@ func TestConnectorLegRenewalDenialPreservesAcknowledgmentCloseFailure(t *testing
 
 func connectorRenewalPair(t *testing.T) (*Session, *Session, tunnelv1.ConnectorPairLegProof, tunnelv1.ConnectorPairLegAccepted) {
 	t.Helper()
+	left, right := newMemoryPair(t)
+	return connectorRenewalTransportPair(t, left, right)
+}
+
+func connectorRenewalTransportPair(t *testing.T, left, right muxsession.Session) (*Session, *Session, tunnelv1.ConnectorPairLegProof, tunnelv1.ConnectorPairLegAccepted) {
+	t.Helper()
 	proof := tunnelv1.ConnectorPairLegProof{PairID: "cpp_1234567890123456789012", DeliveryGeneration: 1,
 		ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 1,
 		PublisherIdentityID: "pub_1234567890123456789012", PublisherConnectionID: "pc_1234567890123456789012", AssignmentRevision: 1,
 		RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "run-a", RelayLeaseRevision: 1, RequestedAt: time.Now(), Nonce: make([]byte, 32), Signature: make([]byte, 64)}
 	receipt := tunnelv1.ConnectorPairLegAccepted{PairID: proof.PairID, DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ", DeliveryGeneration: 1, BindingState: tunnelv1.ConnectorPeerLegBindingActive,
 		SourceIP: "127.0.0.1", ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
-	left, right := newMemoryPair(t)
 	type result struct {
 		session *Session
 		err     error
@@ -70,6 +76,47 @@ func connectorRenewalPair(t *testing.T) (*Session, *Session, tunnelv1.ConnectorP
 	}
 	t.Cleanup(func() { _ = client.Close(); _ = server.session.Close() })
 	return client, server.session, proof, receipt
+}
+
+func TestConnectorLegRenewalDistinguishesLocalAndPeerWSSClose(t *testing.T) {
+	for _, local := range []bool{true, false} {
+		name := "peer close"
+		if local {
+			name = "local close"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := tunnelContext(t)
+			left, right := realTunnelTransportPair(t, ctx, "wss")
+			client, server, proof, initial := connectorRenewalTransportPair(t, left, right)
+			request := tunnelWorker(t, func() { _ = server.Close() }, func() error {
+				_, err := tunnelv1.ReadControl(server.control)
+				return err
+			})
+			renewal := tunnelWorker(t, func() { _ = client.Close() }, func() error {
+				_, err := client.RenewConnectorLeg(ctx, "close", proof, initial)
+				return err
+			})
+			if err := await(t, request); err != nil {
+				t.Fatal(err)
+			}
+			owner := server
+			if local {
+				owner = client
+			}
+			if err := owner.Close(); err != nil {
+				t.Fatal(err)
+			}
+			err := await(t, renewal)
+			if err == nil || client.ConnectorLegRenewalClosedLocally(err) != local ||
+				server.ConnectorLegRenewalClosedLocally(err) ||
+				client.ConnectorLegRenewalClosedLocally(errors.Join(err, io.ErrShortWrite)) {
+				t.Fatal("renewal misclassified its shutdown", err)
+			}
+			if local && !errors.Is(err, yamux.ErrSessionShutdown) {
+				t.Fatal("local shutdown lost its transport reason", err)
+			}
+		})
+	}
 }
 
 func TestConnectorLegRenewalUsesExistingControlAndRejectsSubstitution(t *testing.T) {

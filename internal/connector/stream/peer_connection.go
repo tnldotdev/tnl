@@ -1050,6 +1050,11 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 		}
 	}
 	if cause := context.Cause(p.ctx); cause != nil {
+		// a retired carrier can close this leg while the sibling's denial
+		// stops serving. the joined local close adds no independent failure.
+		if leg.session.ConnectorLegRenewalClosedLocally(err) {
+			return retirePath, nil
+		}
 		return retirePath, errors.Join(err, cause)
 	}
 	if err == nil && call.Err() == nil && leg.until.After(time.Now()) {
