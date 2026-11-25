@@ -90,9 +90,16 @@ func (h *runtimeHarness) blackhole(ctx context.Context, started time.Time, check
 		return errors.New("blackhole requires planned fault sources and destinations")
 	}
 	port, protocols := "443", []string{"tcp"}
+	requireEachProtocol := true
 	switch h.selected {
 	case "forwarding-blackhole":
-		port = "8443"
+		if len(destinations) != 1 {
+			return errors.New("forwarding blackhole requires one planned relay destination")
+		}
+		// ingress pools QUIC or WSS to each relay. block both carriers,
+		// but require packet evidence on the one each ingress actually uses.
+		port, protocols = "8443", []string{"tcp", "udp"}
+		requireEachProtocol = false
 	case "publisher-blackhole":
 		protocols = []string{"tcp", "udp"}
 	case "udp-fallback":
@@ -153,8 +160,8 @@ func (h *runtimeHarness) blackhole(ctx context.Context, started time.Time, check
 			if err := h.writeResult(h.selected+"-"+source+"-counters.txt", counters); err != nil {
 				return err
 			}
-			if err := validateBlackholeCounters(counters, len(destinations)*len(protocols)); err != nil {
-				return err
+			if err := validateBlackholeCounters(counters, len(destinations)*len(protocols), requireEachProtocol); err != nil {
+				return fmt.Errorf("%s: %w", source, err)
 			}
 		}
 		return nil
@@ -393,11 +400,11 @@ func finishUDPFallback(wait func(string) error, check func(string) error, signal
 	return nil
 }
 
-func validateBlackholeCounters(counters string, expected int) error {
+func validateBlackholeCounters(counters string, expected int, requireEachRule bool) error {
 	if expected < 1 {
 		return errors.New("blackhole evidence requires at least one rule")
 	}
-	matched := 0
+	matched, hit := 0, 0
 	for _, line := range strings.Split(counters, "\n") {
 		if !strings.Contains(line, "tnl-runtime-fault") {
 			continue
@@ -408,12 +415,18 @@ func validateBlackholeCounters(counters string, expected int) error {
 			return errors.New("blackhole rule dropped no packets")
 		}
 		packets, err := strconv.ParseUint(fields[0], 10, 64)
-		if err != nil || packets == 0 {
+		if err != nil || requireEachRule && packets == 0 {
 			return errors.New("blackhole rule dropped no packets")
+		}
+		if packets > 0 {
+			hit++
 		}
 	}
 	if matched != expected {
 		return errors.New("blackhole rule count changed during measurement")
+	}
+	if hit == 0 {
+		return errors.New("blackhole rules dropped no packets")
 	}
 	return nil
 }
@@ -556,11 +569,11 @@ func netemOptions(scenario, rtt, loss, rawSeed string) ([]string, error) {
 }
 
 func impairmentEndpoints(path string, addresses map[string]string, sources, destinations []string) ([]impairmentEndpoint, error) {
-	port, protocols := "8443", []string{"6"}
+	port, protocols := "8443", []string{"6", "17"}
 	switch path {
 	case "forwarding":
 	case "publisher", "connector":
-		port, protocols = "443", []string{"6", "17"}
+		port = "443"
 	default:
 		return nil, errors.New("invalid network path")
 	}

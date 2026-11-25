@@ -48,7 +48,7 @@ func TestFaultNetworkInputsAndPlannedEndpoints(t *testing.T) {
 	}
 	addresses := map[string]string{"ingress-a": "192.0.2.1", "publishers": "192.0.2.2", "relay-a": "192.0.2.3", "relay-b": "192.0.2.4"}
 	forward, err := impairmentEndpoints("forwarding", addresses, []string{"ingress-a"}, []string{"relay-a", "relay-b"})
-	if err != nil || len(forward) != 3 || len(forward[0].Filters) != 2 || forward[0].Filters[0][12] != "8443" {
+	if err != nil || len(forward) != 3 || len(forward[0].Filters) != 4 || forward[0].Filters[0][12] != "8443" {
 		t.Fatalf("forwarding impairment = %+v, %v", forward, err)
 	}
 	publisher, err := impairmentEndpoints("publisher", addresses, []string{"publishers"}, []string{"relay-a", "relay-b"})
@@ -89,9 +89,9 @@ func TestImpairmentUsesOnlyPlannedSourcesAndDestinations(t *testing.T) {
 		if !slices.Equal(names, slices.Concat(sources, destinations)) {
 			t.Fatalf("%s selected unplanned endpoints: %v", path, names)
 		}
-		port, protocols := "8443", []string{"6"}
+		port, protocols := "8443", []string{"6", "17"}
 		if path != "forwarding" {
-			port, protocols = "443", []string{"6", "17"}
+			port = "443"
 		}
 		for index, source := range sources {
 			var want []string
@@ -184,18 +184,33 @@ func TestNetworkFaultsRejectEmptyPlansBeforeApplying(t *testing.T) {
 
 func TestBlackholeEvidenceRequiresDroppedPackets(t *testing.T) {
 	for _, counters := range []string{"invalid 0 0 DROP tnl-runtime-fault", "0 0 0 DROP tnl-runtime-fault"} {
-		if err := validateBlackholeCounters(counters, 1); err == nil {
+		if err := validateBlackholeCounters(counters, 1, true); err == nil {
 			t.Fatalf("invalid packet count accepted: %q", counters)
 		}
 	}
-	if err := validateBlackholeCounters("12 0 0 DROP tnl-runtime-fault", 1); err != nil {
+	if err := validateBlackholeCounters("12 0 0 DROP tnl-runtime-fault", 1, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateBlackholeCounters("", 0); err == nil {
+	if err := validateBlackholeCounters("", 0, true); err == nil {
 		t.Fatal("accepted empty blackhole evidence")
 	}
-	if err := validateBlackholeCounters("12 0 0 DROP tnl-runtime-fault", 2); err == nil {
+	if err := validateBlackholeCounters("12 0 0 DROP tnl-runtime-fault", 2, true); err == nil {
 		t.Fatal("accepted missing blackhole rules")
+	}
+}
+
+func TestForwardingBlackholeRequiresBothRulesAndTrafficOnEither(t *testing.T) {
+	const unused = "0 0 DROP tnl-runtime-fault"
+	const used = "12 1800 DROP tnl-runtime-fault"
+	for _, counters := range []string{unused + "\n" + used, used + "\n" + unused, used + "\n" + used} {
+		if err := validateBlackholeCounters(counters, 2, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, counters := range []string{unused + "\n" + unused, used, used + "\ninvalid 0 DROP tnl-runtime-fault"} {
+		if err := validateBlackholeCounters(counters, 2, false); err == nil {
+			t.Fatalf("accepted missing or invalid forwarding fault evidence: %q", counters)
+		}
 	}
 }
 
