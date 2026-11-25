@@ -49,6 +49,7 @@ port inventory from control; it does not need a second copy of those ranges.
 
 Find other checks with `mise exec -- task --list-all`. Integration tasks create
 and clean up their own services; they need Docker. Some CLI suites require Linux.
+`go:test:integration:deployment-database` also needs `psql` 16 or newer on `PATH`.
 Browser tests need Chrome. Hosted Worker tests also need a Wrangler login:
 `mise exec -- wrangler login --device --browser=false`.
 

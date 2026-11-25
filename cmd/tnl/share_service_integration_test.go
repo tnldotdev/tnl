@@ -28,6 +28,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -131,6 +132,136 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("checkout shares only accounts and revokes the receipt ID", func(t *testing.T) {
+		t.Setenv("TNL_OUTPUT", "auto")
+		state := filepath.Join(t.TempDir(), "state")
+		path := filepath.Join(t.TempDir(), "tnl.json")
+		if err := os.WriteFile(path, []byte(`{"version":1,"tnl":{"services":{"accounts":{},"api":{}},"deployments":{"local":{"targets":{"accounts":{"public":true},"api":{"public":true}}}}}}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		project, err := loadProjectConfiguration(ctx, cli{ConfigPath: path}, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := project.LocalPublicationIdentity()
+		preview, err := ownerControl.CreatePreview(ctx, team.Id, "accounts-checkout")
+		if err != nil {
+			t.Fatal(err)
+		}
+		services := make(map[string]controlv1.Service, 2)
+		for _, name := range []string{"accounts", "api"} {
+			local, err := ownerControl.RealizeLocalProjectService(ctx, source.Key, name, controlv1.RealizeLocalProjectServiceRequest{
+				TeamId: team.Id, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), WorktreeLabel: new(project.Worktree.Label.FullLabel),
+				Configuration: controlv1.ProjectServiceConfiguration{Protocol: new(controlv1.ServiceProtocolHTTP), Target: "app", Public: new(true)},
+			})
+			if err != nil {
+				t.Fatal("realize checkout service", name, err)
+			}
+			saved, err := ownerControl.GetService(ctx, local.ServiceId)
+			if err != nil || saved.Endpoint == nil || !saved.Endpoint.Public {
+				t.Fatal("load public checkout service", name, err)
+			}
+			services[name] = saved
+			if _, err := ownerControl.AddPreviewService(ctx, preview.Id, saved.Id); err != nil {
+				t.Fatal("attach checkout service", name, err)
+			}
+		}
+		db, err := clientstate.Open(ctx, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store, err := db.Server(ctx, server.URL)
+		if err == nil {
+			err = store.SavePreviewID(ctx, team.Id, project.LocalWorktreeKey(), preview.Id)
+		}
+		if err := errors.Join(err, db.Close()); err != nil {
+			t.Fatal(err)
+		}
+		invoke := func(args ...string) (string, error) {
+			t.Helper()
+			argv := append([]string{"--config", path, "--no-telemetry", "share"}, args...)
+			argv = append(argv, "--server", server.URL, "--access-token", owner.AccessToken.String(), "--team", team.Id, "--state-dir", state)
+			var output, diagnostics bytes.Buffer
+			err := run(ctx, argv, &output, &diagnostics)
+			if diagnostics.Len() != 0 {
+				t.Fatal("share wrote unexpected diagnostics")
+			}
+			return output.String(), err
+		}
+		// neither a typo nor an omitted selector should be substituted for the other.
+		if out, err := invoke("acounts", "--expires-in", "1h", "--output=json"); out != "" || err == nil {
+			t.Fatal("mistyped selector produced a share")
+		} else if reason, _ := failure.ReasonOf(err); reason != failure.ShareInputInvalid {
+			t.Fatal("mistyped selector did not return a share input error", err)
+		}
+		if shares, err := ownerControl.ListTeamShares(ctx, team.Id); err != nil || len(shares) != 0 {
+			t.Fatal("mistyped selector created a share in control", err)
+		}
+		sourceFromLink := func(link string, service controlv1.Service) controlv1.VisitorTokenShareSource {
+			t.Helper()
+			value, ok := strings.CutPrefix(link, "https://"+service.Endpoint.Hostname+"/__tnl/share/")
+			id, secret, _ := strings.Cut(value, ".")
+			if !ok || !opaqueid.Valid(id, opaqueid.SharePrefix) || !serviceShareSecret(value, id) {
+				t.Fatal("output was not one exact share link for the selected service")
+			}
+			return controlv1.VisitorTokenShareSource{Kind: controlv1.VisitorTokenShare, ShareId: id, Secret: secret}
+		}
+		api, accounts := services["api"], services["accounts"]
+		raw, err := invoke("api", "--expires-in", "1h")
+		apiLink, newline := strings.CutSuffix(raw, "\n")
+		if err != nil || !newline {
+			t.Fatal("default share did not print one link", err)
+		}
+		apiSource := sourceFromLink(apiLink, api)
+		started := time.Now()
+		raw, err = invoke("accounts", "--expires-in", "1h", "--output", "json")
+		var receipt struct {
+			SchemaVersion int       `json:"schema_version"`
+			ShareID       string    `json:"share_id"`
+			EntryURL      string    `json:"entry_url"`
+			ServiceIDs    []string  `json:"service_ids"`
+			ExpiresAt     time.Time `json:"expires_at"`
+		}
+		if err != nil || json.Unmarshal([]byte(raw), &receipt) != nil || receipt.SchemaVersion != 1 ||
+			!slices.Equal(receipt.ServiceIDs, []string{accounts.Id}) || receipt.ExpiresAt.Before(started.Add(time.Hour).Truncate(time.Microsecond)) ||
+			receipt.ExpiresAt.After(time.Now().Add(time.Hour)) {
+			t.Fatal("checkout share did not return one scoped one-hour receipt", err)
+		}
+		accountsSource := sourceFromLink(receipt.EntryURL, accounts)
+		if accountsSource.ShareId != receipt.ShareID || accountsSource.ShareId == apiSource.ShareId {
+			t.Fatal("link and revocation ID did not identify the same new share")
+		}
+		saved, err := ownerControl.GetShare(ctx, receipt.ShareID)
+		if err != nil || saved.Scope != "service" || saved.PreviewId != nil || saved.TeamId != team.Id ||
+			!slices.Equal(saved.ServiceIds, receipt.ServiceIDs) || saved.EntryServiceId != accounts.Id || !saved.ExpiresAt.Equal(receipt.ExpiresAt) || saved.RevokedAt != nil {
+			t.Fatal("receipt did not match the saved share", err)
+		}
+		assertPermission := func(tokenSource controlv1.VisitorTokenShareSource, service controlv1.Service, allowed bool) {
+			t.Helper()
+			body, err := json.Marshal(tokenSource)
+			if err != nil {
+				t.Fatal("could not encode share source")
+			}
+			scope := controlv1.VisitorResourceScope{Kind: "service", Id: service.Id}
+			result, err := ownerControl.IssueVisitorToken(ctx, controlv1.VisitorTokenRequest{Resource: scope, Source: body})
+			reason, _ := failure.ReasonOf(err)
+			if allowed && (err != nil || result.Resource != scope || result.VisitorToken == "") ||
+				!allowed && (reason != failure.ServerDenied || result.VisitorToken != "") {
+				t.Fatalf("unexpected visitor permission for service %s (want allowed=%t): %s", service.Id, allowed, reason)
+			}
+		}
+		assertPermission(accountsSource, accounts, true)
+		assertPermission(accountsSource, api, false)
+		if out, err := invoke("revoke", receipt.ShareID); err != nil || out != "Revoked share "+receipt.ShareID+"\n" {
+			t.Fatal("revoking the receipt ID did not confirm the exact share", err)
+		}
+		revoked, err := ownerControl.GetShare(ctx, receipt.ShareID)
+		if err != nil || revoked.RevokedAt == nil || !slices.Equal(revoked.ServiceIds, receipt.ServiceIDs) {
+			t.Fatal("control did not revoke the exact captured share", err)
+		}
+		assertPermission(accountsSource, accounts, false)
+		assertPermission(apiSource, api, true)
+	})
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

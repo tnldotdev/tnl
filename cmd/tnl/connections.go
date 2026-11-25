@@ -251,7 +251,7 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	case "runtime connections status":
 		return write(connector.Status(ctx, flags.Status.Handle))
 	case "runtime connections stop":
-		return stopped(connector.Stop(ctx, flags.Stop.Handle))
+		return stopped(connector.StopJoined(ctx, flags.Stop.Handle))
 	case "runtime connections kube-credential":
 		return write(connector.KubeCredential(ctx, flags.KubeCredential.Handle, flags.KubeCredential.Service))
 	}

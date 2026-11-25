@@ -39,7 +39,7 @@ func TestShareCheckoutCommandParsing(t *testing.T) {
 		{[]string{"share", "link", "create", "web.example.test", "--preview"}, "share link create <url>", ""},
 		{[]string{"share", "token", "create", "web.example.test", "--name", "ci"}, "share token create <url>", ""},
 		{[]string{"share", "list"}, "share list <url>", ""},
-		{[]string{"share", "revoke", "shr_example"}, "share revoke <share-id>", ""},
+		{[]string{"share", "revoke", "shr_0123456789abcdefghijkl"}, "share revoke <share-id>", ""},
 		{[]string{"share", "team", "create"}, "share team create <url>", ""},
 		{[]string{"share", "service", "list", "database"}, "share service list <name>", ""},
 	} {
@@ -255,7 +255,10 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 	const webID = "svc_0123456789abcdefghijkl"
 	const apiID = "svc_abcdefghijkl0123456789"
 	const otherID = "svc_othercheckout123456789"
+	const foreignID = "svc_otherteam1234567890123"
 	const shareID = "shr_0123456789abcdefghijkl"
+	const siblingShareID = "shr_abcdefghijkl0123456789"
+	const secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	access, _, _, err := credentials.NewAccessToken()
 	if err != nil {
 		t.Fatal(err)
@@ -264,6 +267,7 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 		{Id: webID, TeamId: teamID, Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443, Public: true}, Protocol: controlv1.ServiceProtocolHTTP, Enabled: true},
 		{Id: apiID, TeamId: teamID, Endpoint: &controlv1.ServiceEndpoint{Hostname: "api.example.test", Port: 443, Public: true}, Protocol: controlv1.ServiceProtocolHTTP, Enabled: true},
 		{Id: otherID, TeamId: teamID, Endpoint: &controlv1.ServiceEndpoint{Hostname: "other.example.test", Port: 443, Public: true}, Protocol: controlv1.ServiceProtocolHTTP, Enabled: true},
+		{Id: foreignID, TeamId: "tm_abcdefghijkl0123456789", Endpoint: &controlv1.ServiceEndpoint{Hostname: "foreign.example.test", Port: 443, Public: true}, Protocol: controlv1.ServiceProtocolHTTP, Enabled: true},
 	}
 	type creation struct {
 		path string
@@ -271,8 +275,14 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 	}
 	created := make(chan creation, 1)
 	lookups := make(chan string, 8)
-	var widenResponse atomic.Bool
+	revocations := make(chan string, 4)
+	var requests atomic.Int32
+	var missingMember atomic.Bool
+	var creationFault, revokeFault atomic.Value
+	creationFault.Store("")
+	revokeFault.Store("")
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		write := func(value any) { t.Helper(); _ = json.NewEncoder(w).Encode(value) }
 		if r.URL.Path != "/v1/discovery" && r.Header.Get("Authorization") != "Bearer "+access.String() {
@@ -291,7 +301,11 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 		case "GET /v1/teams/" + teamID + "/domains":
 			write(authorityv1.DomainPage{Domains: []authorityv1.Domain{{Id: "dom_fixture", CanonicalDomain: "example.test", Kind: "custom", State: "ready"}}})
 		case "GET /v1/previews/" + previewID:
-			write(controlv1.Preview{Id: previewID, TeamId: teamID, ServiceIds: []string{webID, apiID}})
+			ids := []string{webID, apiID}
+			if missingMember.Load() {
+				ids = []string{webID}
+			}
+			write(controlv1.Preview{Id: previewID, TeamId: teamID, ServiceIds: ids})
 		case "GET /v1/services":
 			if r.URL.Query().Get("team_id") != teamID {
 				t.Error("service inventory lost its selected team")
@@ -310,9 +324,6 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 			}
 			created <- creation{r.URL.Path, body}
 			share := controlv1.Share{Id: shareID, TeamId: teamID, Scope: "service", ServiceIds: body.ServiceIds, EntryServiceId: body.EntryServiceId, ExpiresAt: body.ExpiresAt}
-			if widenResponse.Load() {
-				share.ServiceIds = append(slices.Clone(share.ServiceIds), otherID)
-			}
 			if strings.HasPrefix(r.URL.Path, "/v1/previews/") {
 				id := previewID
 				share.PreviewId = &id
@@ -321,13 +332,48 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 			entry := ""
 			for _, service := range services {
 				if service.Id == body.EntryServiceId {
-					entry = "https://" + service.Endpoint.Hostname + "/__tnl/share/" + shareID + "." + strings.Repeat("A", 43)
+					entry = "https://" + service.Endpoint.Hostname + "/__tnl/share/" + shareID + "." + secret
 				}
 			}
+			switch creationFault.Load().(string) {
+			case "scope":
+				share.ServiceIds = append(slices.Clone(share.ServiceIds), otherID)
+			case "expiry":
+				share.ExpiresAt = share.ExpiresAt.Add(-time.Minute)
+			case "revoked":
+				share.RevokedAt = new(time.Now())
+			case "link":
+				entry += "#"
+			case "link ID":
+				entry = strings.Replace(entry, shareID, siblingShareID, 1)
+			}
 			w.WriteHeader(http.StatusCreated)
-			write(controlv1.ShareCreation{Share: share, Link: entry, TokenSource: controlv1.VisitorTokenShareSource{Kind: controlv1.VisitorTokenShare, ShareId: shareID, Secret: strings.Repeat("A", 43)}})
+			write(controlv1.ShareCreation{Share: share, Link: entry, TokenSource: controlv1.VisitorTokenShareSource{Kind: controlv1.VisitorTokenShare, ShareId: shareID, Secret: secret}})
+		case "GET /v1/shares/" + shareID:
+			share := controlv1.Share{Id: shareID, TeamId: teamID, Scope: "service", ServiceIds: []string{apiID}, EntryServiceId: apiID}
+			switch revokeFault.Load().(string) {
+			case "lookup ID":
+				share.Id = siblingShareID
+			case "lookup team":
+				share.TeamId = services[3].TeamId
+			}
+			write(share)
+		case "POST /v1/shares/" + shareID + "/revoke":
+			revocations <- shareID
+			share := controlv1.Share{Id: shareID, TeamId: teamID, Scope: "service", ServiceIds: []string{apiID}, EntryServiceId: apiID, RevokedAt: new(time.Now())}
+			switch revokeFault.Load().(string) {
+			case "receipt ID":
+				share.Id = siblingShareID
+			case "receipt team":
+				share.TeamId = services[3].TeamId
+			case "receipt scope":
+				share.ServiceIds = []string{apiID, webID}
+			case "not revoked":
+				share.RevokedAt = nil
+			}
+			write(share)
 		default:
-			t.Errorf("unexpected share request: %s %s", r.Method, r.URL)
+			t.Errorf("unexpected share request: %s", r.Method)
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
@@ -381,6 +427,8 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 		{"one service", []string{"share", "--service=web"}, []string{webID}, webID, false, false},
 		{"API service", []string{"share", "--service=api", "--output=json"}, []string{apiID}, apiID, false, true},
 		{"exact URL", []string{"share", "link", "create", "web.example.test"}, []string{webID}, webID, false, false},
+		{"exact HTTPS origin", []string{"share", "link", "create", "https://API.example.test:443/"}, []string{apiID}, apiID, false, false},
+		{"exact service ID", []string{"share", "link", "create", apiID}, []string{apiID}, apiID, false, false},
 		{"explicit preview", []string{"share", "link", "create", "api.example.test", "--preview"}, []string{webID, apiID}, apiID, true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -417,28 +465,41 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 			if test.name == "checkout" {
 				lifetime = 7 * 24 * time.Hour
 			}
-			if got.body.ExpiresAt.Before(before.Add(lifetime)) || got.body.ExpiresAt.After(time.Now().Add(lifetime)) {
+			if got.body.ExpiresAt.Before(before.Add(lifetime).Truncate(time.Microsecond)) || got.body.ExpiresAt.After(time.Now().Add(lifetime)) {
 				t.Fatalf("unexpected share expiry: %s", got.body.ExpiresAt)
 			}
 			if diagnostics.Len() != 0 {
 				t.Fatalf("unexpected diagnostics: %s", diagnostics.String())
 			}
+			host := services[0].Endpoint.Hostname
+			if test.entry == apiID {
+				host = services[1].Endpoint.Hostname
+			}
+			wantLink := "https://" + host + "/__tnl/share/" + shareID + "." + secret
 			if test.json {
 				var result struct {
 					SchemaVersion int                           `json:"schema_version"`
+					ShareID       string                        `json:"share_id"`
 					PreviewID     *string                       `json:"preview_id"`
+					EntryURL      string                        `json:"entry_url"`
 					ServiceIDs    []string                      `json:"service_ids"`
 					Services      map[string]shareServiceResult `json:"services"`
+					ExpiresAt     time.Time                     `json:"expires_at"`
 				}
 				if err := json.Unmarshal(output.Bytes(), &result); err != nil {
 					t.Fatal(err)
 				}
 				if result.SchemaVersion != 1 || (result.PreviewID != nil) != test.preview || !slices.Equal(result.ServiceIDs, wantIDs) ||
-					test.preview && (len(result.Services) != 2 || result.Services["web"].ServiceID != webID || result.Services["api"].ServiceID != apiID) {
-					t.Fatalf("share JSON lost its captured scope: %s", output.String())
+					result.ShareID != shareID || result.EntryURL != wantLink || !result.ExpiresAt.Equal(got.body.ExpiresAt) {
+					t.Fatal("share JSON lost the captured scope or mixed receipt fields")
 				}
-			} else if !strings.HasPrefix(output.String(), "https://") || strings.Count(output.String(), "\n") != 1 {
-				t.Fatalf("share did not print one raw link: %q", output.String())
+				if test.preview && (len(result.Services) != 2 ||
+					result.Services["web"] != (shareServiceResult{ServiceID: webID, PublicURL: "https://web.example.test"}) ||
+					result.Services["api"] != (shareServiceResult{ServiceID: apiID, PublicURL: "https://api.example.test"})) {
+					t.Fatal("preview named-service mapping lost its IDs or exposed share links")
+				}
+			} else if output.String() != wantLink+"\n" {
+				t.Fatal("share did not print exactly one raw link")
 			}
 		})
 	}
@@ -446,6 +507,7 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 		{"share", "aip"},
 		{"share", "private"},
 		{"share", "api.example.test"},
+		{"share", apiID},
 		{"share", ""},
 		{"share", "--service="},
 		{"share", "--service=aip"},
@@ -462,14 +524,103 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 			}
 		})
 	}
-	t.Run("reject widened server scope", func(t *testing.T) {
-		widenResponse.Store(true)
-		args := []string{"--no-telemetry", "--config", configPath, "share", "--service=web",
-			"--server", server.URL, "--access-token", access.String(), "--team", teamID, "--state-dir", stateDir}
+	checkout := func(args ...string) ([]byte, error) {
+		t.Helper()
+		argv := append([]string{"--no-telemetry", "--config", configPath}, args...)
+		argv = append(argv, "--server", server.URL, "--access-token", access.String(), "--team", teamID, "--state-dir", stateDir)
 		var output, diagnostics bytes.Buffer
-		err := run(t.Context(), args, &output, &diagnostics)
-		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid || output.Len() != 0 {
-			t.Fatalf("widened share response was printed or misclassified: output=%q, error=%v", output.String(), err)
+		err := run(t.Context(), argv, &output, &diagnostics)
+		for len(lookups) != 0 {
+			<-lookups
+		}
+		if bytes.Contains(diagnostics.Bytes(), []byte(secret)) {
+			t.Fatal("a diagnostic contained share credentials")
+		}
+		return output.Bytes(), err
+	}
+	t.Run("exact selection cannot widen", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"share", "link", "create", otherID, "--preview"},
+			{"share", "link", "create", "other.example.test", "--preview"},
+			{"share", "link", "create", foreignID},
+			{"share", "link", "create", "foreign.example.test"},
+			{"share", "link", "create", "api.example.test:444"},
+			{"share", "link", "create", "https://api.example.test/health?private=1"},
+		} {
+			if output, err := checkout(args...); err == nil || len(output) != 0 || len(created) != 0 {
+				t.Fatalf("invalid exact selector created a share: %v", args)
+			}
+		}
+		missingMember.Store(true)
+		defer missingMember.Store(false)
+		output, err := checkout("share", "api")
+		if reason, _ := failure.ReasonOf(err); reason != failure.PreviewStateConflict || len(output) != 0 || len(created) != 0 {
+			t.Fatal("a source-bound service outside the preview was shared", err)
 		}
 	})
+	for _, fault := range []string{"scope", "expiry", "revoked", "link", "link ID"} {
+		t.Run("reject invalid creation "+fault, func(t *testing.T) {
+			creationFault.Store(fault)
+			defer creationFault.Store("")
+			output, err := checkout("share", "--service=web", "--output=json")
+			if reason, _ := failure.ReasonOf(err); reason != failure.ServerResponseInvalid || len(output) != 0 {
+				t.Fatal("an invalid share response produced a receipt", err)
+			}
+			select {
+			case <-created:
+			default:
+				t.Fatal("invalid response fixture saw no creation request")
+			}
+		})
+	}
+	t.Run("reject anything but an exact share ID before contacting control", func(t *testing.T) {
+		before := requests.Load()
+		for _, value := range []string{"", "shr_example", apiID, shareID + "." + secret, "https://api.example.test/__tnl/share/" + shareID + "." + secret} {
+			output, err := checkout("share", "revoke", value, "--output=json")
+			if err == nil || len(output) != 0 || requests.Load() != before {
+				t.Fatal("invalid share ID reached control or produced a confirmation")
+			}
+			var diagnostics bytes.Buffer
+			writeCommandError(&diagnostics, err)
+			if strings.Contains(diagnostics.String(), secret) {
+				t.Fatal("invalid share ID exposed credentials")
+			}
+		}
+	})
+	for _, tt := range []struct {
+		fault  string
+		reason failure.Reason
+		post   bool
+	}{
+		{"lookup ID", failure.ServerResponseInvalid, false},
+		{"lookup team", failure.ServerResourceNotFound, false},
+		{"receipt ID", failure.ServerResponseInvalid, true},
+		{"receipt team", failure.ServerResponseInvalid, true},
+		{"receipt scope", failure.ServerResponseInvalid, true},
+		{"not revoked", failure.ServerResponseInvalid, true},
+		{"", "", true},
+	} {
+		t.Run("exact revocation "+tt.fault, func(t *testing.T) {
+			revokeFault.Store(tt.fault)
+			defer revokeFault.Store("")
+			output, err := checkout("share", "revoke", shareID, "--output=json")
+			select {
+			case id := <-revocations:
+				if !tt.post || id != shareID || len(revocations) != 0 {
+					t.Fatal("revocation did not mutate only the requested ID")
+				}
+			default:
+				if tt.post {
+					t.Fatal("revocation did not post to the requested ID")
+				}
+			}
+			if tt.reason != "" {
+				if reason, _ := failure.ReasonOf(err); reason != tt.reason || len(output) != 0 {
+					t.Fatal("unconfirmed revocation produced a success receipt", err)
+				}
+			} else if err != nil || string(output) != `{"schema_version":1,"share_id":"`+shareID+`","revoked":true}`+"\n" {
+				t.Fatal("confirmed revocation did not print one exact receipt", err)
+			}
+		})
+	}
 }

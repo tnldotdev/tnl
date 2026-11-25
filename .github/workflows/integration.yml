@@ -121,16 +121,18 @@ jobs:
           go-cache: race
           pnpm: true
 
-      - name: Install OpenSSH fixture
-        if: matrix.suite == 'cli:shard' || matrix.suite == 'sshd'
+      - name: Install native client fixtures
+        if: matrix.suite == 'cli:shard' || matrix.suite == 'sshd' || matrix.suite == 'deployment-database'
         timeout-minutes: 3
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
         run: |
           sudo sed --in-place --regexp-extended \
             -e 's|mirror[+]file:/etc/apt/apt-mirrors[.]txt|https://archive.ubuntu.com/ubuntu/|g' \
             -e 's|https?://(azure\.)?archive\.ubuntu\.com/ubuntu/?|https://archive.ubuntu.com/ubuntu/|g' \
             -e 's|http://security\.ubuntu\.com/ubuntu/?|https://security.ubuntu.com/ubuntu/|g' \
             /etc/apt/sources.list.d/ubuntu.sources
-          # OpenSSH only needs Ubuntu's repositories, not the runner's third-party sources.
+          # These fixtures only need Ubuntu's repositories, not the runner's third-party sources.
           apt_options=(
             -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
             -o Dir::Etc::sourceparts=-
@@ -139,8 +141,12 @@ jobs:
             -o Acquire::https::Timeout=15
           )
           sudo apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
-          sudo apt-get "${apt_options[@]}" install --yes --no-install-recommends openssh-server
-          sudo install -d -m 0755 /run/sshd
+          if [ "$TEST_SUITE" = deployment-database ]; then
+            sudo apt-get "${apt_options[@]}" install --yes --no-install-recommends postgresql-client
+          else
+            sudo apt-get "${apt_options[@]}" install --yes --no-install-recommends openssh-server
+            sudo install -d -m 0755 /run/sshd
+          fi
 
       - name: Verify client boundary
         env:

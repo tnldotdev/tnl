@@ -50,8 +50,32 @@ func realTunnelPair(t *testing.T, transport string) (*Session, *Session) {
 
 func realTunnelPairWithHello(t *testing.T, transport string, hello tunnelv1.Message) (*Session, *Session) {
 	t.Helper()
-	serverTLS, clientTLS := realTunnelTLS(t)
 	ctx := tunnelContext(t)
+	left, right := realTunnelTransportPair(t, ctx, transport)
+	type accepted struct {
+		session *Session
+		err     error
+	}
+	peer := tunnelWorker(t, func() { _ = right.Close() }, func() accepted {
+		session, _, err := Accept(ctx, right, func(context.Context, tunnelv1.Message) error { return nil })
+		return accepted{session, err}
+	})
+	client, err := Dial(ctx, left, hello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	server := await(t, peer)
+	if server.err != nil {
+		t.Fatal(server.err)
+	}
+	t.Cleanup(func() { _ = server.session.Close() })
+	return client, server.session
+}
+
+func realTunnelTransportPair(t *testing.T, ctx context.Context, transport string) (muxsession.Session, muxsession.Session) {
+	t.Helper()
+	serverTLS, clientTLS := realTunnelTLS(t)
 	var accept func() (muxsession.Session, error)
 	var closeListener func()
 	var connector muxsession.Connector
@@ -87,32 +111,24 @@ func realTunnelPairWithHello(t *testing.T, transport string, hello tunnelv1.Mess
 	}
 	t.Cleanup(closeListener)
 	type accepted struct {
-		session *Session
+		session muxsession.Session
 		err     error
 	}
 	peer := tunnelWorker(t, closeListener, func() accepted {
 		transport, err := accept()
-		if err != nil {
-			return accepted{err: err}
-		}
-		session, _, err := Accept(ctx, transport, func(context.Context, tunnelv1.Message) error { return nil })
-		return accepted{session, err}
+		return accepted{transport, err}
 	})
 	connection, err := connector.Connect(ctx, muxsession.Endpoint{Address: address, ServerName: "relay.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := Dial(ctx, connection, hello)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = client.Close() })
+	t.Cleanup(func() { _ = connection.Close() })
 	server := await(t, peer)
 	if server.err != nil {
 		t.Fatal(server.err)
 	}
 	t.Cleanup(func() { _ = server.session.Close() })
-	return client, server.session
+	return connection, server.session
 }
 
 func realVisitorPair(t *testing.T, client, server *Session) (muxsession.Stream, muxsession.Stream) {

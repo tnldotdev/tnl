@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
@@ -91,6 +92,32 @@ func Stop(ctx context.Context, path string) error {
 		return err
 	}
 	return waitConnectionsStopped(ctx, path)
+}
+
+// StopJoined is for callers that will discard the saved session after stop.
+// owner death alone allows SDK recovery, but does not prove joined cleanup.
+func StopJoined(ctx context.Context, path string) error {
+	if filepath.Base(path) != "handle.json" {
+		return connectorruntime.ErrUnauthorized
+	}
+	bounded, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if err := Stop(bounded, path); err != nil {
+		return err
+	}
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		err := connectorruntime.OwnerJoined(path)
+		if !errors.Is(err, connectorruntime.ErrUnavailable) {
+			return err
+		}
+		select {
+		case <-bounded.Done():
+			return bounded.Err()
+		case <-tick.C:
+		}
+	}
 }
 
 // wait for joined drain/revocation, not merely the stop acknowledgement.
