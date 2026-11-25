@@ -7,7 +7,7 @@ import {
   type GossipMessage,
 } from "../peers/gossip.ts";
 import { contentType, readAssetResponse, readJSON, type Release } from "../release.ts";
-import { NO_HOST_HEADER, PEER_DISCOVERY_MS } from "../network.ts";
+import { NO_HOST_HEADER, PEER_DISCOVERY_MS, TransportFailure } from "../network.ts";
 
 export function siteHeaders(type = "application/octet-stream") {
   return {
@@ -51,7 +51,41 @@ type Candidate = {
   stopped: boolean;
 };
 
-export function createProxy(release: Release, fetchHost = fetch) {
+type ProxyAttempt = {
+  kind: "asset" | "discovery";
+  host: string | null;
+  status: number | null;
+  outcome:
+    | "ok"
+    | "header_timeout"
+    | "deadline_or_canceled"
+    | "transport_error"
+    | "upstream_status"
+    | "invalid_response";
+  headerBudgetMs: number | null;
+  headersMs: number | null;
+  elapsedMs: number;
+};
+
+type FileSelection = {
+  knownHosts: number;
+  eligibleHosts: number;
+  attempts: ProxyAttempt[];
+};
+
+type FileTrace = FileSelection & {
+  ray: string | null;
+  asset: string;
+  status: number;
+  elapsedMs: number;
+  canceled: boolean;
+};
+
+export function createProxy(
+  release: Release,
+  fetchHost = fetch,
+  reportFile?: (trace: FileTrace) => void,
+) {
   const assets = new Map(release.assets.map((asset) => [asset.path, asset]));
   const known = new Map<string, Candidate>();
   let cursor = Math.floor(Math.random() * MAX_KNOWN_HOSTS);
@@ -103,14 +137,20 @@ export function createProxy(release: Release, fetchHost = fetch) {
     signal: AbortSignal,
     check: (response: Response) => Promise<T>,
     headerBudget?: number,
+    attempts?: ProxyAttempt[],
   ) {
     let response: Response | undefined;
+    let target: URL | undefined;
+    const started = attempts === undefined ? undefined : performance.now();
+    let headersMs: number | null = null;
+    let outcome: ProxyAttempt["outcome"] = "invalid_response";
+    const headers = new AbortController();
     try {
-      const headers = new AbortController();
       const timer =
         headerBudget === undefined ? undefined : setTimeout(() => headers.abort(), headerBudget);
       try {
-        response = await fetchHost(new URL(path, origin), {
+        target = new URL(path, origin);
+        response = await fetchHost(target, {
           cache: "no-store",
           credentials: "omit",
           redirect: "manual",
@@ -119,40 +159,72 @@ export function createProxy(release: Release, fetchHost = fetch) {
       } finally {
         clearTimeout(timer);
       }
+      if (started !== undefined) headersMs = Math.round(performance.now() - started);
       const value = await check(response);
       signal.throwIfAborted();
+      if (value !== undefined) outcome = "ok";
       return value;
-    } catch {
+    } catch (error) {
+      if (attempts) {
+        if (signal.aborted) outcome = "deadline_or_canceled";
+        else if (headers.signal.aborted) outcome = "header_timeout";
+        else if (response === undefined || error instanceof TransportFailure)
+          outcome = "transport_error";
+        else if (response.status !== 200) outcome = "upstream_status";
+      }
       return undefined;
     } finally {
+      if (started !== undefined) {
+        attempts?.push({
+          kind: path === PEERS_PATH ? "discovery" : "asset",
+          host: target?.hostname ?? null,
+          status: response?.status ?? null,
+          outcome,
+          headerBudgetMs: headerBudget ?? null,
+          headersMs,
+          elapsedMs: Math.round(performance.now() - started),
+        });
+      }
       if (response?.bodyUsed === false) await response.body?.cancel().catch(() => {});
     }
   }
 
-  async function probe(origin: string, shared: boolean, parent?: AbortSignal) {
+  async function probe(
+    origin: string,
+    shared: boolean,
+    parent?: AbortSignal,
+    attempts?: ProxyAttempt[],
+  ) {
     const revision = outageRevision;
     const timeout = AbortSignal.timeout(3_000);
     const signal = parent === undefined ? timeout : AbortSignal.any([parent, timeout]);
-    return get(origin, PEERS_PATH, signal, async (response) => {
-      const body = await readJSON(response, MAX_MESSAGE_BYTES, signal);
-      const now = Date.now();
-      const message = parseMessage(body, release.id, now);
-      if (message === undefined || (!shared && origin !== message.from.origin)) return undefined;
-      if (revision === outageRevision) remember(message, now);
-      if (message.from.left || (message.from.endsAt ?? Infinity) <= now) return undefined;
-      if (revision !== outageRevision) return message;
-      liveRevision++;
-      const current = known.get(message.from.origin);
-      if (
-        current?.run === BigInt(message.from.runNumber) &&
-        current.sequence === message.from.seq
-      ) {
-        current.retryAt = 0;
-        if (message.audience !== undefined)
-          audience = { until: Math.min(now, message.from.reportedAt) + STALE_MS, message };
-      }
-      return message;
-    });
+    return get(
+      origin,
+      PEERS_PATH,
+      signal,
+      async (response) => {
+        const body = await readJSON(response, MAX_MESSAGE_BYTES, signal);
+        const now = Date.now();
+        const message = parseMessage(body, release.id, now);
+        if (message === undefined || (!shared && origin !== message.from.origin)) return undefined;
+        if (revision === outageRevision) remember(message, now);
+        if (message.from.left || (message.from.endsAt ?? Infinity) <= now) return undefined;
+        if (revision !== outageRevision) return message;
+        liveRevision++;
+        const current = known.get(message.from.origin);
+        if (
+          current?.run === BigInt(message.from.runNumber) &&
+          current.sequence === message.from.seq
+        ) {
+          current.retryAt = 0;
+          if (message.audience !== undefined)
+            audience = { until: Math.min(now, message.from.reportedAt) + STALE_MS, message };
+        }
+        return message;
+      },
+      undefined,
+      attempts,
+    );
   }
 
   function refresh(origins: string[], retain?: Retain) {
@@ -190,6 +262,7 @@ export function createProxy(release: Release, fetchHost = fetch) {
       alternate: boolean,
     ) => Promise<Response | undefined>,
     discover?: (message: GossipMessage) => Response,
+    selection?: FileSelection,
   ): Promise<Response> {
     const deadline = AbortSignal.any([
       request.signal,
@@ -198,7 +271,12 @@ export function createProxy(release: Release, fetchHost = fetch) {
     const revision = liveRevision;
     let discovered = false;
     const attempted = new Set<string>();
-    refresh(candidates(Date.now()), retain);
+    const initial = candidates(Date.now());
+    if (selection) {
+      selection.knownHosts = known.size;
+      selection.eligibleHosts = initial.length;
+    }
+    refresh(initial, retain);
     while (attempted.size < ATTEMPTS && !deadline.aborted) {
       let origins = candidates(Date.now()).filter((origin) => !attempted.has(origin));
       let origin = origins[cursor % origins.length];
@@ -206,7 +284,7 @@ export function createProxy(release: Release, fetchHost = fetch) {
       // answering the shared address. the roster may lag behind a turnover.
       if (!discovered && (origin === undefined || attempted.size === ATTEMPTS - 1)) {
         discovered = true;
-        const message = await probe(sharedHost, true, deadline);
+        const message = await probe(sharedHost, true, deadline, selection?.attempts);
         if (message !== undefined && discover !== undefined) return discover(message);
         origins = candidates(Date.now()).filter((value) => !attempted.has(value));
         origin =
@@ -267,7 +345,7 @@ export function createProxy(release: Release, fetchHost = fetch) {
         { headers: siteHeaders("application/json") },
       );
     },
-    file(request: Request, sharedHost = SHARED_HOST, retain?: Retain) {
+    async file(request: Request, sharedHost = SHARED_HOST, retain?: Retain) {
       const { pathname, search } = new URL(request.url);
       const asset = assets.get(pathname === "/" ? "/index.html" : pathname);
       if (
@@ -278,7 +356,10 @@ export function createProxy(release: Release, fetchHost = fetch) {
       ) {
         return new Response(null, { status: 404 });
       }
-      return fromHost(request, sharedHost, retain, (origin, deadline, alternate) => {
+      const started = reportFile === undefined ? undefined : performance.now();
+      const selection: FileSelection | undefined =
+        started === undefined ? undefined : { knownHosts: 0, eligibleHosts: 0, attempts: [] };
+      const read = (origin: string, deadline: AbortSignal, alternate: boolean) => {
         const signal = AbortSignal.any([deadline, AbortSignal.timeout(6_000)]);
         const selected = known.get(origin);
         return get(
@@ -293,8 +374,26 @@ export function createProxy(release: Release, fetchHost = fetch) {
             return new Response(bytes, { headers: siteHeaders(contentType(asset.path)) });
           },
           alternate ? ALTERNATE_HEADERS_MS : undefined,
+          selection?.attempts,
         );
-      });
+      };
+      const response = await fromHost(request, sharedHost, retain, read, undefined, selection);
+      if (
+        started !== undefined &&
+        selection &&
+        (response.status !== 200 || selection.attempts.some((attempt) => attempt.outcome !== "ok"))
+      ) {
+        const ray = request.headers.get("CF-Ray");
+        reportFile?.({
+          ...selection,
+          ray: ray !== null && /^[a-f0-9]{16}(?:-[a-z]{3})?$/i.test(ray) ? ray : null,
+          asset: asset.path,
+          status: response.status,
+          elapsedMs: Math.round(performance.now() - started),
+          canceled: request.signal.aborted,
+        });
+      }
+      return response;
     },
     peers(request: Request, sharedHost = SHARED_HOST, retain?: Retain) {
       if (request.method !== "GET" || new URL(request.url).search !== "") {

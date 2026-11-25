@@ -59,5 +59,9 @@ await build({
   ...options,
   entryPoints: ["src/edge/worker.ts"],
   outfile: path.join(dist, "worker.mjs"),
-  define: { ...define, KEEPALIVE_RELEASE: JSON.stringify(release) },
+  define: {
+    ...define,
+    KEEPALIVE_RELEASE: JSON.stringify(release),
+    KEEPALIVE_RAMP_PROXY_TRACE: JSON.stringify(values.fleet === "ramp"),
+  },
 });

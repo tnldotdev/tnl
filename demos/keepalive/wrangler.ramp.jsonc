@@ -4,6 +4,13 @@
   "compatibility_date": "2026-11-18",
   "workers_dev": false,
   "preview_urls": false,
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+      "head_sampling_rate": 1,
+    },
+  },
   "routes": [
     { "pattern": "ramp.keepthisalive.com", "custom_domain": true },
     { "pattern": "start-ramp.keepthisalive.com", "custom_domain": true },

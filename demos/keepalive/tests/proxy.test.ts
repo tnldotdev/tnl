@@ -10,7 +10,7 @@ const aliases = ["a", "b", "c"].map((letter) => `https://p-${letter.repeat(26)}.
 const request = (path: string, init?: RequestInit) =>
   new Request(`https://keepthisalive.com${path}`, init);
 
-async function setup() {
+async function setup(reportFile?: Parameters<typeof createProxy>[2]) {
   const files = {
     "/index.html": "<h1>keepalive</h1>",
     "/app.js": script,
@@ -45,7 +45,7 @@ async function setup() {
     }));
     return Response.json({ releaseID: release.id, startedAt: now, from, changes });
   };
-  return { fetchHost, report, proxy: createProxy(release, fetchHost) };
+  return { fetchHost, report, proxy: createProxy(release, fetchHost, reportFile) };
 }
 
 it("serves the checked font with the font MIME type", async () => {
@@ -220,7 +220,8 @@ it("does not give an old forwarded alias a fresh lifetime", async () => {
 });
 
 it("gives a publisher more than one second for headers even when there are alternatives", async () => {
-  const { proxy, fetchHost, report } = await setup();
+  const reportFile = vi.fn();
+  const { proxy, fetchHost, report } = await setup(reportFile);
   vi.useFakeTimers();
   try {
     fetchHost.mockResolvedValueOnce(report());
@@ -233,13 +234,15 @@ it("gives a publisher more than one second for headers even when there are alter
     await vi.advanceTimersByTimeAsync(1500);
     expect(await (await result).text()).toBe(script);
     expect(fetchHost).toHaveBeenCalledTimes(2);
+    expect(reportFile).not.toHaveBeenCalled();
   } finally {
     vi.useRealTimers();
   }
 });
 
 it("switches away from a host silent before headers and lets the next body finish", async () => {
-  const { proxy, fetchHost, report } = await setup();
+  const reportFile = vi.fn();
+  const { proxy, fetchHost, report } = await setup(reportFile);
   vi.useFakeTimers();
   try {
     fetchHost.mockResolvedValueOnce(report());
@@ -265,7 +268,8 @@ it("switches away from a host silent before headers and lets the next body finis
         }),
       );
     });
-    const result = proxy.file(request("/app.js"));
+    const ray = "a60235872cf36cfc-PHX";
+    const result = proxy.file(request("/app.js", { headers: { "CF-Ray": ray } }));
     await vi.advanceTimersByTimeAsync(1999);
     expect(fetchHost).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1);
@@ -273,9 +277,67 @@ it("switches away from a host silent before headers and lets the next body finis
     await vi.advanceTimersByTimeAsync(1500);
     expect(await (await result).text()).toBe(script);
     expect(bodySignal?.aborted).toBe(false);
+    const [first, second] = fetchHost.mock.calls.slice(1).map(([url]) => new URL(String(url)));
+    expect(reportFile).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        ray,
+        asset: "/app.js",
+        status: 200,
+        attempts: [
+          expect.objectContaining({
+            kind: "discovery",
+            host: new URL(SHARED_HOST).hostname,
+            outcome: "ok",
+          }),
+          expect.objectContaining({
+            kind: "asset",
+            host: first?.hostname,
+            headerBudgetMs: 2_000,
+            headersMs: null,
+            outcome: "header_timeout",
+          }),
+          expect.objectContaining({
+            kind: "asset",
+            host: second?.hostname,
+            status: 200,
+            outcome: "ok",
+          }),
+        ],
+      }),
+    );
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("records why a public 503 had no eligible host without copying request data", async () => {
+  const reportFile = vi.fn();
+  const { proxy, fetchHost } = await setup(reportFile);
+  fetchHost.mockResolvedValueOnce(new Response(null, { status: 503 }));
+  const response = await proxy.file(
+    request("/", { headers: { "CF-Ray": "untrusted value", Authorization: "Bearer secret" } }),
+  );
+  expect(response.status).toBe(503);
+  expect(reportFile).toHaveBeenCalledExactlyOnceWith({
+    ray: null,
+    asset: "/index.html",
+    status: 503,
+    knownHosts: 0,
+    eligibleHosts: 0,
+    elapsedMs: expect.any(Number),
+    canceled: false,
+    attempts: [
+      {
+        kind: "discovery",
+        host: new URL(SHARED_HOST).hostname,
+        status: 503,
+        outcome: "upstream_status",
+        headerBudgetMs: null,
+        headersMs: expect.any(Number),
+        elapsedMs: expect.any(Number),
+      },
+    ],
+  });
 });
 
 it("keeps the original header budget for a sole publisher", async () => {
