@@ -642,9 +642,7 @@ func TestInstalledRealPreparationConflictReachesReadyExactlyOnAttemptTwo(t *test
 	if retry.status.State != JobRetrying || retry.status.Attempts != 1 || retry.status.Failure != string(failure.InstalledPublishRunPending) {
 		t.Fatal("first real preparation conflict lost exact retry code/count", retry)
 	}
-	ready := restoredPublisherStatusUntil(t, statuses, func(e restoredPublisherStatus) bool {
-		return e.status.State == JobReady || e.status.State == JobRetrying || e.status.State == JobBlocked
-	})
+	ready := restoredPublisherReadyStatus(t, statuses)
 	if ready.status.State != JobReady || ready.status.Attempts != 2 || ready.status.RunNumber != 2 || ready.status.Failure != "" || attempts.Load() != 2 || f.Runs.Load() != 2 {
 		t.Fatal("one real conflict did not reach actual Ready on exactly attempt two", ready, attempts.Load(), f.Runs.Load())
 	}
