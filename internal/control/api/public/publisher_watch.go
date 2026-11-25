@@ -209,6 +209,10 @@ func watchAuthorizationProblem(request, auth context.Context, w http.ResponseWri
 		reportRollback(id)
 		return
 	}
+	if !failed && errors.Is(err, controlstate.ErrPublisherWatchContended) {
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher watch authorization temporarily unavailable")
+		return
+	}
 	serviceRunProblem(request, w, operation, err)
 }
 

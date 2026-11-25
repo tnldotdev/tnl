@@ -2,15 +2,21 @@ package state
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 const MaxConnectorPeerWatchBatch = 512
+
+var ErrPublisherWatchContended = errors.New("publisher watch authorization database contention")
 
 // ConnectorPeerWatchVersion is a hint for an exact service run. -1 means there
 // is no bookmark (in a request) or no current run (in a response).
@@ -34,6 +40,17 @@ func (d *Database) AuthorizeConnectorPeerWatch(ctx context.Context, serviceID, r
 	_, err := retryVisitorPreparation(ctx, now, func(at time.Time) (struct{}, error) {
 		return struct{}{}, d.authorizeConnectorPeerWatch(ctx, serviceID, runID, number, token, at)
 	})
+	return classifyPublisherWatchError(err)
+}
+
+func classifyPublisherWatchError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr != nil && failure.Only(err, pgErr) {
+		switch pgErr.Code {
+		case "40001", "40P01", "55P03":
+			return fmt.Errorf("%w: %w", ErrPublisherWatchContended, err)
+		}
+	}
 	return err
 }
 
