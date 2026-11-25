@@ -49,7 +49,7 @@ func (a *commandApp) root() *cobra.Command {
 	root.AddCommand(a.newInitCommand(), a.newApplyCommand(), a.newDeploymentCommand(), a.newGenerateCommand(), a.newCheckCommand(), a.newAuditCommand(), a.newRuntimeCommand(), a.newWaitCommand(), a.newWatchCommand(), a.newPublishCommand(), a.newConnectCommand(), a.newPublisherCommand(), a.newServiceCommand(), a.newEndpointCommand(), a.newStatusCommand(), a.newPingCommand(), a.newInspectCommand(), a.newTelemetryCommand(), a.newAuthCommand(), a.newTeamCommand(), a.newDomainCommand(), a.newURLCommand(), a.newShareCommand(), a.newFeedbackCommand(), a.newWebhookCommand(), a.newAliasCommand(), a.newAdminCommand(), a.newVersionCommand())
 	root.AddCommand(a.newAgentGuideCommand())
 	root.AddCommand(a.newStopCommand())
-	root.SetHelpCommand(newClientHelpCommand())
+	root.SetHelpCommand(a.newClientHelpCommand())
 	root.InitDefaultHelpCmd()
 	root.InitDefaultCompletionCmd()
 	addClientHelpContent(root)

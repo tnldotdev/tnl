@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/csv"
 	"slices"
 	"strings"
 
@@ -29,6 +30,18 @@ func addClientHelpContent(cmd *cobra.Command) {
 // might first discover it. "." is the root help page.
 type clientExample struct {
 	pages, caption, args string
+}
+
+// argv reads the reviewed example syntax, not user input. double quotes keep
+// a variable or multiword value in one argument; there are no shell operators.
+func (example clientExample) argv() []string {
+	reader := csv.NewReader(strings.NewReader(example.args))
+	reader.Comma = ' '
+	args, err := reader.Read()
+	if err != nil {
+		panic("invalid tnl help example: " + example.args)
+	}
+	return args
 }
 
 func examplePages(examples []clientExample) map[string][]clientExample {
@@ -88,6 +101,23 @@ var rootGuideExample = clientExample{".", "Get automation recipes for this versi
 var publishStreamExample = clientExample{"publish", "Read url from the ready event on stdout. Keep tnl running to serve the URL.", "publish 3000 --output ndjson"}
 var publishReceiptExample = clientExample{"publish", "Read one JSON result. Return url and keep job_id for tnl stop.", "publish 3000 --bg --output json"}
 
+var (
+	loginStartExample   = clientExample{"auth login, auth login start", "Get the approval URL, code, and operation ID without waiting.", "auth login start --output json"}
+	loginWaitExample    = clientExample{"auth login, auth login wait", "Save the session after the user approves this operation.", `auth login wait "$OPERATION_ID"`}
+	initPlanExample     = clientExample{"init", "Preview setup without writing files or installing dependencies.", "init --dry-run --output json"}
+	initFilesExample    = clientExample{"init", "Write project files and report the remaining dependency steps.", "init --no-install --output json"}
+	statusSavedExample  = clientExample{"status", "Read saved local evidence without contacting control.", "status --last-known --output json"}
+	waitReadyExample    = clientExample{"wait", "Check accounts now. Give up after 30 seconds.", "wait accounts --timeout 30s --output json"}
+	shareReceiptExample = clientExample{"share, share create", "Share only accounts for one hour. Keep the returned share_id to revoke it.", "share accounts --expires-in 1h --output json"}
+	revokeShareExample  = clientExample{"share revoke", "End access for the exact share ID from the creation receipt or share list.", `share revoke "$SHARE_ID"`}
+	queryExample        = clientExample{"connect, connect start", "Run one staging query. The connector closes when psql exits.", `connect orders --deployment staging --client psql -- -At -c "select 1"`}
+	statusJobsExample   = clientExample{"service, status", "List local jobs and their exact IDs.", "status --bg --output json"}
+	stopJobExample      = clientExample{"stop", "Stop only the job with this ID.", `stop "$JOB_ID" --output json`}
+	watchOneExample     = clientExample{"watch", "Wait up to 30 seconds for one matching new accounts event.", `watch accounts --after "$CURSOR" --count 1 --timeout 30s --output ndjson`}
+	feedbackListExample = clientExample{"feedback, feedback list", "Read feedback in the publishing worktree.", "feedback list --output json"}
+	applyPreviewExample = clientExample{"apply", "Review staging without changing the saved deployment.", "apply --deployment staging --dry-run --output json"}
+)
+
 var publishStartExamples = []clientExample{
 	{"., publish", "Give the app on port 3000 an HTTPS URL.", "publish 3000"},
 	{"publish", "Keep a tunnel running after the terminal closes.", "publish 3000 --bg"},
@@ -102,6 +132,8 @@ var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clie
 
 	{"init", "Preview what setup would change.", "init --dry-run"},
 	{"init", "Set up the files, but run the dependency install yourself.", "init --no-install"},
+	initPlanExample,
+	initFilesExample,
 	{"publish", "Try a tunnel without starting an app.", "publish --demo"},
 	{"publish", "Reuse an exact hostname you manage.", "publish 3000 --hostname app.tnl.example.com"},
 	{"publish", "Open a configured public service in your browser.", "publish app --open"},
@@ -110,15 +142,15 @@ var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clie
 	{"publish", "Publish a local PostgreSQL server for connector access.", "publish 127.0.0.1:5432 --protocol postgres --name orders"},
 	{"connect, connect available", "Find the services your account can reach.", "connect available"},
 	{"connect, connect start", "Open psql for the orders service.", "connect orders --deployment production --client psql"},
-	{"connect, connect start", "Pass a query to psql after the double dash.", `connect orders --deployment production --client psql -- -c "select 1"`},
+	queryExample,
 	{"connect start", "Use an explicit local port for a configured service.", "connect start orders --listen 127.0.0.1:15432"},
-	{"connect start", "Connect to a service whose name is also a command.", "connect start list"},
+	{"connect start", "Connect to a service whose name is also a command.", "connect start available"},
 	{"connect, connect start", "Start an orders connector and return its job ID and connection settings.", "connect orders --deployment production --bg --output json"},
 
 	{"auth, auth login", "Open the approval URL and copy the code.", "auth login --open --copy-code"},
 	{"auth, auth status", "Check your credentials with the server.", "auth status --check"},
-	{"auth login, auth login start", "Start a sign-in that a script can resume.", "auth login start --output json"},
-	{"auth login, auth login wait", "Use the operation ID from tnl auth login start.", `auth login wait "$OPERATION_ID"`},
+	loginStartExample,
+	loginWaitExample,
 	{"auth login inspect", "Check the state of a login started earlier.", `auth login inspect "$OPERATION_ID"`},
 	{"auth login cancel", "Cancel a pending login by its operation ID.", `auth login cancel "$OPERATION_ID"`},
 	{"auth browser", "Visit a restricted URL with your CLI session.", "auth browser app.tnl.example.com"},
@@ -129,12 +161,14 @@ var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clie
 	{"status", "See the app's readiness, URL, and last error.", "status --service app"},
 	{"status", "Show the evidence for accounts without probing it.", "status accounts"},
 	{"status", "Read the saved local state for every project.", "status --last-known --all"},
+	statusSavedExample,
 	{"status", "Read the server's current deployment state as JSON.", "status --server-only --deployment production --output json"},
 	{"wait", "Wait up to 30 seconds for the app service.", "wait app --timeout 30s"},
 	{"wait", "Wait for both services before starting the next step.", "wait app api --output json"},
+	waitReadyExample,
 	{"watch", "Stream this worktree's events as newline-delimited JSON.", "watch --output ndjson"},
 	{"watch", "Resume after the last local event cursor you saved.", `watch --output ndjson --after "$CURSOR"`},
-	{"watch", "Wait up to 30 seconds for one new accounts event.", `watch accounts --after "$CURSOR" --count 1 --timeout 30s --output ndjson`},
+	watchOneExample,
 	{"ping", "Check what a visitor sees at your public hostname.", "ping app.tnl.example.com"},
 	{"ping", "Require a successful HTTP response from the health endpoint.", "ping https://app.tnl.example.com/health --expect 2xx"},
 	{"ping", "Check whether TCP connects to the public endpoint.", "ping db.tnl.example.com:15432"},
@@ -154,9 +188,10 @@ var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clie
 
 	{"share", "Share this checkout's preview for a week.", "share --expires-in 7d"},
 	{"share, share create", "Share only accounts for one hour.", "share accounts --expires-in 1h"},
+	shareReceiptExample,
 	{"share, share create", "Share just the app service for four hours.", "share create --service app --expires-in 4h"},
 	{"share, share list", "Find the ID of a link you created.", "share list"},
-	{"share revoke", "End access for a share ID from tnl share list.", `share revoke "$SHARE_ID"`},
+	revokeShareExample,
 	{"share team, share team create", "Let current team members visit this preview.", "share team create"},
 	{"share team, share team revoke", "End team access to this preview.", "share team revoke"},
 	{"share invite, share invite create", "Invite one reviewer to a public URL.", "share invite create app.tnl.example.com --email reviewer@example.com"},
@@ -173,6 +208,7 @@ var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clie
 	{"share service token, share service token create", "Print a short-lived Tnl-Visitor-Token for app.", "share service token create app --expires-in 5m"},
 
 	{"feedback, feedback list", "Find feedback IDs in the publishing worktree.", "feedback list"},
+	feedbackListExample,
 	{"feedback, feedback inspect", "Read a report and compare its source with this checkout.", `feedback inspect "$FEEDBACK_ID"`},
 	{"feedback watch", "Follow new feedback after event 42.", "feedback watch --after 42 --output ndjson"},
 	{"feedback reply", "Reply to the thread from tnl feedback list.", `feedback reply "$FEEDBACK_ID" --message "I can reproduce this."`},
@@ -210,6 +246,7 @@ var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clie
 	{"domain release", "Release an unused custom domain.", "domain release tnl.example.com"},
 
 	{"apply", "Review the changes for production without applying them.", "apply --deployment production --diff"},
+	applyPreviewExample,
 	{"apply", "Apply the configuration for production.", "apply --deployment production"},
 	{"deployment, deployment list", "Find deployments for the current project.", "deployment list"},
 	{"deployment, deployment show", "See the service targets saved for production.", "deployment show production"},
@@ -230,11 +267,13 @@ var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clie
 	{"publisher grant revoke", "Revoke one grant from tnl publisher list.", `publisher grant revoke "$PUBLISHER_ID" "$GRANT_ID"`},
 	{"endpoint, endpoint release", "After disabling public access, release the reserved port.", `endpoint release "$SERVICE_ID" --port 15443`},
 	{"service, status", "Find running background jobs and installed jobs.", "status --bg"},
+	statusJobsExample,
 	{"service install", "Install the local supervisor for your user account.", "service install"},
 	{"service start", "Restart an installed job by ID.", `service start "$JOB_ID"`},
 	{"service remove", "Remove an installed job and its local resources.", `service remove "$JOB_ID"`},
 	{"status", "Inspect one job by ID.", `status "$JOB_ID"`},
 	{"stop", "Stop only the job with this ID.", `stop "$JOB_ID"`},
+	stopJobExample,
 
 	{"admin, admin server, admin server status", "See the server's service counts and process leases.", "admin server status"},
 	{"admin, admin relays, admin relays list", "Find a relay's ID, run ID, and lease revision.", "admin relays list"},

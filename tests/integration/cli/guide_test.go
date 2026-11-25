@@ -1,8 +1,10 @@
 package cli_test
 
 import (
+	"encoding/csv"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,13 +21,22 @@ func TestIntegrationCLIGuideExamples(t *testing.T) {
 	if err != nil || !strings.Contains(string(output), strings.TrimSpace(string(version))) {
 		t.Fatal("guide does not match installed version")
 	}
-	examples := regexp.MustCompile("(?m)^`tnl ([^`]+)`$").FindAllStringSubmatch(string(output), -1)
+	examples := regexp.MustCompile("(?m)^```sh\n"+`tnl ([^\n]+)`+"\n```$").FindAllStringSubmatch(string(output), -1)
 	if len(examples) == 0 {
 		t.Fatal("no command examples")
 	}
 	for _, example := range examples {
-		args := strings.Fields(example[1])
-		out, err := exec.CommandContext(t.Context(), *cliBinary, append(args, "--help")...).CombinedOutput()
+		reader := csv.NewReader(strings.NewReader(example[1]))
+		reader.Comma = ' '
+		args, err := reader.Read()
+		if err != nil {
+			t.Fatalf("guide example %q: %v", example[1], err)
+		}
+		at := slices.Index(args, "--")
+		if at == -1 {
+			at = len(args)
+		}
+		out, err := exec.CommandContext(t.Context(), *cliBinary, slices.Insert(args, at, "--help")...).CombinedOutput()
 		if err != nil || !strings.Contains(string(out), "Usage:") {
 			t.Fatalf("%v: %s (%v)", args, out, err)
 		}

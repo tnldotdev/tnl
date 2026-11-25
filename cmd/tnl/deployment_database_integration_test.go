@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,7 +64,15 @@ func TestDeploymentDatabaseWorkflow(t *testing.T) {
 	}
 	defer session.Close()
 	team, control := session.Identity().PersonalTeamId, session.Authenticated().Control
-	project := deploymentDatabaseProject(t, f.url, team)
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/accounts-health" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		_, _ = io.WriteString(w, "walkthrough app\n")
+	}))
+	t.Cleanup(app.Close)
+	project := deploymentDatabaseProject(t, f.url, team, app.URL)
 	var applied controlv1.AppliedProjectConfiguration
 	if err := json.Unmarshal(cliCall(t, t.Context(), []string{"--config", filepath.Join(project, "tnl.json"), "apply", "--state-dir", person, "--output", "json"}), &applied); err != nil {
 		t.Fatal(err)
@@ -136,7 +145,9 @@ func TestDeploymentDatabaseWorkflow(t *testing.T) {
 		_, err := control.SelectServiceRun(t.Context(), orders.Id, device.ID)
 		return err == nil
 	})
-	testDeploymentDatabaseClient(t, f, project, person, session.Store(), session.Identity().Identity.Id, device.ID, orders.Id)
+	testDeploymentDatabaseClient(t, f, project, person, session.Store(), session.Identity().Identity.Id, device.ID, orders.Id, func(t *testing.T, query func(*testing.T)) {
+		testCLIWalkthrough(t, f, project, app, session, query)
+	})
 	listener := workflowListen(t)
 	address := listener.Addr().String()
 	_ = listener.Close()
@@ -211,7 +222,7 @@ func TestDeploymentDatabaseWorkflow(t *testing.T) {
 	}
 }
 
-func deploymentDatabaseProject(t *testing.T, server, team string) string {
+func deploymentDatabaseProject(t *testing.T, server, team, appURL string) string {
 	t.Helper()
 	root := t.TempDir()
 	for _, args := range [][]string{{"init", "--quiet"}, {"remote", "add", "origin", "https://example.test/database.git"}} {
@@ -227,8 +238,15 @@ func deploymentDatabaseProject(t *testing.T, server, team string) string {
 	}
 	configuration, err := json.Marshal(map[string]any{"version": 1, "tnl": map[string]any{
 		"server": server, "team": team,
-		"services": map[string]any{"orders": map[string]string{"protocol": "postgres"}, "admin": map[string]string{"protocol": "postgres"}},
+		"services": map[string]any{
+			"accounts": map[string]any{}, "api": map[string]any{},
+			"orders": map[string]string{"protocol": "postgres"}, "admin": map[string]string{"protocol": "postgres"},
+		},
 		"deployments": map[string]any{
+			"local": map[string]any{"targets": map[string]any{
+				"accounts": map[string]any{"address": appURL, "public": true, "access": map[string]bool{"team": true}, "http": map[string]any{"readiness": map[string]string{"path": "/accounts-health"}}},
+				"api":      map[string]any{"address": appURL, "public": true, "access": map[string]bool{"team": true}},
+			}},
 			"staging": map[string]any{"targets": targets},
 			"sibling": map[string]any{"targets": targets},
 		},
@@ -242,7 +260,7 @@ func deploymentDatabaseProject(t *testing.T, server, team string) string {
 	return root
 }
 
-func testDeploymentDatabaseClient(t *testing.T, f *cliWorkflow, project, state string, store *clientstate.Store, identity, device, service string) {
+func testDeploymentDatabaseClient(t *testing.T, f *cliWorkflow, project, state string, store *clientstate.Store, identity, device, service string, walkthrough func(*testing.T, func(*testing.T))) {
 	t.Helper()
 	control, err := pgx.Connect(t.Context(), f.databaseURL)
 	if err != nil {
@@ -308,7 +326,7 @@ func testDeploymentDatabaseClient(t *testing.T, f *cliWorkflow, project, state s
 			stdout: "before error\n", stderr: "psql:<stdin>:2: ERROR:  division by zero\n", code: 3},
 		{name: "busy port", args: query, code: 1},
 	} {
-		t.Run(test.name, func(t *testing.T) {
+		run := func(t *testing.T) {
 			busy := test.name == "busy port"
 			if busy {
 				rebind(t) // keep the socket open for the whole failed attempt.
@@ -342,7 +360,12 @@ func testDeploymentDatabaseClient(t *testing.T, f *cliWorkflow, project, state s
 			if !busy {
 				rebind(t)
 			}
-		})
+		}
+		if test.name == "query" {
+			t.Run("query", func(t *testing.T) { walkthrough(t, run) })
+		} else {
+			t.Run(test.name, run)
+		}
 	}
 	t.Run("interrupt", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
