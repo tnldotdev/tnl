@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,6 +25,19 @@ type ConnectorPeerWatchVersion struct {
 	RunID          string
 	Revision       int64
 	PolicyBookmark string
+}
+
+// entries are hints for the database comparison, never publisher input.
+// eviction or a control restart just recomputes the bookmark on the next poll.
+type watchBookmarkCache struct {
+	sync.Mutex
+	byRun map[string]watchBookmark
+}
+
+type watchBookmark struct {
+	version                  ConnectorPeerWatchVersion
+	runBucket, serviceBucket int32
+	global, run, service     int64
 }
 
 // AuthorizeConnectorPeerWatch verifies subscription authority. the version
@@ -77,32 +91,76 @@ func (d *Database) authorizeConnectorPeerWatch(ctx context.Context, serviceID, r
 // it does not read permissions, extend deadlines, or hold a connection after
 // the comparison returns. only the operation that applies a snapshot can
 // advance a publisher's bookmark.
-func (d *Database) CompareConnectorPeerWatchVersions(ctx context.Context, watched []ConnectorPeerWatchVersion) ([]ConnectorPeerWatchVersion, error) {
+func (d *Database) CompareConnectorPeerWatchVersions(ctx context.Context, watched []ConnectorPeerWatchVersion) (_ []ConnectorPeerWatchVersion, retErr error) {
 	if len(watched) > MaxConnectorPeerWatchBatch {
 		return nil, ErrServiceAccess
 	}
 	if len(watched) == 0 {
 		return nil, nil
 	}
-	params := controlstatedb.CompareConnectorPeerWatchVersionsParams{
-		RunIds: make([]string, len(watched)), Revisions: make([]int64, len(watched)), PolicyBookmarks: make([]string, len(watched)),
-	}
-	seen := make(map[string]struct{}, len(watched))
-	for i, scope := range watched {
+	seen := make(map[string]ConnectorPeerWatchVersion, len(watched))
+	for _, scope := range watched {
 		if _, duplicate := seen[scope.RunID]; duplicate || !opaqueid.Valid(scope.RunID, opaqueid.ServiceRunPrefix) || scope.Revision < -1 {
 			return nil, ErrServiceAccess
 		}
-		seen[scope.RunID] = struct{}{}
-		params.RunIds[i], params.Revisions[i] = scope.RunID, scope.Revision
-		params.PolicyBookmarks[i] = scope.PolicyBookmark
+		seen[scope.RunID] = scope
 	}
-	rows, err := controlstatedb.New(d.pool).CompareConnectorPeerWatchVersions(ctx, params)
+	cache := &d.watchBookmarks
+	compare := func(q *controlstatedb.Queries) (changed []ConnectorPeerWatchVersion, dirty []string, versions [257]int64, err error) {
+		rows, err := q.ListReadDependencyVersions(ctx, "watch")
+		if err != nil {
+			return nil, nil, versions, err
+		}
+		for _, row := range rows {
+			versions[row.Bucket+1] = row.Revision
+		}
+		cache.Lock()
+		defer cache.Unlock()
+		for id, previous := range seen {
+			b, ok := cache.byRun[id]
+			if !ok || b.global != versions[0] || b.run != versions[1+b.runBucket] || b.service != versions[1+b.serviceBucket] {
+				dirty = append(dirty, id)
+			} else if b.version.Revision < 0 || b.version != previous {
+				changed = append(changed, b.version)
+			}
+		}
+		return
+	}
+	changed, dirty, _, err := compare(controlstatedb.New(d.pool))
+	if err != nil || len(dirty) == 0 {
+		return changed, err
+	}
+	// pair fresh bookmarks with their exact revisions, including concurrent
+	// commits from other controls. the idle path needs only the first read.
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, err
 	}
-	changed := make([]ConnectorPeerWatchVersion, len(rows))
-	for i, row := range rows {
-		changed[i] = ConnectorPeerWatchVersion{RunID: row.RunID, Revision: row.Revision, PolicyBookmark: row.PolicyBookmark}
+	defer rollback(ctx, tx, "read publisher watch changes", &retErr)()
+	q := controlstatedb.New(tx)
+	changed, dirty, versions, err := compare(q)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := q.ReadConnectorPeerWatchVersions(ctx, dirty)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	cache.Lock()
+	defer cache.Unlock()
+	if cache.byRun == nil || len(cache.byRun)+len(rows) > 8*MaxConnectorPeerWatchBatch {
+		cache.byRun = make(map[string]watchBookmark)
+	}
+	for _, row := range rows {
+		version := ConnectorPeerWatchVersion{RunID: row.RunID, Revision: row.Revision, PolicyBookmark: row.PolicyBookmark}
+		cache.byRun[row.RunID] = watchBookmark{version: version, runBucket: row.RunBucket, serviceBucket: row.ServiceBucket,
+			global: versions[0], run: versions[1+row.RunBucket], service: versions[1+row.ServiceBucket]}
+		if version.Revision < 0 || version != seen[row.RunID] {
+			changed = append(changed, version)
+		}
 	}
 	return changed, nil
 }

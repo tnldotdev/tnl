@@ -9,46 +9,74 @@ import (
 	"context"
 )
 
-const compareConnectorPeerWatchVersions = `-- name: CompareConnectorPeerWatchVersions :many
-WITH current_policy AS MATERIALIZED (
-    SELECT service_run_id,bookmark FROM control.publisher_run_policy_bookmarks
-    WHERE service_run_id=ANY($1::text[])
-)
-SELECT watched.run_id::text AS run_id,
-    CASE WHEN policy.bookmark IS NULL THEN -1 ELSE COALESCE(version.revision,0) END::bigint AS revision,
-    COALESCE(policy.bookmark,'')::text AS policy_bookmark
-FROM (SELECT unnest($1::text[]) AS run_id,unnest($2::bigint[]) AS seen,
-    unnest($3::text[]) AS policy_seen) watched
-LEFT JOIN current_policy policy ON policy.service_run_id=watched.run_id
-LEFT JOIN control.connector_peer_watch_versions version ON version.service_run_id=watched.run_id
-WHERE policy.bookmark IS NULL OR COALESCE(version.revision,0)<>watched.seen OR policy.bookmark<>watched.policy_seen
+const listReadDependencyVersions = `-- name: ListReadDependencyVersions :many
+SELECT bucket,revision FROM control.read_dependency_versions WHERE topic=$1
 `
 
-type CompareConnectorPeerWatchVersionsParams struct {
-	RunIds          []string
-	Revisions       []int64
-	PolicyBookmarks []string
+type ListReadDependencyVersionsRow struct {
+	Bucket   int32
+	Revision int64
 }
 
-type CompareConnectorPeerWatchVersionsRow struct {
-	RunID          string
-	Revision       int64
-	PolicyBookmark string
-}
-
-// an untouched run starts at zero. a missing or closed run has no version.
-// filter the live bookmark view before joining it to the caller's cursor.
-// otherwise a hash join can compute every run's bookmark for each batch.
-func (q *Queries) CompareConnectorPeerWatchVersions(ctx context.Context, arg CompareConnectorPeerWatchVersionsParams) ([]CompareConnectorPeerWatchVersionsRow, error) {
-	rows, err := q.db.Query(ctx, compareConnectorPeerWatchVersions, arg.RunIds, arg.Revisions, arg.PolicyBookmarks)
+func (q *Queries) ListReadDependencyVersions(ctx context.Context, topic string) ([]ListReadDependencyVersionsRow, error) {
+	rows, err := q.db.Query(ctx, listReadDependencyVersions, topic)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []CompareConnectorPeerWatchVersionsRow
+	var items []ListReadDependencyVersionsRow
 	for rows.Next() {
-		var i CompareConnectorPeerWatchVersionsRow
-		if err := rows.Scan(&i.RunID, &i.Revision, &i.PolicyBookmark); err != nil {
+		var i ListReadDependencyVersionsRow
+		if err := rows.Scan(&i.Bucket, &i.Revision); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readConnectorPeerWatchVersions = `-- name: ReadConnectorPeerWatchVersions :many
+WITH current_policy AS MATERIALIZED (
+    SELECT service_run_id,bookmark FROM control.publisher_run_policy_bookmarks WHERE service_run_id=ANY($1::text[])
+)
+SELECT watched.id::text AS run_id,(hashtext(watched.id)&255)::integer AS run_bucket,
+    (hashtext(COALESCE(run.service_id,watched.id))&255)::integer AS service_bucket,
+    CASE WHEN policy.bookmark IS NULL THEN -1 ELSE COALESCE(version.revision,0) END::bigint AS revision,
+    COALESCE(policy.bookmark,'')::text AS policy_bookmark
+FROM unnest($1::text[]) AS watched(id)
+LEFT JOIN control.service_runs run ON run.id=watched.id
+LEFT JOIN current_policy policy ON policy.service_run_id=watched.id
+LEFT JOIN control.connector_peer_watch_versions version ON version.service_run_id=watched.id
+`
+
+type ReadConnectorPeerWatchVersionsRow struct {
+	RunID          string
+	RunBucket      int32
+	ServiceBucket  int32
+	Revision       int64
+	PolicyBookmark string
+}
+
+// called only for scopes whose change records differ, in the same snapshot.
+func (q *Queries) ReadConnectorPeerWatchVersions(ctx context.Context, runIds []string) ([]ReadConnectorPeerWatchVersionsRow, error) {
+	rows, err := q.db.Query(ctx, readConnectorPeerWatchVersions, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadConnectorPeerWatchVersionsRow
+	for rows.Next() {
+		var i ReadConnectorPeerWatchVersionsRow
+		if err := rows.Scan(
+			&i.RunID,
+			&i.RunBucket,
+			&i.ServiceBucket,
+			&i.Revision,
+			&i.PolicyBookmark,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
