@@ -3,9 +3,10 @@ import { openSync, closeSync, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { chromium, type Page } from "playwright";
+import { fleets } from "../src/fleets.ts";
 import { readPeers } from "../src/peers/http.ts";
 import { HOST_TURN_MS, REPLACE_BEFORE_MS } from "../src/policy.ts";
-import { hostOrigin, type Host } from "../src/peers/gossip.ts";
+import { HOST_PARENT, hostOrigin, type Host } from "../src/peers/gossip.ts";
 import {
   MAX_MANIFEST_BYTES,
   RELEASE_PATH,
@@ -32,6 +33,14 @@ const { values } = parseArgs({
 assert(values.site && values.start, "Pass --site and --start for a site with no hosts.");
 const site = new URL(values.site);
 const start = new URL(values.start);
+const selectedFleet = Object.values(fleets).find(
+  (f) => site.hostname === f.site || start.hostname === f.start,
+);
+if (selectedFleet) {
+  assert.equal(site.origin, `https://${selectedFleet.site}`);
+  assert.equal(start.origin, `https://${selectedFleet.start}`);
+}
+const parent = selectedFleet?.parent ?? HOST_PARENT;
 const interval = Number(values["visitor-interval-ms"]);
 assert(
   Number.isSafeInteger(interval) && interval >= 250 && interval <= 60_000,
@@ -80,6 +89,7 @@ async function begin(page: Page, name: string) {
     asset,
     () => page.getByRole("button", { name, exact: true }).click(),
     emit,
+    parent,
   );
   hosts.set(turn, host);
   return turn;
@@ -108,7 +118,8 @@ async function join(proxy?: { server: string }, downloading?: () => void) {
   let sender: string | undefined;
   page.on("response", (response) => {
     const url = new URL(response.url());
-    if (url.pathname === WASM_PATH && hostOrigin(url.origin) && response.ok()) sender = url.origin;
+    if (url.pathname === WASM_PATH && hostOrigin(url.origin, parent) && response.ok())
+      sender = url.origin;
   });
   const turn = await begin(page, "i'll keep it alive");
   assert(sender, "browser did not copy the publisher WASM from a peer");
@@ -149,9 +160,9 @@ try {
     infrastructure: Boolean(values.metrics),
   });
   if (values.metrics) stopSampling.push(await observeInfrastructure(values.metrics, emit));
-  stopSampling.push(observeHosts(hosts, asset, emit));
+  stopSampling.push(observeHosts(hosts, asset, emit, parent));
   async function currentReport() {
-    const report = await readPeers(site.origin, release.id);
+    const report = await readPeers(site.origin, release.id, undefined, undefined, parent);
     assert(report, "Expected a peer report from a running host.");
     return report;
   }

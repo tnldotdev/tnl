@@ -1,6 +1,7 @@
 import { publish, publisher, type ServiceCertificateSource } from "@tnldotdev/tnl/browser";
 import type * as z from "zod";
 import { parseHost } from "../peers/gossip.ts";
+import { fleetName } from "../fleets.ts";
 import type { hostingConfig } from "../enrollment.ts";
 
 export async function startPublisher(
@@ -11,7 +12,7 @@ export async function startPublisher(
   certificate?: ServiceCertificateSource,
 ) {
   const owner = await publisher({
-    instance: "keepalive",
+    instance: `keepalive-${fleetName}`,
     controlUrl: config.controlURL,
     enrollment,
     signal,

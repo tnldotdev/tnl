@@ -1,14 +1,17 @@
 import { expect, it } from "vitest";
-import { HOST_PARENT, SHARED_HOST } from "../src/peers/gossip.ts";
+import { fleets } from "../src/fleets.ts";
+import { hostOrigin } from "../src/peers/gossip.ts";
 import config from "../tnl.config.ts";
 
-it("uses the same delegated hostnames in tnl, the browser, and the proxy", () => {
-  const deployment = config.deployments.keepalive;
+it.each(["prod", "ramp"] as const)("isolates the %s deployment and its exact donors", (name) => {
+  const deployment = config.deployments[name];
   const service = deployment.targets.production;
-
-  expect(HOST_PARENT).not.toBe(deployment.domain);
-  expect(HOST_PARENT.endsWith(`.${deployment.domain}`)).toBe(true);
-  expect(service.publisherAliasParent).toBe(HOST_PARENT);
-  expect(service.certificateScope).toBe(HOST_PARENT);
-  expect(SHARED_HOST).toBe(`https://${service.hostname}`);
+  const parent = fleets[name].parent;
+  expect(parent).toBe(`${name}.${deployment.domain}`);
+  expect(service.publisherAliasParent).toBe(parent);
+  expect(service.certificateScope).toBe(parent);
+  expect(service.hostname).toBe(`site.${parent}`);
+  const donor = `https://p-${"a".repeat(26)}.`;
+  expect(hostOrigin(donor + parent, parent)).toBe(true);
+  expect(hostOrigin(donor + fleets[name === "prod" ? "ramp" : "prod"].parent, parent)).toBe(false);
 });

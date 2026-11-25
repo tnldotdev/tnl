@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Browser, Page } from "playwright";
-import { parseHost, type Host } from "../src/peers/gossip.ts";
+import { HOST_PARENT, parseHost, type Host } from "../src/peers/gossip.ts";
 import { STARTUP_MS } from "../src/policy.ts";
 import type { Asset, Release } from "../src/release.ts";
 import { copyTransfers, periodic, probeHost, type RecordSample } from "./measure.ts";
@@ -48,9 +48,10 @@ export async function observeTurn(
   asset: Asset,
   click: () => Promise<void>,
   emit: RecordSample,
+  parent = HOST_PARENT,
 ) {
   const session = await page.context().newCDPSession(page);
-  const transfers = copyTransfers(release, startOrigin);
+  const transfers = copyTransfers(release, startOrigin, parent);
   session.on("Network.requestWillBeSent", (e) =>
     transfers.request(e.requestId, e.request.url, e.request.method),
   );
@@ -82,7 +83,7 @@ export async function observeTurn(
       { timeout: STARTUP_MS + 16_000 },
     );
     const local = await page.evaluate(readTurn);
-    const host = parseHost(local.published);
+    const host = parseHost(local.published, parent);
     assert(host && !local.outcome, "turn did not publish");
     const deadline = AbortSignal.timeout(
       Math.max(
@@ -93,7 +94,7 @@ export async function observeTurn(
         ),
       ),
     );
-    while (!(await probeHost(host, asset, deadline))) {
+    while (!(await probeHost(host, asset, deadline, fetch, parent))) {
       emit("startup_probe_miss", { turn });
       if (deadline.aborted) {
         outcome = "probe_failed";
@@ -188,7 +189,12 @@ export async function visitorProbe(browser: Browser, site: URL, files: readonly 
 
 // count only independently verified test participants in this sampling round;
 // a persistent URL answering for a different run is a miss.
-export function observeHosts(hosts: ReadonlyMap<number, Host>, asset: Asset, emit: RecordSample) {
+export function observeHosts(
+  hosts: ReadonlyMap<number, Host>,
+  asset: Asset,
+  emit: RecordSample,
+  parent = HOST_PARENT,
+) {
   return periodic(
     20_000,
     async (signal) => {
@@ -199,7 +205,7 @@ export function observeHosts(hosts: ReadonlyMap<number, Host>, asset: Asset, emi
       const check = async () => {
         for (let entry = pending.pop(); entry && !signal.aborted; entry = pending.pop()) {
           const [turn, host] = entry;
-          const ok = await probeHost(host, asset, signal);
+          const ok = await probeHost(host, asset, signal, fetch, parent);
           if (!signal.aborted) {
             if (ok) verified.add(host.publisherID);
             emit("host_probe", { turn, ok });

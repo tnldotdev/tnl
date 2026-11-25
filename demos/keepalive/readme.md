@@ -41,4 +41,4 @@ the clock. The tab picks up a new host without reloading.
 - [Hosting](src/hosting/tab.ts): copy the site and start the hosting worker.
 - [Proxy](src/edge/proxy.ts): find a host and check the files it sends.
 - [Checks](tests/readme.md): run the tests and measure handoffs.
-- [Operations](operations.md): production DNS and Worker credential rotation.
+- [Operations](operations.md): production and ramp hostnames, Worker credentials, and the browser restart check.

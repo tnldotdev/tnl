@@ -13,6 +13,7 @@ import { PULSE_SECONDS, requestPulse } from "../hosting/activity.ts";
 import { turnSounds, turnWarning, protectHostingTab } from "./attention.ts";
 import type { HostUpdate } from "../hosting/messages.ts";
 import { turnLabel } from "../policy.ts";
+import { fleet } from "../fleets.ts";
 import {
   AlreadyHosting,
   HostingInAnotherTab,
@@ -325,8 +326,8 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       </p>
       {bootstrap ? (
         <p>
-          Start the first host for <a href="https://keepthisalive.com">keepthisalive.com</a> for up
-          to {label}. Keep this tab open to keep the site online.
+          Start the first host for <a href={`https://${fleet.site}`}>{fleet.site}</a> for up to{" "}
+          {label}. Keep this tab open to keep the site online.
         </p>
       ) : (
         <>
@@ -349,7 +350,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             alreadyHosting ? (
               <>
                 Keepalive is already running.{" "}
-                <a href="https://keepthisalive.com">Visit the main site</a> to volunteer.
+                <a href={`https://${fleet.site}`}>Visit the main site</a> to volunteer.
               </>
             ) : !bootstrap && !canVolunteer ? (
               "Checking for a host…"
