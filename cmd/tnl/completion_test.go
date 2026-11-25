@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 )
 
@@ -63,7 +65,7 @@ func setupCompletionFacts(t *testing.T) {
 	if err := os.MkdirAll(meta.DirectoryName, 0700); err != nil {
 		t.Fatal(err)
 	}
-	facts := `{"services":{"orders":"postgres","other":"http","list":"tcp","available":"tcp"},"deployments":["production"]}`
+	facts := `{"services":{"orders":"postgres","orders.example":"postgres","orders/path":"postgres","other":"http","list":"tcp","available":"tcp","kube-credential":"tcp"},"deployments":["production"]}`
 	if err := os.WriteFile(filepath.Join(meta.DirectoryName, "completion.json"), []byte(facts), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -71,10 +73,15 @@ func setupCompletionFacts(t *testing.T) {
 
 func completeForTest(t *testing.T, args ...string) string {
 	t.Helper()
+	return completionRequestForTest(t, cobra.ShellCompRequestCmd, args...)
+}
+
+func completionRequestForTest(t *testing.T, request string, args ...string) string {
+	t.Helper()
 	var out, diagnostics bytes.Buffer
 	app := commandApp{flags: &cli{}, out: &out, errOut: &diagnostics}
 	cmd := app.root()
-	cmd.SetArgs(append([]string{"__complete"}, args...))
+	cmd.SetArgs(append([]string{request}, args...))
 	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatal(err, diagnostics.String())
 	}
@@ -129,13 +136,84 @@ func TestProjectCompletionStopsAfterTerminator(t *testing.T) {
 		{"connect", "--", "li"},
 		{"connect", "orders", "--", "--client"},
 		{"connect", "start", "orders", "--", "ps"},
+		{"connect", "start", "orders", "--", "--client=ps"},
 		{"status", "--", "or"},
 		{"wait", "orders", "--", "ot"},
 		{"inspect", "--", "sh"},
+		{"help", "--", "status"},
 	} {
 		if out := completeForTest(t, args...); out != ":4\n" {
 			t.Fatalf("%v completed after --: %q", args, out)
 		}
+	}
+	if out := completeForTest(t, "connect", "start", "--deployment", "--", "or"); out != "orders\tpostgres\n:4\n" {
+		t.Fatalf("treated a flag value as --: %q", out)
+	}
+}
+
+func TestCompletionExcludesHiddenPaths(t *testing.T) {
+	setupCompletionFacts(t)
+	for _, args := range [][]string{
+		{"ru"},
+		{"connect", "kube"},
+		{"connect", "kube-credential", "--pro"},
+		{"runtime", "connections", "status", "--"},
+		{"help", "runtime", ""},
+	} {
+		if out := completeForTest(t, args...); out != ":4\n" {
+			t.Fatalf("%v exposed hidden path completion: %q", args, out)
+		}
+	}
+}
+
+func TestServiceCompletionInsertsOnlyNamesAndUsesLocalFacts(t *testing.T) {
+	setupCompletionFacts(t)
+	if err := os.Remove("tnl.yml"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("tnl.config.ts", []byte(`throw new Error("do not evaluate this configuration")`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TNL_SERVER", "https://must-not-contact.invalid")
+	for _, command := range [][]string{{"status"}, {"connect"}, {"connect", "start"}} {
+		if out := completionRequestForTest(t, cobra.ShellCompNoDescRequestCmd, append(command, "order")...); out != "orders\n:4\n" {
+			t.Fatalf("%v completed anything other than a local service name: %q", command, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(meta.DirectoryName, "completion.json"), []byte("not JSON"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if out := completeForTest(t, "connect", "order"); out != ":4\n" {
+		t.Fatalf("completed without local facts: %q", out)
+	}
+}
+
+func TestCompletionRolesMatchShorthandAndExcludeOtherCommands(t *testing.T) {
+	root := (&commandApp{flags: &cli{}}).root()
+	for _, test := range []struct {
+		command string
+		arg     completionRole
+		flags   map[string]completionRole
+	}{
+		{"connect", "project-service", map[string]completionRole{"client": "connect-client", "deployment": "deployment"}},
+		{"connect start", "project-service", map[string]completionRole{"client": "connect-client", "deployment": "deployment"}},
+		{"connect available", "", nil},
+		{"connect kube-credential", "", nil},
+		{"help", "command-path", nil},
+		{"wait", "project-service", map[string]completionRole{"service": "project-service"}},
+		{"publisher provision", "", map[string]completionRole{"service": "project-service", "deployment": "deployment"}},
+		{"publisher grant add", "", nil},
+	} {
+		t.Run(test.command, func(t *testing.T) {
+			cmd, rest, err := root.Find(strings.Fields(test.command))
+			if err != nil || len(rest) != 0 {
+				t.Fatalf("find %s: %v (remaining: %v)", test.command, err, rest)
+			}
+			arg, flags := completionRoles(cmd)
+			if arg != test.arg || !maps.Equal(flags, test.flags) {
+				t.Fatalf("completion roles = %q %v, want %q %v", arg, flags, test.arg, test.flags)
+			}
+		})
 	}
 }
 

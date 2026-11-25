@@ -84,11 +84,16 @@ func clientHelp(cmd *cobra.Command, width int, view helpView) string {
 		}
 	}
 	var args []helpRow
-	for _, label := range strings.Fields(argCmd.Use)[1:] {
-		name := strings.Trim(label, "<>[]")
-		if meta, ok := cliflags.ArgumentHelp(argCmd, name); ok {
-			args = append(args, helpRow{label, inputHelp(name, meta)})
+	for _, arg := range cliflags.Positionals(argCmd) {
+		name := arg.Name
+		if arg.Repeatable {
+			name += "..."
 		}
+		label := "<" + name + ">"
+		if arg.Optional {
+			label = "[" + name + "]"
+		}
+		args = append(args, helpRow{label, inputHelp(name, arg.Help)})
 	}
 	p.rows("Arguments", args)
 
@@ -115,9 +120,14 @@ func clientHelp(cmd *cobra.Command, width int, view helpView) string {
 	}
 	if publish && view.reference {
 		p.heading("Output and readiness")
-		p.prose("A foreground tunnel stays attached until stopped. Human lifecycle messages go to stderr. With --output ndjson, read events from stdout instead.", "  ", "  ")
-		p.prose("A ready event means the tunnel can receive visitors. It does not grant anonymous access or prove your app returned HTTP 200.", "  ", "  ")
-		p.prose("Choose one of --foreground, --bg, or --install. --background is the same as --bg. With --bg, tnl exits when the tunnel is ready. Human output prints the URL and a stop command on separate streams; --output json returns one receipt.", "  ", "  ")
+		p.prose("Choose one of --foreground, --bg, or --install. --background is the same as --bg. A foreground tunnel stays attached until stopped; its human lifecycle messages go to stderr.", "  ", "  ")
+		for _, result := range commandResultHelp(cmd) {
+			p.line("")
+			p.prose(result.Mode+" ("+result.Format+"):", "  ", "  ")
+			p.prose("stdout: "+result.Stdout, "    ", "    ")
+			p.prose("stderr: "+result.Stderr, "    ", "    ")
+			p.prose(result.Proves, "    ", "    ")
+		}
 	}
 
 	commands := make(map[string][]helpRow)

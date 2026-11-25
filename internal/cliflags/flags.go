@@ -57,6 +57,10 @@ func Bind(cmd *cobra.Command, options any, persistent bool) {
 					cmd.Annotations = make(map[string]string)
 				}
 				cmd.Annotations["cliflags:arg:"+name] = usage
+				cmd.Annotations["cliflags:type:"+name] = val.Type()
+				if val.path {
+					cmd.Annotations["cliflags:type:"+name] = "path"
+				}
 				if len(val.choices) > 0 {
 					cmd.Annotations["cliflags:enum:"+name] = tag.Get("enum")
 				}
@@ -157,6 +161,40 @@ type Help struct {
 	Usage, Default string
 	Choices        []string
 	Path, Required bool
+}
+
+// Positional is a declared positional input in parser order.
+type Positional struct {
+	Name, Type           string
+	Optional, Repeatable bool
+	Help
+}
+
+// Positionals uses the same labels as the usage line. Bind appends its labels
+// in field order; commands with custom Args can declare their labels in Use.
+func Positionals(cmd *cobra.Command) []Positional {
+	var arguments []Positional
+	labels := strings.Fields(cmd.Use)
+	if len(labels) < 2 {
+		return arguments
+	}
+	for _, label := range labels[1:] {
+		optional := strings.HasPrefix(label, "[") && strings.HasSuffix(label, "]")
+		if !optional && !(strings.HasPrefix(label, "<") && strings.HasSuffix(label, ">")) {
+			continue
+		}
+		name := label[1 : len(label)-1]
+		meta, _ := ArgumentHelp(cmd, name)
+		kind := cmd.Annotations["cliflags:type:"+name]
+		if kind == "" {
+			kind = "string"
+		}
+		name, repeatable := strings.CutSuffix(name, "...")
+		arguments = append(arguments, Positional{
+			Name: name, Type: kind, Optional: optional, Repeatable: repeatable, Help: meta,
+		})
+	}
+	return arguments
 }
 
 // ArgumentHelp returns the metadata for a positional argument added by Bind.

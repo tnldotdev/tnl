@@ -2,9 +2,9 @@ package main
 
 import (
 	"bytes"
-	"encoding/csv"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,38 +23,32 @@ func TestClientHelpExamplesParse(t *testing.T) {
 		if cmd.Short == "" || cmd.Example == "" {
 			t.Errorf("%s has no summary or examples", cmd.CommandPath())
 		}
-		for block := range strings.SplitSeq(cmd.Example, "\n\n") {
-			caption, line, ok := strings.Cut(strings.TrimSpace(block), "\n")
-			line = strings.TrimSpace(line)
-			if !ok || !strings.HasPrefix(caption, "# ") || !strings.HasPrefix(line, "tnl ") || strings.Contains(line, "\n") {
-				t.Errorf("%s: expected a caption and one command: %q", cmd.CommandPath(), block)
+		for _, example := range clientHelpExamples[cmd.CommandPath()] {
+			line := "tnl " + example.args
+			if example.caption == "" || strings.Contains(example.args, "\n") || !strings.Contains(cmd.Example, line) {
+				t.Errorf("%s: expected an intact example: %s", cmd.CommandPath(), line)
 				continue
 			}
 			if seen[line] {
 				continue
 			}
 			seen[line] = true
-			// examples use space-separated words, with double quotes around a
-			// multiword argument or a shell variable. never run a command here.
-			reader := csv.NewReader(strings.NewReader(os.Expand(line, func(key string) string {
-				if key == "REVISION" {
-					return "42"
-				}
-				if key == "JOB_ID" {
-					return "job_0123456789abcdefghijkl"
-				}
-				if key == "SHARE_ID" {
-					return "shr_0123456789abcdefghijkl"
-				}
-				return "example-" + key
-			})))
-			reader.Comma = ' '
-			words, err := reader.Read()
-			if err != nil {
-				t.Errorf("%s: %v", line, err)
-				continue
+			args := example.argv()
+			for i, arg := range args {
+				args[i] = os.Expand(arg, func(key string) string {
+					if key == "REVISION" {
+						return "42"
+					}
+					if key == "JOB_ID" {
+						return "job_0123456789abcdefghijkl"
+					}
+					if key == "SHARE_ID" {
+						return "shr_0123456789abcdefghijkl"
+					}
+					return "example-" + key
+				})
 			}
-			selected, err := parse(words[1:])
+			selected, err := parse(args)
 			if err != nil {
 				t.Errorf("%s: %v", line, err)
 			} else if selected.HasSubCommands() && selected.Annotations["default"] == "" {
@@ -66,6 +60,16 @@ func TestClientHelpExamplesParse(t *testing.T) {
 		}
 	}
 	visit(root)
+	for _, recipe := range guideRecipes {
+		for _, step := range recipe.steps {
+			if !seen["tnl "+step.example.args] {
+				t.Errorf("guide command is missing from the parser-checked examples: %s", step.example.args)
+			}
+		}
+	}
+	if got := queryExample.argv(); !slices.Equal(got[len(got)-4:], []string{"--", "-At", "-c", "select 1"}) {
+		t.Fatalf("query changed the client boundary: %q", got)
+	}
 }
 
 func TestBareCommandGroupsShowHelp(t *testing.T) {
