@@ -29,25 +29,24 @@ type StartOptions struct {
 	Client                                                         string
 	ClientArgs                                                     []string
 	Kubeconfig, Namespace, KubeUserConfig, KubeUser, KubeTokenFile string
-	Foreground, Detach, Install, System, Stdio                     bool
-	SystemStateDir, DetachedChild, Output                          string
+	Foreground, Background, Install, System, Stdio                 bool
+	SystemStateDir, Output                                         string
 	Project                                                        clientproject.Project
 	project                                                        projectConfiguration
-	DetachLaunch                                                   func() error
 	Ready                                                          func(io.Writer, Profile, string) error
 	Starting                                                       func(context.Context)
 	PublicationReady                                               func(context.Context)
-	Prepared                                                       func(context.Context, Profile)
+	Prepared                                                       func(context.Context, Profile, string) error
 	ServiceOptions                                                 installedjobs.ServiceOptions
 }
 
 func ValidateMode(flags StartOptions) error {
 	if flags.Client != "" || len(flags.ClientArgs) > 0 {
-		if flags.Install || flags.Detach || flags.DetachedChild != "" || flags.Stdio || flags.Output == "json" {
+		if flags.Install || flags.Background || flags.Stdio || flags.Output == "json" {
 			return connectModeError(failure.ConnectModeInvalid)
 		}
 	}
-	if flags.Stdio && (flags.Listen != "" || flags.Install || flags.Detach || flags.Foreground || flags.DetachedChild != "" || flags.Output == "json") {
+	if flags.Stdio && (flags.Listen != "" || flags.Install || flags.Background || flags.Foreground || flags.Output == "json") {
 		return connectModeError(failure.ConnectModeInvalid)
 	}
 	if flags.Protocol != "" && !config.ValidProtocol(flags.Protocol) {
@@ -59,7 +58,7 @@ func ValidateMode(flags StartOptions) error {
 	if flags.System {
 		return publisherCLIError("connectors use the user supervisor; --system is only for explicit publishers")
 	}
-	if flags.Install && flags.Detach || flags.Foreground && (flags.Install || flags.Detach) {
+	if flags.Install && flags.Background || flags.Foreground && (flags.Install || flags.Background) {
 		return connectModeError(failure.ConnectModeInvalid)
 	}
 	if flags.SystemStateDir != "" && !flags.Install {
@@ -155,19 +154,12 @@ func (o Operations) start(ctx context.Context, flags StartOptions, input *os.Fil
 	if err := ValidateServiceMode(flags, service); err != nil {
 		return err
 	}
-	if flags.Detach {
-		if flags.DetachLaunch == nil {
-			return publisherCLIError("detached connector launcher is unavailable")
-		}
-		return flags.DetachLaunch()
-	}
 	if flags.Stdio {
 		finishStartup(nil)
 		return runConnectStdio(observability.Independent(ctx), session, service, input, output, o.Telemetry)
 	}
 	flags.Protocol = string(service.Protocol)
 	identity := session.identity.Identity.Id
-	jobID := installedjobs.JobKey(session.authenticated.ServerEndpoint, "connect", identity+":"+service.Id)
 	var registry *installedjobs.Registry
 	listenAddress := ""
 	if flags.Install {
@@ -176,14 +168,12 @@ func (o Operations) start(ctx context.Context, flags StartOptions, input *os.Fil
 			return err
 		}
 		defer registry.Close()
-		jobs, err := registry.List(ctx)
+		existing, found, err := registry.FindConnector(ctx, session.authenticated.ServerEndpoint, service.Id, identity, session.database.Root())
 		if err != nil {
 			return err
 		}
-		for _, existing := range jobs {
-			if existing.ID == jobID && existing.Kind == installedjobs.KindConnector && (flags.Listen == "" || flags.Listen == existing.Target) {
-				listenAddress = existing.Target
-			}
+		if found && (flags.Listen == "" || flags.Listen == existing.Target) {
+			listenAddress = existing.Target
 		}
 	}
 	var listener net.Listener
@@ -204,7 +194,7 @@ func (o Operations) start(ctx context.Context, flags StartOptions, input *os.Fil
 		defer listener.Close()
 		listenAddress = listener.Addr().String()
 	}
-	job := installedjobs.Job{Kind: installedjobs.KindConnector, ID: jobID, Name: service.Name,
+	job := installedjobs.Job{Kind: installedjobs.KindConnector, Name: service.Name,
 		Server: session.authenticated.ServerEndpoint, ServiceID: service.Id, IdentityID: identity, StateDir: session.database.Root(),
 		Protocol: config.ProtocolName(flags.Protocol), Target: listenAddress, TrustRevision: service.TrustRevision}
 	job.Endpoint = service.Endpoint
@@ -214,18 +204,24 @@ func (o Operations) start(ctx context.Context, flags StartOptions, input *os.Fil
 		if err != nil {
 			return err
 		}
+		if flags.Install {
+			profile.JobID = job.ID
+		}
 		if job.Protocol == config.ProtocolKubernetes {
 			if err := prepareKubernetesConnection(ctx, session, flags, service, &profile, job.Target); err != nil {
 				return err
 			}
 		}
 		if flags.Prepared != nil {
-			flags.Prepared(ctx, profile)
+			if err := flags.Prepared(ctx, profile, job.Target); err != nil {
+				return err
+			}
 		}
 		return flags.Ready(destination, profile, job.Target)
 	}
 	if flags.Install {
-		if err := registry.InstallConnector(ctx, job); err != nil {
+		job, err = registry.InstallConnector(ctx, job)
+		if err != nil {
 			return err
 		}
 		if err := waitInstalledConnectorReady(ctx, registry, job.ID); err != nil {

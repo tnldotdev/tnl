@@ -235,7 +235,19 @@ func TestIntegrationFixedDeploymentsCrossTeamIsolation(t *testing.T) {
 			return response.StatusCode == 200 && string(body) == want && response.TLS != nil && len(response.TLS.PeerCertificates) > 0 && bytes.Equal(response.TLS.PeerCertificates[0].RawSubjectPublicKeyInfo, visitorKeys[index])
 		})
 	}
-	jobA := installedjobs.JobKey(f.url, "deployment", identities[0].Member.DeploymentId+":default")
+	jobs, err := registry.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jobA string
+	for _, job := range jobs {
+		if job.PublisherIdentityID == identities[0].Member.PublisherIdentityId {
+			jobA = job.ID
+		}
+	}
+	if jobA == "" {
+		t.Fatal("publisher A did not get a registered job ID")
+	}
 	if err := registry.Stop(t.Context(), jobA); err != nil {
 		t.Fatal(err)
 	}

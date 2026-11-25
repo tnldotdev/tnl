@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
-	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 )
 
 func TestOutputPreferenceUsesCommandAndMode(t *testing.T) {
@@ -27,7 +26,8 @@ func TestOutputPreferenceUsesCommandAndMode(t *testing.T) {
 		{"machine", "status --output human", "human", false},
 		{"human", "status --output json", "json", true},
 		{"machine", "publish 3000", "ndjson", true},
-		{"machine", "publish 3000 --detach", "human", false},
+		{"machine", "publish 3000 --bg", "json", true},
+		{"machine", "publish 3000 --background", "json", true},
 		{"machine", "publish 3000 --install", "human", false},
 		{"machine", "connect orders", "json", true},
 		{"machine", "connect orders --stdio", "human", false},
@@ -141,11 +141,11 @@ func TestObservationRecoveryKeepsHumanOverride(t *testing.T) {
 	}
 }
 
-func TestConnectorJobActionJSON(t *testing.T) {
-	job := installedjobs.Job{ID: "connect-test", Name: "orders", Status: installedjobs.Status{State: installedjobs.JobStopping}}
-	for _, tt := range []struct{ action, state string }{{"stop", "stopping"}, {"remove", "removed"}} {
+func TestJobStopReceiptJSON(t *testing.T) {
+	const job = "job_0123456789abcdefghijkl"
+	for _, state := range []string{"stopping", "stopped"} {
 		var stdout bytes.Buffer
-		if err := writeConnectorJobAction(&stdout, statusOutputJSON, job, tt.action); err != nil {
+		if err := writeStopJobResult(&stdout, statusOutputJSON, job, state); err != nil {
 			t.Fatal(err)
 		}
 		var receipt struct {
@@ -154,8 +154,8 @@ func TestConnectorJobActionJSON(t *testing.T) {
 			State         string `json:"state"`
 		}
 		if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil ||
-			receipt.SchemaVersion != 1 || receipt.JobID != job.ID || receipt.State != tt.state {
-			t.Fatalf("%s receipt: %q", tt.action, &stdout)
+			receipt.SchemaVersion != 1 || receipt.JobID != job || receipt.State != state {
+			t.Fatalf("%s receipt: %q", state, &stdout)
 		}
 	}
 }

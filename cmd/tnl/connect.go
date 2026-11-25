@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/tnldotdev/tnl/internal/client/detached"
+	"github.com/tnldotdev/tnl/internal/client/background"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -25,9 +24,6 @@ import (
 type connectCommand struct {
 	Start          connectStartCommand
 	Available      connectAvailableCommand
-	List           connectListCommand
-	Stop           connectJobCommand
-	Remove         connectJobCommand
 	KubeCredential kubeCredentialCommand
 }
 
@@ -47,25 +43,15 @@ type connectStartCommand struct {
 	Foreground        bool   `name:"foreground" help:"Run in this terminal (the default)."`
 	Client            string `name:"client" help:"Launch a compatible client once the foreground connector is ready. Pass its arguments after --."`
 	clientArgs        []string
-	Detach            bool             `name:"detach" help:"Run independently of this terminal without automatic restart."`
+	Background        bool             `name:"bg" help:"Run independently of this terminal without automatic restart."`
 	Install           bool             `name:"install" help:"Keep this connector running with the installed user supervisor."`
 	System            bool             `name:"system" hidden:""`
 	SystemStateDir    string           `name:"system-state-dir" type:"path" help:"Private user supervisor state directory."`
-	DetachedChild     string           `name:"detached-child" hidden:""`
 	Stdio             bool             `name:"stdio" help:"Carry one opaque TCP stream on stdin/stdout; sign in explicitly before use."`
 	Output            statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Ready local connection address and native client instructions."`
 	project           projectConfiguration
-	detach            func() error
 }
 
-type connectListCommand struct {
-	SystemStateDir string           `name:"system-state-dir" type:"path" help:"Private user supervisor state directory."`
-	Output         statusOutputMode `name:"output" enum:"human,json" default:"human"`
-}
-type connectJobCommand struct {
-	connectListCommand `embed:""`
-	Name               string `arg:"" name:"name" help:"Installed connector name or job ID."`
-}
 type connectAvailableCommand struct {
 	remoteFlags `embed:""`
 	Output      statusOutputMode `name:"output" enum:"human,json" default:"human"`
@@ -88,10 +74,17 @@ func (flags connectStartCommand) options() connector.StartOptions {
 	remote := flags.selection()
 	return connector.StartOptions{SessionOptions: connector.SessionOptions{ServerURL: remote.ServerURL, StateDir: remote.StateDir, AccessToken: remote.AccessToken, ProjectTeam: remote.ProjectTeam, SelectedTeam: remote.SelectedTeam}, Team: flags.Team, Project: flags.project.Project,
 		Name: flags.Name, Client: flags.Client, ClientArgs: flags.clientArgs, Listen: flags.Listen, Protocol: flags.Protocol, Kubeconfig: flags.Kubeconfig, Namespace: flags.Namespace, KubeUserConfig: flags.KubeUserConfig, KubeUser: flags.KubeUser, KubeTokenFile: flags.KubeTokenFile,
-		Foreground: flags.Foreground, Detach: flags.Detach, Install: flags.Install, System: flags.System, SystemStateDir: flags.SystemStateDir, DetachedChild: flags.DetachedChild, Stdio: flags.Stdio, Output: string(flags.Output), DetachLaunch: flags.detach,
+		Foreground: flags.Foreground, Background: flags.Background, Install: flags.Install, System: flags.System, SystemStateDir: flags.SystemStateDir, Stdio: flags.Stdio, Output: string(flags.Output),
+		Starting: background.Reconnecting,
 		Ready: func(destination io.Writer, profile connector.Profile, listen string) error {
 			return writeConnectorReady(destination, profile, flags.Output, listen, flags.StateDir, flags.Install)
-		}, Starting: detached.Starting, PublicationReady: detached.Ready, Prepared: func(ctx context.Context, profile connector.Profile) { detached.SetConnection(ctx, profile) }}
+		}, Prepared: func(ctx context.Context, profile connector.Profile, listen string) error {
+			raw, err := json.Marshal(profile)
+			if err != nil {
+				return err
+			}
+			return background.Ready(ctx, background.Readiness{Address: listen, Target: flags.Name, ServiceID: profile.ServiceID, Profile: raw})
+		}}
 }
 
 func runConnectStart(ctx context.Context, flags connectStartCommand, output, diagnostics io.Writer) error {
@@ -165,48 +158,6 @@ func (project projectConfiguration) connectScope(name string, remote scopedTeamF
 	return remote, err
 }
 
-func runConnectJobs(ctx context.Context, flags connectListCommand, name, action string, output io.Writer) error {
-	options, err := (systemStateFlags{SystemStateDir: flags.SystemStateDir}).options()
-	if err != nil {
-		return err
-	}
-	if err := requireConfiguredService(ctx, options, nil); err != nil {
-		return err
-	}
-	jobs, err := connector.Jobs(ctx, options, name, action)
-	if err != nil {
-		return err
-	}
-	if name != "" {
-		if len(jobs) == 0 {
-			return installedjobs.ErrJobNotFound
-		}
-		return writeConnectorJobAction(output, flags.Output, jobs[0], action)
-	}
-	if flags.Output == statusOutputJSON {
-		return json.NewEncoder(output).Encode(jobs)
-	}
-	return renderSystemJobs(output, "tnl connect "+strings.TrimSpace(action), jobs, "")
-}
-
-func writeConnectorJobAction(output io.Writer, mode statusOutputMode, job installedjobs.Job, action string) error {
-	state := string(job.Status.State)
-	if action == "remove" {
-		state = "removed"
-	}
-	if mode == statusOutputJSON {
-		return json.NewEncoder(output).Encode(struct {
-			SchemaVersion int    `json:"schema_version"`
-			JobID         string `json:"job_id"`
-			State         string `json:"state"`
-		}{1, job.ID, state})
-	}
-	if action == "remove" {
-		return writeResult(output, clioutput.Line("Removed connector "+job.Name))
-	}
-	return writeJobStopResult(output, job)
-}
-
 func runConnectAvailable(ctx context.Context, command connectAvailableCommand, output, diagnostics io.Writer) error {
 	session, err := openTeamSession(ctx, command.remoteFlags, "tnl connect available", diagnostics)
 	if err != nil {
@@ -248,11 +199,12 @@ func (a *commandApp) newConnectCommand() *cobra.Command {
 	}
 	cConnectStart := &cobra.Command{
 		Use: "start", Short: "Start a local connector for one service.",
-		Long: "Start a local connector. You can omit start unless the service name is also a command, such as list.",
+		Long: "Start a local connector. You can omit start unless the service name is also a command, such as available.",
 	}
 	a.leaf(cConnectStart, &f.Connect.Start, func(call commandCall) error {
 		return a.startConnector(call)
 	})
+	registerBackgroundFlag(cConnectStart)
 	cConnect.AddCommand(cConnectStart)
 	bind := cConnectStart.Args
 	cConnectStart.Args = func(cmd *cobra.Command, args []string) error {
@@ -286,21 +238,6 @@ func (a *commandApp) newConnectCommand() *cobra.Command {
 		return runConnectAvailable(call.ctx, f.Connect.Available, a.out, a.errOut)
 	})
 	cConnect.AddCommand(cConnectAvailable)
-	cConnectList := &cobra.Command{Use: "list", Short: "List installed local connectors."}
-	a.leaf(cConnectList, &f.Connect.List, func(call commandCall) error {
-		return runConnectJobs(call.ctx, f.Connect.List, "", "list", a.out)
-	})
-	cConnect.AddCommand(cConnectList)
-	cConnectStop := &cobra.Command{Use: "stop", Short: "Stop an installed connector without revoking access."}
-	a.leaf(cConnectStop, &f.Connect.Stop, func(call commandCall) error {
-		return runConnectJobs(call.ctx, f.Connect.Stop.connectListCommand, f.Connect.Stop.Name, "stop", a.out)
-	})
-	cConnect.AddCommand(cConnectStop)
-	cConnectRemove := &cobra.Command{Use: "remove", Short: "Remove an installed connector and its remembered port."}
-	a.leaf(cConnectRemove, &f.Connect.Remove, func(call commandCall) error {
-		return runConnectJobs(call.ctx, f.Connect.Remove.connectListCommand, f.Connect.Remove.Name, "remove", a.out)
-	})
-	cConnect.AddCommand(cConnectRemove)
 	cConnectKubeCredential := &cobra.Command{Use: "kube-credential", Short: "", Hidden: true}
 	a.leaf(cConnectKubeCredential, &f.Connect.KubeCredential, func(call commandCall) error {
 		return runKubeCredential(call.ctx, f.Connect.KubeCredential, a.out)
@@ -324,25 +261,12 @@ func (a *commandApp) startConnector(call commandCall) error {
 			return err
 		}
 	}
-	if connect.Detach {
-		// resolve and validate the service mode before creating a child.
-		connect.detach = func() error {
-			return detachPublish(ctx, a.argv, connect.StateDir, a.out, func(root, id string) error {
-				return writeDetachedConnection(root, id, connect.Output, a.out)
-			})
-		}
+	if connect.Background {
+		return a.launchBackground(call, background.KindConnect, connect.StateDir, connect.Output == statusOutputJSON)
 	}
 	root, err := clientStateRoot(connect.StateDir)
 	if err != nil {
 		return err
-	}
-	if connect.DetachedChild != "" {
-		var cleanup func()
-		ctx, cleanup, err = detached.Serve(ctx, root, connect.DetachedChild)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
 	}
 	project, err := loadProjectConfiguration(ctx, *flags, root)
 	if err != nil {

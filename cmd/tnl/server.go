@@ -50,6 +50,16 @@ func configArgs(noConfig bool, path string) string {
 	return ""
 }
 
+func configArgv(noConfig bool, path string) []string {
+	if noConfig {
+		return []string{"--no-config"}
+	}
+	if path != "" {
+		return []string{"--config", path}
+	}
+	return nil
+}
+
 func resolveServer(ctx context.Context, root, value string) (string, *clientstate.Database, error) {
 	return clientserver.Open(ctx, root, value)
 }

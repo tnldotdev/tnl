@@ -39,7 +39,7 @@ func TestBackgroundDispatchDoesNotOpenForegroundState(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "missing.yml") || strings.Contains(err.Error(), "command is required") {
 		t.Fatalf("background dispatch = %v", err)
 	}
-	if _, err := os.Stat(ordinaryState); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(ordinaryState, "v1.db")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("background dispatch opened foreground state: %v", err)
 	}
 	if output.Len() != 0 || diagnostics.Len() != 0 {

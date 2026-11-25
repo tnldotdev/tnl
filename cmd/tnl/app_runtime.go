@@ -86,6 +86,7 @@ func configuredRuntimeServices(project projectConfiguration) []app.Service {
 func (a *commandApp) newRuntimeCommand() *cobra.Command {
 	f := a.flags
 	cRuntime := &cobra.Command{Use: "runtime", Short: "", Hidden: true}
+	cRuntime.AddCommand(a.newRuntimeJobCommand())
 	cRuntimeConnections := &cobra.Command{Use: "connections", Short: "", Hidden: true}
 	cRuntimeConnectionsCapabilities := &cobra.Command{Use: "capabilities", Short: ""}
 	a.leaf(cRuntimeConnectionsCapabilities, &f.Runtime.Connections.Capabilities, func(call commandCall) error {

@@ -3,6 +3,7 @@ package invocation
 import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/demo"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -29,10 +30,18 @@ type Presentation struct {
 	TargetUnavailable   func() error
 	Draining            func() error
 	Ready               func(string, uint64) error
+	NamedObservation    func(*app.Service) error // nil when the selected registration cannot be observed
 	Resume              func(url, team, server string) error
 	Stopped             func() error
 	Progress            func(Progress) error
 	Warning             func(string) error
+}
+
+func (p *Presentation) observeNamed(service *app.Service) error {
+	if p == nil || p.NamedObservation == nil {
+		return nil
+	}
+	return p.NamedObservation(service)
 }
 
 func servicePresentation(output *ServicePresentation, saved controlv1.Service, target string) *Presentation {

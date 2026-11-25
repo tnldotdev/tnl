@@ -128,7 +128,7 @@ func TestConnectModeMatrix(t *testing.T) {
 			if protocol == controlv1.ServiceProtocolHTTP {
 				service.Endpoint.Port = 443
 			}
-			for _, flags := range []StartOptions{{}, {Install: true}, {Detach: true}, {Foreground: true}, {Listen: "127.0.0.1:15432"}, {Detach: true, Listen: "127.0.0.1:15432", Output: "json"}, {Stdio: true}, {Output: "json"}, {Protocol: "tcp"}} {
+			for _, flags := range []StartOptions{{}, {Install: true}, {Background: true}, {Foreground: true}, {Listen: "127.0.0.1:15432"}, {Background: true, Listen: "127.0.0.1:15432", Output: "json"}, {Stdio: true}, {Output: "json"}, {Protocol: "tcp"}} {
 				valid := (!flags.Stdio || protocol == controlv1.Tcp) && (flags.Protocol == "" || flags.Protocol == string(protocol))
 				if err := ValidateServiceMode(flags, service); (err == nil) != valid {
 					t.Fatalf("public=%v protocol=%s flags=%+v: %v", public, protocol, flags, err)

@@ -1,12 +1,9 @@
-// package publisherjob owns installed publications and their private state.
 package installed
 
 import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,18 +33,19 @@ import (
 )
 
 var (
-	ErrUnsafeState  = failure.Wrap("open installed publisher state", failure.ClientStateUnavailable, errors.New("installed publisher state is unsafe or has changed"))
-	ErrScope        = target.ErrScope
-	ErrJobExists    = failure.Wrap("install publication", failure.ServerConflict, errors.New("saved publication is already installed"))
-	ErrJobNotFound  = failure.Wrap("read installed publication", failure.ServerResourceNotFound, errors.New("installed publisher job does not exist"))
-	ErrJobAmbiguous = failure.Wrap("select installed publication", failure.InstalledJobAmbiguous, errors.New("more than one installed job has this name"))
+	ErrUnsafeState     = failure.Wrap("open installed job state", failure.ClientStateUnavailable, errors.New("installed job state is unsafe or has changed"))
+	ErrLegacyRegistry  = failure.Wrap("open installed job state", failure.InstalledJobRegistryLegacy, errors.New("installed jobs still use the previous ID format"))
+	ErrScope           = target.ErrScope
+	ErrJobExists       = failure.Wrap("install job", failure.ServerConflict, errors.New("the job binding is already installed"))
+	ErrJobNotFound     = failure.Wrap("read installed job", failure.ServerResourceNotFound, errors.New("installed job does not exist"))
+	ErrRegistryMissing = errors.New("installed job registry does not exist")
 )
 
 type OpenOptions struct {
 	Root string
 	User bool
-	// StandaloneDeployments permits identity-only deployment jobs under the current uid,
-	// independently of user-session connector support.
+	// StandaloneDeployments opens the private fixed-list deployment registry,
+	// not the user or system supervisor's public job registry.
 	StandaloneDeployments bool
 	// tests must explicitly select their uid for isolated system state.
 	TestOwnerUID *int
@@ -138,18 +136,31 @@ func (s JobState) Valid() bool {
 }
 
 type Registry struct {
-	mu          sync.Mutex
-	database    *clientstate.Database
-	root        string
-	owner       int
-	user        bool
-	deployments bool
-	pins        map[string]os.FileInfo
-	key         []byte
+	mu               sync.Mutex
+	database         *clientstate.Database
+	root             string
+	owner            int
+	user             bool
+	fixedDeployments bool
+	pins             map[string]os.FileInfo
+	key              []byte
 }
 
 // Open uses a standalone database and file wrapping key, including on macOS.
 func Open(ctx context.Context, options OpenOptions) (*Registry, error) {
+	return open(ctx, options, true)
+}
+
+// OpenExisting opens the selected supervisor's registry without initializing it
+// when no supervisor has been installed.
+func OpenExisting(ctx context.Context, options OpenOptions) (*Registry, error) {
+	return open(ctx, options, false)
+}
+
+func open(ctx context.Context, options OpenOptions, create bool) (*Registry, error) {
+	if options.StandaloneDeployments && (options.User || !create) {
+		return nil, ErrScope
+	}
 	owner := 0
 	if options.User || options.StandaloneDeployments {
 		owner = os.Getuid()
@@ -165,7 +176,8 @@ func Open(ctx context.Context, options OpenOptions) (*Registry, error) {
 		return nil, err
 	}
 	// an initialized registry must never be silently recreated after deletion.
-	if _, err := os.Lstat(clientstate.DatabasePath(root)); errors.Is(err, os.ErrNotExist) {
+	_, dbErr := os.Lstat(clientstate.DatabasePath(root))
+	if errors.Is(dbErr, os.ErrNotExist) {
 		for _, path := range []string{clientstate.WrappingKeyPath(root), filepath.Join(root, "jobs.lock")} {
 			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 				return nil, ErrUnsafeState
@@ -179,15 +191,29 @@ func Open(ctx context.Context, options OpenOptions) (*Registry, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, ErrUnsafeState
 	}
+	if !create {
+		if dbErr != nil {
+			if errors.Is(dbErr, os.ErrNotExist) {
+				return nil, ErrRegistryMissing
+			}
+			return nil, ErrUnsafeState
+		}
+		if info, err := os.Lstat(filepath.Join(root, "jobs.lock")); err != nil || !privateInfo(info, owner, false) {
+			return nil, ErrUnsafeState
+		}
+	}
 	db, err := clientstate.OpenWithOptions(ctx, root, clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		return nil, err
 	}
-	r := &Registry{database: db, root: db.Root(), owner: owner, user: options.User, deployments: options.User || options.StandaloneDeployments, pins: map[string]os.FileInfo{}}
+	r := &Registry{database: db, root: db.Root(), owner: owner, user: options.User, fixedDeployments: options.StandaloneDeployments, pins: map[string]os.FileInfo{}}
 	// pin the registry lock before any reader or writer can use it.
 	lock, err := filelock.AcquireContext(ctx, filepath.Join(r.root, "jobs.lock"), owner)
 	if err == nil {
 		err = r.pin()
+		if err == nil {
+			_, err = r.load(ctx)
+		}
 		if err == nil {
 			err = r.verifyManifest(ctx)
 		}
@@ -224,44 +250,31 @@ func (r *Registry) Credential(ctx context.Context, job Job) (credentialfile.File
 	return credentialfile.New(job.Server, identity, private)
 }
 
-// Install binds a key to this job, server, and exact grant. a failed registry
-// write can leave an unused encrypted key, but cannot publish a partial job.
-func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) error {
-	if err := validateJob(&job); err != nil {
-		return err
+// Install returns the saved job with its registry-allocated ID. a failed
+// registry write can leave an unused encrypted key, but not a partial job.
+func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (Job, error) {
+	if r.fixedDeployments || job.ID != "" || validateJob(&job) != nil {
+		return Job{}, ErrScope
 	}
 	if !matches(job, identity) || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private[:32]), private) {
-		return ErrScope
+		return Job{}, ErrScope
 	}
-	return r.update(ctx, func(jobs *[]Job) error {
-		for i, existing := range *jobs {
-			if existing.ID == job.ID {
-				if existing.Server != job.Server || existing.PublisherIdentityID != job.PublisherIdentityID || existing.GrantID != job.GrantID || existing.ServiceID != job.ServiceID || existing.Kind != job.Kind {
-					return ErrScope
-				}
-				loaded, key, _, err := r.signingIdentity(ctx, existing)
-				if err != nil {
-					return err
-				}
-				before, _ := json.Marshal(loaded)
-				after, _ := json.Marshal(identity)
-				if !bytes.Equal(key, private) || !bytes.Equal(before, after) {
-					return ErrScope
-				}
-				// retrying installation may refresh local settings, but cannot replace
-				// its signing key or grant. reconciliation joins the old worker first.
-				job.Enabled, job.Revision, job.Status = true, existing.Revision+1, Status{State: JobStarting}
-				(*jobs)[i] = job
-				return nil
+	return r.install(ctx, job, func(existing *Job, job Job) error {
+		if existing != nil {
+			if existing.PublisherIdentityID != job.PublisherIdentityID || existing.GrantID != job.GrantID {
+				return ErrScope
 			}
-			if existing.Server == job.Server && existing.Kind == job.Kind && existing.ServiceID == job.ServiceID {
-				return ErrJobExists
+			loaded, key, _, err := r.signingIdentity(ctx, *existing)
+			if err != nil {
+				return err
 			}
-			// independently supervised jobs need independent runtime identities.
-			// one deployment job may publish many services with its one replica identity.
-			if existing.Server == job.Server && existing.PublisherIdentityID == job.PublisherIdentityID {
-				return ErrJobExists
+			before, _ := json.Marshal(loaded)
+			after, _ := json.Marshal(identity)
+			if !bytes.Equal(key, private) || !bytes.Equal(before, after) {
+				return ErrScope
 			}
+			// a reinstall may refresh local settings, not the signing authority.
+			return nil
 		}
 		profile, err := r.database.Server(ctx, job.Server)
 		if err != nil {
@@ -271,35 +284,89 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 		if err != nil {
 			return err
 		}
-		if err := profile.InstallPublisherIdentity(ctx,
+		return profile.InstallPublisherIdentity(ctx,
 			clientstate.PublisherIdentity{ID: identity.ClientId, PublicDocument: public, SigningKey: private},
-			clientstate.PublisherSelection{Kind: "job", Key: "job:" + job.ID}); err != nil {
-			return err
-		}
-		job.Enabled, job.Revision, job.Status = true, 1, Status{State: JobStarting}
-		*jobs = append(*jobs, job)
-		return nil
+			clientstate.PublisherSelection{Kind: "job", Key: "job:" + job.ID})
 	})
 }
 
-// JobKey separates publisher, connector, and deployment jobs on the same server.
-func JobKey(server, kind, resourceID string) string {
-	if canonical, err := clientstate.CanonicalServer(server); err == nil {
-		server = canonical
-	}
-	digest := sha256.Sum256([]byte(server + "\x00" + kind + "\x00" + resourceID))
-	if kind == "deployment" {
-		kind = "dpl"
-	}
-	return kind + "-" + hex.EncodeToString(digest[:12])
+// jobBinding identifies the slot occupied by a definition, not its credentials.
+// a matching slot can be reused only after verifying the exact authority.
+type jobBinding struct {
+	kind                          Kind
+	server, resourceID, qualifier string
 }
 
-func ServiceJobKey(server, serviceID string) string {
-	return JobKey(server, "service", serviceID)
+func (job Job) binding() jobBinding {
+	switch job.Kind {
+	case KindConnector:
+		return jobBinding{job.Kind, job.Server, job.ServiceID, job.IdentityID}
+	case KindDeployment:
+		return jobBinding{job.Kind, job.Server, job.DeploymentMember.DeploymentId, job.DeploymentInstance}
+	default:
+		return jobBinding{job.Kind, job.Server, job.ServiceID, ""}
+	}
 }
 
-// Remove drops local desired state and its job-scoped signing identity after
-// the caller has stopped and joined the worker.
+type publisherBinding struct{ server, id string }
+
+func (job Job) publisherBinding() publisherBinding {
+	return publisherBinding{job.Server, job.PublisherIdentityID}
+}
+
+func (r *Registry) install(ctx context.Context, job Job, retain func(existing *Job, job Job) error) (Job, error) {
+	err := r.update(ctx, func(jobs *[]Job) error {
+		for i, existing := range *jobs {
+			if existing.binding() != job.binding() {
+				// independently supervised jobs need independent publisher identities.
+				if job.PublisherIdentityID != "" && existing.publisherBinding() == job.publisherBinding() {
+					return ErrJobExists
+				}
+				continue
+			}
+			job = restartDefinition(job, existing.ID, existing.Revision+1)
+			if err := retain(&existing, job); err != nil {
+				return err
+			}
+			(*jobs)[i] = job
+			return nil
+		}
+		id, err := newJobID(*jobs)
+		if err != nil {
+			return err
+		}
+		job = restartDefinition(job, id, 1)
+		if err := retain(nil, job); err != nil {
+			return err
+		}
+		*jobs = append(*jobs, job)
+		return nil
+	})
+	if err != nil {
+		return Job{}, err
+	}
+	return job, nil
+}
+
+func newJobID(jobs []Job) (string, error) {
+	for {
+		id, err := opaqueid.New(opaqueid.JobPrefix)
+		if err != nil {
+			return "", err
+		}
+		if !slices.ContainsFunc(jobs, func(job Job) bool { return job.ID == id }) {
+			return id, nil
+		}
+	}
+}
+
+func restartDefinition(job Job, id string, revision uint64) Job {
+	job.ID, job.Enabled, job.Revision, job.Status = id, true, revision, Status{State: JobStarting}
+	return job
+}
+
+// Remove drops local desired state and its job-scoped signing identity or
+// connector port assignment after the caller has stopped and joined the worker.
 func (r *Registry) Remove(ctx context.Context, id string) error {
 	return r.update(ctx, func(jobs *[]Job) error {
 		for i, job := range *jobs {
@@ -308,6 +375,11 @@ func (r *Registry) Remove(ctx context.Context, id string) error {
 			}
 			if job.Enabled || job.Status.State != JobStopped {
 				return ErrScope
+			}
+			if job.Kind == KindConnector {
+				if err := releaseConnectorPort(ctx, job); err != nil {
+					return err
+				}
 			}
 			if job.Kind == KindDeployment {
 				member, private, profile, err := r.DeploymentIdentity(ctx, job)
@@ -351,6 +423,9 @@ func matches(job Job, identity authorityv1.PublisherEnrollmentResult) bool {
 }
 
 func (r *Registry) signingIdentity(ctx context.Context, job Job) (authorityv1.PublisherEnrollmentResult, ed25519.PrivateKey, *clientstate.Store, error) {
+	if !opaqueid.Valid(job.ID, opaqueid.JobPrefix) {
+		return authorityv1.PublisherEnrollmentResult{}, nil, nil, ErrScope
+	}
 	if err := r.validate(); err != nil {
 		return authorityv1.PublisherEnrollmentResult{}, nil, nil, err
 	}
@@ -401,28 +476,21 @@ func (r *Registry) List(ctx context.Context) (jobs []Job, err error) {
 	return jobs, err
 }
 
-// ResolveJob requires an unambiguous ID or display name across all installed
-// projects in this supervisor. no job changes before this selection succeeds.
+// ResolveJob selects only an exact public job ID in this registry.
 func (r *Registry) ResolveJob(ctx context.Context, selected string) (Job, error) {
+	if !opaqueid.Valid(selected, opaqueid.JobPrefix) {
+		return Job{}, ErrJobNotFound
+	}
 	jobs, err := r.List(ctx)
 	if err != nil {
 		return Job{}, err
 	}
-	var match Job
-	count := 0
 	for _, job := range jobs {
-		if selected == job.ID || selected != "" && selected == job.Name {
-			match = job
-			count++
+		if selected == job.ID {
+			return job, nil
 		}
 	}
-	if count > 1 {
-		return Job{}, ErrJobAmbiguous
-	}
-	if count == 0 {
-		return Job{}, ErrJobNotFound
-	}
-	return match, nil
+	return Job{}, ErrJobNotFound
 }
 
 func (r *Registry) status(ctx context.Context, id string, revision uint64, status Status) error {
@@ -480,12 +548,34 @@ func (r *Registry) load(ctx context.Context) ([]Job, error) {
 		return nil, ErrUnsafeState
 	}
 	seen := map[string]bool{}
+	bindings := map[jobBinding]bool{}
+	publishers := map[publisherBinding]bool{}
 	for i := range jobs {
 		original := jobs[i]
+		if !r.fixedDeployments && !opaqueid.Valid(original.ID, opaqueid.JobPrefix) {
+			if naming.ValidServiceName(original.ID) {
+				return nil, ErrLegacyRegistry
+			}
+			return nil, ErrUnsafeState
+		}
 		if validateJob(&jobs[i]) != nil || jobs[i].Server != original.Server || jobs[i].Target != original.Target || original.Revision == 0 || seen[original.ID] {
 			return nil, ErrUnsafeState
 		}
+		if r.fixedDeployments && (original.Kind != KindDeployment || original.ID != fixedDeploymentID(jobs[i])) {
+			return nil, ErrUnsafeState
+		}
+		binding := jobs[i].binding()
+		if bindings[binding] {
+			return nil, ErrUnsafeState
+		}
+		if publisher := jobs[i].publisherBinding(); publisher.id != "" {
+			if publishers[publisher] {
+				return nil, ErrUnsafeState
+			}
+			publishers[publisher] = true
+		}
 		seen[original.ID] = true
+		bindings[binding] = true
 	}
 	return jobs, nil
 }
@@ -532,6 +622,8 @@ func (r *Registry) WaitStopped(ctx context.Context, id string) error {
 	}
 }
 
+// validateJob checks and normalizes definition fields. the caller verifies whether
+// the public ID must be absent (installation) or present (loading saved state).
 func validateJob(job *Job) error {
 	preferences, err := region.Preferences(job.PreferredRegions)
 	if err != nil || len(preferences) != 0 && job.Kind != KindService {
@@ -544,7 +636,7 @@ func validateJob(job *Job) error {
 	if job.ReadinessPath != "" && (job.Kind != KindService || job.Protocol != config.ProtocolHTTP || job.ReadinessPath != "/" && !targetsyntax.ValidMountPrefix(job.ReadinessPath)) {
 		return ErrScope
 	}
-	if !naming.ValidServiceName(job.ID) || len(job.Name) > 128 || strings.TrimSpace(job.Name) != job.Name || strings.ContainsAny(job.Name, "\x00\r\n") || job.Server == "" {
+	if len(job.Name) > 128 || strings.TrimSpace(job.Name) != job.Name || strings.ContainsAny(job.Name, "\x00\r\n") || job.Server == "" {
 		return ErrScope
 	}
 	if job.Kind != KindDeployment && job.DeploymentMember != nil ||
@@ -568,13 +660,13 @@ func validateJob(job *Job) error {
 		if job.DeploymentMember == nil || job.DeploymentMember.PublisherIdentityId != job.PublisherIdentityID ||
 			job.DeploymentMember.DeploymentName == "local" || !naming.ValidServiceName(job.DeploymentMember.DeploymentName) ||
 			!opaqueid.Valid(job.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(job.DeploymentMember.KeyId, opaqueid.PublisherIdentityKeyPrefix) ||
-			job.DeploymentMember.TeamId == "" || job.DeploymentMember.DeploymentId == "" || job.DeploymentMember.ProjectKey == "" ||
+			job.DeploymentMember.TeamId == "" || !opaqueid.Valid(job.DeploymentMember.DeploymentId, "dpl_") || job.DeploymentMember.ProjectKey == "" ||
 			job.ServiceID != "" || job.Target != "" || job.GrantID != "" || job.Protocol != "" {
 			return ErrScope
 		}
 	case KindConnector:
 		if !opaqueid.Valid(job.ServiceID, opaqueid.ServicePrefix) || job.PublisherIdentityID != "" || job.GrantID != "" ||
-			!opaqueid.Valid(job.IdentityID, opaqueid.IdentityPrefix) || !filepath.IsAbs(job.StateDir) || job.TrustRevision < 1 ||
+			!opaqueid.Valid(job.IdentityID, opaqueid.IdentityPrefix) || !filepath.IsAbs(job.StateDir) || filepath.Clean(job.StateDir) != job.StateDir || job.TrustRevision < 1 ||
 			!job.Protocol.Valid() {
 			return ErrScope
 		}
@@ -611,26 +703,39 @@ func validateJob(job *Job) error {
 
 // InstallConnector stores user desired state only. credentials remain in the
 // signed-in profile, and the worker checks the exact identity at every start.
-func (r *Registry) InstallConnector(ctx context.Context, job Job) error {
-	if !r.user || job.Kind != KindConnector {
-		return ErrScope
+func (r *Registry) InstallConnector(ctx context.Context, job Job) (Job, error) {
+	if !r.user || job.Kind != KindConnector || job.ID != "" {
+		return Job{}, ErrScope
 	}
 	if err := validateJob(&job); err != nil {
-		return err
+		return Job{}, err
 	}
-	return r.update(ctx, func(jobs *[]Job) error {
-		for i, existing := range *jobs {
-			if existing.ID == job.ID {
-				if existing.Kind != KindConnector || existing.Server != job.Server || existing.IdentityID != job.IdentityID || existing.ServiceID != job.ServiceID {
-					return ErrScope
-				}
-				job.Enabled, job.Revision, job.Status = true, existing.Revision+1, Status{State: JobStarting}
-				(*jobs)[i] = job
-				return nil
-			}
+	return r.install(ctx, job, func(existing *Job, job Job) error {
+		if existing != nil && existing.StateDir != job.StateDir {
+			return ErrScope
 		}
-		job.Enabled, job.Revision, job.Status = true, 1, Status{State: JobStarting}
-		*jobs = append(*jobs, job)
 		return nil
 	})
+}
+
+// FindConnector finds the exact saved definition before selecting a listener.
+func (r *Registry) FindConnector(ctx context.Context, server, serviceID, identityID, stateDir string) (Job, bool, error) {
+	server, err := clientstate.CanonicalServer(server)
+	if err != nil || !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) || !opaqueid.Valid(identityID, opaqueid.IdentityPrefix) || !filepath.IsAbs(stateDir) || filepath.Clean(stateDir) != stateDir {
+		return Job{}, false, ErrScope
+	}
+	binding := Job{Kind: KindConnector, Server: server, ServiceID: serviceID, IdentityID: identityID}.binding()
+	jobs, err := r.List(ctx)
+	if err != nil {
+		return Job{}, false, err
+	}
+	for _, job := range jobs {
+		if job.binding() == binding {
+			if job.StateDir != stateDir {
+				return Job{}, false, ErrScope
+			}
+			return job, true, nil
+		}
+	}
+	return Job{}, false, nil
 }

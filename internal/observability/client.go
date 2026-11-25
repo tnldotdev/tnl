@@ -80,12 +80,8 @@ func ClientCommand(ctx context.Context, command string) (context.Context, func(e
 		operation = "client.wait"
 	case "connect available":
 		operation = "client.connect.available"
-	case "connect list":
-		operation = "client.connect.list"
-	case "connect stop <name>":
-		operation = "client.connect.stop"
-	case "connect remove <name>":
-		operation = "client.connect.remove"
+	case "stop <job-id>":
+		operation = "client.job.stop"
 	case "auth status":
 		operation = "client.auth.status"
 	case "auth login", "auth login run":

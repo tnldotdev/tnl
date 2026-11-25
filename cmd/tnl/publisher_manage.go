@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tnldotdev/tnl/internal/client/detached"
+	"github.com/tnldotdev/tnl/internal/client/background"
 
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -536,6 +536,7 @@ func (a *commandApp) newPublisherCommand() *cobra.Command {
 	a.leaf(cPublisherServe, &f.Publisher.Serve, func(call commandCall) error {
 		return a.servePublisher(call)
 	})
+	registerBackgroundFlag(cPublisherServe)
 	cPublisher.AddCommand(cPublisherServe)
 	cPublisherCurrent := &cobra.Command{Use: "current", Short: "Show the selected local or file-backed publisher without exposing its key."}
 	a.leaf(cPublisherCurrent, &f.Publisher.Current, func(call commandCall) error {
@@ -607,29 +608,20 @@ func (a *commandApp) servePublisher(call commandCall) error {
 			return err
 		}
 	}
-	if serve.Detach {
+	if serve.Background {
 		if serve.EnrollmentKey == "-" {
-			return publisherCLIError("--detach cannot read an enrollment key from stdin; enroll this instance in the foreground first")
+			return publisherCLIError("--bg cannot read an enrollment key from stdin; enroll this instance in the foreground first")
 		}
 		// the owning child consumes the injected secret before loading project
 		// configuration; clear the launching process's copy after handoff too.
 		defer os.Unsetenv("TNL_DEPLOYMENT_IDENTITY")
-		return detachPublish(ctx, a.argv, serve.StateDir, a.out, nil)
+		return a.launchBackground(call, background.KindPublisher, serve.StateDir, serve.Output == statusOutputJSON)
+	}
+	if serve.Output == statusOutputJSON {
+		return &commandGuidance{error: publisherCLIError("foreground publisher output"), message: "Use --bg for a JSON publisher receipt."}
 	}
 	if err := prepareDeploymentIdentity(serve); err != nil {
 		return err
-	}
-	if serve.DetachedChild != "" {
-		root, err := clientStateRoot(serve.StateDir)
-		if err != nil {
-			return err
-		}
-		var cleanup func()
-		ctx, cleanup, err = detached.Serve(ctx, root, serve.DetachedChild)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
 	}
 	project, err := a.loadCommandProject(ctx, call.command)
 	if err != nil {

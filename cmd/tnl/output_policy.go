@@ -37,7 +37,11 @@ func environmentOutput(cmd *cobra.Command, value func(string) string, passthroug
 	}
 	switch selectedPath(cmd) {
 	case "publish":
-		if boolFlag("detach") || boolFlag("install") || value("detached-child") != "" {
+		if boolFlag("install") {
+			return "", nil
+		}
+	case "publisher serve":
+		if !boolFlag("bg") {
 			return "", nil
 		}
 	case "connect start":
@@ -57,6 +61,12 @@ func environmentOutput(cmd *cobra.Command, value func(string) string, passthroug
 	case "human":
 		return "human", nil
 	case "machine":
+		if selectedPath(cmd) == "publish" {
+			if boolFlag("bg") {
+				return "json", nil
+			}
+			return "ndjson", nil
+		}
 		for _, choice := range choices {
 			if isMachineFormat(choice) {
 				return choice, nil
@@ -170,7 +180,9 @@ func readOutputInput(flags *pflag.FlagSet, args []string) outputInput {
 			}
 		}
 		switch name {
-		case "output", "stdio", "client", "detach", "detached-child", "install":
+		case "background":
+			input.flags["bg"] = value
+		case "output", "stdio", "client", "bg", "install":
 			input.flags[name] = value
 		}
 	}

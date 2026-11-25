@@ -96,6 +96,9 @@ func PublishNamed(ctx context.Context, project clientproject.Project, name, stat
 			}
 			// a restarted local publisher may be unavailable until its new
 			// scoped endpoint is ready.
+			if err := output.observeNamed(nil); err != nil {
+				return err
+			}
 			if ownerRecoveryDeadline.IsZero() {
 				ownerRecoveryDeadline = time.Now().Add(45 * time.Second)
 			}
@@ -123,11 +126,13 @@ func PublishNamed(ctx context.Context, project clientproject.Project, name, stat
 		status, finishStatus := observability.ClientOperation(ctx, "client.publish.status")
 		statusErr := publisherprotocol.Call(status, endpoint, "GET", "/v1/status", nil, &snapshot)
 		finishStatus(statusErr)
+		var observed *publisherapp.Service
 		if statusErr == nil {
 			for _, service := range snapshot.Services {
 				if service.Name != name || service.RegistrationID != registration.RegistrationID {
 					continue
 				}
+				observed = &service
 				if service.PublicURL == "" && service.Target != "" && lastServiceTarget != service.Target {
 					if err := output.starting("", service.Target); err != nil {
 						return err
@@ -161,6 +166,9 @@ func PublishNamed(ctx context.Context, project clientproject.Project, name, stat
 					return failure.Wrap("publish service", reason, errors.New("service publication failed"))
 				}
 			}
+		}
+		if err := output.observeNamed(observed); err != nil {
+			return err
 		}
 		select {
 		case <-ctx.Done():

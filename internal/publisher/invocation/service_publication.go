@@ -341,7 +341,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	if err := publisheridentity.MatchServiceDeclaration(approved, string(protocol), trust); err != nil {
 		return failure.Wrap("match service declaration", failure.ServerConflict, errors.Join(err, errors.New("saved service protocol or TLS trust differs from the local declaration")))
 	}
-	job := installedjobs.Job{TelemetryDisabled: flags.TelemetryDisabled, Kind: installedjobs.KindService, ID: installedjobs.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
+	job := installedjobs.Job{TelemetryDisabled: flags.TelemetryDisabled, Kind: installedjobs.KindService, Name: name, Server: server,
 		ServiceID: *identity.ServiceId, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Target: target, Protocol: config.ProtocolName(protocol), Trust: trust, ServerCAPEM: serverCAPEM,
 		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool, Endpoint: approved.Endpoint,
 		StreamCapacity: flags.StreamCapacity, Traffic: flags.Traffic}
@@ -360,7 +360,8 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		if flags.ServiceName != "" {
 			job.Name = flags.ServiceName
 		}
-		if err := registry.Install(ctx, job, identity, signing); err != nil {
+		job, err = registry.Install(ctx, job, identity, signing)
+		if err != nil {
 			return err
 		}
 		jobs, err := registry.List(ctx)

@@ -122,6 +122,7 @@ internal/
   connector/           visitor-side service connections
   installed/           installed jobs and OS supervision
   client/              shared auth, API clients, state, and projects
+    background/       local jobs that outlive a terminal without a supervisor
   config/              project configuration types and validation
   transport/           connection and multiplexing mechanics
   policy/, security/   shared policy and security code

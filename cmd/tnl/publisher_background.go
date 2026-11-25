@@ -15,10 +15,9 @@ import (
 type backgroundPublishFlags struct {
 	Foreground     bool   `name:"foreground" help:"Run in this terminal (the default)."`
 	Install        bool   `name:"install" help:"Install a publisher supervisor and keep this saved publication running."`
-	Detach         bool   `name:"detach" help:"Run independently of the terminal without automatic restart."`
-	DetachedChild  string `name:"detached-child" hidden:"" help:"Internal detached publication ID."`
+	Background     bool   `name:"bg" help:"Run independently of the terminal without automatic restart."`
 	System         bool   `name:"system" help:"Use the unattended system supervisor with --install."`
-	ServiceName    string `name:"service-name" help:"Name for service start, stop, and remove; defaults to the configured service."`
+	ServiceName    string `name:"service-name" help:"Display name for the installed job; defaults to the configured service."`
 	SystemStateDir string `name:"system-state-dir" type:"path" help:"Private installed supervisor state directory."`
 	ServerCAFile   string `name:"server-ca-file" type:"path" help:"Additional PEM certificate authorities for this job's control server."`
 }

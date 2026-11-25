@@ -5,9 +5,11 @@ import (
 	"errors"
 	"os"
 
+	"github.com/tnldotdev/tnl/internal/client/background"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -50,5 +52,15 @@ func namedInvocation(flags publishCommand) (resolvedNamedInvocation, error) {
 }
 
 func runNamedPublish(ctx context.Context, selected resolvedNamedInvocation, stateDir string, output *publishOutput) error {
-	return invocation.PublishNamed(ctx, selected.project.Project, selected.service, stateDir, selected.telemetryDisabled, local.EnsureOwner, &invocation.Presentation{Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped})
+	return invocation.PublishNamed(ctx, selected.project.Project, selected.service, stateDir, selected.telemetryDisabled, local.EnsureOwner, &invocation.Presentation{
+		Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped,
+		NamedObservation: func(service *publisherapp.Service) error {
+			if service == nil || !service.Routable {
+				background.Reconnecting(ctx)
+				return nil
+			}
+			return background.Ready(ctx, background.Readiness{Address: service.PublicURL, Target: service.Target,
+				TunnelID: service.TunnelID, ConnectCommand: output.connectCommand})
+		},
+	})
 }

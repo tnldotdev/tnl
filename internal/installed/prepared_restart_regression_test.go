@@ -138,7 +138,7 @@ func TestInstalledReinstallReleasesPreparedRunBeforeReplacement(t *testing.T) {
 		},
 	}
 	access := &restartPreparationAuthority{jobAuthority: authority, control: control}
-	if err := registry.Install(t.Context(), job, identity, private); err != nil {
+	if _, err := registry.Install(t.Context(), job, identity, private); err != nil {
 		t.Fatal(err)
 	}
 	retrying := make(chan struct{}, 1)
@@ -179,7 +179,7 @@ func TestInstalledReinstallReleasesPreparedRunBeforeReplacement(t *testing.T) {
 	}
 	// this is the desired-state write performed by a retried installation.
 	// the supervisor must join that revision before starting its replacement.
-	if err := registry.Install(t.Context(), job, identity, private); err != nil {
+	if _, err := registry.Install(t.Context(), job, identity, private); err != nil {
 		t.Fatal(err)
 	}
 	conflict := false

@@ -24,11 +24,11 @@ func TestTelemetryInstallationPreservesInstallerChoiceForEveryJobKind(t *testing
 				}
 				switch kind {
 				case KindDeployment:
-					err = registry.InstallDeployment(ctx, job, *job.DeploymentMember, key)
+					_, err = registry.InstallDeployment(ctx, job, *job.DeploymentMember, key)
 				case KindConnector:
-					err = registry.InstallConnector(ctx, job)
+					_, err = registry.InstallConnector(ctx, job)
 				default:
-					err = registry.Install(ctx, job, identity, key)
+					_, err = registry.Install(ctx, job, identity, key)
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -62,10 +62,9 @@ func TestTelemetryFixedDeploymentsCaptureInvocationOptOut(t *testing.T) {
 	}
 	defer registry.Close()
 	job, _, key := kindFixture(t, KindDeployment)
-	job.ID = JobKey(job.Server, "deployment", job.DeploymentMember.DeploymentId+":"+job.DeploymentInstance)
 	ctx := t.Context()
 	job.TelemetryDisabled = true
-	if err := registry.ReplaceDeployments(ctx, []DeploymentInstall{{Job: job, Private: key}}); err != nil {
+	if _, err := registry.ReplaceDeployments(ctx, []DeploymentInstall{{Job: job, Private: key}}); err != nil {
 		t.Fatal(err)
 	}
 	jobs, err := registry.List(t.Context())

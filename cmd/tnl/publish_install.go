@@ -59,7 +59,7 @@ func installationPresentation(output, diagnostics io.Writer) setup.Presentation 
 	return setup.Presentation{Input: os.Stdin, Output: output, Diagnostics: diagnostics, Installing: func() error {
 		return writeResult(diagnostics, clioutput.Text("sudo will ask for permission to install the system publisher."))
 	}, Jobs: func(jobs []installedjobs.Job, selected string) error {
-		return renderSystemJobs(output, "tnl publish", jobs, selected)
+		return writeInstalledPublicationReceipt(output, jobs, selected)
 	}}
 }
 
@@ -79,6 +79,6 @@ func runPublicationRegister(ctx context.Context, flags serviceRegisterCommand, i
 		return json.NewEncoder(output).Encode(result)
 	}
 	return setup.RegisterInput(ctx, flags.options, input, executor, func(jobs []installedjobs.Job, selected string) error {
-		return renderSystemJobs(output, "tnl publish", jobs, selected)
+		return writeInstalledPublicationReceipt(output, jobs, selected)
 	})
 }

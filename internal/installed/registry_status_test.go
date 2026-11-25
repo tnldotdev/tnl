@@ -9,7 +9,8 @@ import (
 func TestJobStateRejectsUnknownObservationAndPersistedState(t *testing.T) {
 	r := testRegistry(t)
 	job, identity, private := fixture(t, "status")
-	if err := r.Install(t.Context(), job, identity, private); err != nil {
+	job, err := r.Install(t.Context(), job, identity, private)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := r.status(t.Context(), job.ID, 1, Status{State: JobState("unrecognized")}); !errors.Is(err, ErrScope) {

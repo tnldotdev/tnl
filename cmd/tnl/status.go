@@ -35,22 +35,25 @@ const (
 )
 
 type statusCommand struct {
-	Selector      string           `arg:"" name:"name|hostname|service-id|url|host:port" optional:"" help:"Show only records for this service."`
-	Service       string           `name:"service" help:"Show only records for this service."`
-	Deployment    string           `name:"deployment" help:"Read this configured deployment's applied targets and publishers; defaults to local."`
-	Output        statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
-	LastKnown     bool             `name:"last-known" help:"Read recorded local evidence without contacting the server."`
-	ServerOnly    bool             `name:"server-only" help:"Show current server inventory without local readiness observations."`
-	ServerURL     string           `name:"server" env:"TNL_SERVER" help:"Control URL to read when looking up server inventory."`
-	AccessToken   string           `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token for server status; defaults to saved session."`
-	StateDir      string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	All           bool             `name:"all" help:"Show tunnels from every local project."`
-	Project       string
-	Configuration projectConfiguration
-	configPath    string
-	noConfig      bool
-	configArgs    string
-	diagnostics   io.Writer
+	Selector       string           `arg:"" name:"name|hostname|service-id|url|host:port|job-id" optional:"" help:"A service selector, or an exact job ID from tnl status --bg."`
+	Background     bool             `name:"bg" help:"List background and installed jobs."`
+	System         bool             `name:"system" help:"Select the installed system supervisor instead of user jobs."`
+	SystemStateDir string           `name:"system-state-dir" type:"path" help:"Private supervisor state directory for job status."`
+	Service        string           `name:"service" help:"Show only records for this service."`
+	Deployment     string           `name:"deployment" help:"Read this configured deployment's applied targets and publishers; defaults to local."`
+	Output         statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	LastKnown      bool             `name:"last-known" help:"Read recorded local evidence without contacting the server."`
+	ServerOnly     bool             `name:"server-only" help:"Show current server inventory without local readiness observations."`
+	ServerURL      string           `name:"server" env:"TNL_SERVER" help:"Control URL to read when looking up server inventory."`
+	AccessToken    string           `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token for server status; defaults to saved session."`
+	StateDir       string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	All            bool             `name:"all" help:"Show tunnels from every local project."`
+	Project        string
+	Configuration  projectConfiguration
+	configPath     string
+	noConfig       bool
+	configArgs     string
+	diagnostics    io.Writer
 }
 
 type statusLocal struct {
@@ -564,12 +567,17 @@ func currentProjectRoot(ctx context.Context) (string, error) {
 
 func (a *commandApp) newStatusCommand() *cobra.Command {
 	f := a.flags
-	const summary = "Show the status of services in this project."
+	const summary = "Show service status or local jobs."
 	cStatus := &cobra.Command{
 		Use: "status", Short: summary, GroupID: "start",
-		Long: summary + "\n\nRead recorded local state and, when signed in, current server state. Use tnl wait to check readiness now or tnl watch to follow changes.",
+		Long: summary + "\n\nRead recorded local state and, when signed in, current server state. Use tnl wait to check readiness now or tnl watch to follow changes.\n\nUse --bg to list jobs, or pass an exact job ID to inspect one.",
 	}
 	a.leaf(cStatus, &f.Status, func(call commandCall) error {
+		if f.Status.Background || validJobID(f.Status.Selector) {
+			id := f.Status.Selector
+			return runJobStatus(call.ctx, jobStatusOptions{JobID: id, StateDir: f.Status.StateDir, System: f.Status.System,
+				SystemStateDir: f.Status.SystemStateDir, Output: f.Status.Output}, a.out)
+		}
 		f.Status.diagnostics = a.errOut
 		f.Status.noConfig, f.Status.configPath = f.NoConfig, f.ConfigPath
 		if f.Status.configPath == "" {
@@ -593,10 +601,23 @@ func (a *commandApp) newStatusCommand() *cobra.Command {
 		}
 		return runStatus(call.ctx, f.Status, a.out)
 	})
+	registerBackgroundFlag(cStatus)
 	parse := cStatus.Args
 	cStatus.Args = func(cmd *cobra.Command, args []string) error {
 		if err := parse(cmd, args); err != nil {
 			return err
+		}
+		s := &f.Status
+		if s.Background || validJobID(s.Selector) {
+			if (s.Background && len(args) != 0) || s.All || cmd.Flags().Changed("service") ||
+				cmd.Flags().Changed("deployment") || cmd.Flags().Changed("server") || cmd.Flags().Changed("access-token") ||
+				s.LastKnown || s.ServerOnly {
+				return invalidCommandInput(cmd, errors.New("conflicting job status options"), "Use --bg to list jobs or pass one job ID. Do not combine these with service filters.")
+			}
+			return nil
+		}
+		if s.System || s.SystemStateDir != "" || strings.HasPrefix(s.Selector, "job_") {
+			return requireJobID()
 		}
 		if cmd.Flags().Changed("service") && len(args) != 0 {
 			return invalidCommandInput(cmd, errors.New("multiple status selectors"), "Use either a positional service or --service, not both.")

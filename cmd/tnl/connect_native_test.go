@@ -6,13 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/client/background"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connector"
 	"github.com/tnldotdev/tnl/internal/connector/kubeconfig"
 )
 
 func TestConnectNamesAndRemovedChoices(t *testing.T) {
-	for _, name := range []string{"orders", "inventory", "profile", "setup", "shell"} {
+	for _, name := range []string{"orders", "inventory", "profile", "setup", "shell", "list", "stop", "remove"} {
 		var flags cli
 		parser := commandForTest(&flags, io.Discard)
 		parsed, err := parser([]string{"connect", name, "--output=json"})
@@ -23,7 +24,7 @@ func TestConnectNamesAndRemovedChoices(t *testing.T) {
 	for _, args := range [][]string{
 		{"connect", "profile", "orders"}, {"connect", "setup", "orders"}, {"connect", "orders", "--local"},
 		{"connect", "orders", "--client-certificate"}, {"connect", "orders", "--mtls"},
-		{"connect", "stop", "--stdio"}, {"connect", "start", "--stdio"},
+		{"connect", "available", "--stdio"}, {"connect", "start", "--stdio"},
 	} {
 		var flags cli
 		parser := commandForTest(&flags, io.Discard)
@@ -74,21 +75,28 @@ func TestInstalledConnectorKeepsLongCommandAndRunsInBackground(t *testing.T) {
 	}
 }
 
-func TestDetachedConnectionPrintsCopyableCommands(t *testing.T) {
-	var out bytes.Buffer
+func TestBackgroundConnectionPrintsCopyableCommands(t *testing.T) {
+	var out, diagnostics bytes.Buffer
 	dir := "/path with a space/client state"
-	profile := connector.Profile{DetachedID: "detached-123", Command: []string{"psql", "host=db.example sslrootcert=/path with spaces/team's cert.pem"}}
-	if err := writeNativeConnection(&out, profile, statusOutputHuman, "127.0.0.1:15432", dir); err != nil {
+	const id = "job_0123456789abcdefghijkl"
+	job := background.Entry{JobID: id, Kind: background.KindConnect, Readiness: background.Readiness{
+		Address: "127.0.0.1:15432",
+		Profile: []byte(`{"schema":1,"protocol":"postgres","connector_required":true,"command":["psql","host=db.example sslrootcert=/path with spaces/team's cert.pem"]}`),
+	}}
+	if err := writeBackgroundReceipt(&out, &diagnostics, job, dir, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, line := range []string{
 		`psql 'host=db.example sslrootcert=/path with spaces/team'\''s cert.pem'`,
-		`Listening on 127.0.0.1:15432. Running detached.`,
-		`tnl detached stop detached-123 --state-dir='/path with a space/client state'`,
+		`Listening on 127.0.0.1:15432. Running in the background.`,
 	} {
 		if !strings.Contains("\n"+out.String(), "\n"+line+"\n") {
 			t.Fatalf("missing command %q:\n%s", line, &out)
 		}
+	}
+	stop := `tnl stop ` + id + ` --state-dir '/path with a space/client state'`
+	if strings.Contains(out.String(), stop) || !strings.Contains(diagnostics.String(), stop+"\n") {
+		t.Fatalf("stop command should be on stderr only:\nstdout: %s\nstderr: %s", &out, &diagnostics)
 	}
 }
 

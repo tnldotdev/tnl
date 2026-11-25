@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"net/http"
+	"slices"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	publisherdeployment "github.com/tnldotdev/tnl/internal/publisher/deployment"
@@ -35,39 +38,67 @@ type DeploymentInstall struct {
 func (DeploymentInstall) String() string   { return "deployment installation" }
 func (DeploymentInstall) GoString() string { return "deployment installation" }
 
-// ReplaceDeployments installs the fixed startup list as one desired-state snapshot.
-// it is available only to an identity-only standalone registry. an omitted job
-// cannot accidentally resume from a previous invocation's list.
-func (r *Registry) ReplaceDeployments(ctx context.Context, inputs []DeploymentInstall) error {
-	if !r.deployments || r.user || len(inputs) == 0 {
-		return ErrScope
+// fixedDeploymentID preserves the private worker key used by fixed-list
+// deployment runtimes. it is not a public job handle.
+func fixedDeploymentID(job Job) string {
+	digest := sha256.Sum256([]byte(job.Server + "\x00deployment\x00" + job.DeploymentMember.DeploymentId + ":" + job.DeploymentInstance))
+	return "dpl-" + hex.EncodeToString(digest[:12])
+}
+
+// ReplaceDeployments installs the fixed startup list as one desired-state snapshot
+// and returns the saved jobs in input order. an omitted job cannot resume from
+// a previous invocation's list. only an identity-only standalone registry may use it.
+func (r *Registry) ReplaceDeployments(ctx context.Context, inputs []DeploymentInstall) ([]Job, error) {
+	if !r.fixedDeployments || len(inputs) == 0 {
+		return nil, ErrScope
 	}
 	jobs := make([]Job, 0, len(inputs))
-	seen, replicas := map[string]bool{}, map[string]bool{}
+	publishers, replicas := map[publisherBinding]bool{}, map[jobBinding]bool{}
 	for _, input := range inputs {
 		job := input.Job
-		if validateJob(&job) != nil || job.Kind != KindDeployment || len(input.Private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(input.Private.Seed()), input.Private) {
-			return ErrScope
+		if !validDeploymentInstall(job, input.Private) || validateJob(&job) != nil {
+			return nil, ErrScope
 		}
-		owner := JobKey(job.Server, "publisher", job.PublisherIdentityID)
-		replica := JobKey(job.Server, "deployment", job.DeploymentMember.DeploymentId+":"+job.DeploymentInstance)
-		if seen[owner] || replicas[replica] || job.ID != replica {
-			return ErrJobExists
+		owner, replica := job.publisherBinding(), job.binding()
+		if publishers[owner] || replicas[replica] {
+			return nil, ErrJobExists
 		}
-		seen[owner], replicas[replica] = true, true
-		job.Enabled, job.Revision, job.Status = true, 1, Status{State: JobStarting}
+		publishers[owner], replicas[replica] = true, true
 		jobs = append(jobs, job)
 	}
-	return r.update(ctx, func(existing *[]Job) error {
+	err := r.update(ctx, func(existing *[]Job) error {
 		// Engine.Initialize holds exclusive supervisor ownership before this
-		// fixed-list replacement. omitted replicas leave active name discovery;
-		// their durable signing authority is retained behind immutable pins.
+		// fixed-list replacement. validate this list before retiring any replica.
+		oldReplicas := make(map[jobBinding]Job, len(*existing))
+		oldPublishers := make(map[publisherBinding]jobBinding, len(*existing))
+		usedIDs := make(map[string]jobBinding, len(*existing)+len(jobs))
 		for _, old := range *existing {
-			if seen[JobKey(old.Server, "publisher", old.PublisherIdentityID)] {
-				continue
+			binding := old.binding()
+			oldReplicas[binding], oldPublishers[old.publisherBinding()] = old, binding
+			usedIDs[old.ID] = binding
+		}
+		for i, job := range jobs {
+			binding := job.binding()
+			if prior, found := oldPublishers[job.publisherBinding()]; found && prior != binding {
+				return ErrJobExists
 			}
-			if old.Kind != KindDeployment {
-				return ErrScope
+			id, revision := fixedDeploymentID(job), uint64(1)
+			if prior, found := usedIDs[id]; found && prior != binding {
+				return ErrJobExists
+			}
+			if old, found := oldReplicas[binding]; found {
+				if err := r.verifyDeploymentIdentity(ctx, old, *job.DeploymentMember, inputs[i].Private); err != nil {
+					return err
+				}
+				revision = old.Revision + 1
+			}
+			jobs[i] = restartDefinition(job, id, revision)
+			usedIDs[id] = binding
+		}
+		// omitted replicas leave active name discovery, but keep their pins.
+		for _, old := range *existing {
+			if replicas[old.binding()] {
+				continue
 			}
 			member, private, profile, err := r.DeploymentIdentity(ctx, old)
 			if err != nil {
@@ -86,49 +117,48 @@ func (r *Registry) ReplaceDeployments(ctx context.Context, inputs []DeploymentIn
 				return err
 			}
 		}
-		*existing = jobs
+		*existing = slices.Clone(jobs)
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return jobs, nil
 }
 
 // InstallDeployment captures the task's own signing identity. no person session or
 // project checkout is required by the supervisor after installation.
-func (r *Registry) InstallDeployment(ctx context.Context, job Job, member controlv1.DeploymentPublisherIdentity, private ed25519.PrivateKey) error {
-	if !r.deployments || job.Kind != KindDeployment || job.DeploymentMember == nil || *job.DeploymentMember != member || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private) {
-		return ErrScope
+func (r *Registry) InstallDeployment(ctx context.Context, job Job, member controlv1.DeploymentPublisherIdentity, private ed25519.PrivateKey) (Job, error) {
+	if !r.user || !validDeploymentInstall(job, private) || *job.DeploymentMember != member {
+		return Job{}, ErrScope
 	}
 	if err := validateJob(&job); err != nil {
-		return err
+		return Job{}, err
 	}
-	return r.update(ctx, func(jobs *[]Job) error {
-		for i, existing := range *jobs {
-			if existing.ID != job.ID {
-				if existing.Server == job.Server && (existing.PublisherIdentityID == job.PublisherIdentityID || existing.DeploymentMember != nil && existing.DeploymentMember.DeploymentId == member.DeploymentId && existing.DeploymentInstance == job.DeploymentInstance) {
-					return ErrJobExists
-				}
-				continue
-			}
-			if existing.DeploymentMember == nil || !credentialfile.SameDeploymentIdentity(*existing.DeploymentMember, member) || existing.Server != job.Server || existing.DeploymentInstance != job.DeploymentInstance {
-				return ErrScope
-			}
-			_, key, _, err := r.DeploymentIdentity(ctx, existing)
-			if err != nil || !bytes.Equal(key, private) {
-				return ErrScope
-			}
-			if err := r.retainDeployment(ctx, job, member, private); err != nil {
+	return r.install(ctx, job, func(existing *Job, job Job) error {
+		if existing != nil {
+			if err := r.verifyDeploymentIdentity(ctx, *existing, member, private); err != nil {
 				return err
 			}
-			job.Enabled, job.Revision, job.Status = true, existing.Revision+1, Status{State: JobStarting}
-			(*jobs)[i] = job
-			return nil
 		}
-		if err := r.retainDeployment(ctx, job, member, private); err != nil {
-			return err
-		}
-		job.Enabled, job.Revision, job.Status = true, 1, Status{State: JobStarting}
-		*jobs = append(*jobs, job)
-		return nil
+		return r.retainDeployment(ctx, job, member, private)
 	})
+}
+
+func validDeploymentInstall(job Job, private ed25519.PrivateKey) bool {
+	return job.ID == "" && job.Kind == KindDeployment && job.DeploymentMember != nil &&
+		len(private) == ed25519.PrivateKeySize && bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private)
+}
+
+func (r *Registry) verifyDeploymentIdentity(ctx context.Context, existing Job, member controlv1.DeploymentPublisherIdentity, private ed25519.PrivateKey) error {
+	if !credentialfile.SameDeploymentIdentity(*existing.DeploymentMember, member) {
+		return ErrScope
+	}
+	_, key, _, err := r.DeploymentIdentity(ctx, existing)
+	if err != nil || !bytes.Equal(key, private) {
+		return errors.Join(ErrScope, err)
+	}
+	return nil
 }
 
 func (r *Registry) deploymentProfile(ctx context.Context, job Job) (*clientstate.Store, error) {
