@@ -51,7 +51,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
   const script = await readFile(new URL("./toolbar.js", import.meta.url));
   phase("read committed font");
   const font = await readFile(
-    new URL("../../browserfonts/fira-code-latin-wght-normal.woff2", import.meta.url),
+    new URL("../../browserfonts/jetbrains-mono-latin-wght-normal.woff2", import.meta.url),
   );
   let id = "fb_0123456789abcdefghijkl";
   let messageCount = 12;
@@ -94,7 +94,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
       );
       return;
     }
-    if (url.pathname === "/__tnl/feedback/fira-code.woff2") {
+    if (url.pathname === "/__tnl/feedback/jetbrains-mono.woff2") {
       response.setHeader("Content-Type", "font/woff2");
       response.end(font);
       return;
@@ -235,7 +235,7 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
         page.evaluate(() =>
           Array.from(document.fonts).some(
             (font) =>
-              font.family.replace(/["']/g, "") === "tnl Fira Code" && font.status === "loaded",
+              font.family.replace(/["']/g, "") === "tnl JetBrains Mono" && font.status === "loaded",
           ),
         ),
       )

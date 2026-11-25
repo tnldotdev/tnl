@@ -167,6 +167,11 @@ func TestFeedbackHTMLInjectionAndPerBrowserFailuresKeepAppCookies(t *testing.T) 
 		!strings.Contains(asset.Header.Get("Cache-Control"), "immutable") || len(body) != len(runtime.asset) {
 		t.Fatal("versioned toolbar asset changed", asset.StatusCode, asset.Header)
 	}
+	font, body := feedbackVisit(t, client, http.MethodGet, "/__tnl/feedback/jetbrains-mono.woff2", cookies)
+	if font.StatusCode != http.StatusOK || font.Header.Get("Content-Type") != "font/woff2" ||
+		len(body) < 4 || string(body[:4]) != "wOF2" {
+		t.Fatal("toolbar font not served", font.StatusCode, font.Header)
+	}
 }
 
 func TestFeedbackResolveAndReopenUsePreviewAccess(t *testing.T) {

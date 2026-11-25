@@ -68,7 +68,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   --rule: #b8b8b8;
   --subtle: #f5f5f5;
   font:
-    13px/1.7 "tnl Fira Code",
+    13px/1.7 "tnl JetBrains Mono",
     ui-monospace,
     SFMono-Regular,
     Menlo,
@@ -348,4 +348,4 @@ blockquote {
   max-height: 96px;
   overflow: hidden;
 }
-`;if(!document.querySelector("[data-tnl-feedback]")){let e=document.createElement("div");e.setAttribute("data-tnl-feedback","");let t=e.attachShadow({mode:"open"});"FontFace"in window&&new FontFace("tnl Fira Code","url('/__tnl/feedback/fira-code.woff2')",{weight:"300 700"}).load().then(i=>{document.fonts.add(i)}).catch(()=>{});let r=document.createElement("style");r.nonce=document.querySelector('script[src^="/__tnl/feedback/toolbar."]')?.nonce??"",r.textContent=T$;let o=document.createElement("div");t.append(r,o),document.documentElement.append(e),uu(_(j$,{api:Cy(),document,host:e}),o)}})();
+`;if(!document.querySelector("[data-tnl-feedback]")){let e=document.createElement("div");e.setAttribute("data-tnl-feedback","");let t=e.attachShadow({mode:"open"});"FontFace"in window&&new FontFace("tnl JetBrains Mono","url('/__tnl/feedback/jetbrains-mono.woff2')",{weight:"100 800"}).load().then(i=>{document.fonts.add(i)}).catch(()=>{});let r=document.createElement("style");r.nonce=document.querySelector('script[src^="/__tnl/feedback/toolbar."]')?.nonce??"",r.textContent=T$;let o=document.createElement("div");t.append(r,o),document.documentElement.append(e),uu(_(j$,{api:Cy(),document,host:e}),o)}})();
