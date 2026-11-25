@@ -43,7 +43,28 @@ func shellWord(word string) string {
 	if word != "" && strings.Trim(word, safe) == "" {
 		return word
 	}
-	return "'" + strings.ReplaceAll(word, "'", "'\\''") + "'"
+	if strings.IndexFunc(word, func(r rune) bool { return r < ' ' || r > '~' || r == '\\' }) == -1 {
+		return "'" + strings.ReplaceAll(word, "'", "'\\''") + "'"
+	}
+	// printf reconstructs bytes that the terminal renderer must escape. keep
+	// the substitution quoted so the shell passes exactly one argument.
+	body := strings.TrimRight(word, "\n")
+	var quoted strings.Builder
+	quoted.WriteString(`"$(printf '%b' '`)
+	for i := range len(body) {
+		b := body[i]
+		if b >= ' ' && b <= '~' && b != '\'' && b != '\\' {
+			quoted.WriteByte(b)
+		} else {
+			fmt.Fprintf(&quoted, `\0%03o`, b)
+		}
+	}
+	quoted.WriteString(`')"`)
+	// command substitution strips trailing newlines. quote those separately.
+	if n := len(word) - len(body); n != 0 {
+		quoted.WriteString("$'" + strings.Repeat(`\n`, n) + "'")
+	}
+	return quoted.String()
 }
 
 func countState(count int, singular, plural string) string {

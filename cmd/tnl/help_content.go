@@ -87,7 +87,7 @@ var clientHelpExamples = examplePages([]clientExample{
 	{"auth credential, auth credential create", "Allow migrations to connect to orders in one deployment for an hour.", `auth credential create migrations --connect orders --deployment-id "$DEPLOYMENT_ID" --expires-in 1h --idempotency-key "$REQUEST_ID"`},
 
 	{"status", "See tunnels for the current project.", "status"},
-	{"status", "Show only the app service.", "status --service app"},
+	{"status", "See the app's readiness, URL, and last error.", "status --service app"},
 	{"status", "Read the saved local state for every project.", "status --scope local --all"},
 	{"status", "Read the server's current deployment state as JSON.", "status --scope server --deployment production --output json"},
 	{"wait", "Wait up to 30 seconds for the app service.", "wait --service app --timeout 30s"},

@@ -167,7 +167,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		}
 		selectedTeam = services.teamID
 		if services.neutral || services.previewResume {
-			native, saved, plan, err = prepareOpaqueService(ctx, services, flags, policy, plan)
+			native, saved, plan, err = prepareOpaqueService(ctx, services, flags, policy, plan, output)
 			if saved.Id != "" && saved.Ephemeral && services.neutral {
 				cleanup = func() error {
 					finish, cancel := context.WithDeadline(context.Background(), shutdownDeadline())
@@ -181,11 +181,6 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 			}
 			if err != nil {
 				return err
-			}
-			if services.neutral && !flags.Ephemeral && output != nil && output.Resume != nil {
-				if err := output.Resume("https://"+saved.Endpoint.Hostname, selectedTeam, server); err != nil {
-					return err
-				}
 			}
 		} else if flags.Ephemeral {
 			native, _, err = publisheridentity.EnsureNamespace(ctx, profile, authenticated.Control, authenticated.Authority, services.teamID, services.domainID, services.namespace)

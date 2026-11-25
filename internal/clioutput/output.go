@@ -206,22 +206,19 @@ func (b fieldBlock) render(width int) []row {
 	for _, field := range b {
 		label := sanitize(field.Label)
 		value := sanitize(field.Value)
-		if labelWidth+2 >= width || !field.Prose && labelWidth+2+len(value) > width {
-			result = append(result, row{text: label})
-			if field.Prose {
-				result = append(result, textBlock(field.Value).render(width)...)
-			} else {
-				result = append(result, row{text: value})
-			}
-			continue
-		}
-		valueWidth := width
 		prefix := ""
 		if labelWidth > 0 {
 			prefix = label + strings.Repeat(" ", labelWidth-len(label)) + "  "
-			valueWidth -= len(prefix)
 		}
-		lines := wrap(field.Value, valueWidth)
+		if !field.Prose {
+			result = append(result, row{text: prefix + value})
+			continue
+		}
+		if len(prefix) >= width {
+			result = append(result, row{text: label})
+			prefix = ""
+		}
+		lines := wrap(field.Value, width-len(prefix))
 		for index, line := range lines {
 			if index == 0 {
 				result = append(result, row{text: prefix + line})

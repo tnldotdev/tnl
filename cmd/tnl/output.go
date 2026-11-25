@@ -205,7 +205,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			}
 			blocks = append(blocks, clioutput.Text(footer))
 			if o.resumeCommand != "" {
-				blocks = append(blocks, clioutput.Text("Publish again at the same address:"), clioutput.Literal(o.resumeCommand))
+				blocks = append(blocks, clioutput.Section("Publish again at the same address", clioutput.Literal(o.resumeCommand)))
 			}
 			if err := writeResult(o.stderr, blocks...); err != nil {
 				return err
@@ -310,20 +310,25 @@ func (o *publishOutput) finish(ctx context.Context, result error) error {
 	} else if cause != nil && !errors.Is(result, cause) {
 		result = errors.Join(result, cause)
 	}
-	result = classifyCommandError(result)
+	if result != nil {
+		result = classifyCommandError(result)
+		if _, typed := failure.Of(result); !typed {
+			if _, classified := diagnostic.CodeOf(result); !classified {
+				result = failure.Wrap(failure.Operation(o.command), commandFailureReason(o.command), result)
+			}
+		}
+	}
+	if o.mode == publishOutputHuman {
+		if !o.printed && o.resumeCommand != "" {
+			return withCommandFollowup(result, o.stderr, "Publish at the saved address", o.resumeCommand)
+		}
+		return result
+	}
 	if result == nil {
 		return nil
 	}
-	if _, typed := failure.Of(result); !typed {
-		if _, classified := diagnostic.CodeOf(result); !classified {
-			result = failure.Wrap(failure.Operation(o.command), commandFailureReason(o.command), result)
-		}
-	}
 	if code, render := terminalResult(result); code == 0 && render == nil {
 		return errors.Join(result, o.stopped())
-	}
-	if o.mode == publishOutputHuman {
-		return result
 	}
 	if writeErr := o.failed(result); writeErr != nil {
 		return errors.Join(result, fmt.Errorf("write machine error event: %w", writeErr))

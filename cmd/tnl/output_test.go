@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -237,6 +240,9 @@ func TestPublishOutputNDJSONOwnsSuccessfulErrorEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := publicationPresentation(t.Context(), publishCommand{Target: "3000"}, output).Resume("https://saved.example", "studio", defaultServerURL); err != nil {
+		t.Fatal(err)
+	}
 	cause := errors.New("publisher failed")
 	result := output.finish(t.Context(), failure.Wrap("connect publisher", failure.TransportUnavailable, cause))
 	if !errors.Is(result, cause) {
@@ -258,6 +264,54 @@ func TestPublishOutputNDJSONOwnsSuccessfulErrorEvent(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestPublishResumeBeforeReady(t *testing.T) {
+	const url = "https://saved.example"
+	const server = "https://control.example"
+	flags := publishCommand{Target: "3000"}
+	flags.StateDir, flags.AccessToken = "/my state", "private-token"
+	const cmd = "tnl --no-config publish 3000 --hostname " + url + " --team studio --server " + server + " --state-dir '/my state'"
+	failed := diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("private target error: %w", syscall.ECONNREFUSED))
+	targetHelp := string(diagnostic.TargetUnavailable) + "  " + diagnostic.HelpURL(diagnostic.TargetUnavailable, "connection-refused")
+	tunnelHelp := string(failure.TunnelUnavailable) + "  " + failure.HelpURL(failure.TunnelUnavailable, "")
+	for _, tc := range []struct {
+		name    string
+		cause   error
+		exit    int
+		message string
+		help    string
+	}{
+		{"failed", failed, 1, "the target refused the connection.", targetHelp},
+		{"unclassified failure", errors.New("private preparation error"), 1, "Error: tnl could not start or maintain this tunnel", tunnelHelp},
+		{"cancelled", context.Canceled, 0, "", ""},
+		{"failed while stopping", errors.Join(failed, context.Canceled), 1, "the target refused the connection.", targetHelp},
+		{"clean stop", nil, 0, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			output, err := newPublishOutput(publishOutputHuman, "tnl publish", &stdout, &stderr, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := publicationPresentation(t.Context(), flags, output).Resume(url, "studio", server); err != nil {
+				t.Fatal(err)
+			}
+			result := output.finish(t.Context(), tc.cause)
+			exit, render := terminalResult(result)
+			if exit != tc.exit || !errors.Is(result, tc.cause) {
+				t.Fatalf("finish = %v, exit = %d", result, exit)
+			}
+			if render != nil {
+				writeCommandError(&stderr, render)
+			}
+			text := stderr.String()
+			if !strings.HasPrefix(text, tc.message) || (tc.exit != 0 && strings.Count(text, tc.help) != 1) ||
+				strings.Count(text, "tnl --no-config publish") != 1 || !strings.HasSuffix(text, "\n"+cmd+"\n") || strings.Contains(text, "private") || stdout.Len() != 0 {
+				t.Fatalf("stderr = %q, stdout = %q", text, &stdout)
+			}
+		})
 	}
 }
 

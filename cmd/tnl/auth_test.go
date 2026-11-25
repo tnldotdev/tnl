@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -140,28 +142,42 @@ type loginPromptWriter func([]byte) (int, error)
 
 func (w loginPromptWriter) Write(p []byte) (int, error) { return w(p) }
 
-func TestLoginApprovalResumeAndStreams(t *testing.T) {
-	clientstate.UseMemoryKeychainForTesting()
-	const code = "ABCDEF-123456"
-	secret := strings.Repeat("p", 43)
-	expires := time.Now().UTC().Add(10 * time.Minute)
+func loginChallengeServer(t *testing.T, challenge authorityv1.DeviceLoginChallenge, poll http.HandlerFunc) *httptest.Server {
+	t.Helper()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/discovery":
 			_ = json.NewEncoder(w).Encode(controlv1.ControlDiscovery{Authentication: controlv1.AuthenticationFacts{Methods: []controlv1.AuthenticationFactsMethods{controlv1.Oidc}, Oidc: &controlv1.OIDCAuthenticationFacts{Issuer: "https://issuer.example", LoginFlow: controlv1.DeviceCode}}})
 		case "/v1/auth/device":
+			response := challenge
+			response.ApprovalUrl = "https://" + r.Host + "/v1/auth/device/approve?code=" + challenge.UserCode
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(authorityv1.DeviceLoginChallenge{PollingCredential: secret, UserCode: code, ExpiresAt: expires, IntervalSeconds: 30, ApprovalUrl: "https://" + r.Host + "/v1/auth/device/approve?code=" + code})
+			_ = json.NewEncoder(w).Encode(response)
+		case "/v1/auth/device/poll":
+			if poll != nil {
+				poll(w, r)
+				return
+			}
+			fallthrough
 		default:
 			t.Errorf("unexpected login request: %s", r.URL.Path)
 			http.NotFound(w, r)
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	before := http.DefaultTransport
 	http.DefaultTransport = server.Client().Transport
-	defer func() { http.DefaultTransport = before }()
+	t.Cleanup(func() { http.DefaultTransport = before })
+	return server
+}
+
+func TestLoginApprovalResumeAndStreams(t *testing.T) {
+	clientstate.UseMemoryKeychainForTesting()
+	const code = "ABCDEF-123456"
+	secret := strings.Repeat("p", 43)
+	expires := time.Now().UTC().Add(10 * time.Minute)
+	server := loginChallengeServer(t, authorityv1.DeviceLoginChallenge{PollingCredential: secret, UserCode: code, ExpiresAt: expires, IntervalSeconds: 30}, nil)
 	flags := loginCommand{StateDir: filepath.Join(t.TempDir(), "client state"), ServerURL: server.URL, Timeout: time.Millisecond}
 	var out, diag bytes.Buffer
 	if err := runAuthLoginStart(t.Context(), flags, nil, &out, &diag); err != nil {
@@ -218,6 +234,53 @@ func TestLoginApprovalResumeAndStreams(t *testing.T) {
 	if reason, _ := failure.ReasonOf(err); reason != failure.AuthWaitTimeout || out.Len() != 0 || json.Unmarshal(diag.Bytes(), &event) != nil ||
 		event.SchemaVersion != 1 || event.ID != id || event.UserCode != code || strings.Contains(diag.String(), secret) {
 		t.Fatalf("machine login = %q; diagnostics = %q; %v", &out, &diag, err)
+	}
+}
+
+func TestLoginResumeAfterUnavailablePoll(t *testing.T) {
+	clientstate.UseMemoryKeychainForTesting()
+	secret := strings.Repeat("p", 43)
+	server := loginChallengeServer(t, authorityv1.DeviceLoginChallenge{
+		PollingCredential: secret, UserCode: "ABCDEF-123456", ExpiresAt: time.Now().Add(5 * time.Minute), IntervalSeconds: 1,
+	}, func(w http.ResponseWriter, _ *http.Request) { http.Error(w, secret, http.StatusServiceUnavailable) })
+	root := filepath.Join(t.TempDir(), "client state")
+	args := []string{"--no-config", "auth", "login", "--state-dir", root, "--server", server.URL}
+	var out, diag bytes.Buffer
+	err := run(t.Context(), args, &out, &diag)
+	if !errors.Is(err, clientauthority.ErrUnavailable) {
+		t.Fatalf("poll failure = %v", err)
+	}
+	exit, render := terminalResult(err)
+	if exit != 1 || render == nil {
+		t.Fatalf("terminal result = %d, %v", exit, render)
+	}
+	writeCommandError(&diag, render)
+
+	var saved bytes.Buffer
+	err = runAuthLoginStart(t.Context(), loginCommand{StateDir: root, ServerURL: server.URL, Output: statusOutputJSON}, nil, &saved, io.Discard)
+	var op clientstate.AuthOperation
+	if err != nil || json.Unmarshal(saved.Bytes(), &op) != nil || op.Phase != clientstate.AuthExchanging || op.ID == "" {
+		t.Fatalf("did not recover the polling operation: %v", err)
+	}
+	cmd := "tnl --no-config auth login wait " + op.ID + " --server=" + server.URL + " --state-dir=" + shellWord(root)
+	text := diag.String()
+	if out.Len() != 0 || strings.Count(text, "auth login wait") != 1 || !strings.HasSuffix(text, "Resume login:\n"+cmd+"\n") ||
+		strings.Count(text, string(diagnostic.ServerUnavailable)) != 1 || strings.Contains(text, secret) {
+		t.Fatal("expected the original diagnostic and one scoped resume command on stderr")
+	}
+
+	diag.Reset()
+	err = run(t.Context(), append(args, "--output=json"), &out, &diag)
+	if !errors.Is(err, clientauthority.ErrUnavailable) {
+		t.Fatalf("machine poll failure = %v", err)
+	}
+	writeCommandError(&diag, err)
+	dec := json.NewDecoder(&diag)
+	var prompt clientstate.AuthOperation
+	var result commandDiagnostic
+	if strings.Contains(diag.String(), secret) || out.Len() != 0 || dec.Decode(&prompt) != nil || prompt.ID != op.ID ||
+		dec.Decode(&result) != nil || result.Code != string(diagnostic.ServerUnavailable) || !result.Retryable || dec.Decode(&struct{}{}) != io.EOF {
+		t.Fatal("expected just the operation and its existing JSON diagnostic")
 	}
 }
 

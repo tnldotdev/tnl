@@ -50,7 +50,7 @@ func TestCopyableLines(t *testing.T) {
 		}{
 			{Text("Visit " + url), url},
 			{Fields(Field{Label: "help", Value: url}), url},
-			{Fields(Field{Label: "CA file", Value: path}), path},
+			{Fields(Field{Label: "CA file", Value: path}), "CA file  " + path},
 			{Section("client command", Literal(command)), command},
 			{Table([]string{"NAME", "ADDRESS"}, [][]string{{"web", url}}, "No services."), url},
 			{Line(command), command},

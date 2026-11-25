@@ -80,7 +80,7 @@ type tunnelFlags struct {
 	RateRequests       *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
 	RatePer            string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
 	RateBurst          *int                  `name:"rate-burst" help:"Maximum burst of application work admitted by the rate limit."`
-	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous HTTP work or TCP connections. Defaults to 64 for HTTP and 24 for TCP."`
+	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous HTTP work or TCP connections."`
 	TargetCAFile       string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS target."`
 	InspectionMode     config.InspectionMode `name:"inspection-mode" enum:"none,summary" default:"summary" help:"Local HTTP inspection: summary (default) or none."`
 
@@ -355,11 +355,28 @@ func writeCommandError(output io.Writer, err error) {
 		return
 	}
 	err = classifyCommandError(err)
-	if message, ok := diagnostic.MessageForError(err); ok {
-		_ = clioutput.Write(output, message)
-		return
+	followup, _ := errors.AsType[*commandFollowup](err)
+	message, ok := diagnostic.MessageForError(err)
+	if !ok {
+		message = humanFailureMessage(err, followup != nil)
 	}
+	if followup != nil {
+		message.Blocks = append(message.Blocks, followup.block)
+	}
+	_ = clioutput.Write(output, message)
+}
+
+func humanFailureMessage(err error, hasFollowup bool) clioutput.Message {
 	presented := presentHumanFailure(err)
+	if hasFollowup {
+		// the concrete resume command replaces the operation-id placeholder.
+		switch presented.reason {
+		case failure.AuthWaitTimeout:
+			presented.action = ""
+		case failure.AuthProviderUnavailable:
+			presented.action = "Check provider connectivity."
+		}
+	}
 	blocks := []clioutput.Block{clioutput.Text("Error: " + presented.message)}
 	if typed, ok := failure.Of(err); ok && typed.Reason() == failure.ObservabilityConfigInvalid && typed.Setting() != "" {
 		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "setting", Value: string(typed.Setting())}))
@@ -367,15 +384,13 @@ func writeCommandError(output io.Writer, err error) {
 	caseID := failure.KnownCase(err)
 	if variant := failure.CaseFor(presented.reason, caseID); variant != nil {
 		blocks = append(blocks, clioutput.Text(variant.Description), clioutput.Line(variant.Action))
-	} else if timeout, ok := errors.AsType[*loginTimeout](err); ok {
-		blocks = append(blocks, clioutput.Text("Resume login:"), clioutput.Literal(timeout.resume))
 	} else if presented.action != "" {
 		blocks = append(blocks, clioutput.Line(presented.action))
 	}
 	if helpURL := failure.HelpURL(presented.reason, caseID); helpURL != "" {
 		blocks = append(blocks, clioutput.Line(string(presented.reason)+"  "+helpURL))
 	}
-	_ = clioutput.Write(output, clioutput.Message{Blocks: blocks})
+	return clioutput.Message{Blocks: blocks}
 }
 
 func classifyCommandError(err error) error {

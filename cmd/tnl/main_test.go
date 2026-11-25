@@ -135,7 +135,7 @@ func TestTunnelHelpExplainsIPPolicyAndTeamSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := strings.Join(strings.Fields(output.String()), " ")
-	for _, want := range []string{"--anonymous", "--ip", "--team", "--server"} {
+	for _, want := range []string{"--anonymous", "--ip", "--team", "--server", "Defaults to 1024 for HTTP and 24 for TCP."} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("publish help missing %q:\n%s", want, output.String())
 		}
@@ -150,6 +150,45 @@ func TestUnknownFlagUsesParsedCommand(t *testing.T) {
 	}
 	if title, ok := clioutput.CommandOf(err); !ok || title != "tnl domain list" {
 		t.Fatalf("parse error command = %q, %t", title, ok)
+	}
+}
+
+func TestHumanFlagErrorsShowOnlyBoundedFlagNames(t *testing.T) {
+	const secret = "private-value"
+	identity := string(failure.Authentication) + "  " + failure.HelpURL(failure.Authentication, "")
+	for _, tc := range []struct{ arg, message string }{
+		{"--lll=" + secret, "Unknown flag: --lll"},
+		{"-z" + secret, "Unknown flag: -z"},
+		{"--timeout=" + secret, "Invalid value for --timeout"},
+		{"--server", "Missing value for --server"},
+		{"---" + secret, "Invalid flag syntax."},
+		{"--bad\n\x1b[31m" + secret, "Unknown flag."},
+		{"--" + strings.Repeat("x", 65) + secret, "Unknown flag."},
+	} {
+		var out, diag bytes.Buffer
+		err := run(t.Context(), []string{"auth", "login", tc.arg}, &out, &diag)
+		if err == nil {
+			t.Fatal("expected a parser error")
+		}
+		writeCommandError(&diag, err)
+		text := diag.String()
+		if text != "Error: "+tc.message+"\ntnl auth login --help\n"+identity+"\n" || out.Len() != 0 {
+			t.Errorf("flag diagnostic = %q; stdout = %q", text, &out)
+		}
+	}
+}
+
+func TestMachineUnknownLoginFlagKeepsAuthenticationClassification(t *testing.T) {
+	var out, diag bytes.Buffer
+	err := run(t.Context(), []string{"auth", "login", "--lll=private-value", "--output=json"}, &out, &diag)
+	if err == nil {
+		t.Fatal("unknown flag was accepted")
+	}
+	writeCommandError(&diag, err)
+	var result commandDiagnostic
+	if json.Unmarshal(diag.Bytes(), &result) != nil || result.Reason != string(failure.Authentication) || result.Code != result.Reason || result.HelpURL != failure.HelpURL(failure.Authentication, "") ||
+		result.Message != "tnl could not authenticate this request" || strings.Contains(diag.String(), "lll") || strings.Contains(diag.String(), "private-value") || out.Len() != 0 {
+		t.Fatalf("machine diagnostic = %s; stdout = %q", &diag, &out)
 	}
 }
 
@@ -235,7 +274,10 @@ func TestPublishResumePrintsHostnameFlag(t *testing.T) {
 	if err := output.ready("https://app.example.test", 1); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(stderr.String(), "https://app.example.test\n") || !strings.Contains(stderr.String(), "tnl --no-config publish 3000 --hostname https://app.example.test --state-dir ") || strings.Contains(stderr.String(), "--server") {
+	if code, render := terminalResult(output.finish(t.Context(), context.Canceled)); code != 0 || render != nil {
+		t.Fatalf("stopping after readiness = %d, %v", code, render)
+	}
+	if !strings.HasPrefix(stderr.String(), "https://app.example.test\n") || strings.Count(stderr.String(), "tnl --no-config publish 3000 --hostname https://app.example.test --state-dir ") != 1 || strings.Contains(stderr.String(), "--server") {
 		t.Fatal("expected the URL first, then a reusable command", stderr.String())
 	}
 	if _, err := os.Stat(flags.StateDir); !os.IsNotExist(err) {

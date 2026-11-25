@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/region"
@@ -210,6 +212,8 @@ func (a *commandApp) newPublishCommand() *cobra.Command {
 	a.leaf(cPublish, &f.Publish, func(call commandCall) error {
 		return a.publish(call)
 	})
+	limits := applicationlimits.Limits{}
+	cPublish.Flags().Lookup("concurrency").Usage += fmt.Sprintf(" Defaults to %d for HTTP and %d for TCP.", limits.Defaults(false).Concurrency, limits.Defaults(true).Concurrency)
 	return cPublish
 }
 

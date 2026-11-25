@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"strings"
@@ -15,7 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/failure"
 	"golang.org/x/term"
 )
 
@@ -201,32 +199,20 @@ func (flags loginCommand) resumeCommand(ctx context.Context, state *clientstate.
 }
 
 func interruptedLogin(ctx context.Context, config auth.Config, id string, flags loginCommand, diagnostics io.Writer, cause error) error {
-	if id == "" || flags.Output == statusOutputJSON || !(ctx.Err() != nil || errors.Is(cause, context.DeadlineExceeded)) {
+	if id == "" || flags.Output == statusOutputJSON {
 		return cause
 	}
-	// read the durable phase: cancellation can race with exchange or installation.
+	// a failed poll can leave a resumable challenge, even after approval.
 	inspectCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	op, err := auth.InspectLogin(inspectCtx, config, id)
 	if err == nil {
 		if cmd := flags.resumeCommand(inspectCtx, config.State, op); cmd != "" {
-			if reason, _ := failure.ReasonOf(cause); reason == failure.AuthWaitTimeout {
-				return &loginTimeout{cause, cmd}
-			}
-			return errors.Join(cause, writeResult(diagnostics,
-				clioutput.Text("Resume login:"), clioutput.Literal(cmd)))
+			return withCommandFollowup(cause, diagnostics, "Resume login", cmd)
 		}
 	}
 	return cause
 }
-
-type loginTimeout struct {
-	cause  error
-	resume string
-}
-
-func (e *loginTimeout) Error() string { return e.cause.Error() }
-func (e *loginTimeout) Unwrap() error { return e.cause }
 
 func runAuthStatus(ctx context.Context, flags authStatusCommand, output, diagnostics io.Writer) error {
 	server, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)

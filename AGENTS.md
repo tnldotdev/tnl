@@ -336,8 +336,10 @@ In introductory diagrams and user-facing CLI output, label the local process
 not rename machine fields such as `publisher_connection_id`.
 
 Lead with what the user came for: an address, a command, a status, or a
-short confirmation. Use a row per item for lists and labeled fields for
-details. Don't repeat the command, draw a box, or dump the underlying record.
+short confirmation. List commands use tables, even for one item. A selected
+service gets labeled fields. `tnl share` prints the link alone. Keep a
+follow-up command on its own line. Don't repeat the command, draw a box, or
+dump the underlying record.
 
 - Show IDs when the next command needs one. Keep event cursors, revisions,
   and precise timestamps in machine output unless the command asks for them.
