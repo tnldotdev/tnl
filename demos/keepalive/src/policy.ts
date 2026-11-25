@@ -6,7 +6,7 @@ export const INVITATION_ACK_MS = 15_000;
 export const STARTUP_MS = 3 * MINUTE_MS;
 export const REPLACE_BEFORE_MS = STARTUP_MS + MINUTE_MS;
 export const UPLOAD_BYTES = 1024 * 1024;
-export const UPLOAD_MS = 3_000;
+export const UPLOAD_MS = 5_000;
 
 export function turnLength(bootstrap: boolean) {
   return bootstrap ? BOOTSTRAP_TURN_MS : HOST_TURN_MS;

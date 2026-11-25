@@ -7,11 +7,11 @@ import {
   releaseInvitation,
   waitForWork,
 } from "../src/peers/http.ts";
-import { INVITATION_ACK_MS, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "../src/policy.ts";
+import { INVITATION_ACK_MS, STARTUP_MS, UPLOAD_BYTES } from "../src/policy.ts";
 import { INVITATION_PATH, READY_HEADER } from "../src/enrollment.ts";
 import { Gossip, HOST_PARENT, PEERS_PATH, type Host } from "../src/peers/gossip.ts";
 
-it("allows time to reach the donor without extending its upload read deadline", async () => {
+it("allows five seconds at the donor plus time for the request to reach it", async () => {
   vi.useFakeTimers();
   vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
     const timeout = new AbortController();
@@ -28,7 +28,7 @@ it("allows time to reach the donor without extending its upload read deadline", 
   };
   const lifetime = new AbortController();
   const donor = peerServer(release, [origin], async () => new Response(), lifetime.signal);
-  let bodyDelay = UPLOAD_MS + 1;
+  let bodyDelay = 5_001;
   let attempts = 0;
   vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
     const headers = new Headers(init.headers);
@@ -69,9 +69,9 @@ it("allows time to reach the donor without extending its upload read deadline", 
     expect(invitation).toBeTruthy();
     if (invitation === null) throw new Error("expected invitation");
     const slow = checkUpload(host, invitation, lifetime.signal);
-    await vi.advanceTimersByTimeAsync(900 + UPLOAD_MS + 1);
+    await vi.advanceTimersByTimeAsync(900 + bodyDelay);
     expect(await slow).toBe(false);
-    bodyDelay = UPLOAD_MS - 200;
+    bodyDelay = 4_800;
     const healthy = checkUpload(host, invitation, lifetime.signal);
     await vi.advanceTimersByTimeAsync(900 + bodyDelay);
     expect(await healthy).toBe(true);
