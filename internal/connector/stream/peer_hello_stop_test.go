@@ -128,3 +128,58 @@ func TestConnectorDisabledCandidatesCannotBorrowALaterOwnerStop(t *testing.T) {
 		t.Fatal("an all-disabled configuration borrowed a later owner's stop as operation provenance")
 	}
 }
+
+func TestConnectorOwnerStopAfterHelloWhileJoiningAlternate(t *testing.T) {
+	for _, kind := range []string{"clean stop", "independent alternate", "independent close"} {
+		t.Run(kind, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				p, op := pendingRetryOwner(t, t.Context())
+				independent := errors.New("independent connector failure")
+				script := legRetryScript{response: tunnelv1.HelloAccepted}
+				if kind == "independent close" {
+					script.closeErr = independent
+				}
+				session := newLegRetrySession(t, t.Context(), op.pair, 0, script)
+				accepted, release := make(chan struct{}), make(chan struct{})
+				config := Config{
+					RelayQUIC: muxsession.ConnectorFunc(func(race context.Context, _ muxsession.Endpoint) (muxsession.Session, error) {
+						<-race.Done()
+						close(accepted)
+						<-release
+						if kind == "independent alternate" {
+							return nil, independent
+						}
+						return nil, muxsession.ErrConnectorDisabled
+					}),
+					RelayWebSocket: muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+						return session, nil
+					}),
+				}
+				result := make(chan error, 1)
+				go func() {
+					leg, err := dialConnectorLeg(p.ctx, t.Context(), config, p.signer, op.pair, [32]byte{1}, 0, nil, op.initial[0])
+					if leg != nil {
+						err = errors.Join(err, errors.New("stopped owner received a leg"), leg.Close())
+					}
+					result <- err
+				}()
+				// the hello already won the race; stop the owner before the
+				// disabled alternate has joined.
+				<-accepted
+				p.cancel(context.Canceled)
+				close(release)
+				err := <-result
+				if !errors.Is(err, context.Canceled) || session.closes.Load() != 1 {
+					t.Fatal("owner stop did not close the authenticated session", err)
+				}
+				p.recordLegRecoveryFailure(err, context.Cause(p.ctx))
+				if kind == "clean stop" && p.useErr != nil {
+					t.Fatal("disabled alternate turned a clean owner stop into a cleanup error", p.useErr)
+				}
+				if kind != "clean stop" && !errors.Is(p.useErr, independent) {
+					t.Fatal("owner stop hid an independent failure", p.useErr)
+				}
+			})
+		})
+	}
+}

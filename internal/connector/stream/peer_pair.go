@@ -260,6 +260,7 @@ type connectorLegAttemptError struct {
 	count      int
 	context    error
 	cleanup    error
+	accepted   bool
 }
 
 func (e *connectorLegAttemptError) Unwrap() []error {
@@ -524,9 +525,10 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 		attemptCandidate(primary, primaryKind), attemptCandidate(fallback, fallbackKind),
 		func(next result) error { return next.leg.Close() })
 	winner := selected.Value
-	attempt := &connectorLegAttemptError{}
+	attempt := &connectorLegAttemptError{accepted: selected.Accepted}
 	for _, failure := range failures {
 		if failure.Accepted {
+			attempt.accepted = true
 			attempt.cleanup = errors.Join(attempt.cleanup, connectorCleanupFailure(failure.CleanupErr))
 		} else {
 			attempt.candidates[attempt.count] = failure.Value.failed
