@@ -12,6 +12,7 @@ import {
   withCurrentDirectory,
 } from "../helpers/project.js";
 import {
+  closeTestWebSocket,
   holdLoopbackPort,
   openTestWebSocketWithMessage,
   requestTestServer,
@@ -583,6 +584,8 @@ test(
       expect(updatedModule.status).toBe(200);
       expect(updatedModule.body).toContain("Vite fixture HMR");
 
+      // finish the HMR exchange before restarting the listener that owns it.
+      await closeTestWebSocket(socket);
       const config = join(fixture.directory, "vite.config.ts");
       const originalConfig = await readFile(config, "utf8");
       const restartPort = await findAvailableLoopbackPort();

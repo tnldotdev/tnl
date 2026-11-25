@@ -3,9 +3,9 @@ package installed
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -417,12 +417,16 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 	r := testRegistry(t)
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer target.Close()
-	closed, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// keep the port owned for the whole test and fail before target preflight
+	// can succeed. a released loopback port can be reused by another test.
+	unavailable := httptest.NewUnstartedServer(http.NotFoundHandler())
+	unavailable.TLS = &tls.Config{
+		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			return nil, errors.New("target unavailable")
+		},
 	}
-	missing := "http://" + closed.Addr().String()
-	_ = closed.Close()
+	unavailable.StartTLS()
+	defer unavailable.Close()
 	type boundary struct {
 		c *jobControl
 		a *jobAuthority
@@ -432,7 +436,8 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 		job, identity, private := fixture(t, name)
 		job.Target = target.URL
 		if name == "target-down" {
-			job.Target = missing
+			job.Target = unavailable.URL
+			job.Trust = capturedTrust(t, "localhost", nil)
 		}
 		if name == "server-down" {
 			job.Server = "https://unavailable.example"
