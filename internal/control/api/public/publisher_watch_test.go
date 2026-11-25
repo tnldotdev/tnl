@@ -284,6 +284,7 @@ func TestPublisherWatchAuthorizationTimeoutReturnsUnavailable(t *testing.T) {
 	}{
 		{"deadline", func(e error) error { return e }, 503, false},
 		{"authorization finished after deadline", func(error) error { return nil }, 503, false},
+		{"database contention", func(error) error { return controlstate.ErrPublisherWatchContended }, 503, false},
 		{"deadline and rollback failure", func(e error) error {
 			return &controlstate.RollbackFailure{OperationErr: fmt.Errorf("query: %w", e), RollbackErr: storageErr}
 		}, 503, true},

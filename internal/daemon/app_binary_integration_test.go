@@ -63,7 +63,10 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			t.Logf("tnld output:\n%s", fixture.server.output.String())
 		}
 	})
-	project := t.TempDir()
+	project, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	initializeIntegrationBinaryProject(t, project, "app-led")
 	configuration := []byte(`{"version":1,"tnl":{"server":"https://control.127.0.0.1.nip.io","services":{"api":{}},"deployments":{"local":{"targets":{"api":{"name":"app-led-binary","public":true,"http":{"access":"anonymous"}}}}}}}`)
 	if err := os.WriteFile(filepath.Join(project, "tnl.json"), configuration, 0600); err != nil {
@@ -80,6 +83,29 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 			t.Logf("local publisher output:\n%s", runtimeProcess.output.String())
 		}
 	})
+	// runtime endpoint can start another owner if the supervised one has not
+	// published its descriptor yet. wait for the owner this test will join.
+	descriptor, err := publisherprotocol.DescriptorPath(fixture.stateDirectory, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var owner publisherprotocol.Endpoint
+	waitForIntegrationCondition(t, 15*time.Second, func(ctx context.Context) (bool, error) {
+		select {
+		case <-runtimeProcess.done:
+			t.Fatalf("local publisher exited before readiness: %v", runtimeProcess.result())
+		default:
+		}
+		current, err := publisherprotocol.ReadEndpoint(descriptor)
+		if err != nil {
+			return false, err
+		}
+		if err := publisherprotocol.Call(ctx, current, http.MethodGet, "/v1/health", nil, nil); err != nil {
+			return false, err
+		}
+		owner = current
+		return true, nil
+	})
 	started := startIntegrationBinaryProcess(t, project, fixture.environment, fixture.tnlPath, "runtime", "endpoint", "--directory", project, "--service", "api")
 	if err := waitForDoneWithin(started.done, 30*time.Second); err != nil {
 		t.Fatal("local publisher did not start")
@@ -88,6 +114,9 @@ func TestBinaryIntegrationAppLedPublisher(t *testing.T) {
 	var endpoint publisherprotocol.Endpoint
 	if err := json.Unmarshal([]byte(started.output.String()), &endpoint); err != nil || endpoint.Scope != "app" || endpoint.Service == nil || *endpoint.Service != "api" || endpoint.Capability == "" {
 		t.Fatalf("runtime did not return the scoped api app endpoint: %v", err)
+	}
+	if endpoint.OwnerId != owner.OwnerId {
+		t.Fatal("runtime endpoint started a different publisher")
 	}
 	client := &http.Client{Timeout: 75 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
 	request := func(operation string, value any, target any) int {

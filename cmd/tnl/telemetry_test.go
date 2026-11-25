@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
@@ -65,8 +66,12 @@ func (r *recordingTelemetry) factory(config clienttelemetry.Config) *clienttelem
 }
 
 func (r *recordingTelemetry) events() []api.Event {
+	// collect the fake receiver's events without imposing the CLI's best-effort
+	// exit budget on this assertion. collector requests still have their own limit.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	for _, c := range r.collectors {
-		closeTelemetry(context.Background(), c.Close)
+		c.Close(ctx)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
