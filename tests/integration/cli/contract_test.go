@@ -49,8 +49,8 @@ func TestIntegrationCLIContract(t *testing.T) {
 		{"share create --service web --output json", "", "", "TNL_CLIENT_STATE_UNAVAILABLE", 1},
 		{"runtime connections read --help", "--handle", "", "", 0},
 		{"runtime connections read", "", "", "TNL_CLIENT_INVALID_COMMAND", 1},
-		{"domain list --unknown --output json", "", "", "TNL_CLIENT_DOMAIN_UNAVAILABLE", 1},
-		{"domain list --unknown -- --output json", "", "TNL_CLIENT_DOMAIN_UNAVAILABLE", "", 1},
+		{"domain list --unknown --output json", "", "", "TNL_CLIENT_INVALID_COMMAND", 1},
+		{"domain list --unknown -- --output json", "", "TNL_CLIENT_INVALID_COMMAND", "", 1},
 	} {
 		t.Run(tc.argv, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)

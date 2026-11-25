@@ -7,8 +7,10 @@ import (
 	"io"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/cliflags"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
@@ -20,6 +22,77 @@ type presentedFailure struct {
 	reason  failure.Reason
 	message string
 	action  string
+}
+
+type commandGuidance struct {
+	error
+	message string
+	help    []string
+}
+
+func (e *commandGuidance) Unwrap() error { return e.error }
+
+func commandGuidanceOf(err error) *commandGuidance {
+	hint, _ := errors.AsType[*commandGuidance](err)
+	if !failure.Only(err, hint) {
+		return nil
+	}
+	return hint
+}
+
+func guidanceCommand(args []string) string {
+	words := make([]string, len(args))
+	for i, arg := range args {
+		words[i] = shellWord(arg)
+	}
+	return strings.Join(words, " ")
+}
+
+func invalidCommandInput(cmd *cobra.Command, err error, message string) error {
+	help := append(strings.Fields(cmd.CommandPath()), "--help")
+	return failure.Wrap("parse command", failure.InvalidCommand, &commandGuidance{err, message, help})
+}
+
+func classifyInputErrors(root *cobra.Command) {
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		message := flagErrorMessage(err)
+		if message == "" {
+			message = "Invalid flag."
+		}
+		if invalid, ok := errors.AsType[*pflag.InvalidValueError](err); ok {
+			if choices := cliflags.FlagHelp(invalid.GetFlag()).Choices; len(choices) != 0 {
+				message += ". Choose " + strings.Join(choices, ", ") + "."
+			}
+		}
+		return invalidCommandInput(cmd, err, message)
+	})
+	var visit func(*cobra.Command)
+	visit = func(cmd *cobra.Command) {
+		if args := cmd.Args; args != nil {
+			cmd.Args = func(selected *cobra.Command, argv []string) error {
+				err := args(selected, argv)
+				if err == nil || errors.Is(err, pflag.ErrHelp) {
+					return err
+				}
+				if _, typed := failure.Of(err); typed {
+					return err
+				}
+				if len(argv) != 0 && selected.HasAvailableSubCommands() && selected.Annotations["default"] == "" {
+					if name := commandSuggestion(selected, argv[0]); name != "" {
+						path := selected.CommandPath()
+						help := append(strings.Fields(path), name, "--help")
+						message := "Unknown command under " + path + "."
+						return failure.Wrap("select command", failure.InvalidCommand, &commandGuidance{err, message, help})
+					}
+				}
+				return invalidCommandInput(selected, err, "Invalid command arguments.")
+			}
+		}
+		for _, child := range cmd.Commands() {
+			visit(child)
+		}
+	}
+	visit(root)
 }
 
 type commandFollowup struct {
@@ -73,13 +146,12 @@ func unconfiguredService(name string) error {
 
 // presentHumanFailure adds bounded policy guidance without changing machine output.
 func presentHumanFailure(err error) presentedFailure {
-	if message := flagErrorMessage(err); message != "" {
-		command, ok := clioutput.CommandOf(err)
-		if !ok {
-			command = "tnl"
-		}
+	if guidance := commandGuidanceOf(err); guidance != nil {
 		presented := presentFailure(err)
-		presented.message, presented.action = message, command+" --help"
+		if guidance.message != "" {
+			presented.message = guidance.message
+		}
+		presented.action = guidanceCommand(guidance.help)
 		return presented
 	}
 	if probe, ok := errors.AsType[*pingFailure](err); ok && probe != nil && failure.Only(err, probe) {

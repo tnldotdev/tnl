@@ -6,6 +6,7 @@ import (
 
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 type commandScope struct{ configArgs, server, team, stateDir string }
@@ -38,4 +39,42 @@ func (f commandScope) command(path string, args ...string) string {
 func (f commandScope) nextPage(path, cursor string, filters ...string) clioutput.Block {
 	command := f.command(path, append(filters, "--after="+cursor)...)
 	return clioutput.Section("Next page", clioutput.Literal(command))
+}
+
+func observationFollowup(err error, flags cli) error {
+	reason, _ := failure.ReasonOf(err)
+	if reason != failure.AppReadinessTimeout && reason != failure.AppCursorExpired {
+		return err
+	}
+	args := []string{"tnl"}
+	if flags.NoConfig {
+		args = append(args, "--no-config")
+	} else if path := flags.ConfigPath; path != "" {
+		args = append(args, "--config", path)
+	} else if path := os.Getenv("TNL_CONFIG"); path != "" {
+		args = append(args, "--config", path)
+	}
+	var stateDir, output string
+	if reason == failure.AppCursorExpired {
+		args = append(args, "watch")
+		stateDir, output = flags.Watch.StateDir, flags.Watch.Output
+	} else {
+		stateDir, output = flags.Wait.StateDir, flags.Wait.Output
+		if len(flags.Wait.Service) <= 1 {
+			args = append(args, "status", "--scope", "local")
+		} else {
+			// status accepts one service. retry an exact multi-service wait.
+			args = append(args, "wait")
+		}
+		for _, service := range flags.Wait.Service {
+			args = append(args, "--service", service)
+		}
+	}
+	if stateDir != "" {
+		args = append(args, "--state-dir", stateDir)
+	}
+	if output != "" {
+		args = append(args, "--output", output)
+	}
+	return &commandGuidance{error: err, help: args}
 }

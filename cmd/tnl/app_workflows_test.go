@@ -34,7 +34,7 @@ func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
 		t.Fatal("remote selection registered local apps", services)
 	}
 	for _, services := range [][]string{{"remote"}, nil} {
-		err := runAppWait(t.Context(), remote, state.Root(), waitCommand{Service: services, Timeout: time.Second}, &bytes.Buffer{})
+		err := runAppWait(t.Context(), remote, state.Root(), waitCommand{Service: services, Timeout: time.Second}, &bytes.Buffer{}, nil)
 		if reason, _ := failure.ReasonOf(err); reason != failure.AppRemoteService {
 			t.Fatal("wait did not reject the remote selection", err)
 		}
@@ -65,7 +65,7 @@ func TestAppWorkflowWaitSelectsLocalServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := runAppWait(t.Context(), project, state.Root(), waitCommand{Timeout: 3 * time.Second, Output: "json"}, &output); err != nil {
+	if err := runAppWait(t.Context(), project, state.Root(), waitCommand{Timeout: 3 * time.Second, Output: "json"}, &output, nil); err != nil {
 		t.Fatalf("local selection wait failed: %v\n%s", err, &output)
 	}
 }

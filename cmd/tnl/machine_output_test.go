@@ -49,7 +49,7 @@ func TestCommandDiagnosticPreservesOwnedRetryDecision(t *testing.T) {
 }
 
 func TestMachineOutputDoesNotConsumeChildArguments(t *testing.T) {
-	if machineOutputRequested([]string{"dev", "--", "node", "--output=json"}) {
+	if machineDiagnosticForInput(nil, []string{"dev", "--", "node", "--output=json"}) {
 		t.Fatal("child arguments selected CLI machine output")
 	}
 }

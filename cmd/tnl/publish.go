@@ -119,7 +119,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	}
 	if flags.Install {
 		if flags.Output != "human" {
-			return publisherCLIError("--install requires --output=human")
+			return publishOutputModeError("--install")
 		}
 		if !credentialOwned && (flags.Service == "" || flags.System) {
 			return runPublicationInstall(ctx, flags, stdout, stderr)
@@ -226,17 +226,20 @@ func (a *commandApp) publish(call commandCall) error {
 	if flags.Publish.Detach && flags.Publish.Install {
 		return publisherCLIError("--install and --detach cannot be combined")
 	}
+	if flags.Publish.Install && flags.Publish.Output != publishOutputHuman {
+		return publishOutputModeError("--install")
+	}
 	if flags.Publish.Detach {
 		if flags.Publish.EnrollmentKey == "-" {
 			return publisherCLIError("--detach cannot read an enrollment key from stdin; use --publisher-identity or --publisher-credential-file")
 		}
 		if flags.Publish.Output != "human" {
-			return publisherCLIError("--detach requires --output=human")
+			return publishOutputModeError("--detach")
 		}
 		if flags.Publish.System || flags.Publish.ServiceName != "" || flags.Publish.SystemStateDir != "" || flags.Publish.ServerCAFile != "" {
 			return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
 		}
-		return detachPublish(ctx, a.argv, flags.Publish.StateDir, a.out, "tnl publish")
+		return detachPublish(ctx, a.argv, flags.Publish.StateDir, a.out, nil)
 	}
 	if flags.Publish.DetachedChild != "" {
 		root, err := clientStateRoot(flags.Publish.StateDir)

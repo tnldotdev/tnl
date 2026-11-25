@@ -2,12 +2,64 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/tnldotdev/tnl/internal/cliflags"
 )
+
+func TestRootHelpStartsWithThreeEntryPointsAndGuide(t *testing.T) {
+	root := (&commandApp{flags: &cli{}, out: io.Discard, errOut: io.Discard}).root()
+	for _, audience := range []helpAudience{helpHuman, helpAgent} {
+		text := clientHelp(root, 80, helpView{audience: audience})
+		screen := strings.SplitN(text, "\n", 25)[:24]
+		want := []string{"tnl publish 3000", "tnl init", "tnl connect orders --deployment production", "tnl agent-guide"}
+		if audience == helpAgent {
+			want = slices.Concat(want[3:], want[:3])
+		}
+		var got []string
+		for _, line := range screen {
+			if strings.HasPrefix(line, "  tnl ") && !strings.Contains(line, "<command>") {
+				got = append(got, strings.TrimSpace(line))
+			}
+		}
+		if screen[0] != "tunnels for local apps and private services." || !slices.Equal(got, want) {
+			t.Fatalf("%s help first screen:\n%s", audience, strings.Join(screen, "\n"))
+		}
+	}
+}
+
+func TestPublishHelpViewsShareExamples(t *testing.T) {
+	root := (&commandApp{flags: &cli{}, out: io.Discard, errOut: io.Discard}).root()
+	publish, _, err := root.Find([]string{"publish"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, width := range []int{36, 68, 126} {
+		for _, view := range []helpView{
+			{audience: helpHuman}, {audience: helpAgent},
+			{audience: helpHuman, reference: true}, {audience: helpAgent, reference: true},
+		} {
+			text := clientHelp(publish, width, view)
+			port := strings.Index(text, "\n  tnl publish 3000\n")
+			stream := strings.Index(text, "\n  tnl publish 3000 --output ndjson\n")
+			if port < 0 || stream < 0 || (stream < port) != (view.audience == helpAgent) {
+				t.Errorf("width %d, view %+v: incorrect order or missing examples:\n%s", width, view, text)
+			}
+			for _, fullOnly := range []string{"tnl publish --demo", "--target-ca-file PATH", "Output and readiness:"} {
+				if strings.Contains(text, fullOnly) != view.reference {
+					t.Errorf("width %d, view %+v: expected reference-only %q:\n%s", width, view, fullOnly, text)
+				}
+			}
+			if strings.Contains(text, "--bg") || strings.Contains(text, "--output json") {
+				t.Errorf("width %d, view %+v: help advertised an unsupported publish form", width, view)
+			}
+		}
+	}
+}
 
 func TestHelpWrapsProseAndKeepsTheExampleCopyable(t *testing.T) {
 	const example = "tnl example --output json --config 'project with spaces.yml'"
@@ -19,7 +71,7 @@ func TestHelpWrapsProseAndKeepsTheExampleCopyable(t *testing.T) {
 		Output string `name:"output" enum:"human,json" default:"human"`
 	}{}, false)
 
-	narrow, wide := clientHelp(cmd, 36), clientHelp(cmd, 100)
+	narrow, wide := clientHelp(cmd, 36, helpView{}), clientHelp(cmd, 100, helpView{})
 	if !(strings.Contains(narrow, "--output FORMAT\n    Output format.") && strings.Contains(wide, "--output FORMAT  Output format.")) {
 		t.Fatalf("expected stacked and side-by-side descriptions:\n%s\n%s", narrow, wide)
 	}

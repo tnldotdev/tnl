@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -128,10 +129,8 @@ func TestTeamEnvironmentSelectsDomainCommand(t *testing.T) {
 }
 
 func TestTunnelHelpExplainsIPPolicyAndTeamSelection(t *testing.T) {
-	var flags cli
 	var output bytes.Buffer
-	parser := commandForTest(&flags, &output)
-	if _, err := parser([]string{"publish", "--help"}); err != nil {
+	if err := run(t.Context(), []string{"help", "publish"}, &output, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	text := strings.Join(strings.Fields(output.String()), " ")
@@ -155,7 +154,7 @@ func TestUnknownFlagUsesParsedCommand(t *testing.T) {
 
 func TestHumanFlagErrorsShowOnlyBoundedFlagNames(t *testing.T) {
 	const secret = "private-value"
-	identity := string(failure.Authentication) + "  " + failure.HelpURL(failure.Authentication, "")
+	identity := string(failure.InvalidCommand) + "  " + failure.HelpURL(failure.InvalidCommand, "")
 	for _, tc := range []struct{ arg, message string }{
 		{"--lll=" + secret, "Unknown flag: --lll"},
 		{"-z" + secret, "Unknown flag: -z"},
@@ -178,7 +177,7 @@ func TestHumanFlagErrorsShowOnlyBoundedFlagNames(t *testing.T) {
 	}
 }
 
-func TestMachineUnknownLoginFlagKeepsAuthenticationClassification(t *testing.T) {
+func TestMachineUnknownLoginFlagUsesInputClassification(t *testing.T) {
 	var out, diag bytes.Buffer
 	err := run(t.Context(), []string{"auth", "login", "--lll=private-value", "--output=json"}, &out, &diag)
 	if err == nil {
@@ -186,8 +185,8 @@ func TestMachineUnknownLoginFlagKeepsAuthenticationClassification(t *testing.T) 
 	}
 	writeCommandError(&diag, err)
 	var result commandDiagnostic
-	if json.Unmarshal(diag.Bytes(), &result) != nil || result.Reason != string(failure.Authentication) || result.Code != result.Reason || result.HelpURL != failure.HelpURL(failure.Authentication, "") ||
-		result.Message != "tnl could not authenticate this request" || strings.Contains(diag.String(), "lll") || strings.Contains(diag.String(), "private-value") || out.Len() != 0 {
+	if json.Unmarshal(diag.Bytes(), &result) != nil || result.Reason != string(failure.InvalidCommand) || result.Code != result.Reason || result.HelpURL != failure.HelpURL(failure.InvalidCommand, "") ||
+		result.Message != "Unknown flag: --lll" || !slices.Equal(result.Command, []string{"tnl", "auth", "login", "--help"}) || strings.Contains(diag.String(), "private-value") || out.Len() != 0 {
 		t.Fatalf("machine diagnostic = %s; stdout = %q", &diag, &out)
 	}
 }

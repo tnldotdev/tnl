@@ -57,7 +57,7 @@ func testWaitWithoutOwner(t *testing.T, seedReady bool) {
 		}
 	}
 	var output bytes.Buffer
-	err = runAppWait(t.Context(), project, state.Root(), waitCommand{Timeout: 10 * time.Millisecond, Output: "json"}, &output)
+	err = runAppWait(t.Context(), project, state.Root(), waitCommand{Timeout: 10 * time.Millisecond, Output: "json"}, &output, nil)
 	if reason, _ := failure.ReasonOf(err); reason != failure.AppReadinessTimeout || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("old readiness without an owner did not time out with its original cause", err)
 	}

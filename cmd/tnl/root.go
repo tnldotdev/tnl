@@ -10,10 +10,11 @@ import (
 )
 
 type commandApp struct {
-	flags       *cli
-	out, errOut io.Writer
-	argv        []string
-	factories   []telemetryFactory
+	flags                         *cli
+	out, errOut                   io.Writer
+	argv                          []string
+	factories                     []telemetryFactory
+	outputSelected, machineOutput bool
 }
 
 type commandCall struct {
@@ -45,9 +46,11 @@ func (a *commandApp) root() *cobra.Command {
 	cliflags.Bind(root, a.flags, true)
 	root.AddCommand(a.newInitCommand(), a.newApplyCommand(), a.newDeploymentCommand(), a.newGenerateCommand(), a.newCheckCommand(), a.newAuditCommand(), a.newRuntimeCommand(), a.newWaitCommand(), a.newWatchCommand(), a.newPublishCommand(), a.newConnectCommand(), a.newPublisherCommand(), a.newServiceCommand(), a.newEndpointCommand(), a.newDetachedCommand(), a.newStatusCommand(), a.newPingCommand(), a.newInspectCommand(), a.newTelemetryCommand(), a.newAuthCommand(), a.newTeamCommand(), a.newDomainCommand(), a.newURLCommand(), a.newShareCommand(), a.newFeedbackCommand(), a.newWebhookCommand(), a.newAliasCommand(), a.newAdminCommand(), a.newVersionCommand())
 	root.AddCommand(a.newAgentGuideCommand())
+	root.SetHelpCommand(newClientHelpCommand())
 	root.InitDefaultHelpCmd()
 	root.InitDefaultCompletionCmd()
 	addClientHelpContent(root)
+	classifyInputErrors(root)
 	configureClientHelp(root)
 	registerProjectCompletions(root)
 	return root
