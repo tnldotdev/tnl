@@ -497,7 +497,7 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 	if err != nil {
 		return err
 	}
-	blocks := make([]clioutput.Block, 0, len(shares))
+	rows := make([][]string, 0, len(shares))
 	teamGrant := false
 	if project.Found() && project.Root != "" {
 		id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.LocalWorktreeKey())
@@ -511,30 +511,9 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 			}
 			if preview.TeamId == current.Team().Id && preview.TeamAccessEnabled != nil && *preview.TeamAccessEnabled {
 				teamGrant = true
-				blocks = append(blocks, clioutput.Section("team", clioutput.Fields(
-					clioutput.Field{Label: "preview ID", Value: preview.Id},
-					clioutput.Field{Label: "services", Value: strconv.Itoa(len(preview.ServiceIds))},
-				)))
+				rows = append(rows, []string{"team", "active", "never", "-", "this preview", strconv.Itoa(len(preview.ServiceIds))})
 			}
 		}
-	}
-	for _, share := range shares {
-		state := "active"
-		if share.RevokedAt != nil {
-			state = "revoked"
-		} else if !share.ExpiresAt.After(time.Now()) {
-			state = "expired"
-		}
-		fields := []clioutput.Field{
-			{Label: "scope", Value: string(share.Scope)},
-			{Label: "state", Value: state},
-			{Label: "expires", Value: share.ExpiresAt.UTC().Format(time.RFC3339)},
-			{Label: "services", Value: strconv.Itoa(len(share.ServiceIds))},
-		}
-		if share.Label != "" {
-			fields = append(fields, clioutput.Field{Label: "name", Value: share.Label})
-		}
-		blocks = append(blocks, clioutput.Section(share.Id, clioutput.Fields(fields...)))
 	}
 	if flags.Output == statusOutputJSON {
 		return failure.Wrap("write share list", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
@@ -543,11 +522,11 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 			TeamAccessEnabled bool              `json:"team_access_enabled"`
 		}{1, shares, teamGrant}))
 	}
-	count := len(shares)
-	if teamGrant {
-		count++
+	now := time.Now()
+	for _, share := range shares {
+		rows = append(rows, append(shareRow(share, now), strconv.Itoa(len(share.ServiceIds))))
 	}
-	return writeHumanFrame(output, "tnl share list", countState(count, "share", "shares"), "", blocks...)
+	return writeResult(output, clioutput.Table([]string{"ACCESS", "STATE", "EXPIRES", "ID", "NAME", "SERVICES"}, rows, "No shares."))
 }
 
 func runExactShareList(ctx context.Context, flags remoteFlags, selector string, mode statusOutputMode, output, diagnostics io.Writer) error {
@@ -580,34 +559,18 @@ func runExactShareList(ctx context.Context, flags remoteFlags, selector string, 
 			Shares      []controlv1.Share             `json:"shares"`
 		}{grants, invitations, shares})
 	}
-	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "service ID", Value: item.Id})}
+	rows := make([][]string, 0, len(grants)+len(invitations)+len(shares))
+	now := time.Now()
 	for _, grant := range grants {
-		expiry := "perpetual"
-		state := "active"
-		if grant.ExpiresAt != nil {
-			expiry = grant.ExpiresAt.UTC().Format(time.RFC3339)
-			if !grant.ExpiresAt.After(time.Now()) {
-				state = "expired"
-			}
-		}
-		if grant.RevokedAt != nil {
-			state = "revoked"
-		}
-		fields := []clioutput.Field{{Label: "kind", Value: string(grant.Kind)}, {Label: "state", Value: state}, {Label: "expires", Value: expiry}}
-		blocks = append(blocks, clioutput.Section(grant.Id, clioutput.Fields(fields...)))
+		rows = append(rows, shareGrantRow(grant, now))
 	}
 	for _, invitation := range invitations {
-		fields := []clioutput.Field{{Label: "email", Value: string(invitation.Email)}, {Label: "expires", Value: invitation.ExpiresAt.UTC().Format(time.RFC3339)}}
-		blocks = append(blocks, clioutput.Section(invitation.Id, clioutput.Fields(fields...)))
+		rows = append(rows, shareInviteRow(invitation, now))
 	}
 	for _, share := range shares {
-		fields := []clioutput.Field{{Label: "scope", Value: string(share.Scope)}, {Label: "expires", Value: share.ExpiresAt.UTC().Format(time.RFC3339)}}
-		if share.Label != "" {
-			fields = append(fields, clioutput.Field{Label: "name", Value: share.Label})
-		}
-		blocks = append(blocks, clioutput.Section(share.Id, clioutput.Fields(fields...)))
+		rows = append(rows, shareRow(share, now))
 	}
-	return writeHumanFrame(output, "tnl share list", countState(len(grants)+len(invitations)+len(shares), "share", "shares"), "", blocks...)
+	return writeShareRows(output, item.Id, rows)
 }
 
 func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -650,9 +613,8 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 			Enabled       bool                          `json:"enabled"`
 		}{1, preview.Id, "https://" + selected.Endpoint.Hostname + "/", services, true}))
 	}
-	return writeHumanFrame(output, "tnl share team create", "shared", "", clioutput.Fields(
-		clioutput.Field{Label: "public URL", Value: "https://" + selected.Endpoint.Hostname + "/"},
-	))
+	return writeResult(output, clioutput.Literal("https://"+selected.Endpoint.Hostname+"/"),
+		clioutput.Text("Team members can sign in to visit this preview."))
 }
 
 func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -692,7 +654,7 @@ func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, proje
 			Enabled       bool   `json:"enabled"`
 		}{1, id, false}))
 	}
-	return writeHumanFrame(output, "tnl share team revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "preview ID", Value: id}))
+	return writeResult(output, clioutput.Line("Revoked team access to preview "+id))
 }
 
 func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetime string, revoke bool, mode statusOutputMode, output, diagnostics io.Writer) error {
@@ -753,11 +715,20 @@ func exactTeamShare(ctx context.Context, session *clientteam.Session, selector, 
 			State     string                 `json:"state"`
 		}{item.Id, result, state})
 	}
-	fields := []clioutput.Field{{Label: "service ID", Value: item.Id}}
-	if item.Endpoint != nil {
-		fields = append(fields, clioutput.Field{Label: "hostname", Value: item.Endpoint.Hostname})
+	address := item.Id
+	if item.Endpoint != nil && item.Endpoint.Public {
+		if endpoint, err := servicePublicAddress(item.Protocol, item.Endpoint); err == nil {
+			address = endpoint
+		}
 	}
-	return writeHumanFrame(output, "tnl share team", state, "", clioutput.Fields(fields...))
+	if revoke {
+		return writeResult(output, clioutput.Line("Revoked team access to "+address))
+	}
+	grant := "Team access granted."
+	if result.ExpiresAt != nil {
+		grant = "Team access granted until " + shareExpiry(*result.ExpiresAt) + "."
+	}
+	return writeResult(output, clioutput.Line(address), clioutput.Text(grant))
 }
 
 func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagnostics io.Writer) error {
@@ -787,7 +758,7 @@ func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagn
 			Revoked       bool   `json:"revoked"`
 		}{1, share.Id, true}))
 	}
-	return writeHumanFrame(output, "tnl share revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "share ID", Value: share.Id}))
+	return writeResult(output, clioutput.Line("Revoked share "+share.Id))
 }
 
 func (a *commandApp) newShareCommand() *cobra.Command {

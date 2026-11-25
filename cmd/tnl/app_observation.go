@@ -7,6 +7,7 @@ import (
 	"io"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
@@ -87,40 +89,144 @@ func checkAppSnapshotOwner(ctx context.Context, state *clientstate.Database, sna
 	}
 }
 
-func appServiceBlocks(snapshot publisherapp.Snapshot) []clioutput.Block {
-	blocks := make([]clioutput.Block, 0, len(snapshot.Services))
-	for _, service := range snapshot.Services {
-		state := "not registered"
-		if service.Registered {
-			state = "registered"
-		}
-		if service.Routable {
-			state = "routable"
-		}
-		if service.Ready {
-			state = "ready"
-		}
-		fields := []clioutput.Field{{Label: "service", Value: service.Name}, {Label: "directory", Value: service.Directory}}
-		for _, value := range []clioutput.Field{{Label: "protocol", Value: service.ServiceProtocol}, {Label: "project", Value: service.Project}, {Label: "public URL", Value: service.PublicURL}, {Label: "target", Value: service.Target}, {Label: "provisioning", Value: service.ProvisioningStage}, {Label: "recent failure", Value: service.Failure}} {
-			if value.Value != "" {
-				fields = append(fields, value)
-			}
-		}
-		if service.RunNumber != 0 {
-			fields = append(fields, clioutput.Field{Label: "publish run number", Value: strconv.FormatUint(service.RunNumber, 10)})
-		}
-		if service.Observation != nil {
-			fields = append(fields, clioutput.Field{Label: "checked at", Value: service.Observation.CheckedAt.Format(time.RFC3339Nano)})
-			if service.Observation.Status != 0 {
-				fields = append(fields, clioutput.Field{Label: "HTTP status", Value: strconv.Itoa(service.Observation.Status)})
-			}
-			if service.Observation.Reason != "" {
-				fields = append(fields, clioutput.Field{Label: "readiness", Value: service.Observation.Reason})
-			}
-		}
-		blocks = append(blocks, clioutput.Section("local "+service.Name+" "+state, clioutput.Fields(fields...)))
+type observationRow struct {
+	name, state, address, lastError string
+}
+
+func (r observationRow) blocks() []clioutput.Block {
+	line := r.name + ": " + r.state
+	if r.address != "" {
+		line += "  " + r.address
+	}
+	blocks := []clioutput.Block{clioutput.Line(line)}
+	if r.lastError != "" {
+		blocks = append(blocks, clioutput.Text("Last error: "+r.lastError))
 	}
 	return blocks
+}
+
+func observationName(name string) string {
+	if name == "" || opaqueid.Valid(name, opaqueid.InvocationPrefix) {
+		return "publication"
+	}
+	return name
+}
+
+func observationError(code string) string {
+	if reason, ok := failure.DefinitionFor(failure.Reason(code)); ok {
+		return reason.Message
+	}
+	switch code {
+	case "":
+		return ""
+	case "runtime.manager_unavailable":
+		return "the local tnl process is unavailable"
+	case "runtime.manager_restarted":
+		return "the local tnl process restarted"
+	case "runtime.registration_stale":
+		return "the app registration is stale"
+	case "runtime.probe_failed":
+		return "the readiness check could not complete"
+	case "runtime.probe_rejected":
+		return "the readiness check did not get a successful response"
+	case "runtime.target_changed":
+		return "the readiness check could not confirm the current target"
+	case "runtime.publication_failed":
+		return "tnl could not publish the service"
+	case "runtime.publication_cleanup_failed":
+		return "tnl could not finish cleaning up the publication"
+	case "runtime.provisioning_stalled":
+		return "publication setup has stalled"
+	case "runtime.preparation_failed":
+		return "tnl could not prepare the service"
+	default:
+		return "no further details available"
+	}
+}
+
+func appServiceRow(s publisherapp.Service) observationRow {
+	r := observationRow{name: observationName(s.Name), address: s.PublicURL, lastError: observationError(s.Failure)}
+	switch {
+	case s.Failure == "runtime.manager_unavailable":
+		r.state = "readiness not confirmed"
+	case !s.Registered:
+		r.state = "not registered"
+	case !s.Routable:
+		r.state = "registered, waiting for a connection"
+		if s.PublicURL != "" {
+			r.state = "public readiness not confirmed"
+		}
+		if s.ProvisioningStage != "" {
+			r.state = "provisioning: " + strings.ReplaceAll(s.ProvisioningStage, "_", " ")
+		}
+	case s.Ready:
+		r.state = "ready"
+		if s.PublicURL == "" {
+			r.state = "ready (target checked; no public URL)"
+		}
+	default:
+		r.state = "public readiness not confirmed"
+		if s.PublicURL == "" {
+			r.state = "target readiness not confirmed"
+		}
+		if o := s.Observation; o != nil && !o.Ready {
+			if o.Reason != "runtime.target_changed" {
+				r.state = "readiness check failed"
+				if o.Status != 0 {
+					r.state += " (HTTP " + strconv.Itoa(o.Status) + ")"
+				}
+			}
+			if r.lastError == "" {
+				r.lastError = observationError(o.Reason)
+			}
+		}
+	}
+	return r
+}
+
+func publicationRow(t clientstate.TunnelInfo) observationRow {
+	r := observationRow{name: observationName(t.Service), state: string(t.State), address: t.PublicURL, lastError: observationError(t.Failure)}
+	if r.name != "publication" {
+		r.name += " publication"
+	}
+	if t.State == clientstate.TunnelStateReady {
+		// the tunnel is routable; it has no app readiness check of its own.
+		r.state = "routable"
+	}
+	return r
+}
+
+type snapshotObservation struct {
+	key      string
+	row      observationRow
+	canWait  bool
+	lastSeen time.Time
+}
+
+// show an app and its current tunnel once. a stale lease or a draining tunnel
+// takes precedence over a saved app check; other publications stand alone.
+func snapshotObservations(services []publisherapp.Service, tunnels []clientstate.TunnelInfo) []snapshotObservation {
+	var rows []snapshotObservation
+	unmatched := make(map[string]clientstate.TunnelInfo, len(tunnels))
+	for _, t := range tunnels {
+		unmatched[t.ID] = t
+	}
+	for _, s := range services {
+		entry := snapshotObservation{key: s.Name, row: appServiceRow(s), canWait: s.Registered && !s.Ready}
+		if t, linked := unmatched[s.TunnelID]; linked && s.TunnelID != "" {
+			if t.State == clientstate.TunnelStateStale || t.State == clientstate.TunnelStateDraining {
+				entry.row.state, entry.canWait, entry.lastSeen = string(t.State), false, t.HeartbeatAt
+			}
+			delete(unmatched, s.TunnelID)
+		}
+		rows = append(rows, entry)
+	}
+	for _, t := range tunnels {
+		if _, show := unmatched[t.ID]; show {
+			rows = append(rows, snapshotObservation{key: "publication:" + t.ID, row: publicationRow(t), lastSeen: t.HeartbeatAt})
+		}
+	}
+	return rows
 }
 
 func runAppObservation(ctx context.Context, flags cli, command string, output io.Writer) error {
@@ -248,8 +354,14 @@ func writeAppWait(output io.Writer, mode string, snapshot publisherapp.Snapshot,
 			CheckedBy string `json:"checked_by"`
 		}{snapshot, state, checkedBy})
 	}
-	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "checked by", Value: checkedBy})}
-	return writeHumanFrame(output, "tnl wait", state, "", append(blocks, appServiceBlocks(snapshot)...)...)
+	var blocks []clioutput.Block
+	if state != "ready" {
+		blocks = append(blocks, clioutput.Text("Timed out waiting for readiness."))
+	}
+	for _, s := range snapshot.Services {
+		blocks = append(blocks, appServiceRow(s).blocks()...)
+	}
+	return writeResult(output, blocks...)
 }
 
 func runAppWatch(ctx context.Context, project projectConfiguration, root string, flags watchCommand, output io.Writer) (result error) {
@@ -261,6 +373,7 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 	}
 	defer state.Close()
 	cursor := flags.After
+	watch := make(humanWatch)
 	if cursor == "" {
 		snapshot, err := readAppSnapshotFrom(ctx, project, state)
 		if err != nil {
@@ -274,8 +387,18 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 			}{"snapshot", snapshot}); err != nil {
 				return err
 			}
-		} else if err := writeHumanFrame(output, "tnl watch", "snapshot", "cursor "+cursor, appServiceBlocks(snapshot)...); err != nil {
-			return err
+		} else {
+			var blocks []clioutput.Block
+			for _, entry := range snapshotObservations(snapshot.Services, snapshot.Publications) {
+				watch[entry.key] = entry.row
+				blocks = append(blocks, entry.row.blocks()...)
+			}
+			if len(blocks) == 0 {
+				blocks = append(blocks, clioutput.Text("No local services to watch."))
+			}
+			if err := writeResult(output, blocks...); err != nil {
+				return err
+			}
 		}
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -296,7 +419,7 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 			return failure.Wrap("resume local events", failure.AppCursorExpired, err)
 		}
 		for _, event := range events {
-			if err := writeAppWatchEvent(output, flags.Output, event); err != nil {
+			if err := watch.writeEvent(output, flags.Output, event); err != nil {
 				return err
 			}
 			cursor = event.Cursor
@@ -309,21 +432,66 @@ func runAppWatch(ctx context.Context, project projectConfiguration, root string,
 	}
 }
 
-func writeAppWatchEvent(output io.Writer, mode string, event publisherapp.Event) error {
+type humanWatch map[string]observationRow
+
+func (w humanWatch) writeEvent(output io.Writer, mode string, event publisherapp.Event) error {
 	if mode == "ndjson" {
 		return json.NewEncoder(output).Encode(event)
 	}
-	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "cursor", Value: event.Cursor})}
-	if event.Service != nil {
-		blocks = append(blocks, appServiceBlocks(publisherapp.Snapshot{Services: []publisherapp.Service{*event.Service}})...)
+	var row observationRow
+	var key string
+	var terminal bool
+	switch {
+	case event.Service != nil:
+		s := *event.Service
+		key, row.name = s.Name, observationName(s.Name)
+		switch event.Type {
+		case "service.readiness", "service.provisioning", "service.publication":
+			row = appServiceRow(s)
+		case "service.bound":
+			row.state = "publication attached"
+		case "service.failed", "service.warning":
+			row.state = strings.TrimPrefix(event.Type, "service.")
+			row.lastError = observationError(s.Failure)
+		case "service.stopped":
+			row.state = "stopped"
+			row.lastError = observationError(s.Failure)
+		case "service.replacing":
+			row.state = "replacing registration"
+		default:
+			row.state = strings.TrimPrefix(event.Type, "service.")
+		}
+		terminal = event.Type == "service.unregistered" || event.Type == "service.stopped"
+	case event.Publication != nil:
+		t := *event.Publication
+		key, row = "publication:"+t.ID, publicationRow(t)
+		terminal = t.State == clientstate.TunnelStateStopped || t.State == clientstate.TunnelStateFailed
+	default:
+		// a process event carries a full journal snapshot, including services
+		// that did not change. report the operation that produced it.
+		switch event.Type {
+		case "runtime.started", "runtime.stopped", "runtime.restarted":
+			clear(w)
+			return writeResult(output, clioutput.Text("Local tnl process "+strings.TrimPrefix(event.Type, "runtime.")+"."))
+		case "runtime.configured", "service.configured":
+			return writeResult(output, clioutput.Text("Service configuration updated."))
+		default:
+			return writeResult(output, clioutput.Text(strings.ReplaceAll(event.Type, ".", " ")))
+		}
 	}
-	if event.Snapshot != nil {
-		blocks = append(blocks, appServiceBlocks(*event.Snapshot)...)
+	previous := w[key]
+	if previous == row {
+		return nil
 	}
-	if event.Publication != nil {
-		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "tunnel", Value: event.Publication.ID}, clioutput.Field{Label: "state", Value: string(event.Publication.State)}, clioutput.Field{Label: "public URL", Value: event.Publication.PublicURL}))
+	if terminal {
+		delete(w, key)
+	} else {
+		w[key] = row
 	}
-	return writeHumanFrame(output, "tnl watch", event.Type, "", blocks...)
+	if row.lastError == previous.lastError {
+		row.lastError = ""
+	}
+	return writeResult(output, row.blocks()...)
 }
 
 func (a *commandApp) newWaitCommand() *cobra.Command {

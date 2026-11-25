@@ -41,5 +41,5 @@ func runDeploymentRename(ctx context.Context, flags deploymentRenameCommand, pro
 	if err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl deployment rename", "renamed", "update the deployment selector in Git before tnl apply", clioutput.Fields(clioutput.Field{Label: "deployment", Value: flags.Name}, clioutput.Field{Label: "endpoints", Value: "preserved"}))
+	return writeResult(output, clioutput.Line("Renamed deployment to "+flags.Name+"."), clioutput.Line("Update the deployment selector in Git before running tnl apply."))
 }

@@ -52,5 +52,7 @@ func runAuthBrowser(ctx context.Context, flags authBrowserCommand, output, diagn
 	if err = openBrowser(handoff); err != nil {
 		return failure.Wrap("open browser handoff", failure.BrowserOpenFailed, err)
 	}
-	return writeHumanFrame(output, "tnl auth browser", "opened", "", clioutput.Fields(clioutput.Field{Label: "public URL", Value: "https://" + item.Endpoint.Hostname}, clioutput.Field{Label: "session", Value: "browser session follows this CLI session's revocation"}))
+	return writeResult(output,
+		clioutput.Line("https://"+item.Endpoint.Hostname),
+		clioutput.Text("Opened in your browser. Revoking this CLI session also ends browser access."))
 }

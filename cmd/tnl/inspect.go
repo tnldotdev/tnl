@@ -171,11 +171,9 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 			Inspections   []inspectionRecord `json:"inspections"`
 		}{1, records})
 	}
-	if len(records) == 0 {
-		return writeHumanFrame(output, "tnl inspect list", "no activity", "", clioutput.Text("no matching local activity"))
-	}
-	blocks := make([]clioutput.Block, 0, len(records))
+	var rows [][]string
 	for _, record := range records {
+		operation, result := "", string(record.Result)
 		if record.Postgres != nil || record.MySQL != nil {
 			var sql inspectionSQL
 			if record.Postgres != nil {
@@ -183,34 +181,21 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 			} else {
 				sql = record.MySQL.inspectionSQL
 			}
-			fields := []clioutput.Field{
-				{Label: "service", Value: record.Service}, {Label: "result", Value: string(record.Result)},
-				{Label: "time", Value: record.ReceivedAt.Format(time.RFC3339)},
-			}
+			operation = string(sql.Operation)
 			if sql.SQLState != "" {
-				fields = append(fields, clioutput.Field{Label: "SQLSTATE", Value: sql.SQLState})
+				result += " " + sql.SQLState
 			}
-			blocks = append(blocks, clioutput.Section(fmt.Sprintf("%d / %s %s", record.Number, record.Protocol, sql.Operation), clioutput.Fields(fields...)))
-			continue
+		} else if record.Redis != nil {
+			operation = record.Redis.Command
+		} else {
+			operation = record.HTTP.Method + " " + record.HTTP.Path
+			if record.HTTP.Status != 0 {
+				result = fmt.Sprint(record.HTTP.Status) + " " + result
+			}
 		}
-		if record.Redis != nil {
-			blocks = append(blocks, clioutput.Section(fmt.Sprintf("%d / redis %s", record.Number, record.Redis.Command), clioutput.Fields(
-				clioutput.Field{Label: "service", Value: record.Service}, clioutput.Field{Label: "result", Value: string(record.Result)},
-				clioutput.Field{Label: "time", Value: record.ReceivedAt.Format(time.RFC3339)},
-			)))
-			continue
-		}
-		blocks = append(blocks, clioutput.Section(fmt.Sprintf("%d / %s %s", record.Number, record.HTTP.Method, record.HTTP.Path), clioutput.Fields(
-			clioutput.Field{Label: "protocol", Value: string(record.Protocol)},
-			clioutput.Field{Label: "service", Value: record.Service},
-			clioutput.Field{Label: "result", Value: string(record.Result)},
-			clioutput.Field{Label: "status", Value: fmt.Sprint(record.HTTP.Status)},
-			clioutput.Field{Label: "from", Value: record.HTTP.Origin},
-			clioutput.Field{Label: "time", Value: record.ReceivedAt.Format(time.RFC3339)},
-			clioutput.Field{Label: "worktree", Value: record.Project},
-		)))
+		rows = append(rows, []string{fmt.Sprint(record.Number), record.Service, result, operation})
 	}
-	return writeHumanFrame(output, "tnl inspect list", countState(len(records), "inspection", "inspections"), "", blocks...)
+	return writeResult(output, clioutput.Table([]string{"ID", "SERVICE", "RESULT", "REQUEST"}, rows, "No matching local activity."))
 }
 
 func runInspectShow(ctx context.Context, flags inspectShowCommand, project string, output io.Writer) error {
@@ -277,7 +262,7 @@ func runInspectShow(ctx context.Context, flags inspectShowCommand, project strin
 			}
 		}
 	}
-	return writeHumanFrame(output, "tnl inspect show", fmt.Sprintf("inspection %d", record.Number), "", clioutput.Fields(fields...))
+	return writeResult(output, clioutput.Fields(fields...))
 }
 
 func validInspectionMethod(method string) bool {

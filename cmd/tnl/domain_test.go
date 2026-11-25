@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
-	"github.com/tnldotdev/tnl/internal/clioutput"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
@@ -75,7 +74,7 @@ func TestDomainClaimResultPresentation(t *testing.T) {
 			if err := writeDomainClaim(&output, test.claim, true, false); err != nil {
 				t.Fatal(err)
 			}
-			if test.wantNS && !strings.Contains(output.String(), "ns-1.example") || test.claim.State == authorityv1.DomainStateFailed && !strings.Contains(output.String(), "-- failed ") {
+			if test.wantNS && !strings.Contains(output.String(), "ns-1.example") || test.claim.State == authorityv1.DomainStateFailed && output.String() != "claimed.example  failed\nask your team admin to check DNS setup\n" {
 				t.Fatalf("claim output: %s", output.String())
 			}
 		})
@@ -98,7 +97,7 @@ func TestDomainClaimTimeoutPresentation(t *testing.T) {
 func TestDomainClaimFollowupRetainsServerAndTeam(t *testing.T) {
 	var output bytes.Buffer
 	claimed := authorityv1.Domain{CanonicalDomain: "studio.example.test", Id: "dom_1", State: authorityv1.DomainStatePending}
-	if err := writeDomainClaimWithContext(&output, claimed, false, true, "https://control.example.test", "tm_studio"); err != nil {
+	if err := writeDomainClaimWithContext(&output, claimed, false, true, domainFollowup{server: "https://control.example.test", team: "tm_studio"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, value := range []string{"--server=https://control.example.test", "--team=tm_studio", "studio.example.test"} {
@@ -120,12 +119,12 @@ func TestDomainStatusFindsOneDomainAndShowsAction(t *testing.T) {
 		if err := writeDomainStatus(&output, found, true); err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"tnl domain status", "verification required", "domain_1", "default  yes", "ns-1.example", "add the DNS records"} {
+		for _, want := range []string{"custom.example  verification required (default)\n", "ns-1.example", "add the DNS records"} {
 			if !strings.Contains(output.String(), want) {
 				t.Fatalf("status missing %q:\n%s", want, output.String())
 			}
 		}
-		if strings.Contains(output.String(), "other.example") {
+		if strings.Contains(output.String(), "other.example") || strings.Contains(output.String(), "domain_1") {
 			t.Fatalf("status included another domain:\n%s", output.String())
 		}
 	}
@@ -148,42 +147,41 @@ func TestDomainStatusFindsOneDomainAndShowsAction(t *testing.T) {
 		if err := writeDomainStatus(&output, domain, false); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(output.String(), test.heading) || !strings.Contains(output.String(), test.action) || !strings.Contains(output.String(), "default  no") {
+		if !strings.HasPrefix(output.String(), "custom.example  "+test.heading+"\n") || !strings.Contains(output.String(), test.action) || strings.Contains(output.String(), "(default)") {
 			t.Fatalf("status for %s:\n%s", test.state, output.String())
 		}
 	}
 }
 
-func TestDomainDNSRecordBlocksRenderRequiredRecords(t *testing.T) {
+func TestDomainStatusShowsDelegationStageAndBothRequiredRecords(t *testing.T) {
 	domain := authorityv1.Domain{
-		CanonicalDomain: "claimed.example",
-		Id:              "domain_0123456789abcdef0123456789abcdef",
-		Kind:            "custom",
-		State:           authorityv1.DomainStatePending,
+		CanonicalDomain:  "claimed.example",
+		Id:               "domain_0123456789abcdef0123456789abcdef",
+		Kind:             "custom",
+		State:            authorityv1.DomainStatePending,
+		ClaimStage:       new(authorityv1.WaitingForDelegation),
+		DelegationTarget: new("example"),
 		RequiredRecords: []authorityv1.DNSRecord{
 			{Name: "claimed.example", Type: "NS", Value: "ns-1.example"},
 			{Name: "claimed.example", Type: "NS", Value: "ns-2.example"},
 		},
 	}
-	details := []clioutput.Block{clioutput.Fields(
-		clioutput.Field{Label: "kind", Value: string(domain.Kind)},
-		clioutput.Field{Label: "state", Value: string(domain.State)},
-		clioutput.Field{Label: "id", Value: domain.Id},
-	)}
-	details = append(details, domainDNSRecordBlocks(domain.RequiredRecords)...)
-	output, err := clioutput.Render(clioutput.Frame{
-		Command: "tnl domain list", State: "1 domain", Footer: "* default",
-		Blocks: []clioutput.Block{clioutput.Section(domain.CanonicalDomain, details...)},
-	})
-	if err != nil {
+	var out bytes.Buffer
+	if err := writeDomainStatus(&out, domain, false); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"claimed.example", "pending", "ns-1.example", "ns-2.example"} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("output does not contain %q:\n%s", want, output)
+	text := strings.Join(strings.Fields(out.String()), " ")
+	for _, want := range []string{"claimed.example waiting for delegation", "add records under example", "leave the parent domain's nameservers unchanged", "claimed.example NS ns-1.example", "claimed.example NS ns-2.example", "add the nameservers shown above"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("delegation status missing %q:\n%s", want, &out)
 		}
 	}
-	if strings.Count(output, "DNS record") != 2 {
-		t.Fatalf("output does not contain both DNS record sections:\n%s", output)
+	domain.DelegationTarget = nil
+	out.Reset()
+	if err := writeDomainStatus(&out, domain, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "registrar") || !strings.Contains(out.String(), "add the nameservers shown above") {
+		t.Fatalf("unknown delegation target: %s", &out)
 	}
 }

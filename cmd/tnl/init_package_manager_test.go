@@ -38,7 +38,7 @@ func TestInitInstallsMissingPackageWithDetectedManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{cwd, "add", "--save-dev", "--reporter=silent", "@tnldotdev/tnl"}
-	if !slices.Equal(strings.Split(strings.TrimSuffix(string(arguments), "\n"), "\n"), want) || !strings.Contains(stdout.String(), "installed") || stderr.Len() != 0 {
+	if !slices.Equal(strings.Split(strings.TrimSuffix(string(arguments), "\n"), "\n"), want) || !strings.Contains(stdout.String(), "Installed @tnldotdev/tnl\n") || stderr.Len() != 0 {
 		t.Fatalf("arguments = %q, want %v; stdout = %q, stderr = %q", arguments, want, stdout.String(), stderr.String())
 	}
 }

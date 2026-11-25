@@ -88,7 +88,7 @@ func (flags connectStartCommand) options() connector.StartOptions {
 		Name: flags.Name, Client: flags.Client, ClientArgs: flags.clientArgs, Listen: flags.Listen, Protocol: flags.Protocol, Kubeconfig: flags.Kubeconfig, Namespace: flags.Namespace, KubeUserConfig: flags.KubeUserConfig, KubeUser: flags.KubeUser, KubeTokenFile: flags.KubeTokenFile,
 		Foreground: flags.Foreground, Detach: flags.Detach, Install: flags.Install, System: flags.System, SystemStateDir: flags.SystemStateDir, DetachedChild: flags.DetachedChild, Stdio: flags.Stdio, Output: string(flags.Output), DetachLaunch: flags.detach,
 		Ready: func(destination io.Writer, profile connector.Profile, listen string) error {
-			return writeNativeConnection(destination, profile, flags.Output, listen, flags.StateDir)
+			return writeConnectorReady(destination, profile, flags.Output, listen, flags.StateDir, flags.Install)
 		}, Starting: detached.Starting, PublicationReady: detached.Ready, Prepared: func(ctx context.Context, profile connector.Profile) { detached.SetConnection(ctx, profile) }}
 }
 
@@ -167,7 +167,7 @@ func runConnectJobs(ctx context.Context, flags connectListCommand, name, action 
 		return err
 	}
 	if name != "" && action == "remove" {
-		return writeHumanFrame(output, "tnl connect remove", "removed", "", clioutput.Fields(clioutput.Field{Label: "name", Value: jobs[0].Name}))
+		return writeResult(output, clioutput.Line("Removed connector "+jobs[0].Name))
 	}
 	if name != "" {
 		if len(jobs) == 0 {
@@ -197,15 +197,15 @@ func runConnectAvailable(ctx context.Context, command connectAvailableCommand, o
 		}
 		return json.NewEncoder(output).Encode(services)
 	}
-	blocks := make([]clioutput.Block, 0, len(services))
+	rows := make([][]string, 0, len(services))
 	for _, service := range services {
 		state := "offline"
 		if service.Enabled && service.ServiceRunId != nil && service.RunNumber != nil {
 			state = "ready"
 		}
-		blocks = append(blocks, clioutput.Section(service.Name, clioutput.Fields(clioutput.Field{Label: "service ID", Value: service.Id}, clioutput.Field{Label: "team ID", Value: service.TeamId}, clioutput.Field{Label: "state", Value: state})))
+		rows = append(rows, []string{service.Name, service.TeamName, state, service.Id})
 	}
-	return writeHumanFrame(output, "tnl connect available", countState(len(services), "service", "services"), "", blocks...)
+	return writeResult(output, clioutput.Table([]string{"SERVICE", "TEAM", "STATE", "SERVICE ID"}, rows, "No services available to connect to."))
 }
 
 func (a *commandApp) newConnectCommand() *cobra.Command {

@@ -20,18 +20,18 @@ type Code string
 const helpOrigin = "https://tnl.dev"
 
 type definition struct {
-	Code         Code                 `json:"code"`
-	Slug         string               `json:"slug"`
-	Category     string               `json:"category"`
-	Title        string               `json:"title"`
-	Summary      string               `json:"summary"`
-	Description  string               `json:"description"`
-	DiagramLabel string               `json:"diagram_label"`
-	Surfaces     []string             `json:"surfaces"`
-	HTTPStatus   int                  `json:"http_status"`
-	Flow         []clioutput.FlowNode `json:"flow"`
-	Causes       []string             `json:"causes"`
-	Cases        []caseDefinition     `json:"cases"`
+	Code         Code              `json:"code"`
+	Slug         string            `json:"slug"`
+	Category     string            `json:"category"`
+	Title        string            `json:"title"`
+	Summary      string            `json:"summary"`
+	Description  string            `json:"description"`
+	DiagramLabel string            `json:"diagram_label"`
+	Surfaces     []string          `json:"surfaces"`
+	HTTPStatus   int               `json:"http_status"`
+	Flow         []json.RawMessage `json:"flow"`
+	Causes       []string          `json:"causes"`
+	Cases        []caseDefinition  `json:"cases"`
 	Actions      struct {
 		Visitor   []string `json:"visitor"`
 		Publisher []string `json:"publisher"`
@@ -162,22 +162,22 @@ func Codes() []Code {
 }
 
 func Text(code Code) string {
-	return renderText(textFrame("tnl", code, "", definitionFor(code).Summary))
+	return renderText(textMessage(code, "", definitionFor(code).Summary))
 }
 
 func TextForError(err error) (string, bool) {
-	f, ok := FrameForCommandError("tnl", err)
+	f, ok := MessageForError(err)
 	if !ok {
 		return "", false
 	}
 	return renderText(f), true
 }
 
-// FrameForCommandError describes a classified error for one canonical command.
-func FrameForCommandError(command string, err error) (clioutput.Frame, bool) {
+// MessageForError describes a classified error without revealing its raw cause.
+func MessageForError(err error) (clioutput.Message, bool) {
 	classified, ok := errors.AsType[*Error](err)
 	if !ok || classified == nil {
-		return clioutput.Frame{}, false
+		return clioutput.Message{}, false
 	}
 	code := classified.code
 	definition := definitionFor(code)
@@ -185,18 +185,15 @@ func FrameForCommandError(command string, err error) (clioutput.Frame, bool) {
 	if classified.showDetail {
 		detail = classified.message
 	}
-	details := []string{definition.Summary}
-	if detail == "" || detail == definition.Summary || detail == definition.Title {
-		details = details[:1]
-	} else {
-		details = append(details, detail)
+	if detail == "" || detail == definition.Title {
+		detail = definition.Summary
 	}
-	return textFrame(command, code, KnownCase(err), details...), true
+	return textMessage(code, KnownCase(err), detail), true
 }
 
-// WriteWarning renders a non-terminal diagnostic through the shared diagram renderer.
-func WriteWarning(output io.Writer, command string, code Code) error {
-	return clioutput.Write(output, textFrame(command, code, "", definitionFor(code).Summary))
+// WriteWarning reports a non-terminal diagnostic.
+func WriteWarning(output io.Writer, code Code) error {
+	return clioutput.Write(output, textMessage(code, "", "Warning: "+definitionFor(code).Summary))
 }
 
 func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, caseID string) {
@@ -208,7 +205,7 @@ func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, c
 	if caseFor(code, caseID) != nil {
 		variant = caseID
 	}
-	body := renderText(textFrame("tnl", code, variant, definitionFor(code).Summary))
+	body := renderText(textMessage(code, variant, definitionFor(code).Summary))
 	contentType := "text/plain; charset=utf-8"
 	if browserpage.AcceptsHTML(request.Header.Get("Accept")) {
 		body = renderHTML(code, variant)
@@ -227,34 +224,23 @@ func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, c
 	}
 }
 
-func textFrame(command string, code Code, caseID string, details ...string) clioutput.Frame {
+func textMessage(code Code, caseID string, message string) clioutput.Message {
 	definition := definitionFor(code)
-	blocks := make([]clioutput.Block, 0, len(details)+2)
-	for _, detail := range details {
-		blocks = append(blocks, clioutput.Text(detail))
-	}
-	flow := append([]clioutput.FlowNode(nil), definition.Flow...)
+	var blocks []clioutput.Block
 	if variant := caseFor(code, caseID); variant != nil {
-		blocks = append(blocks, clioutput.Text(variant.Description), clioutput.Text(variant.Action))
-		for index := range flow {
-			if flow[index].Failure {
-				flow[index].Detail = variant.DiagramDetail
-				break
-			}
+		if message == definition.Summary {
+			message = variant.Description
 		}
+		blocks = append(blocks, clioutput.Text(message), clioutput.Line(variant.Action))
+	} else {
+		blocks = append(blocks, clioutput.Text(message))
 	}
-	blocks = append(blocks, clioutput.Flow(flow...),
-		clioutput.Fields(clioutput.Field{Label: "help", Value: HelpURL(code, caseID)}))
-	return clioutput.Frame{
-		Command: command,
-		State:   definition.Title,
-		Blocks:  blocks,
-		Footer:  string(code),
-	}
+	blocks = append(blocks, clioutput.Line(string(code)+"  "+HelpURL(code, caseID)))
+	return clioutput.Message{Blocks: blocks}
 }
 
-func renderText(frame clioutput.Frame) string {
-	text, err := clioutput.Render(frame)
+func renderText(message clioutput.Message) string {
+	text, err := clioutput.Render(message)
 	if err != nil {
 		panic(err)
 	}

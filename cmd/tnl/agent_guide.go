@@ -35,7 +35,7 @@ func (a *commandApp) newAgentGuideCommand() *cobra.Command {
 		for _, s := range sections {
 			blocks = append(blocks, clioutput.Text(s.use), clioutput.Literal(s.command))
 		}
-		return writeHumanFrame(a.out, "tnl agent-guide", "automation", "tnl agent-guide --skill prints an installable SKILL.md", blocks...)
+		return writeWithHint(a.out, "tnl agent-guide --skill prints an installable SKILL.md", blocks...)
 	}
 	return cmd
 }

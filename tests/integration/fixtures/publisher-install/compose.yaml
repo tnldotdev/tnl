@@ -2,7 +2,7 @@ services:
   publisher:
     image: ${TNL_IMAGE:?set the source-built fixture image}
     user: "0:0"
-    command: [publish, --enrolled, --foreground, --inspection-mode=none]
+    command: [publish, --enrolled, --foreground, --inspection-mode=none, --output=ndjson]
     environment:
       TNL_SERVER: ${TNL_SERVER:?set the fixture control URL}
       TNL_TARGET: ${TNL_TARGET:?set the fixture target}

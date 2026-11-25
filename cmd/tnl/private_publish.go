@@ -66,19 +66,50 @@ func privatePresentation(ctx context.Context, flags publishCommand, output, diag
 					Target        string `json:"target"`
 				}{1, event.State, event.ServiceID, event.Name, event.Target})
 			}
-			address := clioutput.Field{Label: "TLS hostname", Value: event.Hostname}
-			reachability := "connector access only"
-			if event.Public {
-				address.Label = "public endpoint"
-				address.Value = net.JoinHostPort(event.Hostname, strconv.Itoa(event.Port))
-				if event.Protocol == "http" {
-					address.Label, address.Value = "public URL", "https://"+address.Value
-				}
-				reachability = "public and connector access; visitors still need access"
+			if event.State != "ready" {
+				return writeResult(diagnostics, clioutput.Line(event.Name+": "+event.State))
 			}
-			return writeHumanFrame(diagnostics, "tnl publish", event.State, "", clioutput.Fields(clioutput.Field{Label: "service ID", Value: event.ServiceID}, clioutput.Field{Label: "name", Value: event.Name}, address, clioutput.Field{Label: "reachability", Value: reachability}, clioutput.Field{Label: "visitor TLS", Value: "verified native TLS"}, clioutput.Field{Label: "target", Value: event.Target}))
+			var blocks []clioutput.Block
+			if event.Public {
+				address := net.JoinHostPort(event.Hostname, strconv.Itoa(event.Port))
+				if event.Protocol == "http" {
+					if event.Port == 443 {
+						address = event.Hostname
+					}
+					address = "https://" + address
+				}
+				blocks = append(blocks, clioutput.Literal(address),
+					clioutput.Text("Public and connector access. Visitors still need access."))
+			} else {
+				blocks = append(blocks, clioutput.Literal(publishedConnectCommand(ctx, flags, event.ServiceID, false)), clioutput.Line("Connector access only. TLS hostname: "+event.Hostname))
+			}
+			blocks = append(blocks, clioutput.Line("Forwarding to "+event.Target), clioutput.Text("Visitor TLS: verified native TLS. Ctrl+C to stop."))
+			return writeResult(diagnostics, blocks...)
 		},
 	}
+}
+
+func publishedConnectCommand(ctx context.Context, flags publishCommand, selector string, configured bool) string {
+	cmd := "tnl " + flags.configArgs + "connect "
+	server := flags.project.Config.Server
+	if configured {
+		// a configured service may also be a subcommand, such as "list".
+		cmd += "start "
+		if effective, err := flags.project.EffectiveService(selector); err == nil {
+			server = effective.Server
+		}
+	}
+	cmd += shellWord(selector)
+	if pin := suggestedServer(ctx, flags.ServerURL, server, os.Getenv("TNL_ACCESS_TOKEN"), flags.StateDir, nil); pin != "" {
+		cmd += " --server=" + shellWord(pin)
+	}
+	if flags.Team != "" {
+		cmd += " --team=" + shellWord(flags.Team)
+	}
+	if flags.StateDir != "" {
+		cmd += " --state-dir=" + shellWord(flags.StateDir)
+	}
+	return cmd
 }
 
 func privateOptions(flags publishCommand) invocation.ServiceOptions {

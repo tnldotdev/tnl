@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -12,54 +11,62 @@ import (
 )
 
 func writeNativeConnection(output io.Writer, profile connector.Profile, mode statusOutputMode, listen, stateDir string) error {
+	return writeConnectorReady(output, profile, mode, listen, stateDir, false)
+}
+
+func writeConnectorReady(output io.Writer, profile connector.Profile, mode statusOutputMode, listen, stateDir string, installed bool) error {
 	if mode == statusOutputJSON {
 		return json.NewEncoder(output).Encode(profile)
 	}
-	fields := []clioutput.Field{{Label: "service", Value: profile.ServiceID}, {Label: "protocol", Value: string(profile.Protocol)}, {Label: "hostname", Value: profile.Hostname}, {Label: "port", Value: strconv.Itoa(profile.Port)}, {Label: "TLS", Value: profile.TLS}, {Label: "authentication", Value: string(profile.Authentication)}}
-	footer := "keep tnl running while using the service"
-	if listen != "" {
-		fields = append(fields, clioutput.Field{Label: "listen", Value: listen})
-	}
-	if profile.URL != "" {
-		label := "url"
-		if profile.Protocol == config.ProtocolHTTP {
-			label = "curl url"
+	var blocks []clioutput.Block
+	if len(profile.Command) > 0 {
+		command := make([]string, len(profile.Command))
+		for i, argument := range profile.Command {
+			command[i] = shellWord(argument)
 		}
-		fields = append(fields, clioutput.Field{Label: label, Value: profile.URL})
+		blocks = append(blocks, clioutput.Literal(strings.Join(command, " ")))
+	} else if profile.Protocol == config.ProtocolHTTP && profile.URL != "" {
+		blocks = append(blocks, clioutput.Text("Use a client dial override for this HTTPS URL:"), clioutput.Literal(profile.URL))
 	}
-	if profile.DetachedID != "" {
-		fields = append(fields, clioutput.Field{Label: "detached ID", Value: profile.DetachedID})
-		footer = ""
-	}
-	if profile.ServerCAFile != "" {
-		fields = append(fields, clioutput.Field{Label: "server CA", Value: profile.ServerCAFile})
-	}
-	if kube := profile.Kubeconfig; kube != nil {
-		fields = append(fields, clioutput.Field{Label: "kubeconfig", Value: kube.File}, clioutput.Field{Label: "context", Value: kube.Context})
-		if kube.Namespace != "" {
-			fields = append(fields, clioutput.Field{Label: "namespace", Value: kube.Namespace})
-		}
-		if kube.Qualified {
-			footer = "context name was qualified to preserve an existing installation"
-		}
-	}
-	command := make([]string, len(profile.Command))
-	for i, argument := range profile.Command {
-		command[i] = "'" + strings.ReplaceAll(argument, "'", "'\\''") + "'"
-	}
-	blocks := []clioutput.Block{clioutput.Fields(fields...)}
 	for _, instruction := range profile.Instructions {
+		if profile.Protocol == config.ProtocolHTTP {
+			instruction = strings.Replace(instruction, "curl below", "curl", 1)
+		}
 		blocks = append(blocks, clioutput.Text(instruction))
 	}
-	if len(command) != 0 {
-		blocks = append(blocks, clioutput.Section("client command", clioutput.Literal(strings.Join(command, " "))))
+	if listen != "" {
+		blocks = append(blocks, clioutput.Line("Listening on "+listen))
 	}
+	if (profile.Protocol == config.ProtocolTCP || profile.Protocol == config.ProtocolKubernetes) && profile.Hostname != "" {
+		blocks = append(blocks, clioutput.Line("TLS hostname: "+profile.Hostname))
+	}
+	if profile.TLS != "" {
+		blocks = append(blocks, clioutput.Text("TLS: "+profile.TLS))
+	}
+	if profile.ServerCAFile != "" {
+		blocks = append(blocks, clioutput.Line("Server CA: "+profile.ServerCAFile))
+	}
+	if kube := profile.Kubeconfig; kube != nil {
+		if kube.Namespace != "" {
+			blocks = append(blocks, clioutput.Line("Namespace: "+kube.Namespace))
+		}
+		if kube.Qualified {
+			blocks = append(blocks, clioutput.Text("The context name was qualified to preserve an existing installation."))
+		}
+	}
+	footer := "Keep this terminal open while using the service."
 	if profile.DetachedID != "" {
 		stop := "tnl detached stop " + shellWord(profile.DetachedID)
 		if stateDir != "" {
 			stop += " --state-dir=" + shellWord(stateDir)
 		}
-		blocks = append(blocks, clioutput.Section("stop", clioutput.Literal(stop)))
+		blocks = append(blocks, clioutput.Text("Stop the detached connector:"), clioutput.Literal(stop))
+		footer = ""
+	} else if installed {
+		footer = "The installed connector runs in the background."
 	}
-	return writeHumanFrame(output, "tnl connect", "ready", footer, blocks...)
+	if footer != "" {
+		blocks = append(blocks, clioutput.Text(footer))
+	}
+	return writeResult(output, blocks...)
 }

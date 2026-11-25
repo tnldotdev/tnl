@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -118,7 +117,7 @@ func runServiceInstall(ctx context.Context, flags serviceInstallCommand, output 
 	if err := installedjobs.InstallService(ctx, options, executor); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl service install", "installed", "", clioutput.Fields(clioutput.Field{Label: "state directory", Value: options.Root}))
+	return writeResult(output, clioutput.Text("Installed the tnl system service."))
 }
 
 func runServiceStart(ctx context.Context, flags serviceJobCommand, output io.Writer, executor installedjobs.Executor) error {
@@ -201,7 +200,7 @@ func runServiceRemove(ctx context.Context, flags serviceJobCommand, output io.Wr
 	if err := registry.Remove(ctx, job.ID); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl service remove", "removed", "", clioutput.Fields(clioutput.Field{Label: "name", Value: displayJobName(job)}, clioutput.Field{Label: "job ID", Value: job.ID}))
+	return writeResult(output, clioutput.Line("Removed "+displayJobName(job)+"."))
 }
 
 func runServiceList(ctx context.Context, flags serviceListCommand, output io.Writer) error {
@@ -295,46 +294,38 @@ func writeSystemJobs(ctx context.Context, registry *installedjobs.Registry, outp
 }
 
 func renderSystemJobs(output io.Writer, command string, jobs []installedjobs.Job, selected string) error {
-	blocks := []clioutput.Block{}
-	state := "no jobs"
+	var rows [][]string
 	for _, job := range jobs {
 		if selected != "" && selected != job.ID {
 			continue
 		}
-		state = "installed"
-		if selected != "" {
-			state = string(job.Status.State)
-		}
-		desired := "stopped"
-		if job.Enabled {
-			desired = "running"
-		}
-		fields := []clioutput.Field{{Label: "name", Value: displayJobName(job)}, {Label: "job ID", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "protocol", Value: string(job.Protocol)}, {Label: "desired", Value: desired}, {Label: "state", Value: string(job.Status.State)}}
-		if job.Kind == installedjobs.KindDeployment && job.DeploymentMember != nil {
-			fields = append(fields, clioutput.Field{Label: "deployment", Value: job.DeploymentMember.DeploymentName}, clioutput.Field{Label: "project key", Value: job.DeploymentMember.ProjectKey}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(job.Status.ObservedRevision, 10)})
-		} else if job.Kind == installedjobs.KindService || job.Kind == installedjobs.KindConnector {
-			fields = append(fields, clioutput.Field{Label: "service ID", Value: job.ServiceID})
-		}
-		if job.Kind == installedjobs.KindService && job.Status.Address != "" {
-			fields = append(fields, clioutput.Field{Label: "address", Value: job.Status.Address})
-		}
+		state := string(job.Status.State)
+		detail := job.Status.Address
 		if job.Kind == installedjobs.KindConnector {
-			fields = append(fields, clioutput.Field{Label: "listen", Value: job.Target})
-		} else {
-			fields = append(fields, clioutput.Field{Label: "publisher", Value: job.PublisherIdentityID})
-		}
-		if job.Status.RunNumber != 0 {
-			fields = append(fields, clioutput.Field{Label: "service run", Value: strconv.FormatUint(job.Status.RunNumber, 10)})
+			detail = job.Target
 		}
 		if job.Status.Failure != "" {
-			fields = append(fields, clioutput.Field{Label: "failure", Value: job.Status.Failure})
+			detail = job.Status.Failure
 		}
-		blocks = append(blocks, clioutput.Section(displayJobName(job), clioutput.Fields(fields...)))
+		if !job.Enabled && state != "stopped" {
+			state += " (stop requested)"
+		}
+		if command == "tnl service status" {
+			fields := []clioutput.Field{{Label: "job", Value: job.ID}, {Label: "state", Value: state}}
+			if job.ServiceID != "" {
+				fields = append(fields, clioutput.Field{Label: "service ID", Value: job.ServiceID}, clioutput.Field{Label: "protocol", Value: string(job.Protocol)})
+			}
+			if detail != "" {
+				fields = append(fields, clioutput.Field{Label: "detail", Value: detail})
+			}
+			return writeResult(output, clioutput.Section(displayJobName(job), clioutput.Fields(fields...)))
+		}
+		rows = append(rows, []string{displayJobName(job), job.ID, state, detail})
 	}
-	if selected != "" && len(blocks) == 0 {
+	if selected != "" && len(rows) == 0 {
 		return installedjobs.ErrJobNotFound
 	}
-	return writeHumanFrame(output, command, state, "", blocks...)
+	return writeResult(output, clioutput.Table([]string{"NAME", "JOB ID", "STATE", "DETAIL"}, rows, "No installed jobs."))
 }
 
 func displayJobName(job installedjobs.Job) string {

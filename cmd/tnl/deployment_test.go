@@ -81,7 +81,7 @@ func TestDeploymentReadRejectsCrossScopeAndRendersDeterministically(t *testing.T
 		}
 	}
 	var output bytes.Buffer
-	if err := writeHumanFrame(&output, "tnl deployment show", "saved", "", deploymentBlock(deployment)); err != nil {
+	if err := writeResult(&output, deploymentBlock(deployment)); err != nil {
 		t.Fatal(err)
 	}
 	text := output.String()

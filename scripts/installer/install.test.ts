@@ -84,8 +84,8 @@ test("installs GitHub's latest stable release, retains notices, and cleans up", 
   const f = fixture();
   const result = f.run();
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain("tnl is installed");
-  expect(result.stderr).toContain("downloading and verifying");
+  expect(result.stdout).toContain("Installed tnl.");
+  expect(result.stderr).toContain("Downloading and verifying");
   expect(readFileSync(f.binary, "utf8")).toBe("fixture tnl\n");
   expect(readFileSync(join(f.root, "urls"), "utf8")).toContain("/releases/download/v1.2.3/");
   expect(readdirSync(join(f.dir, "tnl-notices"))).toEqual([
@@ -112,7 +112,7 @@ test.each([
   const f = fixture();
   const result = f.run("", latest);
   expect(result.status).not.toBe(0);
-  expect(result.stderr).toContain("could not find a stable tnl release");
+  expect(result.stderr).toContain("Could not find a stable tnl release");
   expect(result.stdout).toBe("");
   expect(readFileSync(join(f.root, "urls"), "utf8").trim()).toBe(
     "https://github.com/tnldotdev/tnl/releases/latest",
@@ -140,7 +140,7 @@ test("a failed replacement preserves the binary and removes staging files", () =
   f.executable("mv", "exit 1");
   const result = f.run();
   expect(result.status).not.toBe(0);
-  expect(result.stderr).toContain("could not install tnl");
+  expect(result.stderr).toContain("Could not install tnl");
   expect(readFileSync(f.binary, "utf8")).toBe("old binary");
   expect(readdirSync(f.scratch)).toEqual([]);
   expect(readdirSync(f.dir)).toEqual(["tnl", "tnl-notices"]);

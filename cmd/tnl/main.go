@@ -95,11 +95,13 @@ type tunnelFlags struct {
 }
 
 type remoteFlags struct {
-	ServerURL    string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
-	AccessToken  string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved session."`
-	StateDir     string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	ProjectTeam  string
-	SelectedTeam string
+	ServerURL     string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
+	AccessToken   string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved session."`
+	StateDir      string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	ProjectTeam   string
+	SelectedTeam  string
+	configArgs    string
+	projectServer *string
 }
 
 type teamSelectionFlags struct {
@@ -353,36 +355,27 @@ func writeCommandError(output io.Writer, err error) {
 		return
 	}
 	err = classifyCommandError(err)
-	command := "tnl"
-	if contextual, ok := clioutput.CommandOf(err); ok {
-		command = contextual
-	}
-	if frame, ok := diagnostic.FrameForCommandError(command, err); ok {
-		_ = clioutput.Write(output, frame)
+	if message, ok := diagnostic.MessageForError(err); ok {
+		_ = clioutput.Write(output, message)
 		return
 	}
 	presented := presentHumanFailure(err)
-	blocks := []clioutput.Block{clioutput.Text(presented.message)}
+	blocks := []clioutput.Block{clioutput.Text("Error: " + presented.message)}
 	if typed, ok := failure.Of(err); ok && typed.Reason() == failure.ObservabilityConfigInvalid && typed.Setting() != "" {
 		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "setting", Value: string(typed.Setting())}))
 	}
 	caseID := failure.KnownCase(err)
 	if variant := failure.CaseFor(presented.reason, caseID); variant != nil {
-		blocks = append(blocks, clioutput.Text(variant.Description), clioutput.Text(variant.Action))
+		blocks = append(blocks, clioutput.Text(variant.Description), clioutput.Line(variant.Action))
+	} else if timeout, ok := errors.AsType[*loginTimeout](err); ok {
+		blocks = append(blocks, clioutput.Text("Resume login:"), clioutput.Literal(timeout.resume))
 	} else if presented.action != "" {
-		blocks = append(blocks, clioutput.Text(presented.action))
+		blocks = append(blocks, clioutput.Line(presented.action))
 	}
-	footer := ""
 	if helpURL := failure.HelpURL(presented.reason, caseID); helpURL != "" {
-		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "help", Value: helpURL}))
-		footer = string(presented.reason)
+		blocks = append(blocks, clioutput.Line(string(presented.reason)+"  "+helpURL))
 	}
-	_ = clioutput.Write(output, clioutput.Frame{
-		Command: command,
-		State:   "command failed",
-		Blocks:  blocks,
-		Footer:  footer,
-	})
+	_ = clioutput.Write(output, clioutput.Message{Blocks: blocks})
 }
 
 func classifyCommandError(err error) error {

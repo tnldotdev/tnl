@@ -2,45 +2,19 @@ package main
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
 )
 
-func TestAuthenticationPromptUsesCommandFrame(t *testing.T) {
+func TestAuthenticationPromptShowsApprovalURLAndVerificationCode(t *testing.T) {
 	var output bytes.Buffer
 	prompt := authenticationPrompt(&output, "tnl auth login")
 	if err := prompt(auth.Prompt{URL: "https://account.example/device", Code: "ABCD-EFGH"}); err != nil {
 		t.Fatal(err)
 	}
-	got := output.String()
-	for _, fragment := range []string{
-		"+--[ tnl auth login ]-- authentication required ",
-		"https://account.example/device",
-		"ABCD-EFGH",
-		"+-- waiting for authentication ",
-	} {
-		if !strings.Contains(got, fragment) {
-			t.Fatalf("authentication prompt does not contain %q:\n%s", fragment, got)
-		}
-	}
-}
-
-func TestHumanTransitionUsesSharedShape(t *testing.T) {
-	var output bytes.Buffer
-	if err := writeHumanTransition(&output, "tnl url delete", "deleted", "route.example", "", "public URL deleted", ""); err != nil {
-		t.Fatal(err)
-	}
-	got := output.String()
-	for _, fragment := range []string{
-		"+--[ tnl url delete ]-- deleted ",
-		"route.example",
-		"public URL deleted",
-	} {
-		if !strings.Contains(got, fragment) {
-			t.Fatalf("transition does not contain %q:\n%s", fragment, got)
-		}
+	if got := output.String(); got != "Open this URL to sign in:\nhttps://account.example/device\nMatch code: ABCD-EFGH\n" {
+		t.Fatalf("authentication prompt = %q", got)
 	}
 }
 

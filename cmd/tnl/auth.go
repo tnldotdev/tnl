@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"golang.org/x/term"
 )
 
@@ -33,12 +34,14 @@ type authStatusCommand struct {
 }
 
 type loginCommand struct {
-	Team      string           `name:"team" help:"Team name to authenticate for; defaults to the project or saved team."`
-	ServerURL string           `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
-	StateDir  string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	Open      bool             `name:"open" help:"Open the approval URL in a browser."`
-	Timeout   time.Duration    `name:"timeout" default:"10m" help:"Maximum wait; a device login operation can be resumed after timeout."`
-	Output    statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	projectServer *string
+	configArgs    string
+	Team          string           `name:"team" help:"Team name to authenticate for; defaults to the project or saved team."`
+	ServerURL     string           `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
+	StateDir      string           `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	Open          bool             `name:"open" help:"Open the approval URL in a browser."`
+	Timeout       time.Duration    `name:"timeout" default:"10m" help:"Maximum wait; a device login operation can be resumed after timeout."`
+	Output        statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type authLoginCommand struct {
@@ -60,18 +63,15 @@ type logoutCommand struct {
 	Output    statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
-func authLoginConfig(flags loginCommand, server string, state *clientstate.Database, input io.Reader, diagnostics io.Writer) (auth.Config, error) {
+func authLoginConfig(flags loginCommand, server string, state *clientstate.Database, input io.Reader, diagnostics io.Writer) auth.Config {
 	config := auth.Config{ServerEndpoint: server, State: state, Diagnostics: diagnostics,
 		Team:                 flags.Team,
 		LoginTimeout:         flags.Timeout,
 		AuthenticationPrompt: authenticationPrompt(diagnostics, "tnl auth login")}
-	config.ObserveLogin = func(op clientstate.AuthOperation) error {
-		return writeAuthOperation(diagnostics, "tnl auth login", op, flags)
-	}
 	if flags.Open && flags.Output != statusOutputJSON {
 		config.OpenURL = interactiveBrowserOpener(input)
 	}
-	return config, nil
+	return config
 }
 
 func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, errorOutput io.Writer) error {
@@ -80,13 +80,15 @@ func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, 
 		return err
 	}
 	defer state.Close()
-	config, err := authLoginConfig(flags, serverURL, state, input, errorOutput)
-	if err != nil {
-		return err
+	config := authLoginConfig(flags, serverURL, state, input, errorOutput)
+	var id string
+	config.ObserveLogin = func(op clientstate.AuthOperation) error {
+		id = op.ID
+		return writeWaitingLogin(errorOutput, op, flags.Output, config.OpenURL != nil && op.Phase == clientstate.AuthPending)
 	}
 	_, err = auth.Login(ctx, config)
 	if err != nil {
-		return err
+		return interruptedLogin(ctx, config, id, flags, errorOutput, err)
 	}
 	return writeLoginResult(ctx, config, output, flags.Output)
 }
@@ -98,8 +100,11 @@ func writeLoginResult(ctx context.Context, config auth.Config, output io.Writer,
 	}
 	if status.Status == "available" && status.Source == "saved_session" {
 		status.Status = "authenticated"
+		if mode != statusOutputJSON {
+			return writeSignedIn(output, status.Server)
+		}
 	}
-	return writeAuthStatus(output, "tnl auth login", status, mode)
+	return writeAuthStatus(output, status, mode)
 }
 
 func runAuthLoginStart(ctx context.Context, flags loginCommand, input io.Reader, output, diagnostics io.Writer) error {
@@ -108,15 +113,12 @@ func runAuthLoginStart(ctx context.Context, flags loginCommand, input io.Reader,
 		return err
 	}
 	defer state.Close()
-	config, err := authLoginConfig(flags, server, state, input, diagnostics)
-	if err != nil {
-		return err
-	}
+	config := authLoginConfig(flags, server, state, input, diagnostics)
 	op, err := auth.StartLogin(ctx, config)
 	if err != nil {
 		return err
 	}
-	return writeAuthOperation(output, "tnl auth login start", op, flags)
+	return writeAuthOperation(output, op, flags.Output, flags.resumeCommand(ctx, state, op))
 }
 
 func runAuthLoginOperation(ctx context.Context, flags loginCommand, id, action string, output, diagnostics io.Writer) error {
@@ -134,18 +136,26 @@ func runAuthLoginOperation(ctx context.Context, flags loginCommand, id, action s
 			if inspectErr != nil {
 				return inspectErr
 			}
-			if pending.Phase == clientstate.AuthPending {
-				if err := writeAuthOperation(diagnostics, "tnl auth login wait", pending, flags); err != nil {
+			if loginNeedsApproval(pending) {
+				var open func(string) error
+				if flags.Open {
+					open = interactiveBrowserOpener(os.Stdin)
+				}
+				if err := writeWaitingLogin(diagnostics, pending, flags.Output, open != nil); err != nil {
 					return err
 				}
-				if flags.Open {
-					if open := interactiveBrowserOpener(os.Stdin); open != nil {
-						_ = open(pending.ApprovalURL)
-					}
+				if open != nil {
+					_ = open(pending.ApprovalURL)
 				}
 			}
 		}
 		op, err = auth.WaitLogin(ctx, config, id, flags.Timeout)
+		if err != nil {
+			return interruptedLogin(ctx, config, id, flags, diagnostics, err)
+		}
+		if flags.Output != statusOutputJSON && op.Phase == clientstate.AuthCompleted {
+			return writeSignedIn(output, op.Server)
+		}
 	case "inspect":
 		op, err = auth.InspectLogin(ctx, config, id)
 	case "cancel":
@@ -154,8 +164,69 @@ func runAuthLoginOperation(ctx context.Context, flags loginCommand, id, action s
 	if err != nil {
 		return err
 	}
-	return writeAuthOperation(output, "tnl auth login "+action, op, flags)
+	return writeAuthOperation(output, op, flags.Output, flags.resumeCommand(ctx, state, op))
 }
+
+func loginNeedsApproval(op clientstate.AuthOperation) bool {
+	return (op.Phase == clientstate.AuthPending || op.Phase == clientstate.AuthExchanging) && op.ApprovalURL != "" && op.ExpiresAt.After(time.Now())
+}
+
+func writeWaitingLogin(output io.Writer, op clientstate.AuthOperation, mode statusOutputMode, opening bool) error {
+	if mode == statusOutputJSON || !loginNeedsApproval(op) {
+		return writeAuthOperation(output, op, mode, "")
+	}
+	blocks := approvalBlocks(op.ApprovalURL, op.UserCode, opening)
+	return writeResult(output, append(blocks, clioutput.Text("Waiting for approval..."))...)
+}
+
+func writeSignedIn(output io.Writer, server string) error {
+	if server == defaultServerURL {
+		return writeResult(output, clioutput.Text("Signed in."))
+	}
+	return writeResult(output, clioutput.Line("Signed in to "+server))
+}
+
+func (flags loginCommand) resumeCommand(ctx context.Context, state *clientstate.Database, op clientstate.AuthOperation) string {
+	if flags.Output == statusOutputJSON || op.Method != "device_code" || !(loginNeedsApproval(op) || op.Phase == clientstate.AuthIssued) {
+		return ""
+	}
+	cmd := "tnl " + flags.configArgs + "auth login wait " + shellWord(op.ID)
+	if pin := suggestedServer(ctx, op.Server, flags.projectServer, "", flags.StateDir, state); pin != "" {
+		cmd += " --server=" + shellWord(pin)
+	}
+	if flags.StateDir != "" {
+		cmd += " --state-dir=" + shellWord(flags.StateDir)
+	}
+	return cmd
+}
+
+func interruptedLogin(ctx context.Context, config auth.Config, id string, flags loginCommand, diagnostics io.Writer, cause error) error {
+	if id == "" || flags.Output == statusOutputJSON || !(ctx.Err() != nil || errors.Is(cause, context.DeadlineExceeded)) {
+		return cause
+	}
+	// read the durable phase: cancellation can race with exchange or installation.
+	inspectCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	op, err := auth.InspectLogin(inspectCtx, config, id)
+	if err == nil {
+		if cmd := flags.resumeCommand(inspectCtx, config.State, op); cmd != "" {
+			if reason, _ := failure.ReasonOf(cause); reason == failure.AuthWaitTimeout {
+				return &loginTimeout{cause, cmd}
+			}
+			return errors.Join(cause, writeResult(diagnostics,
+				clioutput.Text("Resume login:"), clioutput.Literal(cmd)))
+		}
+	}
+	return cause
+}
+
+type loginTimeout struct {
+	cause  error
+	resume string
+}
+
+func (e *loginTimeout) Error() string { return e.cause.Error() }
+func (e *loginTimeout) Unwrap() error { return e.cause }
 
 func runAuthStatus(ctx context.Context, flags authStatusCommand, output, diagnostics io.Writer) error {
 	server, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
@@ -167,43 +238,59 @@ func runAuthStatus(ctx context.Context, flags authStatusCommand, output, diagnos
 	if err != nil {
 		return err
 	}
-	return writeAuthStatus(output, "tnl auth status", status, flags.Output)
+	return writeAuthStatus(output, status, flags.Output)
 }
 
-func writeAuthStatus(output io.Writer, command string, status auth.StatusResult, mode statusOutputMode) error {
+func writeAuthStatus(output io.Writer, status auth.StatusResult, mode statusOutputMode) error {
 	if mode == statusOutputJSON {
 		return json.NewEncoder(output).Encode(status)
 	}
-	fields := []clioutput.Field{{Label: "control", Value: status.Server}, {Label: "source", Value: status.Source}, {Label: "checked", Value: strconv.FormatBool(status.Checked)}}
-	if status.AccessExpiresAt != nil {
-		fields = append(fields, clioutput.Field{Label: "access expires", Value: status.AccessExpiresAt.UTC().Format(time.RFC3339)})
+	var summary string
+	switch status.Status {
+	case "unauthenticated":
+		summary = "Not signed in to " + status.Server
+	case "authenticated":
+		summary = "Signed in to " + status.Server
+	case "available":
+		summary = "Saved session for " + status.Server + " (not checked)"
+		if status.Source == "explicit_access_token" {
+			summary = "Access token supplied for " + status.Server + " (not checked)"
+		}
+	case "refresh_required":
+		summary = "Session needs a refresh: " + status.Server
+	case "expired":
+		summary = "Session expired: " + status.Server
+	case "recovery_required":
+		summary = "Session needs a new login: " + status.Server
+	default:
+		summary = strings.ReplaceAll(status.Status, "_", " ") + ": " + status.Server
 	}
-	if status.RefreshExpiresAt != nil {
-		fields = append(fields, clioutput.Field{Label: "refresh expires", Value: status.RefreshExpiresAt.UTC().Format(time.RFC3339)})
-	}
-	return writeHumanFrame(output, command, strings.ReplaceAll(status.Status, "_", " "), "", clioutput.Fields(fields...))
+	return writeResult(output, clioutput.Line(summary))
 }
 
-func writeAuthOperation(output io.Writer, command string, op clientstate.AuthOperation, flags loginCommand) error {
-	if flags.Output == statusOutputJSON {
+func writeAuthOperation(output io.Writer, op clientstate.AuthOperation, mode statusOutputMode, resume string) error {
+	if mode == statusOutputJSON {
 		return json.NewEncoder(output).Encode(struct {
 			SchemaVersion int `json:"schema_version"`
 			clientstate.AuthOperation
 		}{1, op})
 	}
 	blocks := []clioutput.Block{}
-	if op.Phase == clientstate.AuthPending {
-		blocks = approvalBlocks(op.ApprovalURL, op.UserCode)
-		resume := "tnl auth login wait " + shellWord(op.ID) + " --server=" + shellWord(op.Server)
-		if flags.StateDir != "" {
-			resume += " --state-dir=" + shellWord(flags.StateDir)
-		}
-		blocks = append(blocks, clioutput.Section("resume login", clioutput.Literal(resume)),
-			clioutput.Fields(clioutput.Field{Label: "expires", Value: op.ExpiresAt.UTC().Format(time.RFC3339)}))
+	if loginNeedsApproval(op) {
+		blocks = approvalBlocks(op.ApprovalURL, op.UserCode, false)
+	} else if op.Phase == clientstate.AuthCompleted {
+		blocks = append(blocks, clioutput.Line("Login completed on "+op.Server))
 	} else {
-		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "operation", Value: op.ID}, clioutput.Field{Label: "control", Value: op.Server}, clioutput.Field{Label: "method", Value: op.Method}))
+		blocks = append(blocks, clioutput.Line("Login "+strings.ReplaceAll(string(op.Phase), "_", " ")+": "+op.Server))
 	}
-	return writeHumanFrame(output, command, strings.ReplaceAll(string(op.Phase), "_", " "), "", blocks...)
+	if resume != "" {
+		label := "Finish login:"
+		if loginNeedsApproval(op) {
+			label = "Finish login before " + op.ExpiresAt.UTC().Format("15:04 MST") + ":"
+		}
+		blocks = append(blocks, clioutput.Text(label), clioutput.Literal(resume))
+	}
+	return writeResult(output, blocks...)
 }
 
 func interactiveBrowserOpener(input io.Reader) func(string) error {
@@ -236,13 +323,17 @@ func runLogout(ctx context.Context, flags logoutCommand, output io.Writer, diagn
 			Status        string `json:"status"`
 		}{1, serverURL, "logged_out"})
 	}
-	return writeHumanFrame(output, "tnl auth logout", "logged out", "local session removed",
-		clioutput.Fields(clioutput.Field{Label: "control", Value: serverURL}),
-	)
+	return writeResult(output, clioutput.Line("Signed out of "+serverURL))
 }
 
 func (a *commandApp) newAuthCommand() *cobra.Command {
 	f := a.flags
+	loginFlags := func(call commandCall) loginCommand {
+		flags := f.Auth.Login.loginCommand
+		flags.projectServer = call.project.Config.Server
+		flags.configArgs = configArgs(f.NoConfig, f.ConfigPath)
+		return flags
+	}
 	cAuth := &cobra.Command{Use: "auth", Short: "Sign in, check your session, or sign out.", GroupID: "start"}
 	cAuthCredential := &cobra.Command{Use: "credential", Short: "Create a scoped signing credential for a deployment backend."}
 	cAuthCredentialCreate := &cobra.Command{Use: "create", Short: "Issue a credential for the services and actions you select."}
@@ -263,28 +354,28 @@ func (a *commandApp) newAuthCommand() *cobra.Command {
 	cliflags.Bind(cAuthLogin, &f.Auth.Login.loginCommand, true)
 	cAuthLoginRun := &cobra.Command{Use: "run", Short: "", Hidden: true}
 	a.leaf(cAuthLoginRun, &f.Auth.Login.Run, func(call commandCall) error {
-		return runLogin(call.ctx, f.Auth.Login.loginCommand, os.Stdin, a.out, a.errOut)
+		return runLogin(call.ctx, loginFlags(call), os.Stdin, a.out, a.errOut)
 	})
 	cAuthLogin.AddCommand(cAuthLoginRun)
 	a.useDefault(cAuthLogin, cAuthLoginRun)
 	cAuthLoginStart := &cobra.Command{Use: "start", Short: "Print an approval URL and operation ID without waiting."}
 	a.leaf(cAuthLoginStart, &f.Auth.Login.Start, func(call commandCall) error {
-		return runAuthLoginStart(call.ctx, f.Auth.Login.loginCommand, os.Stdin, a.out, a.errOut)
+		return runAuthLoginStart(call.ctx, loginFlags(call), os.Stdin, a.out, a.errOut)
 	})
 	cAuthLogin.AddCommand(cAuthLoginStart)
 	cAuthLoginWait := &cobra.Command{Use: "wait", Short: "Wait for approval and save credentials for this operation."}
 	a.leaf(cAuthLoginWait, &f.Auth.Login.Wait, func(call commandCall) error {
-		return runAuthLoginOperation(call.ctx, f.Auth.Login.loginCommand, f.Auth.Login.Wait.ID, "wait", a.out, a.errOut)
+		return runAuthLoginOperation(call.ctx, loginFlags(call), f.Auth.Login.Wait.ID, "wait", a.out, a.errOut)
 	})
 	cAuthLogin.AddCommand(cAuthLoginWait)
 	cAuthLoginInspect := &cobra.Command{Use: "inspect", Short: "Show the current state of a saved login attempt."}
 	a.leaf(cAuthLoginInspect, &f.Auth.Login.Inspect, func(call commandCall) error {
-		return runAuthLoginOperation(call.ctx, f.Auth.Login.loginCommand, f.Auth.Login.Inspect.ID, "inspect", a.out, a.errOut)
+		return runAuthLoginOperation(call.ctx, loginFlags(call), f.Auth.Login.Inspect.ID, "inspect", a.out, a.errOut)
 	})
 	cAuthLogin.AddCommand(cAuthLoginInspect)
 	cAuthLoginCancel := &cobra.Command{Use: "cancel", Short: "Cancel this login attempt so it cannot save a session."}
 	a.leaf(cAuthLoginCancel, &f.Auth.Login.Cancel, func(call commandCall) error {
-		return runAuthLoginOperation(call.ctx, f.Auth.Login.loginCommand, f.Auth.Login.Cancel.ID, "cancel", a.out, a.errOut)
+		return runAuthLoginOperation(call.ctx, loginFlags(call), f.Auth.Login.Cancel.ID, "cancel", a.out, a.errOut)
 	})
 	cAuthLogin.AddCommand(cAuthLoginCancel)
 	cAuth.AddCommand(cAuthLogin)

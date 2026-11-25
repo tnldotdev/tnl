@@ -50,14 +50,15 @@ func TestInitWritesHonoBunEntrypointWithoutAConfiguredPort(t *testing.T) {
 	if err != nil || bytes.Contains(config, []byte("command:")) || bytes.Contains(config, []byte("port:")) {
 		t.Fatalf("generated config = %s, %v", config, err)
 	}
-	if !strings.Contains(output.String(), "src/index.ts") {
+	if !strings.Contains(output.String(), "Updated src/index.ts\n") {
 		t.Fatalf("updated server was not reported: %s", output.String())
 	}
+	output.Reset()
 	if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &diagnostics); err != nil {
 		t.Fatal(err)
 	}
 	second, err := os.ReadFile(filepath.Join(root, "src", "index.ts"))
-	if err != nil || !bytes.Equal(second, entry) {
+	if err != nil || !bytes.Equal(second, entry) || strings.Contains(output.String(), "Updated src/index.ts") {
 		t.Fatalf("repeat init modified server: %s, %v", second, err)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -151,38 +152,21 @@ func readServiceAudit(ctx context.Context, reader serviceAuditReader, team strin
 }
 
 func renderServiceAudit(output io.Writer, page controlv1.ServiceAuditPage) error {
-	blocks := make([]clioutput.Block, 0, len(page.Events))
+	var rows [][]string
 	for _, event := range page.Events {
-		fields := []clioutput.Field{
-			{Label: "occurred at", Value: event.OccurredAt.UTC().Format(time.RFC3339Nano)},
-			{Label: "service ID", Value: event.ServiceId}, {Label: "kind", Value: string(event.ServiceKind)},
-			{Label: "event ID", Value: event.Id}, {Label: "cursor", Value: event.Cursor},
-		}
-		for _, optional := range []struct {
-			label string
-			value *string
-		}{
-			{"outcome", event.Outcome}, {"reason", event.Reason}, {"actor identity ID", event.ActorIdentityId},
-			{"publisher ID", event.PublisherIdentityId}, {"device ID", event.DeviceId}, {"run ID", event.RunId},
-			{"visitor connection ID", event.VisitorConnectionId}, {"source digest", event.SourceDigest},
-		} {
-			if optional.value != nil {
-				fields = append(fields, clioutput.Field{Label: optional.label, Value: *optional.value})
+		var detail []string
+		for _, value := range []*string{event.Outcome, event.Reason} {
+			if value != nil {
+				detail = append(detail, *value)
 			}
 		}
-		if event.ConfigurationRevision != nil {
-			fields = append(fields, clioutput.Field{Label: "configuration revision", Value: strconv.FormatInt(*event.ConfigurationRevision, 10)})
-		}
-		blocks = append(blocks, clioutput.Section(event.EventType, clioutput.Fields(fields...)))
+		rows = append(rows, []string{event.OccurredAt.UTC().Format(time.RFC3339), event.EventType, event.ServiceId, strings.Join(detail, ": ")})
 	}
-	if len(blocks) == 0 {
-		blocks = append(blocks, clioutput.Text("no service audit events match the filters"))
-	}
-	footer := ""
+	blocks := []clioutput.Block{clioutput.Table([]string{"TIME", "EVENT", "SERVICE", "OUTCOME"}, rows, "No matching audit events.")}
 	if page.NextCursor != nil {
-		footer = "continue with --after " + *page.NextCursor
+		blocks = append(blocks, clioutput.Line("continue with --after "+*page.NextCursor))
 	}
-	return writeHumanFrame(output, "tnl audit list", countState(len(page.Events), "event", "events"), footer, blocks...)
+	return writeResult(output, blocks...)
 }
 
 func (a *commandApp) newAuditCommand() *cobra.Command {

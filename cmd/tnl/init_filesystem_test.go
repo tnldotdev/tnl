@@ -72,7 +72,7 @@ func TestInitWiresTypeIncludeForExistingProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Contains(got, []byte("app/**/*.tsx")) || !bytes.Contains(got, []byte(".tnl/generated/project.d.ts")) || !strings.Contains(output.String(), `.tnl/generated/project.d.ts`) || !strings.Contains(output.String(), "ignore") {
+	if err != nil || !bytes.Contains(got, []byte("app/**/*.tsx")) || !bytes.Contains(got, []byte(".tnl/generated/project.d.ts")) {
 		t.Fatalf("tsconfig = %s, output = %s, err = %v", got, output.String(), err)
 	}
 }

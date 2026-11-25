@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
-	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/httpjson"
@@ -84,14 +83,8 @@ export default {};`
 	if events := r.events(); len(events) != 0 {
 		t.Fatalf("check opened telemetry = %+v", events)
 	}
-	want, err := clioutput.Render(clioutput.Frame{
-		Command: "tnl check", State: "valid", Blocks: []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "path", Value: configPath})},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := stdout.String(); got != want+"\n" {
-		t.Fatalf("config path output = %q, want %q", got, want+"\n")
+	if got, want := stdout.String(), "Valid configuration: "+configPath+"\n"; got != want {
+		t.Fatalf("config path output = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(markerPath); err != nil {
 		t.Fatalf("check did not evaluate tnl.config.ts: %v", err)

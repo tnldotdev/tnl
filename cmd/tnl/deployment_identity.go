@@ -71,13 +71,10 @@ func runDeploymentPublisherProvision(ctx context.Context, options deploymentIden
 	if err != nil {
 		return err
 	}
-	member := value.Member
 	if err := credentialfile.WriteDeployment(options.OutputFile, value); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl publisher provision", "created", "store the private file in this replica's secret", clioutput.Fields(
-		clioutput.Field{Label: "file", Value: options.OutputFile}, clioutput.Field{Label: "publisher", Value: member.PublisherIdentityId}, clioutput.Field{Label: "deployment", Value: member.DeploymentName}, clioutput.Field{Label: "instance", Value: options.Instance},
-	))
+	return writeResult(output, clioutput.Line("Wrote private publisher credentials: "+options.OutputFile), clioutput.Line("Store this file in the secret for "+value.Member.DeploymentName+"/"+options.Instance+"."))
 }
 
 // deploymentPublisherIdentityInput consumes a private mounted file or an ECS-injected

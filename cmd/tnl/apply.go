@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -104,30 +103,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(applied)
 	}
-	return writeHumanFrame(output, "tnl apply", "applied", "start publishers with tnl publisher serve --deployment NAME", appliedProjectBlocks(applied)...)
-}
-
-func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []clioutput.Block {
-	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "project key", Value: applied.ProjectKey}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(applied.Revision, 10)})}
-	blocks = append(blocks, appliedServiceBlocks(applied.Services)...)
-	for _, member := range applied.Members {
-		fields := []clioutput.Field{{Label: "publisher ID", Value: member.PublisherIdentityId}, {Label: "observed revision", Value: strconv.FormatInt(member.ObservedRevision, 10)}, {Label: "healthy", Value: strconv.FormatBool(member.Healthy)}}
-		fields = append(fields, publisherRuntimeFields(member.Runtime)...)
-		blocks = append(blocks, clioutput.Section(member.DeploymentName, clioutput.Fields(fields...)))
-	}
-	return blocks
-}
-
-func appliedServiceBlocks(services []controlv1.AppliedProjectService) []clioutput.Block {
-	var blocks []clioutput.Block
-	for _, service := range services {
-		id := ""
-		if service.ServiceId != nil {
-			id = *service.ServiceId
-		}
-		blocks = append(blocks, clioutput.Section(service.Service, clioutput.Fields(clioutput.Field{Label: "deployment", Value: service.Deployment}, clioutput.Field{Label: "service ID", Value: id}, clioutput.Field{Label: "assignment", Value: string(service.ServiceKind)}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(service.DesiredRevision, 10)})))
-	}
-	return blocks
+	return writeResult(output, clioutput.Line("Applied "+applied.Deployment+" ("+countState(len(applied.Services), "service", "services")+")."))
 }
 
 func (a *commandApp) newApplyCommand() *cobra.Command {

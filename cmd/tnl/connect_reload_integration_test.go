@@ -145,7 +145,8 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				ready, done = make(chan struct{}, 8), make(chan error, 1)
 				joined = false
 				go func() {
-					done <- run(ctx, args, io.Discard, workflowLifecycleLog{t: t, ready: func() { ready <- struct{}{} }})
+					log := workflowLifecycleLog{t: t, ready: func() { ready <- struct{}{} }}
+					done <- log.run(ctx, args)
 				}()
 			}
 			defer func() {

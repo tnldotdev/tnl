@@ -318,11 +318,7 @@ func acceptServiceShareInvitation(ctx context.Context, control *clientcontrol.Cl
 	if f.Output == statusOutputJSON {
 		return failure.Wrap("write accepted service invitation", failure.OutputUnavailable, json.NewEncoder(o).Encode(grant))
 	}
-	return writeHumanFrame(o, "tnl share service invite accept", "accepted", "", clioutput.Fields(
-		clioutput.Field{Label: "service ID", Value: grant.ServiceId},
-		clioutput.Field{Label: "grant ID", Value: grant.Id},
-		clioutput.Field{Label: "expires", Value: grant.ExpiresAt.UTC().Format(time.RFC3339)},
-	))
+	return writeAcceptedShare(o, grant)
 }
 
 func validServiceShareGrant(g controlv1.ServiceGrant, service string) bool {
@@ -387,50 +383,56 @@ func listServiceShares(ctx context.Context, control *clientcontrol.Client, servi
 		}{1, service, grants, invitations, httpGrants, shares}))
 	}
 	now := time.Now()
-	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "service ID", Value: service})}
+	rows := make([][]string, 0, len(grants)+len(invitations)+len(httpGrants)+len(shares))
 	for _, grant := range grants {
-		expires := "perpetual"
-		if grant.ExpiresAt != nil {
-			expires = grant.ExpiresAt.UTC().Format(time.RFC3339)
-		}
-		fields := []clioutput.Field{{Label: "kind", Value: string(grant.Kind)}, {Label: "state", Value: serviceShareState(grant.ExpiresAt, grant.RevokedAt, now)}, {Label: "expires", Value: expires}}
-		if grant.IdentityId != nil {
-			fields = append(fields, clioutput.Field{Label: "identity ID", Value: *grant.IdentityId})
-		}
-		if grant.InvitationId != nil {
-			fields = append(fields, clioutput.Field{Label: "invitation ID", Value: *grant.InvitationId})
-		}
-		blocks = append(blocks, clioutput.Section(grant.Id, clioutput.Fields(fields...)))
+		rows = append(rows, shareGrantRow(grant, now))
 	}
 	for _, invite := range invitations {
-		state := serviceShareState(&invite.ExpiresAt, invite.RevokedAt, now)
-		if state == "active" {
-			state = "pending"
-			if invite.AcceptedAt != nil {
-				state = "accepted"
-			}
-		}
-		blocks = append(blocks, clioutput.Section(invite.Id, clioutput.Fields(
-			clioutput.Field{Label: "email", Value: string(invite.Email)},
-			clioutput.Field{Label: "state", Value: state},
-			clioutput.Field{Label: "expires", Value: invite.ExpiresAt.UTC().Format(time.RFC3339)},
-		)))
+		rows = append(rows, shareInviteRow(invite, now))
 	}
 	for _, grant := range httpGrants {
-		blocks = append(blocks, clioutput.Section(grant.Id, clioutput.Fields(
-			clioutput.Field{Label: "kind", Value: "http " + string(grant.Kind)},
-			clioutput.Field{Label: "state", Value: serviceShareState(&grant.ExpiresAt, grant.RevokedAt, now)},
-			clioutput.Field{Label: "expires", Value: grant.ExpiresAt.UTC().Format(time.RFC3339)},
-		)))
+		rows = append(rows, []string{"http " + string(grant.Kind), serviceShareState(&grant.ExpiresAt, grant.RevokedAt, now), shareExpiry(grant.ExpiresAt), grant.Id, ""})
 	}
 	for _, share := range shares {
-		blocks = append(blocks, clioutput.Section(share.Id, clioutput.Fields(
-			clioutput.Field{Label: "scope", Value: string(share.Scope)},
-			clioutput.Field{Label: "state", Value: serviceShareState(&share.ExpiresAt, share.RevokedAt, now)},
-			clioutput.Field{Label: "expires", Value: share.ExpiresAt.UTC().Format(time.RFC3339)},
-		)))
+		rows = append(rows, shareRow(share, now))
 	}
-	return writeHumanFrame(o, "tnl share service list", "access", "", blocks...)
+	return writeShareRows(o, service, rows)
+}
+
+func writeShareRows(output io.Writer, service string, rows [][]string) error {
+	return writeResult(output, clioutput.Table([]string{"ACCESS", "STATE", "EXPIRES", "ID", "DETAILS"}, rows, "No grants, invitations, or shares for "+service+"."))
+}
+
+func shareExpiry(at time.Time) string { return at.UTC().Format("2006-01-02 15:04 MST") }
+
+func shareGrantRow(grant controlv1.ServiceGrant, now time.Time) []string {
+	expires := "never"
+	if grant.ExpiresAt != nil {
+		expires = shareExpiry(*grant.ExpiresAt)
+	}
+	var subject string
+	if grant.IdentityId != nil {
+		subject = *grant.IdentityId
+	}
+	return []string{string(grant.Kind), serviceShareState(grant.ExpiresAt, grant.RevokedAt, now), expires, grant.Id, subject}
+}
+
+func shareRow(share controlv1.Share, now time.Time) []string {
+	return []string{string(share.Scope), serviceShareState(&share.ExpiresAt, share.RevokedAt, now), shareExpiry(share.ExpiresAt), share.Id, share.Label}
+}
+
+func shareInviteRow(invite controlv1.ServiceInvitation, now time.Time) []string {
+	return []string{"invitation", invitationState(invite, now), shareExpiry(invite.ExpiresAt), invite.Id, string(invite.Email)}
+}
+
+func invitationState(invite controlv1.ServiceInvitation, now time.Time) string {
+	if state := serviceShareState(&invite.ExpiresAt, invite.RevokedAt, now); state != "active" {
+		return state
+	}
+	if invite.AcceptedAt != nil {
+		return "accepted"
+	}
+	return "pending"
 }
 
 func serviceShareState(expires, revoked *time.Time, now time.Time) string {
@@ -513,9 +515,7 @@ func revokeServiceShare(ctx context.Context, control *clientcontrol.Client, serv
 			Revoked   bool   `json:"revoked"`
 		}{service, f.ID, true}))
 	}
-	return writeHumanFrame(o, "tnl share service revoke", "revoked", "", clioutput.Fields(
-		clioutput.Field{Label: "service ID", Value: service}, clioutput.Field{Label: "access ID", Value: f.ID},
-	))
+	return writeResult(o, clioutput.Line("Revoked "+f.ID+" for "+service))
 }
 
 func runServiceShareHTTPCreate(ctx context.Context, f serviceShareHTTPCreateCommand, project projectConfiguration, token bool, o, d io.Writer) error {

@@ -193,14 +193,15 @@ func runDeployment(ctx context.Context, command string, flags cli, project proje
 		if selected.Output == statusOutputJSON {
 			return failure.Wrap("write deployments", failure.OutputUnavailable, json.NewEncoder(output).Encode(page))
 		}
-		blocks := []clioutput.Block{}
+		var rows [][]string
 		for _, deployment := range page.Deployments {
-			blocks = append(blocks, deploymentBlock(deployment))
+			rows = append(rows, []string{deployment.Name, strings.Join(slices.Sorted(maps.Keys(deployment.Services)), ", ")})
 		}
+		blocks := []clioutput.Block{clioutput.Table([]string{"DEPLOYMENT", "SERVICES"}, rows, "No deployments.")}
 		if page.NextCursor != nil {
 			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "next cursor", Value: *page.NextCursor}))
 		}
-		return writeHumanFrame(output, "tnl deployment list", "listed", "", blocks...)
+		return writeResult(output, blocks...)
 	}
 	var deployment controlv1.Deployment
 	switch command {
@@ -237,7 +238,7 @@ func runDeployment(ctx context.Context, command string, flags cli, project proje
 					Deleted bool   `json:"deleted"`
 				}{deployment.Id, true}))
 			}
-			return writeHumanFrame(output, "tnl deployment delete", "deleted", "", clioutput.Fields(clioutput.Field{Label: "deployment", Value: deployment.Id}))
+			return writeResult(output, clioutput.Line("Deleted deployment "+deployment.Name+"."))
 		}
 		deployment, err = control.UpdateDeployment(ctx, team, key, deployment.Id, deployment.Revision, controlv1.UpdateDeploymentRequest{Targets: targets})
 	}
@@ -250,7 +251,10 @@ func runDeployment(ctx context.Context, command string, flags cli, project proje
 	if selected.Output == statusOutputJSON {
 		return failure.Wrap("write deployment", failure.OutputUnavailable, json.NewEncoder(output).Encode(deployment))
 	}
-	return writeHumanFrame(output, "tnl "+strings.Split(command, " <")[0], "saved", "no target connection or database query was checked", deploymentBlock(deployment))
+	if command == "deployment show <deployment>" {
+		return writeResult(output, deploymentBlock(deployment))
+	}
+	return writeResult(output, clioutput.Line("Saved deployment "+deployment.Name+"."))
 }
 
 func validDeploymentSelector(selector string) bool {
@@ -336,7 +340,7 @@ func (a *commandApp) newDeploymentCommand() *cobra.Command {
 	cDeploymentNamespace := &cobra.Command{Use: "namespace", Short: "Manage a deployment's DNS namespace separately from its selector."}
 	cDeploymentNamespaceRename := &cobra.Command{
 		Use: "rename", Short: "Move the deployment's service hostnames to a new namespace.",
-		Long: "This changes the service hostnames. Get the current applied revision from tnl status. After a lost reply, retry with the same revision, request ID, and arguments.",
+		Long: "This changes the service hostnames. Get the current applied revision from tnl status --scope server --output json. After a lost reply, retry with the same revision, request ID, and arguments.",
 	}
 	a.leaf(cDeploymentNamespaceRename, &f.Deployment.Namespace.Rename, func(call commandCall) error {
 		return runDeploymentNamespaceRename(call.ctx, f.Deployment.Namespace.Rename, call.project, a.out, a.errOut)

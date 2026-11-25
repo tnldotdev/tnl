@@ -2,10 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
-
-	"errors"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -36,9 +35,9 @@ func runAliasChoice(ctx context.Context, flags aliasChoiceCommand, project proje
 	if err != nil {
 		return err
 	}
-	command, status := "tnl alias use", "selected"
+	status := "selected"
 	if !use {
-		command, status = "tnl alias release", "default restored"
+		status = "default restored"
 	}
-	return writeHumanFrame(stdout, command, status, "tnl status shows alias readiness", clioutput.Fields(clioutput.Field{Label: "alias", Value: flags.Name}, clioutput.Field{Label: "public URL", Value: "https://" + selected.Hostname}, clioutput.Field{Label: "selected worktree", Value: selected.Project}))
+	return writeResult(stdout, clioutput.Line("https://"+selected.Hostname), clioutput.Line(status+": "+selected.Project))
 }

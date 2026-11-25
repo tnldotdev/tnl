@@ -10,6 +10,7 @@ import (
 	"runtime"
 
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
+	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
@@ -56,7 +57,7 @@ func runPublicationInstall(ctx context.Context, flags publishCommand, output, di
 
 func installationPresentation(output, diagnostics io.Writer) setup.Presentation {
 	return setup.Presentation{Input: os.Stdin, Output: output, Diagnostics: diagnostics, Installing: func() error {
-		return writeHumanFrame(diagnostics, "tnl publish", "installing", "sudo will ask for permission to install the system publisher")
+		return writeResult(diagnostics, clioutput.Text("sudo will ask for permission to install the system publisher."))
 	}, Jobs: func(jobs []installedjobs.Job, selected string) error {
 		return renderSystemJobs(output, "tnl publish", jobs, selected)
 	}}

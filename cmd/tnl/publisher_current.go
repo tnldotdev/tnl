@@ -129,11 +129,8 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 	if result.Checked {
 		state = "authorized"
 	}
-	return writeHumanFrame(output, "tnl publisher current", state, "", clioutput.Fields(
-		clioutput.Field{Label: "source", Value: result.Source},
-		clioutput.Field{Label: "control URL", Value: result.ControlURL},
-		clioutput.Field{Label: "publisher", Value: result.PublisherIdentityID},
-		clioutput.Field{Label: "grant", Value: result.GrantID},
+	return writeResult(output, clioutput.Line(result.PublisherIdentityID+"  "+state), clioutput.Fields(
 		clioutput.Field{Label: "scope", Value: result.Scope},
+		clioutput.Field{Label: "grant", Value: result.GrantID},
 	))
 }

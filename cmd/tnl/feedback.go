@@ -109,7 +109,7 @@ func runFeedbackDelete(ctx context.Context, flags feedbackDeleteCommand, project
 	if err = local.Delete(ctx, flags.FeedbackID); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl feedback delete", "deleted", "", clioutput.Fields(clioutput.Field{Label: "feedback ID", Value: flags.FeedbackID}))
+	return writeResult(output, clioutput.Line("Deleted feedback "+flags.FeedbackID+"."))
 }
 
 func localFeedbackFailure(err error) error {
@@ -213,18 +213,11 @@ func runFeedbackList(ctx context.Context, flags feedbackListCommand, project pro
 	if flags.Output == feedbackJSON {
 		return failure.Wrap("write feedback list", failure.OutputUnavailable, json.NewEncoder(output).Encode(feedbackListResult{SchemaVersion: 1, Threads: threads, EventCursor: cursor}))
 	}
-	blocks := make([]clioutput.Block, 0, len(threads)+1)
+	var rows [][]string
 	for _, thread := range threads {
-		blocks = append(blocks, clioutput.Section(thread.Id, clioutput.Fields(
-			clioutput.Field{Label: "state", Value: string(thread.State)},
-			clioutput.Field{Label: "service", Value: thread.Scope.Service},
-			clioutput.Field{Label: "page", Value: thread.Scope.PagePath},
-			clioutput.Field{Label: "author", Value: feedbackAuthorLabel(thread.Report.Author)},
-			clioutput.Field{Label: "report", Value: thread.Report.Text, Prose: true},
-		)))
+		rows = append(rows, []string{thread.Id, string(thread.State), thread.Scope.Service, thread.Report.Text})
 	}
-	blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "watch after", Value: strconv.FormatUint(cursor, 10)}))
-	return writeHumanFrame(output, "tnl feedback list", countState(len(threads), "thread", "threads"), "", blocks...)
+	return writeResult(output, clioutput.Table([]string{"FEEDBACK ID", "STATE", "SERVICE", "REPORT"}, rows, "No feedback."))
 }
 
 type feedbackThreadReader interface {
@@ -336,7 +329,6 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 			clioutput.Field{Label: "report", Value: thread.Report.Text, Prose: true},
 			clioutput.Field{Label: "element", Value: feedbackElementLabel(thread.Evidence.Element)},
 			clioutput.Field{Label: "source", Value: result.LocalProject.Comparison},
-			clioutput.Field{Label: "event cursor", Value: strconv.FormatUint(cursor, 10)},
 		),
 	}
 	for _, event := range events {
@@ -349,7 +341,7 @@ func runFeedbackInspect(ctx context.Context, flags feedbackInspectCommand, proje
 			clioutput.Field{Label: "message", Value: text, Prose: true},
 		)))
 	}
-	return writeHumanFrame(output, "tnl feedback inspect", string(thread.State), "", blocks...)
+	return writeResult(output, blocks...)
 }
 
 func feedbackElementLabel(element *controlv1.FeedbackElement) string {
@@ -414,12 +406,7 @@ func pollFeedbackEvents(ctx context.Context, client feedbackEventReader, preview
 			if event.Text != nil {
 				text = *event.Text
 			}
-			err = writeHumanFrame(output, "tnl feedback watch", string(event.Type), "", clioutput.Fields(
-				clioutput.Field{Label: "feedback ID", Value: event.FeedbackId},
-				clioutput.Field{Label: "cursor", Value: strconv.FormatInt(event.Cursor, 10)},
-				clioutput.Field{Label: "by", Value: feedbackEventAuthorLabel(event)},
-				clioutput.Field{Label: "message", Value: text, Prose: true},
-			))
+			err = writeResult(output, clioutput.Line(strings.TrimSpace(event.FeedbackId+"  "+string(event.Type)+"  "+feedbackEventAuthorLabel(event)+"  "+text)))
 		}
 		if err != nil {
 			return cursor, false, failure.Wrap("write feedback event", failure.OutputUnavailable, err)
@@ -520,10 +507,7 @@ func runFeedbackMutation(ctx context.Context, flags feedbackMutationCommand, pro
 	if flags.Output == feedbackJSON {
 		return failure.Wrap("write feedback event", failure.OutputUnavailable, json.NewEncoder(output).Encode(event))
 	}
-	return writeHumanFrame(output, "tnl feedback "+feedbackMutationName(kind), "saved", "", clioutput.Fields(
-		clioutput.Field{Label: "feedback ID", Value: flags.FeedbackID},
-		clioutput.Field{Label: "event cursor", Value: strconv.FormatInt(event.Cursor, 10)},
-	))
+	return writeResult(output, clioutput.Line(flags.FeedbackID+"  "+string(event.Type)))
 }
 
 func feedbackMutationName(kind string) string {

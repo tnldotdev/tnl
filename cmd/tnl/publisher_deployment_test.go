@@ -161,7 +161,7 @@ func TestDeploymentPublisherObservationScope(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	if err := writeHumanFrame(&output, "tnl publisher list", "listed", "", deploymentPublisherBlock(publisher)); err != nil {
+	if err := writeResult(&output, deploymentPublisherBlock(publisher)); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), "query succeeded") || !strings.Contains(output.String(), "not current") {

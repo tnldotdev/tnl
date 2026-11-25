@@ -59,7 +59,11 @@ func detachPublish(ctx context.Context, args []string, stateDir string, output i
 			}
 			return writeDetachedConnection(root, id, mode, output)
 		}
-		return writeHumanFrame(output, title, "detached", "", clioutput.Fields(clioutput.Field{Label: "id", Value: id}, clioutput.Field{Label: "pid", Value: pid}, clioutput.Field{Label: "state", Value: "ready"}))
+		stop := "tnl detached stop " + shellWord(id)
+		if stateDir != "" {
+			stop += " --state-dir=" + shellWord(stateDir)
+		}
+		return writeResult(output, clioutput.Text("Publishing in the background. To stop:"), clioutput.Literal(stop))
 	})
 }
 
@@ -81,27 +85,18 @@ func runDetachedList(flags detachedListCommand, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	blocks := []clioutput.Block{}
+	var rows [][]string
 	for _, entry := range entries {
-		fields := []clioutput.Field{{Label: "id", Value: entry.ID}}
-		if entry.PID != "" {
-			fields = append(fields, clioutput.Field{Label: "pid", Value: entry.PID})
-		}
-		fields = append(fields, clioutput.Field{Label: "state", Value: entry.State})
-		blocks = append(blocks, clioutput.Fields(fields...))
+		rows = append(rows, []string{entry.ID, entry.State})
 	}
-	state := "no publications"
-	if len(entries) > 0 {
-		state = "detached"
-	}
-	return writeHumanFrame(output, "tnl detached list", state, "", blocks...)
+	return writeResult(output, clioutput.Table([]string{"ID", "STATE"}, rows, "No detached tunnels."))
 }
 
 func runDetachedStop(flags detachedStopCommand, output io.Writer) error {
 	if err := detached.Stop(flags.StateDir, flags.ID); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl detached stop", "stopping", "", clioutput.Fields(clioutput.Field{Label: "id", Value: flags.ID}))
+	return writeResult(output, clioutput.Line("Stopping "+flags.ID+"."))
 }
 
 func (a *commandApp) newDetachedCommand() *cobra.Command {

@@ -119,7 +119,7 @@ func writeDeploymentPublisherEnrollment(output, diagnostics io.Writer, mode stat
 	for _, name := range slices.Sorted(maps.Keys(enrollment.Services)) {
 		fields = append(fields, clioutput.Field{Label: name, Value: string(enrollment.Services[name])})
 	}
-	if err := writeHumanFrame(diagnostics, "tnl publisher setup", "approved", "deliver stdout privately; enrollment does not start a publisher", clioutput.Fields(fields...)); err != nil {
+	if err := writeWithHint(diagnostics, "Deliver the enrollment key privately.", clioutput.Fields(fields...)); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintln(output, enrollment.EnrollmentKey)
@@ -154,10 +154,13 @@ func runDeploymentPublisherList(ctx context.Context, flags publisherListCommand,
 	for _, publisher := range page.Publishers {
 		blocks = append(blocks, deploymentPublisherBlock(publisher))
 	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, clioutput.Text("No enrolled publishers."))
+	}
 	if page.NextCursor != nil {
 		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "next cursor", Value: *page.NextCursor}))
 	}
-	return writeHumanFrame(output, "tnl publisher list", countState(len(page.Publishers), "publisher", "publishers"), "observations do not prove target reachability or a database query", blocks...)
+	return writeResult(output, blocks...)
 }
 
 func validateDeploymentPublisher(publisher controlv1.DeploymentPublisher, deployment controlv1.Deployment) error {
@@ -179,18 +182,7 @@ func deploymentPublisherBlock(publisher controlv1.DeploymentPublisher) clioutput
 	if publisher.RevokedAt != nil {
 		state = "revoked"
 	}
-	fields := []clioutput.Field{{Label: "deployment", Value: publisher.DeploymentId}, {Label: "state", Value: state}, {Label: "current revision", Value: strconv.FormatInt(publisher.CurrentRevision, 10)}, {Label: "observed revision", Value: strconv.FormatInt(publisher.ObservedRevision, 10)}, {Label: "snapshot", Value: publisher.SnapshotAt.UTC().Format(time.RFC3339)}}
-	if publisher.AcknowledgedAt != nil {
-		fields = append(fields, clioutput.Field{Label: "acknowledged at", Value: publisher.AcknowledgedAt.UTC().Format(time.RFC3339)})
-	}
-	if publisher.LeaseExpiresAt != nil {
-		fields = append(fields, clioutput.Field{Label: "lease expires", Value: publisher.LeaseExpiresAt.UTC().Format(time.RFC3339)})
-	}
-	fields = append(fields, publisherRuntimeFields(publisher.Runtime)...)
-	for _, name := range slices.Sorted(maps.Keys(publisher.Services)) {
-		fields = append(fields, clioutput.Field{Label: name, Value: string(publisher.Services[name])})
-	}
-	return clioutput.Section(publisher.PublisherIdentityId, clioutput.Fields(fields...))
+	return clioutput.Line(publisher.PublisherIdentityId + "  " + state + "  " + strings.Join(slices.Sorted(maps.Keys(publisher.Services)), ", "))
 }
 
 func runDeploymentPublisherRevoke(ctx context.Context, flags publisherRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -208,7 +200,7 @@ func runDeploymentPublisherRevoke(ctx context.Context, flags publisherRevokeComm
 	if flags.Output == statusOutputJSON {
 		return writePublisherRevoked(output, flags.ID)
 	}
-	return writeHumanFrame(output, "tnl publisher revoke", "revoked", "active publications stop when current authority is refreshed", clioutput.Fields(clioutput.Field{Label: "deployment", Value: deployment.Id}, clioutput.Field{Label: "publisher", Value: flags.ID}))
+	return writeResult(output, clioutput.Line("Revoked publisher "+flags.ID+"."))
 }
 
 func writePublisherRevoked(output io.Writer, id string) error {

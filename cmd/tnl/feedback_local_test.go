@@ -121,7 +121,7 @@ func TestFeedbackCommandsUseOnlyLocalContentAndDeleteWholeThread(t *testing.T) {
 		t.Fatal("CLI did not read complete local history", output.String(), err)
 	}
 	output.Reset()
-	if err = runFeedbackDelete(t.Context(), feedbackDeleteCommand{scopedTeamFlags: flags, FeedbackID: thread.Id}, project, &output, io.Discard); err != nil || !strings.Contains(output.String(), "deleted") {
+	if err = runFeedbackDelete(t.Context(), feedbackDeleteCommand{scopedTeamFlags: flags, FeedbackID: thread.Id}, project, &output, io.Discard); err != nil || output.String() != "Deleted feedback "+thread.Id+".\n" {
 		t.Fatal("CLI deletion failed", output.String(), err)
 	}
 	output.Reset()

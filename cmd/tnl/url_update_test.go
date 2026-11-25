@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	publicapi "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
@@ -259,6 +258,7 @@ func TestURLUpdateHTTPPresentsPublicAndConnectorOnlyServices(t *testing.T) {
 		reject   bool
 	}{
 		{name: "public", public: true, endpoint: true},
+		{name: "public declaration without endpoint", public: true},
 		{name: "connector-only", endpoint: true},
 		{name: "connector-only without endpoint"},
 		{name: "upstream rejection", reject: true},
@@ -286,16 +286,15 @@ func TestURLUpdateHTTPPresentsPublicAndConnectorOnlyServices(t *testing.T) {
 				s.declaration.TargetTLS != nil || s.record.TLS != nil || s.record.TrustRevision != 2 {
 				t.Fatal("valid update failed or did not clear HTTPS trust", s.declaration, err, stderr)
 			}
-			fields := []clioutput.Field{{Label: "service", Value: s.record.Name}, {Label: "service ID", Value: s.record.ID}}
-			if test.public {
-				fields = append(fields, clioutput.Field{Label: "public URL", Value: "https://update.example.test"})
-			} else {
-				fields = append(fields, clioutput.Field{Label: "access path", Value: "connector-only"})
+			access := "Access: connector-only"
+			if test.public && test.endpoint {
+				access = "Public URL: https://update.example.test"
+			} else if test.public {
+				access = "No public endpoint reported."
 			}
-			fields = append(fields, clioutput.Field{Label: "target", Value: "http://127.0.0.1:4000"})
-			want, err := clioutput.Render(clioutput.Frame{Command: "tnl url update", State: "updated", Footer: "restart the publisher to use the new target", Blocks: []clioutput.Block{clioutput.Fields(fields...)}})
-			if err != nil || stdout != want+"\n" {
-				t.Fatalf("success did not use the shared service/target presentation: %v\n%s", err, stdout)
+			want := "Saved target for update-service: http://127.0.0.1:4000\n" + access + "\nRestart the publisher to use the new target.\n"
+			if stdout != want {
+				t.Fatalf("wrong target, exposure, or restart guidance:\n%s", stdout)
 			}
 		})
 	}

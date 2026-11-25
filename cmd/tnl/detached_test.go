@@ -51,10 +51,11 @@ func TestDetachedListAndStopPresentation(t *testing.T) {
 	if err := runDetachedStop(flags, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), id) || !strings.Contains(output.String(), "stopping") {
+	if output.String() != "Stopping "+id+".\n" {
 		t.Fatal("stop omitted its result", output.String())
 	}
-	if err := runDetachedStop(flags, &output); err == nil {
+	output.Reset()
+	if err := runDetachedStop(flags, &output); err == nil || output.Len() != 0 {
 		t.Fatal("duplicate stop was reported as a new successful stop")
 	}
 }

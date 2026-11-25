@@ -59,13 +59,8 @@ func runEndpointRelease(ctx context.Context, flags endpointReleaseCommand, outpu
 		released.Endpoint.Port != 0 || released.Endpoint.Hostname != service.Endpoint.Hostname || released.EndpointRevision != service.EndpointRevision+1 || released.TrustRevision != service.TrustRevision {
 		return failure.Wrap("release service endpoint", failure.ServerResponseInvalid, errors.New("control returned an unexpected service binding"))
 	}
-	return writeHumanFrame(output, "tnl endpoint release", "retired", "connector access is unchanged", clioutput.Fields(
-		clioutput.Field{Label: "service ID", Value: released.Id},
-		clioutput.Field{Label: "TLS hostname", Value: released.Endpoint.Hostname},
-		clioutput.Field{Label: "former public port", Value: strconv.Itoa(flags.Port)},
-		clioutput.Field{Label: "capacity", Value: "quarantined until old authority expires and cleanup finishes"},
-		clioutput.Field{Label: "local connector port", Value: "saved assignment unchanged"},
-	))
+	return writeResult(output, clioutput.Line("Retired public port "+strconv.Itoa(flags.Port)+" for "+released.Endpoint.Hostname+"."),
+		clioutput.Text("Connector access is unchanged."))
 }
 
 func (a *commandApp) newEndpointCommand() *cobra.Command {

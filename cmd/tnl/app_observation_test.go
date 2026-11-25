@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,5 +80,63 @@ func testWaitWithoutOwner(t *testing.T, seedReady bool) {
 	}
 	if service := result.Services[0]; service.Registered || service.Routable || service.Observation != nil || service.Failure != "runtime.manager_unavailable" {
 		t.Fatalf("wait presented saved readiness as current: %s", output.String())
+	}
+}
+
+func TestWaitHumanShowsOnlyCheckedServiceResults(t *testing.T) {
+	snapshot := publisherapp.Snapshot{Services: []publisherapp.Service{
+		{Name: "accounts", Project: "/project", Registered: true, Routable: true, Ready: true, RunNumber: 123, PublicURL: "https://accounts.example.test"},
+		{Name: "database", ServiceProtocol: "postgres", Registered: true, Routable: true, Ready: true, Target: "localhost:5432"},
+	}}
+	var output bytes.Buffer
+	if err := writeAppWait(&output, "human", snapshot, "ready", "selected local publisher process (fresh public-path check)"); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); got != "accounts: ready  https://accounts.example.test\ndatabase: ready (target checked; no public URL)\n" {
+		t.Fatalf("public and private readiness:\n%s", got)
+	}
+	snapshot.Services = []publisherapp.Service{{Name: "accounts", Failure: "runtime.manager_unavailable"}}
+	output.Reset()
+	if err := writeAppWait(&output, "human", snapshot, "timed out", "local publisher process unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); got != "Timed out waiting for readiness.\naccounts: readiness not confirmed\nLast error: the local tnl process is unavailable\n" {
+		t.Fatalf("unknown readiness at timeout:\n%s", got)
+	}
+}
+
+func TestWatchReportsOnlyChangesAndNDJSONRetainsEveryEvent(t *testing.T) {
+	s := publisherapp.Service{Name: "accounts", Registered: true, Routable: true, Ready: true, PublicURL: "https://accounts.example.test", RunNumber: 19}
+	events := []publisherapp.Event{
+		{Cursor: "first", Type: "runtime.restarted", Snapshot: &publisherapp.Snapshot{Services: []publisherapp.Service{{Name: "unrelated", Directory: "/private/worktree"}}}},
+		{Cursor: "second", Type: "service.registered", Service: &s},
+		{Cursor: "third", Type: "service.readiness", Service: &s},
+		{Cursor: "fourth", Type: "service.readiness", Service: &s},
+		{Cursor: "fifth", Type: "service.unregistered", Service: &s},
+		{Cursor: "sixth", Type: "publication.changed", Publication: &clientstate.TunnelInfo{State: clientstate.TunnelStateDraining, ID: "tunnel-private"}},
+	}
+	var human, ndjson bytes.Buffer
+	watch := make(humanWatch)
+	for _, e := range events {
+		if err := watch.writeEvent(&human, "human", e); err != nil {
+			t.Fatal(err)
+		}
+		if err := watch.writeEvent(&ndjson, "ndjson", e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "Local tnl process restarted.\naccounts: registered\naccounts: ready  https://accounts.example.test\naccounts: unregistered\npublication: draining\n"
+	if human.String() != want {
+		t.Fatalf("watch:\n%s\nwant:\n%s", &human, want)
+	}
+	lines := strings.Split(strings.TrimSuffix(ndjson.String(), "\n"), "\n")
+	if len(lines) != len(events) {
+		t.Fatalf("NDJSON dropped events: %s", &ndjson)
+	}
+	for i, e := range events {
+		encoded, err := json.Marshal(e)
+		if err != nil || lines[i] != string(encoded) {
+			t.Fatalf("NDJSON event %d: %s", i, lines[i])
+		}
 	}
 }

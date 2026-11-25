@@ -23,12 +23,15 @@ func TestNestedAliasDiagnosticNamesDomainPolicyAndAvailableCustomDomain(t *testi
 		}
 		var output bytes.Buffer
 		writeCommandError(&output, err)
-		text := output.String()
-		if !strings.Contains(text, "api.shop") || !strings.Contains(text, "2 labels") || !strings.Contains(text, "allows 1") || strings.Contains(text, "claimed") || strings.Contains(text, "certificate") {
+		text := strings.Join(strings.Fields(output.String()), " ")
+		if !strings.Contains(text, "api.shop needs 2 labels beneath your namespace") || !strings.Contains(text, "allows 1 on its managed domain") || !strings.Contains(text, "use a one-label alias name") || strings.Contains(text, "claimed") || strings.Contains(text, "certificate") || strings.Contains(text, "alias hostname depth rejected") {
 			t.Fatalf("unclear nested-alias error: %s", text)
 		}
 		if strings.Contains(text, "custom domain") != custom {
 			t.Fatalf("custom-domain advice does not match availability: %s", text)
+		}
+		if !strings.HasSuffix(output.String(), "TNL_MEMBER_HOSTNAME_DEPTH_EXCEEDED  https://tnl.dev/e/member-hostname-depth-exceeded\n") {
+			t.Fatalf("missing diagnostic code or help URL: %s", &output)
 		}
 		policy.Hostname = "review.member.tnl.dev"
 		if err := invocation.CheckAliasHostnamePolicy(policy); err != nil {

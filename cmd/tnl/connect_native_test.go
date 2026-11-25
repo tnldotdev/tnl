@@ -34,12 +34,14 @@ func TestConnectNamesAndRemovedChoices(t *testing.T) {
 
 func TestNativeHTTPOutputQualifiesURLAndLocalListener(t *testing.T) {
 	for _, listen := range []string{"127.0.0.1:25443", "127.0.0.1:15432", "[::1]:15432"} {
-		profile := connector.Profile{Protocol: config.ProtocolHTTP, ServiceID: "svc_0123456789ABCDEFGHIJKL", Hostname: "orders.example.test", Port: 15432, URL: "https://orders.example.test/"}
+		profile := connector.Profile{Protocol: config.ProtocolHTTP, ServiceID: "svc_0123456789ABCDEFGHIJKL", Hostname: "orders.example.test", Port: 15432, URL: "https://orders.example.test/",
+			Command: []string{"curl", "--connect-to", "orders.example.test:443:" + listen, "https://orders.example.test/"}, Instructions: []string{"a browser uses the public endpoint when enabled; connector access needs a client-specific dial override"}}
 		var output bytes.Buffer
 		if err := writeNativeConnection(&output, profile, statusOutputHuman, listen, ""); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(output.String(), "curl url") || !strings.Contains(output.String(), listen) {
+		if !strings.HasPrefix(output.String(), "curl --connect-to "+shellWord("orders.example.test:443:"+listen)+" "+profile.URL+"\n") ||
+			!strings.Contains(output.String(), "Listening on "+listen+"\n") || !strings.Contains(output.String(), "a browser uses the public endpoint") {
 			t.Fatal("HTTP output did not qualify its URL and local listener", output.String())
 		}
 	}
@@ -56,20 +58,16 @@ func TestNativeProfileWithoutCommandKeepsClientGuidance(t *testing.T) {
 	}
 }
 
-func TestNativeProfileOutputUsesSharedRendererWidth(t *testing.T) {
-	for _, public := range []bool{false, true} {
-		for _, protocol := range []config.ProtocolName{config.ProtocolHTTP, config.ProtocolPostgres, config.ProtocolMySQL, config.ProtocolTCP, config.ProtocolKubernetes} {
-			profile := connector.Profile{Schema: 1, ServiceID: "svc_0123456789ABCDEFGHIJKL", Protocol: protocol, Hostname: "orders.production.example.test", Public: public, Host: "127.0.0.1", Port: 15432, TLS: "service hostname verification", Command: []string{"client", "orders.production.example.test:15432"}}
-			var output bytes.Buffer
-			if err := writeNativeConnection(&output, profile, statusOutputHuman, "127.0.0.1:15432", ""); err != nil {
-				t.Fatal(err)
-			}
-			for _, line := range strings.Split(output.String(), "\n") {
-				if len(line) > 72 {
-					t.Fatal("output exceeds shared renderer width")
-				}
-			}
-		}
+func TestInstalledConnectorKeepsLongCommandAndRunsInBackground(t *testing.T) {
+	uri := "postgresql://orders.production.example.test:15432/?channel_binding=disable&gssencmode=disable&hostaddr=127.0.0.1&sslmode=verify-full&sslrootcert=system"
+	profile := connector.Profile{Protocol: config.ProtocolPostgres, Command: []string{"psql", uri}, TLS: "PostgreSQL SSLRequest; verify-full; system roots"}
+	var out bytes.Buffer
+	if err := writeConnectorReady(&out, profile, statusOutputHuman, "127.0.0.1:15432", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.String(), "psql '"+uri+"'\n") || !strings.Contains(out.String(), profile.TLS) ||
+		!strings.Contains(out.String(), "runs in the background") || strings.Contains(out.String(), "Keep this terminal open") {
+		t.Fatal("installed profile lost its client command, TLS settings, or lifetime", out.String())
 	}
 }
 
@@ -81,10 +79,10 @@ func TestDetachedConnectionPrintsCopyableCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, line := range []string{
-		`'psql' 'host=db.example sslrootcert=/path with spaces/team'\''s cert.pem'`,
+		`psql 'host=db.example sslrootcert=/path with spaces/team'\''s cert.pem'`,
 		`tnl detached stop detached-123 --state-dir='/path with a space/client state'`,
 	} {
-		if !strings.Contains(out.String(), "\n"+line+"\n") {
+		if !strings.Contains("\n"+out.String(), "\n"+line+"\n") {
 			t.Fatalf("missing command %q:\n%s", line, &out)
 		}
 	}

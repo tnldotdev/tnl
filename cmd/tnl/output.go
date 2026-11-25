@@ -67,6 +67,8 @@ type publishOutput struct {
 	fallbackPublicURL     uint64
 	command               string
 	target                string
+	connectCommand        string
+	resumeCommand         string
 	demo                  bool
 	guestDemo             bool
 	guestShare            string
@@ -88,10 +90,10 @@ func (o *publishOutput) provisioning(hostname string, publishRunNumber uint64) e
 	if o.mode != publishOutputHuman {
 		return nil
 	}
-	return writeHumanTransition(
-		o.stderr, o.command, "provisioning", hostname,
-		"certificate and publisher connections", o.target, "waiting for public URL readiness",
-	)
+	if hostname == "" {
+		hostname = "service"
+	}
+	return writeResult(o.stderr, clioutput.Line("Preparing "+hostname+"..."))
 }
 
 func (o *publishOutput) provisioningStalled(publishRunNumber uint64) error {
@@ -102,7 +104,7 @@ func (o *publishOutput) provisioningStalled(publishRunNumber uint64) error {
 	}
 	o.stalled = publishRunNumber
 	if o.mode == publishOutputHuman {
-		return diagnostic.WriteWarning(o.stderr, o.command, diagnostic.ProvisioningStalled)
+		return diagnostic.WriteWarning(o.stderr, diagnostic.ProvisioningStalled)
 	}
 	retryable := true
 	return o.emitLocked(publishEvent{
@@ -117,7 +119,7 @@ func (o *publishOutput) targetUnavailable() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.mode == publishOutputHuman {
-		return diagnostic.WriteWarning(o.stderr, o.command, diagnostic.TargetUnavailable)
+		return diagnostic.WriteWarning(o.stderr, diagnostic.TargetUnavailable)
 	}
 	retryable := false
 	return o.emitLocked(publishEvent{
@@ -136,13 +138,8 @@ func (o *publishOutput) transportFallback(publishRunNumber uint64, transport str
 	}
 	o.fallbackPublicURL = publishRunNumber
 	if o.mode == publishOutputHuman {
-		return writeHumanFrame(o.stderr, o.command, "transport fallback", "tunnel continues over WSS",
-			clioutput.Fields(
-				clioutput.Field{Label: "transport", Value: "WSS"},
-				clioutput.Field{Label: "code", Value: string(failure.TransportFallback)},
-				clioutput.Field{Label: "help", Value: failure.HelpURL(failure.TransportFallback, "")},
-			),
-		)
+		return writeResult(o.stderr, clioutput.Text("QUIC did not connect. The tunnel continues over WSS."),
+			clioutput.Line(string(failure.TransportFallback)+"  "+failure.HelpURL(failure.TransportFallback, "")))
 	}
 	retryable := false
 	definition, _ := failure.DefinitionFor(failure.TransportFallback)
@@ -182,43 +179,35 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 	if o.mode == publishOutputHuman {
 		if !o.printed {
 			o.printed = true
-			footer := "ctrl+c to stop"
-			if o.guestDemo {
-				footer = "tnl auth login to publish your app; ctrl+c to stop"
-			}
+			footer := "Ctrl+C to stop."
 			var openErr error
 			if o.openURL != nil && !o.opened && !o.demo {
 				o.opened = true
 				openErr = o.openPublicURL(url)
 				if openErr == nil {
-					footer = "opened in browser; ctrl+c to stop"
+					footer = "Opened in your browser. Ctrl+C to stop."
 				}
 			}
-			var fields []clioutput.Field
+			var blocks []clioutput.Block
+			if url != "" {
+				blocks = append(blocks, clioutput.Literal(url))
+			} else if o.connectCommand != "" {
+				blocks = append(blocks, clioutput.Literal(o.connectCommand))
+			}
+			if o.target != "" {
+				blocks = append(blocks, clioutput.Line("Forwarding to "+o.target))
+			}
 			if o.demo {
-				fields = append(fields,
-					clioutput.Field{Label: "demo", Value: "running on this computer"},
-				)
+				blocks = append(blocks, clioutput.Text("The demo is running on this computer."))
 			}
 			if o.guestDemo {
-				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "20 min ready across runs"})
+				blocks = append(blocks, clioutput.Text("Guest trial: 20 minutes of ready time across runs."), clioutput.Line("Run tnl auth login to publish your app."))
 			}
-			if o.fallbackPublicURL == publishRunNumber {
-				fields = append(fields, clioutput.Field{Label: "transport", Value: "WSS fallback"})
+			blocks = append(blocks, clioutput.Text(footer))
+			if o.resumeCommand != "" {
+				blocks = append(blocks, clioutput.Text("Publish again at the same address:"), clioutput.Literal(o.resumeCommand))
 			}
-			label := url
-			if label == "" {
-				label = "service"
-			}
-			blocks := []clioutput.Block{clioutput.Flow(
-				clioutput.FlowNode{Label: label},
-				clioutput.FlowNode{Label: "tnl"},
-				clioutput.FlowNode{Label: o.target},
-			)}
-			if len(fields) != 0 {
-				blocks = append(blocks, clioutput.Fields(fields...))
-			}
-			if err := writeHumanFrame(o.stderr, o.command, "ready", footer, blocks...); err != nil {
+			if err := writeResult(o.stderr, blocks...); err != nil {
 				return err
 			}
 			if o.guestDemo && o.guestShare != "" {
@@ -228,16 +217,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				}
 			}
 			if openErr != nil {
-				presented := presentFailure(failure.Wrap("open browser", failure.BrowserOpenFailed, openErr))
-				_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
-					clioutput.Fields(
-						clioutput.Field{Label: "URL", Value: url},
-						clioutput.Field{Label: "reason", Value: presented.message, Prose: true},
-						clioutput.Field{Label: "next step", Value: presented.action, Prose: true},
-						clioutput.Field{Label: "code", Value: string(failure.BrowserOpenFailed)},
-						clioutput.Field{Label: "help", Value: failure.HelpURL(failure.BrowserOpenFailed, "")},
-					),
-				)
+				o.browserNotOpened(openErr)
 			}
 		}
 	} else if err := o.emitLocked(publishEvent{Type: publishEventReady, URL: url, PublishRunNumber: publishRunNumber}); err != nil {
@@ -246,22 +226,19 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 	if (o.mode != publishOutputHuman || o.demo) && o.openURL != nil && !o.opened {
 		o.opened = true
 		if err := o.openPublicURL(url); err != nil {
-			presented := presentFailure(failure.Wrap("open browser", failure.BrowserOpenFailed, err))
-			_ = writeHumanFrame(o.stderr, o.command, "browser not opened", "public URL remains ready",
-				clioutput.Fields(
-					clioutput.Field{Label: "URL", Value: url},
-					clioutput.Field{Label: "reason", Value: presented.message, Prose: true},
-					clioutput.Field{Label: "next step", Value: presented.action, Prose: true},
-					clioutput.Field{Label: "code", Value: string(failure.BrowserOpenFailed)},
-					clioutput.Field{Label: "help", Value: failure.HelpURL(failure.BrowserOpenFailed, "")},
-				),
-			)
+			o.browserNotOpened(err)
 		}
 	}
 	if o.detachedCtx != nil {
 		detached.Ready(o.detachedCtx)
 	}
 	return nil
+}
+
+func (o *publishOutput) browserNotOpened(err error) {
+	presented := presentFailure(failure.Wrap("open browser", failure.BrowserOpenFailed, err))
+	_ = writeResult(o.stderr, clioutput.Text(presented.message), clioutput.Line(presented.action),
+		clioutput.Line(string(failure.BrowserOpenFailed)+"  "+failure.HelpURL(failure.BrowserOpenFailed, "")))
 }
 
 // openPublicURL releases the output lock while DNS and the browser opener run.
@@ -296,11 +273,7 @@ func (o *publishOutput) setGuestShare(token string) {
 func (o *publishOutput) demoPing(state demo.State) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return writeHumanFrame(o.stderr, o.command, "ping received", "pong sent",
-		clioutput.Fields(
-			clioutput.Field{Label: "count", Value: fmt.Sprint(state.RequestCount)},
-		),
-	)
+	return writeResult(o.stderr, clioutput.Line(fmt.Sprintf("Ping %d received. Pong sent.", state.RequestCount)))
 }
 
 func (o *publishOutput) logf(format string, arguments ...any) {
@@ -308,17 +281,14 @@ func (o *publishOutput) logf(format string, arguments ...any) {
 	defer o.mu.Unlock()
 	cause := fmt.Errorf(format, arguments...)
 	presented := presentFailure(failure.Wrap("maintain publisher connection", failure.TransportUnavailable, cause))
-	_ = writeHumanFrame(o.stderr, o.command, "publisher connection disrupted", "reconnecting",
-		clioutput.Text(presented.message),
-		clioutput.Fields(clioutput.Field{Label: "code", Value: string(failure.TransportUnavailable)},
-			clioutput.Field{Label: "help", Value: failure.HelpURL(failure.TransportUnavailable, "")}),
-	)
+	_ = writeResult(o.stderr, clioutput.Text(presented.message+"; reconnecting"),
+		clioutput.Line(string(failure.TransportUnavailable)+"  "+failure.HelpURL(failure.TransportUnavailable, "")))
 }
 
-func (o *publishOutput) integrationURLMessage(state, footer string, blocks ...clioutput.Block) error {
+func (o *publishOutput) integrationURLMessage(state, hint string, blocks ...clioutput.Block) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return writeHumanFrame(o.stderr, o.command, state, footer, blocks...)
+	return writeWithHint(o.stderr, hint, append([]clioutput.Block{clioutput.Text(state)}, blocks...)...)
 }
 
 func (o *publishOutput) failed(err error) error {

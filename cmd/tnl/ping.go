@@ -29,28 +29,24 @@ func runPing(ctx context.Context, flags pingCommand, output io.Writer) error {
 		if err := json.NewEncoder(output).Encode(result); err != nil {
 			return err
 		}
-	} else if err := writeHumanFrame(output, "tnl ping", result.State, "", clioutput.Fields(
-		clioutput.Field{Label: "visitor", Value: "this machine"},
-		clioutput.Field{Label: "address", Value: result.Address},
-		clioutput.Field{Label: "protocol", Value: result.Protocol},
-		clioutput.Field{Label: "checked at", Value: result.CheckedAt.Format("2006-01-02T15:04:05.999999999Z07:00")},
-		clioutput.Field{Label: "HTTP status", Value: pingStatus(result.Status)},
-		clioutput.Field{Label: "tnl error code", Value: result.Code},
-		clioutput.Field{Label: "note", Value: result.Note},
-	)); err != nil {
-		return err
+	} else {
+		state := result.State
+		if result.Status != 0 {
+			state = "HTTP " + strconv.Itoa(result.Status) + " (" + state + ")"
+		}
+		if result.Code != "" {
+			state += ": " + result.Code
+		} else if result.Note != "" {
+			state += ": " + result.Note
+		}
+		if err := writeResult(output, clioutput.Line(state+"  "+result.Address)); err != nil {
+			return err
+		}
 	}
 	if result.State == "unavailable" || result.State == "tnl denied" || result.State == "invalid address" || result.State == "invalid protocol" {
 		return failure.Wrap("ping public URL", failure.TunnelUnavailable, errors.New(result.State))
 	}
 	return nil
-}
-
-func pingStatus(status int) string {
-	if status == 0 {
-		return ""
-	}
-	return strconv.Itoa(status)
 }
 
 func (a *commandApp) newPingCommand() *cobra.Command {

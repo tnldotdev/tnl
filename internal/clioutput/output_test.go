@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"testing"
 	"testing/quick"
@@ -24,9 +23,9 @@ func (e commandAs) As(target any) bool {
 
 func TestCommandExtractionContracts(t *testing.T) {
 	cause := errors.New("private cause")
-	first := &commandError{command: "tnl inspect list", err: cause}
+	first := &commandError{command: CommandTitle("tnl", "inspect show <id>"), err: cause}
 	for _, err := range []error{first, fmt.Errorf("outer: %w", first), errors.Join(first, WrapCommand("tnl publish", cause)), commandAs{first}} {
-		if command, ok := CommandOf(err); !ok || command != first.command {
+		if command, ok := CommandOf(err); !ok || command != "tnl inspect show" {
 			t.Fatalf("command context = %q, %t", command, ok)
 		}
 	}
@@ -40,94 +39,11 @@ func TestCommandExtractionContracts(t *testing.T) {
 	}
 }
 
-func TestRenderFrame(t *testing.T) {
-	got, err := Render(Frame{
-		Command: "tnl wait",
-		State:   "ready",
-		Blocks: []Block{
-			Fields(Field{Label: "framework", Value: "vite"}),
-			Flow(
-				FlowNode{Label: "https://chase.tnl.dev"},
-				FlowNode{Label: "tnl"},
-				FlowNode{Label: "http://127.0.0.1:5173"},
-			),
-		},
-		Footer: "ctrl+c to stop",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "+--[ tnl wait ]-- ready ---------------------------------------+\n" +
-		"|                                                              |\n" +
-		"|  framework  vite                                             |\n" +
-		"|                                                              |\n" +
-		"|  https://chase.tnl.dev                                       |\n" +
-		"|     |                                                        |\n" +
-		"|     v                                                        |\n" +
-		"|    tnl                                                       |\n" +
-		"|     |                                                        |\n" +
-		"|     v                                                        |\n" +
-		"|  http://127.0.0.1:5173                                       |\n" +
-		"|                                                              |\n" +
-		"+-- ctrl+c to stop --------------------------------------------+\n"
-	if got != want {
-		t.Fatalf("frame =\n%s\nwant:\n%s", got, want)
-	}
-}
-
-func TestRenderSectionsTreeAndFailure(t *testing.T) {
-	got, err := Render(Frame{
-		Command: "tnl status",
-		State:   "1 local tunnel",
-		Blocks: []Block{Section("ready",
-			Tree(TreeNode{Label: "route", Children: []TreeNode{
-				{Label: "hostname", Value: "route.example"},
-				{Label: "state", Value: "ready"},
-			}}),
-			Flow(FlowNode{Label: "publisher", Detail: "connection refused", Failure: true}, FlowNode{Label: "local service"}),
-		)},
-		Footer: "TNL_TARGET_UNAVAILABLE",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, fragment := range []string{
-		"|-- ready ",
-		"|  route",
-		"|  |-- hostname  route.example",
-		"|  `-- state  ready",
-		"|     x  connection refused",
-		"+-- TNL_TARGET_UNAVAILABLE ",
-	} {
-		if !strings.Contains(got, fragment) {
-			t.Fatalf("frame does not contain %q:\n%s", fragment, got)
-		}
-	}
-}
-
-func TestRenderWrapsAndEscapesWithoutExceedingLimit(t *testing.T) {
-	got, err := Render(Frame{
-		Command: "tnl url list",
-		State:   "routes",
-		Blocks: []Block{Fields(
-			Field{Label: "hostname", Value: strings.Repeat("a", 100) + ".example"},
-			Field{Label: "name", Value: "caf\u00e9\x1b[31m"},
-		)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got, `caf\u00e9\x1b[31m`) {
-		t.Fatalf("escaped frame = %q", got)
-	}
-	assertFrameInvariants(t, got)
-}
-
 func TestCopyableLines(t *testing.T) {
-	url := "https://control.example.test/v1/auth/device/approve?user_code=ABCDEF-123456"
+	url := "https://control.example.test/v1/auth/device/approve?code=ABCDEF-123456"
 	path := "/var/data/my project/" + strings.Repeat("long-path/", 8) + "client.pem"
 	command := "tnl connect orders --server=https://control.example.test -- 'two words'"
-	for _, width := range []int{0, 20, 40, 64, 72, 160} {
+	for _, width := range []int{0, 1, 20, 40, 64, 72, 160} {
 		for _, tc := range []struct {
 			block Block
 			value string
@@ -135,18 +51,18 @@ func TestCopyableLines(t *testing.T) {
 			{Text("Visit " + url), url},
 			{Fields(Field{Label: "help", Value: url}), url},
 			{Fields(Field{Label: "CA file", Value: path}), path},
-			{Flow(FlowNode{Label: url}), url},
-			{Tree(TreeNode{Label: "CA file", Value: path}), path},
 			{Section("client command", Literal(command)), command},
+			{Table([]string{"NAME", "ADDRESS"}, [][]string{{"web", url}}, "No services."), url},
+			{Line(command), command},
 		} {
-			frame := Frame{Command: "tnl", State: "result", Blocks: []Block{tc.block}}
-			got, err := render(frame, width)
-			if err != nil || !strings.Contains(got, "\n"+tc.value+"\n") {
-				t.Fatalf("width %d: missing literal line %q:\n%s\n%v", width, tc.value, got, err)
+			result := Message{Blocks: []Block{tc.block}}
+			got, err := render(result, width)
+			if err != nil || !strings.Contains(got, tc.value) {
+				t.Fatalf("width %d: missing literal %q:\n%s\n%v", width, tc.value, got, err)
 			}
 			if width == 0 {
 				var buf bytes.Buffer
-				if err := Write(&buf, frame); err != nil || buf.String() != got+"\n" {
+				if err := Write(&buf, result); err != nil || buf.String() != got {
 					t.Fatalf("redirected output: %q, %v", &buf, err)
 				}
 			}
@@ -154,297 +70,69 @@ func TestCopyableLines(t *testing.T) {
 	}
 }
 
-func TestRenderRightBorderIsAligned(t *testing.T) {
-	tests := map[string]Frame{
-		"app output": {
-			Command: "tnl wait",
-			State:   "ready",
-			Blocks: []Block{
-				Fields(Field{Label: "framework", Value: "vite"}),
-				Flow(
-					FlowNode{Label: "https://chase.tnl.dev"},
-					FlowNode{Label: "tnl"},
-					FlowNode{Label: "http://127.0.0.1:5173"},
-				),
-			},
-			Footer: "ctrl+c to stop",
-		},
-		"every block with wrapping": {
-			Command: "tnl status",
-			State:   "results",
-			Blocks: []Block{
-				Text("long text " + strings.Repeat("word ", 30)),
-				Fields(Field{Label: "escaped", Value: "tab\t caf\x11"}),
-				Flow(FlowNode{Label: "publisher", Detail: strings.Repeat("failure ", 20), Failure: true}, FlowNode{Label: "local service"}),
-				Transition("old state", strings.Repeat("changing ", 20), "new state"),
-				Tree(TreeNode{Label: "service", Children: []TreeNode{{Label: "hostname", Value: "app.example"}}}),
-				Section(strings.Repeat("section ", 20), Fields(Field{Label: "state", Value: "ready"})),
-			},
-			Footer: "complete",
-		},
-		"maximum width": {
-			Command: "tnl",
-			State:   strings.Repeat("s", maxWidth-len("+--[ tnl ]-- ")-3),
-			Blocks:  []Block{Text(strings.Repeat("three words here ", 15))},
-		},
+func TestPlainOutput(t *testing.T) {
+	var out bytes.Buffer
+	results := []Block{
+		Table([]string{"SERVICE", "STATE"}, nil, "No services."),
+		Table([]string{"SERVICE", "STATE"}, [][]string{{"accounts", "ready"}, {"web", "not registered"}}, ""),
+		Section("Open this URL", Literal("https://example.test")),
+		Line("Signed in."),
 	}
-	for name, frame := range tests {
-		t.Run(name, func(t *testing.T) {
-			got, err := Render(frame)
-			if err != nil {
-				t.Fatal(err)
-			}
-			lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
-			borderColumn := len(lines[0]) - 1
-			for index, line := range lines {
-				if len(line) != borderColumn+1 {
-					t.Fatalf("line %d right border is in column %d, want %d:\n%s", index+1, len(line)-1, borderColumn, got)
-				}
-				want := byte('|')
-				if index == 0 || index == len(lines)-1 {
-					want = '+'
-				}
-				if line[borderColumn] != want {
-					t.Fatalf("line %d has %q in right-border column %d, want %q:\n%s", index+1, line[borderColumn], borderColumn, want, got)
-				}
-			}
-		})
-	}
-}
-
-func TestRenderRejectsInvalidRails(t *testing.T) {
-	for _, frame := range []Frame{
-		{},
-		{Command: "tnl", State: "bad\nstate"},
-		{Command: strings.Repeat("x", 80), State: "failed"},
-		{Command: "tnl", State: "failed", Blocks: []Block{Section("nested", nil)}},
-	} {
-		if _, err := Render(frame); err == nil {
-			t.Fatalf("Render(%#v) succeeded", frame)
-		}
-	}
-}
-
-func TestCommandContext(t *testing.T) {
-	if got := CommandTitle("tnl", "team member set-role <membership-id>"); got != "tnl team member set-role" {
-		t.Fatalf("CommandTitle() = %q", got)
-	}
-	want := errors.New("failed")
-	err := WrapCommand("tnl status", want)
-	if !errors.Is(err, want) {
-		t.Fatal("command context did not preserve its cause")
-	}
-	if command, ok := CommandOf(err); !ok || command != "tnl status" {
-		t.Fatalf("CommandOf() = %q, %t", command, ok)
-	}
-	if WrapCommand("tnl", nil) != nil {
-		t.Fatal("WrapCommand returned an error for a nil cause")
-	}
-}
-
-func TestWritePropagatesWriterError(t *testing.T) {
-	want := errors.New("write failed")
-	if err := Write(errorWriter{err: want}, Frame{Command: "tnl", State: "ready"}); !errors.Is(err, want) {
-		t.Fatalf("Write error = %v", err)
-	}
-}
-
-func TestWriteSeparatesHumanFrames(t *testing.T) {
-	first := Frame{Command: "tnl team use", State: "selected"}
-	second := Frame{Command: "tnl domain status", State: "ready"}
-	var output bytes.Buffer
-	for _, frame := range []Frame{first, second} {
-		if err := Write(&output, frame); err != nil {
+	for _, block := range results {
+		if err := Write(&out, Message{Blocks: []Block{block}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	firstText, err := Render(first)
-	if err != nil {
-		t.Fatal(err)
+	want := "No services.\nSERVICE   STATE\naccounts  ready\nweb       not registered\nOpen this URL:\nhttps://example.test\nSigned in.\n"
+	if out.String() != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", &out, want)
 	}
-	secondText, err := Render(second)
-	if err != nil {
-		t.Fatal(err)
+	if got, _ := render(Message{Blocks: []Block{Text("two short words")}}, 9); got != "two short\nwords\n" {
+		t.Fatalf("wrapped prose: %q", got)
 	}
-	if got, want := output.String(), firstText+"\n"+secondText+"\n"; got != want {
-		t.Fatalf("written frames = %q, want %q", got, want)
-	}
-}
-
-func TestWriteRejectsShortWrite(t *testing.T) {
-	if err := Write(shortWriter{}, Frame{Command: "tnl", State: "ready"}); !errors.Is(err, io.ErrShortWrite) {
-		t.Fatalf("Write error = %v", err)
+	if _, err := Render(Message{Blocks: []Block{Section("nested", nil)}}); err == nil {
+		t.Fatal("accepted a missing block")
 	}
 }
 
-func TestRenderAcceptsMaximumRailAndRejectsLongerRail(t *testing.T) {
-	prefixWithoutState := "+--[ tnl ]-- "
-	state := strings.Repeat("s", maxWidth-len(prefixWithoutState)-3)
-	got, err := Render(Frame{Command: "tnl", State: state})
-	if err != nil {
-		t.Fatal(err)
+func TestWriteErrors(t *testing.T) {
+	result := Message{Blocks: []Block{Text("ready")}}
+	if err := Write(shortWriter{}, result); !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("short write: %v", err)
 	}
-	if len(strings.SplitN(got, "\n", 2)[0]) != maxWidth {
-		t.Fatalf("top rail width = %d", len(strings.SplitN(got, "\n", 2)[0]))
-	}
-	if _, err := Render(Frame{Command: "tnl", State: state + "s"}); err == nil {
-		t.Fatal("rail wider than the limit was accepted")
+	want := errors.New("write failed")
+	if err := Write(errorWriter{want}, result); !errors.Is(err, want) {
+		t.Fatalf("writer error: %v", err)
 	}
 }
 
-func TestRenderPathologicalDynamicContent(t *testing.T) {
-	values := []string{
-		"",
-		" ",
-		strings.Repeat("x", 10_000),
-		strings.Repeat("word ", 2_000),
-		"\x00\x01\x02\x1b\x7f",
-		"line one\r\nline two\tend",
-		"caf\u00e9 \u4e16\u754c \U0001f680",
-		string([]byte{0xff, 0xfe, 'x', 0xc0, 0xaf}),
-	}
-	for index, value := range values {
-		t.Run(strconv.Itoa(index), func(t *testing.T) {
-			got, err := Render(Frame{
-				Command: "tnl status",
-				State:   "result",
-				Blocks: []Block{
-					Text(value),
-					Fields(Field{Label: strings.Repeat("label", 20), Value: value}),
-					Section(value, Flow(
-						FlowNode{Label: value, Detail: value, Failure: true},
-						FlowNode{Label: value},
-					)),
-				},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertFrameInvariants(t, got)
-		})
-	}
-}
-
-func TestRenderDeepTree(t *testing.T) {
-	root := TreeNode{Label: "root"}
-	current := &root
-	for depth := 0; depth < 1_000; depth++ {
-		current.Children = []TreeNode{{Label: strings.Repeat("node", depth%30+1), Value: strings.Repeat("value", depth%20+1)}}
-		current = &current.Children[0]
-	}
-	got, err := Render(Frame{Command: "tnl status", State: "ready", Blocks: []Block{Tree(root)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertFrameInvariants(t, got)
-}
-
-func TestRenderManySections(t *testing.T) {
-	blocks := make([]Block, 2_000)
-	for index := range blocks {
-		blocks[index] = Section(fmt.Sprintf("section %d", index), Fields(
-			Field{Label: "index", Value: strconv.Itoa(index)},
-		))
-	}
-	got, err := Render(Frame{Command: "tnl status", State: "many results", Blocks: blocks})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertFrameInvariants(t, got)
+func safeOutput(value string, width int) bool {
+	got, err := render(Message{Blocks: []Block{
+		Text(value), Line(value), Fields(Field{Label: value, Value: value}),
+		Section(value, Literal(value)), Table([]string{"VALUE"}, [][]string{{value}}, ""),
+	}}, width)
+	return err == nil && strings.IndexFunc(got, func(r rune) bool { return r != '\n' && (r < 0x20 || r > 0x7e) }) == -1
 }
 
 func TestRenderArbitraryBytes(t *testing.T) {
-	property := func(input []byte) bool {
-		value := string(input)
-		got, err := Render(Frame{
-			Command: "tnl",
-			State:   "result",
-			Blocks: []Block{
-				Text(value),
-				Fields(Field{Label: value, Value: value}),
-				Flow(FlowNode{Label: value, Detail: value}, FlowNode{Label: value}),
-			},
-		})
-		return err == nil && frameInvariants(got) == nil
-	}
-	if err := quick.Check(property, &quick.Config{MaxCount: 5_000}); err != nil {
+	if err := quick.Check(func(input []byte) bool { return safeOutput(string(input), 80) }, &quick.Config{MaxCount: 5_000}); err != nil {
 		t.Fatal(err)
+	}
+	got, err := Render(Message{Blocks: []Block{Line("caf\u00e9\r\n\x1b[31m\xff")}})
+	if err != nil || got != `caf\u00e9\x0d\x0a\x1b[31m\xff`+"\n" {
+		t.Fatalf("escaped output: %q, %v", got, err)
 	}
 }
 
 func FuzzRender(f *testing.F) {
-	for index, seed := range [][]byte{
-		nil,
-		[]byte("hello world"),
-		[]byte("\x00\x1b\r\n\t"),
-		[]byte("caf\u00e9 \U0001f680"),
-		{0xff, 0xfe, 0xc0, 0xaf},
-		bytes.Repeat([]byte("long-value-"), 100),
-	} {
+	for index, seed := range [][]byte{nil, []byte("\x00\x1b\r\n\t"), []byte("caf\u00e9 \U0001f680"), {0xff, 0xfe}, bytes.Repeat([]byte("long value "), 2000)} {
 		f.Add(seed, uint8(index))
 	}
-	f.Fuzz(func(t *testing.T, input []byte, widthOffset uint8) {
-		value := string(input)
-		got, err := Render(Frame{
-			Command: "tnl wait",
-			State:   "result",
-			Blocks: []Block{
-				Text(value),
-				Fields(Field{Label: value, Value: value}),
-				Section(value, Tree(TreeNode{Label: value, Children: []TreeNode{{Label: value, Value: value}}})),
-				Flow(FlowNode{Label: value, Detail: value, Failure: true}, FlowNode{Label: value}),
-				Transition(value, value, value),
-			},
-			Footer: strings.Repeat("f", 57+int(widthOffset%9)),
-		})
-		if err != nil {
-			t.Fatal(err)
+	f.Fuzz(func(t *testing.T, input []byte, width uint8) {
+		if !safeOutput(string(input), int(width)) {
+			t.Fatal("unsafe output")
 		}
-		assertFrameInvariants(t, got)
 	})
-}
-
-func assertFrameInvariants(t *testing.T, frame string) {
-	t.Helper()
-	if err := frameInvariants(frame); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func frameInvariants(frame string) error {
-	if !strings.HasSuffix(frame, "\n") || strings.HasSuffix(frame, "\n\n") {
-		return fmt.Errorf("frame has invalid trailing newline: %q", frame)
-	}
-	lines := strings.Split(strings.TrimSuffix(frame, "\n"), "\n")
-	if len(lines) < 2 {
-		return fmt.Errorf("frame has only %d lines", len(lines))
-	}
-	width := len(lines[0])
-	if width < defaultWidth || width > maxWidth {
-		return fmt.Errorf("frame width = %d", width)
-	}
-	for index, line := range lines {
-		for _, character := range line {
-			if character < 0x20 || character > 0x7e {
-				return fmt.Errorf("line %d is not ASCII: %q", index, line)
-			}
-		}
-	}
-	if lines[0][0] != '+' || lines[0][width-1] != '+' {
-		return errors.New("top rail does not have corners")
-	}
-	if lines[1] != "|"+strings.Repeat(" ", width-2)+"|" {
-		return nil // an open layout has no side rails.
-	}
-	if last := lines[len(lines)-1]; len(last) != width || last[0] != '+' || last[width-1] != '+' {
-		return errors.New("bottom rail does not have corners")
-	}
-	for index, line := range lines[1 : len(lines)-1] {
-		if len(line) != width || line[0] != '|' || line[width-1] != '|' {
-			return fmt.Errorf("body line %d does not have sides: %q", index+1, line)
-		}
-	}
-	return nil
 }
 
 type errorWriter struct{ err error }

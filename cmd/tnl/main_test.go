@@ -221,17 +221,25 @@ func TestPublishRejectsRetiredPublicURLFlag(t *testing.T) {
 }
 
 func TestPublishResumePrintsHostnameFlag(t *testing.T) {
+	t.Setenv("TNL_SERVER", "")
 	var stderr bytes.Buffer
 	output, err := newPublishOutput(publishOutputHuman, "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	flags := publishCommand{Target: "3000"}
-	if err := publicationPresentation(t.Context(), flags, output).Resume("https://app.example.test", "", ""); err != nil {
+	flags.StateDir = filepath.Join(t.TempDir(), "state")
+	if err := publicationPresentation(t.Context(), flags, output).Resume("https://app.example.test", "", defaultServerURL); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr.String(), "--hostname") || strings.Contains(stderr.String(), "--public-url") {
-		t.Fatal("resume output did not use --hostname", stderr.String())
+	if err := output.ready("https://app.example.test", 1); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(stderr.String(), "https://app.example.test\n") || !strings.Contains(stderr.String(), "tnl --no-config publish 3000 --hostname https://app.example.test --state-dir ") || strings.Contains(stderr.String(), "--server") {
+		t.Fatal("expected the URL first, then a reusable command", stderr.String())
+	}
+	if _, err := os.Stat(flags.StateDir); !os.IsNotExist(err) {
+		t.Fatalf("formatting the command created state: %v", err)
 	}
 }
 
@@ -367,7 +375,7 @@ func TestBarePublishReachesCanonicalDispatch(t *testing.T) {
 		t.Fatalf("command = %q, %t", got, ok)
 	}
 	writeCommandError(&stderr, err)
-	if got := stderr.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- command failed ") || strings.Contains(got, "clientstate: ") {
+	if got := stderr.String(); !strings.HasPrefix(got, "Error: ") || strings.Contains(got, "clientstate: ") {
 		t.Fatalf("error output = %q", got)
 	}
 }
@@ -552,23 +560,23 @@ func TestDemoPublishRegistersTunnelWithoutProjectConfiguration(t *testing.T) {
 	}
 }
 
-func TestWriteCommandErrorUsesContextAndSharedFrame(t *testing.T) {
+func TestWriteCommandErrorShowsActionCodeAndHelp(t *testing.T) {
 	var output bytes.Buffer
 	writeCommandError(&output, clioutput.WrapCommand("tnl team use", failure.Wrap("select team", failure.TeamNotFound, errors.New("team not found"))))
-	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl team use ]-- command failed ") ||
+	if got := output.String(); !strings.HasPrefix(got, "Error: ") ||
 		!strings.Contains(got, "team not found") || !strings.Contains(got, "TNL_CLIENT_TEAM_NOT_FOUND") ||
-		!strings.Contains(got, "https://tnl.dev/c/team-not-found") || !strings.HasSuffix(got, "\n\n") {
+		!strings.Contains(got, "https://tnl.dev/c/team-not-found") || strings.Contains(got, "\n\n") {
 		t.Fatalf("error output = %q", got)
 	}
 	output.Reset()
 	writeCommandError(&output, clioutput.WrapCommand("tnl publish", diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("connection refused"))))
-	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- target unavailable ") ||
-		!strings.HasSuffix(got, "\n\n") {
+	if got := output.String(); !strings.HasPrefix(got, "tnl could not reach") ||
+		!strings.Contains(got, "TNL_TARGET_UNAVAILABLE") {
 		t.Fatalf("classified error output = %q", got)
 	}
 }
 
-func TestClientErrorFramesHaveBoundedHelpAndStableCodes(t *testing.T) {
+func TestClientErrorsHaveCopyableHelpAndStableCodes(t *testing.T) {
 	for _, entry := range failure.ClientReasons() {
 		var output bytes.Buffer
 		writeCommandError(&output, failure.Wrap("test client failure", entry.Code, errors.New("secret-token")))
@@ -579,11 +587,6 @@ func TestClientErrorFramesHaveBoundedHelpAndStableCodes(t *testing.T) {
 		}
 		if !strings.Contains(text, string(entry.Code)) || strings.Contains(text, "secret-token") {
 			t.Fatalf("unsafe output for %s: %q", entry.Code, text)
-		}
-		for _, line := range strings.Split(text, "\n") {
-			if len(line) > 72 {
-				t.Fatalf("output line exceeds 72 columns for %s: %q", entry.Code, line)
-			}
 		}
 	}
 }

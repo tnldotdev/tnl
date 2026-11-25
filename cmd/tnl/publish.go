@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tnldotdev/tnl/internal/client/detached"
@@ -107,6 +106,8 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		output.detachedCtx = ctx
 		if publicHTTP {
 			output.openURL = browserOpener(ctx, flags.Open, true)
+		} else {
+			output.connectCommand = publishedConnectCommand(ctx, flags, selected.service, true)
 		}
 		defer func() { result = output.finish(ctx, result) }()
 		return runNamedPublish(ctx, selected, flags.StateDir, output)
@@ -172,23 +173,18 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 				return nil
 			}
 			// saved policy comes from control, not from the current project config.
-			quote := func(value string) string {
-				if !strings.ContainsAny(value, " \t\r\n'\"$`\\;|&<>()!*?#[]{}~") {
-					return value
-				}
-				return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-			}
-			command := "tnl --no-config publish " + quote(flags.Target) + " --hostname " + url
+			command := "tnl --no-config publish " + shellWord(flags.Target) + " --hostname " + shellWord(url)
 			if team != "" {
-				command += " --team " + quote(team)
+				command += " --team " + shellWord(team)
 			}
-			if server != "" {
-				command += " --server " + quote(server)
+			if pin := suggestedServer(ctx, server, nil, "", flags.StateDir, nil); pin != "" {
+				command += " --server " + shellWord(pin)
 			}
 			if flags.StateDir != "" {
-				command += " --state-dir " + quote(flags.StateDir)
+				command += " --state-dir " + shellWord(flags.StateDir)
 			}
-			return writeHumanFrame(output.stderr, "tnl publish", "address saved", "", clioutput.Fields(clioutput.Field{Label: "resume", Value: command}))
+			output.resumeCommand = command
+			return nil
 		},
 		ProvisioningStalled: output.provisioningStalled, TransportFallback: output.transportFallback, TargetUnavailable: output.targetUnavailable,
 		Progress: func(p invocation.Progress) error { return output.integrationURLMessage(p.State, p.Hint, p.Details...) },
@@ -198,7 +194,7 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 			if output.mode == publishOutputNDJSON {
 				return output.emitLocked(publishEvent{Type: publishEventWarning, Message: message})
 			}
-			return writeHumanFrame(output.stderr, output.command, "warning", "", clioutput.Text(message))
+			return writeResult(output.stderr, clioutput.Text(message))
 		},
 		ConfigureBrowser: func(automated bool) { output.openURL = browserOpener(ctx, flags.Open, automated) },
 		Demo:             output.setDemo, GuestDemo: output.setGuestDemo, GuestShare: output.setGuestShare, DemoPing: output.demoPing, Logf: output.logf,
@@ -219,6 +215,7 @@ func (a *commandApp) newPublishCommand() *cobra.Command {
 
 func (a *commandApp) publish(call commandCall) error {
 	ctx, flags := call.ctx, a.flags
+	flags.Publish.configArgs = configArgs(flags.NoConfig, flags.ConfigPath)
 	if flags.Publish.Foreground && (flags.Publish.Install || flags.Publish.Detach) {
 		return publisherCLIError("select only one of --foreground, --detach, or --install")
 	}

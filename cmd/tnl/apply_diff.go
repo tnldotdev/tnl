@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -182,7 +181,10 @@ func (d applyDiff) write(out io.Writer, mode statusOutputMode) error {
 	if mode == statusOutputJSON {
 		return json.NewEncoder(out).Encode(d)
 	}
-	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "team", Value: d.Team}, clioutput.Field{Label: "deployment", Value: d.Deployment}, clioutput.Field{Label: "base revision", Value: strconv.FormatInt(d.Base, 10)})}
+	if len(d.Changes) == 0 {
+		return writeResult(out, clioutput.Line("No changes to "+d.Deployment+"."))
+	}
+	blocks := []clioutput.Block{clioutput.Line("Proposed changes to " + d.Deployment + ":")}
 	for _, c := range d.Changes {
 		label := strings.ReplaceAll(c.Field, "_", " ")
 		switch c.Field {
@@ -193,11 +195,7 @@ func (d applyDiff) write(out io.Writer, mode statusOutputMode) error {
 		case "access":
 			label = "visitor access"
 		}
-		blocks = append(blocks, clioutput.Section(strings.TrimSpace(c.Resource+" "+c.Name), clioutput.Fields(clioutput.Field{Label: label, Value: displayDiffValue(c.Before) + " -> " + displayDiffValue(c.After)})))
+		blocks = append(blocks, clioutput.Line(strings.TrimSpace(c.Resource+" "+c.Name)+"  "+label+": "+displayDiffValue(c.Before)+" -> "+displayDiffValue(c.After)))
 	}
-	state := "changes"
-	if len(d.Changes) == 0 {
-		state = "no changes"
-	}
-	return writeHumanFrame(out, "tnl apply", state, "compared with the saved revision; no changes applied", blocks...)
+	return writeResult(out, blocks...)
 }

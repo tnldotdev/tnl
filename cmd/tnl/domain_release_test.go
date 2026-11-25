@@ -131,12 +131,18 @@ func testDomainReleaseAcknowledgement(t *testing.T, readStatus int) {
 
 func TestDomainReleaseStatusRequiresFinalOwnerConfirmation(t *testing.T) {
 	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
-	for _, confirmed := range []bool{false, true} {
+	for _, test := range []struct {
+		receipt   *authorityv1.DomainRelease
+		confirmed bool
+	}{
+		{},
+		{receipt: &authorityv1.DomainRelease{ObservedAt: now}},
+		{receipt: &authorityv1.DomainRelease{ObservedAt: now, ReleasedAt: &now, CompletionUnknown: true}},
+		{receipt: &authorityv1.DomainRelease{ObservedAt: now, ReleasedAt: &now, Blockers: []authorityv1.DomainReleaseBlocker{authorityv1.DnsAuthority}}},
+		{receipt: &authorityv1.DomainRelease{ObservedAt: now, ReleasedAt: &now}, confirmed: true},
+	} {
 		domain := authorityv1.Domain{Id: "dom_0123456789abcdefghijkl", CanonicalDomain: "release.example.test",
-			Kind: "custom", State: authorityv1.DomainStateReleased}
-		if confirmed {
-			domain.Release = &authorityv1.DomainRelease{ObservedAt: now, ReleasedAt: &now, Blockers: []authorityv1.DomainReleaseBlocker{}}
-		}
+			Kind: "custom", State: authorityv1.DomainStateReleased, Release: test.receipt}
 		var output bytes.Buffer
 		if err := writeDomainStatus(&output, domain, false); err != nil {
 			t.Fatal(err)
@@ -145,10 +151,10 @@ func TestDomainReleaseStatusRequiresFinalOwnerConfirmation(t *testing.T) {
 		if strings.Contains(text, "ready for public URLs") {
 			t.Fatal("released domain was presented as usable", text)
 		}
-		if confirmed != strings.Contains(text, "-- released ") || confirmed != strings.Contains(text, "DNS authority release confirmed") {
-			t.Fatalf("release confirmation=%t did not match owner evidence:\n%s", confirmed, text)
+		if test.confirmed != strings.HasPrefix(text, domain.CanonicalDomain+"  released\n") || test.confirmed != strings.Contains(text, "DNS authority release confirmed") {
+			t.Fatalf("release confirmation=%t did not match owner evidence:\n%s", test.confirmed, text)
 		}
-		if !confirmed && !strings.Contains(text, "unknown") {
+		if !test.confirmed && (!strings.Contains(text, "unknown") || !strings.Contains(text, "tnl domain status "+domain.Id)) {
 			t.Fatal("missing owner receipt became known completion", text)
 		}
 	}

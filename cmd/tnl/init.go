@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -44,39 +45,37 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if err != nil {
 		return err
 	}
-	state := "already configured"
+	message := "Project is already configured."
 	if result.Changed {
-		state = "configured"
+		message = "Configured project."
 	}
-	if len(result.Actions) != 0 {
-		state = "needs action"
-	}
-	fields := []clioutput.Field{{Label: "project", Value: result.Root}}
+	blocks := []clioutput.Block{clioutput.Text(message)}
 	if result.ConfigurationCreated {
-		fields = append(fields, clioutput.Field{Label: "created", Value: result.ConfigurationPath})
-	} else {
-		fields = append(fields, clioutput.Field{Label: "config", Value: result.ConfigurationPath})
+		blocks = append(blocks, clioutput.Line("Created "+filepath.Base(result.ConfigurationPath)))
 	}
 	if len(result.InstalledPackages) != 0 {
-		fields = append(fields, clioutput.Field{Label: "installed", Value: strings.Join(result.InstalledPackages, ", ")})
+		blocks = append(blocks, clioutput.Line("Installed "+strings.Join(result.InstalledPackages, ", ")))
 	}
 	for _, path := range result.UpdatedPaths {
-		fields = append(fields, clioutput.Field{Label: "updated", Value: path})
+		name, err := filepath.Rel(result.Root, path)
+		if err != nil {
+			return err
+		}
+		verb := "Updated "
+		if path == plan.FrameworkPath && len(plan.NewFrameworkConfig) != 0 {
+			verb = "Created "
+		}
+		blocks = append(blocks, clioutput.Line(verb+filepath.ToSlash(name)))
 	}
-	fields = append(fields, clioutput.Field{Label: "types", Value: result.DeclarationsPath})
-	if result.PythonPackagePath != "" {
-		fields = append(fields, clioutput.Field{Label: "python", Value: result.PythonPackagePath})
-	}
-	fields = append(fields, clioutput.Field{Label: "ignore", Value: projectinit.LocalIgnoreRule})
-	blocks := []clioutput.Block{clioutput.Fields(fields...)}
-	for _, action := range result.Actions {
-		blocks = append(blocks, clioutput.Section("action", clioutput.Text(action)))
-	}
-	footer := "start your app normally, then run tnl wait"
 	if len(result.Actions) != 0 {
-		footer = "complete the actions above, then start your app normally"
+		blocks[0] = clioutput.Text("Finish setting up this project:")
+		for _, action := range result.Actions {
+			blocks = append(blocks, clioutput.Line(action))
+		}
+	} else if result.Changed {
+		blocks = append(blocks, clioutput.Line("Start your app normally, then run tnl wait."))
 	}
-	return writeHumanFrame(stdout, "tnl init", state, footer, blocks...)
+	return writeResult(stdout, blocks...)
 }
 
 func writeInitPlan(output io.Writer, plan projectinit.Plan, noInstall bool) error {
@@ -84,7 +83,7 @@ func writeInitPlan(output io.Writer, plan projectinit.Plan, noInstall bool) erro
 	if len(plan.NewConfiguration) != 0 {
 		configLabel = "create config"
 	}
-	fields := []clioutput.Field{{Label: "project", Value: plan.Root}, {Label: configLabel, Value: plan.ConfigurationPath}}
+	fields := []clioutput.Field{{Label: configLabel, Value: plan.ConfigurationPath}}
 	if len(plan.NewFrameworkConfig) != 0 {
 		fields = append(fields, clioutput.Field{Label: "create", Value: plan.FrameworkPath})
 	}
@@ -107,9 +106,9 @@ func writeInitPlan(output io.Writer, plan projectinit.Plan, noInstall bool) erro
 	}
 	blocks := []clioutput.Block{clioutput.Fields(fields...), clioutput.Text("Generate files under .tnl/generated and check Git ignore rules and project type bindings.")}
 	for _, action := range plan.Actions {
-		blocks = append(blocks, clioutput.Section("action", clioutput.Text(action)))
+		blocks = append(blocks, clioutput.Line(action))
 	}
-	return writeHumanFrame(output, "tnl init", "dry run", "no changes made", blocks...)
+	return writeWithHint(output, "no changes made", blocks...)
 }
 
 func (a *commandApp) newInitCommand() *cobra.Command {

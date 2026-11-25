@@ -13,6 +13,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -105,6 +106,15 @@ func TestStatusAllKeepsIndependentProjectCursors(t *testing.T) {
 	}
 	if len(all.Projects) != 2 || all.Projects[0].Local.Snapshot.Cursor == all.Projects[1].Local.Snapshot.Cursor {
 		t.Fatalf("project cursors=%s", output.String())
+	}
+	output.Reset()
+	if err := runStatus(t.Context(), statusCommand{Scope: "local", StateDir: root, All: true}, &output); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range all.Projects {
+		if !strings.Contains(output.String(), "Project: "+filepath.Base(p.Project)+"\nNo local publications.") || strings.Contains(output.String(), p.Local.Snapshot.Cursor) {
+			t.Fatalf("expected a distinct result per project: %s", &output)
+		}
 	}
 }
 
@@ -240,32 +250,75 @@ func TestStatusServiceHumanOutputUsesHintsAndIndependentEndpointFacts(t *testing
 	run, number := "sr_fixture", int64(37)
 	services := statusServicesForProject([]controlv1.ServiceSummary{
 		{Id: "svc_ready", Name: "web", Enabled: true, Protocol: controlv1.ServiceProtocolHTTP, ServiceRunId: &run, RunNumber: &number,
-			Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Port: 443}},
+			Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Public: true, Port: 443}},
 		{Id: "svc_saved", Name: "database", Protocol: controlv1.Postgres,
-			Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 0}},
+			Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.example.test", Port: 15432}},
 		{Id: "svc_no_endpoint", Name: "private", Protocol: controlv1.Tcp},
 	}, map[string]bool{"svc_ready": true, "svc_saved": true, "svc_no_endpoint": true})
 	var output bytes.Buffer
-	if err := writeHumanFrame(&output, "tnl status", "1 project", "", statusServiceBlocks(services)...); err != nil {
+	if err := writeStatus(&output, statusCommand{Scope: "server"}, []projectStatus{{Server: &statusServer{Available: true, ControlURL: "https://control.example", Services: services}}}); err != nil {
 		t.Fatal(err)
 	}
-	got := output.String()
-	normalized := strings.Join(strings.Fields(strings.ReplaceAll(got, "|", " ")), " ")
-	for _, fragment := range []string{"+--[ tnl status ]--", "server enabled", "server disabled", "service ID svc_ready", "protocol postgres",
-		"ready publisher hint; not a selected visitor run", "service run ID hint sr_fixture", "run number hint 37",
-		"no ready publisher observed", "public false", "endpoint port 443", "endpoint port 0", "endpoint not reported"} {
-		if !strings.Contains(normalized, fragment) {
-			t.Fatalf("status human output missing %q:\n%s", fragment, got)
-		}
+	want := "Server: https://control.example\n" +
+		"web: enabled, http, publisher reported; readiness not checked  https://web.example.test\n" +
+		"database: disabled, postgres, connector-only, port 15432 reserved, no ready publisher reported\n" +
+		"private: disabled, tcp, endpoint not reported, no ready publisher reported\n"
+	if got := output.String(); got != want {
+		t.Fatalf("server status:\n%s\nwant:\n%s", got, want)
 	}
-	for _, fragment := range []string{"public URL ID", "open publish run", "next publish run", "publish run state", "server updated at"} {
-		if strings.Contains(got, fragment) {
-			t.Fatalf("status human output retained %q:\n%s", fragment, got)
+}
+
+func TestStatusHumanShowsOneRowPerServiceAndNextCheck(t *testing.T) {
+	const accountsURL = "https://accounts-tnl-dev.m-pnnmceidbvki5sik2qxb6eacq4.quirky-snap.tnl.dev"
+	const server = "https://control.example.test"
+	s := publisherapp.Service{Name: "accounts", TunnelID: "tunnel-1", PublicURL: accountsURL, Registered: true, Routable: true, Ready: true, RunNumber: 42}
+	tunnel := clientstate.TunnelInfo{ID: s.TunnelID, State: clientstate.TunnelStateReady, Server: server, PublicURL: accountsURL, ServiceID: "svc-accounts"}
+	local := &statusLocal{Snapshot: publisherapp.Snapshot{Cursor: "private-cursor", Services: []publisherapp.Service{s}}, Tunnels: clientstate.TunnelSnapshot{Tunnels: []clientstate.TunnelInfo{tunnel}}}
+	f := statusCommand{Configuration: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"accounts": {}}}}}}
+	serverView := &statusServer{Available: true, ControlURL: server, Services: []statusServerService{{ServiceID: tunnel.ServiceID, Name: "accounts-worktree", Enabled: true,
+		Protocol: controlv1.ServiceProtocolHTTP, Endpoint: &controlv1.ServiceEndpoint{Public: true, Hostname: strings.TrimPrefix(accountsURL, "https://"), Port: 443},
+		PublisherObservation: "ready_publisher_hint"}}, Applied: &controlv1.AppliedProjectConfiguration{Services: []controlv1.AppliedProjectService{{Service: "accounts", Deployment: "local"}}}}
+	render := func() string {
+		t.Helper()
+		var output bytes.Buffer
+		if err := writeStatus(&output, f, []projectStatus{{Project: "/local/project", Local: local, Server: serverView}}); err != nil {
+			t.Fatal(err)
 		}
+		return output.String()
 	}
-	for _, line := range strings.Split(got, "\n") {
-		if len(line) > 72 {
-			t.Fatalf("status bypassed renderer width: %q", line)
-		}
+	if got := render(); got != "accounts: ready  "+accountsURL+"\n" {
+		t.Fatalf("expected one usable URL, not three inventory entries:\n%s", got)
+	}
+	local.Snapshot.Services[0].Ready = false
+	local.Snapshot.Services[0].Routable = false
+	local.Snapshot.Services[0].Failure = string(failure.ServerResponseInvalid)
+	if got := render(); got != "accounts: public readiness not confirmed  "+accountsURL+"\nLast error: the server sent a response tnl could not use\nCheck now: tnl wait --service accounts\n" {
+		t.Fatalf("unconfirmed service with a previous error:\n%s", got)
+	}
+	local.Snapshot.Services[0].Routable = true
+	local.Snapshot.Services[0].Observation = &publisherapp.Observation{Status: 503, Reason: "runtime.probe_rejected"}
+	if got := render(); !strings.Contains(got, "accounts: readiness check failed (HTTP 503)") {
+		t.Fatalf("failed check displayed as unconfirmed:\n%s", got)
+	}
+	local.Tunnels.Tunnels[0].State = clientstate.TunnelStateStale
+	local.CheckedAt = time.Now().UTC()
+	local.Tunnels.Tunnels[0].HeartbeatAt = local.CheckedAt.Add(-10 * time.Minute)
+	local.Snapshot.Services[0] = s
+	if got := render(); !strings.Contains(got, "accounts: stale (last seen 10 minutes ago)") || strings.Contains(got, "accounts: ready") || !strings.Contains(got, "readiness not checked") {
+		t.Fatalf("server hint concealed stale local publication:\n%s", got)
+	}
+}
+
+func TestStatusHumanDistinguishesRemoteFromMissingLocalService(t *testing.T) {
+	var output bytes.Buffer
+	project := projectStatus{Local: &statusLocal{}, Server: &statusServer{Available: true, AppliedServices: []controlv1.AppliedProjectService{
+		{Service: "accounts", Deployment: "production", Public: new(false)},
+	}}}
+	flags := statusCommand{Service: "accounts", Configuration: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Deployment: "production"}}}}
+	if err := writeStatus(&output, flags, []projectStatus{project}); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); got != "Deployment production is remote. No local publications.\naccounts: configured in production, connector-only\n" {
+		t.Fatalf("remote service:\n%s", got)
 	}
 }
