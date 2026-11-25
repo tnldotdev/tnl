@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"io"
-	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -26,18 +25,21 @@ func runGenerate(ctx context.Context, flags cli, output io.Writer) error {
 	if err := meta.Generate(ctx, project, flags.Generate.OutputDir, flags.Generate.Check); err != nil {
 		return err
 	}
-	state := "generated"
+	message := "Generated project files in " + flags.Generate.OutputDir
 	if flags.Generate.Check {
-		state = "current"
+		message = "Generated files are current."
 	} else if err := meta.WriteCompletion(ctx, project); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl generate", state, "commit generated artifacts with project configuration", clioutput.Fields(clioutput.Field{Label: "services", Value: strconv.Itoa(len(project.Config.Services))}, clioutput.Field{Label: "output", Value: flags.Generate.OutputDir}))
+	return writeResult(output, clioutput.Line(message))
 }
 
 func (a *commandApp) newGenerateCommand() *cobra.Command {
 	f := a.flags
-	cGenerate := &cobra.Command{Use: "generate", Short: "Generate portable project types and declared publisher infrastructure offline.", GroupID: "manage"}
+	cGenerate := &cobra.Command{
+		Use: "generate", Short: "Generate project types and publisher infrastructure.", GroupID: "project",
+		Long: "Generate files from your project configuration without contacting the server. Use --check in CI to detect missing or outdated files.",
+	}
 	a.leaf(cGenerate, &f.Generate, func(call commandCall) error {
 		return runGenerate(call.ctx, *f, a.out)
 	})

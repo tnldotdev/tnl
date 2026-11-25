@@ -1,16 +1,40 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestConnectAvailableReportsOnlyObservedRuns(t *testing.T) {
+	runID, number := "run_observed", int64(1)
+	services := []controlv1.ServiceSummary{
+		{Name: "db", TeamName: "shop", Id: "svc_db", Enabled: true, ServiceRunId: &runID, RunNumber: &number},
+		{Name: "web", TeamName: "shop", Id: "svc_web", Enabled: true},
+		{Name: "api", TeamName: "shop", Id: "svc_api", Enabled: true, RunNumber: &number},
+		{Name: "old", TeamName: "shop", Id: "svc_old", ServiceRunId: &runID, RunNumber: &number},
+	}
+	var out bytes.Buffer
+	if err := writeAvailableConnectServices(&out, services); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	for i := range got {
+		got[i] = strings.Join(strings.Fields(got[i]), " ")
+	}
+	if !slices.Equal(got, []string{"SERVICE TEAM STATUS SERVICE ID", "db shop ready run reported svc_db", "web shop run not reported svc_web", "api shop run not reported svc_api", "old shop disabled svc_old"}) {
+		t.Fatalf("unexpected connector inventory:\n%s", &out)
+	}
+}
 
 func TestPrivateInstallPreflightPrecedesClientAndSupervisorState(t *testing.T) {
 	for _, command := range [][]string{

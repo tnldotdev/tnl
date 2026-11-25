@@ -355,28 +355,23 @@ In introductory diagrams and user-facing CLI output, label the local process
 `tnl`. Use **publisher** when its architectural or protocol role matters; do
 not rename machine fields such as `publisher_connection_id`.
 
-Human-readable `tnl` output, including diagnostics, uses the shared ASCII
-diagram renderer. The renderer and its tests define layout, width, wrapping,
-escaping, and frame syntax. Command handlers provide semantic content only;
-they must not construct borders, rails, padding, or connectors.
+Lead with what the user came for: an address, a command, a status, or a
+short confirmation. List commands use tables, even for one item. A selected
+service gets labeled fields. `tnl share` prints the link alone. Keep a
+follow-up command on its own line. Don't repeat the command, draw a box, or
+dump the underlying record.
 
-Frames follow this general form:
-
-```text
-+--[ <command> ]-- <state> -------------------------------+
-|                                                         |
-|  diagram or structured details                          |
-|                                                         |
-+-- <optional action, hint, or diagnostic code> -----------+
-```
-
-- Use short, lowercase, concrete states and ASCII-only frame syntax. Use `v` for healthy flow and `x` for the exact failure boundary.
-- Keep human output deterministic and at most 72 columns. Do not truncate meaningful values or emit ANSI control sequences.
-- Keep JSON and NDJSON contracts unchanged. `tnl version` and one-time credentials remain exact raw values; generated help remains unframed.
+- Show IDs when the next command needs one. Keep event cursors, revisions,
+  and precise timestamps in machine output unless the command asks for them.
+- Distinguish saved observations, current failures, and verified readiness.
+  Give one next step when it helps.
+- Use `internal/clioutput` to escape untrusted text and wrap prose at spaces.
+  Keep each URL, path, code, and shell command intact at every terminal width.
+- Keep JSON, NDJSON, `connect --stdio`, raw credentials, and version output stable.
 - Finite results go to stdout; prompts, lifecycle output, warnings, and errors go to stderr. Applications own their terminal output.
 - Render errors once at the top level through the same renderer. Preserve stable diagnostic codes, help URLs, HTTP behavior, and HTML negotiation.
 - `tnl publish` uses the tunnel presentation; app-led observations use `tnl status`, `tnl wait`, and `tnl watch`.
-- Do not use the diagram renderer for `tnld`. Its commands retain exact raw values, silent successes, and compact one-line operational logs and errors.
+- `tnld` retains exact raw values, silent successes, and compact one-line operational logs and errors.
 - Never include secrets in diagrams or logs.
 
 # codebase and contracts
@@ -459,7 +454,7 @@ Use these practical boundaries when placing a change:
 | Change multiplexed stream mechanics    | `internal/transport/muxsession` owns QUIC/yamux mechanics without placement or visitor policy                                                                              |
 | Persist protected certificate material | `internal/client/state` owns publisher keys, pending CSRs, locks, and atomic persistence; publisher TLS files use the private identity directory                           |
 | Change project configuration syntax    | `internal/config` owns types and validation; `client/project` evaluates the selected source and `client/project/resolve` combines it with selected state/server/team facts |
-| Change CLI framing                     | `internal/clioutput` owns frame syntax, wrapping, width, and escaping; commands supply semantic facts                                                                      |
+| Change CLI presentation                | `internal/clioutput` owns tables, wrapping, width, and escaping; commands choose the facts that answer the user's question                                                 |
 
 Shared client operations are implemented, not command-private helpers:
 `client/team` owns session/team/domain selection, `client/project/resolve` owns

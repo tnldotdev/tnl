@@ -80,7 +80,7 @@ type tunnelFlags struct {
 	RateRequests       *int                  `name:"rate-requests" env:"TNL_RATE_REQUESTS" help:"Number of requests admitted per rate period. Requires --rate-per."`
 	RatePer            string                `name:"rate-per" env:"TNL_RATE_PER" help:"Rate period, such as 1m. Requires --rate-requests."`
 	RateBurst          *int                  `name:"rate-burst" help:"Maximum burst of application work admitted by the rate limit."`
-	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous HTTP work or TCP connections. Defaults to 64 for HTTP and 24 for TCP."`
+	Concurrency        *int                  `name:"concurrency" env:"TNL_CONCURRENCY" help:"Maximum simultaneous HTTP work or TCP connections."`
 	TargetCAFile       string                `name:"target-ca-file" env:"TNL_TARGET_CA_FILE" type:"path" help:"Additional PEM certificate authorities for an HTTPS target."`
 	InspectionMode     config.InspectionMode `name:"inspection-mode" enum:"none,summary" default:"summary" help:"Local HTTP inspection: summary (default) or none."`
 
@@ -95,11 +95,13 @@ type tunnelFlags struct {
 }
 
 type remoteFlags struct {
-	ServerURL    string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
-	AccessToken  string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved session."`
-	StateDir     string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	ProjectTeam  string
-	SelectedTeam string
+	ServerURL     string `name:"server" env:"TNL_SERVER" help:"Control URL. Defaults to the project or selected server."`
+	AccessToken   string `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token. Defaults to the saved session."`
+	StateDir      string `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	ProjectTeam   string
+	SelectedTeam  string
+	configArgs    string
+	projectServer *string
 }
 
 type teamSelectionFlags struct {
@@ -353,36 +355,42 @@ func writeCommandError(output io.Writer, err error) {
 		return
 	}
 	err = classifyCommandError(err)
-	command := "tnl"
-	if contextual, ok := clioutput.CommandOf(err); ok {
-		command = contextual
+	followup, _ := errors.AsType[*commandFollowup](err)
+	message, ok := diagnostic.MessageForError(err)
+	if !ok {
+		message = humanFailureMessage(err, followup != nil)
 	}
-	if text, ok := diagnostic.TextForCommandError(command, err); ok {
-		_, _ = io.WriteString(output, text+"\n")
-		return
+	if followup != nil {
+		message.Blocks = append(message.Blocks, followup.block)
 	}
+	_ = clioutput.Write(output, message)
+}
+
+func humanFailureMessage(err error, hasFollowup bool) clioutput.Message {
 	presented := presentHumanFailure(err)
-	blocks := []clioutput.Block{clioutput.Text(presented.message)}
+	if hasFollowup {
+		// the concrete resume command replaces the operation-id placeholder.
+		switch presented.reason {
+		case failure.AuthWaitTimeout:
+			presented.action = ""
+		case failure.AuthProviderUnavailable:
+			presented.action = "Check provider connectivity."
+		}
+	}
+	blocks := []clioutput.Block{clioutput.Text("Error: " + presented.message)}
 	if typed, ok := failure.Of(err); ok && typed.Reason() == failure.ObservabilityConfigInvalid && typed.Setting() != "" {
 		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "setting", Value: string(typed.Setting())}))
 	}
 	caseID := failure.KnownCase(err)
 	if variant := failure.CaseFor(presented.reason, caseID); variant != nil {
-		blocks = append(blocks, clioutput.Text(variant.Description), clioutput.Text(variant.Action))
+		blocks = append(blocks, clioutput.Text(variant.Description), clioutput.Line(variant.Action))
 	} else if presented.action != "" {
-		blocks = append(blocks, clioutput.Text(presented.action))
+		blocks = append(blocks, clioutput.Line(presented.action))
 	}
-	footer := ""
 	if helpURL := failure.HelpURL(presented.reason, caseID); helpURL != "" {
-		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "help", Value: helpURL}))
-		footer = string(presented.reason)
+		blocks = append(blocks, clioutput.Line(string(presented.reason)+"  "+helpURL))
 	}
-	_ = clioutput.Write(output, clioutput.Frame{
-		Command: command,
-		State:   "command failed",
-		Blocks:  blocks,
-		Footer:  footer,
-	})
+	return clioutput.Message{Blocks: blocks}
 }
 
 func classifyCommandError(err error) error {
@@ -455,7 +463,7 @@ func (a *commandApp) execute(parsed *cobra.Command, handle func(commandCall) err
 	factories := a.factories
 	parsedCommand := commandID(parsed)
 	applyTunnelCLIUnits(parsed, flags)
-	if parsedCommand == "version" || parsedCommand == "generate" || parsedCommand == "check" {
+	if parsedCommand == "version" || parsedCommand == "generate" || parsedCommand == "check" || parsedCommand == "init" && flags.Init.DryRun {
 		return handle(commandCall{ctx: ctx})
 	}
 	var err error

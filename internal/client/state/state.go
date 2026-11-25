@@ -233,7 +233,32 @@ func (d *Database) Server(ctx context.Context, serverOrigin string) (*Store, err
 
 // SavedServer returns the server selected by the last successful login.
 func (d *Database) SavedServer(ctx context.Context) (string, bool, error) {
-	selected, err := d.queries.GetSelectedServer(ctx)
+	return savedServer(ctx, d.queries)
+}
+
+// SavedServerAt reads the selected origin without unlocking or creating state.
+func SavedServerAt(ctx context.Context, root string) (string, bool, error) {
+	path := DatabasePath(root)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if err := validatePrivateFile(info, false); err != nil {
+		return "", false, err
+	}
+	db, err := openReadOnlySQLite(ctx, path)
+	if err != nil {
+		return "", false, err
+	}
+	defer db.Close()
+	return savedServer(ctx, clientstatedb.New(db))
+}
+
+func savedServer(ctx context.Context, queries *clientstatedb.Queries) (string, bool, error) {
+	selected, err := queries.GetSelectedServer(ctx)
 	if err != nil {
 		return "", false, fmt.Errorf("clientstate: read selected server: %w", err)
 	}

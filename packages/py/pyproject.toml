@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "tnldotdev-tnl"
 version = "1.0.0.dev0"
-description = "take a shortcut through the internet."
+description = "tunnels for local apps and private services."
 readme = "readme.md"
 requires-python = ">=3.12"
 license = "BSD-3-Clause"

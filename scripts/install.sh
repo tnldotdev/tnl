@@ -6,40 +6,18 @@
 
 tnl_message() {
   case "$1" in
-    installing) printf '%s\n' '+--[ tnl install ]-- installing -------------------------------+
-|                                                              |
-|  downloading and verifying the tnl client                    |
-|                                                              |
-+--------------------------------------------------------------+
+    installing) printf '%s' 'Downloading and verifying tnl...
 ' ;;
-    installed) printf '%s\n' '+--[ tnl install ]-- installed --------------------------------+
-|                                                              |
-|  tnl is installed. add the installation directory to PATH    |
-|  if needed.                                                  |
-|                                                              |
-+-- start with: tnl publish 3000 ------------------------------+
+    installed) printf '%s' 'Installed tnl. Add the installation directory to PATH if needed.
 ' ;;
-    failed) printf '%s\n' '+--[ tnl install ]-- failed -----------------------------------+
-|                                                              |
-|  could not install tnl. check the selected version, curl,    |
-|  tar, a SHA-256 tool, and write access to the install        |
-|  directory.                                                  |
-|                                                              |
-+-- run the installer again -----------------------------------+
+    failed) printf '%s' 'Could not install tnl. Check the version, curl, tar, a SHA-256 tool, and write
+access to the install directory.
 ' ;;
-    stable_failed) printf '%s\n' '+--[ tnl install ]-- failed -----------------------------------+
-|                                                              |
-|  could not find a stable tnl release. check GitHub access    |
-|  or set TNL_VERSION to an exact release.                     |
-|                                                              |
-+-- check GitHub releases -------------------------------------+
+    stable_failed) printf '%s' 'Could not find a stable tnl release. Check GitHub access or set TNL_VERSION to
+an exact release.
 ' ;;
-    checksum_failed) printf '%s\n' '+--[ tnl install ]-- failed -----------------------------------+
-|                                                              |
-|  the release checksum is missing, invalid, or does not       |
-|  match. download the release again.                          |
-|                                                              |
-+-- run the installer again -----------------------------------+
+    checksum_failed) printf '%s' 'The release checksum is missing, invalid, or does not match. Download the
+release again.
 ' ;;
   esac
 }

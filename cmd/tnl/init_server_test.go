@@ -8,6 +8,44 @@ import (
 	"testing"
 )
 
+func TestInitDryRunPrintsPlanWithoutEdits(t *testing.T) {
+	root := t.TempDir()
+	const manifest = `{"packageManager":"pnpm@11.0.0","devDependencies":{"vite":"*"}}`
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	t.Setenv("TNL_STATE_DIR", filepath.Join(root, "state"))
+	var out, diag bytes.Buffer
+	if err := run(t.Context(), []string{"init", "--dry-run"}, &out, &diag); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []string{"Planned changes:\nCreate tnl.config.ts\nCreate vite.config.ts", "\npnpm add --save-dev @tnldotdev/tnl\n"} {
+		if !strings.Contains(out.String(), step) {
+			t.Fatalf("missing plan step %q:\n%s", step, &out)
+		}
+	}
+	if !strings.HasSuffix(out.String(), "\nNo changes made.\n") {
+		t.Fatalf("missing dry run footer:\n%s", &out)
+	}
+	out.Reset()
+	if err := run(t.Context(), []string{"init", "--dry-run", "--no-install"}, &out, &diag); err != nil {
+		t.Fatal(err)
+	}
+	plan, manual, ok := strings.Cut(out.String(), "Manual steps:\n")
+	if !ok || strings.Contains(plan, "pnpm add") || !strings.HasPrefix(manual, "pnpm add --save-dev @tnldotdev/tnl\n") {
+		t.Fatalf("no-install plan:\n%s", &out)
+	}
+	files, err := os.ReadDir(root)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("dry run changed project: %v (%v)", files, err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil || string(data) != manifest {
+		t.Fatal("dry run changed package.json", err)
+	}
+}
+
 func TestInitWritesHonoBunEntrypointWithoutAConfiguredPort(t *testing.T) {
 	root := apiInitFixture(t, "hono", "bun --hot src/index.ts", "module", "import { Hono } from 'hono'\nconst app = new Hono()\nexport default app\n")
 	t.Chdir(root)
@@ -23,14 +61,15 @@ func TestInitWritesHonoBunEntrypointWithoutAConfiguredPort(t *testing.T) {
 	if err != nil || bytes.Contains(config, []byte("command:")) || bytes.Contains(config, []byte("port:")) {
 		t.Fatalf("generated config = %s, %v", config, err)
 	}
-	if !strings.Contains(output.String(), "src/index.ts") {
+	if !strings.Contains(output.String(), "Updated src/index.ts\n") {
 		t.Fatalf("updated server was not reported: %s", output.String())
 	}
+	output.Reset()
 	if err := runInitWithInput(t.Context(), initCommand{NoInstall: true}, strings.NewReader(""), false, &output, &diagnostics); err != nil {
 		t.Fatal(err)
 	}
 	second, err := os.ReadFile(filepath.Join(root, "src", "index.ts"))
-	if err != nil || !bytes.Equal(second, entry) {
+	if err != nil || !bytes.Equal(second, entry) || strings.Contains(output.String(), "Updated src/index.ts") {
 		t.Fatalf("repeat init modified server: %s, %v", second, err)
 	}
 }

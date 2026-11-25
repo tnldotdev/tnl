@@ -116,6 +116,9 @@ func TestHTTPShareGrantsUseSessionAndIdempotencyKey(t *testing.T) {
 			if kind == "invite" && output.String() != secret+"\n" {
 				t.Fatal("caller did not use the complete server-issued credential")
 			}
+			if kind == "team" && !strings.HasPrefix(output.String(), "https://app.example.test\nTeam access granted until ") {
+				t.Fatalf("team grant did not lead with the URL and expiry: %s", &output)
+			}
 		})
 	}
 }

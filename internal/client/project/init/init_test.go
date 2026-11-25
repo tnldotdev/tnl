@@ -73,7 +73,7 @@ func TestInitApplyOwnsInstallEditsGenerationAndTypeWiringOrder(t *testing.T) {
 			}
 			data, err := os.ReadFile(log)
 			if noInstall {
-				if !errors.Is(err, os.ErrNotExist) || len(result.InstalledPackages) != 0 || !slices.Equal(result.Actions, []string{"Run: pnpm add --save-dev @tnldotdev/tnl", "run in the Python project: uv add --editable ./.tnl/generated/python"}) {
+				if !errors.Is(err, os.ErrNotExist) || result.PythonInstalled || len(result.InstalledPackages) != 0 || !slices.Equal(result.Actions, []string{"pnpm add --save-dev @tnldotdev/tnl", "uv add --editable ./.tnl/generated/python"}) {
 					t.Fatalf("no-install result = %+v, invocation = %s, %v", result, data, err)
 				}
 			} else {
@@ -82,7 +82,7 @@ func TestInitApplyOwnsInstallEditsGenerationAndTypeWiringOrder(t *testing.T) {
 					t.Fatal(err)
 				}
 				want := fmt.Sprintf("pnpm:%s:1:add --save-dev --reporter=silent @tnldotdev/tnl\nuv:%s:1:add --editable ./.tnl/generated/python\n", canonical, canonical)
-				if string(data) != want || !slices.Equal(result.InstalledPackages, []string{"@tnldotdev/tnl"}) || len(result.Actions) != 0 {
+				if string(data) != want || !result.PythonInstalled || !slices.Equal(result.InstalledPackages, []string{"@tnldotdev/tnl"}) || len(result.Actions) != 0 {
 					t.Fatalf("result = %+v, invocation = %q, want %q", result, data, want)
 				}
 			}
@@ -147,7 +147,7 @@ func TestInitDetectionDiagnosticsUseCallerActionsAndKeepReasons(t *testing.T) {
 		reasons = append(reasons, reason)
 		return "caller action: " + string(reason)
 	})
-	if err != nil || !slices.Equal(reasons, []failure.Reason{failure.InitPackageManager, failure.InitFramework}) || len(plan.Actions) != 2 || !plan.InstallBlocked || plan.NeedsAppRegistration {
+	if err != nil || !slices.Equal(reasons, []failure.Reason{failure.InitPackageManager, failure.InitFramework}) || len(plan.Actions) != 3 || plan.Actions[2] != "tnl init" || !plan.InstallBlocked || plan.NeedsAppRegistration {
 		t.Fatalf("plan = %+v, reasons = %v, err = %v", plan, reasons, err)
 	}
 	for i, reason := range reasons {

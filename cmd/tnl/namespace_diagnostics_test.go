@@ -71,9 +71,8 @@ func TestPolicyDiagnosticNamespaceUntrustedServerAndIndependentFault(t *testing.
 				t.Fatalf("malicious problem caused publication work or hid its failure: calls=%d err=%v\n%s", calls, err, stderr)
 			}
 			assertPolicyDiagnosticFrame(t, stderr, test.reason)
-			compact := strings.NewReplacer(" ", "", "\n", "", "|", "").Replace(stderr)
 			if test.allowed != "" {
-				if !strings.Contains(compact, test.allowed) {
+				if !strings.Contains(stderr, test.allowed) {
 					t.Fatal("approved bounded namespace was lost or truncated", stderr)
 				}
 			} else if strings.Contains(stderr, policyDiagnosticNamespace) {

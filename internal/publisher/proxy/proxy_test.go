@@ -118,8 +118,8 @@ func TestProxyDiagnosesUnavailableTarget(t *testing.T) {
 		t.Fatalf("response = %d, %#v", response.Code, response.Header())
 	}
 	body := response.Body.String()
-	if !strings.HasPrefix(body, "+--[ tnl ]-- target unavailable ") ||
-		!strings.Contains(body, "+-- TNL_TARGET_UNAVAILABLE ") || !strings.Contains(body, "https://tnl.dev/e/target") {
+	if !strings.Contains(body, "target") ||
+		!strings.Contains(body, "TNL_TARGET_UNAVAILABLE") || !strings.Contains(body, "https://tnl.dev/e/target") {
 		t.Fatalf("body = %q", body)
 	}
 }

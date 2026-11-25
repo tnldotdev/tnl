@@ -956,7 +956,8 @@ func (f *cliWorkflow) commandWithStop(t *testing.T, ctx context.Context, cancel 
 	var once sync.Once
 	go func() {
 		defer close(joined)
-		done <- run(ctx, append([]string{"--no-telemetry"}, args...), io.Discard, workflowLifecycleLog{t: t, ready: func() { once.Do(func() { close(ready) }) }})
+		log := workflowLifecycleLog{t: t, ready: func() { once.Do(func() { close(ready) }) }}
+		done <- log.run(ctx, append([]string{"--no-telemetry"}, args...))
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -977,9 +978,26 @@ type workflowLifecycleLog struct {
 	ready func()
 }
 
+func (w workflowLifecycleLog) run(ctx context.Context, args []string) error {
+	switch {
+	case slices.Contains(args, "connect"):
+		return run(ctx, append(slices.Clone(args), "--output=json"), w, io.Discard)
+	case slices.Contains(args, "publish"):
+		return run(ctx, append(slices.Clone(args), "--output=ndjson"), w, io.Discard)
+	default:
+		// publisher serve reports deployment state on stderr.
+		return run(ctx, args, io.Discard, w)
+	}
+}
+
 func (w workflowLifecycleLog) Write(value []byte) (int, error) {
 	w.t.Log(strings.TrimSpace(string(value)))
-	if w.ready != nil && bytes.Contains(value, []byte("]-- ready ")) {
+	var record struct {
+		Type              string `json:"type"`
+		ConnectorRequired bool   `json:"connector_required"`
+	}
+	ready := json.Unmarshal(value, &record) == nil && (record.Type == "ready" || record.ConnectorRequired)
+	if w.ready != nil && (ready || bytes.Contains(value, []byte("  ready\n"))) {
 		w.ready()
 	}
 	return len(value), nil

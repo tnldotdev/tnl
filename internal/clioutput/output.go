@@ -1,4 +1,4 @@
-// Package clioutput renders stable human-readable CLI diagrams.
+// Package clioutput renders plain, copyable CLI results.
 package clioutput
 
 import (
@@ -7,23 +7,18 @@ import (
 	"io"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/term"
 )
 
-const (
-	defaultWidth = 64
-	maxWidth     = 72
-	framePadding = 2
-)
+const defaultWidth = 80
 
-// Frame is one complete human-readable command result or diagnostic.
-type Frame struct {
-	Command string
-	State   string
-	Blocks  []Block
-	Footer  string
+// Message holds the lines of one result or diagnostic.
+type Message struct {
+	Blocks []Block
 }
 
-// Block is content rendered inside a Frame.
+// Block is content rendered inside a message.
 type Block interface {
 	render(int) []row
 }
@@ -32,32 +27,21 @@ type Block interface {
 type Field struct {
 	Label string
 	Value string
-}
-
-// FlowNode is one node in a vertical flow. Detail and Failure describe the
-// connection from this node to the next node.
-type FlowNode struct {
-	Label   string
-	Detail  string
-	Failure bool
-}
-
-// TreeNode is one node in an ASCII tree.
-type TreeNode struct {
-	Label    string
-	Value    string
-	Children []TreeNode
+	// prose may wrap at spaces. other values are printed intact.
+	Prose bool
 }
 
 type row struct {
-	text    string
-	section bool
+	text string
 }
 
 type textBlock string
+type literalBlock string
 type fieldBlock []Field
-type flowBlock []FlowNode
-type treeBlock TreeNode
+type tableBlock struct {
+	head []string
+	rows [][]string
+}
 
 type sectionBlock struct {
 	title  string
@@ -104,32 +88,66 @@ func CommandOf(err error) (string, bool) {
 // Text renders wrapped prose.
 func Text(value string) Block { return textBlock(value) }
 
+// Literal prints one copyable value on its own line.
+func Literal(value string) Block { return literalBlock(value) }
+
+// Line prints one logical row. only the terminal may wrap it.
+func Line(value string) Block { return literalBlock(value) }
+
+func (b literalBlock) render(int) []row { return []row{{text: sanitize(string(b))}} }
+
 // Fields renders aligned label-value pairs.
 func Fields(values ...Field) Block { return fieldBlock(values) }
 
-// Flow renders nodes connected vertically by v or x markers.
-func Flow(nodes ...FlowNode) Block { return flowBlock(nodes) }
-
-// Transition renders one healthy transition between two values.
-func Transition(from, detail, to string) Block {
-	return Flow(FlowNode{Label: from, Detail: detail}, FlowNode{Label: to})
+// Table aligns comparable records without splitting their values.
+func Table(head []string, rows [][]string, empty string) Block {
+	if len(rows) == 0 {
+		return Text(empty)
+	}
+	return tableBlock{head, rows}
 }
 
-// Tree renders a hierarchy with ASCII branches.
-func Tree(root TreeNode) Block { return treeBlock(root) }
+func (b tableBlock) render(int) []row {
+	data := make([][]string, 0, len(b.rows)+1)
+	widths := make([]int, len(b.head))
+	for _, cells := range append([][]string{b.head}, b.rows...) {
+		values := make([]string, len(cells))
+		for i, cell := range cells {
+			values[i] = sanitize(cell)
+			if i < len(widths) {
+				widths[i] = max(widths[i], len(values[i]))
+			}
+		}
+		data = append(data, values)
+	}
+	result := make([]row, 0, len(data))
+	for _, values := range data {
+		var line strings.Builder
+		for len(values) > 0 && values[len(values)-1] == "" {
+			values = values[:len(values)-1]
+		}
+		for i, value := range values {
+			line.WriteString(value)
+			if i+1 < len(values) && i < len(widths) {
+				line.WriteString(strings.Repeat(" ", widths[i]-len(value)+2))
+			}
+		}
+		result = append(result, row{text: line.String()})
+	}
+	return result
+}
 
-// Section renders a titled divider followed by content.
+// Section places a title above its content.
 func Section(title string, blocks ...Block) Block {
 	return sectionBlock{title: title, blocks: blocks}
 }
 
-// Write renders frame to output with a blank line after its closing rail.
-func Write(output io.Writer, frame Frame) error {
-	text, err := Render(frame)
+// Write emits one newline-terminated result.
+func Write(output io.Writer, message Message) error {
+	text, err := render(message, TerminalWidth(output, 0))
 	if err != nil {
 		return err
 	}
-	text += "\n"
 	written, err := io.WriteString(output, text)
 	if err == nil && written != len(text) {
 		err = io.ErrShortWrite
@@ -137,59 +155,36 @@ func Write(output io.Writer, frame Frame) error {
 	return err
 }
 
-// Render returns a complete frame ending in one newline.
-func Render(frame Frame) (string, error) {
-	if hasLineBreak(frame.Command) || hasLineBreak(frame.State) || hasLineBreak(frame.Footer) {
-		return "", errors.New("clioutput: frame rails must be single-line values")
-	}
-	command := sanitize(frame.Command)
-	state := sanitize(frame.State)
-	footer := sanitize(frame.Footer)
-	if command == "" || state == "" {
-		return "", errors.New("clioutput: command and state are required")
-	}
+// Render returns newline-terminated plain text.
+func Render(message Message) (string, error) {
+	return render(message, 0)
+}
 
-	topPrefix := "+--[ " + command + " ]-- " + state + " "
-	bottomPrefix := ""
-	if footer != "" {
-		bottomPrefix = "+-- " + footer + " "
+// TerminalWidth uses the destination's terminal size, or fallback for pipes and files.
+func TerminalWidth(output io.Writer, fallback int) int {
+	if file, ok := output.(interface{ Fd() uintptr }); ok {
+		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 0 {
+			return width
+		}
 	}
-	width := max(defaultWidth, len(topPrefix)+2, len(bottomPrefix)+2)
-	if width > maxWidth {
-		return "", fmt.Errorf("clioutput: frame rail exceeds %d columns", maxWidth)
-	}
-	contentWidth := width - 2 - 2*framePadding
+	return fallback
+}
 
+func render(message Message, columns int) (string, error) {
+	width := defaultWidth
+	if columns > 0 {
+		width = min(width, columns)
+	}
 	var result strings.Builder
-	result.WriteString(topPrefix)
-	result.WriteString(strings.Repeat("-", width-len(topPrefix)-1))
-	result.WriteString("+\n")
-	writeBodyRow(&result, width, "")
-	for index, block := range frame.Blocks {
+	for _, block := range message.Blocks {
 		if err := validateBlock(block); err != nil {
 			return "", err
 		}
-		if index > 0 {
-			writeBodyRow(&result, width, "")
-		}
-		for _, rendered := range block.render(contentWidth) {
-			if rendered.section {
-				writeSectionRow(&result, width, rendered.text)
-				continue
-			}
-			writeBodyRow(&result, width, rendered.text)
+		for _, r := range block.render(width) {
+			result.WriteString(r.text)
+			result.WriteByte('\n')
 		}
 	}
-	writeBodyRow(&result, width, "")
-	if footer == "" {
-		result.WriteByte('+')
-		result.WriteString(strings.Repeat("-", width-2))
-		result.WriteString("+\n")
-		return result.String(), nil
-	}
-	result.WriteString(bottomPrefix)
-	result.WriteString(strings.Repeat("-", width-len(bottomPrefix)-1))
-	result.WriteString("+\n")
 	return result.String(), nil
 }
 
@@ -207,29 +202,23 @@ func (b fieldBlock) render(width int) []row {
 	for _, field := range b {
 		labelWidth = max(labelWidth, len(sanitize(field.Label)))
 	}
-	stacked := labelWidth+2 >= width
-	if stacked {
-		var result []row
-		for _, field := range b {
-			for _, line := range wrap(field.Label, width) {
-				result = append(result, row{text: line})
-			}
-			for _, line := range wrap(field.Value, width-2) {
-				result = append(result, row{text: "  " + line})
-			}
-		}
-		return result
-	}
 	var result []row
 	for _, field := range b {
 		label := sanitize(field.Label)
-		valueWidth := width
+		value := sanitize(field.Value)
 		prefix := ""
 		if labelWidth > 0 {
 			prefix = label + strings.Repeat(" ", labelWidth-len(label)) + "  "
-			valueWidth -= len(prefix)
 		}
-		lines := wrap(field.Value, valueWidth)
+		if !field.Prose {
+			result = append(result, row{text: prefix + value})
+			continue
+		}
+		if len(prefix) >= width {
+			result = append(result, row{text: label})
+			prefix = ""
+		}
+		lines := wrap(field.Value, width-len(prefix))
 		for index, line := range lines {
 			if index == 0 {
 				result = append(result, row{text: prefix + line})
@@ -241,115 +230,12 @@ func (b fieldBlock) render(width int) []row {
 	return result
 }
 
-func (b flowBlock) render(width int) []row {
-	var result []row
-	for index, node := range b {
-		lines := wrap(node.Label, width)
-		for _, line := range lines {
-			// short labels sit beneath the fixed connector at content column three.
-			if len(lines) == 1 && len(line) > 0 && len(line) < 7 {
-				line = strings.Repeat(" ", (7-len(line))/2) + line
-			}
-			result = append(result, row{text: line})
-		}
-		if index == len(b)-1 {
-			continue
-		}
-		result = append(result, row{text: "   |"})
-		marker := "   v"
-		if node.Failure {
-			marker = "   x"
-		}
-		if node.Detail == "" {
-			result = append(result, row{text: marker})
-			continue
-		}
-		prefix := marker + "  "
-		detail := wrap(node.Detail, width-len(prefix))
-		for detailIndex, line := range detail {
-			if detailIndex == 0 {
-				result = append(result, row{text: prefix + line})
-				continue
-			}
-			result = append(result, row{text: strings.Repeat(" ", len(prefix)) + line})
-		}
-	}
-	return result
-}
-
-func (b treeBlock) render(width int) []row {
-	root := TreeNode(b)
-	result := make([]row, 0)
-	for _, line := range wrap(treeLabel(root), width) {
-		result = append(result, row{text: line})
-	}
-	return appendTreeChildren(result, root.Children, "", width)
-}
-
 func (b sectionBlock) render(width int) []row {
-	title := wrap(b.title, width-2)
-	result := []row{{text: title[0], section: true}}
-	for _, continuation := range title[1:] {
-		result = append(result, row{text: continuation})
-	}
-	for index, block := range b.blocks {
-		if index > 0 {
-			result = append(result, row{})
-		}
+	result := []row{{text: sanitize(b.title) + ":"}}
+	for _, block := range b.blocks {
 		result = append(result, block.render(width)...)
 	}
 	return result
-}
-
-func appendTreeChildren(result []row, children []TreeNode, parentPrefix string, width int) []row {
-	for index, child := range children {
-		last := index == len(children)-1
-		branch := "|-- "
-		childPrefix := parentPrefix + "|   "
-		if last {
-			branch = "`-- "
-			childPrefix = parentPrefix + "    "
-		}
-		maxParentWidth := max(0, width-len(branch)-1)
-		if len(parentPrefix) > maxParentWidth {
-			parentPrefix = parentPrefix[:maxParentWidth]
-		}
-		prefix := parentPrefix + branch
-		lines := wrap(treeLabel(child), width-len(prefix))
-		for lineIndex, line := range lines {
-			if lineIndex == 0 {
-				result = append(result, row{text: prefix + line})
-				continue
-			}
-			result = append(result, row{text: strings.Repeat(" ", len(prefix)) + line})
-		}
-		if len(childPrefix) > maxParentWidth {
-			childPrefix = childPrefix[:maxParentWidth]
-		}
-		result = appendTreeChildren(result, child.Children, childPrefix, width)
-	}
-	return result
-}
-
-func treeLabel(node TreeNode) string {
-	if node.Value == "" {
-		return node.Label
-	}
-	return node.Label + "  " + node.Value
-}
-
-func writeBodyRow(output *strings.Builder, width int, text string) {
-	output.WriteString("|  ")
-	output.WriteString(text)
-	output.WriteString(strings.Repeat(" ", width-6-len(text)))
-	output.WriteString("  |\n")
-}
-
-func writeSectionRow(output *strings.Builder, width int, title string) {
-	prefix := "|-- " + title + " "
-	output.WriteString(prefix)
-	output.WriteString(strings.Repeat("-", width-len(prefix)-1))
-	output.WriteString("|\n")
 }
 
 func wrap(value string, width int) []string {
@@ -364,7 +250,11 @@ func wrap(value string, width int) []string {
 	for len(value) > width {
 		cut := strings.LastIndexByte(value[:width+1], ' ')
 		if cut <= 0 {
-			cut = width
+			next := strings.IndexByte(value[width:], ' ')
+			if next < 0 {
+				break
+			}
+			cut = width + next
 		}
 		result = append(result, strings.TrimRight(value[:cut], " "))
 		value = strings.TrimLeft(value[cut:], " ")
@@ -396,11 +286,9 @@ func sanitize(value string) string {
 	return result.String()
 }
 
-func hasLineBreak(value string) bool { return strings.ContainsAny(value, "\r\n") }
-
 func validateBlock(block Block) error {
 	if block == nil {
-		return errors.New("clioutput: frame contains a nil block")
+		return errors.New("clioutput: nil block")
 	}
 	section, ok := block.(sectionBlock)
 	if !ok {

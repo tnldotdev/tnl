@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -118,7 +117,10 @@ func runServiceInstall(ctx context.Context, flags serviceInstallCommand, output 
 	if err := installedjobs.InstallService(ctx, options, executor); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl service install", "installed", "", clioutput.Fields(clioutput.Field{Label: "state directory", Value: options.Root}))
+	if options.User {
+		return writeResult(output, clioutput.Text("Installed the tnl user supervisor."))
+	}
+	return writeResult(output, clioutput.Text("Installed the tnl system supervisor."))
 }
 
 func runServiceStart(ctx context.Context, flags serviceJobCommand, output io.Writer, executor installedjobs.Executor) error {
@@ -201,7 +203,7 @@ func runServiceRemove(ctx context.Context, flags serviceJobCommand, output io.Wr
 	if err := registry.Remove(ctx, job.ID); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl service remove", "removed", "", clioutput.Fields(clioutput.Field{Label: "name", Value: displayJobName(job)}, clioutput.Field{Label: "job ID", Value: job.ID}))
+	return writeResult(output, clioutput.Line("Removed "+displayJobName(job)+"."))
 }
 
 func runServiceList(ctx context.Context, flags serviceListCommand, output io.Writer) error {
@@ -295,46 +297,65 @@ func writeSystemJobs(ctx context.Context, registry *installedjobs.Registry, outp
 }
 
 func renderSystemJobs(output io.Writer, command string, jobs []installedjobs.Job, selected string) error {
-	blocks := []clioutput.Block{}
-	state := "no jobs"
+	var rows [][]string
 	for _, job := range jobs {
 		if selected != "" && selected != job.ID {
 			continue
 		}
-		state = "installed"
-		if selected != "" {
-			state = string(job.Status.State)
+		if command == "tnl service stop" {
+			return writeJobStopResult(output, job)
 		}
-		desired := "stopped"
-		if job.Enabled {
-			desired = "running"
+		if command == "tnl service start" {
+			blocks := []clioutput.Block{clioutput.Line("Requested start for " + displayJobName(job) + "."), clioutput.Line("State: " + string(job.Status.State))}
+			if job.Status.Failure != "" {
+				blocks = append(blocks, clioutput.Text(job.Status.Failure))
+			}
+			return writeResult(output, blocks...)
 		}
-		fields := []clioutput.Field{{Label: "name", Value: displayJobName(job)}, {Label: "job ID", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "protocol", Value: string(job.Protocol)}, {Label: "desired", Value: desired}, {Label: "state", Value: string(job.Status.State)}}
-		if job.Kind == installedjobs.KindDeployment && job.DeploymentMember != nil {
-			fields = append(fields, clioutput.Field{Label: "deployment", Value: job.DeploymentMember.DeploymentName}, clioutput.Field{Label: "project key", Value: job.DeploymentMember.ProjectKey}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(job.Status.ObservedRevision, 10)})
-		} else if job.Kind == installedjobs.KindService || job.Kind == installedjobs.KindConnector {
-			fields = append(fields, clioutput.Field{Label: "service ID", Value: job.ServiceID})
-		}
-		if job.Kind == installedjobs.KindService && job.Status.Address != "" {
-			fields = append(fields, clioutput.Field{Label: "address", Value: job.Status.Address})
-		}
+		state := string(job.Status.State)
+		detail := job.Status.Address
 		if job.Kind == installedjobs.KindConnector {
-			fields = append(fields, clioutput.Field{Label: "listen", Value: job.Target})
-		} else {
-			fields = append(fields, clioutput.Field{Label: "publisher", Value: job.PublisherIdentityID})
-		}
-		if job.Status.RunNumber != 0 {
-			fields = append(fields, clioutput.Field{Label: "service run", Value: strconv.FormatUint(job.Status.RunNumber, 10)})
+			detail = job.Target
 		}
 		if job.Status.Failure != "" {
-			fields = append(fields, clioutput.Field{Label: "failure", Value: job.Status.Failure})
+			detail = job.Status.Failure
 		}
-		blocks = append(blocks, clioutput.Section(displayJobName(job), clioutput.Fields(fields...)))
+		if !job.Enabled && state != "stopped" {
+			state += " (stop requested)"
+		}
+		if command == "tnl service status" {
+			fields := []clioutput.Field{{Label: "state", Value: state}, {Label: "job ID", Value: job.ID}}
+			if job.ServiceID != "" {
+				fields = append(fields, clioutput.Field{Label: "service ID", Value: job.ServiceID}, clioutput.Field{Label: "protocol", Value: string(job.Protocol)})
+			}
+			if detail != "" {
+				label := "address"
+				if job.Status.Failure != "" {
+					label = "failure"
+				} else if job.Kind == installedjobs.KindConnector {
+					label = "local address"
+				}
+				fields = append(fields, clioutput.Field{Label: label, Value: detail, Prose: job.Status.Failure != ""})
+			}
+			return writeResult(output, clioutput.Section(displayJobName(job), clioutput.Fields(fields...)))
+		}
+		rows = append(rows, []string{displayJobName(job), job.ID, state, detail})
 	}
-	if selected != "" && len(blocks) == 0 {
+	if selected != "" && len(rows) == 0 {
 		return installedjobs.ErrJobNotFound
 	}
-	return writeHumanFrame(output, command, state, "", blocks...)
+	empty := "No installed jobs."
+	if command == "tnl connect list" {
+		empty = "No installed connectors."
+	}
+	return writeResult(output, clioutput.Table([]string{"NAME", "JOB ID", "STATE", "DETAIL"}, rows, empty))
+}
+
+func writeJobStopResult(output io.Writer, job installedjobs.Job) error {
+	if job.Status.State == installedjobs.JobStopped {
+		return writeResult(output, clioutput.Line("Stopped "+displayJobName(job)+"."))
+	}
+	return writeResult(output, clioutput.Line("Requested stop for "+displayJobName(job)+"."))
 }
 
 func displayJobName(job installedjobs.Job) string {
@@ -346,8 +367,11 @@ func displayJobName(job installedjobs.Job) string {
 
 func (a *commandApp) newServiceCommand() *cobra.Command {
 	f := a.flags
-	cService := &cobra.Command{Use: "service", Short: "Manage installed publications.", GroupID: "operate"}
-	cServiceInstall := &cobra.Command{Use: "install", Short: "Install or refresh the user-login publisher supervisor (or system publisher supervisor with --system)."}
+	cService := &cobra.Command{
+		Use: "service", Short: "Manage publications installed on this machine.", GroupID: "deploy",
+		Long: "Manage background jobs created with --install. Use tnl detached for publications started with --detach, or tnl connect list for installed connectors.",
+	}
+	cServiceInstall := &cobra.Command{Use: "install", Short: "Install or refresh the supervisor that runs local jobs."}
 	a.leaf(cServiceInstall, &f.Service.Install, func(call commandCall) error {
 		return runServiceInstall(call.ctx, f.Service.Install, a.out, nil)
 	})

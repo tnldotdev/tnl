@@ -55,11 +55,11 @@ func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project p
 	if err != nil {
 		return failure.Wrap("validate webhook endpoint", failure.ProjectConfigInvalid, err)
 	}
-	command, status := "tnl webhook use", "selected"
+	status := "selected"
 	if use {
 		err = state.ClaimWebhookReceiver(ctx, server, selected.IntegrationScope, flags.Endpoint, selected.ID, digest, force)
 	} else {
-		command, status = "tnl webhook release", "released"
+		status = "released"
 		err = state.ReleaseWebhookReceiver(ctx, server, selected.IntegrationScope, flags.Endpoint, selected.ID)
 	}
 	if err != nil {
@@ -74,8 +74,5 @@ func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project p
 			return failure.Wrap("update webhook receiver", failure.ClientStateUnavailable, err)
 		}
 	}
-	return writeHumanFrame(stdout, command, status, "", clioutput.Fields(
-		clioutput.Field{Label: "webhook", Value: "https://" + hostname + definition.Path},
-		clioutput.Field{Label: "receiver", Value: selected.PublicURL},
-	))
+	return writeResult(stdout, clioutput.Line("https://"+hostname+definition.Path), clioutput.Line("Receiver "+status+": "+selected.PublicURL))
 }

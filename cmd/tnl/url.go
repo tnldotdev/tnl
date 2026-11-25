@@ -65,22 +65,19 @@ func runURLList(ctx context.Context, command publicURLListCommand, output, diagn
 	if command.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(items)
 	}
-	blocks := make([]clioutput.Block, 0, len(items))
+	return writeVisitorURLs(output, items)
+}
+
+func writeVisitorURLs(output io.Writer, items []controlv1.ServiceSummary) error {
+	var rows [][]string
 	for _, item := range items {
 		address, err := servicePublicAddress(item.Protocol, item.Endpoint)
 		if err != nil {
 			return err
 		}
-		blocks = append(blocks, clioutput.Section(item.Endpoint.Hostname, clioutput.Fields(
-			clioutput.Field{Label: "public URL", Value: address},
-			clioutput.Field{Label: "service ID", Value: item.Id},
-			clioutput.Field{Label: "team ID", Value: item.TeamId},
-			clioutput.Field{Label: "team", Value: item.TeamName},
-			clioutput.Field{Label: "protocol", Value: string(item.Protocol)},
-			clioutput.Field{Label: "access", Value: string(item.VisitorAccess)},
-		)))
+		rows = append(rows, []string{item.TeamName, item.Name, string(item.VisitorAccess), address})
 	}
-	return writeHumanFrame(output, "tnl url list", countState(len(items), "public URL", "public URLs"), "", blocks...)
+	return writeResult(output, clioutput.Table([]string{"TEAM", "SERVICE", "ACCESS", "ADDRESS"}, rows, "No public URLs."))
 }
 
 type visitorURLListClient interface {
@@ -147,16 +144,11 @@ func runURLInventory(ctx context.Context, command publicURLInventoryCommand, out
 	if err != nil {
 		return err
 	}
-	blocks := []clioutput.Block{clioutput.Fields(
-		clioutput.Field{Label: "server", Value: session.Authenticated().ServerEndpoint},
-		clioutput.Field{Label: "team", Value: current.Team().DisplayName},
-	)}
-	count := 0
+	var rows [][]string
 	for _, service := range services {
 		if service.Endpoint == nil || !service.Endpoint.Public {
 			continue
 		}
-		count++
 		state := "disabled"
 		if service.Enabled {
 			state = "enabled"
@@ -165,18 +157,9 @@ func runURLInventory(ctx context.Context, command publicURLInventoryCommand, out
 		if err != nil {
 			return err
 		}
-		fields := []clioutput.Field{
-			{Label: "state", Value: state},
-			{Label: "service ID", Value: service.Id},
-			{Label: "protocol", Value: string(service.Protocol)},
-			{Label: "public URL", Value: address},
-		}
-		if service.RunNumber != nil {
-			fields = append(fields, clioutput.Field{Label: "service run number", Value: strconv.FormatInt(*service.RunNumber, 10)})
-		}
-		blocks = append(blocks, clioutput.Section(service.Endpoint.Hostname, clioutput.Fields(fields...)))
+		rows = append(rows, []string{service.Name, state, service.Id, address})
 	}
-	return writeHumanFrame(output, "tnl url inventory", countState(count, "public URL", "public URLs"), "", blocks...)
+	return writeResult(output, clioutput.Table([]string{"SERVICE", "STATE", "SERVICE ID", "ADDRESS"}, rows, "No public URLs."))
 }
 
 func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, diagnostics io.Writer) error {
@@ -192,8 +175,7 @@ func runURLDelete(ctx context.Context, command publicURLDeleteCommand, output, d
 	if err := deleteManagedService(ctx, session.Authenticated().Control, selected.Id, command.Unconditional); err != nil {
 		return err
 	}
-	return writeHumanTransition(output, "tnl url delete", "deleted", selected.Name, "", "service deleted", "",
-		clioutput.Field{Label: "id", Value: selected.Id})
+	return writeResult(output, clioutput.Line("Deleted "+selected.Name+"."))
 }
 
 type serviceDeletionClient interface {
@@ -240,7 +222,7 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	if err != nil {
 		return err
 	}
-	updated, _, err := updateServiceDeclaration(ctx, session.Authenticated().Control, service, func(saved *controlv1.ProjectServiceConfiguration, metadata *controlv1.UpdateServiceRequest) error {
+	updated, declaration, err := updateServiceDeclaration(ctx, session.Authenticated().Control, service, func(saved *controlv1.ProjectServiceConfiguration, metadata *controlv1.UpdateServiceRequest) error {
 		saved.Target, saved.TargetDiscovery = parsed.Host, nil
 		if parsed.Scheme == "http" {
 			saved.TargetTls, metadata.TargetTls = nil, nil
@@ -261,24 +243,26 @@ func runURLUpdate(ctx context.Context, flags publicURLUpdateCommand, output, dia
 	if err != nil {
 		return err
 	}
-	fields := []clioutput.Field{{Label: "service", Value: updated.Name}, {Label: "service ID", Value: updated.Id}}
+	access := "No public endpoint reported."
 	if updated.Endpoint != nil && updated.Endpoint.Public {
 		address, err := servicePublicAddress(updated.Protocol, updated.Endpoint)
 		if err != nil {
 			return err
 		}
-		fields = append(fields, clioutput.Field{Label: "public URL", Value: address})
-	} else {
-		fields = append(fields, clioutput.Field{Label: "access path", Value: "connector-only"})
+		access = "Public URL: " + address
+	} else if updated.Endpoint != nil || declaration != nil && declaration.Public != nil && !*declaration.Public {
+		access = "Access: connector-only"
 	}
-	fields = append(fields, clioutput.Field{Label: "target", Value: target})
-	return writeHumanFrame(output, "tnl url update", "updated", "restart the publisher to use the new target",
-		clioutput.Fields(fields...))
+	return writeResult(output, clioutput.Line("Saved target for "+updated.Name+": "+target),
+		clioutput.Line(access), clioutput.Text("Restart the publisher to use the new target."))
 }
 
 func (a *commandApp) newURLCommand() *cobra.Command {
 	f := a.flags
-	cURL := &cobra.Command{Use: "url", Short: "Manage public URLs.", GroupID: "manage"}
+	cURL := &cobra.Command{
+		Use: "url", Short: "Find public URLs and manage visitor access.", GroupID: "access",
+		Long: "Use list for URLs you can visit. Use inventory for public service endpoints owned by your team, including ones you manage but cannot visit.",
+	}
 	cURLList := &cobra.Command{Use: "list", Short: "List public URLs you may visit; --team filters the results."}
 	a.leaf(cURLList, &f.URL.List, func(call commandCall) error {
 		return runURLList(call.ctx, f.URL.List, a.out, a.errOut)
@@ -300,7 +284,10 @@ func (a *commandApp) newURLCommand() *cobra.Command {
 		return runURLAccessShow(call.ctx, f.URL.Access.Show, a.out, a.errOut)
 	})
 	cURLAccess.AddCommand(cURLAccessShow)
-	cURLAccessSet := &cobra.Command{Use: "set", Short: "Replace the complete visitor access policy, including its IP list, without stopping the publisher."}
+	cURLAccessSet := &cobra.Command{
+		Use: "set", Short: "Replace the access mode and the entire IP allowlist.",
+		Long: "Set restricted to require a tnl visitor credential or anonymous to allow visitors without one. Repeat --ip for every allowed network; omitting it clears the IP filter. The publisher keeps running.",
+	}
 	a.leaf(cURLAccessSet, &f.URL.Access.Set, func(call commandCall) error {
 		return runURLAccessSet(call.ctx, f.URL.Access.Set, a.out, a.errOut)
 	})

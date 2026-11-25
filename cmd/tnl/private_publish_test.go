@@ -17,7 +17,7 @@ func TestServicePublishPresentationSeparatesExposureAndIdentity(t *testing.T) {
 		want, absent   string
 	}{
 		{"private without reservation", "http", 0, false, "TLS hostname", "example.test:0"},
-		{"retained private reservation", "postgres", 25443, false, "connector access only", "example.test:25443"},
+		{"retained private reservation", "postgres", 25443, false, "Connector access only", "example.test:25443"},
 		{"public HTTP", "http", 25443, true, "https://api.example.test:25443", "https://api.example.test:443"},
 		{"public postgres", "postgres", 25443, true, "api.example.test:25443", "https://"},
 	} {
@@ -27,6 +27,10 @@ func TestServicePublishPresentationSeparatesExposureAndIdentity(t *testing.T) {
 			err := privatePresentation(t.Context(), publishCommand{}, &output, &diagnostics).Event(event)
 			if err != nil || output.Len() != 0 || !strings.Contains(diagnostics.String(), test.want) || strings.Contains(diagnostics.String(), test.absent) {
 				t.Fatal("service publish presentation lost exposure or port", diagnostics.String(), err)
+			}
+			first, _, _ := strings.Cut(diagnostics.String(), "\n")
+			if test.public && first != test.want || !test.public && first != "tnl connect svc_test" {
+				t.Fatalf("first usable address or command = %q", first)
 			}
 		})
 	}

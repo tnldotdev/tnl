@@ -16,7 +16,7 @@ func TestInitPythonWithoutUvRecommendsProjectLocalDependency(t *testing.T) {
 	}
 	t.Setenv("PATH", t.TempDir())
 	updated, actions, err := wirePythonProject(t.Context(), root, false)
-	if err != nil || updated || !slices.Equal(actions, []string{"run in the Python project: uv add --editable ./.tnl/generated/python"}) {
+	if err != nil || updated || !slices.Equal(actions, []string{"uv add --editable ./.tnl/generated/python"}) {
 		t.Fatalf("Python result = %t, %v, %v", updated, actions, err)
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != string(before) {

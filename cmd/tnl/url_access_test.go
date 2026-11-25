@@ -85,7 +85,7 @@ func TestURLAccessUsesSameServiceAndFreshDeclarationAfterConflict(t *testing.T) 
 		t.Fatalf("same-ID access replacement: reads=%d writes=%d err=%v", reads, writes, err)
 	}
 	var output bytes.Buffer
-	if err := writeAccessPolicy(&output, "tnl url access set", result.Id, result.Endpoint, saved); err != nil {
+	if err := writeAccessPolicy(&output, result.Id, result.Endpoint, saved); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), declaration.Target) || strings.Contains(output.String(), current.TargetTls.Digest) || !strings.Contains(output.String(), "anonymous") {

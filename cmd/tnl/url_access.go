@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -28,7 +29,7 @@ type urlAccessSetCommand struct {
 	IP                   []string                    `name:"ip" help:"Restrict source IPs to an address, CIDR, or 'current'. Repeat to allow several networks."`
 }
 
-func writeAccessPolicy(out io.Writer, command, id string, endpoint *controlv1.ServiceEndpoint, declaration *controlv1.ProjectServiceConfiguration) error {
+func writeAccessPolicy(out io.Writer, id string, endpoint *controlv1.ServiceEndpoint, declaration *controlv1.ProjectServiceConfiguration) error {
 	access := "server default"
 	var ips []string
 	if declaration != nil && declaration.Http != nil && declaration.Http.Access != nil {
@@ -51,7 +52,7 @@ func writeAccessPolicy(out io.Writer, command, id string, endpoint *controlv1.Se
 			fields = append(fields, clioutput.Field{Label: "IP", Value: prefix})
 		}
 	}
-	return writeHumanFrame(out, command, "saved", "new visitor work uses this policy", clioutput.Fields(fields...))
+	return writeResult(out, clioutput.Fields(fields...))
 }
 
 func runURLAccessShow(ctx context.Context, flags urlAccessShowCommand, out, diagnostics io.Writer) error {
@@ -71,7 +72,7 @@ func runURLAccessShow(ctx context.Context, flags urlAccessShowCommand, out, diag
 	if item.Protocol != controlv1.ServiceProtocolHTTP {
 		return failure.Wrap("read HTTP access", failure.InvalidTunnelFlags, errors.New("HTTP access requires an HTTP service"))
 	}
-	return writeAccessPolicy(out, "tnl url access show", item.Id, item.Endpoint, declaration)
+	return writeAccessPolicy(out, item.Id, item.Endpoint, declaration)
 }
 
 func runURLAccessSet(ctx context.Context, flags urlAccessSetCommand, out, diagnostics io.Writer) error {
@@ -88,11 +89,19 @@ func runURLAccessSet(ctx context.Context, flags urlAccessSetCommand, out, diagno
 	if err != nil {
 		return err
 	}
-	updated, declaration, err := replaceServiceHTTPAccess(ctx, session.Authenticated().Control, item, flags.Mode, ips)
+	updated, _, err := replaceServiceHTTPAccess(ctx, session.Authenticated().Control, item, flags.Mode, ips)
 	if err != nil {
 		return err
 	}
-	return writeAccessPolicy(out, "tnl url access set", updated.Id, updated.Endpoint, declaration)
+	service := updated.Id
+	if updated.Endpoint != nil && updated.Endpoint.Hostname != "" {
+		service = updated.Endpoint.Hostname
+	}
+	filter := "none"
+	if len(ips) > 0 {
+		filter = strings.Join(ips, ", ")
+	}
+	return writeResult(out, clioutput.Line("Set "+string(flags.Mode)+" access for "+service+"."), clioutput.Text("IP filter: "+filter))
 }
 
 func replaceServiceHTTPAccess(ctx context.Context, control serviceDeclarationClient, item controlv1.ServiceSummary, mode controlv1.VisitorAccessMode, ips []string) (controlv1.Service, *controlv1.ProjectServiceConfiguration, error) {

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -20,24 +19,23 @@ func TestTelemetryCommandControlsFutureCommandEvents(t *testing.T) {
 		}
 		return stdout.String()
 	}
-	if result := invoke("telemetry", "status"); !strings.Contains(result, "usage telemetry  on") ||
-		strings.Contains(result, "demo telemetry") {
+	if result := invoke("telemetry", "status"); result != "Usage telemetry is on.\n" {
 		t.Fatalf("initial status output = %q", result)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("status created client state: %v", err)
 	}
-	if result := invoke("telemetry", "off"); !strings.Contains(result, "usage telemetry  off") {
+	if result := invoke("telemetry", "off"); result != "Usage telemetry is off.\n" {
 		t.Fatalf("off output = %q", result)
 	}
-	if result := invoke("telemetry", "status"); !strings.Contains(result, "usage telemetry  off") {
+	if result := invoke("telemetry", "status"); result != "Usage telemetry is off.\n" {
 		t.Fatalf("status output = %q", result)
 	}
 	invoke("version")
 	if events := r.events(); len(events) != 0 {
 		t.Fatalf("telemetry commands or disabled client sent events: %#v", events)
 	}
-	if result := invoke("telemetry", "on"); !strings.Contains(result, "usage telemetry  on") {
+	if result := invoke("telemetry", "on"); result != "Usage telemetry is on.\n" {
 		t.Fatalf("on output = %q", result)
 	}
 	invoke("--no-telemetry", "version")

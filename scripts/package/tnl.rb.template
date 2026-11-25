@@ -1,5 +1,5 @@
 class Tnl < Formula
-  desc "take a shortcut through the internet."
+  desc "tunnels for local apps and private services."
   homepage "https://github.com/tnldotdev/tnl"
   version "{{VERSION}}"
   license "BSD-3-Clause"

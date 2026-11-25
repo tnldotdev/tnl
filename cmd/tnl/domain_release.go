@@ -9,13 +9,15 @@ import (
 
 func domainReleaseConfirmed(domain authorityv1.Domain) bool {
 	return domain.State == authorityv1.DomainStateReleased && domain.Release != nil &&
-		!domain.Release.CompletionUnknown && domain.Release.ReleasedAt != nil
+		!domain.Release.CompletionUnknown && domain.Release.ReleasedAt != nil && !domain.Release.ReleasedAt.IsZero() && len(domain.Release.Blockers) == 0
 }
 
-func domainReleaseBlocks(domain authorityv1.Domain, server, team string) []clioutput.Block {
+func domainReleaseBlocks(domain authorityv1.Domain, followup commandScope) []clioutput.Block {
+	if domainReleaseConfirmed(domain) {
+		return nil
+	}
 	blocks := []clioutput.Block{}
 	if domain.Release != nil {
-		blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "observed", Value: domain.Release.ObservedAt.UTC().Format(time.RFC3339)}))
 		for _, blocker := range domain.Release.Blockers {
 			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "blocked", Value: domainReleaseBlockerText(blocker)}))
 		}
@@ -24,9 +26,6 @@ func domainReleaseBlocks(domain authorityv1.Domain, server, team string) []cliou
 				clioutput.Text("Certificate expiry is not a release completion date."))
 		}
 	}
-	if domainReleaseConfirmed(domain) {
-		return append(blocks, clioutput.Fields(clioutput.Field{Label: "released", Value: domain.Release.ReleasedAt.UTC().Format(time.RFC3339)}))
-	}
 	if domain.DelegationTarget != nil {
 		if *domain.DelegationTarget == "registrar" {
 			blocks = append(blocks, clioutput.Text("move the domain off the tnl nameservers at its registrar"))
@@ -34,17 +33,8 @@ func domainReleaseBlocks(domain authorityv1.Domain, server, team string) []cliou
 			blocks = append(blocks, clioutput.Text("remove the tnl nameservers for this domain from its parent DNS"))
 		}
 	}
-	next := "tnl domain status " + domain.Id
-	if server != "" {
-		next += " --server=" + server
-	}
-	if team != "" {
-		next += " --team=" + team
-	}
-	return append(blocks,
-		clioutput.Fields(clioutput.Field{Label: "completion", Value: "unknown"},
-			clioutput.Field{Label: "next", Value: next}),
-		clioutput.Text("Wait for cleanup and final DNS authority release; ask your team admin if it stays blocked."))
+	return append(blocks, clioutput.Text("Release completion is unknown. Check again after DNS cleanup:"),
+		clioutput.Literal(followup.command("domain status", domain.Id)))
 }
 
 func domainReleaseBlockerText(blocker authorityv1.DomainReleaseBlocker) string {

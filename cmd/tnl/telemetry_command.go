@@ -46,17 +46,12 @@ func runTelemetryPreference(ctx context.Context, command telemetryPreferenceComm
 	if enabled {
 		value = "on"
 	}
-	return clioutput.Write(output, clioutput.Frame{
-		Command: "tnl telemetry " + action, State: value,
-		Blocks: []clioutput.Block{clioutput.Fields(
-			clioutput.Field{Label: "usage telemetry", Value: value},
-		)},
-	})
+	return writeResult(output, clioutput.Line("Usage telemetry is "+value+"."))
 }
 
 func (a *commandApp) newTelemetryCommand() *cobra.Command {
 	f := a.flags
-	cTelemetry := &cobra.Command{Use: "telemetry", Short: "Manage the saved usage telemetry choice.", GroupID: "manage"}
+	cTelemetry := &cobra.Command{Use: "telemetry", Short: "View or change usage telemetry for this client.", GroupID: "tools"}
 	cTelemetryOn := &cobra.Command{Use: "on", Short: "Enable usage telemetry in this client state."}
 	a.leaf(cTelemetryOn, &f.Telemetry.On, func(call commandCall) error {
 		return runTelemetryPreference(call.ctx, f.Telemetry.On, "on", a.out)

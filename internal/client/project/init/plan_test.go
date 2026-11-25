@@ -12,12 +12,11 @@ import (
 
 func TestInitPlansNextProjectWithoutRewritingExistingFrameworkConfig(t *testing.T) {
 	root := copyInitFixture(t, "next")
-	path := filepath.Join(root, "next.config.ts")
 	plan, err := planInit(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.PackageManager != "pnpm" || plan.Framework != "next" || !slices.Equal(plan.MissingPackages, []string{"@tnldotdev/tnl"}) || len(plan.NewFrameworkConfig) != 0 || !slices.Equal(plan.Actions, []string{frameworkConfigAction("next", path)}) {
+	if plan.PackageManager != "pnpm" || plan.Framework != "next" || !slices.Equal(plan.MissingPackages, []string{"@tnldotdev/tnl"}) || len(plan.NewFrameworkConfig) != 0 || !slices.Equal(plan.Actions, []string{frameworkConfigAction("next", "next.config.ts")}) {
 		t.Fatalf("plan = %#v", plan)
 	}
 	for _, fragment := range []string{"app:", `type: "app"`, "deployments:", "targets:", "defineConfig"} {
@@ -48,7 +47,7 @@ func TestPlanFrameworkConfigPreservesExistingConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(after, source) || len(plan.NewFrameworkConfig) != 0 || !slices.Equal(plan.Actions, []string{frameworkConfigAction("next", path)}) {
+	if !bytes.Equal(after, source) || len(plan.NewFrameworkConfig) != 0 || !slices.Equal(plan.Actions, []string{frameworkConfigAction("next", "next.config.ts")}) {
 		t.Fatalf("config = %q, plan = %#v", after, plan)
 	}
 }

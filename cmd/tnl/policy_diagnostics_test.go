@@ -73,17 +73,13 @@ func policyDiagnosticCLI(t *testing.T, handle http.HandlerFunc) func(...string) 
 func assertPolicyDiagnosticFrame(t *testing.T, text string, reason failure.Reason) {
 	t.Helper()
 	help := failure.HelpURL(reason, "")
-	if strings.Count(text, "+--[ ") != 1 || help != "" && !strings.Contains(text, string(reason)) {
+	if strings.Count(text, "Error: ") != 1 || help != "" && strings.Count(text, string(reason)) != 1 {
 		t.Fatalf("policy error did not render once with its stable code:\n%s", text)
 	}
-	unwrapped := strings.NewReplacer(" ", "", "\n", "", "|", "").Replace(text)
-	if help != "" && !strings.Contains(unwrapped, help) {
+	if help != "" && !strings.Contains(text, help) {
 		t.Fatalf("policy error lost its help URL:\n%s", text)
 	}
 	for _, line := range strings.Split(text, "\n") {
-		if len(line) > 72 {
-			t.Fatalf("policy diagnostic exceeds 72 columns: %q", line)
-		}
 		for _, character := range line {
 			if character < 32 || character > 126 {
 				t.Fatalf("policy diagnostic contains an unescaped character: %q", line)

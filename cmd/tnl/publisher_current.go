@@ -125,15 +125,16 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(result)
 	}
-	state := "configured"
+	state := "configured (not checked)"
 	if result.Checked {
 		state = "authorized"
 	}
-	return writeHumanFrame(output, "tnl publisher current", state, "", clioutput.Fields(
-		clioutput.Field{Label: "source", Value: result.Source},
-		clioutput.Field{Label: "control URL", Value: result.ControlURL},
-		clioutput.Field{Label: "publisher", Value: result.PublisherIdentityID},
-		clioutput.Field{Label: "grant", Value: result.GrantID},
+	return writeResult(output, clioutput.Fields(
+		clioutput.Field{Label: "publisher ID", Value: result.PublisherIdentityID},
+		clioutput.Field{Label: "state", Value: state},
 		clioutput.Field{Label: "scope", Value: result.Scope},
+		clioutput.Field{Label: "grant ID", Value: result.GrantID},
+		clioutput.Field{Label: "server", Value: result.ControlURL},
+		clioutput.Field{Label: "source", Value: result.Source},
 	))
 }

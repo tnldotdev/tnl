@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -142,11 +141,11 @@ func runFixedDeploymentRuntime(ctx context.Context, flags publisherServeCommand,
 	}, Observe: func(job installedjobs.Job, status installedjobs.Status) error {
 		outputMu.Lock()
 		defer outputMu.Unlock()
-		fields := []clioutput.Field{{Label: "job ID", Value: job.ID}, {Label: "server", Value: job.Server}, {Label: "team ID", Value: job.DeploymentMember.TeamId}, {Label: "deployment ID", Value: job.DeploymentMember.DeploymentId}, {Label: "publisher", Value: job.PublisherIdentityID}, {Label: "instance", Value: job.DeploymentInstance}, {Label: "observed revision", Value: strconv.FormatInt(status.ObservedRevision, 10)}}
+		line := job.DeploymentMember.DeploymentName + "/" + job.DeploymentInstance + "  " + string(status.State)
 		if status.Failure != "" {
-			fields = append(fields, clioutput.Field{Label: "failure", Value: status.Failure})
+			line += ": " + status.Failure
 		}
-		return writeHumanFrame(diagnostics, "tnl publisher serve", string(status.State), "", clioutput.Fields(fields...))
+		return writeResult(diagnostics, clioutput.Line(line))
 	}}
 	return engine.Serve(ctx)
 }

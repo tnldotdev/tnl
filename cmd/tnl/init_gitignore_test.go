@@ -70,11 +70,11 @@ func TestInitGitignoreActualGitAndSourceState(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &output, &bytes.Buffer{}); err != nil {
 					t.Fatal(err)
 				}
-				if !strings.Contains(output.String(), projectinit.LocalIgnoreRule) || strings.Contains(output.String(), "Narrow custom") {
+				if strings.Contains(output.String(), "Narrow custom") {
 					t.Fatal(output.String())
 				}
 				after, err := os.ReadFile(filepath.Join(root, ".gitignore"))
-				if err != nil || run > 0 && !bytes.Equal(previous, after) {
+				if err != nil || !strings.Contains(string(after), projectinit.LocalIgnoreRule) || run > 0 && !bytes.Equal(previous, after) {
 					t.Fatalf("init changed ignore rules on repeat: %q, %v", after, err)
 				}
 				previous = after
@@ -124,7 +124,7 @@ func TestInitGitignoreCustomRulesAreDiagnosedAndPreserved(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &output, &bytes.Buffer{}); err != nil {
 					t.Fatal(err)
 				}
-				if !strings.Contains(output.String(), "needs action") || !strings.Contains(output.String(), ".gitignore:2") || !strings.Contains(output.String(), "Narrow custom") {
+				if !strings.Contains(output.String(), "Finish setup:\n") || !strings.Contains(output.String(), "Review .gitignore:2") || !strings.Contains(output.String(), "Narrow custom") {
 					t.Fatalf("missing custom rule action: %s", output.String())
 				}
 				after, err := os.ReadFile(filepath.Join(root, ".gitignore"))
@@ -160,9 +160,7 @@ func TestInitGitignoreNestedProjectRoot(t *testing.T) {
 	if err := runInit(t.Context(), initCommand{NoInstall: true}, &output, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	// the renderer can wrap the filename and line number independently.
-	unwrapped := strings.NewReplacer(" ", "", "\n", "", "|", "").Replace(output.String())
-	if !strings.Contains(unwrapped, ".gitignore:1") {
+	if !strings.Contains(output.String(), ".gitignore:1") {
 		t.Fatalf("ancestor conflict not diagnosed: %s", output.String())
 	}
 }

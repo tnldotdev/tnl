@@ -31,7 +31,7 @@ func previewPublisher(ctx context.Context, state *clientstate.Store, client *aut
 	return publisheridentity.EnsurePreviewPublisher(ctx, state, client.Control, client.Authority, selected.Team().Id, selected.Membership().Id, domain.Id, domain.CanonicalDomain)
 }
 
-func prepareOpaqueService(ctx context.Context, services publisherServices, flags PublicOptions, policy resolvedVisitorAccess, plan targetplan.TargetPlan) (*publisheridentity.Native, controlv1.Service, targetplan.TargetPlan, error) {
+func prepareOpaqueService(ctx context.Context, services publisherServices, flags PublicOptions, policy resolvedVisitorAccess, plan targetplan.TargetPlan, output *Presentation) (*publisheridentity.Native, controlv1.Service, targetplan.TargetPlan, error) {
 	client := services.authenticated
 	if services.previewResume {
 		saved, err := client.Control.GetServiceByHostname(ctx, services.teamID, services.hostname)
@@ -89,6 +89,12 @@ func prepareOpaqueService(ctx context.Context, services publisherServices, flags
 	parent, ok := naming.PreviewHostname(saved.Endpoint.Hostname, client.Discovery.ManagedDomain)
 	if !ok || parent != *identity.Namespace {
 		return nil, saved, plan, publisheridentity.ErrScope
+	}
+	// the address is saved even if selecting the service or checking the target fails.
+	if !flags.Ephemeral && !saved.Ephemeral && output != nil && output.Resume != nil {
+		if err := output.Resume("https://"+saved.Endpoint.Hostname, services.teamID, client.ServerEndpoint); err != nil {
+			return nil, saved, plan, err
+		}
 	}
 	native, approved, err := native.ForService(ctx, saved.Id)
 	if err != nil {

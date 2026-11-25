@@ -58,7 +58,7 @@ func planAPIServer(plan *Plan, root, kind string, config packageDocument) error 
 			return nil
 		}
 	}
-	plan.Actions = append(plan.Actions, fmt.Sprintf("update %s: await tnl.prepare({ service: \"app\" }) before startup and register the bound listener with that handle.", entry))
+	plan.Actions = append(plan.Actions, fmt.Sprintf("Update %s: await tnl.prepare({ service: \"app\" }) before startup and register the bound listener with that handle.", RelativePath(root, entry)))
 	return nil
 }
 

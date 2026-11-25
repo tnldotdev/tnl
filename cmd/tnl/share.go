@@ -47,17 +47,6 @@ type shareCheckoutCommand struct {
 	Service          string `name:"service" help:"Share only this configured HTTP public service instead of the whole checkout."`
 }
 
-func (shareCommand) Help() string {
-	return `Run tnl share without a subcommand to print a browser link for this
-checkout's current HTTP public URLs. Use --service to share only one service.
-
-  tnl share --expires-in 7d
-  tnl share --service web --expires-in 7d
-
-Links expire after 24 hours by default. Other worktrees and private services
-are not included. Use tnl share create --help for all link creation flags.`
-}
-
 type teamShareCommand struct {
 	Create teamShareCreateCommand
 	Revoke teamShareRevokeCommand
@@ -508,7 +497,7 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 	if err != nil {
 		return err
 	}
-	blocks := make([]clioutput.Block, 0, len(shares))
+	rows := make([][]string, 0, len(shares))
 	teamGrant := false
 	if project.Found() && project.Root != "" {
 		id, found, err := session.Store().PreviewID(ctx, current.Team().Id, project.LocalWorktreeKey())
@@ -522,30 +511,9 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 			}
 			if preview.TeamId == current.Team().Id && preview.TeamAccessEnabled != nil && *preview.TeamAccessEnabled {
 				teamGrant = true
-				blocks = append(blocks, clioutput.Section("team", clioutput.Fields(
-					clioutput.Field{Label: "preview ID", Value: preview.Id},
-					clioutput.Field{Label: "services", Value: strconv.Itoa(len(preview.ServiceIds))},
-				)))
+				rows = append(rows, []string{"team", "active", "never", "-", "this preview", strconv.Itoa(len(preview.ServiceIds))})
 			}
 		}
-	}
-	for _, share := range shares {
-		state := "active"
-		if share.RevokedAt != nil {
-			state = "revoked"
-		} else if !share.ExpiresAt.After(time.Now()) {
-			state = "expired"
-		}
-		fields := []clioutput.Field{
-			{Label: "scope", Value: string(share.Scope)},
-			{Label: "state", Value: state},
-			{Label: "expires", Value: share.ExpiresAt.UTC().Format(time.RFC3339)},
-			{Label: "services", Value: strconv.Itoa(len(share.ServiceIds))},
-		}
-		if share.Label != "" {
-			fields = append(fields, clioutput.Field{Label: "name", Value: share.Label})
-		}
-		blocks = append(blocks, clioutput.Section(share.Id, clioutput.Fields(fields...)))
 	}
 	if flags.Output == statusOutputJSON {
 		return failure.Wrap("write share list", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
@@ -554,11 +522,11 @@ func runShareList(ctx context.Context, flags shareListCommand, project projectCo
 			TeamAccessEnabled bool              `json:"team_access_enabled"`
 		}{1, shares, teamGrant}))
 	}
-	count := len(shares)
-	if teamGrant {
-		count++
+	now := time.Now()
+	for _, share := range shares {
+		rows = append(rows, append(shareRow(share, now), strconv.Itoa(len(share.ServiceIds))))
 	}
-	return writeHumanFrame(output, "tnl share list", countState(count, "share", "shares"), "", blocks...)
+	return writeResult(output, clioutput.Table([]string{"ACCESS", "STATE", "EXPIRES", "ID", "NAME", "SERVICES"}, rows, "No shares."))
 }
 
 func runExactShareList(ctx context.Context, flags remoteFlags, selector string, mode statusOutputMode, output, diagnostics io.Writer) error {
@@ -591,34 +559,18 @@ func runExactShareList(ctx context.Context, flags remoteFlags, selector string, 
 			Shares      []controlv1.Share             `json:"shares"`
 		}{grants, invitations, shares})
 	}
-	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "service ID", Value: item.Id})}
+	rows := make([][]string, 0, len(grants)+len(invitations)+len(shares))
+	now := time.Now()
 	for _, grant := range grants {
-		expiry := "perpetual"
-		state := "active"
-		if grant.ExpiresAt != nil {
-			expiry = grant.ExpiresAt.UTC().Format(time.RFC3339)
-			if !grant.ExpiresAt.After(time.Now()) {
-				state = "expired"
-			}
-		}
-		if grant.RevokedAt != nil {
-			state = "revoked"
-		}
-		fields := []clioutput.Field{{Label: "kind", Value: string(grant.Kind)}, {Label: "state", Value: state}, {Label: "expires", Value: expiry}}
-		blocks = append(blocks, clioutput.Section(grant.Id, clioutput.Fields(fields...)))
+		rows = append(rows, shareGrantRow(grant, now))
 	}
 	for _, invitation := range invitations {
-		fields := []clioutput.Field{{Label: "email", Value: string(invitation.Email)}, {Label: "expires", Value: invitation.ExpiresAt.UTC().Format(time.RFC3339)}}
-		blocks = append(blocks, clioutput.Section(invitation.Id, clioutput.Fields(fields...)))
+		rows = append(rows, shareInviteRow(invitation, now))
 	}
 	for _, share := range shares {
-		fields := []clioutput.Field{{Label: "scope", Value: string(share.Scope)}, {Label: "expires", Value: share.ExpiresAt.UTC().Format(time.RFC3339)}}
-		if share.Label != "" {
-			fields = append(fields, clioutput.Field{Label: "name", Value: share.Label})
-		}
-		blocks = append(blocks, clioutput.Section(share.Id, clioutput.Fields(fields...)))
+		rows = append(rows, shareRow(share, now))
 	}
-	return writeHumanFrame(output, "tnl share list", countState(len(grants)+len(invitations)+len(shares), "share", "shares"), "", blocks...)
+	return writeShareRows(output, item.Id, rows)
 }
 
 func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -661,9 +613,8 @@ func runShareTeamCreate(ctx context.Context, flags teamShareCreateCommand, proje
 			Enabled       bool                          `json:"enabled"`
 		}{1, preview.Id, "https://" + selected.Endpoint.Hostname + "/", services, true}))
 	}
-	return writeHumanFrame(output, "tnl share team create", "shared", "", clioutput.Fields(
-		clioutput.Field{Label: "public URL", Value: "https://" + selected.Endpoint.Hostname + "/"},
-	))
+	return writeResult(output, clioutput.Literal("https://"+selected.Endpoint.Hostname+"/"),
+		clioutput.Text("Team members can sign in to visit this preview."))
 }
 
 func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -703,7 +654,7 @@ func runShareTeamRevoke(ctx context.Context, flags teamShareRevokeCommand, proje
 			Enabled       bool   `json:"enabled"`
 		}{1, id, false}))
 	}
-	return writeHumanFrame(output, "tnl share team revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "preview ID", Value: id}))
+	return writeResult(output, clioutput.Line("Revoked team access to preview "+id))
 }
 
 func runExactTeamShare(ctx context.Context, flags remoteFlags, selector, lifetime string, revoke bool, mode statusOutputMode, output, diagnostics io.Writer) error {
@@ -764,11 +715,20 @@ func exactTeamShare(ctx context.Context, session *clientteam.Session, selector, 
 			State     string                 `json:"state"`
 		}{item.Id, result, state})
 	}
-	fields := []clioutput.Field{{Label: "service ID", Value: item.Id}}
-	if item.Endpoint != nil {
-		fields = append(fields, clioutput.Field{Label: "hostname", Value: item.Endpoint.Hostname})
+	address := item.Id
+	if item.Endpoint != nil && item.Endpoint.Public {
+		if endpoint, err := servicePublicAddress(item.Protocol, item.Endpoint); err == nil {
+			address = endpoint
+		}
 	}
-	return writeHumanFrame(output, "tnl share team", state, "", clioutput.Fields(fields...))
+	if revoke {
+		return writeResult(output, clioutput.Line("Revoked team access to "+address))
+	}
+	grant := "Team access granted."
+	if result.ExpiresAt != nil {
+		grant = "Team access granted until " + shareExpiry(*result.ExpiresAt) + "."
+	}
+	return writeResult(output, clioutput.Line(address), clioutput.Text(grant))
 }
 
 func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagnostics io.Writer) error {
@@ -798,27 +758,32 @@ func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagn
 			Revoked       bool   `json:"revoked"`
 		}{1, share.Id, true}))
 	}
-	return writeHumanFrame(output, "tnl share revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "share ID", Value: share.Id}))
+	return writeResult(output, clioutput.Line("Revoked share "+share.Id))
 }
 
 func (a *commandApp) newShareCommand() *cobra.Command {
 	f := a.flags
-	cShare := &cobra.Command{Use: "share", Short: "Share this checkout's HTTP public URLs or manage existing access.", GroupID: "manage"}
-	cShare.Long = f.Share.Help()
-	cShareCreate := &cobra.Command{Use: "create", Short: "Print a browser link for this checkout's HTTP public URLs; create is optional."}
+	cShare := &cobra.Command{
+		Use: "share", Short: "Create a share link for this checkout's preview.", GroupID: "access",
+		Long: "Print one link to this checkout's current public HTTP services. It expires after 24 hours by default. Use --service to include just one service, or tnl share revoke to end access early.",
+	}
+	cShareCreate := &cobra.Command{Use: "create", Short: "Print a share link for this checkout; create is optional."}
 	a.leaf(cShareCreate, &f.Share.Create, func(call commandCall) error {
 		return runShareCheckout(call.ctx, f.Share.Create, call.project, a.out, a.errOut)
 	})
 	cShare.AddCommand(cShareCreate)
 	a.useDefault(cShare, cShareCreate)
-	cShareService := &cobra.Command{Use: "service", Short: "Manage access to one configured service or exact service ID."}
-	cShareServiceInvite := &cobra.Command{Use: "invite", Short: "Invite a verified-email identity to exactly one service."}
-	cShareServiceInviteCreate := &cobra.Command{Use: "create", Short: "Print a one-use invitation secret or retry recovery details; requires --expires-at or --expires-in (at most 30d)."}
+	cShareService := &cobra.Command{Use: "service", Short: "Share one service by its configured name or service ID."}
+	cShareServiceInvite := &cobra.Command{Use: "invite", Short: "Invite someone to one service by verified email."}
+	cShareServiceInviteCreate := &cobra.Command{
+		Use: "create", Short: "Print a one-use invitation for the recipient.",
+		Long: "Invite the recipient to this service without adding them to your team. Set an expiry of at most 30 days with --expires-at or --expires-in.",
+	}
 	a.leaf(cShareServiceInviteCreate, &f.Share.Service.Invite.Create, func(call commandCall) error {
 		return runServiceShareInviteCreate(call.ctx, f.Share.Service.Invite.Create, call.project, a.out, a.errOut)
 	})
 	cShareServiceInvite.AddCommand(cShareServiceInviteCreate)
-	cShareServiceInviteAccept := &cobra.Command{Use: "accept", Short: "Accept using the matching signed-in verified email; does not join a team."}
+	cShareServiceInviteAccept := &cobra.Command{Use: "accept", Short: "Accept an invitation using the recipient's verified email."}
 	a.leaf(cShareServiceInviteAccept, &f.Share.Service.Invite.Accept, func(call commandCall) error {
 		return runServiceShareInviteAccept(call.ctx, f.Share.Service.Invite.Accept, a.out, a.errOut)
 	})
@@ -834,15 +799,18 @@ func (a *commandApp) newShareCommand() *cobra.Command {
 		return runServiceShareRevoke(call.ctx, f.Share.Service.Revoke, call.project, a.out, a.errOut)
 	})
 	cShareService.AddCommand(cShareServiceRevoke)
-	cShareServiceLink := &cobra.Command{Use: "link", Short: "Create a bounded share link for a publicly reachable service HTTP service."}
-	cShareServiceLinkCreate := &cobra.Command{Use: "create", Short: "Print a one-time share URL; requires --expires-at or --expires-in (at most 7d)."}
+	cShareServiceLink := &cobra.Command{Use: "link", Short: "Create a browser link to one public HTTP service."}
+	cShareServiceLinkCreate := &cobra.Command{Use: "create", Short: "Print a share link that expires in at most 7 days."}
 	a.leaf(cShareServiceLinkCreate, &f.Share.Service.Link.Create, func(call commandCall) error {
 		return runServiceShareHTTPCreate(call.ctx, f.Share.Service.Link.Create, call.project, false, a.out, a.errOut)
 	})
 	cShareServiceLink.AddCommand(cShareServiceLinkCreate)
 	cShareService.AddCommand(cShareServiceLink)
-	cShareServiceToken := &cobra.Command{Use: "token", Short: "Create a bounded token for a publicly reachable service HTTP service."}
-	cShareServiceTokenCreate := &cobra.Command{Use: "create", Short: "Print a one-time Tnl-Visitor-Token value; requires --expires-at or --expires-in (at most 7d)."}
+	cShareServiceToken := &cobra.Command{Use: "token", Short: "Give an HTTP client access to one public HTTP service."}
+	cShareServiceTokenCreate := &cobra.Command{
+		Use: "create", Short: "Print a short-lived Tnl-Visitor-Token for one service.",
+		Long: "Set the share's expiry with --expires-in or --expires-at (at most 7 days). The printed token expires after at most 5 minutes, or sooner if the share expires.",
+	}
 	a.leaf(cShareServiceTokenCreate, &f.Share.Service.Token.Create, func(call commandCall) error {
 		return runServiceShareHTTPCreate(call.ctx, f.Share.Service.Token.Create, call.project, true, a.out, a.errOut)
 	})
@@ -850,22 +818,22 @@ func (a *commandApp) newShareCommand() *cobra.Command {
 	cShareService.AddCommand(cShareServiceToken)
 	cShare.AddCommand(cShareService)
 	cShareInvite := &cobra.Command{Use: "invite", Short: "Invite a verified-email visitor without team membership."}
-	cShareInviteCreate := &cobra.Command{Use: "create", Short: ""}
+	cShareInviteCreate := &cobra.Command{Use: "create", Short: "Print an invitation for one email address and public URL."}
 	a.leaf(cShareInviteCreate, &f.Share.Invite.Create, func(call commandCall) error {
 		return runShareInviteCreate(call.ctx, f.Share.Invite.Create, a.out, a.errOut)
 	})
 	cShareInvite.AddCommand(cShareInviteCreate)
-	cShareInviteAccept := &cobra.Command{Use: "accept", Short: ""}
+	cShareInviteAccept := &cobra.Command{Use: "accept", Short: "Accept an invitation using the recipient's verified email."}
 	a.leaf(cShareInviteAccept, &f.Share.Invite.Accept, func(call commandCall) error {
 		return runShareInviteAccept(call.ctx, f.Share.Invite.Accept, a.out, a.errOut)
 	})
 	cShareInvite.AddCommand(cShareInviteAccept)
-	cShareInviteList := &cobra.Command{Use: "list", Short: ""}
+	cShareInviteList := &cobra.Command{Use: "list", Short: "List visitor invitations for one public URL."}
 	a.leaf(cShareInviteList, &f.Share.Invite.List, func(call commandCall) error {
 		return runShareInviteList(call.ctx, f.Share.Invite.List, a.out, a.errOut)
 	})
 	cShareInvite.AddCommand(cShareInviteList)
-	cShareInviteRevoke := &cobra.Command{Use: "revoke", Short: ""}
+	cShareInviteRevoke := &cobra.Command{Use: "revoke", Short: "Revoke a visitor invitation by ID."}
 	a.leaf(cShareInviteRevoke, &f.Share.Invite.Revoke, func(call commandCall) error {
 		return runShareInviteRevoke(call.ctx, f.Share.Invite.Revoke, a.out, a.errOut)
 	})
@@ -879,19 +847,24 @@ func (a *commandApp) newShareCommand() *cobra.Command {
 	cShareLink.AddCommand(cShareLinkCreate)
 	cShare.AddCommand(cShareLink)
 	cShareToken := &cobra.Command{Use: "token", Short: "Create a share token for an HTTP client."}
-	cShareTokenCreate := &cobra.Command{Use: "create", Short: "Print a Tnl-Visitor-Token value for one public URL (valid for at most 5m)."}
+	cShareTokenCreate := &cobra.Command{
+		Use: "create", Short: "Print a visitor token for one public URL.",
+		Long: "Print a token for the Tnl-Visitor-Token HTTP header. The token lasts at most five minutes. --expires-in sets the lifetime of the underlying share.",
+	}
 	a.leaf(cShareTokenCreate, &f.Share.Token.Create, func(call commandCall) error {
 		return runShareTokenCreate(call.ctx, f.Share.Token.Create, call.project, a.out, a.errOut)
 	})
+	cShareTokenCreate.Flags().Lookup("preview").Hidden = true
+	cShareTokenCreate.Flags().Lookup("name").Usage = "Required. Identify the automation using this token."
 	cShareToken.AddCommand(cShareTokenCreate)
 	cShare.AddCommand(cShareToken)
-	cShareTeam := &cobra.Command{Use: "team", Short: "Share the preview with its team."}
-	cShareTeamCreate := &cobra.Command{Use: "create", Short: "Let current team members visit this preview."}
+	cShareTeam := &cobra.Command{Use: "team", Short: "Manage team access to a preview or one public URL."}
+	cShareTeamCreate := &cobra.Command{Use: "create", Short: "Let current team members visit this preview or URL."}
 	a.leaf(cShareTeamCreate, &f.Share.Team.Create, func(call commandCall) error {
 		return runShareTeamCreate(call.ctx, f.Share.Team.Create, call.project, a.out, a.errOut)
 	})
 	cShareTeam.AddCommand(cShareTeamCreate)
-	cShareTeamRevoke := &cobra.Command{Use: "revoke", Short: "Stop team-member access to this preview."}
+	cShareTeamRevoke := &cobra.Command{Use: "revoke", Short: "Revoke team access to this preview or URL."}
 	a.leaf(cShareTeamRevoke, &f.Share.Team.Revoke, func(call commandCall) error {
 		return runShareTeamRevoke(call.ctx, f.Share.Team.Revoke, call.project, a.out, a.errOut)
 	})

@@ -51,5 +51,5 @@ func runTeamFeedbackPolicy(ctx context.Context, f remoteFlags, authors string, m
 	if mode == statusOutputJSON {
 		return json.NewEncoder(output).Encode(policy)
 	}
-	return writeHumanFrame(output, "tnl team feedback", "current", "", clioutput.Fields(clioutput.Field{Label: "team", Value: current.Team().DisplayName}, clioutput.Field{Label: "authors", Value: string(policy.Authors)}))
+	return writeResult(output, clioutput.Line(current.Team().DisplayName+": feedback from "+string(policy.Authors)))
 }

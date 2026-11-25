@@ -90,8 +90,12 @@ func runShareInviteAccept(ctx context.Context, f shareInviteAcceptCommand, o, d 
 	if !validServiceShareGrant(grant, grant.ServiceId) || grant.Kind != "identity" || grant.InvitationId == nil || *grant.InvitationId != invitationID || grant.IdentityId == nil || grant.ExpiresAt == nil || grant.RevokedAt != nil {
 		return serviceShareResponse()
 	}
-	fields := []clioutput.Field{{Label: "service ID", Value: grant.ServiceId}, {Label: "grant ID", Value: grant.Id}}
-	return writeHumanFrame(o, "tnl share invite accept", "accepted", "", clioutput.Fields(fields...))
+	return writeAcceptedShare(o, grant)
+}
+
+func writeAcceptedShare(output io.Writer, grant controlv1.ServiceGrant) error {
+	return writeResult(output, clioutput.Line("Access granted to "+grant.ServiceId),
+		clioutput.Line("Expires: "+shareExpiry(*grant.ExpiresAt)), clioutput.Line("Grant: "+grant.Id))
 }
 func runShareInviteList(ctx context.Context, f shareInviteListCommand, o, d io.Writer) error {
 	s, err := openTeamSession(ctx, f.remoteFlags, "tnl share invite list", d)
@@ -110,12 +114,11 @@ func runShareInviteList(ctx context.Context, f shareInviteListCommand, o, d io.W
 	if f.Output == statusOutputJSON {
 		return json.NewEncoder(o).Encode(invites)
 	}
-	blocks := []clioutput.Block{}
+	rows := make([][]string, 0, len(invites))
 	for _, invite := range invites {
-		fields := []clioutput.Field{{Label: "email", Value: string(invite.Email)}, {Label: "expires", Value: invite.ExpiresAt.UTC().Format(time.RFC3339)}}
-		blocks = append(blocks, clioutput.Section(invite.Id, clioutput.Fields(fields...)))
+		rows = append(rows, []string{string(invite.Email), invitationState(invite, time.Now()), shareExpiry(invite.ExpiresAt), invite.Id})
 	}
-	return writeHumanFrame(o, "tnl share invite list", countState(len(invites), "invitation", "invitations"), "", blocks...)
+	return writeResult(o, clioutput.Table([]string{"EMAIL", "STATE", "EXPIRES", "INVITATION ID"}, rows, "No invitations."))
 }
 func runShareInviteRevoke(ctx context.Context, f shareInviteRevokeCommand, o, d io.Writer) error {
 	s, err := openTeamSession(ctx, f.remoteFlags, "tnl share invite revoke", d)
@@ -130,5 +133,5 @@ func runShareInviteRevoke(ctx context.Context, f shareInviteRevokeCommand, o, d 
 	if err = s.Authenticated().Control.RevokeServiceInvitation(ctx, item.Id, f.InvitationID); err != nil {
 		return err
 	}
-	return writeHumanFrame(o, "tnl share invite revoke", "revoked", "", clioutput.Fields(clioutput.Field{Label: "invitation ID", Value: f.InvitationID}))
+	return writeResult(o, clioutput.Line("Revoked invitation "+f.InvitationID))
 }

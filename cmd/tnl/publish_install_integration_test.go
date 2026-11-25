@@ -457,7 +457,9 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	compose(false, "up", "--detach")
 	ready := func() {
 		t.Helper()
-		workflowWait(t, 30*time.Second, func() bool { return strings.Contains(compose(false, "logs", "--no-color", "publisher"), "ready") })
+		workflowWait(t, 30*time.Second, func() bool {
+			return strings.Contains(compose(false, "logs", "--no-color", "publisher"), `"type":"ready"`)
+		})
 	}
 	ready()
 	before := installedServiceRunNumber(t, f.databaseURL, serviceID)

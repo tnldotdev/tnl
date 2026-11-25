@@ -408,7 +408,7 @@ func TestServiceShareInvitationLifecycleUsesExactAPI(t *testing.T) {
 		t.Fatal("one-time invitation was not raw stdout", err)
 	}
 	output.Reset()
-	if err := acceptServiceShareInvitation(t.Context(), control, serviceShareInviteAcceptCommand{Secret: secret}, &output); err != nil || strings.Contains(output.String(), secret) || !strings.Contains(output.String(), shareTestService) {
+	if err := acceptServiceShareInvitation(t.Context(), control, serviceShareInviteAcceptCommand{Secret: secret}, &output); err != nil || strings.Contains(output.String(), secret) || !strings.HasPrefix(output.String(), "Access granted to "+shareTestService+"\n") || !strings.Contains(output.String(), shareTestGrant) {
 		t.Fatal("accepted scope or secret presentation", err)
 	}
 	for _, mode := range []statusOutputMode{statusOutputHuman, statusOutputJSON} {

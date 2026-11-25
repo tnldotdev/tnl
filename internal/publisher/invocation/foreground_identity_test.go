@@ -9,11 +9,14 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -88,6 +91,41 @@ func TestForegroundPublicationReusesItsServiceAndIdentityWithoutSessionRuns(t *t
 	}
 	if f.creates != 1 || f.enrollments != 1 || f.redemptions != 1 || f.runs != 2 || f.updates != 0 {
 		t.Fatal("restart changed saved service, key, or policy", f.creates, f.enrollments, f.redemptions, f.runs, f.updates)
+	}
+}
+
+func TestForegroundReportsSavedAddressBeforePublisherLookup(t *testing.T) {
+	parent := strings.Repeat("a", 26) + ".preview.example.test"
+	host := "s-" + strings.Repeat("b", 26) + "." + parent
+	f := newServiceSetupFixture(t, host)
+	f.services.authenticated.Discovery = controlv1.ControlDiscovery{ManagedDomain: "example.test", ManagedUrlMode: controlv1.Generated, DnsAutomation: true}
+	f.services.context = team.NewContext(authorityv1.Team{Id: f.saved.TeamId}, authorityv1.Membership{Id: serviceTestID(t, opaqueid.MembershipPrefix)},
+		[]authorityv1.Domain{{Id: *f.saved.DomainId, CanonicalDomain: "example.test", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}, naming.ManagedURLModeGenerated)
+	f.services.neutral = true
+	f.identity.Kind, f.identity.ServiceId, f.identity.DomainId, f.identity.Namespace = authorityv1.Namespace, nil, f.saved.DomainId, &parent
+	f.before = func(r *http.Request) (*http.Response, bool) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v1/publisher-enrollments":
+			return f.issueEnrollment(r, controlv1.PublisherEnrollment{Kind: "namespace", TeamId: f.saved.TeamId, DomainId: f.saved.DomainId, Namespace: &parent}), true
+		case "POST /v1/services":
+			f.created = true
+			return serviceTestResponse(r, 201, f.saved), true
+		case "GET /v1/publisher/services/" + f.saved.Id:
+			return serviceTestResponse(r, 503, controlv1.Problem{Status: 503, Code: controlv1.Unavailable}), true
+		}
+		return nil, false
+	}
+	calls := 0
+	output := &Presentation{Resume: func(url, teamID, server string) error {
+		calls++
+		if !f.created || url != "https://"+host || teamID != f.saved.TeamId || server != f.services.authenticated.ServerEndpoint {
+			t.Error("resume command did not identify the saved service")
+		}
+		return nil
+	}}
+	_, _, _, err := prepareOpaqueService(t.Context(), f.services, PublicOptions{}, resolvedVisitorAccess{}, foregroundPlan(), output)
+	if !errors.Is(err, clientcontrol.ErrUnavailable) || calls != 1 {
+		t.Fatalf("publisher lookup = %v; resume calls = %d", err, calls)
 	}
 }
 

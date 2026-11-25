@@ -194,22 +194,14 @@ func TestSystemServiceNativeStateOutput(t *testing.T) {
 	if err := renderSystemJobs(&output, "tnl service list", []installedjobs.Job{job}, ""); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"orders", "service-012345", "postgres", "ready", "service run", "42", "svc_selected", "pub_selected", "orders.example:25443"} {
+	for _, expected := range []string{"orders", "service-012345", "ready", "orders.example:25443"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("publication field missing: %s", expected)
 		}
 	}
-	if strings.Contains(output.String(), "secret") {
-		t.Fatal("private state escaped the renderer")
-	}
-	for _, line := range strings.Split(output.String(), "\n") {
-		if len(line) > 72 {
-			t.Fatalf("frame wider than 72 columns: %q", line)
-		}
-		for _, c := range line {
-			if c > 127 || c == 27 {
-				t.Fatal("non-ASCII output")
-			}
+	for _, hidden := range []string{"secret", "pub_selected", "service run"} {
+		if strings.Contains(output.String(), hidden) {
+			t.Fatalf("unexpected field %q in list: %s", hidden, output.String())
 		}
 	}
 }
@@ -221,7 +213,7 @@ func TestSystemServiceHTTPAndConnectorUseServiceIdentity(t *testing.T) {
 				Server: "https://control.example", PublisherIdentityID: "pub_web", Target: "127.0.0.1:23080",
 				Status: installedjobs.Status{State: installedjobs.JobReady, RunNumber: 3, Address: "https://web.example"}}
 			var output bytes.Buffer
-			if err := renderSystemJobs(&output, "tnl service show", []installedjobs.Job{job}, job.ID); err != nil {
+			if err := renderSystemJobs(&output, "tnl service status", []installedjobs.Job{job}, job.ID); err != nil {
 				t.Fatal(err)
 			}
 			for _, expected := range []string{"service ID", "svc_web", "http"} {

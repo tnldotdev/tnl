@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
-	"strconv"
+	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,7 +18,6 @@ import (
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
-	"github.com/tnldotdev/tnl/internal/clioutput"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -29,6 +30,7 @@ const (
 )
 
 type statusCommand struct {
+	Service       string           `name:"service" help:"Show only records for this service name."`
 	Deployment    string           `name:"deployment" help:"Read this configured deployment's applied targets and publishers; defaults to local."`
 	Output        statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 	Scope         string           `name:"scope" enum:"local,server,both" default:"both" help:"Read local snapshots, fresh server state, or both (default)."`
@@ -38,6 +40,10 @@ type statusCommand struct {
 	All           bool             `name:"all" help:"Show tunnels from every local project."`
 	Project       string
 	Configuration projectConfiguration
+	configPath    string
+	noConfig      bool
+	configArgs    string
+	diagnostics   io.Writer
 }
 
 type statusLocal struct {
@@ -45,6 +51,7 @@ type statusLocal struct {
 	CheckedAt time.Time                  `json:"checked_at"`
 	Snapshot  publisherapp.Snapshot      `json:"snapshot"`
 	Tunnels   clientstate.TunnelSnapshot `json:"tunnels"`
+	readErr   error
 }
 
 type statusServerService struct {
@@ -59,16 +66,20 @@ type statusServerService struct {
 	// its current readiness or durable lifecycle state.
 	ServiceRunID *controlv1.ServiceRunID `json:"service_run_id,omitempty"`
 	RunNumber    *int64                  `json:"run_number,omitempty,string"`
+	sourceName   string
 }
 
 type statusServer struct {
-	Applied       *controlv1.AppliedProjectConfiguration `json:"applied,omitempty"`
-	AppliedReason string                                 `json:"applied_reason,omitempty"`
-	Available     bool                                   `json:"available"`
-	CheckedAt     time.Time                              `json:"checked_at"`
-	ControlURL    string                                 `json:"control_url,omitempty"`
-	Reason        string                                 `json:"reason,omitempty"`
-	Services      []statusServerService                  `json:"services"`
+	AppliedServices []controlv1.AppliedProjectService      `json:"applied_services,omitempty"`
+	Applied         *controlv1.AppliedProjectConfiguration `json:"applied,omitempty"`
+	AppliedReason   string                                 `json:"applied_reason,omitempty"`
+	Available       bool                                   `json:"available"`
+	CheckedAt       time.Time                              `json:"checked_at"`
+	ControlURL      string                                 `json:"control_url,omitempty"`
+	Reason          string                                 `json:"reason,omitempty"`
+	Services        []statusServerService                  `json:"services"`
+	inventoryReason string
+	declarations    controlv1.ProjectServiceDeclarations
 }
 
 type projectStatus struct {
@@ -83,7 +94,7 @@ type statusResult struct {
 	Projects      []projectStatus `json:"projects"`
 }
 
-func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error {
+func runStatus(ctx context.Context, flags statusCommand, output io.Writer) (resultErr error) {
 	if flags.Scope == "" {
 		flags.Scope = "both"
 	}
@@ -97,6 +108,15 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 	}
 	defer state.Close()
 	root = state.Root()
+	// a project can still have readable server inventory when its local journal
+	// cannot be read. preserve the machine command's existing failure contract.
+	allowPartial := !flags.All && flags.Scope == "both" && flags.Output != statusOutputJSON
+	var localErr error
+	defer func() {
+		if localErr != nil {
+			resultErr = errors.Join(localErr, resultErr)
+		}
+	}()
 	var snapshot clientstate.TunnelSnapshot
 	if flags.All {
 		snapshot, err = state.Snapshot(ctx)
@@ -110,7 +130,10 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		snapshot, err = state.SnapshotProject(ctx, flags.Project)
 	}
 	if err != nil {
-		return err
+		if !allowPartial || ctx.Err() != nil {
+			return err
+		}
+		localErr = err
 	}
 	appSnapshot := publisherapp.Snapshot{Services: []publisherapp.Service{}}
 	var projectSnapshots []publisherapp.Snapshot
@@ -121,15 +144,17 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		}
 		if resolveErr == nil {
 			appSnapshot, err = readAppSnapshotFrom(ctx, project, state)
-			if err != nil {
-				return err
-			}
 		} else {
 			appSnapshot, err = publisherapp.ReadSnapshotFrom(ctx, state, flags.Project)
-			if err != nil {
+			if err == nil {
+				checkAppSnapshotOwner(ctx, state, &appSnapshot)
+			}
+		}
+		if err != nil {
+			if !allowPartial || ctx.Err() != nil {
 				return err
 			}
-			checkAppSnapshotOwner(ctx, state, &appSnapshot)
+			localErr = errors.Join(localErr, err)
 		}
 	} else {
 		projects, err := publisherapp.ListSnapshotsFrom(ctx, state)
@@ -183,33 +208,60 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 	} else {
 		entry := projectStatus{Project: flags.Project}
 		if flags.Scope != "server" {
-			entry.Local = &statusLocal{Available: true, CheckedAt: time.Now().UTC(), Snapshot: appSnapshot, Tunnels: snapshot}
+			entry.Local = &statusLocal{Available: localErr == nil, CheckedAt: time.Now().UTC(), Snapshot: appSnapshot, Tunnels: snapshot, readErr: localErr}
 		}
 		projects = append(projects, entry)
+	}
+	if flags.Service != "" {
+		for _, p := range projects {
+			if local := p.Local; local != nil {
+				local.Snapshot.Services = slices.DeleteFunc(local.Snapshot.Services, func(s publisherapp.Service) bool { return s.Name != flags.Service })
+				local.Snapshot.Publications = slices.DeleteFunc(local.Snapshot.Publications, func(t clientstate.TunnelInfo) bool { return t.Service != flags.Service })
+				local.Tunnels.SelectService(flags.Service)
+			}
+		}
 	}
 	if flags.Scope != "local" {
 		server, selectErr := clientserver.Select(ctx, state, flags.ServerURL)
 		if selectErr != nil {
 			return selectErr
 		}
-		if flags.ServerURL == "" && flags.Configuration.Config.Server != nil && !flags.All {
-			server, selectErr = clientstate.CanonicalServer(*flags.Configuration.Config.Server)
-			if selectErr != nil {
-				return selectErr
-			}
-		}
 		for index := range projects {
+			project := &projects[index]
+			configuration := flags.Configuration
+			var configErr error
+			if flags.All {
+				configuration, configErr = recordedStatusConfiguration(ctx, state, project.Project, flags)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+			}
 			var localTunnels clientstate.TunnelSnapshot
-			if projects[index].Local != nil {
-				localTunnels = projects[index].Local.Tunnels
+			if project.Local != nil {
+				localTunnels = project.Local.Tunnels
 			} else {
-				localTunnels, err = state.SnapshotProject(ctx, projects[index].Project)
+				localTunnels, err = state.SnapshotProject(ctx, project.Project)
 				if err != nil {
 					return err
 				}
+				if flags.Service != "" {
+					localTunnels.SelectService(flags.Service)
+				}
 			}
 			selected := server
-			if flags.ServerURL == "" && (flags.All || flags.Configuration.Config.Server == nil) && len(localTunnels.Tunnels) != 0 {
+			switch {
+			case flags.ServerURL != "":
+				// the explicit server applies to every project.
+			case configuration.Config.Server != nil:
+				selected, err = clientstate.CanonicalServer(*configuration.Config.Server)
+				if err != nil {
+					return err
+				}
+				if flags.All && flags.AccessToken != "" && selected != server {
+					project.Server = &statusServer{ControlURL: selected, CheckedAt: time.Now().UTC(), Reason: "select the project server with --server to use an explicit access token", Services: []statusServerService{}}
+					continue
+				}
+			case len(localTunnels.Tunnels) != 0:
 				selected = localTunnels.Tunnels[0].Server
 				mixed := false
 				for _, tunnel := range localTunnels.Tunnels {
@@ -219,17 +271,18 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 					}
 				}
 				if mixed {
-					projects[index].Server = &statusServer{CheckedAt: time.Now().UTC(), Reason: "multiple local servers; select one with --server", Services: []statusServerService{}}
+					project.Server = &statusServer{CheckedAt: time.Now().UTC(), Reason: "multiple local servers; select one with --server", Services: []statusServerService{}}
 					continue
 				}
 			}
-			projects[index].Server = readStatusServer(ctx, state, selected, flags.AccessToken, projects[index].Project)
-			configuration := flags.Configuration
-			if flags.All {
-				configuration, _, _ = runtimeProject(ctx, runtimeOptions{Directory: projects[index].Project, StateDir: root})
+			project.Server = readStatusServer(ctx, state, selected, flags.AccessToken, project.Project)
+			if configErr != nil {
+				project.Server.AppliedReason = "selected project configuration unavailable"
+			} else if configuration.Found() {
+				readAppliedStatus(ctx, state, selected, flags.AccessToken, configuration, project.Server)
 			}
-			if configuration.Found() {
-				readAppliedStatus(ctx, state, selected, flags.AccessToken, configuration, projects[index].Server)
+			if flags.Service != "" {
+				project.Server.selectService(flags.Service, localTunnels)
 			}
 		}
 	}
@@ -237,50 +290,75 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(result)
 	}
-	blocks := []clioutput.Block{}
-	for _, project := range projects {
-		fields := []clioutput.Field{{Label: "project", Value: project.Project}}
-		if project.Local != nil {
-			fields = append(fields, clioutput.Field{Label: "local snapshot at", Value: project.Local.CheckedAt.Format(time.RFC3339Nano)}, clioutput.Field{Label: "local cursor", Value: project.Local.Snapshot.Cursor})
-			if !project.Local.Snapshot.ObservedAt.IsZero() {
-				fields = append(fields, clioutput.Field{Label: "local updated at", Value: project.Local.Snapshot.ObservedAt.Format(time.RFC3339Nano)})
-			}
+	return writeStatus(output, flags, projects)
+}
+
+// a journal belongs to one project directory. an explicit file for one project
+// and a configuration discovered in an ancestor must not select another's server.
+func recordedStatusConfiguration(ctx context.Context, state *clientstate.Database, directory string, flags statusCommand) (projectConfiguration, error) {
+	if flags.noConfig {
+		return projectConfiguration{}, nil
+	}
+	root, err := filepath.EvalSymlinks(directory)
+	if os.IsNotExist(err) {
+		return projectConfiguration{}, nil
+	}
+	if err != nil {
+		return projectConfiguration{}, err
+	}
+	path := flags.configPath
+	if path != "" {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return projectConfiguration{}, err
 		}
-		if project.Server != nil {
-			fields = append(fields, clioutput.Field{Label: "server", Value: project.Server.ControlURL}, clioutput.Field{Label: "server checked at", Value: project.Server.CheckedAt.Format(time.RFC3339Nano)})
-			if !project.Server.Available {
-				fields = append(fields, clioutput.Field{Label: "server", Value: "unavailable: " + project.Server.Reason})
-			}
-		}
-		blocks = append(blocks, clioutput.Section("project", clioutput.Fields(fields...)))
-		if project.Local != nil {
-			blocks = append(blocks, appServiceBlocks(project.Local.Snapshot)...)
-			if len(project.Local.Snapshot.Services) == 0 && len(project.Local.Tunnels.Tunnels) == 0 {
-				blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "local", Value: "no local publications; start an app or run tnl publish 3000"}))
-			}
-			for _, tunnel := range project.Local.Tunnels.Tunnels {
-				blocks = append(blocks, clioutput.Section("local "+string(tunnel.State), clioutput.Fields(clioutput.Field{Label: "public URL", Value: tunnel.PublicURL}, clioutput.Field{Label: "tunnel", Value: tunnel.ID}, clioutput.Field{Label: "updated at", Value: tunnel.UpdatedAt.Format(time.RFC3339Nano)})))
-			}
-			for _, url := range project.Local.Tunnels.IntegrationURLs {
-				blocks = append(blocks, clioutput.Section("local "+url.Kind+" "+url.State, clioutput.Fields(clioutput.Field{Label: "public URL", Value: url.PublicURL}, clioutput.Field{Label: "server", Value: url.Server}, clioutput.Field{Label: "reason", Value: string(url.Reason)}, clioutput.Field{Label: "action", Value: url.Action})))
-				for _, endpoint := range url.Endpoints {
-					blocks = append(blocks, clioutput.Section("local webhook "+endpoint.Name+" "+endpoint.State, clioutput.Fields(clioutput.Field{Label: "endpoint", Value: endpoint.URL}, clioutput.Field{Label: "service", Value: endpoint.Service}, clioutput.Field{Label: "delivery", Value: endpoint.Delivery}, clioutput.Field{Label: "ready receivers", Value: strconv.Itoa(len(endpoint.ReadyReceivers))}, clioutput.Field{Label: "reason", Value: string(endpoint.Reason)}, clioutput.Field{Label: "action", Value: endpoint.Action})))
-				}
-			}
-			for _, alias := range project.Local.Tunnels.Aliases {
-				blocks = append(blocks, clioutput.Section("local alias "+alias.State, clioutput.Fields(clioutput.Field{Label: "alias", Value: alias.Name}, clioutput.Field{Label: "public URL", Value: alias.PublicURL}, clioutput.Field{Label: "service", Value: alias.Service}, clioutput.Field{Label: "selected worktree", Value: alias.SelectedProject}, clioutput.Field{Label: "reason", Value: string(alias.Reason)}, clioutput.Field{Label: "action", Value: alias.Action})))
-			}
-		}
-		if project.Server != nil && project.Server.Available {
-			blocks = append(blocks, statusServiceBlocks(project.Server.Services)...)
-		}
-		if project.Server != nil && project.Server.Applied != nil {
-			blocks = append(blocks, appliedProjectBlocks(*project.Server.Applied)...)
-		} else if project.Server != nil && project.Server.AppliedReason != "" {
-			blocks = append(blocks, clioutput.Fields(clioutput.Field{Label: "applied configuration", Value: project.Server.AppliedReason}))
+		dir, err := filepath.EvalSymlinks(filepath.Dir(absolute))
+		if err != nil || dir != root {
+			path = ""
+		} else {
+			path = filepath.Join(root, filepath.Base(absolute))
 		}
 	}
-	return writeHumanFrame(output, "tnl status", countState(len(projects), "project", "projects"), "", blocks...)
+	selection, err := clientproject.SelectProjectConfig(ctx, root, path, "", false)
+	if err != nil || selection.Path == "" || filepath.Dir(selection.Path) != root {
+		return projectConfiguration{}, err
+	}
+	selection.Deployment = flags.Deployment
+	salt, err := state.WorktreeHashSalt(ctx)
+	if err != nil {
+		return projectConfiguration{}, err
+	}
+	project, err := clientproject.Resolve(ctx, selection, root, salt)
+	return projectConfiguration{Project: project}, err
+}
+
+func (server *statusServer) selectService(name string, local clientstate.TunnelSnapshot) {
+	ids := map[string]bool{}
+	for _, tunnel := range local.Tunnels {
+		if tunnel.Server == server.ControlURL && tunnel.Service == name {
+			ids[tunnel.ServiceID] = true
+		}
+	}
+	for _, a := range local.Aliases {
+		if a.Server == server.ControlURL && a.Service == name {
+			ids[a.ServiceID] = true
+		}
+	}
+	// the hash identifies the complete applied configuration. emit only the
+	// matching binding records rather than attaching it to a partial config.
+	if server.Applied != nil {
+		server.declarations = server.Applied.ServiceDeclarations
+		for _, s := range server.Applied.Services {
+			if s.Service == name {
+				server.AppliedServices = append(server.AppliedServices, s)
+				if s.ServiceId != nil {
+					ids[*s.ServiceId] = true
+				}
+			}
+		}
+		server.Applied = nil
+	}
+	server.Services = slices.DeleteFunc(server.Services, func(s statusServerService) bool { return s.Name != name && s.sourceName != name && !ids[s.ServiceID] })
 }
 
 func readAppliedStatus(ctx context.Context, state *clientstate.Database, server, token string, project projectConfiguration, result *statusServer) {
@@ -326,7 +404,12 @@ func readAppliedStatus(ctx context.Context, state *clientstate.Database, server,
 		result.AppliedReason = "server returned another project source"
 		return
 	}
+	if applied.Deployment != project.Deployment {
+		result.AppliedReason = "server returned another deployment"
+		return
+	}
 	result.Applied = &applied
+	result.inventoryReason = result.Reason
 	result.Available, result.Reason = true, ""
 }
 
@@ -414,50 +497,15 @@ func statusServicesForProject(services []controlv1.ServiceSummary, ids map[strin
 			ServiceRunID: service.ServiceRunId, RunNumber: service.RunNumber,
 			PublisherObservation: "no_ready_publisher_observed",
 		}
+		if service.Source != nil {
+			item.sourceName = service.Source.Service
+		}
 		if service.ServiceRunId != nil || service.RunNumber != nil {
 			item.PublisherObservation = "ready_publisher_hint"
 		}
 		result = append(result, item)
 	}
 	return result
-}
-
-func statusServiceBlocks(services []statusServerService) []clioutput.Block {
-	blocks := make([]clioutput.Block, 0, len(services))
-	for _, service := range services {
-		state := "disabled"
-		if service.Enabled {
-			state = "enabled"
-		}
-		fields := []clioutput.Field{
-			{Label: "service", Value: service.Name},
-			{Label: "service ID", Value: service.ServiceID},
-			{Label: "protocol", Value: string(service.Protocol)},
-			{Label: "created at", Value: service.CreatedAt.Format(time.RFC3339Nano)},
-		}
-		if service.Endpoint != nil {
-			fields = append(fields,
-				clioutput.Field{Label: "hostname", Value: service.Endpoint.Hostname},
-				clioutput.Field{Label: "public", Value: strconv.FormatBool(service.Endpoint.Public)},
-				clioutput.Field{Label: "endpoint port", Value: strconv.Itoa(service.Endpoint.Port)},
-			)
-		} else {
-			fields = append(fields, clioutput.Field{Label: "endpoint", Value: "not reported"})
-		}
-		observation := "no ready publisher observed"
-		if service.PublisherObservation == "ready_publisher_hint" {
-			observation = "ready publisher hint; not a selected visitor run"
-		}
-		fields = append(fields, clioutput.Field{Label: "publisher", Value: observation})
-		if service.ServiceRunID != nil {
-			fields = append(fields, clioutput.Field{Label: "service run ID hint", Value: *service.ServiceRunID})
-		}
-		if service.RunNumber != nil {
-			fields = append(fields, clioutput.Field{Label: "run number hint", Value: strconv.FormatInt(*service.RunNumber, 10)})
-		}
-		blocks = append(blocks, clioutput.Section("server "+state, clioutput.Fields(fields...)))
-	}
-	return blocks
 }
 
 func currentProjectRoot(ctx context.Context) (string, error) {
@@ -474,8 +522,18 @@ func currentProjectRoot(ctx context.Context) (string, error) {
 
 func (a *commandApp) newStatusCommand() *cobra.Command {
 	f := a.flags
-	cStatus := &cobra.Command{Use: "status", Short: "Show local snapshots and fresh signed-in server facts; --all includes other projects.", GroupID: "start"}
+	const summary = "Show the status of services in this project."
+	cStatus := &cobra.Command{
+		Use: "status", Short: summary, GroupID: "start",
+		Long: summary + "\n\nRead recorded local state and, when signed in, current server state. Use tnl wait to check readiness now or tnl watch to follow changes.",
+	}
 	a.leaf(cStatus, &f.Status, func(call commandCall) error {
+		f.Status.diagnostics = a.errOut
+		f.Status.configArgs = configArgs(f.NoConfig, f.ConfigPath)
+		f.Status.noConfig, f.Status.configPath = f.NoConfig, f.ConfigPath
+		if f.Status.configPath == "" {
+			f.Status.configPath = os.Getenv("TNL_CONFIG")
+		}
 		if !f.Status.All {
 			var err error
 			f.Status.Project, err = projectRoot(call.ctx, *f)

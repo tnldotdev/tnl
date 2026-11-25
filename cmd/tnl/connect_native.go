@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -11,48 +10,57 @@ import (
 	"github.com/tnldotdev/tnl/internal/connector"
 )
 
-func writeNativeConnection(output io.Writer, profile connector.Profile, mode statusOutputMode, listen string) error {
+func writeNativeConnection(output io.Writer, profile connector.Profile, mode statusOutputMode, listen, stateDir string) error {
+	return writeConnectorReady(output, profile, mode, listen, stateDir, false)
+}
+
+func writeConnectorReady(output io.Writer, profile connector.Profile, mode statusOutputMode, listen, stateDir string, installed bool) error {
 	if mode == statusOutputJSON {
 		return json.NewEncoder(output).Encode(profile)
 	}
-	fields := []clioutput.Field{{Label: "service", Value: profile.ServiceID}, {Label: "protocol", Value: string(profile.Protocol)}, {Label: "hostname", Value: profile.Hostname}, {Label: "port", Value: strconv.Itoa(profile.Port)}, {Label: "TLS", Value: profile.TLS}, {Label: "authentication", Value: string(profile.Authentication)}}
-	footer := "keep tnl running while using the service"
-	if listen != "" {
-		fields = append(fields, clioutput.Field{Label: "listen", Value: listen})
-	}
-	if profile.URL != "" {
-		label := "url"
-		if profile.Protocol == config.ProtocolHTTP {
-			label = "curl url"
+	var blocks []clioutput.Block
+	if len(profile.Command) > 0 {
+		command := make([]string, len(profile.Command))
+		for i, argument := range profile.Command {
+			command[i] = shellWord(argument)
 		}
-		fields = append(fields, clioutput.Field{Label: label, Value: profile.URL})
+		blocks = append(blocks, clioutput.Literal(strings.Join(command, " ")))
+	} else if profile.Protocol == config.ProtocolHTTP && profile.URL != "" {
+		blocks = append(blocks, clioutput.Literal(profile.URL))
 	}
+	lifetime := "Ctrl+C to stop."
 	if profile.DetachedID != "" {
-		fields = append(fields, clioutput.Field{Label: "detached ID", Value: profile.DetachedID})
-		footer = "stop with tnl detached stop " + profile.DetachedID
+		lifetime = "Running detached."
+	} else if installed {
+		lifetime = "Installed; running in the background."
 	}
-	if profile.ServerCAFile != "" {
-		fields = append(fields, clioutput.Field{Label: "server CA", Value: profile.ServerCAFile})
+	if listen != "" {
+		blocks = append(blocks, clioutput.Line("Listening on "+listen+". "+lifetime))
+	}
+	switch profile.Protocol {
+	case config.ProtocolHTTP:
+		blocks = append(blocks, clioutput.Text("Use a dial override to reach the local listener. Keep the URL's HTTPS hostname."))
+		if profile.Public {
+			blocks = append(blocks, clioutput.Text("Opening the URL in a browser uses the public endpoint."))
+		}
+	case config.ProtocolMySQL:
+		blocks = append(blocks, clioutput.Text("Dial the listener with the SDK mysql2 connection factory or a compatible driver."), clioutput.Fields(
+			clioutput.Field{Label: "Verify TLS hostname", Value: profile.Hostname},
+			clioutput.Field{Label: "Server CA", Value: profile.ServerCAFile},
+		))
+	case config.ProtocolTCP:
+		blocks = append(blocks, clioutput.Line("tnl verifies TLS for "+profile.Hostname+"."))
 	}
 	if kube := profile.Kubeconfig; kube != nil {
-		fields = append(fields, clioutput.Field{Label: "kubeconfig", Value: kube.File}, clioutput.Field{Label: "context", Value: kube.Context})
 		if kube.Namespace != "" {
-			fields = append(fields, clioutput.Field{Label: "namespace", Value: kube.Namespace})
+			blocks = append(blocks, clioutput.Line("Namespace: "+kube.Namespace))
 		}
 		if kube.Qualified {
-			footer = "context name was qualified to preserve an existing installation"
+			blocks = append(blocks, clioutput.Text("The context name includes a suffix because the original name is in use."))
 		}
 	}
-	command := make([]string, len(profile.Command))
-	for i, argument := range profile.Command {
-		command[i] = "'" + strings.ReplaceAll(argument, "'", "'\\''") + "'"
+	if profile.DetachedID != "" {
+		blocks = append(blocks, clioutput.Text("To stop:"), clioutput.Literal(detachedStopCommandLine(profile.DetachedID, stateDir)))
 	}
-	blocks := []clioutput.Block{clioutput.Fields(fields...)}
-	for _, instruction := range profile.Instructions {
-		blocks = append(blocks, clioutput.Text(instruction))
-	}
-	if len(command) != 0 {
-		blocks = append(blocks, clioutput.Section("client command", clioutput.Text(strings.Join(command, " "))))
-	}
-	return writeHumanFrame(output, "tnl connect", "ready", footer, blocks...)
+	return writeResult(output, blocks...)
 }

@@ -365,10 +365,7 @@ func runCheck(loaded projectConfiguration, stdout io.Writer) error {
 	if !loaded.Found() {
 		return failure.Wrap("check project configuration", failure.ProjectConfigMissing, errors.New("no project configuration file found"))
 	}
-	return clioutput.Write(stdout, clioutput.Frame{
-		Command: "tnl check", State: "valid",
-		Blocks: []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "path", Value: loaded.Selection.Path})},
-	})
+	return writeResult(stdout, clioutput.Line("Valid configuration: "+loaded.Selection.Path))
 }
 
 func projectSensitiveCommand(command string) bool {
@@ -385,6 +382,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		if contextErr != nil {
 			return
 		}
+		remote.configArgs = configArgs(flags.NoConfig, flags.ConfigPath)
+		remote.projectServer = project.Config.Server
 		remote.ServerURL, _, contextErr = resolve.Server(remote.ServerURL, project.Config.Server, remote.AccessToken)
 		if contextErr == nil && useTeam {
 			remote.ProjectTeam, contextErr = resolve.TeamForServer(remote.ServerURL, project.Config.Server, project.Config.Team)

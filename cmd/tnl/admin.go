@@ -70,18 +70,14 @@ func runAdminServerStatus(ctx context.Context, command adminServerStatusCommand,
 		if err != nil {
 			return err
 		}
-		return writeHumanFrame(stdout, "tnl admin server status", "serving", "",
-			clioutput.Tree(clioutput.TreeNode{Label: "control", Children: []clioutput.TreeNode{
-				{Label: "ingress", Value: countState(value.IngressLeases, "lease", "leases")},
-				{Label: "relays", Value: countState(value.RelayLeases, "lease", "leases")},
-			}}),
+		return writeResult(stdout,
 			clioutput.Fields(
 				clioutput.Field{Label: "server", Value: server},
 				clioutput.Field{Label: "role", Value: string(value.Role)},
+				clioutput.Field{Label: "ingress", Value: countState(value.IngressLeases, "lease", "leases")},
+				clioutput.Field{Label: "relays", Value: countState(value.RelayLeases, "lease", "leases")},
 				clioutput.Field{Label: "services", Value: fmt.Sprintf("%d enabled / %d suspended", value.EnabledServices, value.SuspendedServices)},
 				clioutput.Field{Label: "service runs", Value: fmt.Sprintf("%d ready / %d starting", value.ReadyServiceRuns, value.StartingServiceRuns)},
-				clioutput.Field{Label: "started", Value: adminTime(value.StartedAt)},
-				clioutput.Field{Label: "current", Value: adminTime(value.CurrentTime)},
 			),
 		)
 	})
@@ -93,28 +89,18 @@ func runAdminRelaysList(ctx context.Context, command adminRelaysListCommand, std
 		if err != nil {
 			return err
 		}
-		blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "server", Value: server})}
+		var rows [][]string
 		for _, value := range page.Relays {
 			state := "active"
 			if value.Draining {
 				state = "draining"
 			}
-			fields := []clioutput.Field{
-				{Label: "relay service", Value: string(value.RelayServiceId)},
-				{Label: "process run", Value: string(value.RelayRunId)},
-				{Label: "lease revision", Value: strconv.FormatInt(value.RelayLeaseRevision, 10)},
-				{Label: "relay address", Value: value.RelayAddress},
-				{Label: "internal address", Value: value.InternalRelayAddress},
-				{Label: "publisher connections", Value: fmt.Sprintf("%d / %d", value.ReportedConnections, value.ConnectionCapacity)},
-				{Label: "visitor streams", Value: fmt.Sprintf("%d / %d", value.ReportedStreams, value.StreamCapacity)},
-				{Label: "lease expires", Value: adminTime(value.LeaseExpiresAt)},
-			}
 			if value.DrainDeadline != nil {
-				fields = append(fields, clioutput.Field{Label: "drain deadline", Value: adminTime(*value.DrainDeadline)})
+				state += " until " + adminTime(*value.DrainDeadline)
 			}
-			blocks = append(blocks, clioutput.Section(string(value.RelayId)+" / "+state, clioutput.Fields(fields...)))
+			rows = append(rows, []string{string(value.RelayId), state, fmt.Sprint(value.ReportedConnections, "/", value.ConnectionCapacity), string(value.RelayRunId), strconv.FormatInt(value.RelayLeaseRevision, 10)})
 		}
-		return writeHumanFrame(stdout, "tnl admin relays list", countState(len(page.Relays), "relay process", "relay processes"), "", blocks...)
+		return writeResult(stdout, clioutput.Table([]string{"RELAY", "STATE", "CONNECTIONS", "RUN ID", "LEASE REVISION"}, rows, "No relay leases."))
 	})
 }
 
@@ -130,15 +116,11 @@ func runAdminRelayDrain(ctx context.Context, command adminRelayDrainCommand, std
 		if err != nil {
 			return err
 		}
-		footer := "rejecting new work"
+		footer := ""
 		if lease.DrainDeadline != nil {
 			footer = "deadline " + adminTime(*lease.DrainDeadline)
 		}
-		return writeHumanTransition(stdout, "tnl admin relays drain", "draining", string(lease.RelayId), "", "rejecting new work", footer,
-			clioutput.Field{Label: "server", Value: server},
-			clioutput.Field{Label: "process run", Value: string(lease.RelayRunId)},
-			clioutput.Field{Label: "lease revision", Value: strconv.FormatInt(lease.RelayLeaseRevision, 10)},
-		)
+		return writeWithHint(stdout, footer, clioutput.Line(string(lease.RelayId)+": rejecting new work"))
 	})
 }
 
@@ -148,16 +130,11 @@ func runAdminMaintenanceList(ctx context.Context, command adminMaintenanceListCo
 		if err != nil {
 			return err
 		}
-		blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "server", Value: server})}
+		var rows [][]string
 		for _, value := range values {
-			blocks = append(blocks, clioutput.Section(string(value.Name), clioutput.Fields(
-				clioutput.Field{Label: "state", Value: allowedState(value.Allowed)},
-				clioutput.Field{Label: "control revision", Value: strconv.FormatInt(value.Revision, 10)},
-				clioutput.Field{Label: "updated", Value: adminTime(value.UpdatedAt)},
-				clioutput.Field{Label: "updated by", Value: string(value.UpdatedBy)},
-			)))
+			rows = append(rows, []string{string(value.Name), allowedState(value.Allowed)})
 		}
-		return writeHumanFrame(stdout, "tnl admin maintenance list", countState(len(values), "control", "controls"), "", blocks...)
+		return writeResult(stdout, clioutput.Table([]string{"OPERATION", "STATE"}, rows, "No maintenance controls."))
 	})
 }
 
@@ -172,9 +149,7 @@ func runAdminMaintenanceSet(ctx context.Context, command adminMaintenanceSetComm
 		if err != nil {
 			return err
 		}
-		return writeHumanTransition(stdout, commandName, "updated", string(value.Name), "", allowedState(value.Allowed), "",
-			clioutput.Field{Label: "server", Value: server},
-			clioutput.Field{Label: "control revision", Value: strconv.FormatInt(value.Revision, 10)})
+		return writeResult(stdout, clioutput.Line(string(value.Name)+": "+allowedState(value.Allowed)))
 	})
 }
 
@@ -203,7 +178,7 @@ func adminTime(value time.Time) string { return value.UTC().Format(time.RFC3339)
 
 func (a *commandApp) newAdminCommand() *cobra.Command {
 	f := a.flags
-	cAdmin := &cobra.Command{Use: "admin", Short: "Administer a self-hosted tnl server.", GroupID: "operate"}
+	cAdmin := &cobra.Command{Use: "admin", Short: "Check or maintain a self-hosted tnl server.", GroupID: "observe"}
 	cAdminServer := &cobra.Command{Use: "server", Short: "Inspect a tnl server."}
 	cAdminServerStatus := &cobra.Command{Use: "status", Short: "Show control, ingress, and relay status."}
 	a.leaf(cAdminServerStatus, &f.Admin.Server.Status, func(call commandCall) error {

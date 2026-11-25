@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -93,17 +96,26 @@ func TestPublishOutputHumanPrintsURLOnce(t *testing.T) {
 	if err := output.failed(errors.New("failure")); err != nil {
 		t.Fatal(err)
 	}
-	if stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "+--[ tnl publish ]-- ready ") ||
-		strings.Count(stderr.String(), "]-- ready ") != 1 ||
-		strings.Count(stderr.String(), "https://demo.example") != 1 ||
-		!strings.Contains(stderr.String(), "|    tnl ") ||
-		strings.Contains(stderr.String(), "|  publisher ") ||
-		strings.Contains(stderr.String(), "publish run number") ||
-		!strings.Contains(stderr.String(), "+-- opened in browser; ctrl+c to stop ") {
+	if stdout.Len() != 0 || stderr.String() != "https://demo.example\nForwarding to http://127.0.0.1:3000\nOpened in your browser. Ctrl+C to stop.\n" {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 	if len(opened) != 1 || opened[0] != "https://demo.example" {
 		t.Fatalf("opened = %#v", opened)
+	}
+}
+
+func TestPublishOutputWithoutURLShowsNamedConnectorCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	output, err := newPublishOutput("human", "tnl publish", &stdout, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.connectCommand = publishedConnectCommand(t.Context(), publishCommand{}, "list", true)
+	if err := output.ready("", 1); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(stderr.String(), "tnl connect start list\n") || stdout.Len() != 0 {
+		t.Fatalf("stdout = %q; diagnostics = %q", &stdout, &stderr)
 	}
 }
 
@@ -130,8 +142,7 @@ func TestDemoOutputMatchesPageAndPrintsReadyBeforeOpening(t *testing.T) {
 	}
 	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "https://real.generated.tnl.dev") ||
 		strings.Contains(stderr.String(), "stamp") ||
-		!strings.Contains(stderr.String(), "|  count") || strings.Contains(stderr.String(), "request count") ||
-		!strings.Contains(stderr.String(), "ping received") ||
+		!strings.Contains(stderr.String(), "Ping 1 received. Pong sent.") ||
 		strings.ContainsRune(stderr.String(), '\x1b') {
 		t.Fatalf("demo output = %q, stdout = %q", stderr.String(), stdout.String())
 	}
@@ -153,7 +164,7 @@ func TestDemoPingKeepsNDJSONOnStdout(t *testing.T) {
 	if err := json.NewDecoder(&stdout).Decode(&event); err != nil || event.Type != publishEventStarting {
 		t.Fatalf("NDJSON event = %+v, error = %v", event, err)
 	}
-	if !strings.Contains(stderr.String(), "ping received") || strings.Contains(stdout.String(), "stamp") {
+	if !strings.Contains(stderr.String(), "Ping 1 received. Pong sent.") || strings.Contains(stdout.String(), "stamp") {
 		t.Fatalf("output = %q / %q", stdout.String(), stderr.String())
 	}
 }
@@ -172,8 +183,8 @@ func TestGuestDemoReadyExplainsTrialAndSignIn(t *testing.T) {
 	if err := output.ready("https://demo-1.guest-01234567.tnl.dev", 1); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr.String(), "20 min ready across runs") ||
-		!strings.Contains(stderr.String(), "tnl auth login to publish your app") ||
+	if !strings.Contains(stderr.String(), "20 minutes of ready time across runs") ||
+		!strings.Contains(strings.Join(strings.Fields(stderr.String()), " "), "tnl auth login to publish your app") ||
 		!strings.Contains(stderr.String(), "demo-1.guest-01234567") {
 		t.Fatalf("guest ready output = %q", stderr.String())
 	}
@@ -229,6 +240,9 @@ func TestPublishOutputNDJSONOwnsSuccessfulErrorEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := publicationPresentation(t.Context(), publishCommand{Target: "3000"}, output).Resume("https://saved.example", "studio", defaultServerURL); err != nil {
+		t.Fatal(err)
+	}
 	cause := errors.New("publisher failed")
 	result := output.finish(t.Context(), failure.Wrap("connect publisher", failure.TransportUnavailable, cause))
 	if !errors.Is(result, cause) {
@@ -250,6 +264,54 @@ func TestPublishOutputNDJSONOwnsSuccessfulErrorEvent(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestPublishResumeBeforeReady(t *testing.T) {
+	const url = "https://saved.example"
+	const server = "https://control.example"
+	flags := publishCommand{Target: "3000"}
+	flags.StateDir, flags.AccessToken = "/my state", "private-token"
+	const cmd = "tnl --no-config publish 3000 --hostname " + url + " --team studio --server " + server + " --state-dir '/my state'"
+	failed := diagnostic.Wrap(diagnostic.TargetUnavailable, fmt.Errorf("private target error: %w", syscall.ECONNREFUSED))
+	targetHelp := string(diagnostic.TargetUnavailable) + "  " + diagnostic.HelpURL(diagnostic.TargetUnavailable, "connection-refused")
+	tunnelHelp := string(failure.TunnelUnavailable) + "  " + failure.HelpURL(failure.TunnelUnavailable, "")
+	for _, tc := range []struct {
+		name    string
+		cause   error
+		exit    int
+		message string
+		help    string
+	}{
+		{"failed", failed, 1, "the target refused the connection.", targetHelp},
+		{"unclassified failure", errors.New("private preparation error"), 1, "Error: tnl could not start or maintain this tunnel", tunnelHelp},
+		{"cancelled", context.Canceled, 0, "", ""},
+		{"failed while stopping", errors.Join(failed, context.Canceled), 1, "the target refused the connection.", targetHelp},
+		{"clean stop", nil, 0, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			output, err := newPublishOutput(publishOutputHuman, "tnl publish", &stdout, &stderr, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := publicationPresentation(t.Context(), flags, output).Resume(url, "studio", server); err != nil {
+				t.Fatal(err)
+			}
+			result := output.finish(t.Context(), tc.cause)
+			exit, render := terminalResult(result)
+			if exit != tc.exit || !errors.Is(result, tc.cause) {
+				t.Fatalf("finish = %v, exit = %d", result, exit)
+			}
+			if render != nil {
+				writeCommandError(&stderr, render)
+			}
+			text := stderr.String()
+			if !strings.HasPrefix(text, tc.message) || (tc.exit != 0 && strings.Count(text, tc.help) != 1) ||
+				strings.Count(text, "tnl --no-config publish") != 1 || !strings.HasSuffix(text, "\n"+cmd+"\n") || strings.Contains(text, "private") || stdout.Len() != 0 {
+				t.Fatalf("stderr = %q, stdout = %q", text, &stdout)
+			}
+		})
 	}
 }
 
@@ -441,7 +503,7 @@ func TestPublishOutputHumanProvisioningWarningStopsAtReady(t *testing.T) {
 	got := stderr.String()
 	if strings.Count(got, string(diagnostic.ProvisioningStalled)) != 1 ||
 		!strings.Contains(got, diagnostic.HelpURL(diagnostic.ProvisioningStalled, "")) ||
-		strings.Count(got, "]-- provisioning stalled ") != 1 {
+		strings.Count(got, "Warning:") != 1 {
 		t.Fatalf("human warning output = %q", got)
 	}
 }
@@ -483,7 +545,7 @@ func TestPublishOutputTransportFallbackWarning(t *testing.T) {
 	}
 }
 
-func TestPublishOutputHumanShowsTransportFallbackAtReady(t *testing.T) {
+func TestPublishOutputHumanReportsFallbackOnce(t *testing.T) {
 	var stderr bytes.Buffer
 	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
@@ -496,9 +558,8 @@ func TestPublishOutputHumanShowsTransportFallbackAtReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := stderr.String()
-	if strings.Count(got, "+--[ tnl publish ]-- transport fallback ") != 1 ||
-		!strings.Contains(got, "tunnel continues over WSS") ||
-		!strings.Contains(got, "transport") || !strings.Contains(got, "WSS fallback") {
+	if strings.Count(got, "tunnel continues over WSS") != 1 || !strings.Contains(got, "\nhttps://demo.example\n") ||
+		!strings.Contains(got, string(failure.TransportFallback)) || !strings.Contains(got, failure.HelpURL(failure.TransportFallback, "")) {
 		t.Fatalf("human output = %q", got)
 	}
 }
@@ -522,7 +583,7 @@ func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
 	if openCount != 1 {
 		t.Fatalf("open count = %d", openCount)
 	}
-	if got := stderr.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- browser not opened ") ||
+	if got := stderr.String(); !strings.HasPrefix(got, "tnl could not open the public URL in a browser\n") ||
 		!strings.Contains(got, "open the printed public URL manually") || strings.Contains(got, "browser") && strings.Contains(got, "unavailable") || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}
@@ -539,7 +600,7 @@ func TestPublishOutputNDJSONWarnsWhenBrowserCannotOpen(t *testing.T) {
 	}
 }
 
-func TestPublishOutputHumanFramesBrowserFailure(t *testing.T) {
+func TestPublishOutputHumanWarnsOnceAfterReadyOnBrowserFailure(t *testing.T) {
 	var stderr bytes.Buffer
 	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, func(string) error {
 		return errors.New("browser\x1b unavailable")
@@ -554,15 +615,13 @@ func TestPublishOutputHumanFramesBrowserFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := stderr.String()
-	if strings.Count(got, "+--[ tnl publish ]-- ") != 2 ||
-		!strings.Contains(got, "]-- ready ") || !strings.Contains(got, "]-- browser not opened ") ||
-		!strings.Contains(got, "+\n\n+--[ tnl publish ]-- browser not opened ") ||
+	if !strings.HasPrefix(got, "https://demo.example\n") || strings.Count(got, string(failure.BrowserOpenFailed)) != 1 ||
 		!strings.Contains(got, "open the printed public URL manually") || strings.Contains(got, `browser\x1b unavailable`) || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}
 }
 
-func TestPublishOutputHumanFramesConnectionDisruption(t *testing.T) {
+func TestPublishOutputHumanExplainsConnectionDisruption(t *testing.T) {
 	var stderr bytes.Buffer
 	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
@@ -570,13 +629,13 @@ func TestPublishOutputHumanFramesConnectionDisruption(t *testing.T) {
 	}
 	output.logf("connection %s", "lost")
 	got := stderr.String()
-	if !strings.HasPrefix(got, "+--[ tnl publish ]-- publisher connection disrupted ") ||
-		!strings.Contains(got, "a publisher connection could not be established") || !strings.Contains(got, "+-- reconnecting ") {
+	if !strings.HasPrefix(got, "a publisher connection could not be established; reconnecting\n") ||
+		!strings.Contains(got, string(failure.TransportUnavailable)) {
 		t.Fatalf("stderr = %q", got)
 	}
 }
 
-func TestPublishOutputNDJSONFramesConnectionDisruption(t *testing.T) {
+func TestPublishOutputNDJSONReportsConnectionDisruptionOnStderr(t *testing.T) {
 	var stderr bytes.Buffer
 	output, err := newPublishOutput("ndjson", "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
@@ -584,8 +643,8 @@ func TestPublishOutputNDJSONFramesConnectionDisruption(t *testing.T) {
 	}
 	output.logf("connection %s", "lost\x1b")
 	got := stderr.String()
-	if !strings.HasPrefix(got, "+--[ tnl publish ]-- publisher connection disrupted ") ||
-		!strings.Contains(got, "a publisher connection could not be established") || strings.Contains(got, `connection lost\x1b`) || strings.ContainsRune(got, '\x1b') {
+	if !strings.HasPrefix(got, "a publisher connection could not be established; reconnecting\n") ||
+		strings.Contains(got, `connection lost\x1b`) || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("stderr = %q", got)
 	}
 }
@@ -605,9 +664,7 @@ func TestPublishOutputHumanProvisioning(t *testing.T) {
 		}
 	}
 	got := stderr.String()
-	if strings.Count(got, "]-- provisioning ") != 2 ||
-		!strings.Contains(got, "certificate and publisher connections") ||
-		strings.Contains(got, "192.0.2") || strings.ContainsRune(got, '\x1b') {
+	if got != strings.Repeat("Preparing demo.example...\n", 2) {
 		t.Fatalf("human lifecycle output = %q", got)
 	}
 }
@@ -622,7 +679,7 @@ func TestPublishOutputWarnsWhenRunningLocalServiceFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := stderr.String()
-	if !strings.Contains(text, "target unavailable") || !strings.Contains(text, "TNL_TARGET_UNAVAILABLE") ||
+	if !strings.Contains(text, "could not reach the target") || !strings.Contains(text, "TNL_TARGET_UNAVAILABLE") ||
 		!strings.Contains(text, "https://tnl.dev/e/target") || strings.Contains(text, "localproxy:") {
 		t.Fatalf("target warning = %q", text)
 	}

@@ -26,7 +26,15 @@ type detachedListCommand struct {
 }
 type detachedStopCommand struct {
 	detachedListCommand `embed:""`
-	ID                  string `arg:"" name:"id" help:"Detached publication ID."`
+	ID                  string `arg:"" name:"id" help:"Detached publication or connector ID."`
+}
+
+func detachedStopCommandLine(id, stateDir string) string {
+	stop := "tnl detached stop " + shellWord(id)
+	if stateDir != "" {
+		stop += " --state-dir=" + shellWord(stateDir)
+	}
+	return stop
 }
 
 func detachPublish(ctx context.Context, args []string, stateDir string, output io.Writer, title string) error {
@@ -59,7 +67,7 @@ func detachPublish(ctx context.Context, args []string, stateDir string, output i
 			}
 			return writeDetachedConnection(root, id, mode, output)
 		}
-		return writeHumanFrame(output, title, "detached", "", clioutput.Fields(clioutput.Field{Label: "id", Value: id}, clioutput.Field{Label: "pid", Value: pid}, clioutput.Field{Label: "state", Value: "ready"}))
+		return writeResult(output, clioutput.Text("Publishing in the background. To stop:"), clioutput.Literal(detachedStopCommandLine(id, stateDir)))
 	})
 }
 
@@ -73,7 +81,7 @@ func writeDetachedConnection(root, id string, mode statusOutputMode, output io.W
 		return failure.Wrap("read detached connection", failure.ServerResponseInvalid, errors.New("invalid prepared connection"))
 	}
 	profile.DetachedID = id
-	return writeNativeConnection(output, profile, mode, net.JoinHostPort(profile.Host, strconv.Itoa(profile.Port)))
+	return writeNativeConnection(output, profile, mode, net.JoinHostPort(profile.Host, strconv.Itoa(profile.Port)), root)
 }
 
 func runDetachedList(flags detachedListCommand, output io.Writer) error {
@@ -81,38 +89,29 @@ func runDetachedList(flags detachedListCommand, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	blocks := []clioutput.Block{}
+	var rows [][]string
 	for _, entry := range entries {
-		fields := []clioutput.Field{{Label: "id", Value: entry.ID}}
-		if entry.PID != "" {
-			fields = append(fields, clioutput.Field{Label: "pid", Value: entry.PID})
-		}
-		fields = append(fields, clioutput.Field{Label: "state", Value: entry.State})
-		blocks = append(blocks, clioutput.Fields(fields...))
+		rows = append(rows, []string{entry.ID, entry.State})
 	}
-	state := "no publications"
-	if len(entries) > 0 {
-		state = "detached"
-	}
-	return writeHumanFrame(output, "tnl detached list", state, "", blocks...)
+	return writeResult(output, clioutput.Table([]string{"ID", "STATE"}, rows, "No detached publications or connectors."))
 }
 
 func runDetachedStop(flags detachedStopCommand, output io.Writer) error {
 	if err := detached.Stop(flags.StateDir, flags.ID); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl detached stop", "stopping", "", clioutput.Fields(clioutput.Field{Label: "id", Value: flags.ID}))
+	return writeResult(output, clioutput.Line("Stopping "+flags.ID+"."))
 }
 
 func (a *commandApp) newDetachedCommand() *cobra.Command {
 	f := a.flags
-	cDetached := &cobra.Command{Use: "detached", Short: "Inspect and stop detached publications.", GroupID: "operate"}
-	cDetachedList := &cobra.Command{Use: "list", Short: "List detached publications for this client state."}
+	cDetached := &cobra.Command{Use: "detached", Short: "List or stop publications and connectors started with --detach.", GroupID: "deploy"}
+	cDetachedList := &cobra.Command{Use: "list", Short: "List detached publications and connectors for this client state."}
 	a.leaf(cDetachedList, &f.Detached.List, func(call commandCall) error {
 		return runDetachedList(f.Detached.List, a.out)
 	})
 	cDetached.AddCommand(cDetachedList)
-	cDetachedStop := &cobra.Command{Use: "stop", Short: "Stop a detached publication."}
+	cDetachedStop := &cobra.Command{Use: "stop", Short: "Stop a detached publication or connector."}
 	a.leaf(cDetachedStop, &f.Detached.Stop, func(call commandCall) error {
 		return runDetachedStop(f.Detached.Stop, a.out)
 	})

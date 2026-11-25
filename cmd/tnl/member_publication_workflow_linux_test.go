@@ -127,10 +127,10 @@ func TestIntegrationCLIMemberOwnPublicationWithoutInventory(t *testing.T) {
 		}
 	}
 	assertInventoryDenied("")
+	const namespace = "implementer.member-publication.apps.integration.test"
 	current := call("team", "current", "--team", team.Id)
-	if !bytes.Contains(current, []byte(team.Id)) || !bytes.Contains(current, []byte(team.DisplayName)) ||
-		!bytes.Contains(current, []byte("implementer")) {
-		t.Fatal("built CLI selected a different team or membership")
+	if want := team.DisplayName + " (member)\nNew named URL: https://app." + namespace + "\n"; string(current) != want {
+		t.Fatalf("built CLI selected a different team or membership: got %q, want %q", current, want)
 	}
 	var requests atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +140,7 @@ func TestIntegrationCLIMemberOwnPublicationWithoutInventory(t *testing.T) {
 		_, _ = io.WriteString(w, "ordinary member application")
 	}))
 	t.Cleanup(target.Close)
-	hostname := "own-app.implementer.member-publication.apps.integration.test"
+	hostname := "own-app." + namespace
 	process := startNamedWorkflowCommand(t, command("publish", target.URL, "--foreground", "--output", "ndjson",
 		"--name", "own-app", "--anonymous", "--team", team.Id))
 	var ready publishEvent

@@ -34,23 +34,23 @@ func TestIntegrationCLIContract(t *testing.T) {
 		exit                       int
 	}{
 		{"version", "tnl ", "", "", 0},
-		{"check", "[ tnl check ]-- valid", "", "", 0},
-		{"--config absent.json --config good.json check", "[ tnl check ]-- valid", "", "", 0},
-		{"--config absent.json check", "", "[ tnl check ]", "", 1},
+		{"check", "Valid configuration:", "", "", 0},
+		{"--config absent.json --config good.json check", "Valid configuration:", "", "", 0},
+		{"--config absent.json check", "", "Error: ", "", 1},
 		{"--no-config check", "", "no project configuration file was found", "", 1},
-		{"--no-config=false check", "[ tnl check ]-- valid", "", "", 0},
+		{"--no-config=false check", "Valid configuration:", "", "", 0},
 		{"connect orders --install --foreground --output json", "", "", "TNL_CLIENT_CONNECT_MODE_INVALID", 1},
 		{"connect --install --foreground orders --output=json", "", "", "TNL_CLIENT_CONNECT_MODE_INVALID", 1},
 		{"connect start orders --install --foreground --output=json", "", "", "TNL_CLIENT_CONNECT_MODE_INVALID", 1},
-		{"connect start list --install --foreground", "", "[ tnl connect start ]", "", 1},
+		{"connect start list --install --foreground", "", "TNL_CLIENT_CONNECT_MODE_INVALID", "", 1},
 		{"connect orders --install --client psql --output json", "", "", "TNL_CLIENT_CONNECT_MODE_INVALID", 1},
-		{"connect orders --detach -- sh --output json", "", "[ tnl connect start ]", "", 1},
+		{"connect orders --detach -- sh --output json", "", "Error: ", "", 1},
 		{"share --service web --output json", "", "", "TNL_CLIENT_STATE_UNAVAILABLE", 1},
 		{"share create --service web --output json", "", "", "TNL_CLIENT_STATE_UNAVAILABLE", 1},
 		{"runtime connections read --help", "--handle", "", "", 0},
 		{"runtime connections read", "", "", "TNL_CLIENT_INVALID_COMMAND", 1},
 		{"domain list --unknown --output json", "", "", "TNL_CLIENT_DOMAIN_UNAVAILABLE", 1},
-		{"domain list --unknown -- --output json", "", "[ tnl domain list ]", "", 1},
+		{"domain list --unknown -- --output json", "", "TNL_CLIENT_DOMAIN_UNAVAILABLE", "", 1},
 	} {
 		t.Run(tc.argv, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)

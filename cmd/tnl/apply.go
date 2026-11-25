@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -79,7 +78,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 		if err != nil {
 			return err
 		}
-		return diff.write(output, flags.Output)
+		return diff.write(output, flags.Output, current.Team().DisplayName)
 	}
 	applied, err := session.Authenticated().Control.ApplyProjectConfiguration(ctx, source.Key, controlv1.ApplyProjectConfigurationRequest{
 		TeamId: current.Team().Id, Source: &controlv1.GitProjectSource{GitOrigin: source.Source.GitOrigin, ConfigurationPath: source.Source.ConfigurationPath}, ExpectedRevision: revision, Configuration: declaration,
@@ -104,29 +103,15 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(applied)
 	}
-	return writeHumanFrame(output, "tnl apply", "applied", "start publishers with tnl publisher serve --deployment NAME", appliedProjectBlocks(applied)...)
-}
-
-func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []clioutput.Block {
-	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "project key", Value: applied.ProjectKey}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(applied.Revision, 10)})}
-	for _, service := range applied.Services {
-		id := ""
-		if service.ServiceId != nil {
-			id = *service.ServiceId
-		}
-		blocks = append(blocks, clioutput.Section(service.Service, clioutput.Fields(clioutput.Field{Label: "deployment", Value: service.Deployment}, clioutput.Field{Label: "service ID", Value: id}, clioutput.Field{Label: "assignment", Value: string(service.ServiceKind)}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(service.DesiredRevision, 10)})))
-	}
-	for _, member := range applied.Members {
-		fields := []clioutput.Field{{Label: "publisher ID", Value: member.PublisherIdentityId}, {Label: "observed revision", Value: strconv.FormatInt(member.ObservedRevision, 10)}, {Label: "healthy", Value: strconv.FormatBool(member.Healthy)}}
-		fields = append(fields, publisherRuntimeFields(member.Runtime)...)
-		blocks = append(blocks, clioutput.Section(member.DeploymentName, clioutput.Fields(fields...)))
-	}
-	return blocks
+	return writeResult(output, clioutput.Line("Applied "+applied.Deployment+" for team "+current.Team().DisplayName+" ("+countState(len(applied.Services), "service", "services")+")."))
 }
 
 func (a *commandApp) newApplyCommand() *cobra.Command {
 	f := a.flags
-	cApply := &cobra.Command{Use: "apply", Short: "Reconcile this project's declared services and deployments with control.", GroupID: "manage"}
+	cApply := &cobra.Command{
+		Use: "apply", Short: "Save a configured deployment on the server.", GroupID: "deploy",
+		Long: "Apply the project's service declarations and the selected deployment's targets and workloads. Use --diff to review changes before applying them. The default deployment is local.",
+	}
 	a.leaf(cApply, &f.Apply, func(call commandCall) error {
 		return runApply(call.ctx, f.Apply, call.project, a.out, a.errOut)
 	})

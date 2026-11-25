@@ -161,10 +161,10 @@ func TestDeploymentPublisherObservationScope(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	if err := writeHumanFrame(&output, "tnl publisher list", "listed", "", deploymentPublisherBlock(publisher)); err != nil {
+	if err := writeResult(&output, deploymentPublisherTable([]controlv1.DeploymentPublisher{publisher})); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(output.String(), "query succeeded") || !strings.Contains(output.String(), "not current") {
+	if !strings.HasPrefix(output.String(), "PUBLISHER ID") || strings.Contains(output.String(), "query succeeded") || !strings.Contains(output.String(), "not current") {
 		t.Fatal("publisher observation overstated readiness")
 	}
 }

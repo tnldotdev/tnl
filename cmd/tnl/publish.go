@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tnldotdev/tnl/internal/client/detached"
@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/region"
@@ -107,6 +108,8 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		output.detachedCtx = ctx
 		if publicHTTP {
 			output.openURL = browserOpener(ctx, flags.Open, true)
+		} else {
+			output.connectCommand = publishedConnectCommand(ctx, flags, selected.service, true)
 		}
 		defer func() { result = output.finish(ctx, result) }()
 		return runNamedPublish(ctx, selected, flags.StateDir, output)
@@ -172,23 +175,18 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 				return nil
 			}
 			// saved policy comes from control, not from the current project config.
-			quote := func(value string) string {
-				if !strings.ContainsAny(value, " \t\r\n'\"$`\\;|&<>()!*?#[]{}~") {
-					return value
-				}
-				return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-			}
-			command := "tnl --no-config publish " + quote(flags.Target) + " --hostname " + url
+			command := "tnl --no-config publish " + shellWord(flags.Target) + " --hostname " + shellWord(url)
 			if team != "" {
-				command += " --team " + quote(team)
+				command += " --team " + shellWord(team)
 			}
-			if server != "" {
-				command += " --server " + quote(server)
+			if pin := suggestedServer(ctx, server, nil, "", flags.StateDir, nil); pin != "" {
+				command += " --server " + shellWord(pin)
 			}
 			if flags.StateDir != "" {
-				command += " --state-dir " + quote(flags.StateDir)
+				command += " --state-dir " + shellWord(flags.StateDir)
 			}
-			return writeHumanFrame(output.stderr, "tnl publish", "address saved", "", clioutput.Fields(clioutput.Field{Label: "resume", Value: command}))
+			output.resumeCommand = command
+			return nil
 		},
 		ProvisioningStalled: output.provisioningStalled, TransportFallback: output.transportFallback, TargetUnavailable: output.targetUnavailable,
 		Progress: func(p invocation.Progress) error { return output.integrationURLMessage(p.State, p.Hint, p.Details...) },
@@ -198,7 +196,7 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 			if output.mode == publishOutputNDJSON {
 				return output.emitLocked(publishEvent{Type: publishEventWarning, Message: message})
 			}
-			return writeHumanFrame(output.stderr, output.command, "warning", "", clioutput.Text(message))
+			return writeResult(output.stderr, clioutput.Text(message))
 		},
 		ConfigureBrowser: func(automated bool) { output.openURL = browserOpener(ctx, flags.Open, automated) },
 		Demo:             output.setDemo, GuestDemo: output.setGuestDemo, GuestShare: output.setGuestShare, DemoPing: output.demoPing, Logf: output.logf,
@@ -207,15 +205,21 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 
 func (a *commandApp) newPublishCommand() *cobra.Command {
 	f := a.flags
-	cPublish := &cobra.Command{Use: "publish", Short: "Publish a local service or try the built-in demo.", GroupID: "start"}
+	cPublish := &cobra.Command{
+		Use: "publish", Short: "Publish a local port or configured service.", GroupID: "start",
+		Long: "Give a running HTTP server an HTTPS URL, or publish a service by its name in the project configuration. For HTTP, visitors normally need a sign-in, share link, or token. The built-in demo also works without a local app.",
+	}
 	a.leaf(cPublish, &f.Publish, func(call commandCall) error {
 		return a.publish(call)
 	})
+	limits := applicationlimits.Limits{}
+	cPublish.Flags().Lookup("concurrency").Usage += fmt.Sprintf(" Defaults to %d for HTTP and %d for TCP.", limits.Defaults(false).Concurrency, limits.Defaults(true).Concurrency)
 	return cPublish
 }
 
 func (a *commandApp) publish(call commandCall) error {
 	ctx, flags := call.ctx, a.flags
+	flags.Publish.configArgs = configArgs(flags.NoConfig, flags.ConfigPath)
 	if flags.Publish.Foreground && (flags.Publish.Install || flags.Publish.Detach) {
 		return publisherCLIError("select only one of --foreground, --detach, or --install")
 	}

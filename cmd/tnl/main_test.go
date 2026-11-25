@@ -135,7 +135,7 @@ func TestTunnelHelpExplainsIPPolicyAndTeamSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := strings.Join(strings.Fields(output.String()), " ")
-	for _, want := range []string{"--anonymous", "--ip", "--team", "--server"} {
+	for _, want := range []string{"--anonymous", "--ip", "--team", "--server", "Defaults to 1024 for HTTP and 24 for TCP."} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("publish help missing %q:\n%s", want, output.String())
 		}
@@ -150,6 +150,45 @@ func TestUnknownFlagUsesParsedCommand(t *testing.T) {
 	}
 	if title, ok := clioutput.CommandOf(err); !ok || title != "tnl domain list" {
 		t.Fatalf("parse error command = %q, %t", title, ok)
+	}
+}
+
+func TestHumanFlagErrorsShowOnlyBoundedFlagNames(t *testing.T) {
+	const secret = "private-value"
+	identity := string(failure.Authentication) + "  " + failure.HelpURL(failure.Authentication, "")
+	for _, tc := range []struct{ arg, message string }{
+		{"--lll=" + secret, "Unknown flag: --lll"},
+		{"-z" + secret, "Unknown flag: -z"},
+		{"--timeout=" + secret, "Invalid value for --timeout"},
+		{"--server", "Missing value for --server"},
+		{"---" + secret, "Invalid flag syntax."},
+		{"--bad\n\x1b[31m" + secret, "Unknown flag."},
+		{"--" + strings.Repeat("x", 65) + secret, "Unknown flag."},
+	} {
+		var out, diag bytes.Buffer
+		err := run(t.Context(), []string{"auth", "login", tc.arg}, &out, &diag)
+		if err == nil {
+			t.Fatal("expected a parser error")
+		}
+		writeCommandError(&diag, err)
+		text := diag.String()
+		if text != "Error: "+tc.message+"\ntnl auth login --help\n"+identity+"\n" || out.Len() != 0 {
+			t.Errorf("flag diagnostic = %q; stdout = %q", text, &out)
+		}
+	}
+}
+
+func TestMachineUnknownLoginFlagKeepsAuthenticationClassification(t *testing.T) {
+	var out, diag bytes.Buffer
+	err := run(t.Context(), []string{"auth", "login", "--lll=private-value", "--output=json"}, &out, &diag)
+	if err == nil {
+		t.Fatal("unknown flag was accepted")
+	}
+	writeCommandError(&diag, err)
+	var result commandDiagnostic
+	if json.Unmarshal(diag.Bytes(), &result) != nil || result.Reason != string(failure.Authentication) || result.Code != result.Reason || result.HelpURL != failure.HelpURL(failure.Authentication, "") ||
+		result.Message != "tnl could not authenticate this request" || strings.Contains(diag.String(), "lll") || strings.Contains(diag.String(), "private-value") || out.Len() != 0 {
+		t.Fatalf("machine diagnostic = %s; stdout = %q", &diag, &out)
 	}
 }
 
@@ -221,17 +260,28 @@ func TestPublishRejectsRetiredPublicURLFlag(t *testing.T) {
 }
 
 func TestPublishResumePrintsHostnameFlag(t *testing.T) {
+	t.Setenv("TNL_SERVER", "")
 	var stderr bytes.Buffer
 	output, err := newPublishOutput(publishOutputHuman, "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	flags := publishCommand{Target: "3000"}
-	if err := publicationPresentation(t.Context(), flags, output).Resume("https://app.example.test", "", ""); err != nil {
+	flags.StateDir = filepath.Join(t.TempDir(), "state")
+	if err := publicationPresentation(t.Context(), flags, output).Resume("https://app.example.test", "", defaultServerURL); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr.String(), "--hostname") || strings.Contains(stderr.String(), "--public-url") {
-		t.Fatal("resume output did not use --hostname", stderr.String())
+	if err := output.ready("https://app.example.test", 1); err != nil {
+		t.Fatal(err)
+	}
+	if code, render := terminalResult(output.finish(t.Context(), context.Canceled)); code != 0 || render != nil {
+		t.Fatalf("stopping after readiness = %d, %v", code, render)
+	}
+	if !strings.HasPrefix(stderr.String(), "https://app.example.test\n") || strings.Count(stderr.String(), "tnl --no-config publish 3000 --hostname https://app.example.test --state-dir ") != 1 || strings.Contains(stderr.String(), "--server") {
+		t.Fatal("expected the URL first, then a reusable command", stderr.String())
+	}
+	if _, err := os.Stat(flags.StateDir); !os.IsNotExist(err) {
+		t.Fatalf("formatting the command created state: %v", err)
 	}
 }
 
@@ -367,7 +417,7 @@ func TestBarePublishReachesCanonicalDispatch(t *testing.T) {
 		t.Fatalf("command = %q, %t", got, ok)
 	}
 	writeCommandError(&stderr, err)
-	if got := stderr.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- command failed ") || strings.Contains(got, "clientstate: ") {
+	if got := stderr.String(); !strings.HasPrefix(got, "Error: ") || strings.Contains(got, "clientstate: ") {
 		t.Fatalf("error output = %q", got)
 	}
 }
@@ -552,39 +602,33 @@ func TestDemoPublishRegistersTunnelWithoutProjectConfiguration(t *testing.T) {
 	}
 }
 
-func TestWriteCommandErrorUsesContextAndSharedFrame(t *testing.T) {
+func TestWriteCommandErrorShowsActionCodeAndHelp(t *testing.T) {
 	var output bytes.Buffer
 	writeCommandError(&output, clioutput.WrapCommand("tnl team use", failure.Wrap("select team", failure.TeamNotFound, errors.New("team not found"))))
-	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl team use ]-- command failed ") ||
+	if got := output.String(); !strings.HasPrefix(got, "Error: ") ||
 		!strings.Contains(got, "team not found") || !strings.Contains(got, "TNL_CLIENT_TEAM_NOT_FOUND") ||
-		!strings.Contains(got, "https://tnl.dev/c/team-not-found") || !strings.HasSuffix(got, "\n\n") {
+		!strings.Contains(got, "https://tnl.dev/c/team-not-found") || strings.Contains(got, "\n\n") {
 		t.Fatalf("error output = %q", got)
 	}
 	output.Reset()
 	writeCommandError(&output, clioutput.WrapCommand("tnl publish", diagnostic.Wrap(diagnostic.TargetUnavailable, errors.New("connection refused"))))
-	if got := output.String(); !strings.HasPrefix(got, "+--[ tnl publish ]-- target unavailable ") ||
-		!strings.HasSuffix(got, "\n\n") {
+	if got := output.String(); !strings.HasPrefix(got, "tnl could not reach") ||
+		!strings.Contains(got, "TNL_TARGET_UNAVAILABLE") {
 		t.Fatalf("classified error output = %q", got)
 	}
 }
 
-func TestClientErrorFramesHaveBoundedHelpAndStableCodes(t *testing.T) {
+func TestClientErrorsHaveCopyableHelpAndStableCodes(t *testing.T) {
 	for _, entry := range failure.ClientReasons() {
 		var output bytes.Buffer
 		writeCommandError(&output, failure.Wrap("test client failure", entry.Code, errors.New("secret-token")))
 		text := output.String()
-		unwrapped := strings.NewReplacer(" ", "", "\n", "", "|", "").Replace(text)
-		if !strings.Contains(unwrapped, failure.HelpURL(entry.Code, "")) {
+		if !strings.Contains(text, failure.HelpURL(entry.Code, "")) {
 			// each client error must be reachable even when its internal cause is not.
 			t.Fatalf("missing help for %s: %q", entry.Code, text)
 		}
 		if !strings.Contains(text, string(entry.Code)) || strings.Contains(text, "secret-token") {
 			t.Fatalf("unsafe output for %s: %q", entry.Code, text)
-		}
-		for _, line := range strings.Split(text, "\n") {
-			if len(line) > 72 {
-				t.Fatalf("output line exceeds 72 columns for %s: %q", entry.Code, line)
-			}
 		}
 	}
 }

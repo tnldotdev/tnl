@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
@@ -269,7 +268,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 		if found {
 			member = current.Member
 		}
-		return writeHumanFrame(diagnostics, "tnl publisher serve", state, "", clioutput.Fields(clioutput.Field{Label: "deployment", Value: member.DeploymentName}, clioutput.Field{Label: "project key", Value: member.ProjectKey}, clioutput.Field{Label: "observed revision", Value: strconv.FormatInt(revision, 10)}))
+		return writeResult(diagnostics, clioutput.Line(member.DeploymentName+"  "+state))
 	})
 }
 

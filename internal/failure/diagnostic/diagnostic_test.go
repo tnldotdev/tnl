@@ -70,16 +70,13 @@ func TestDefinitionsHaveStableBoundedASCIIOutput(t *testing.T) {
 		}
 		seenURLs[url] = true
 		text := Text(code)
-		if !strings.Contains(text, "help  "+url) {
+		if !strings.Contains(text, url) {
 			t.Fatalf("diagnostic %q does not contain its help URL: %q", code, text)
 		}
-		if !strings.HasPrefix(text, "+--[ tnl ]-- ") || !strings.Contains(text, "+-- "+string(code)+" ") {
-			t.Fatalf("diagnostic %q does not contain a framed diagram: %q", code, text)
+		if !strings.HasSuffix(text, string(code)+"  "+url+"\n") || strings.Contains(text, "+--[") {
+			t.Fatalf("diagnostic %q lost its plain code and URL: %q", code, text)
 		}
 		for _, line := range strings.Split(text, "\n") {
-			if len(line) > 72 {
-				t.Fatalf("diagnostic %q line exceeds 72 columns: %q", code, line)
-			}
 			for _, character := range line {
 				if character < 0x20 || character > 0x7e {
 					t.Fatalf("diagnostic %q contains non-ASCII output: %q", code, line)
@@ -92,8 +89,9 @@ func TestDefinitionsHaveStableBoundedASCIIOutput(t *testing.T) {
 func TestKnownCaseChangesGuidanceButNotDiagnosticIdentity(t *testing.T) {
 	err := Wrap(TargetUnavailable, syscall.ECONNREFUSED)
 	text, ok := TextForError(err)
-	if !ok || !strings.Contains(text, "x  target refused connection") ||
-		!strings.Contains(text, "help  https://tnl.dev/e/target?case=connection-refused") ||
+	if !ok || !strings.Contains(text, "the target refused the connection.") ||
+		!strings.Contains(text, "start the target and check its listening port") ||
+		!strings.Contains(text, "https://tnl.dev/e/target?case=connection-refused") ||
 		!strings.Contains(text, string(TargetUnavailable)) {
 		t.Fatalf("contextual diagnostic = %q", text)
 	}
@@ -133,28 +131,26 @@ func TestErrorPreservesCauseAndRendersDetail(t *testing.T) {
 		t.Fatalf("CodeOf() = %q, %t", code, ok)
 	}
 	text, ok := TextForError(err)
-	if !ok || !strings.Contains(text, err.Error()) || !strings.Contains(text, "help  "+HelpURL(TargetUnavailable, "")) ||
-		!strings.Contains(text, "+-- "+string(TargetUnavailable)+" ") {
+	if !ok || !strings.Contains(text, err.Error()) || !strings.Contains(text, HelpURL(TargetUnavailable, "")) ||
+		!strings.Contains(text, string(TargetUnavailable)) {
 		t.Fatalf("TextForError() = %q, %t", text, ok)
 	}
 }
 
 func TestWriteWarningUsesDiagnosticFrame(t *testing.T) {
 	var output bytes.Buffer
-	if err := WriteWarning(&output, "tnl publish", ProvisioningStalled); err != nil {
+	if err := WriteWarning(&output, ProvisioningStalled); err != nil {
 		t.Fatal(err)
 	}
 	text := output.String()
-	if !strings.HasPrefix(text, "+--[ tnl publish ]-- provisioning stalled ") ||
-		!strings.Contains(text, "help  "+HelpURL(ProvisioningStalled, "")) ||
-		!strings.Contains(text, "+-- "+string(ProvisioningStalled)+" ") ||
-		!strings.HasSuffix(text, "\n\n") {
+	if !strings.HasPrefix(text, "Warning: ") ||
+		!strings.HasSuffix(text, string(ProvisioningStalled)+"  "+HelpURL(ProvisioningStalled, "")+"\n") {
 		t.Fatalf("warning = %q", text)
 	}
 }
 
 func TestWriteWarningRejectsShortWrite(t *testing.T) {
-	if err := WriteWarning(shortWriter{}, "tnl publish", ProvisioningStalled); !errors.Is(err, io.ErrShortWrite) {
+	if err := WriteWarning(shortWriter{}, ProvisioningStalled); !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("WriteWarning error = %v", err)
 	}
 }

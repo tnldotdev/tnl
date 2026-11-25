@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,16 +97,14 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, project pro
 		if err != nil {
 			return err
 		}
-		n, identity, err := publisheridentity.EnsureServiceOwner(ctx, session.Store(), session.Authenticated().Control, session.Authenticated().Authority, service)
+		n, _, err := publisheridentity.EnsureServiceOwner(ctx, session.Store(), session.Authenticated().Control, session.Authenticated().Authority, service)
 		if err != nil {
 			return err
 		}
 		if _, err := n.SavedService(ctx); err != nil {
 			return err
 		}
-		return writeHumanFrame(output, "tnl publisher setup", "ready", "service publisher is set up", clioutput.Fields(
-			clioutput.Field{Label: "service ID", Value: service.Id}, clioutput.Field{Label: "publisher", Value: identity.ClientId}, clioutput.Field{Label: "grant", Value: identity.GrantId},
-		))
+		return writeResult(output, clioutput.Line("Set up publisher for "+service.Name+"."))
 	}
 	current, err := session.CurrentWithDomains(ctx)
 	if err != nil {
@@ -119,13 +118,11 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, project pro
 	if !valid || namespace == "" {
 		return publisherCLIError("selected domain has no HTTP namespace")
 	}
-	_, identity, err := publisheridentity.EnsureNamespace(ctx, session.Store(), session.Authenticated().Control, session.Authenticated().Authority, current.Team().Id, domain.Id, namespace)
+	_, _, err = publisheridentity.EnsureNamespace(ctx, session.Store(), session.Authenticated().Control, session.Authenticated().Authority, current.Team().Id, domain.Id, namespace)
 	if err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl publisher setup", "ready", "local apps can now publish in this namespace", clioutput.Fields(
-		clioutput.Field{Label: "namespace", Value: namespace}, clioutput.Field{Label: "publisher", Value: identity.ClientId}, clioutput.Field{Label: "grant", Value: identity.GrantId},
-	))
+	return writeResult(output, clioutput.Line("Set up publisher for "+namespace+"."))
 }
 
 func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -220,9 +217,7 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 	if err := credentialfile.Write(f.OutputFile, fCred); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl publisher provision", "created", "mount the file and set TNL_PUBLISHER_CREDENTIAL_FILE", clioutput.Fields(
-		clioutput.Field{Label: "file", Value: f.OutputFile}, clioutput.Field{Label: "publisher", Value: identity.ClientId}, clioutput.Field{Label: "grant", Value: identity.GrantId},
-	))
+	return writeResult(output, clioutput.Line("Wrote private publisher credentials: "+f.OutputFile), clioutput.Text("Mount this file and set TNL_PUBLISHER_CREDENTIAL_FILE to its path."))
 }
 
 type publisherEnrollCommand struct {
@@ -326,36 +321,57 @@ func runPublisherList(ctx context.Context, f publisherListCommand, project proje
 	if f.Output == statusOutputJSON {
 		return failure.Wrap("write publishers", failure.OutputUnavailable, json.NewEncoder(output).Encode(page))
 	}
-	blocks := []clioutput.Block{}
-	for _, p := range page.Identities {
-		state := "active"
+	blocks := publisherListTables(page.Identities, time.Now())
+	if page.NextCursor != nil {
+		scope := f.followupScope(ctx, session, current.Team().Id)
+		blocks = append(blocks, f.nextPage(scope, *page.NextCursor, ""))
+	}
+	return writeResult(output, blocks...)
+}
+
+func publisherListTables(identities []controlv1.PublisherIdentity, now time.Time) []clioutput.Block {
+	var publishers, grants [][]string
+	for _, p := range identities {
+		state := "enrolled"
 		if p.RevokedAt != nil {
 			state = "revoked"
 		}
-		fields := []clioutput.Field{{Label: "publisher", Value: p.Id}, {Label: "kind", Value: string(p.Kind)}, {Label: "state", Value: state}}
-		fields = append(fields, publisherRuntimeFields(p.Runtime)...)
+		publishers = append(publishers, []string{p.Name, state, p.Id})
 		for _, g := range p.Grants {
-			value := g.Id
+			scope := string(g.Kind)
 			if g.Namespace != nil {
-				value += " " + *g.Namespace
+				scope = *g.Namespace
 			}
 			if g.ServiceId != nil {
-				value += " " + *g.ServiceId
+				scope = *g.ServiceId
 			}
+			state := "granted"
 			if g.RevokedAt != nil {
-				value += " (revoked)"
-			} else if g.ExpiresAt != nil && !g.ExpiresAt.After(time.Now()) {
-				value += " (expired)"
+				state = "revoked"
+			} else if g.ExpiresAt != nil && !g.ExpiresAt.After(now) {
+				state = "expired"
+			} else if p.RevokedAt != nil {
+				state = "publisher revoked"
 			}
-			fields = append(fields, clioutput.Field{Label: "grant", Value: value})
+			grants = append(grants, []string{p.Id, g.Id, scope, state})
 		}
-		blocks = append(blocks, clioutput.Section(p.Name, clioutput.Fields(fields...)))
 	}
-	footer := ""
-	if page.NextCursor != nil {
-		footer = "next: tnl publisher list --after " + *page.NextCursor
+	blocks := []clioutput.Block{clioutput.Table([]string{"PUBLISHER", "STATE", "PUBLISHER ID"}, publishers, "No publishers.")}
+	if len(grants) != 0 {
+		blocks = append(blocks, clioutput.Section("Grants", clioutput.Table([]string{"PUBLISHER ID", "GRANT ID", "SCOPE", "STATE"}, grants, "")))
 	}
-	return writeHumanFrame(output, "tnl publisher list", countState(len(page.Identities), "publisher", "publishers"), footer, blocks...)
+	return blocks
+}
+
+func (f publisherListCommand) nextPage(scope commandScope, cursor, projectKey string) clioutput.Block {
+	var args []string
+	if f.Deployment != "" {
+		args = append(args, "--deployment="+f.Deployment, "--project-key="+projectKey)
+		if f.Limit != 50 {
+			args = append(args, "--limit="+strconv.Itoa(f.Limit))
+		}
+	}
+	return scope.nextPage("publisher list", cursor, args...)
 }
 
 func runPublisherRevoke(ctx context.Context, f publisherRevokeCommand, project projectConfiguration, output, diagnostics io.Writer) error {
@@ -383,7 +399,7 @@ func runPublisherRevoke(ctx context.Context, f publisherRevokeCommand, project p
 	if f.Output == statusOutputJSON {
 		return writePublisherRevoked(output, f.ID)
 	}
-	return writeHumanFrame(output, "tnl publisher revoke", "revoked", "active runs stop on heartbeat", clioutput.Fields(clioutput.Field{Label: "publisher", Value: f.ID}))
+	return writeResult(output, clioutput.Line("Revoked publisher "+f.ID+"."))
 }
 
 func runPublisherGrantAdd(ctx context.Context, f publisherGrantAddCommand, output, diagnostics io.Writer) error {
@@ -410,7 +426,7 @@ func runPublisherGrantAdd(ctx context.Context, f publisherGrantAddCommand, outpu
 	if g.TeamId != current.Team().Id || service != nil && (g.Kind != "service" || g.ServiceId == nil || *g.ServiceId != *service || g.DomainId != nil || g.Namespace != nil) || domain != nil && (g.Kind != "namespace" || g.DomainId == nil || *g.DomainId != *domain || g.ServiceId != nil || !publisherNamespaceMatches(current, *domain, g.Namespace)) {
 		return publisheridentity.ErrScope
 	}
-	return writeHumanFrame(output, "tnl publisher grant add", "created", "", clioutput.Fields(clioutput.Field{Label: "publisher", Value: f.PublisherIdentityID}, clioutput.Field{Label: "grant", Value: g.Id}))
+	return writeResult(output, clioutput.Line("Created grant "+g.Id+"."))
 }
 
 func publisherScopeTeam(ctx context.Context, session *clientteam.Session, namespace bool) (clientteam.Context, error) {
@@ -502,7 +518,7 @@ func runPublisherGrantRevoke(ctx context.Context, f publisherGrantRevokeCommand,
 	if err := session.Authenticated().Control.RevokePublisherGrant(ctx, current.Team().Id, f.PublisherIdentityID, f.GrantID); err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl publisher grant revoke", "revoked", "active runs stop on heartbeat", clioutput.Fields(clioutput.Field{Label: "publisher", Value: f.PublisherIdentityID}, clioutput.Field{Label: "grant", Value: f.GrantID}))
+	return writeResult(output, clioutput.Line("Revoked grant "+f.GrantID+"."))
 }
 
 type grantSubcommands struct {
@@ -512,8 +528,11 @@ type grantSubcommands struct {
 
 func (a *commandApp) newPublisherCommand() *cobra.Command {
 	f := a.flags
-	cPublisher := &cobra.Command{Use: "publisher", Short: "Enroll publishers and manage their scoped grants.", GroupID: "manage"}
-	cPublisherServe := &cobra.Command{Use: "serve", Short: "Run this replica's assigned services with a saved or portable deployment identity."}
+	cPublisher := &cobra.Command{
+		Use: "publisher", Short: "Authorize publishers to serve specific services.", GroupID: "deploy",
+		Long: "Use setup to approve a publisher for a deployment's services. On a machine that can reach their targets, use serve to enroll and run that publisher.",
+	}
+	cPublisherServe := &cobra.Command{Use: "serve", Short: "Run the services assigned to a deployment publisher."}
 	a.leaf(cPublisherServe, &f.Publisher.Serve, func(call commandCall) error {
 		return a.servePublisher(call)
 	})
@@ -523,7 +542,7 @@ func (a *commandApp) newPublisherCommand() *cobra.Command {
 		return runPublisherCurrent(call.ctx, f.Publisher.Current, a.out)
 	})
 	cPublisher.AddCommand(cPublisherCurrent)
-	cPublisherSetup := &cobra.Command{Use: "setup", Short: "Approve scoped deployment publisher enrollment or set up a local publisher."}
+	cPublisherSetup := &cobra.Command{Use: "setup", Short: "Approve deployment enrollment or set up a local publisher."}
 	a.leaf(cPublisherSetup, &f.Publisher.Setup, func(call commandCall) error {
 		return runPublisherSetup(call.ctx, f.Publisher.Setup, call.project, a.out, a.errOut)
 	})
