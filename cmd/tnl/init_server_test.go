@@ -20,10 +20,21 @@ func TestInitDryRunPrintsPlanWithoutEdits(t *testing.T) {
 	if err := run(t.Context(), []string{"init", "--dry-run"}, &out, &diag); err != nil {
 		t.Fatal(err)
 	}
-	for _, step := range []string{"tnl.config.ts", "vite.config.ts", "pnpm add --save-dev @tnldotdev/tnl", "no changes made"} {
+	for _, step := range []string{"Planned changes:\nCreate tnl.config.ts\nCreate vite.config.ts", "\npnpm add --save-dev @tnldotdev/tnl\n"} {
 		if !strings.Contains(out.String(), step) {
 			t.Fatalf("missing plan step %q:\n%s", step, &out)
 		}
+	}
+	if !strings.HasSuffix(out.String(), "\nNo changes made.\n") {
+		t.Fatalf("missing dry run footer:\n%s", &out)
+	}
+	out.Reset()
+	if err := run(t.Context(), []string{"init", "--dry-run", "--no-install"}, &out, &diag); err != nil {
+		t.Fatal(err)
+	}
+	plan, manual, ok := strings.Cut(out.String(), "Manual steps:\n")
+	if !ok || strings.Contains(plan, "pnpm add") || !strings.HasPrefix(manual, "pnpm add --save-dev @tnldotdev/tnl\n") {
+		t.Fatalf("no-install plan:\n%s", &out)
 	}
 	files, err := os.ReadDir(root)
 	if err != nil || len(files) != 1 {

@@ -124,7 +124,7 @@ func TestInitGitignoreCustomRulesAreDiagnosedAndPreserved(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &output, &bytes.Buffer{}); err != nil {
 					t.Fatal(err)
 				}
-				if !strings.HasPrefix(output.String(), "Finish setting up this project:\n") || !strings.Contains(output.String(), ".gitignore:2") || !strings.Contains(output.String(), "Narrow custom") {
+				if !strings.Contains(output.String(), "Finish setup:\n") || !strings.Contains(output.String(), "Review .gitignore:2") || !strings.Contains(output.String(), "Narrow custom") {
 					t.Fatalf("missing custom rule action: %s", output.String())
 				}
 				after, err := os.ReadFile(filepath.Join(root, ".gitignore"))

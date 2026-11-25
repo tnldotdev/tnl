@@ -72,6 +72,9 @@ func NewPlan(ctx context.Context, cwd string, actionForFailure func(error) strin
 	if frameworkUnclear {
 		plan.Actions = append(plan.Actions, actionForFailure(failure.Wrap("detect framework", failure.InitFramework, err)))
 	}
+	if plan.InstallBlocked || frameworkUnclear {
+		plan.Actions = append(plan.Actions, "tnl init")
+	}
 	apiKind := detectAPIServer(packageConfig)
 	if apiKind != "" && plan.Framework == "vite" && startsAPIServer(packageConfig.Scripts["dev"]) {
 		plan.Framework = ""
@@ -97,12 +100,12 @@ func NewPlan(ctx context.Context, cwd string, actionForFailure func(error) strin
 		} else {
 			plan.ConfigurationPath = filepath.Join(root, "tnl.yml")
 			plan.NewConfiguration = []byte("version: 1\ntnl:\n  services: {}\n")
-			plan.Actions = append(plan.Actions, "declare services in tnl.yml, then run tnl generate")
+			plan.Actions = append(plan.Actions, "Declare services in tnl.yml, then run:", "tnl generate")
 		}
 	}
 	plan.NeedsAppRegistration = packageFound && !frameworkUnclear && plan.Framework == "" && apiKind == "" && plan.GeneratedAppService
 	if plan.NeedsAppRegistration {
-		plan.Actions = append(plan.Actions, "prepare the app before startup with await tnl.prepare({ service: \"app\" }), then await the returned handle's register(server) after the HTTP listener binds.")
+		plan.Actions = append(plan.Actions, "Prepare the app before startup with await tnl.prepare({ service: \"app\" }), then await the returned handle's register(server) after the HTTP listener binds.")
 	}
 
 	if packageFound {
@@ -171,7 +174,7 @@ func planFrameworkConfig(plan *Plan, root string) error {
 	if bytes.Equal(data, frameworkConfigSource(plan.Framework)) {
 		return nil
 	}
-	plan.Actions = append(plan.Actions, frameworkConfigAction(plan.Framework, path))
+	plan.Actions = append(plan.Actions, frameworkConfigAction(plan.Framework, filepath.Base(path)))
 	return nil
 }
 
@@ -218,13 +221,31 @@ func commandForRecommendation(manager string, packages []string) []string {
 	return append([]string{"npm", "install", "--save-dev"}, packages...)
 }
 
-func (plan Plan) InstallRecommendation() string {
+// Install describes what init would run or ask the user to run.
+type Install struct {
+	Command string
+	Manual  bool
+	args    []string
+}
+
+func (plan Plan) PackageInstall(noInstall bool) Install {
 	if plan.InstallBlocked || len(plan.MissingPackages) == 0 {
-		return ""
+		return Install{}
 	}
-	return shellCommand(commandForRecommendation(plan.PackageManager, plan.MissingPackages))
+	args := packageInstallCommand(plan.PackageManager, plan.MissingPackages)
+	return Install{Command: shellCommand(commandForRecommendation(plan.PackageManager, plan.MissingPackages)), Manual: noInstall || args == nil, args: args}
 }
 
 func shellCommand(arguments []string) string {
 	return strings.Join(arguments, " ")
+}
+
+// RelativePath names a file from the project root. Git may supply an ignore
+// file on another volume, which requires its full path.
+func RelativePath(root, path string) string {
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(relative)
 }

@@ -42,7 +42,8 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 		return result, err
 	}
 	relative = filepath.ToSlash(relative)
-	action := fmt.Sprintf("add %q to the include array in %s.", relative, path)
+	name := RelativePath(root, path)
+	action := fmt.Sprintf("Add %q to the include array in %s.", relative, name)
 	manual := func() (projectTypeIncludeResult, error) {
 		result.actions = append(result.actions, action)
 		return result, nil
@@ -53,7 +54,7 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 	visited[path] = true
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
-		result.actions = append(result.actions, fmt.Sprintf("add %q to the include array in %s when creating it.", relative, path))
+		result.actions = append(result.actions, fmt.Sprintf("Add %q to the include array in %s when creating it.", relative, name))
 		return result, nil
 	}
 	if err != nil {
@@ -113,7 +114,7 @@ func projectTypeIncludesAt(root, path string, visited map[string]bool) (projectT
 		// an inherited include cannot be narrowed safely. with no inheritance,
 		// retain typescript's default source glob when adding the explicit file.
 		if ast.Find("/extends") != nil {
-			action = fmt.Sprintf("retain the inherited source include patterns in %s and append %q to an explicit include array.", path, relative)
+			action = fmt.Sprintf("Retain the inherited source include patterns in %s and append %q to an explicit include array.", name, relative)
 			return manual()
 		}
 		includes, err := json.Marshal([]string{"**/*", relative})

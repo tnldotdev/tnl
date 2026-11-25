@@ -10,7 +10,7 @@ import (
 )
 
 func planInit(ctx context.Context, root string) (projectinit.Plan, error) {
-	return projectinit.NewPlan(ctx, root, func(err error) string { return presentFailure(err).action })
+	return projectinit.NewPlan(ctx, root, initRecoveryAction)
 }
 
 func copyInitFixture(t *testing.T, name string) string {

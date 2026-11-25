@@ -133,7 +133,7 @@ func TestProjectTypeIncludesPreserveConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if test.wantAction && (len(result.actions) != 1 || !strings.Contains(result.actions[0], `".tnl/generated/project.d.ts"`) || !strings.Contains(result.actions[0], path)) || !test.wantAction && len(result.actions) != 0 || (len(result.updated) != 0) != test.wantUpdate {
+			if test.wantAction && (len(result.actions) != 1 || !strings.Contains(result.actions[0], `".tnl/generated/project.d.ts"`) || !strings.Contains(result.actions[0], "in tsconfig.json.")) || !test.wantAction && len(result.actions) != 0 || (len(result.updated) != 0) != test.wantUpdate {
 				t.Fatalf("include result = %v", result)
 			}
 			after, err := os.ReadFile(path)
@@ -182,7 +182,7 @@ func TestProjectTypeIncludeActionDoesNotInferNestedServiceDirectory(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.actions) != 1 || !strings.Contains(result.actions[0], filepath.Join(root, "tsconfig.json")) || !strings.Contains(result.actions[0], `".tnl/generated/project.d.ts"`) || strings.Contains(result.actions[0], nestedPath) {
+	if len(result.actions) != 1 || result.actions[0] != `Add ".tnl/generated/project.d.ts" to the include array in tsconfig.json when creating it.` {
 		t.Fatalf("actions = %v", result.actions)
 	}
 	if got, err := os.ReadFile(nestedPath); err != nil || !bytes.Equal(got, source) {

@@ -27,10 +27,14 @@ func TestInitReportsManualActionForExistingFrameworkConfig(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &stderr); err != nil {
 					t.Fatal(err)
 				}
-				for _, fragment := range []string{"Finish setting up", test.action} {
+				for _, fragment := range []string{"Finish setup:", test.action} {
 					if !strings.Contains(stdout.String(), fragment) {
 						t.Fatalf("run %d missing %q: %q", run, fragment, stdout.String())
 					}
+				}
+				changes, manual, _ := strings.Cut(stdout.String(), "Finish setup:\n")
+				if run == 1 && !strings.Contains(changes, "Created tnl.config.ts") || run == 2 && changes != "" || !strings.Contains(manual, "Update "+filepath.Base(path)+":") || strings.Contains(manual, root) {
+					t.Fatalf("run %d: changes = %q, manual steps = %q", run, changes, manual)
 				}
 				if stderr.Len() != 0 {
 					t.Fatalf("stderr = %q", stderr.String())
@@ -70,7 +74,7 @@ func TestInitWiresProjectTypesIdempotently(t *testing.T) {
 				if err := runInit(t.Context(), initCommand{NoInstall: true}, &stdout, &bytes.Buffer{}); err != nil {
 					t.Fatal(err)
 				}
-				if strings.Contains(stdout.String(), "add \".tnl/generated/project.d.ts\"") {
+				if strings.Contains(stdout.String(), "Add \".tnl/generated/project.d.ts\"") {
 					t.Fatalf("run %d stdout = %q", run, stdout.String())
 				}
 				after, err := os.ReadFile(path)
@@ -99,7 +103,7 @@ func TestInitAmbiguousFrameworkOutputNeedsAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(after, source) || !strings.Contains(stdout.String(), "Finish setting up") || strings.Contains(stdout.String(), "already configured") || stderr.Len() != 0 {
+	if !bytes.Equal(after, source) || !strings.Contains(stdout.String(), "Finish setup:") || strings.Contains(stdout.String(), "already configured") || stderr.Len() != 0 {
 		t.Fatalf("config = %q, stdout = %q, stderr = %q", after, stdout.String(), stderr.String())
 	}
 }
@@ -120,7 +124,7 @@ func TestInitGenericShowsRegistrationStepsOnRepeat(t *testing.T) {
 				if err := runInitWithInput(t.Context(), initCommand{}, strings.NewReader("7777\n"), false, &stdout, &stderr); err != nil {
 					t.Fatal(err)
 				}
-				for _, text := range []string{"Finish setting up", "tnl.prepare"} {
+				for _, text := range []string{"Finish setup:", "tnl.prepare"} {
 					if !strings.Contains(stdout.String(), text) {
 						t.Fatalf("run %d missing %q: %s", run, text, stdout.String())
 					}
@@ -207,7 +211,7 @@ func TestInitIgnoresObsoleteCommandAndPortPromptAnswers(t *testing.T) {
 	if err != nil || strings.Contains(string(config), "dev:") {
 		t.Fatalf("config = %q, %v", config, err)
 	}
-	if !strings.Contains(stdout.String(), "tnl.prepare") || !strings.Contains(stdout.String(), "Finish setting up") || stderr.Len() != 0 {
+	if !strings.Contains(stdout.String(), "tnl.prepare") || !strings.Contains(stdout.String(), "Finish setup:") || stderr.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 	stdout.Reset()

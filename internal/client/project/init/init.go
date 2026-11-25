@@ -31,6 +31,7 @@ type Result struct {
 	UpdatedPaths         []string
 	DeclarationsPath     string
 	PythonPackagePath    string
+	PythonInstalled      bool
 	Actions              []string
 	Changed              bool
 }
@@ -42,12 +43,11 @@ func (plan Plan) Apply(ctx context.Context, options Options) (Result, error) {
 		DeclarationsPath:  filepath.Join(plan.Root, meta.GeneratedDirectoryName, meta.DeclarationsName),
 		Actions:           slices.Clone(plan.Actions),
 	}
-	if len(plan.MissingPackages) != 0 && !plan.InstallBlocked {
-		command := packageInstallCommand(plan.PackageManager, plan.MissingPackages)
-		if options.NoInstall || command == nil {
-			result.Actions = append(result.Actions, "Run: "+plan.InstallRecommendation())
+	if install := plan.PackageInstall(options.NoInstall); install.Command != "" {
+		if install.Manual {
+			result.Actions = append(result.Actions, install.Command)
 		} else {
-			if err := runInitInstall(ctx, plan.Root, command); err != nil {
+			if err := runInitInstall(ctx, plan.Root, install.args); err != nil {
 				return Result{}, err
 			}
 			result.InstalledPackages = slices.Clone(plan.MissingPackages)
@@ -89,6 +89,7 @@ func (plan Plan) Apply(ctx context.Context, options Options) (Result, error) {
 		return Result{}, err
 	}
 	result.Actions = append(result.Actions, pythonActions...)
+	result.PythonInstalled = pythonUpdated
 	if pythonUpdated || len(pythonActions) != 0 {
 		result.PythonPackagePath = filepath.Join(plan.Root, meta.GeneratedDirectoryName, meta.PythonDirectoryName)
 	}

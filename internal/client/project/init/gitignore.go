@@ -71,6 +71,9 @@ func projectGitignoreActions(ctx context.Context, root string) []string {
 		if source != "" && !filepath.IsAbs(source) {
 			source = filepath.Join(ignoreRoot, source)
 		}
+		if source != "" {
+			source = RelativePath(root, source)
+		}
 		location := source + ":" + line
 		if seen[location] {
 			continue
