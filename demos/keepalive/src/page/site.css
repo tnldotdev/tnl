@@ -1,24 +1,17 @@
-@font-face {
-  font-family: "JetBrains Mono";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 100 800;
-  src: url("../../../../internal/browserfonts/jetbrains-mono-latin-wght-normal.woff2")
-    format("woff2");
-}
-
 :root {
   color-scheme: light;
   background: #fff;
   color: #171717;
-  font:
-    1rem/1.6 "JetBrains Mono",
+  font-family:
     ui-monospace,
-    "SFMono-Regular",
+    SFMono-Regular,
+    SF Mono,
     Menlo,
     Consolas,
-    "Liberation Mono",
+    Liberation Mono,
     monospace;
+  font-size: 1rem;
+  line-height: 1.6;
 }
 
 main {
