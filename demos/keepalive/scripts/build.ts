@@ -43,18 +43,12 @@ await Promise.all([
 ]);
 
 const assets = await Promise.all(
-  [
-    "/app.js",
-    "/index.html",
-    "/index.css",
-    "/favicon.svg",
-    "/jetbrains-mono-latin-wght-normal.woff2",
-    WORKER_PATH,
-    WASM_PATH,
-  ].map(async (file): Promise<Asset> => {
-    const bytes = await readFile(path.join(output, file));
-    return { path: file, size: bytes.byteLength, sha256: await digest(bytes) };
-  }),
+  ["/app.js", "/index.html", "/index.css", "/favicon.svg", WORKER_PATH, WASM_PATH].map(
+    async (file): Promise<Asset> => {
+      const bytes = await readFile(path.join(output, file));
+      return { path: file, size: bytes.byteLength, sha256: await digest(bytes) };
+    },
+  ),
 );
 const id = await digest(new TextEncoder().encode(JSON.stringify(assets)));
 const release = await parseRelease({ id, assets });

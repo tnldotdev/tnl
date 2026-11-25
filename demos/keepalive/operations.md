@@ -14,6 +14,10 @@ If the fleet is empty, open [start.keepthisalive.com](https://start.keepthisaliv
 and click **start hosting**. Use the same Chrome profile to reuse the seed's
 certificate. Check the live site at [keepthisalive.com](https://keepthisalive.com).
 
+The Worker only serves files from hosts on its own release. After a deploy or
+rollback, start a fresh tab from the matching start page if no matching host is
+serving. An old hosting tab cannot seed a different release.
+
 ## Rotate the Worker credential
 
 From `demos/keepalive`, use the following commands. The credential

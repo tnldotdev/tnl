@@ -5,7 +5,7 @@ import { WASM_PATH, WORKER_PATH, digest, parseRelease } from "../src/release.ts"
 import { NO_HOST_HEADER } from "../src/network.ts";
 
 const script = "export const version = 1;";
-const fontPath = "/jetbrains-mono-latin-wght-normal.woff2";
+const legacyFontPath = "/jetbrains-mono-latin-wght-normal.woff2";
 const aliases = ["a", "b", "c"].map((letter) => `https://p-${letter.repeat(26)}.${HOST_PARENT}`);
 const request = (path: string, init?: RequestInit) =>
   new Request(`https://keepthisalive.com${path}`, init);
@@ -14,7 +14,6 @@ async function setup(reportFile?: Parameters<typeof createProxy>[2]) {
   const files = {
     "/index.html": "<h1>keepalive</h1>",
     "/app.js": script,
-    [fontPath]: "wOF2",
     [WORKER_PATH]: "export {};",
     [WASM_PATH]: "fixture",
   };
@@ -48,15 +47,10 @@ async function setup(reportFile?: Parameters<typeof createProxy>[2]) {
   return { fetchHost, report, proxy: createProxy(release, fetchHost, reportFile) };
 }
 
-it("serves the checked font with the font MIME type", async () => {
-  const { proxy, fetchHost, report } = await setup();
-  fetchHost.mockResolvedValueOnce(report(aliases.slice(0, 1)));
-  fetchHost.mockResolvedValueOnce(new Response("wOF2"));
-
-  const response = await proxy.file(request(fontPath));
-  expect(response.status).toBe(200);
-  expect(response.headers.get("Content-Type")).toBe("font/woff2");
-  expect(await response.text()).toBe("wOF2");
+it("does not contact a host for the old font URL", async () => {
+  const { proxy, fetchHost } = await setup();
+  expect((await proxy.file(request(legacyFontPath))).status).toBe(404);
+  expect(fetchHost).not.toHaveBeenCalled();
 });
 
 it("checks the script before serving it and does not pass through credentials", async () => {
