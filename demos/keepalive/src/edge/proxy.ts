@@ -7,6 +7,7 @@ import {
   type GossipMessage,
 } from "../peers/gossip.ts";
 import { contentType, readAssetResponse, readJSON, type Release } from "../release.ts";
+import { NO_HOST_HEADER, PEER_DISCOVERY_MS } from "../network.ts";
 
 export function siteHeaders(type = "application/octet-stream") {
   return {
@@ -22,9 +23,15 @@ export function siteHeaders(type = "application/octet-stream") {
   };
 }
 
-function unavailable() {
+function unavailable(discoveredNoHost = false) {
   // keep empty navigations from becoming downloads in Safari.
-  return new Response(null, { status: 503, headers: siteHeaders("text/html; charset=utf-8") });
+  return new Response(null, {
+    status: 503,
+    headers: {
+      ...siteHeaders("text/html; charset=utf-8"),
+      ...(discoveredNoHost ? { [NO_HOST_HEADER]: "1" } : {}),
+    },
+  });
 }
 
 const ATTEMPTS = 3;
@@ -51,6 +58,8 @@ export function createProxy(release: Release, fetchHost = fetch) {
   let refreshAt = 0;
   let refreshing = false;
   let audience: { until: number; message: GossipMessage } | undefined;
+  let liveRevision = 0;
+  let outageRevision = 0;
 
   function remember(message: GossipMessage, now: number) {
     for (const host of [message.from, ...message.changes]) {
@@ -120,6 +129,7 @@ export function createProxy(release: Release, fetchHost = fetch) {
   }
 
   async function probe(origin: string, shared: boolean, parent?: AbortSignal) {
+    const revision = outageRevision;
     const timeout = AbortSignal.timeout(3_000);
     const signal = parent === undefined ? timeout : AbortSignal.any([parent, timeout]);
     return get(origin, PEERS_PATH, signal, async (response) => {
@@ -127,13 +137,18 @@ export function createProxy(release: Release, fetchHost = fetch) {
       const now = Date.now();
       const message = parseMessage(body, release.id, now);
       if (message === undefined || (!shared && origin !== message.from.origin)) return undefined;
-      remember(message, now);
+      if (revision === outageRevision) remember(message, now);
       if (message.from.left || (message.from.endsAt ?? Infinity) <= now) return undefined;
+      if (revision !== outageRevision) return message;
+      liveRevision++;
+      const current = known.get(message.from.origin);
       if (
-        message.audience !== undefined &&
-        known.get(message.from.origin)?.sequence === message.from.seq
+        current?.run === BigInt(message.from.runNumber) &&
+        current.sequence === message.from.seq
       ) {
-        audience = { until: Math.min(now, message.from.reportedAt) + STALE_MS, message };
+        current.retryAt = 0;
+        if (message.audience !== undefined)
+          audience = { until: Math.min(now, message.from.reportedAt) + STALE_MS, message };
       }
       return message;
     });
@@ -173,9 +188,13 @@ export function createProxy(release: Release, fetchHost = fetch) {
       signal: AbortSignal,
       alternate: boolean,
     ) => Promise<Response | undefined>,
-    discover: (message: GossipMessage) => Response | undefined = () => undefined,
+    discover?: (message: GossipMessage) => Response,
   ): Promise<Response> {
-    const deadline = AbortSignal.any([request.signal, AbortSignal.timeout(20_000)]);
+    const deadline = AbortSignal.any([
+      request.signal,
+      AbortSignal.timeout(discover === undefined ? 20_000 : PEER_DISCOVERY_MS),
+    ]);
+    const revision = liveRevision;
     let discovered = false;
     const attempted = new Set<string>();
     refresh(candidates(Date.now()), retain);
@@ -187,10 +206,7 @@ export function createProxy(release: Release, fetchHost = fetch) {
       if (!discovered && (origin === undefined || attempted.size === ATTEMPTS - 1)) {
         discovered = true;
         const message = await probe(sharedHost, true, deadline);
-        if (message !== undefined) {
-          const response = discover(message);
-          if (response !== undefined) return response;
-        }
+        if (message !== undefined && discover !== undefined) return discover(message);
         origins = candidates(Date.now()).filter((value) => !attempted.has(value));
         origin =
           attempted.size > 0 && message !== undefined && origins.includes(message.from.origin)
@@ -209,7 +225,14 @@ export function createProxy(release: Release, fetchHost = fetch) {
       if (response !== undefined) return response;
       if (!deadline.aborted) coolDown(origin);
     }
-    return unavailable();
+    // a newer successful probe wins over an overlapping failed search.
+    const noHost =
+      discover !== undefined && discovered && !deadline.aborted && revision === liveRevision;
+    if (noHost) {
+      audience = undefined;
+      outageRevision++;
+    }
+    return unavailable(noHost);
   }
 
   return {

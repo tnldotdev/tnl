@@ -25,6 +25,10 @@ The main site never falls back to that seed copy.
 A Cloudflare Worker fetches each file from a hosting tab through tnl and checks
 its size and SHA-256. If it can't get a valid copy, it returns an empty `503`.
 
+An already-open tab stays on screen. If the Worker finds no reachable host,
+the clock resets and volunteering stops. A missed check alone doesn't reset
+the clock. The tab picks up a new host without reloading.
+
 [Read the post and try the interactive diagrams](https://tnl.dev/blog/keepalive).
 
 ## read the code
@@ -33,3 +37,4 @@ its size and SHA-256. If it can't get a valid copy, it returns an empty `503`.
 - [Hosting](src/hosting/tab.ts): copy the site and start the hosting worker.
 - [Proxy](src/edge/proxy.ts): find a host and check the files it sends.
 - [Checks](tests/readme.md): run the tests and measure handoffs.
+- [Operations](operations.md): production DNS and Worker credential rotation.

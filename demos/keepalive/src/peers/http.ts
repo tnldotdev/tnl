@@ -28,7 +28,7 @@ import {
 import { MAX_FALLBACK_HOSTS, TREE_PATH, treeSample } from "./view.ts";
 import { readBytes, readJSON } from "../release.ts";
 import { INVITATION_PATH, READY_HEADER, invitationSchema } from "../enrollment.ts";
-import { hostTarget, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "../policy.ts";
+import { hostTarget, INVITATION_ACK_MS, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "../policy.ts";
 import type { ExportedCertificate } from "@tnldotdev/tnl";
 import {
   CERTIFICATE_PATH,
@@ -40,11 +40,21 @@ import {
   readInheritedCertificate,
   type CertificateReport,
 } from "../hosting/certificate.ts";
+import {
+  NoReachableHost,
+  PEER_REQUEST_MS,
+  noReachableHost,
+  request as sendRequest,
+  requireStatus,
+  retryOnce,
+} from "../network.ts";
 
 const CHECK_PATH = "/__keepalive/check";
 const WAIT_PATH = "/__keepalive/wait";
 const UPLOAD_PATH = "/__keepalive/upload";
 const WAIT_MS = 5_000;
+const CONFIRMATION_MS = 12_000;
+const MAX_CONFIRMATIONS = 16;
 const checkSchema = z.strictObject({ target: hostSchema, message: z.unknown() });
 const certificateRequest = z.strictObject({ requester: hostSchema, nonce: z.uuid() });
 const certificateProof = z.strictObject({ donor: hostSchema, run: runIDSchema, nonce: z.uuid() });
@@ -55,13 +65,17 @@ export async function readPeers(
   signal?: AbortSignal,
   invitation?: string,
 ) {
-  const request = options(signal, 5_000);
-  const response = await fetch(new URL(PEERS_PATH, origin), {
+  const request = options(signal, invitation === undefined ? PEER_REQUEST_MS : 5_000);
+  const response = await sendRequest(new URL(PEERS_PATH, origin), {
     ...request,
     ...(invitation === undefined ? {} : { headers: { [READY_HEADER]: invitation } }),
   });
+  if (invitation === undefined && noReachableHost(response)) {
+    await response.body?.cancel().catch(() => {});
+    throw new NoReachableHost();
+  }
   return parseMessage(
-    await readJSON(response, MAX_MESSAGE_BYTES, request.signal ?? undefined),
+    await readJSON(await requireStatus(response), MAX_MESSAGE_BYTES, request.signal ?? undefined),
     releaseID,
     Date.now(),
   );
@@ -69,32 +83,56 @@ export async function readPeers(
 
 /** waits for the host to pick this tab and returns its private invitation. */
 export async function waitForWork(host: Host, signal: AbortSignal) {
-  const response = await fetch(new URL(WAIT_PATH, host.origin), {
-    ...options(signal, WAIT_MS + 5_000),
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(WAIT_MS + 5_000)]);
+  const response = await sendRequest(new URL(WAIT_PATH, host.origin), {
+    signal: deadline,
+    credentials: "omit",
     method: "POST",
   });
-  if (!response.ok) throw new Error("Could not wait on this host.");
-  return invitationSchema.nullable().parse(await readJSON(response, 64));
+  return invitationSchema
+    .nullable()
+    .parse(await readJSON(await requireStatus(response), 64, deadline));
+}
+
+export class InvitationUnavailable extends Error {
+  constructor(busy: boolean) {
+    super(busy ? "The host couldn't accept this upload." : "The hosting invitation expired.");
+  }
 }
 
 export async function checkUpload(host: Host, invitation: string, signal: AbortSignal) {
+  signal.throwIfAborted();
   const bytes = new Uint8Array(UPLOAD_BYTES);
   for (let offset = 0; offset < bytes.length; offset += 65_536) {
     crypto.getRandomValues(bytes.subarray(offset, offset + 65_536));
   }
-  for (let attempt = 0; attempt < 2; attempt++) {
-    signal.throwIfAborted();
-    const response = await fetch(new URL(UPLOAD_PATH, host.origin), {
+  return retryOnce(signal, async () => {
+    const response = await sendRequest(new URL(UPLOAD_PATH, host.origin), {
       ...options(signal, UPLOAD_MS),
       method: "POST",
       headers: { [READY_HEADER]: invitation },
       body: bytes,
-    }).catch(() => undefined);
-    if (response?.status === 204) return true;
-    await response?.body?.cancel().catch(() => {});
-  }
-  signal.throwIfAborted();
-  return false;
+    });
+    if (response.status === 403 || response.status === 409 || response.status === 422) {
+      await response.body?.cancel().catch(() => {});
+      if (response.status === 422) return false;
+      throw new InvitationUnavailable(response.status === 409);
+    }
+    await requireStatus(response, 204);
+    return true;
+  });
+}
+
+export async function releaseInvitation(host: Host, invitation: string, releaseID: string) {
+  const deadline = AbortSignal.timeout(2_000);
+  await retryOnce(deadline, async () => {
+    const response = await sendRequest(new URL(INVITATION_PATH, host.origin), {
+      ...options(deadline, 1_000),
+      method: "POST",
+      headers: { [READY_HEADER]: invitation, "X-Keepalive-Release": releaseID },
+    });
+    await requireStatus(response, 204);
+  }).catch(() => {});
 }
 
 function options(signal: AbortSignal | undefined, timeout: number): RequestInit {
@@ -103,17 +141,21 @@ function options(signal: AbortSignal | undefined, timeout: number): RequestInit 
     signal: signal === undefined ? deadline : AbortSignal.any([signal, deadline]),
     cache: "no-store",
     credentials: "omit",
-    redirect: "error",
+    redirect: "manual",
   };
 }
 
 export async function readInviterCertificate(host: Host, invitation: string, signal: AbortSignal) {
-  const deadline = AbortSignal.any([signal, AbortSignal.timeout(4_000)]);
-  const response = await fetch(new URL(CERTIFICATE_PATH, host.origin), {
-    ...options(deadline, 4_000),
-    headers: { [READY_HEADER]: invitation },
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(8_000)]);
+  return retryOnce(deadline, async () => {
+    const attempt = AbortSignal.any([deadline, AbortSignal.timeout(4_000)]);
+    const response = await sendRequest(new URL(CERTIFICATE_PATH, host.origin), {
+      signal: attempt,
+      credentials: "omit",
+      headers: { [READY_HEADER]: invitation },
+    });
+    return readInheritedCertificate(await requireStatus(response), attempt);
   });
-  return readInheritedCertificate(response, deadline);
 }
 
 export function peerServer(
@@ -139,6 +181,7 @@ export function peerServer(
       }
     | undefined;
   let acceptedInvitation: string | undefined;
+  const confirmations = new Map<string, { host: Host; until: number }>();
   let replacement: Change | undefined;
   let checking = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -147,6 +190,20 @@ export function peerServer(
   let pendingCertificateProof: { donor: Host; nonce: string; answered: boolean } | undefined;
   let checkingCertificate = false;
   let isReplacing = () => false;
+
+  function cancelPromotion() {
+    promotion = undefined;
+    gossip?.cancelStart();
+  }
+
+  function expirePromotion(now: number) {
+    if (promotion !== undefined && promotion.endsAt <= now) cancelPromotion();
+  }
+
+  function expireConfirmations(now: number) {
+    for (const [invitation, receipt] of confirmations)
+      if (receipt.until <= now) confirmations.delete(invitation);
+  }
 
   function reportMessage(now: number, requesterMessage?: GossipMessage) {
     if (gossip === undefined) throw new Error("No peer view yet.");
@@ -176,26 +233,40 @@ export function peerServer(
     invitation?: string,
   ) {
     const path = via === undefined ? PEERS_PATH : CHECK_PATH;
-    const request = options(
-      lifetime,
-      invitation !== undefined ? 8_000 : via === undefined ? 1800 : 2400,
-    );
-    const response = await fetch(new URL(path, (via ?? target).origin), {
-      ...request,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(invitation === undefined ? {} : { [READY_HEADER]: invitation }),
-      },
-      body: JSON.stringify(via === undefined ? message : { target, message }),
-    });
-    const reply = parseMessage(
-      await readJSON(response, MAX_MESSAGE_BYTES, request.signal ?? undefined),
-      releaseID,
-      Date.now(),
-    );
-    if (reply !== undefined && sameRun(reply.from, target)) return reply;
-    return undefined;
+    const body = JSON.stringify(via === undefined ? message : { target, message });
+    const operation =
+      invitation === undefined
+        ? lifetime
+        : AbortSignal.any([lifetime, AbortSignal.timeout(CONFIRMATION_MS)]);
+    async function attempt() {
+      const request = options(
+        operation,
+        invitation !== undefined ? 6_000 : via === undefined ? 1800 : 2400,
+      );
+      const response = await sendRequest(new URL(path, (via ?? target).origin), {
+        ...request,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(invitation === undefined ? {} : { [READY_HEADER]: invitation }),
+        },
+        body,
+      });
+      const reply = parseMessage(
+        await readJSON(
+          await requireStatus(response),
+          MAX_MESSAGE_BYTES,
+          request.signal ?? undefined,
+        ),
+        releaseID,
+        Date.now(),
+      );
+      if (reply !== undefined && sameRun(reply.from, target)) return reply;
+      return undefined;
+    }
+    // only invitation confirmation has a replay receipt. routine gossip already
+    // retries via another peer on its own schedule.
+    return invitation === undefined ? attempt() : retryOnce(operation, attempt);
   }
 
   app.use(
@@ -203,7 +274,7 @@ export function peerServer(
     cors({
       origin: allowed,
       allowMethods: ["GET", "POST", "OPTIONS"],
-      allowHeaders: ["Content-Type", READY_HEADER],
+      allowHeaders: ["Content-Type", READY_HEADER, "X-Keepalive-Release"],
     }),
   );
   app.use("*", async (c, next) => {
@@ -253,7 +324,7 @@ export function peerServer(
   app.get(TREE_PATH, (c) => {
     if (gossip === undefined || signal.aborted) return c.body(null, 503);
     const hostRunID = gossip.self.runID;
-    return c.json({ hostRunID, hosts: treeSample(gossip.roster(Date.now()), hostRunID) });
+    return c.json({ hostRunID, hosts: treeSample(gossip.hostHistory(Date.now()), hostRunID) });
   });
   app.get(CERTIFICATE_PATH, async (c) => {
     const pending = promotion;
@@ -369,8 +440,12 @@ export function peerServer(
     try {
       const deadline = AbortSignal.any([signal, c.req.raw.signal, AbortSignal.timeout(UPLOAD_MS)]);
       await readBytes(new Response(c.req.raw.body), UPLOAD_BYTES, deadline, UPLOAD_BYTES);
-      if (promotion !== pending || pending.endsAt <= Date.now()) return c.body(null, 409);
+      const now = Date.now();
+      if (promotion !== pending || pending.endsAt <= now || deadline.aborted)
+        return c.body(null, 409);
       pending.uploadPassed = true;
+      pending.endsAt = now + STARTUP_MS;
+      gossip?.confirmStart(pending.endsAt);
       return c.body(null, 204);
     } catch {
       return c.body(null, 422);
@@ -390,9 +465,16 @@ export function peerServer(
     const pending = promotion;
     const invitation = c.req.header(READY_HEADER);
     if (invitation !== undefined) {
+      const now = Date.now();
+      expireConfirmations(now);
+      const receipt = confirmations.get(invitation);
+      if (receipt !== undefined) {
+        if (message.from.left || !sameRun(receipt.host, message.from)) return c.body(null, 403);
+        return c.json(reportMessage(now, message));
+      }
       if (
         !pending?.uploadPassed ||
-        pending.endsAt <= Date.now() ||
+        pending.endsAt <= now ||
         pending.invitation !== invitation ||
         message.from.left ||
         pending.reading
@@ -414,7 +496,9 @@ export function peerServer(
         return c.body(null, 409);
       promotion = undefined;
       gossip.finishStart();
-      gossip.receive(reply, Date.now());
+      const acceptedAt = Date.now();
+      confirmations.set(invitation, { host: reply.from, until: acceptedAt + CONFIRMATION_MS });
+      gossip.receive(reply, acceptedAt);
       if (pending.replacing) replacement = reply.from;
     } else {
       gossip.receive(message, Date.now());
@@ -452,18 +536,32 @@ export function peerServer(
       c.req.header("X-Keepalive-Release") === releaseID;
     return c.body(null, valid ? 204 : 403);
   });
+  app.post(INVITATION_PATH, (c) => {
+    expirePromotion(Date.now());
+    if (
+      signal.aborted ||
+      !allowed(c.req.header("Origin") ?? "") ||
+      c.req.header("X-Keepalive-Release") !== releaseID ||
+      promotion === undefined ||
+      promotion.invitation !== c.req.header(READY_HEADER)
+    )
+      return c.body(null, 403);
+    cancelPromotion();
+    return c.body(null, 204);
+  });
   app.post(WAIT_PATH, (c) => {
     if (!allowed(c.req.header("Origin") ?? "")) return c.body(null, 403);
     if (gossip === undefined || signal.aborted) return c.body(null, 503);
     const now = Date.now();
     let selected: string | null = null;
-    if (promotion !== undefined && promotion.endsAt <= now) promotion = undefined;
-    if (promotion === undefined)
+    expirePromotion(now);
+    expireConfirmations(now);
+    if (promotion === undefined && confirmations.size < MAX_CONFIRMATIONS)
       gossip.maybeStart(now, hostTarget(gossip.tabs(now)), () => {
         selected = crypto.randomUUID();
         promotion = {
           invitation: selected,
-          endsAt: now + STARTUP_MS,
+          endsAt: now + INVITATION_ACK_MS,
           replacing: isReplacing(),
           uploadPassed: false,
           uploads: 0,
@@ -522,6 +620,10 @@ export function peerServer(
     get replacementReady() {
       return replacement !== undefined;
     },
+    get confirmingHandoff() {
+      expireConfirmations(Date.now());
+      return confirmations.size > 0;
+    },
     get replacement() {
       return replacement;
     },
@@ -559,7 +661,7 @@ export function peerServer(
         peers.update({ departing });
         updateSampling(peers, now);
         peers.observeTabs(leases.count(now, sampling), now);
-        if (promotion !== undefined && promotion.endsAt <= now) promotion = undefined;
+        expirePromotion(now);
         if (probe === undefined) {
           const operation = AbortSignal.any([signal, probing.signal]);
           probe = peers

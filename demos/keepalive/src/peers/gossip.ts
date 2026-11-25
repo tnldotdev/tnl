@@ -1,15 +1,16 @@
 import * as z from "zod";
 import { hostNameSchema } from "./host-names.ts";
-import { BOOTSTRAP_TURN_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "../policy.ts";
+import { BOOTSTRAP_TURN_MS, INVITATION_ACK_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "../policy.ts";
 import { MAX_TABS_PER_HOST, REMOTE_TAB_REPORT_MS, SAMPLE_WEIGHT } from "./presence.ts";
 import { certificateReport, newerCertificate } from "../hosting/certificate.ts";
 
-export const HOST_PARENT = "hosts.keepthisalive.com";
+export const HOST_PARENT = "live.hosts.keepthisalive.com";
 export const SHARED_HOST = `https://prod.${HOST_PARENT}`;
 export const PEERS_PATH = "/__keepalive/peers";
 export const MAX_MESSAGE_BYTES = 24 * 1024;
 export const MAX_PEERS = 8_192;
 export const MAX_CHANGES = 40;
+const MAX_HOST_HISTORY = 128;
 export const PROBE_MS = 2_000;
 export const FRESH_REPORT_MS = 60_000;
 export const SUSPECT_MS = 15_000;
@@ -80,6 +81,9 @@ const messageSchema = z.strictObject({
 });
 export type Host = Readonly<z.infer<typeof hostSchema>>;
 export type Change = Readonly<z.infer<typeof changeSchema>>;
+export type HostHistory = Pick<Change, "runID" | "name" | "endsAt" | "copyFrom" | "left"> & {
+  unreachable?: boolean | undefined;
+};
 export const hostDetailsSchema = changeSchema.pick({
   name: true,
   endsAt: true,
@@ -256,6 +260,7 @@ function isNewerChange(next: Change, current: Change): boolean {
 export class Gossip {
   readonly releaseID: string;
   readonly #peers = new Map<string, Seen>();
+  readonly #history = new Map<string, HostHistory>();
   readonly #slots: Seen[] = [];
   readonly #priority = new PriorityReports();
   readonly #fresh = new Set<string>();
@@ -314,9 +319,26 @@ export class Gossip {
     this.#self = { ...this.#self, tabs: { count, observedAt: now } };
   }
 
-  roster(now: number) {
+  hostHistory(now: number): HostHistory[] {
     this.#forgetOldPeers(now);
-    return [this.#self, ...[...this.#peers.values()].map(({ change }) => change)];
+    return [
+      historyEntry(this.#self),
+      ...[...this.#peers.values()].map(({ change, suspectAt }) =>
+        historyEntry(
+          change,
+          !change.left && suspectAt !== undefined && now >= suspectAt + SUSPECT_MS,
+        ),
+      ),
+      ...[...this.#history.values()].reverse(),
+    ];
+  }
+
+  #archive(change: Change) {
+    // never feed the display history back into gossip, routing or admission.
+    this.#history.set(change.runID, { ...historyEntry(change), left: true });
+    if (this.#history.size <= MAX_HOST_HISTORY) return;
+    const oldest = this.#history.keys().next();
+    if (!oldest.done) this.#history.delete(oldest.value);
   }
 
   tabs(now: number) {
@@ -402,6 +424,7 @@ export class Gossip {
     const recovered =
       suspectAt !== undefined && (fromSender || change.reportedAt >= suspectAt + SUSPECT_MS);
     const slot = previous?.slot ?? this.#slots.length;
+    if (previous !== undefined && !sameRun(change, previous.change)) this.#archive(previous.change);
     const entry =
       suspectAt !== undefined && !recovered ? { change, slot, suspectAt } : { change, slot };
     this.#peers.set(change.publisherID, entry);
@@ -545,6 +568,7 @@ export class Gossip {
     for (const [id, peer] of this.#peers) {
       const deadline = recordDeadline(peer.change);
       if (deadline <= now) {
+        this.#archive(peer.change);
         this.#presence = undefined;
         this.#peers.delete(id);
         this.#priority.delete(id);
@@ -648,7 +672,7 @@ export class Gossip {
     const peers = this.#countedPeers(now);
     const starting = peers.filter(({ change }) => change.startingUntil > now).length;
     if (this.readyBeyondWindow(now) + starting >= target || !offer()) return false;
-    this.#self = { ...this.#self, startingUntil: now + STARTUP_MS };
+    this.#self = { ...this.#self, startingUntil: now + INVITATION_ACK_MS };
     this.#nextStart = now + COOLDOWN_MS + Math.floor(random() * 5_000);
     return true;
   }
@@ -656,6 +680,22 @@ export class Gossip {
   finishStart() {
     this.#self = { ...this.#self, startingUntil: 0 };
   }
+
+  confirmStart(startingUntil: number) {
+    this.#self = { ...this.#self, startingUntil };
+  }
+
+  cancelStart() {
+    this.finishStart();
+    this.#nextStart = 0;
+  }
+}
+
+function historyEntry(
+  { runID, name, endsAt, copyFrom, left }: Change,
+  unreachable = false,
+): HostHistory {
+  return { runID, name, endsAt, copyFrom, left, ...(unreachable ? { unreachable } : {}) };
 }
 
 export function reportedTabs(

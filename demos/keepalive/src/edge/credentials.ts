@@ -1,22 +1,16 @@
 import { control, createPublisherEnrollment } from "@tnldotdev/tnl/control";
 import { INVITATION_PATH, READY_HEADER, credentialRequest, enrollmentKey } from "../enrollment.ts";
-import { httpsOriginSchema } from "../peers/gossip.ts";
 import { readJSON } from "../release.ts";
+import { noReachableHost, PEER_DISCOVERY_MS } from "../network.ts";
+import {
+  deploymentCredential,
+  HOSTING_SERVICE,
+  type DeploymentBindings,
+} from "./deployment-credential.ts";
 
-export type CredentialBindings = {
-  CONTROL_URL: string;
-  PROJECT_KEY?: string;
-  TEAM_ID?: string;
-  MANAGEMENT_TOKEN?: string;
+export type CredentialBindings = DeploymentBindings & {
   START_HOST: string;
 };
-
-export function enrollmentConfigured(
-  env: CredentialBindings,
-): env is CredentialBindings &
-  Required<Pick<CredentialBindings, "MANAGEMENT_TOKEN" | "PROJECT_KEY" | "TEAM_ID">> {
-  return Boolean(env.MANAGEMENT_TOKEN && env.PROJECT_KEY && env.TEAM_ID);
-}
 
 export async function credentials(
   request: Request,
@@ -33,14 +27,16 @@ export async function credentials(
   ) {
     return new Response(null, { status: 403, headers });
   }
-  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]);
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(PEER_DISCOVERY_MS + 8_000)]);
+  const bodyDeadline = AbortSignal.any([signal, AbortSignal.timeout(3_000)]);
   const body = credentialRequest.safeParse(
-    await readJSON(new Response(request.body), 1024, signal).catch(() => undefined),
+    await readJSON(new Response(request.body), 1024, bodyDeadline).catch(() => undefined),
   );
   if (!body.success || body.data.releaseID !== releaseID) {
     return new Response(null, { status: 400, headers });
   }
-  if (!enrollmentConfigured(env)) {
+  const deployment = deploymentCredential(env);
+  if (!deployment) {
     return new Response(null, { status: 503, headers });
   }
   try {
@@ -57,22 +53,25 @@ export async function credentials(
           signal,
         });
     await check.body?.cancel();
-    if (body.data.bootstrap ? check.status !== 503 : check.status !== 204)
+    if (body.data.bootstrap && check.status === 503 && !noReachableHost(check))
+      return new Response(null, { status: 503, headers });
+    if (body.data.bootstrap ? !noReachableHost(check) : check.status !== 204)
       return new Response(null, { status: 403, headers });
     const result = await createPublisherEnrollment({
       client: control({
-        baseUrl: httpsOriginSchema.parse(env.CONTROL_URL),
-        auth: env.MANAGEMENT_TOKEN,
+        baseUrl: deployment.controlURL,
+        auth: await deployment.accessToken(signal),
       }),
-      path: { project_key: env.PROJECT_KEY, deployment: "keepalive" },
-      query: { team_id: env.TEAM_ID },
+      path: { project_key: deployment.projectKey, deployment: deployment.deploymentID },
+      query: { team_id: deployment.teamID },
       headers: { "Idempotency-Key": body.data.requestID },
-      body: { services: ["production"], max_members: 1, expires_in: 180 },
+      body: { services: [HOSTING_SERVICE], max_members: 1, expires_in: 180 },
       cache: "no-store",
       redirect: "manual",
       signal,
     });
-    if (result.response?.status !== 201) return new Response(null, { status: 503, headers });
+    if (result.response?.status !== 201 || result.data?.deployment_id !== deployment.deploymentID)
+      return new Response(null, { status: 503, headers });
     return Response.json(enrollmentKey.parse(result.data?.enrollment_key), { headers });
   } catch {
     return new Response(null, { status: 503, headers });

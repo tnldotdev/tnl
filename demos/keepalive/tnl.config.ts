@@ -4,14 +4,15 @@ export default defineConfig({
   services: { production: { protocol: "http" } },
   deployments: {
     keepalive: {
+      domain: "hosts.keepthisalive.com",
       targets: {
         production: {
           type: "app",
           public: true,
           http: { access: "anonymous" },
-          hostname: "prod.hosts.keepthisalive.com",
-          publisherAliasParent: "hosts.keepthisalive.com",
-          certificateScope: "hosts.keepthisalive.com",
+          hostname: "prod.live.hosts.keepthisalive.com",
+          publisherAliasParent: "live.hosts.keepthisalive.com",
+          certificateScope: "live.hosts.keepthisalive.com",
         },
       },
     },

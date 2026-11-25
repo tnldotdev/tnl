@@ -3,10 +3,19 @@ import { TURN_WARNING_MS } from "../policy.ts";
 // consume the warning even when muted; enabling sound later must not replay it.
 export function turnWarning() {
   let warnedRun: string | undefined;
+  let nextMinute = Infinity;
   return (run: string, endsAt: number, now: number) => {
-    if (run === warnedRun || now >= endsAt || endsAt - now > TURN_WARNING_MS) return false;
-    warnedRun = run;
-    return true;
+    const remaining = endsAt - now;
+    if (remaining <= 0 || remaining > TURN_WARNING_MS) return false;
+    if (run !== warnedRun) {
+      warnedRun = run;
+      nextMinute = Infinity;
+    }
+    const minute = Math.ceil(remaining / 60_000);
+    if (minute >= nextMinute) return false;
+    nextMinute = minute;
+    // tolerate a late tick without playing warnings missed in a suspended tab.
+    return minute * 60_000 - remaining < 5_000;
   };
 }
 

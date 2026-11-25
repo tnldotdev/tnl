@@ -1,17 +1,38 @@
-import { sameRun, type Host } from "../peers/gossip.ts";
+import { FRESH_REPORT_MS, sameRun, type Change, type Host } from "../peers/gossip.ts";
 import { readPeers } from "../peers/http.ts";
-import {
-  AUDIENCE_PATH,
-  heartbeatSchema,
-  HEARTBEAT_MS,
-  PRESENCE_PATH,
-  sampledTab,
-} from "../peers/presence.ts";
+import { AUDIENCE_PATH, heartbeatSchema, PRESENCE_PATH, sampledTab } from "../peers/presence.ts";
 import { audienceSnapshot, presenceSummary } from "../peers/view.ts";
 import type * as z from "zod";
-import { MAX_MANIFEST_BYTES, parseRelease, readJSON, RELEASE_PATH } from "../release.ts";
+import { loadRelease, readJSON } from "../release.ts";
+import {
+  HTTPFailure,
+  NoReachableHost,
+  PEER_REQUEST_MS,
+  TransportFailure,
+  request,
+  requireStatus,
+} from "../network.ts";
 
 export type Observation = Omit<z.infer<typeof presenceSummary>, "fallback">;
+
+class MissingPeerReport extends Error {}
+
+async function findCountingHost(releaseID: string, signal: AbortSignal, failed?: Host) {
+  const report = await readPeers(location.origin, releaseID, signal);
+  if (report === undefined) throw new MissingPeerReport("No matching host report.");
+  const now = Date.now();
+  const eligible = (peer: Change) =>
+    !peer.left &&
+    (peer.endsAt ?? Infinity) > now &&
+    now - peer.reportedAt < FRESH_REPORT_MS &&
+    (failed === undefined || !sameRun(failed, peer));
+  const candidates = [report.from, ...report.changes].filter(
+    (peer) => eligible(peer) && !peer.departing,
+  );
+  // on recovery, prefer the host that just answered the proxy's probe.
+  const index = failed === undefined ? Math.floor(Math.random() * candidates.length) : 0;
+  return candidates[index] ?? (eligible(report.from) ? report.from : undefined);
+}
 
 export async function renewPresence(
   host: Host,
@@ -22,92 +43,93 @@ export async function renewPresence(
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
   const url = new URL(PRESENCE_PATH, host.origin);
   const body = JSON.stringify(heartbeatSchema.parse({ tab, releaseID }));
-  const send = () =>
-    fetch(url, {
+  async function send() {
+    const response = await request(url, {
       method: "POST",
       body,
-      cache: "no-store",
       credentials: "omit",
-      redirect: "error",
       signal: deadline,
     });
-  const response = await send().catch((err: unknown) => {
+    const report = presenceSummary.safeParse(
+      await readJSON(await requireStatus(response), 4_096, deadline),
+    );
+    if (!report.success || !sameRun(host, report.data.host))
+      throw new Error("The counting host changed.");
+    return report.data;
+  }
+  return send().catch((err: unknown) => {
     deadline.throwIfAborted();
-    if (!(err instanceof TypeError)) throw err;
+    if (!(err instanceof TransportFailure)) throw err;
     // the relay can close before fetch gets headers. the same tab refreshes
     // one lease even if the counting host already received the first POST.
     return send();
   });
-  const report = presenceSummary.safeParse(await readJSON(response, 4_096, deadline));
-  if (!report.success || !sameRun(host, report.data.host))
-    throw new Error("The counting host changed.");
-  return report.data;
 }
 
-export async function observeVisitors(
-  signal: AbortSignal,
-  update: (observation: Observation | undefined) => void,
-) {
+export function createVisitorCheck() {
   const tab = crypto.randomUUID();
   let checkAudience = !sampledTab(tab);
   let releaseID: string | undefined;
   let host: Host | undefined;
   let alternates: Host[] = [];
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  function stop() {
-    clearTimeout(timer);
-  }
-  async function beat() {
+  return async function check(signal: AbortSignal): Promise<Observation | null> {
+    signal.throwIfAborted();
     try {
-      if (releaseID === undefined) {
-        const deadline = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
-        const response = await fetch(RELEASE_PATH, { cache: "no-store", signal: deadline });
-        releaseID = (await parseRelease(await readJSON(response, MAX_MANIFEST_BYTES, deadline))).id;
-      }
+      releaseID ??= (await loadRelease(signal)).id;
       if (checkAudience) {
         const deadline = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
-        const summary = await fetch(AUDIENCE_PATH, { cache: "no-store", signal: deadline })
+        const summary = await request(AUDIENCE_PATH, { signal: deadline })
           .then(async (r) =>
             r.status === 204
               ? undefined
-              : audienceSnapshot.parse(await readJSON(r, 4096, deadline)),
+              : audienceSnapshot.parse(await readJSON(await requireStatus(r), 4096, deadline)),
           )
           .catch(() => undefined);
         signal.throwIfAborted();
-        if (summary?.releaseID === releaseID && summary.sampling) {
-          update(summary);
-          return;
-        }
+        if (summary?.releaseID === releaseID && summary.sampling) return summary;
         // a missing, stale or small estimate resumes counting on this tick.
       }
-      if (host === undefined) {
-        const report = await readPeers(location.origin, releaseID, signal);
-        const now = Date.now();
-        alternates =
-          report === undefined
-            ? []
-            : [report.from, ...report.changes].filter(
-                (peer) =>
-                  !peer.left && (peer.endsAt === undefined || peer.endsAt > now) && !peer.departing,
-              );
-        if (alternates.length === 0 && report?.from.left === false) alternates.push(report.from);
-        const index = Math.floor(Math.random() * alternates.length);
-        host = alternates.splice(index, 1)[0];
-      }
-      if (host === undefined) throw new Error("No counting host.");
-      const { fallback, ...observation } = await renewPresence(host, tab, releaseID, signal);
+      // allow two presence attempts and one complete proxy discovery.
+      const deadline = AbortSignal.any([signal, AbortSignal.timeout(PEER_REQUEST_MS + 11_000)]);
+      const currentRelease = releaseID;
+      const selected = (host ??= await findCountingHost(currentRelease, deadline));
+      if (selected === undefined) throw new Error("No counting host.");
+      const { fallback, ...observation } = await renewPresence(
+        selected,
+        tab,
+        currentRelease,
+        deadline,
+      ).catch(async (error: unknown) => {
+        deadline.throwIfAborted();
+        // try only one different run in this heartbeat, with the same tab ID.
+        const alternate = alternates.pop();
+        host = alternate ?? (await findCountingHost(currentRelease, deadline, selected));
+        if (host === undefined) throw error;
+        try {
+          return await renewPresence(host, tab, currentRelease, deadline);
+        } catch (error) {
+          // dead cached hosts do not prove the site is down. ask the proxy.
+          if (alternate !== undefined) await readPeers(location.origin, currentRelease, deadline);
+          throw error;
+        }
+      });
       checkAudience = !sampledTab(tab) && observation.sampling === true;
       alternates = fallback.filter((candidate) => !sameRun(candidate, observation.host));
-      if (!signal.aborted) update(observation);
-    } catch {
-      // retry discovery; a newer release may be active after a deployment.
-      host = alternates.pop();
-      if (host === undefined) releaseID = undefined;
-      if (!signal.aborted) update(undefined);
-    } finally {
-      if (!signal.aborted) timer = setTimeout(() => void beat(), HEARTBEAT_MS);
+      signal.throwIfAborted();
+      return observation;
+    } catch (error) {
+      signal.throwIfAborted();
+      host = undefined;
+      alternates = [];
+      checkAudience = false;
+      // only discard the manifest when the active release might have changed.
+      if (
+        error instanceof MissingPeerReport ||
+        (error instanceof HTTPFailure && error.status === 400)
+      )
+        releaseID = undefined;
+      if (error instanceof NoReachableHost) return null;
+      throw error;
     }
-  }
-  signal.addEventListener("abort", stop, { once: true });
-  await beat();
+  };
 }

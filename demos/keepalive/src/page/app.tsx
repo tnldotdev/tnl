@@ -1,20 +1,31 @@
 import "../validation.ts";
-import { render } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { hostBranches, type TreeHost } from "./host-tree.ts";
+import {
+  QueryClient,
+  QueryClientProvider,
+  skipToken,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { hostBranches, visibleBranches, type Branch, type TreeHost } from "./host-tree.ts";
 import { PULSE_SECONDS, requestPulse } from "../hosting/activity.ts";
 import { turnSounds, turnWarning, protectHostingTab } from "./attention.ts";
 import type { HostUpdate } from "../hosting/messages.ts";
 import { turnLabel } from "../policy.ts";
 import {
   AlreadyHosting,
+  HostingInAnotherTab,
   HostingUnavailable,
   UploadTooSlow,
   hostTab,
   type HostState,
 } from "../hosting/tab.ts";
 import { readTree } from "../peers/view.ts";
-import { observeVisitors, type Observation } from "./visitor.ts";
+import { HEARTBEAT_MS } from "../peers/presence.ts";
+import { InvitationUnavailable } from "../peers/http.ts";
+import { NoReachableHost, retryDelay } from "../network.ts";
+import { createVisitorCheck, type Observation } from "./visitor.ts";
 
 const labels = {
   copying: "Copying the site from another host…",
@@ -38,47 +49,36 @@ function age(since: number, now: number) {
   return days > 0 ? `${days}d ${clock}` : clock;
 }
 
-type Branch = ReturnType<typeof hostBranches>[number]["root"];
-
 function BranchRow({
   branch,
   now,
   self,
-  prefix = "",
-  edge = "",
-  next = "",
+  depth = 0,
 }: {
   branch: Branch;
   now: number;
   self: string | undefined;
-  prefix?: string;
-  edge?: string;
-  next?: string;
+  depth?: number;
 }) {
   const { host, children } = branch;
   const label = host.name ?? "unnamed host";
   const former = host.left || (host.endsAt !== undefined && host.endsAt <= now);
+  const state = former ? "former host" : host.unreachable ? "unreachable" : undefined;
   return (
     <li>
-      <span class="tree-edge" aria-hidden="true">
-        {prefix}
-        {edge}
-      </span>
-      <span class={former ? "former-host" : undefined}>
+      <span className={state !== undefined ? "former-host" : undefined}>
         {host.runID === self ? <strong>{label} (you)</strong> : label}
-        {former && <span class="visually-hidden"> (former host)</span>}
+        {state && <small> ({state})</small>}
       </span>
       {children.length > 0 && (
-        <ul class="host-tree">
-          {children.map((child, index) => (
+        <ul className={depth < 12 ? "host-tree" : "host-tree host-tree-deep"}>
+          {children.map((child) => (
             <BranchRow
               key={child.host.runID}
               branch={child}
               now={now}
               self={self}
-              prefix={prefix + next}
-              edge="+-- "
-              next={index === children.length - 1 ? "    " : "|   "}
+              depth={depth + 1}
             />
           ))}
         </ul>
@@ -86,6 +86,9 @@ function BranchRow({
     </li>
   );
 }
+
+const TREE_ROWS = 16;
+const TREE_REFRESH_MS = 15_000;
 
 function Hosts({
   origin,
@@ -98,51 +101,53 @@ function Hosts({
   self: string | undefined;
   focus: string | undefined;
 }) {
-  const [anchor, setAnchor] = useState<string>();
+  const [visibleRows, setVisibleRows] = useState(TREE_ROWS);
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<{ origin: string; focus: string; hosts: readonly TreeHost[] }>();
-  useEffect(() => {
-    if (!open || origin === undefined || focus === undefined) return;
-    const lifetime = new AbortController();
-    setAnchor(undefined);
-    void readTree(origin, focus, lifetime.signal)
-      .then((hosts) => {
-        if (!lifetime.signal.aborted && hosts !== undefined) setView({ origin, focus, hosts });
-      })
-      .catch(() => {});
-    return () => lifetime.abort();
-  }, [open, origin, focus]);
-  const roster =
-    view?.origin === origin && view?.focus === focus ? (view?.hosts ?? emptyRoster) : emptyRoster;
-  const pages = useMemo(() => hostBranches(roster, focus), [roster, focus]);
-  const index = Math.max(
-    0,
-    pages.findIndex((page) => page.focusID === anchor),
+  const tree = useQuery({
+    queryKey: ["host-tree", origin, focus],
+    queryFn:
+      open && origin !== undefined && focus !== undefined
+        ? ({ signal }) => readTree(origin, focus, signal)
+        : skipToken,
+    refetchInterval: open ? TREE_REFRESH_MS : false,
+    staleTime: 5_000,
+    retry: (failures, error) => failures === 0 && retryDelay(error) !== undefined,
+    retryDelay: (_failures, error) => retryDelay(error) ?? 0,
+  });
+  const roster = tree.data ?? emptyRoster;
+  const branches = useMemo(() => hostBranches(roster, focus), [roster, focus]);
+  const selected = useMemo(
+    () => visibleBranches(branches, focus, visibleRows),
+    [branches, focus, visibleRows],
   );
-  const page = pages[index];
   if (origin === undefined || focus === undefined) return null;
   return (
-    <details class="host-details" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details className="host-details" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>hosts</summary>
-      <p class="tree-note">
-        <span>how it spread</span>
-        <br />
-        Each branch shows who copied from whom.
-      </p>
-      {page?.continued && <div aria-label="Earlier hosts not shown">...</div>}
-      {page !== undefined && (
-        <ul class="host-tree">
-          <BranchRow branch={page.root} now={now} self={self} />
-        </ul>
+      <p className="tree-note">Follow the site from one browser to the next.</p>
+      {selected.branches.some(({ host }) => host.copyFrom !== undefined) && (
+        <p className="tree-note">Earlier hosts aren’t shown.</p>
       )}
-      {page === undefined && <p>Waiting for a host report.</p>}
-      {page !== undefined && pages.length > 1 && (
+      {selected.branches.length > 0 ? (
+        <ul className="host-tree">
+          {selected.branches.map((branch) => (
+            <BranchRow key={branch.host.runID} branch={branch} now={now} self={self} />
+          ))}
+        </ul>
+      ) : (
+        <p>
+          {tree.isError
+            ? "Couldn't load the host report. We'll try again."
+            : "Waiting for a host report."}
+        </p>
+      )}
+      {selected.more && (
         <button
-          class="text-action"
+          className="text-action"
           type="button"
-          onClick={() => setAnchor(pages[index + 1]?.focusID)}
+          onClick={() => setVisibleRows((count) => count + TREE_ROWS)}
         >
-          {index === pages.length - 1 ? "back to first branch" : "show more"}
+          show more
         </button>
       )}
     </details>
@@ -150,6 +155,7 @@ function Hosts({
 }
 
 const emptyRoster: readonly TreeHost[] = [];
+const visitorKey = ["visitor"] as const;
 const pluralRequests = (requests: number) =>
   `${requests.toLocaleString()} ${requests === 1 ? "request" : "requests"}`;
 
@@ -162,16 +168,32 @@ function App({ bootstrap }: { bootstrap: boolean }) {
   const [message, setMessage] = useState("");
   const [alreadyHosting, setAlreadyHosting] = useState(false);
   const [now, setNow] = useState(Date.now);
-  const [observed, setObserved] = useState<Observation>();
-  const [lastStart, setLastStart] = useState<number>();
+  const [localStart, setLocalStart] = useState<number>();
   const [sound, setSound] = useState(true);
-  const chirp = useRef<ReturnType<typeof turnSounds>>(undefined);
+  const chirp = useRef<ReturnType<typeof turnSounds> | undefined>(undefined);
+  const queryClient = useQueryClient();
+  const [checkVisitor] = useState(createVisitorCheck);
+  const visitor = useQuery({
+    queryKey: visitorKey,
+    queryFn: ({ signal }) => checkVisitor(signal),
+    // one check already tries multiple hosts. don't replay the whole heartbeat.
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.status === "error" ? 8_000 + Math.random() * 4_000 : HEARTBEAT_MS,
+    refetchIntervalInBackground: true,
+    staleTime: 5_000,
+  });
   const shouldWarn = useMemo(turnWarning, []);
   const label = turnLabel(bootstrap);
   const hosting = host?.type === "hosting" ? host : undefined;
-  const startedAt = hosting?.startedAt ?? observed?.startedAt ?? lastStart;
-  const ticking = startedAt !== undefined || hosting !== undefined;
   const active = hosting !== undefined;
+  const observed = visitor.isSuccess && !visitor.isPaused ? visitor.data : undefined;
+  const unavailable = !active && observed === null;
+  const canVolunteer = observed != null;
+  // query keeps the last good value when a refetch fails.
+  const startedAt =
+    hosting?.startedAt ?? (visitor.data === null ? null : (visitor.data?.startedAt ?? localStart));
+  const ticking = typeof startedAt === "number";
   useEffect(() => {
     if (
       hosting &&
@@ -191,13 +213,10 @@ function App({ bootstrap }: { bootstrap: boolean }) {
     return undefined;
   }, [active]);
   useEffect(() => {
-    const lifetime = new AbortController();
-    void observeVisitors(lifetime.signal, (next) => {
-      setObserved(next);
-      if (next !== undefined) setLastStart(next.startedAt);
-    });
-    return () => lifetime.abort();
-  }, []);
+    if (!unavailable) return;
+    setAlreadyHosting(false);
+    if (!bootstrap && host?.type === "waiting") lifetime?.abort(new NoReachableHost());
+  }, [unavailable, bootstrap, host, lifetime]);
   const hosts = hosting?.hosts ?? observed?.hosts ?? 0;
   const visitors = hosting?.tabs ?? observed?.tabs ?? 0;
 
@@ -214,7 +233,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
   }
 
   function start() {
-    if (lifetime !== undefined) return;
+    if (lifetime !== undefined || (!bootstrap && !canVolunteer)) return;
     const stop = new AbortController();
     if (sound) chirp.current = turnSounds();
     setLifetime(stop);
@@ -231,7 +250,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         if (next.type === "checking") chirp.current?.play("invitation");
         if (next.type === "hosting") {
           hosted = true;
-          setLastStart(next.startedAt);
+          setLocalStart(next.startedAt);
         }
         document.title =
           next.type === "hosting" ? "hosting · keepalive" : "can we keep this alive?";
@@ -263,15 +282,26 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             setAlreadyHosting(true);
             return;
           }
+          if (stop.signal.reason instanceof NoReachableHost) return;
+          if (error instanceof NoReachableHost) {
+            void queryClient.cancelQueries({ queryKey: visitorKey }).then(() => {
+              queryClient.setQueryData<Observation | null>(visitorKey, null);
+            });
+            return;
+          }
           setRetry(!stop.signal.aborted);
           setMessage(
             stop.signal.aborted
               ? "This tab stopped."
-              : error instanceof HostingUnavailable
-                ? "This tab couldn't start hosting. Try again later."
-                : error instanceof UploadTooSlow
-                  ? "This connection isn't fast enough to host right now."
-                  : "This tab couldn't host the site. Try again.",
+              : error instanceof HostingInAnotherTab
+                ? "Another tab in this browser profile is hosting or waiting to host."
+                : error instanceof HostingUnavailable
+                  ? "This tab couldn't start hosting. Try again later."
+                  : error instanceof InvitationUnavailable
+                    ? `${error.message} Try again.`
+                    : error instanceof UploadTooSlow
+                      ? "This tab couldn't complete the upload check. Try again."
+                      : "This tab couldn't host the site. Try again.",
           );
         },
       )
@@ -280,15 +310,18 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         document.title = "can we keep this alive?";
         setHost(undefined);
         setLifetime(undefined);
+        if (hosted) void visitor.refetch();
       });
   }
 
   return (
     <main>
       <h1>{bootstrap ? "start keepalive" : "can we keep this alive?"}</h1>
-      <p class="experiment-age">
+      <p className="experiment-age">
         <span>alive for</span>
-        <strong>{startedAt === undefined ? "—" : age(startedAt, now)}</strong>
+        <strong>
+          {startedAt === null ? "00h 00m 00s" : startedAt === undefined ? "—" : age(startedAt, now)}
+        </strong>
       </p>
       {bootstrap ? (
         <p>
@@ -299,24 +332,27 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         <>
           <p>
             This site is served from people's browsers. Visitors copy it from each other and take
-            turns keeping it online. If the last host stops, the site goes down.
+            15min turns keeping it online. If the last host stops, the site goes down.
           </p>
-          {lifetime === undefined && finished === undefined && !retry && (
-            <p>
-              Click below to volunteer, then keep this tab open. It'll host when needed, for up to{" "}
-              {label}. You can stop anytime.
-            </p>
+          {canVolunteer && lifetime === undefined && finished === undefined && !retry && (
+            <p>Click below to volunteer, then keep this tab open. You can stop anytime.</p>
           )}
         </>
       )}
       <section aria-label="keepalive">
         <p role="status">
-          {host === undefined ? (
+          {unavailable && (host === undefined || host.type === "waiting") ? (
+            "No host is serving the site right now."
+          ) : !canVolunteer && host?.type === "waiting" ? (
+            "Checking for a host…"
+          ) : host === undefined ? (
             alreadyHosting ? (
               <>
                 Keepalive is already running.{" "}
                 <a href="https://keepthisalive.com">Visit the main site</a> to volunteer.
               </>
+            ) : !bootstrap && !canVolunteer ? (
+              "Checking for a host…"
             ) : (
               message || "You can help keep it online."
             )
@@ -326,22 +362,19 @@ function App({ bootstrap }: { bootstrap: boolean }) {
             labels[host.type]
           )}
         </p>
-        {host?.type === "waiting" && (
-          <p>Your turn starts when hosting begins and lasts up to {turnLabel(false)}.</p>
-        )}
         {host?.type === "copying" && <CopyProgress received={host.received} total={host.total} />}
         {hosting && (
           <>
-            <p class="turn-countdown">
+            <p className="turn-countdown">
               {countdown(hosting.endsAt, Math.max(now, hosting.since))} left in your turn
             </p>
-            <div class="host-activity">
+            <div className="host-activity">
               <div>
                 serving ~{hosting.localTabs.toLocaleString()} of ~{hosting.tabs.toLocaleString()}{" "}
                 {hosting.tabs === 1 ? "tab" : "tabs"}
               </div>
-              <div class="request-line">
-                <span class="request-pulse" aria-hidden="true">
+              <div className="request-line">
+                <span className="request-pulse" aria-hidden="true">
                   {activity
                     ? requestPulse(activity.pulse, activity.second, now)
                     : "_".repeat(PULSE_SECONDS)}
@@ -353,15 +386,21 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         )}
         {finished !== undefined && (
           <>
-            <p>You can close this tab or {bootstrap ? "host" : "volunteer"} again.</p>
+            <p>
+              {bootstrap || canVolunteer
+                ? `You can close this tab or ${bootstrap ? "host" : "volunteer"} again.`
+                : "You can close this tab."}
+            </p>
             <p>{pluralRequests(finished)} handled</p>
           </>
         )}
-        {!hosting && hosts > 0 && (
-          <p>
-            ~{visitors} {visitors === 1 ? "tab" : "tabs"} · {hosts} {hosts === 1 ? "host" : "hosts"}
-          </p>
-        )}
+        <p>
+          {unavailable
+            ? "0 reachable hosts"
+            : hosts === 0
+              ? "— tabs · — hosts"
+              : `~${visitors.toLocaleString()} ${visitors === 1 ? "tab" : "tabs"} · ${hosts.toLocaleString()} ${hosts === 1 ? "host" : "hosts"}`}
+        </p>
         {(hosting?.saturated ?? observed?.saturated) && <p>Some hosts aren’t shown.</p>}
         <Hosts
           key={hosting?.runID}
@@ -371,19 +410,21 @@ function App({ bootstrap }: { bootstrap: boolean }) {
           focus={hosting?.runID ?? observed?.host.runID}
         />
       </section>
-      <div class="actions">
+      <div className="actions">
         {alreadyHosting ? null : lifetime === undefined ? (
-          <button type="button" onClick={start}>
-            {retry
-              ? "try again"
-              : finished !== undefined
-                ? bootstrap
-                  ? "host again"
-                  : "volunteer again"
-                : bootstrap
-                  ? "start hosting"
-                  : "i'll keep it alive"}
-          </button>
+          (bootstrap || canVolunteer) && (
+            <button type="button" onClick={start}>
+              {retry
+                ? "try again"
+                : finished !== undefined
+                  ? bootstrap
+                    ? "host again"
+                    : "volunteer again"
+                  : bootstrap
+                    ? "start hosting"
+                    : "i'll keep it alive"}
+            </button>
+          )
         ) : (
           <button
             type="button"
@@ -395,11 +436,11 @@ function App({ bootstrap }: { bootstrap: boolean }) {
         )}
         {lifetime !== undefined && (
           <button
-            class="text-action"
+            className="text-action"
             type="button"
             onClick={toggleSound}
             aria-pressed={sound}
-            title="Play a short invitation sound in the background and a warning with five minutes left"
+            title="Play an invitation sound in the background and a warning each minute in the final five minutes"
           >
             sound: {sound ? "on" : "off"}
           </button>
@@ -419,7 +460,7 @@ function CopyProgress({ received, total }: { received: number; total: number }) 
   const mb = (bytes: number) => (bytes / 1_000_000).toFixed(1);
   return (
     <p
-      class="copy-progress"
+      className="copy-progress"
       role="progressbar"
       aria-label="Downloading hosting files"
       aria-valuemin={0}
@@ -436,4 +477,9 @@ function CopyProgress({ received, total }: { received: number; total: number }) 
 }
 
 const root = document.getElementById("app");
-if (root !== null) render(<App bootstrap={root.hasAttribute("data-start")} />, root);
+if (root !== null)
+  createRoot(root).render(
+    <QueryClientProvider client={new QueryClient()}>
+      <App bootstrap={root.hasAttribute("data-start")} />
+    </QueryClientProvider>,
+  );

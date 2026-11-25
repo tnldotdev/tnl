@@ -133,12 +133,22 @@ footer {
   overflow-wrap: anywhere;
 }
 
-.host-tree ul {
+.host-tree > li {
+  min-inline-size: 0;
+}
+
+.host-tree .host-tree {
   margin: 0;
+  padding-inline-start: clamp(0.125rem, 0.8vw, 0.5rem);
+  border-inline-start: 1px solid #c5c5c5;
+}
+
+.host-tree .host-tree-deep {
+  padding-inline-start: 0;
+  border-inline-start: 0;
 }
 
 .tree-note,
-.tree-edge,
 .former-host {
   color: #595959;
 }
@@ -146,17 +156,4 @@ footer {
 .tree-note {
   margin-block: 0.75rem 0;
   font-size: 0.875rem;
-}
-
-.tree-edge {
-  white-space: pre;
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }

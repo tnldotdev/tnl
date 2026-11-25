@@ -1,11 +1,13 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { observeVisitors, renewPresence } from "../src/page/visitor.ts";
+import { createVisitorCheck, renewPresence } from "../src/page/visitor.ts";
+import { HTTPFailure, NO_HOST_HEADER, TransportFailure } from "../src/network.ts";
 import { digest, RELEASE_PATH, WASM_PATH, WORKER_PATH } from "../src/release.ts";
 import { REPLACE_BEFORE_MS, STARTUP_MS } from "../src/policy.ts";
 import {
   FRESH_REPORT_MS,
   Gossip,
   HOST_PARENT,
+  PEERS_PATH,
   reportedTabs,
   type Host,
 } from "../src/peers/gossip.ts";
@@ -23,7 +25,20 @@ const now = Date.UTC(2026, 10, 19);
 const releaseID = "a".repeat(64);
 const tab = "0336c461-0342-45ba-865e-b813ec381839";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+async function fixtureRelease() {
+  const assets = ["/index.html", WORKER_PATH, WASM_PATH].map((path) => ({
+    path,
+    size: 1,
+    sha256: "a".repeat(64),
+  }));
+  return { id: await digest(new TextEncoder().encode(JSON.stringify(assets))), assets };
+}
 
 function host(label: "a" | "b" | "c", run: number): Host {
   return {
@@ -69,12 +84,7 @@ it("recovers a lost presence reply without counting the tab twice", async () => 
 
 it("a held-out visitor reads the edge estimate and resumes reporting on the first small snapshot", async () => {
   const h = host("a", 1);
-  const assets = ["/index.html", WORKER_PATH, WASM_PATH].map((path) => ({
-    path,
-    size: 1,
-    sha256: "a".repeat(64),
-  }));
-  const id = await digest(new TextEncoder().encode(JSON.stringify(assets)));
+  const { id, assets } = await fixtureRelease();
   const reported = {
     host: h,
     startedAt: now,
@@ -98,29 +108,185 @@ it("a held-out visitor reads the edge estimate and resumes reporting on the firs
     return Response.json({
       releaseID: id,
       startedAt: now,
-      from: { ...h, seq: 1, reportedAt: now, left: false, startingUntil: 0 },
+      from: { ...h, seq: 1, reportedAt: Date.now(), left: false, startingUntil: 0 },
       changes: [],
     });
   });
-  const owner = new AbortController(),
-    update = vi.fn();
+  const owner = new AbortController();
+  const check = createVisitorCheck();
   try {
-    await observeVisitors(owner.signal, update);
-    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ tabs: 20000 }));
+    await expect(check(owner.signal)).resolves.toMatchObject({ tabs: 20000 });
     await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    await expect(check(owner.signal)).resolves.toMatchObject({ tabs: 20000 });
     expect(sent).toEqual([]);
     Object.assign(reported, { tabs: 300, hosts: 6, sampling: false });
     await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    await expect(check(owner.signal)).resolves.toMatchObject({ tabs: 300 });
     expect(sent).toEqual([JSON.stringify({ tab, releaseID: id })]);
-    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ tabs: 300 }));
     owner.abort();
-    await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+    await expect(check(owner.signal)).rejects.toMatchObject({ name: "AbortError" });
     expect(sent).toHaveLength(1);
   } finally {
     owner.abort();
     vi.useRealTimers();
   }
 });
+
+it("does not try an old host that still appears in the peer report", async () => {
+  vi.useFakeTimers({ now });
+  vi.spyOn(Math, "random").mockReturnValue(0.99);
+  const site = "https://keepthisalive.com";
+  const release = await fixtureRelease();
+  const a = new Gossip(release.id, host("a", 1), now - FRESH_REPORT_MS);
+  const b = new Gossip(release.id, host("b", 2), now);
+  b.receive(a.message(now - FRESH_REPORT_MS), now);
+  const message = b.message(now);
+  expect(message.changes).toHaveLength(1);
+  vi.stubGlobal("location", { origin: site });
+  const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
+    const url = new URL(String(input), site);
+    if (url.pathname === RELEASE_PATH) return Response.json(release);
+    if (url.pathname === AUDIENCE_PATH) return new Response(null, { status: 204 });
+    if (url.pathname === PEERS_PATH) return Response.json(message);
+    expect(url.href).toBe(b.self.origin + PRESENCE_PATH);
+    return Response.json({
+      host: b.self,
+      startedAt: now,
+      tabs: 1,
+      hosts: 1,
+      saturated: false,
+      fallback: [],
+    });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const owner = new AbortController();
+  try {
+    await expect(createVisitorCheck()(owner.signal)).resolves.toMatchObject({ host: b.self });
+    expect(fetch.mock.calls.some(([url]) => String(url) === a.self.origin + PRESENCE_PATH)).toBe(
+      false,
+    );
+  } finally {
+    owner.abort();
+  }
+});
+
+it.each([true, false])(
+  "moves presence to the replacement in the same heartbeat (known fallback: %s)",
+  async (hasFallback) => {
+    const release = await fixtureRelease();
+    const site = "https://keepthisalive.com";
+    const a = new Gossip(release.id, host("a", 1), now);
+    const b = new Gossip(release.id, host("b", 2), now);
+    vi.useFakeTimers({ now });
+    vi.stubGlobal("location", { origin: site });
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(tab);
+    const beats: Array<[string, number]> = [];
+    let replaced = false;
+    let discoveries = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), site);
+      if (url.pathname === RELEASE_PATH) return Response.json(release);
+      if (url.pathname === AUDIENCE_PATH) return new Response(null, { status: 204 });
+      if (url.pathname === PEERS_PATH) {
+        discoveries++;
+        return Response.json((replaced ? b : a).message(Date.now()));
+      }
+      expect(url.pathname).toBe(PRESENCE_PATH);
+      expect(init?.body).toBe(JSON.stringify({ tab, releaseID: release.id }));
+      beats.push([url.origin, Date.now()]);
+      if (url.origin === a.self.origin && replaced) return new Response(null, { status: 503 });
+      return Response.json({
+        host: (replaced ? b : a).self,
+        startedAt: now,
+        tabs: 1,
+        hosts: 1,
+        saturated: false,
+        fallback: hasFallback && !replaced ? [b.self] : [],
+      });
+    });
+    const owner = new AbortController();
+    const check = createVisitorCheck();
+    try {
+      await expect(check(owner.signal)).resolves.toMatchObject({ host: a.self, startedAt: now });
+      replaced = true;
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      await expect(check(owner.signal)).resolves.toMatchObject({ host: b.self, startedAt: now });
+      expect(beats).toEqual([
+        [a.self.origin, now],
+        [a.self.origin, now + HEARTBEAT_MS],
+        [b.self.origin, now + HEARTBEAT_MS],
+      ]);
+      expect(discoveries).toBe(hasFallback ? 1 : 2);
+    } finally {
+      owner.abort();
+    }
+  },
+);
+
+it.each([true, false])(
+  "reports a confirmed outage and learns a new start after reseeding (cached fallback: %s)",
+  async (cached) => {
+    const release = await fixtureRelease();
+    const site = "https://keepthisalive.com";
+    const a = new Gossip(release.id, host("a", 1), now);
+    const b = new Gossip(release.id, host("b", 2), now);
+    const c = new Gossip(release.id, host("c", 3), now + 3 * HEARTBEAT_MS);
+    vi.useFakeTimers({ now });
+    vi.stubGlobal("location", { origin: site });
+    let state: "live" | "unknown" | "unmarked" | "offline" | "reseeded" = "live";
+    const send = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), site);
+      if (url.pathname === RELEASE_PATH) return Response.json(release);
+      if (url.pathname === AUDIENCE_PATH) return new Response(null, { status: 204 });
+      const current = state === "reseeded" ? c : a;
+      if (url.pathname === PEERS_PATH) {
+        if (state === "unknown") throw new TypeError("Could not reach the proxy.");
+        if (state === "unmarked") return new Response(null, { status: 503 });
+        if (state === "offline")
+          return new Response(null, { status: 503, headers: { [NO_HOST_HEADER]: "1" } });
+        return Response.json(current.message(Date.now()));
+      }
+      expect(url.pathname).toBe(PRESENCE_PATH);
+      if (state === "unknown" || state === "offline" || state === "unmarked")
+        return new Response(null, { status: 503 });
+      return Response.json({
+        host: current.self,
+        startedAt: current.startedAt,
+        tabs: 1,
+        hosts: 1,
+        saturated: false,
+        fallback: cached && state === "live" ? [b.self] : [],
+      });
+    });
+    vi.stubGlobal("fetch", send);
+    const owner = new AbortController();
+    const check = createVisitorCheck();
+    try {
+      await expect(check(owner.signal)).resolves.toMatchObject({ startedAt: now });
+      state = "unknown";
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      await expect(check(owner.signal)).rejects.toBeInstanceOf(TransportFailure);
+      state = "unmarked";
+      await expect(check(owner.signal)).rejects.toBeInstanceOf(HTTPFailure);
+      if (cached) {
+        // recover the roster before checking that a cached, failed alternate
+        // still lets the browser learn the site is down.
+        state = "live";
+        await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+        await expect(check(owner.signal)).resolves.toMatchObject({ startedAt: now });
+      }
+      state = "offline";
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      await expect(check(owner.signal)).resolves.toBeNull();
+      state = "reseeded";
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      await expect(check(owner.signal)).resolves.toMatchObject({ startedAt: c.startedAt });
+      expect(send.mock.calls.filter(([input]) => input === RELEASE_PATH)).toHaveLength(1);
+    } finally {
+      owner.abort();
+    }
+  },
+);
 
 it("does not retry a refusal, changed run, or canceled presence request", async () => {
   for (const outcome of ["refused", "changed", "canceled"]) {

@@ -1,6 +1,7 @@
 import "../validation.ts";
 import { Hono } from "hono";
-import { credentials, enrollmentConfigured, type CredentialBindings } from "./credentials.ts";
+import { credentials, type CredentialBindings } from "./credentials.ts";
+import { deploymentCredential } from "./deployment-credential.ts";
 import { CONFIG_PATH, CREDENTIALS_PATH, hostingConfig } from "../enrollment.ts";
 import { PEERS_PATH } from "../peers/gossip.ts";
 import { AUDIENCE_PATH } from "../peers/presence.ts";
@@ -36,7 +37,7 @@ app.post(CREDENTIALS_PATH, (c) =>
 app.post(CONFIG_PATH, (c) => {
   const origin = new URL(c.req.url).origin;
   if (c.req.header("Origin") !== origin) return c.body(null, 403);
-  if (!enrollmentConfigured(c.env)) return c.body(null, 503, siteHeaders());
+  if (!deploymentCredential(c.env)) return c.body(null, 503, siteHeaders());
   const config = hostingConfig.parse({
     controlURL: c.env.CONTROL_URL,
     siteOrigin: c.env.SITE_ORIGIN,
