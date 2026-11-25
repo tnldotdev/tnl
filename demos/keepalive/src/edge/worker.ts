@@ -34,7 +34,7 @@ app.use("*", async (c, next) => {
       return Response.redirect(url, 308);
     }
   }
-  await next();
+  return next();
 });
 
 app.get(RELEASE_PATH, (c) => {
