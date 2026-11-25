@@ -32,6 +32,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
@@ -196,9 +197,14 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer registry.Close()
-	job, err := registry.ResolveJob(t.Context(), "opencode")
-	if err != nil {
-		t.Fatal(err)
+	jobs, err := registry.List(t.Context())
+	if err != nil || len(jobs) != 1 {
+		t.Fatal("expected one installed publication", err)
+	}
+	job := jobs[0]
+	jobID := job.ID
+	if !strings.Contains(output, jobID) {
+		t.Fatal("installation did not report the allocated job ID")
 	}
 	if job.Status.Address != "https://"+hostname {
 		t.Fatal("installation printed a different public URL")
@@ -226,7 +232,9 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	// interrupt after the desired job/key commit, before supervisor installation.
-	err = setup.Register(t.Context(), installedjobs.ServiceOptions{Root: root, BinarySource: filepath.Join(binDir, "missing")}, setup.Installation{Job: job, Credential: credential},
+	spec := job
+	spec.ID = ""
+	err = setup.Register(t.Context(), installedjobs.ServiceOptions{Root: root, BinarySource: filepath.Join(binDir, "missing")}, setup.Installation{Job: spec, Credential: credential},
 		installedjobs.ExecutorFunc(func(context.Context, installedjobs.Command) error {
 			t.Fatal("interrupted installer reached systemd")
 			return nil
@@ -244,7 +252,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	installFixtureCommand(t, "chown", "-R", "1001:1001", filepath.Dir(person))
 	installFixtureCommand(t, "runuser", append([]string{"-u", "installer", "--", binary}, args...)...)
 	installFixtureCommand(t, "chown", "-R", "0:0", filepath.Dir(person))
-	job, err = registry.ResolveJob(t.Context(), "opencode")
+	job, err = registry.ResolveJob(t.Context(), jobID)
 	if err != nil || job.PublisherIdentityID != publisherIdentityID || job.ServiceID != serviceID || job.Status.RunNumber <= firstRun {
 		t.Fatal("setup retry replaced the identity or URL", err)
 	}
@@ -259,7 +267,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	installFixtureCommand(t, "systemctl", "daemon-reexec")
 	installFixtureCommand(t, "systemctl", "restart", installedjobs.SystemdUnit)
 	workflowWait(t, 30*time.Second, func() bool {
-		job, err = registry.ResolveJob(t.Context(), "opencode")
+		job, err = registry.ResolveJob(t.Context(), jobID)
 		return err == nil && job.Status.State == "ready" && job.Status.RunNumber > firstRun
 	})
 	if job.ServiceID != serviceID || job.PublisherIdentityID != publisherIdentityID {
@@ -274,7 +282,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	installFixtureCommand(t, "docker", "run", "--detach", "--name", machine, "--privileged", "--cgroupns=private", "--network=container:"+*publisherInstallNetwork, "--tmpfs", "/run", "--tmpfs", "/run/lock", *publisherInstallImage)
 	t.Cleanup(func() {
 		if t.Failed() {
-			for _, args := range [][]string{{"logs", machine}, {"exec", machine, "systemctl", "status", installedjobs.SystemdUnit, "--no-pager"}, {"exec", machine, binary, "service", "status", "opencode", "--system"}} {
+			for _, args := range [][]string{{"logs", machine}, {"exec", machine, "systemctl", "status", installedjobs.SystemdUnit, "--no-pager"}, {"exec", machine, binary, "status", "--bg", "--system"}} {
 				output, _ := exec.Command("docker", args...).CombinedOutput()
 				t.Log(string(output))
 			}
@@ -287,14 +295,27 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	installFixtureCommand(t, "docker", "cp", binDir+"/.", machine+":"+binDir)
 	installFixtureCommand(t, "docker", "cp", "/usr/local/share/ca-certificates/tnl-install-fixture.crt", machine+":/usr/local/share/ca-certificates/tnl-install-fixture.crt")
 	installFixtureCommand(t, "docker", "exec", machine, "update-ca-certificates")
-	payload, err := json.Marshal(setup.Installation{Job: job, Credential: credential})
+	spec = job
+	spec.ID = ""
+	payload, err := json.Marshal(setup.Installation{Job: spec, Credential: credential})
 	if err != nil {
 		t.Fatal(err)
 	}
 	register := exec.CommandContext(t.Context(), "docker", "exec", "-i", machine, binary, "--no-telemetry", "service", "register", "--system")
 	register.Stdin = bytes.NewReader(payload)
-	if output, err := register.CombinedOutput(); err != nil {
-		t.Fatalf("register reboot fixture: %v\n%s", err, output)
+	registered, err := register.CombinedOutput()
+	if err != nil {
+		t.Fatalf("register reboot fixture: %v\n%s", err, registered)
+	}
+	var rebootJobID string
+	for _, value := range strings.Fields(string(registered)) {
+		if opaqueid.Valid(value, opaqueid.JobPrefix) {
+			rebootJobID = value
+			break
+		}
+	}
+	if rebootJobID == "" || rebootJobID == jobID {
+		t.Fatal("independent supervisor did not allocate its own job ID")
 	}
 	// control's current run number is observed across a complete container boot,
 	// not inferred from local desired state or an old readiness observation.
@@ -330,7 +351,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 		t.Fatalf("restore fixture DNS: %v\n%s", err, output)
 	}
 	workflowWait(t, 75*time.Second, func() bool {
-		command := exec.CommandContext(t.Context(), "docker", "exec", machine, binary, "service", "status", "opencode", "--system")
+		command := exec.CommandContext(t.Context(), "docker", "exec", machine, binary, "status", rebootJobID, "--system")
 		output, err := command.CombinedOutput()
 		if err != nil || !strings.Contains(string(output), "ready") {
 			return false

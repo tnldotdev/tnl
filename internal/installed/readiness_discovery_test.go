@@ -155,11 +155,12 @@ func TestInstalledHTTPDiscoveryHealthKeepsRunAndOpenResponse(t *testing.T) {
 	definition := project.Config.Services["web"]
 	definition.Target.TLS = &config.TargetTLS{Hostname: new("target.internal"), CA: new(string(root))}
 	project.Config.Services["web"] = definition
-	job := Job{Kind: KindService, ID: "web", Name: "web", Server: fixture.URL,
+	job := Job{Kind: KindService, Name: "web", Server: fixture.URL,
 		PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, ServiceID: saved.Id,
 		Target: first.URL, Protocol: config.ProtocolHTTP, Trust: trust, TrustRevision: saved.TrustRevision,
 		PublisherPool: saved.PublisherPool, ReadinessPath: "/health", Project: project, ProjectService: "web"}
-	if err := registry.Install(ctx, job, identity, ed25519.PrivateKey(key.SigningKey)); err != nil {
+	job, err = registry.Install(ctx, job, identity, ed25519.PrivateKey(key.SigningKey))
+	if err != nil {
 		t.Fatal(err)
 	}
 	job, err = registry.ResolveJob(ctx, job.ID)

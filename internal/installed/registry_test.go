@@ -54,7 +54,7 @@ func fixture(t *testing.T, name string) (Job, authorityv1.PublisherEnrollmentRes
 		}
 		return result
 	}
-	job := Job{Kind: KindService, ID: name, Server: "https://control.example", PublisherIdentityID: id(opaqueid.PublisherIdentityPrefix), GrantID: id(opaqueid.PublisherGrantPrefix), ServiceID: id(opaqueid.ServicePrefix), TrustRevision: 1, Target: "http://127.0.0.1:3000", Protocol: config.ProtocolHTTP}
+	job := Job{Kind: KindService, Name: name, Server: "https://control.example", PublisherIdentityID: id(opaqueid.PublisherIdentityPrefix), GrantID: id(opaqueid.PublisherGrantPrefix), ServiceID: id(opaqueid.ServicePrefix), TrustRevision: 1, Target: "http://127.0.0.1:3000", Protocol: config.ProtocolHTTP}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: job.PublisherIdentityID, GrantId: job.GrantID, KeyId: id(opaqueid.PublisherIdentityKeyPrefix), TeamId: "team", Kind: authorityv1.Service, ServiceId: &job.ServiceID}
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -79,7 +79,8 @@ func capturedTrust(t *testing.T, hostname string, pem []byte) *targettrust.Snaps
 func TestInstalledObservationsFenceReplacedJobRevision(t *testing.T) {
 	registry := testRegistry(t)
 	job, identity, key := fixture(t, "web")
-	if err := registry.Install(t.Context(), job, identity, key); err != nil {
+	job, err := registry.Install(t.Context(), job, identity, key)
+	if err != nil {
 		t.Fatal(err)
 	}
 	before, err := registry.ResolveJob(t.Context(), job.ID)
@@ -118,7 +119,8 @@ func TestRegistryRestartAndScopeBinding(t *testing.T) {
 	job.Target = "https://127.0.0.1:3000"
 	job.Trust = capturedTrust(t, "web.internal", nil)
 	job.ReadinessPath = "/health"
-	if err := r.Install(t.Context(), job, identity, private); err != nil {
+	job, err = r.Install(t.Context(), job, identity, private)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Close(); err != nil {
@@ -130,7 +132,7 @@ func TestRegistryRestartAndScopeBinding(t *testing.T) {
 	}
 	defer r.Close()
 	jobs, err := r.List(t.Context())
-	if err != nil || len(jobs) != 1 || !jobs[0].Enabled || jobs[0].Trust == nil || jobs[0].Trust.Hostname != "web.internal" || jobs[0].ReadinessPath != "/health" {
+	if err != nil || len(jobs) != 1 || jobs[0].ID != job.ID || !opaqueid.Valid(job.ID, opaqueid.JobPrefix) || !jobs[0].Enabled || jobs[0].Trust == nil || jobs[0].Trust.Hostname != "web.internal" || jobs[0].ReadinessPath != "/health" {
 		t.Fatalf("restart: %+v, %v", jobs, err)
 	}
 	loaded, key, _, err := r.signingIdentity(t.Context(), jobs[0])
@@ -192,7 +194,8 @@ func TestRegistryConcurrentProcessesDoNotLoseJobs(t *testing.T) {
 				return
 			}
 			defer r.Close()
-			errs <- r.Install(t.Context(), job, identity, private)
+			_, err = r.Install(t.Context(), job, identity, private)
+			errs <- err
 		})
 	}
 	wg.Wait()
@@ -217,16 +220,138 @@ func TestRegistryConcurrentProcessesDoNotLoseJobs(t *testing.T) {
 	}
 }
 
+func TestConcurrentInstallsAllocateOneHandleForAnExactBinding(t *testing.T) {
+	options := testOptions(t)
+	first, err := Open(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := Open(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	spec, identity, private := fixture(t, "web")
+	type result struct {
+		job Job
+		err error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for _, registry := range []*Registry{first, second} {
+		go func() {
+			<-start
+			job, err := registry.Install(t.Context(), spec, identity, private)
+			results <- result{job, err}
+		}()
+	}
+	close(start)
+	a, b := <-results, <-results
+	if a.err != nil || b.err != nil || !opaqueid.Valid(a.job.ID, opaqueid.JobPrefix) || a.job.ID != b.job.ID {
+		t.Fatal("same binding did not share one allocated job ID", a.err, b.err)
+	}
+	jobs, err := first.List(t.Context())
+	if err != nil || len(jobs) != 1 || jobs[0].ID != a.job.ID || jobs[0].Revision != 2 {
+		t.Fatal("concurrent reinstall did not leave one revised definition", err)
+	}
+}
+
+func TestLegacyRegistryIsRejectedWithoutRewritingDefinitionsOrSelections(t *testing.T) {
+	options := testOptions(t)
+	r, err := Open(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	job, identity, private := fixture(t, "web")
+	job.ID = "service-0123456789abcdef01234567"
+	job.Enabled, job.Revision = true, 1
+	value, err := json.Marshal([]Job{job})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := r.Profile(t.Context(), job.Server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := json.Marshal(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selections := []clientstate.PublisherSelection{{Kind: "job", Key: "job:" + job.ID}, {Kind: "job", Key: "foreground-publisher"}}
+	for _, selection := range selections {
+		if err := profile.InstallPublisherIdentity(t.Context(), clientstate.PublisherIdentity{ID: identity.ClientId, PublicDocument: document, SigningKey: private}, selection); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.database.SavePublisherJobRegistry(t.Context(), value); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := Open(t.Context(), options); !errors.Is(err, ErrLegacyRegistry) {
+		if reopened != nil {
+			reopened.Close()
+		}
+		t.Fatalf("old registry did not fail at open: %v", err)
+	}
+	job.ID = ""
+	if _, err := r.Install(t.Context(), job, identity, private); !errors.Is(err, ErrLegacyRegistry) {
+		t.Fatalf("existing registry handle accepted a write: %v", err)
+	}
+	after, found, err := r.database.PublisherJobRegistry(t.Context())
+	if err != nil || !found || !bytes.Equal(value, after) {
+		t.Fatal("old registry was changed", err)
+	}
+	for _, selection := range selections {
+		identity, found, err := profile.SelectedPublisherIdentity(t.Context(), selection.Kind, selection.Key)
+		if err != nil || !found || !bytes.Equal(identity.SigningKey, private) {
+			t.Fatalf("lost saved %s selection: %v", selection.Key, err)
+		}
+	}
+}
+
+func TestConnectorBindingKeepsItsHandleAndOriginatingState(t *testing.T) {
+	r := userRegistry(t)
+	spec, _, _ := kindFixture(t, KindConnector)
+	first, err := r.InstallConnector(t.Context(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, exists, err := r.FindConnector(t.Context(), spec.Server+"/", spec.ServiceID, spec.IdentityID, spec.StateDir)
+	if err != nil || !exists || found.ID != first.ID || found.Target != spec.Target {
+		t.Fatal("exact binding did not find the saved listener", err)
+	}
+	if retry, err := r.InstallConnector(t.Context(), spec); err != nil || retry.ID != first.ID {
+		t.Fatal("same connector changed job ID", err)
+	}
+	differentState := spec
+	differentState.StateDir = t.TempDir()
+	if _, _, err := r.FindConnector(t.Context(), spec.Server, spec.ServiceID, spec.IdentityID, differentState.StateDir); !errors.Is(err, ErrScope) {
+		t.Fatal("another state directory selected this connector", err)
+	}
+	if _, err := r.InstallConnector(t.Context(), differentState); !errors.Is(err, ErrScope) {
+		t.Fatal("another state directory inherited this connector", err)
+	}
+	other, _, _ := kindFixture(t, KindConnector)
+	spec.IdentityID = other.IdentityID
+	if _, exists, err := r.FindConnector(t.Context(), spec.Server, spec.ServiceID, spec.IdentityID, spec.StateDir); err != nil || exists {
+		t.Fatal("another identity selected this connector", err)
+	}
+	if second, err := r.InstallConnector(t.Context(), spec); err != nil || second.ID == first.ID {
+		t.Fatal("another identity inherited this connector", err)
+	}
+}
+
 func TestInstalledJobsCannotShareOneRuntimeIdentity(t *testing.T) {
 	r := testRegistry(t)
 	first, identity, private := fixture(t, "first-runtime")
-	if err := r.Install(t.Context(), first, identity, private); err != nil {
+	if _, err := r.Install(t.Context(), first, identity, private); err != nil {
 		t.Fatal(err)
 	}
 	second, other, _ := fixture(t, "second-runtime")
 	second.PublisherIdentityID = first.PublisherIdentityID
 	other.ClientId, other.KeyId = identity.ClientId, identity.KeyId
-	if err := r.Install(t.Context(), second, other, private); !errors.Is(err, ErrJobExists) {
+	if _, err := r.Install(t.Context(), second, other, private); !errors.Is(err, ErrJobExists) {
 		t.Fatal("two independently supervised jobs accepted the same runtime identity", err)
 	}
 }
@@ -234,11 +359,12 @@ func TestInstalledJobsCannotShareOneRuntimeIdentity(t *testing.T) {
 func TestInstallRetryRefreshesSettingsWithoutReplacingScopeOrKey(t *testing.T) {
 	r := testRegistry(t)
 	job, identity, private := fixture(t, "one")
-	if err := r.Install(t.Context(), job, identity, private); err != nil {
+	first, err := r.Install(t.Context(), job, identity, private)
+	if err != nil {
 		t.Fatal(err)
 	}
 	job.Target = "http://127.0.0.1:4000"
-	if err := r.Install(t.Context(), job, identity, private); err != nil {
+	if updated, err := r.Install(t.Context(), job, identity, private); err != nil || updated.ID != first.ID {
 		t.Fatalf("installation retry failed: %v", err)
 	}
 	jobs, err := r.List(t.Context())
@@ -253,35 +379,31 @@ func TestInstallRetryRefreshesSettingsWithoutReplacingScopeOrKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Install(t.Context(), job, identity, replacement); !errors.Is(err, ErrScope) {
+	if _, err := r.Install(t.Context(), job, identity, replacement); !errors.Is(err, ErrScope) {
 		t.Fatalf("replacement key accepted: %v", err)
 	}
-	job.Server = "https://another.example"
-	if err := r.Install(t.Context(), job, identity, private); !errors.Is(err, ErrScope) {
-		t.Fatalf("replacement server scope accepted: %v", err)
+	job.GrantID, _ = opaqueid.New(opaqueid.PublisherGrantPrefix)
+	identity.GrantId = job.GrantID
+	if _, err := r.Install(t.Context(), job, identity, private); !errors.Is(err, ErrScope) {
+		t.Fatalf("replacement grant accepted: %v", err)
 	}
 }
 
-func TestStableJobKeyAndDisplayName(t *testing.T) {
+func TestJobHandleSurvivesReinstallAndDisplayRename(t *testing.T) {
 	r := testRegistry(t)
-	job, identity, private := fixture(t, "placeholder")
-	if ServiceJobKey(job.Server+"/", job.ServiceID) != ServiceJobKey(job.Server, job.ServiceID) {
-		t.Fatal("server spelling changed the stable job key")
-	}
-	job.ID = ServiceJobKey(job.Server, job.ServiceID)
-	if job.ID == JobKey(job.Server, "connector", job.ServiceID) {
-		t.Fatal("publisher and connector share a job key")
-	}
-	job.Name = "first"
-	if err := r.Install(t.Context(), job, identity, private); err != nil {
+	spec, identity, private := fixture(t, "first")
+	first, err := r.Install(t.Context(), spec, identity, private)
+	if err != nil {
 		t.Fatal(err)
 	}
-	job.Name = "renamed"
-	if err := r.Install(t.Context(), job, identity, private); err != nil {
+	spec.Name = "renamed"
+	spec.Server += "/"
+	job, err := r.Install(t.Context(), spec, identity, private)
+	if err != nil {
 		t.Fatal(err)
 	}
 	jobs, err := r.List(t.Context())
-	if err != nil || len(jobs) != 1 || jobs[0].ID != job.ID || jobs[0].Name != "renamed" || jobs[0].Revision != 2 {
+	if err != nil || len(jobs) != 1 || jobs[0].ID != job.ID || job.ID != first.ID || jobs[0].Name != "renamed" || jobs[0].Revision != 2 {
 		t.Fatalf("renamed job: %+v %v", jobs, err)
 	}
 	if err := r.Stop(t.Context(), job.ID); err != nil {
@@ -312,23 +434,23 @@ func TestStableJobKeyAndDisplayName(t *testing.T) {
 	}
 }
 
-func TestResolveJobNameOrIDWithoutCrossProjectGuessing(t *testing.T) {
+func TestResolveJobRequiresExactHandleWithoutCrossProjectGuessing(t *testing.T) {
 	r := testRegistry(t)
-	first, identity, private := fixture(t, "first")
-	first.Name = "orders"
-	if err := r.Install(t.Context(), first, identity, private); err != nil {
+	first, identity, private := fixture(t, "orders")
+	first, err := r.Install(t.Context(), first, identity, private)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if selected, err := r.ResolveJob(t.Context(), "orders"); err != nil || selected.ID != first.ID {
-		t.Fatalf("single service name: %+v %v", selected, err)
+	if selected, err := r.ResolveJob(t.Context(), "orders"); !errors.Is(err, ErrJobNotFound) {
+		t.Fatalf("single service name was accepted as a job ID: %+v %v", selected, err)
 	}
-	second, identity, private := fixture(t, "second")
-	second.Name = "orders"
+	second, identity, private := fixture(t, "orders")
 	second.Server = "https://other.example"
-	if err := r.Install(t.Context(), second, identity, private); err != nil {
+	second, err = r.Install(t.Context(), second, identity, private)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ResolveJob(t.Context(), "orders"); !errors.Is(err, ErrJobAmbiguous) {
+	if _, err := r.ResolveJob(t.Context(), "orders"); !errors.Is(err, ErrJobNotFound) {
 		t.Fatalf("same name across projects was selected: %v", err)
 	}
 	for _, id := range []string{first.ID, second.ID} {
@@ -399,7 +521,7 @@ func TestMissingOrChangedKeyFailsAcrossReopen(t *testing.T) {
 				t.Fatal(err)
 			}
 			job, identity, private := fixture(t, "one")
-			if err := r.Install(t.Context(), job, identity, private); err != nil {
+			if _, err := r.Install(t.Context(), job, identity, private); err != nil {
 				t.Fatal(err)
 			}
 			if err := r.Close(); err != nil {
@@ -480,12 +602,12 @@ func TestRegistryRejectsNamespaceAndInvalidJob(t *testing.T) {
 	r := testRegistry(t)
 	job, identity, private := fixture(t, "one")
 	identity.Kind = "namespace"
-	if err := r.Install(t.Context(), job, identity, private); !errors.Is(err, ErrScope) {
+	if _, err := r.Install(t.Context(), job, identity, private); !errors.Is(err, ErrScope) {
 		t.Fatalf("namespace job: %v", err)
 	}
 	identity.Kind = "saved_public_url"
 	job.Server = ""
-	if err := r.Install(t.Context(), job, identity, private); !errors.Is(err, ErrScope) {
+	if _, err := r.Install(t.Context(), job, identity, private); !errors.Is(err, ErrScope) {
 		t.Fatalf("implicit server: %v", err)
 	}
 	otherOwner := os.Geteuid() + 1

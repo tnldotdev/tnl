@@ -3,59 +3,48 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"flag"
-	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	clientdetached "github.com/tnldotdev/tnl/internal/client/detached"
-	"github.com/tnldotdev/tnl/internal/naming"
-
+	"github.com/tnldotdev/tnl/internal/client/background"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/connector"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
-	"github.com/tnldotdev/tnl/internal/testutil"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
-	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	if runtime.GOOS != "linux" {
-		t.Skip("real CLI credential protection requires Linux")
-	}
-	if !*cliWorkflowChild {
-		executable, err := os.Executable()
-		if err != nil {
-			t.Fatal(err)
-		}
-		command := exec.CommandContext(t.Context(), executable, "-test.run=^TestIntegrationCLIConnectMetadataReload$", "-test.v", "-test.timeout=3m", "-tnl-test-tier=integration",
-			"-tnl-test-postgres-url="+flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-workflow-child")
-		output, err := command.CombinedOutput()
-		if err != nil {
-			t.Fatalf("connector reload CLI: %v\n%s", err, output)
-		}
-		t.Logf("%s", output)
+	if !cliWorkflowInChild(t) {
 		return
 	}
 	f := newCLIWorkflow(t)
-	for _, detached := range []bool{false, true} {
-		t.Run(fmt.Sprintf("detached=%t", detached), func(t *testing.T) {
+	command := workflowBackgroundCLI(t, f)
+	for _, mode := range []string{"foreground", "background"} {
+		t.Run(mode, func(t *testing.T) {
+			bg := mode == "background"
 			person := f.state(t, "visitor")
+			if bg {
+				t.Cleanup(func() { cleanupBackgroundJobs(t, person) })
+			}
 			f.loginPerson(t, person)
 			session, err := openTeamSession(t.Context(), remoteFlags{ServerURL: f.url, StateDir: person}, "connector reload", io.Discard)
 			if err != nil {
@@ -84,7 +73,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				t.Fatal(err)
 			}
 			key, _ := randomIdempotencyKey()
-			service, err := session.Authenticated().Control.CreateService(t.Context(), session.Identity().PersonalTeamId, fmt.Sprintf("reload-%t", detached), key,
+			service, err := session.Authenticated().Control.CreateService(t.Context(), session.Identity().PersonalTeamId, "reload-"+mode, key,
 				controlv1.ServiceMetadata{Protocol: "tcp", TrustRevision: 1, TargetTls: publisheridentity.ServiceTargetTLS(&trust)}, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -126,52 +115,78 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			listener := workflowListen(t)
 			address := listener.Addr().String()
 			_ = listener.Close()
-			args := []string{"--no-config", "--no-telemetry", "connect", service.Id, "--listen", address, "--server", f.url, "--state-dir", person}
-			const detachedID = "abcdef0123456789abcdef02"
-			if detached {
-				args = append(args, "--detached-child="+detachedID)
-			}
+			args := []string{"connect", service.Id, "--listen", address, "--server", f.url, "--state-dir", person}
 			var ready chan struct{}
 			var done chan error
+			var launched chan workflowCLIResult
 			var cancel context.CancelFunc
-			joined := true
+			var jobID string
 			startConnector := func() {
 				t.Helper()
-				if !joined {
+				if done != nil || launched != nil {
 					t.Fatal("previous connector invocation was not joined")
 				}
 				ctx, stop := context.WithCancel(t.Context())
 				cancel = stop
+				if bg {
+					launched = make(chan workflowCLIResult, 1)
+					go func(result chan<- workflowCLIResult) {
+						result <- command(ctx, append(args, "--bg", "--output=json")...)
+					}(launched)
+					return
+				}
 				ready, done = make(chan struct{}, 8), make(chan error, 1)
-				joined = false
-				go func() {
+				go func(ready chan<- struct{}, done chan<- error) {
 					log := workflowLifecycleLog{t: t, ready: func() { ready <- struct{}{} }}
-					done <- log.run(ctx, args)
-				}()
+					done <- log.run(ctx, append([]string{"--no-config", "--no-telemetry"}, args...))
+				}(ready, done)
 			}
 			defer func() {
 				if cancel != nil {
 					cancel()
 				}
-				if !joined {
+				if done != nil {
 					select {
 					case <-done:
 					case <-time.After(10 * time.Second):
 						t.Error("CLI did not join")
 					}
 				}
+				if launched != nil {
+					select {
+					case <-launched:
+					case <-time.After(10 * time.Second):
+						t.Error("background launcher did not join")
+					}
+				}
 			}()
-			joinReplacedConnector := func() {
+			waitLaunch := func() workflowCLIResult {
 				t.Helper()
 				select {
-				case err := <-done:
-					joined = true
+				case result := <-launched:
+					launched = nil
 					cancel()
-					if !errors.Is(err, connectorstream.ErrServiceConnection) && !errors.Is(err, clientcontrol.ErrNotFound) {
-						t.Fatalf("replaced connector did not stop with an obsolete run: %v", err)
+					return result
+				case <-time.After(35 * time.Second):
+					t.Fatal("background launch did not return")
+					return workflowCLIResult{}
+				}
+			}
+			joinReplacedConnector := func() {
+				t.Helper()
+				if bg {
+					waitBackgroundJobExit(t, t.Context(), person, jobID)
+				} else {
+					select {
+					case err := <-done:
+						done = nil
+						cancel()
+						if !errors.Is(err, connectorstream.ErrServiceConnection) && !errors.Is(err, clientcontrol.ErrNotFound) {
+							t.Fatalf("replaced connector did not stop with an obsolete run: %v", err)
+						}
+					case <-time.After(10 * time.Second):
+						t.Fatal("replaced connector did not join")
 					}
-				case <-time.After(10 * time.Second):
-					t.Fatal("replaced connector did not join")
 				}
 				if conn, err := net.DialTimeout("tcp", address, time.Second); err == nil {
 					_ = conn.Close()
@@ -180,19 +195,31 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			}
 			waitReady := func() {
 				t.Helper()
+				if bg {
+					result := waitLaunch()
+					var receipt connector.Profile
+					host, port, _ := net.SplitHostPort(address)
+					if err := json.Unmarshal(result.stdout, &receipt); result.err != nil || len(result.stderr) != 0 || err != nil ||
+						receipt.Schema != 1 || receipt.Protocol != config.ProtocolTCP || receipt.ServiceID != service.Id ||
+						!receipt.ConnectorRequired || receipt.Host != host || strconv.Itoa(receipt.Port) != port ||
+						!opaqueid.Valid(receipt.JobID, opaqueid.JobPrefix) || receipt.JobID == jobID {
+						t.Fatalf("invalid background connector receipt: %s (%v %v)\n%s", result.stdout, result.err, err, result.stderr)
+					}
+					jobID = receipt.JobID
+					job, err := background.Status(t.Context(), person, jobID)
+					if err != nil || job.State != background.StateReady || job.Kind != background.KindConnect ||
+						job.Address != address || job.PID == os.Getpid() {
+						t.Fatalf("receipt does not identify the ready connector on %s: %+v (%v)", address, job, err)
+					}
+					return
+				}
 				select {
 				case <-ready:
 				case err := <-done:
-					done <- err
+					done = nil
 					t.Fatalf("connector stopped: %v", err)
 				case <-time.After(15 * time.Second):
 					t.Fatal("connector not ready")
-				}
-				if detached {
-					workflowWait(t, time.Second, func() bool {
-						status, err := clientdetached.Request(person, detachedID, "status")
-						return err == nil && status == fmt.Sprintf("ready %d", os.Getpid())
-					})
 				}
 			}
 			startConnector()
@@ -271,11 +298,14 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("new invocation did not refetch visitor inventory")
 			}
-			if detached {
-				status, err := clientdetached.Request(person, detachedID, "status")
-				if err != nil || status != fmt.Sprintf("starting %d", os.Getpid()) {
-					t.Fatalf("pending authorization advertised readiness: %q %v", status, err)
+			var pendingID string
+			if bg {
+				jobs, err := background.List(t.Context(), person)
+				if err != nil || len(jobs) != 1 || jobs[0].Kind != background.KindConnect ||
+					jobs[0].State != background.StateStarting || jobs[0].JobID == jobID || jobs[0].Address != "" {
+					t.Fatalf("pending authorization advertised readiness or lost its owner: %+v (%v)", jobs, err)
 				}
+				pendingID = jobs[0].JobID
 			}
 			database, err := controlstate.Open(t.Context(), f.databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 			if err != nil {
@@ -292,19 +322,33 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				}
 			}
 			unblock()
-			select {
-			case err := <-done:
-				joined = true
-				if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResourceNotFound {
-					t.Fatalf("revoked invocation did not fail inventory authorization: %v", err)
+			if bg {
+				result := waitLaunch()
+				var problem struct {
+					Type string         `json:"type"`
+					Code failure.Reason `json:"code"`
 				}
-			case <-time.After(10 * time.Second):
-				t.Fatal("revoked connector did not stop")
-			}
-			select {
-			case <-ready:
-				t.Fatal("revoked metadata emitted readiness")
-			default:
+				var exit *exec.ExitError
+				if !errors.As(result.err, &exit) || exit.ExitCode() != 1 || len(result.stdout) != 0 ||
+					json.Unmarshal(result.stderr, &problem) != nil || problem.Type != "error" || problem.Code != failure.ServerResourceNotFound {
+					t.Fatalf("revoked background invocation emitted a receipt or missed its startup failure: %s (%v)\n%s", result.stdout, result.err, result.stderr)
+				}
+				waitBackgroundJobExit(t, t.Context(), person, pendingID)
+			} else {
+				select {
+				case err := <-done:
+					done = nil
+					if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResourceNotFound {
+						t.Fatalf("revoked invocation did not fail inventory authorization: %v", err)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("revoked connector did not stop")
+				}
+				select {
+				case <-ready:
+					t.Fatal("revoked metadata emitted readiness")
+				default:
+				}
 			}
 			if conn, err := net.DialTimeout("tcp", address, time.Second); err == nil {
 				_ = conn.Close()

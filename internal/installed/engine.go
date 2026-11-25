@@ -354,7 +354,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		return false, err
 	}
 	if job.Kind == KindDeployment {
-		if e.Deployment == nil || !e.Registry.deployments {
+		if e.Deployment == nil || !e.Registry.user && !e.Registry.fixedDeployments {
 			return false, ErrScope
 		}
 		var ready atomic.Bool

@@ -40,6 +40,9 @@ func TestClientHelpExamplesParse(t *testing.T) {
 				if key == "REVISION" {
 					return "42"
 				}
+				if key == "JOB_ID" {
+					return "job_0123456789abcdefghijkl"
+				}
 				return "example-" + key
 			})))
 			reader.Comma = ' '

@@ -85,9 +85,9 @@ const (
 	ServicePublisherUnavailable           Reason = "TNL_CLIENT_PRIVATE_PUBLISHER_UNAVAILABLE"
 	LocalServiceUnavailable               Reason = "TNL_CLIENT_LOCAL_PRIVATE_SERVICE_UNAVAILABLE"
 	InstalledTargetMissing                Reason = "TNL_CLIENT_INSTALLED_TARGET_MISSING"
-	InstalledJobAmbiguous                 Reason = "TNL_CLIENT_INSTALLED_JOB_AMBIGUOUS"
-	DetachedNotFound                      Reason = "TNL_CLIENT_DETACHED_NOT_FOUND"
-	DetachedStartFailed                   Reason = "TNL_CLIENT_DETACHED_START_FAILED"
+	InstalledJobRegistryLegacy            Reason = "TNL_CLIENT_INSTALLED_JOB_REGISTRY_LEGACY"
+	BackgroundNotFound                    Reason = "TNL_CLIENT_BACKGROUND_NOT_FOUND"
+	BackgroundStartFailed                 Reason = "TNL_CLIENT_BACKGROUND_START_FAILED"
 	GuestSessionInvalid                   Reason = "TNL_CLIENT_GUEST_SESSION_INVALID"
 	CurrentDirectoryUnavailable           Reason = "TNL_CLIENT_CURRENT_DIRECTORY_UNAVAILABLE"
 	TeamNotFound                          Reason = "TNL_CLIENT_TEAM_NOT_FOUND"
@@ -339,7 +339,7 @@ var definitions = map[Reason]Definition{
 	},
 	ConnectModeInvalid: {
 		Class: Invalid, Message: "connect options select incompatible modes",
-		Action: "select one of --foreground, --detach, or --install; --stdio takes none of these, --listen, or --output=json", Retry: RetryAfterChange,
+		Action: "select one of --foreground, --bg, or --install; --stdio takes none of these, --listen, or --output=json", Retry: RetryAfterChange,
 	},
 	ConnectStdioProtocolInvalid: {
 		Class: Invalid, Message: "--stdio requires a service with the approved tcp protocol",
@@ -451,17 +451,18 @@ var definitions = map[Reason]Definition{
 		Class: Invalid, Message: "the configured service has no fixed target to install",
 		Action: "set this service's target to an address that remains valid after restart, then retry --install", Retry: RetryAfterChange,
 	},
-	InstalledJobAmbiguous: {
-		Class: Conflict, Message: "more than one installed publication has this name",
-		Action: "run tnl service list and use the job ID for start, stop, or remove", Retry: RetryAfterChange,
+	InstalledJobRegistryLegacy: {
+		Class: Conflict, Message: "installed jobs still use the previous ID format",
+		Action: "use the previous tnl binary to inventory, stop, and remove these jobs, then refresh the supervisor and recreate the jobs with this binary; do not reset client state",
+		Retry:  RetryAfterChange,
 	},
-	DetachedNotFound: {
-		Class: NotFound, Message: "the detached publication is not running",
-		Action: "run tnl detached list to see current publications", Retry: RetryAfterChange,
+	BackgroundNotFound: {
+		Class: NotFound, Message: "the background job is not running in the selected state directory",
+		Action: "run tnl status --bg with the same state directory to see current jobs", Retry: RetryAfterChange,
 	},
-	DetachedStartFailed: {
-		Class: Unavailable, Message: "the detached publication did not start",
-		Action: "run tnl publish without --detach to see the failure, then retry", Retry: RetryAfterChange,
+	BackgroundStartFailed: {
+		Class: Unavailable, Message: "the background job did not start",
+		Action: "run the same command without --bg or --background to see what failed, then retry", Retry: RetryAfterChange,
 	},
 	GuestSessionInvalid: {
 		Class: Invalid, Message: "the saved guest demo state is invalid",

@@ -63,7 +63,7 @@ func setupCompletionFacts(t *testing.T) {
 	if err := os.MkdirAll(meta.DirectoryName, 0700); err != nil {
 		t.Fatal(err)
 	}
-	facts := `{"services":{"orders":"postgres","other":"http","list":"tcp"},"deployments":["production"]}`
+	facts := `{"services":{"orders":"postgres","other":"http","list":"tcp","available":"tcp"},"deployments":["production"]}`
 	if err := os.WriteFile(filepath.Join(meta.DirectoryName, "completion.json"), []byte(facts), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -109,8 +109,14 @@ func TestServiceCompletionExcludesExistingSelectors(t *testing.T) {
 	if out := completeForTest(t, "--no-config", "status", "or"); strings.Contains(out, "orders\t") {
 		t.Fatalf("--no-config completed a project service: %q", out)
 	}
-	if out := completeForTest(t, "connect", "li"); strings.Contains(out, "list\ttcp") {
+	if out := completeForTest(t, "connect", "ava"); strings.Contains(out, "available\ttcp") {
 		t.Fatalf("connect completed a service that would dispatch to a command: %q", out)
+	}
+	if out := completeForTest(t, "connect", "start", "ava"); !strings.Contains(out, "available\ttcp\n") {
+		t.Fatalf("explicit connect start did not complete service with a command name: %q", out)
+	}
+	if out := completeForTest(t, "connect", "li"); !strings.Contains(out, "list\ttcp\n") {
+		t.Fatalf("connect did not complete a service named after a retired command: %q", out)
 	}
 	if out := completeForTest(t, "connect", "start", "li"); !strings.Contains(out, "list\ttcp\n") {
 		t.Fatalf("explicit connect start did not complete service with a command name: %q", out)

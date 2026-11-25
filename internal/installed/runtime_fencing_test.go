@@ -67,7 +67,8 @@ func TestInstalledDeploymentRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 	}))
 	defer server.Close()
 	job.Server = server.URL
-	if err := r.InstallDeployment(t.Context(), job, member, key); err != nil {
+	job, err = r.InstallDeployment(t.Context(), job, member, key)
+	if err != nil {
 		t.Fatal(err)
 	}
 	client, err := publisherdeployment.NewClient(server.URL, server.Client())

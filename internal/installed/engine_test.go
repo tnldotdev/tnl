@@ -171,8 +171,8 @@ func (c *jobControl) CloseServiceRun(ctx context.Context, service, run string, t
 }
 
 func jobBoundary(job Job, identity authorityv1.PublisherEnrollmentResult, key ed25519.PrivateKey) (*jobControl, *jobAuthority) {
-	hostname := job.ID + ".example"
-	return &jobControl{service: controlv1.Service{Id: job.ServiceID, TeamId: identity.TeamId, Name: job.ID, Protocol: controlv1.ServiceProtocol(job.Protocol),
+	hostname := job.Name + ".example"
+	return &jobControl{service: controlv1.Service{Id: job.ServiceID, TeamId: identity.TeamId, Name: job.Name, Protocol: controlv1.ServiceProtocol(job.Protocol),
 		Enabled: true, TrustRevision: job.TrustRevision, EndpointRevision: 1, PublisherPool: job.PublisherPool,
 		TargetTls: publisheridentity.ServiceTargetTLS(job.Trust), Endpoint: &controlv1.ServiceEndpoint{Hostname: hostname, Port: 443}},
 		preparation: controlv1.ServiceRunPreparation{ServiceId: job.ServiceID, TeamId: identity.TeamId,
@@ -224,7 +224,7 @@ func TestInstalledTelemetryOptOutSurvivesSupervisorRestart(t *testing.T) {
 			registry := userRegistry(t)
 			job, _, _ := kindFixture(t, KindConnector)
 			job.TelemetryDisabled = disabled
-			if err := registry.InstallConnector(t.Context(), job); err != nil {
+			if _, err := registry.InstallConnector(t.Context(), job); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {
@@ -283,7 +283,8 @@ func TestInstalledServiceRequiresExplicitServiceControl(t *testing.T) {
 	registry := testRegistry(t)
 	job, identity, private := fixture(t, "web")
 	control, authority := jobBoundary(job, identity, private)
-	if err := registry.Install(t.Context(), job, identity, private); err != nil {
+	job, err := registry.Install(t.Context(), job, identity, private)
+	if err != nil {
 		t.Fatal(err)
 	}
 	engine := Engine{Registry: registry, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
@@ -314,7 +315,7 @@ func TestInstalledRunConflictRetriesOnlyWhileRuntimeIsCurrent(t *testing.T) {
 					control.runtimeMu.Unlock()
 				}
 			}
-			if err := registry.Install(t.Context(), job, identity, key); err != nil {
+			if _, err := registry.Install(t.Context(), job, identity, key); err != nil {
 				t.Fatal(err)
 			}
 			engine := Engine{Registry: registry, PollInterval: 5 * time.Millisecond, RetryMin: 5 * time.Millisecond, RetryMax: 10 * time.Millisecond,
@@ -363,7 +364,7 @@ func TestRealNativeRunSignsWithTheSameKeyAfterBoot(t *testing.T) {
 			t.Fatal(err)
 		}
 		if boot == 0 {
-			if err := r.Install(t.Context(), job, identity, private); err != nil {
+			if _, err := r.Install(t.Context(), job, identity, private); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -442,7 +443,7 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 		if name == "server-down" {
 			job.Server = "https://unavailable.example"
 		}
-		if err := r.Install(t.Context(), job, identity, private); err != nil {
+		if _, err := r.Install(t.Context(), job, identity, private); err != nil {
 			t.Fatal(err)
 		}
 		c, a := jobBoundary(job, identity, private)
@@ -458,24 +459,24 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 	defer release()
 	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 15 * time.Millisecond, RetryMax: 30 * time.Millisecond,
 		Observe: func(job Job, status Status) error {
-			if status.State == JobRetrying && status.Attempts >= retryReady[job.ID] {
+			if status.State == JobRetrying && status.Attempts >= retryReady[job.Name] {
 				// stop after the retryable failure has been recorded, not while
 				// the attempt may still return an independent failure.
 				mu.Lock()
-				parked[job.ID] = true
+				parked[job.Name] = true
 				mu.Unlock()
 				<-releaseRetry
 			}
 			return nil
 		},
 		Clients: func(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
-			if job.ID == "server-down" {
+			if job.Name == "server-down" {
 				mu.Lock()
 				retries = append(retries, time.Now())
 				mu.Unlock()
 				return PublisherClients{}, nil, errors.New("server unavailable with token=secret")
 			}
-			b := boundaries[job.ID]
+			b := boundaries[job.Name]
 			return jobClients(b.c), b.a, nil
 		}}
 	cancel, done := startEngine(t, engine)
@@ -487,7 +488,7 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 		jobs, _ := r.List(t.Context())
 		targetRetried := false
 		for _, j := range jobs {
-			if j.ID == "target-down" {
+			if j.Name == "target-down" {
 				targetRetried = j.Status.Attempts >= 3 && j.Status.State == JobRetrying
 			}
 		}
@@ -519,7 +520,8 @@ func TestInstalledCancellationPreservesIndependentPublicationFailure(t *testing.
 	defer target.Close()
 	job, identity, private := fixture(t, "cancelled-attempt")
 	job.Target = target.URL
-	if err := r.Install(t.Context(), job, identity, private); err != nil {
+	job, err := r.Install(t.Context(), job, identity, private)
+	if err != nil {
 		t.Fatal(err)
 	}
 	control, authority := jobBoundary(job, identity, private)
@@ -539,14 +541,17 @@ func TestInstalledCancellationPreservesIndependentPublicationFailure(t *testing.
 
 func TestReconcileDoesNotBlockOnAnotherJobsDrain(t *testing.T) {
 	r := userRegistry(t)
+	ids := map[string]string{}
 	for _, name := range []string{"slow", "next"} {
 		job, _, _ := kindFixture(t, KindConnector)
-		job.ID = name
-		if err := r.InstallConnector(t.Context(), job); err != nil {
+		job.Name = name
+		job, err := r.InstallConnector(t.Context(), job)
+		if err != nil {
 			t.Fatal(err)
 		}
+		ids[name] = job.ID
 	}
-	if err := r.Stop(t.Context(), "next"); err != nil {
+	if err := r.Stop(t.Context(), ids["next"]); err != nil {
 		t.Fatal(err)
 	}
 	release := make(chan struct{})
@@ -557,27 +562,30 @@ func TestReconcileDoesNotBlockOnAnotherJobsDrain(t *testing.T) {
 		if err := ready(); err != nil {
 			return err
 		}
-		if j.ID == "next" {
+		if j.ID == ids["next"] {
 			running.Store(true)
 		}
 		<-ctx.Done()
-		if j.ID == "slow" {
+		if j.ID == ids["slow"] {
 			draining.Store(true)
 			<-release
 		}
 		return nil
 	}}
 	cancel, done := startEngine(t, engine)
-	await(t, func() bool { jobs, _ := r.List(t.Context()); return len(jobs) == 2 && jobs[1].Status.State == JobReady })
-	if err := r.Stop(t.Context(), "slow"); err != nil {
+	await(t, func() bool {
+		job, err := r.ResolveJob(t.Context(), ids["slow"])
+		return err == nil && job.Status.State == JobReady
+	})
+	if err := r.Stop(t.Context(), ids["slow"]); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Start(t.Context(), "next"); err != nil {
+	if err := r.Start(t.Context(), ids["next"]); err != nil {
 		t.Fatal(err)
 	}
 	await(t, func() bool { return draining.Load() && running.Load() })
 	wait, stop := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	if err := r.WaitStopped(wait, "slow"); !errors.Is(err, context.DeadlineExceeded) {
+	if err := r.WaitStopped(wait, ids["slow"]); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("stop preceded drain join", err)
 	}
 	stop()
@@ -589,7 +597,7 @@ func TestReconcileDoesNotBlockOnAnotherJobsDrain(t *testing.T) {
 	}
 	once.Do(func() { close(release) })
 	joinEngine(t, cancel, done)
-	if err := r.WaitStopped(t.Context(), "slow"); err != nil {
+	if err := r.WaitStopped(t.Context(), ids["slow"]); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -597,7 +605,8 @@ func TestReconcileDoesNotBlockOnAnotherJobsDrain(t *testing.T) {
 func TestBlockedGrantCanRestartWithoutLeakingErrorText(t *testing.T) {
 	r := testRegistry(t)
 	job, identity, private := fixture(t, "one")
-	if err := r.Install(t.Context(), job, identity, private); err != nil {
+	job, err := r.Install(t.Context(), job, identity, private)
+	if err != nil {
 		t.Fatal(err)
 	}
 	control, authority := jobBoundary(job, identity, private)
@@ -633,7 +642,8 @@ func TestServicePublicationRejectsDriftBeforePreparingAnyRun(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := testRegistry(t)
 			job, identity, key := fixture(t, "web")
-			if err := r.Install(t.Context(), job, identity, key); err != nil {
+			job, err := r.Install(t.Context(), job, identity, key)
+			if err != nil {
 				t.Fatal(err)
 			}
 			control, authority := jobBoundary(job, identity, key)

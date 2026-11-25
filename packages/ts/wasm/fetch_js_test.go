@@ -93,6 +93,12 @@ func TestJSBodyCopiesBoundedChunksAndJoinsCancellation(t *testing.T) {
 }
 
 func TestFetchTransportContextAbortsHostOperation(t *testing.T) {
+	t.Run("same reason", func(t *testing.T) { testFetchTransportContextAbort(t, false) })
+	t.Run("cloned reason", func(t *testing.T) { testFetchTransportContextAbort(t, true) })
+}
+
+func testFetchTransportContextAbort(t *testing.T, clone bool) {
+	t.Helper()
 	entered := make(chan struct{})
 	aborted := make(chan struct{})
 	var abort js.Func
@@ -102,7 +108,12 @@ func TestFetchTransportContextAbortsHostOperation(t *testing.T) {
 			reject := args[1]
 			abort = js.FuncOf(func(js.Value, []js.Value) any {
 				close(aborted)
-				reject.Invoke(signal.Get("reason"))
+				reason := signal.Get("reason")
+				if clone {
+					// workerd's fetch rejection carries a copy, not the same JS object.
+					reason = js.Global().Call("structuredClone", reason)
+				}
+				reject.Invoke(reason)
 				return nil
 			})
 			signal.Call("addEventListener", "abort", abort)
@@ -127,6 +138,14 @@ func TestFetchTransportContextAbortsHostOperation(t *testing.T) {
 	}
 	<-aborted
 	abort.Release()
+}
+
+func TestFetchAbortReasonDoesNotMatchAnotherRequest(t *testing.T) {
+	_, ownsAbort := newFetchAbortReason()
+	other, _ := newFetchAbortReason()
+	if ownsAbort(js.Global().Call("structuredClone", other)) {
+		t.Fatal("another request's abort reason was accepted")
+	}
 }
 
 func TestFetchTransportRetainsIndependentRejectionAfterCancellation(t *testing.T) {

@@ -19,10 +19,7 @@ import (
 type serviceCommand struct {
 	Install  serviceInstallCommand
 	Start    serviceJobCommand
-	Stop     serviceJobCommand
 	Remove   serviceJobCommand
-	List     serviceListCommand
-	Status   serviceJobCommand
 	Serve    serviceServeCommand
 	Register serviceRegisterCommand
 }
@@ -38,10 +35,7 @@ type serviceInstallCommand struct {
 }
 type serviceJobCommand struct {
 	systemStateFlags `embed:""`
-	Job              string `arg:"" name:"job" help:"Installed publication name or job ID."`
-}
-type serviceListCommand struct {
-	systemStateFlags `embed:""`
+	Job              string `arg:"" name:"job-id" help:"Exact installed job ID from tnl status --bg."`
 }
 type serviceServeCommand struct {
 	telemetry        *clienttelemetry.Collector
@@ -149,30 +143,23 @@ func runServiceStart(ctx context.Context, flags serviceJobCommand, output io.Wri
 	if err := installedjobs.StartService(ctx, options, executor); err != nil {
 		return err
 	}
-	return writeSystemJobs(ctx, registry, output, "tnl service start", job.ID)
-}
-
-func runServiceStop(ctx context.Context, flags serviceJobCommand, output io.Writer) error {
-	options, err := flags.options()
+	current, err := registry.ResolveJob(ctx, job.ID)
 	if err != nil {
 		return err
 	}
-	if err := requireConfiguredService(ctx, options, nil); err != nil {
-		return err
-	}
-	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User})
+	status, err := readInstalledJobStatus(ctx, registry, current, flags.System)
 	if err != nil {
 		return err
 	}
-	defer registry.Close()
-	job, err := registry.ResolveJob(ctx, flags.Job)
-	if err != nil {
-		return err
+	name := status.Name
+	if name == "" {
+		name = status.JobID
 	}
-	if err := registry.Stop(ctx, job.ID); err != nil {
-		return err
+	blocks := []clioutput.Block{clioutput.Line("Requested start for " + name + "."), clioutput.Line("State: " + status.State)}
+	if status.Failure != "" {
+		blocks = append(blocks, clioutput.Text(status.Failure))
 	}
-	return writeSystemJobs(ctx, registry, output, "tnl service stop", job.ID)
+	return writeResult(output, blocks...)
 }
 
 func runServiceRemove(ctx context.Context, flags serviceJobCommand, output io.Writer) error {
@@ -188,58 +175,11 @@ func runServiceRemove(ctx context.Context, flags serviceJobCommand, output io.Wr
 		return err
 	}
 	defer registry.Close()
-	job, err := registry.ResolveJob(ctx, flags.Job)
+	job, err := registry.RemoveJob(ctx, flags.Job)
 	if err != nil {
-		return err
-	}
-	if err := registry.Stop(ctx, job.ID); err != nil {
-		return err
-	}
-	waitCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	if err := registry.WaitStopped(waitCtx, job.ID); err != nil {
-		return err
-	}
-	if err := registry.Remove(ctx, job.ID); err != nil {
 		return err
 	}
 	return writeResult(output, clioutput.Line("Removed "+displayJobName(job)+"."))
-}
-
-func runServiceList(ctx context.Context, flags serviceListCommand, output io.Writer) error {
-	options, err := flags.options()
-	if err != nil {
-		return err
-	}
-	if err := requireConfiguredService(ctx, options, nil); err != nil {
-		return err
-	}
-	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User})
-	if err != nil {
-		return err
-	}
-	defer registry.Close()
-	return writeSystemJobs(ctx, registry, output, "tnl service list", "")
-}
-
-func runServiceStatus(ctx context.Context, flags serviceJobCommand, output io.Writer) error {
-	options, err := flags.options()
-	if err != nil {
-		return err
-	}
-	if err := requireConfiguredService(ctx, options, nil); err != nil {
-		return err
-	}
-	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: options.Root, User: options.User})
-	if err != nil {
-		return err
-	}
-	defer registry.Close()
-	job, err := registry.ResolveJob(ctx, flags.Job)
-	if err != nil {
-		return err
-	}
-	return writeSystemJobs(ctx, registry, output, "tnl service status", job.ID)
 }
 
 func runServiceServe(ctx context.Context, flags serviceServeCommand) error {
@@ -277,40 +217,11 @@ func runServiceServeWithUserJobs(ctx context.Context, flags serviceServeCommand,
 	return engine.Serve(ctx)
 }
 
-func writeSystemJobs(ctx context.Context, registry *installedjobs.Registry, output io.Writer, command, selected string) error {
-	jobs, err := registry.List(ctx)
-	if err != nil {
-		return err
-	}
-	for i := range jobs {
-		if jobs[i].Kind != installedjobs.KindDeployment {
-			continue
-		}
-		member, _, _, err := registry.DeploymentIdentity(ctx, jobs[i])
-		if err != nil {
-			return err
-		}
-		jobs[i].DeploymentMember = &member
-		jobs[i].Name = member.DeploymentName + "-" + jobs[i].DeploymentInstance
-	}
-	return renderSystemJobs(output, command, jobs, selected)
-}
-
-func renderSystemJobs(output io.Writer, command string, jobs []installedjobs.Job, selected string) error {
+func writeInstalledPublicationReceipt(output io.Writer, jobs []installedjobs.Job, selected string) error {
 	var rows [][]string
 	for _, job := range jobs {
 		if selected != "" && selected != job.ID {
 			continue
-		}
-		if command == "tnl service stop" {
-			return writeJobStopResult(output, job)
-		}
-		if command == "tnl service start" {
-			blocks := []clioutput.Block{clioutput.Line("Requested start for " + displayJobName(job) + "."), clioutput.Line("State: " + string(job.Status.State))}
-			if job.Status.Failure != "" {
-				blocks = append(blocks, clioutput.Text(job.Status.Failure))
-			}
-			return writeResult(output, blocks...)
 		}
 		state := string(job.Status.State)
 		detail := job.Status.Address
@@ -323,39 +234,12 @@ func renderSystemJobs(output io.Writer, command string, jobs []installedjobs.Job
 		if !job.Enabled && state != "stopped" {
 			state += " (stop requested)"
 		}
-		if command == "tnl service status" {
-			fields := []clioutput.Field{{Label: "state", Value: state}, {Label: "job ID", Value: job.ID}}
-			if job.ServiceID != "" {
-				fields = append(fields, clioutput.Field{Label: "service ID", Value: job.ServiceID}, clioutput.Field{Label: "protocol", Value: string(job.Protocol)})
-			}
-			if detail != "" {
-				label := "address"
-				if job.Status.Failure != "" {
-					label = "failure"
-				} else if job.Kind == installedjobs.KindConnector {
-					label = "local address"
-				}
-				fields = append(fields, clioutput.Field{Label: label, Value: detail, Prose: job.Status.Failure != ""})
-			}
-			return writeResult(output, clioutput.Section(displayJobName(job), clioutput.Fields(fields...)))
-		}
 		rows = append(rows, []string{displayJobName(job), job.ID, state, detail})
 	}
 	if selected != "" && len(rows) == 0 {
 		return installedjobs.ErrJobNotFound
 	}
-	empty := "No installed jobs."
-	if command == "tnl connect list" {
-		empty = "No installed connectors."
-	}
-	return writeResult(output, clioutput.Table([]string{"NAME", "JOB ID", "STATE", "DETAIL"}, rows, empty))
-}
-
-func writeJobStopResult(output io.Writer, job installedjobs.Job) error {
-	if job.Status.State == installedjobs.JobStopped {
-		return writeResult(output, clioutput.Line("Stopped "+displayJobName(job)+"."))
-	}
-	return writeResult(output, clioutput.Line("Requested stop for "+displayJobName(job)+"."))
+	return writeResult(output, clioutput.Table([]string{"NAME", "JOB ID", "STATE", "DETAIL"}, rows, "No installed jobs."))
 }
 
 func displayJobName(job installedjobs.Job) string {
@@ -368,39 +252,27 @@ func displayJobName(job installedjobs.Job) string {
 func (a *commandApp) newServiceCommand() *cobra.Command {
 	f := a.flags
 	cService := &cobra.Command{
-		Use: "service", Short: "Manage publications installed on this machine.", GroupID: "deploy",
-		Long: "Manage background jobs created with --install. Use tnl detached for publications started with --detach, or tnl connect list for installed connectors.",
+		Use: "service", Short: "Manage the supervisor and installed jobs.", GroupID: "deploy",
+		Long: "Install the supervisor or start or remove an installed job. Use tnl status --bg to find job IDs and tnl stop to stop a job.",
 	}
 	cServiceInstall := &cobra.Command{Use: "install", Short: "Install or refresh the supervisor that runs local jobs."}
 	a.leaf(cServiceInstall, &f.Service.Install, func(call commandCall) error {
 		return runServiceInstall(call.ctx, f.Service.Install, a.out, nil)
 	})
 	cService.AddCommand(cServiceInstall)
-	cServiceStart := &cobra.Command{Use: "start", Short: "Start one installed publication."}
+	cServiceStart := &cobra.Command{Use: "start", Short: "Start one installed job."}
 	a.leaf(cServiceStart, &f.Service.Start, func(call commandCall) error {
 		return runServiceStart(call.ctx, f.Service.Start, a.out, nil)
 	})
+	bindExactJobID(cServiceStart, func() string { return f.Service.Start.Job })
 	cService.AddCommand(cServiceStart)
-	cServiceStop := &cobra.Command{Use: "stop", Short: "Stop one local job without revoking its grant."}
-	a.leaf(cServiceStop, &f.Service.Stop, func(call commandCall) error {
-		return runServiceStop(call.ctx, f.Service.Stop, a.out)
-	})
-	cService.AddCommand(cServiceStop)
-	cServiceRemove := &cobra.Command{Use: "remove", Short: "Remove a stopped publication and its local job identity."}
+	cServiceRemove := &cobra.Command{Use: "remove", Short: "Stop an installed job and remove its local definition.",
+		Long: "Stop an installed job and remove its local definition. This discards the local publisher identity or releases the connector's remembered local port."}
 	a.leaf(cServiceRemove, &f.Service.Remove, func(call commandCall) error {
 		return runServiceRemove(call.ctx, f.Service.Remove, a.out)
 	})
+	bindExactJobID(cServiceRemove, func() string { return f.Service.Remove.Job })
 	cService.AddCommand(cServiceRemove)
-	cServiceList := &cobra.Command{Use: "list", Short: "List installed publications and their run state."}
-	a.leaf(cServiceList, &f.Service.List, func(call commandCall) error {
-		return runServiceList(call.ctx, f.Service.List, a.out)
-	})
-	cService.AddCommand(cServiceList)
-	cServiceStatus := &cobra.Command{Use: "status", Short: "Show one installed publication and its run state."}
-	a.leaf(cServiceStatus, &f.Service.Status, func(call commandCall) error {
-		return runServiceStatus(call.ctx, f.Service.Status, a.out)
-	})
-	cService.AddCommand(cServiceStatus)
 	cServiceServe := &cobra.Command{Use: "serve", Short: "Run the enrolled system publisher service.", Hidden: true}
 	a.leaf(cServiceServe, &f.Service.Serve, func(call commandCall) error {
 		return runServiceServe(call.ctx, f.Service.Serve)

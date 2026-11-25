@@ -64,7 +64,8 @@ func TestPrivateInstallPreflightPrecedesClientAndSupervisorState(t *testing.T) {
 func TestConnectShorthandAndExplicitModes(t *testing.T) {
 	for _, args := range [][]string{
 		{"connect", "orders", "--listen", "15432"},
-		{"connect", "start", "orders", "--detach"},
+		{"connect", "start", "orders", "--bg"},
+		{"connect", "start", "orders", "--background"},
 		{"connect", "start", "orders", "--install"},
 	} {
 		var flags cli
@@ -80,7 +81,7 @@ func TestConnectShorthandAndExplicitModes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, flags := range []connectStartCommand{{System: true}, {Install: true, Detach: true}, {Foreground: true, Detach: true}, {Foreground: true, Install: true}} {
+	for _, flags := range []connectStartCommand{{System: true}, {Install: true, Background: true}, {Foreground: true, Background: true}, {Foreground: true, Install: true}} {
 		if err := validateConnectMode(flags); err == nil {
 			t.Fatalf("invalid connector mode accepted: %+v", flags)
 		}

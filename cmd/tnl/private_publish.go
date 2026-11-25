@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/tnldotdev/tnl/internal/client/detached"
+	"github.com/tnldotdev/tnl/internal/client/background"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
@@ -52,11 +52,31 @@ func runPrivatePublish(ctx context.Context, flags publishCommand, output, diagno
 
 func privatePresentation(ctx context.Context, flags publishCommand, output, diagnostics io.Writer) *invocation.ServicePresentation {
 	return &invocation.ServicePresentation{
-		Starting: func() { detached.Starting(ctx) }, Ready: func() { detached.Ready(ctx) },
 		Installed: func(jobs []installedjobs.Job, selected string) error {
-			return renderSystemJobs(output, "tnl publish", jobs, selected)
+			return writeInstalledPublicationReceipt(output, jobs, selected)
 		},
 		Event: func(event invocation.ServiceEvent) error {
+			var address string
+			var connect []string
+			if event.State == "provisioning" {
+				background.Reconnecting(ctx)
+			}
+			if event.State == "ready" {
+				if event.Public {
+					address = net.JoinHostPort(event.Hostname, strconv.Itoa(event.Port))
+					if event.Protocol == "http" {
+						if event.Port == 443 {
+							address = event.Hostname
+						}
+						address = "https://" + address
+					}
+				} else {
+					connect = publishedConnectArgs(ctx, flags, event.ServiceID, false)
+				}
+				if err := background.Ready(ctx, background.Readiness{Target: event.Target, Address: address, ServiceID: event.ServiceID, ConnectCommand: connect}); err != nil {
+					return err
+				}
+			}
 			if flags.Output == publishOutputNDJSON {
 				return json.NewEncoder(output).Encode(struct {
 					SchemaVersion int    `json:"schema_version"`
@@ -71,17 +91,10 @@ func privatePresentation(ctx context.Context, flags publishCommand, output, diag
 			}
 			var blocks []clioutput.Block
 			if event.Public {
-				address := net.JoinHostPort(event.Hostname, strconv.Itoa(event.Port))
-				if event.Protocol == "http" {
-					if event.Port == 443 {
-						address = event.Hostname
-					}
-					address = "https://" + address
-				}
 				blocks = append(blocks, clioutput.Literal(address),
 					clioutput.Text("Public and connector access. Visitors still need access."))
 			} else {
-				blocks = append(blocks, clioutput.Literal(publishedConnectCommand(ctx, flags, event.ServiceID, false)), clioutput.Line("Connector access only. TLS hostname: "+event.Hostname))
+				blocks = append(blocks, clioutput.Literal(guidanceCommand(connect)), clioutput.Line("Connector access only. TLS hostname: "+event.Hostname))
 			}
 			blocks = append(blocks, clioutput.Line("Forwarding to "+event.Target), clioutput.Text("Visitor TLS: verified native TLS. Ctrl+C to stop."))
 			return writeResult(diagnostics, blocks...)
@@ -89,27 +102,28 @@ func privatePresentation(ctx context.Context, flags publishCommand, output, diag
 	}
 }
 
-func publishedConnectCommand(ctx context.Context, flags publishCommand, selector string, configured bool) string {
-	cmd := "tnl " + flags.configArgs + "connect "
+func publishedConnectArgs(ctx context.Context, flags publishCommand, selector string, configured bool) []string {
+	args := append([]string{"tnl"}, flags.projectArgs...)
+	args = append(args, "connect")
 	server := flags.project.Config.Server
 	if configured {
-		// a configured service may also be a subcommand, such as "list".
-		cmd += "start "
+		// a configured service may also be a subcommand, such as "available".
+		args = append(args, "start")
 		if effective, err := flags.project.EffectiveService(selector); err == nil {
 			server = effective.Server
 		}
 	}
-	cmd += shellWord(selector)
+	args = append(args, selector)
 	if pin := suggestedServer(ctx, flags.ServerURL, server, os.Getenv("TNL_ACCESS_TOKEN"), flags.StateDir, nil); pin != "" {
-		cmd += " --server=" + shellWord(pin)
+		args = append(args, "--server", pin)
 	}
 	if flags.Team != "" {
-		cmd += " --team=" + shellWord(flags.Team)
+		args = append(args, "--team", flags.Team)
 	}
 	if flags.StateDir != "" {
-		cmd += " --state-dir=" + shellWord(flags.StateDir)
+		args = append(args, "--state-dir", flags.StateDir)
 	}
-	return cmd
+	return args
 }
 
 func privateOptions(flags publishCommand) invocation.ServiceOptions {

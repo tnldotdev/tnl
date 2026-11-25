@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
-	"github.com/tnldotdev/tnl/internal/client/detached"
+	"github.com/tnldotdev/tnl/internal/client/background"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -30,19 +30,19 @@ type publisherServeCommand struct {
 	telemetry         *clienttelemetry.Collector
 	telemetryDisabled bool
 	scopedTeamFlags   `embed:""`
-	Deployment        string   `name:"deployment" help:"Saved deployment name or ID; omit to use the identities bound in --identity-file."`
-	ProjectKey        string   `name:"project-key" help:"Applied project key; defaults to the current Git configuration source."`
-	EnrollmentKey     string   `name:"enroll-key" env:"TNL_DEPLOYMENT_ENROLL_KEY" help:"Scoped enrollment from publisher setup --deployment --service; use - to read stdin. Serving never approves its own bindings."`
-	IdentityFile      []string `name:"identity-file" type:"path" help:"Private portable deployment identity. Repeat for independent deployments in this process, omitting --deployment. Single-deployment mode also accepts TNL_DEPLOYMENT_IDENTITY."`
-	BindingFile       []string `name:"binding-file" type:"path" help:"Operator-owned local dependency binding for an immutable deployment identity. Repeat per deployment; omitted bindings deny secret and cloud access."`
-	IdentityDir       string   `name:"identity-dir" env:"TNL_IDENTITY_DIR" type:"path" help:"Durable publisher identity and TLS files; defaults to identities beneath the state directory. Keep SQLite task-local when using a network mount."`
-	Instance          string   `name:"instance" default:"default" help:"Replica identity name; must match the portable identity when supplied."`
-	Foreground        bool     `name:"foreground" help:"Run in this terminal (the default)."`
-	Detach            bool     `name:"detach" help:"Run independently of this terminal without automatic restart."`
-	Install           bool     `name:"install" help:"Run durably with the user publisher supervisor."`
-	System            bool     `name:"system" hidden:""`
-	SystemStateDir    string   `name:"system-state-dir" type:"path"`
-	DetachedChild     string   `name:"detached-child" hidden:""`
+	Deployment        string           `name:"deployment" help:"Saved deployment name or ID; omit to use the identities bound in --identity-file."`
+	ProjectKey        string           `name:"project-key" help:"Applied project key; defaults to the current Git configuration source."`
+	EnrollmentKey     string           `name:"enroll-key" env:"TNL_DEPLOYMENT_ENROLL_KEY" help:"Scoped enrollment from publisher setup --deployment --service; use - to read stdin. Serving never approves its own bindings."`
+	IdentityFile      []string         `name:"identity-file" type:"path" help:"Private portable deployment identity. Repeat for independent deployments in this process, omitting --deployment. Single-deployment mode also accepts TNL_DEPLOYMENT_IDENTITY."`
+	BindingFile       []string         `name:"binding-file" type:"path" help:"Operator-owned local dependency binding for an immutable deployment identity. Repeat per deployment; omitted bindings deny secret and cloud access."`
+	IdentityDir       string           `name:"identity-dir" env:"TNL_IDENTITY_DIR" type:"path" help:"Durable publisher identity and TLS files; defaults to identities beneath the state directory. Keep SQLite task-local when using a network mount."`
+	Instance          string           `name:"instance" default:"default" help:"Replica identity name; must match the portable identity when supplied."`
+	Foreground        bool             `name:"foreground" help:"Run in this terminal (the default)."`
+	Background        bool             `name:"bg" help:"Run independently of this terminal without automatic restart."`
+	Install           bool             `name:"install" help:"Run durably with the user publisher supervisor."`
+	System            bool             `name:"system" hidden:""`
+	SystemStateDir    string           `name:"system-state-dir" type:"path"`
+	Output            statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Human output, or a JSON receipt with --bg."`
 
 	identityInputRead bool
 	identity          *credentialfile.DeploymentFile
@@ -58,8 +58,8 @@ func validatePublisherServe(flags publisherServeCommand) error {
 	if flags.System {
 		return publisherCLIError("deployments use the user supervisor; --system requires an explicit single-service publisher")
 	}
-	if flags.Foreground && (flags.Detach || flags.Install) || flags.Detach && flags.Install {
-		return publisherCLIError("select only one of --foreground, --detach, or --install")
+	if flags.Foreground && (flags.Background || flags.Install) || flags.Background && flags.Install {
+		return publisherCLIError("select only one of --foreground, --bg, or --install")
 	}
 	if flags.SystemStateDir != "" && !flags.Install {
 		return publisherCLIError("--system-state-dir requires --install")
@@ -233,7 +233,7 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	if err != nil {
 		return err
 	}
-	job := installedjobs.Job{Kind: installedjobs.KindDeployment, ID: installedjobs.JobKey(server, "deployment", member.DeploymentId+":"+flags.Instance), Name: flags.Deployment + "-" + flags.Instance, Server: server, PublisherIdentityID: member.PublisherIdentityId, DeploymentMember: &member, DeploymentInstance: flags.Instance}
+	job := installedjobs.Job{Kind: installedjobs.KindDeployment, Name: flags.Deployment + "-" + flags.Instance, Server: server, PublisherIdentityID: member.PublisherIdentityId, DeploymentMember: &member, DeploymentInstance: flags.Instance}
 	job.IdentityDir = profile.IdentityDirectory()
 	job.TelemetryDisabled = flags.telemetryDisabled
 	if flags.Install {
@@ -242,24 +242,24 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 			return err
 		}
 		defer registry.Close()
-		if err := registry.InstallDeployment(ctx, job, member, private); err != nil {
+		job, err = registry.InstallDeployment(ctx, job, member, private)
+		if err != nil {
 			return err
 		}
-		return writeSystemJobs(ctx, registry, output, "tnl publisher serve", job.ID)
+		job, err = registry.ResolveJob(ctx, job.ID)
+		if err != nil {
+			return err
+		}
+		return writeInstalledPublicationReceipt(output, []installedjobs.Job{job}, job.ID)
 	}
 	// setup has finished; the reusable runner acquires the immutable selection
 	// lock and the durable publisher.lock for its full serving lifetime.
 	if err := lock.Close(); err != nil {
 		return err
 	}
-	detached.Starting(ctx)
 	return serveDeploymentPublisher(ctx, job, profile, private, flags.telemetry, func(revision int64, healthy bool) error {
-		if healthy {
-			detached.Ready(ctx)
-		}
-		state := "reconciling"
-		if healthy {
-			state = "ready"
+		if !healthy {
+			background.Reconnecting(ctx)
 		}
 		current, found, err := credentialfile.SavedDeployment(profile, server, member.ProjectKey, member.DeploymentId, flags.Instance)
 		if err != nil {
@@ -267,6 +267,13 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 		}
 		if found {
 			member = current.Member
+		}
+		state := "reconciling"
+		if healthy {
+			state = "ready"
+			if err := background.Ready(ctx, background.Readiness{Target: member.DeploymentName + "/" + flags.Instance}); err != nil {
+				return err
+			}
 		}
 		return writeResult(diagnostics, clioutput.Line(member.DeploymentName+"  "+state))
 	})

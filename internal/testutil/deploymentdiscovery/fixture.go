@@ -106,7 +106,6 @@ func New(t *testing.T) *Fixture {
 	t.Cleanup(f.Server.Close)
 	serverCA := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.Server.Certificate().Raw})
 	f.Job = installedjobs.Job{Kind: installedjobs.KindDeployment, Name: "cloud-default", Server: f.Server.URL, ServerCAPEM: serverCA, PublisherIdentityID: member.PublisherIdentityId, DeploymentMember: &member, DeploymentInstance: "default"}
-	f.Job.ID = installedjobs.JobKey(f.Job.Server, "deployment", member.DeploymentId+":default")
 	database, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)

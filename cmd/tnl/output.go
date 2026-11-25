@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/detached"
+	"github.com/tnldotdev/tnl/internal/client/background"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
@@ -30,6 +30,7 @@ type publishOutputMode string
 
 const (
 	publishOutputHuman  publishOutputMode = "human"
+	publishOutputJSON   publishOutputMode = "json"
 	publishOutputNDJSON publishOutputMode = "ndjson"
 )
 
@@ -52,7 +53,7 @@ type publishEvent struct {
 
 type publishOutput struct {
 	delegatedLifecycle    bool
-	detachedCtx           context.Context
+	jobContext            context.Context
 	mode                  publishOutputMode
 	stdout                io.Writer
 	stderr                io.Writer
@@ -67,7 +68,7 @@ type publishOutput struct {
 	fallbackPublicURL     uint64
 	command               string
 	target                string
-	connectCommand        string
+	connectCommand        []string
 	resumeCommand         string
 	demo                  bool
 	guestDemo             bool
@@ -83,6 +84,10 @@ func (e *reportedError) Unwrap() error { return e.err }
 func (o *publishOutput) provisioning(hostname string, publishRunNumber uint64) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if o.jobContext != nil {
+		// a ready run can lose readiness without changing its run number.
+		background.Reconnecting(o.jobContext)
+	}
 	if publishRunNumber <= o.provision {
 		return nil
 	}
@@ -163,9 +168,6 @@ func (o *publishOutput) starting(tunnelID, target string) error {
 	defer o.mu.Unlock()
 	o.tunnelID = tunnelID
 	o.target = target
-	if o.detachedCtx != nil {
-		detached.Starting(o.detachedCtx)
-	}
 	if o.mode == publishOutputHuman {
 		return nil
 	}
@@ -191,8 +193,8 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			var blocks []clioutput.Block
 			if url != "" {
 				blocks = append(blocks, clioutput.Literal(url))
-			} else if o.connectCommand != "" {
-				blocks = append(blocks, clioutput.Literal(o.connectCommand))
+			} else if len(o.connectCommand) != 0 {
+				blocks = append(blocks, clioutput.Literal(guidanceCommand(o.connectCommand)))
 			}
 			if o.target != "" {
 				blocks = append(blocks, clioutput.Line("Forwarding to "+o.target))
@@ -229,8 +231,12 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 			o.browserNotOpened(err)
 		}
 	}
-	if o.detachedCtx != nil {
-		detached.Ready(o.detachedCtx)
+	if o.jobContext != nil {
+		ready := background.Readiness{Address: url, Target: o.target, TunnelID: o.tunnelID, ConnectCommand: o.connectCommand}
+		if o.guestDemo {
+			ready.GuestEntryURL = o.guestShare
+		}
+		return background.Ready(o.jobContext, ready)
 	}
 	return nil
 }

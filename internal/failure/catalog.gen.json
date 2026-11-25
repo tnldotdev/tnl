@@ -142,6 +142,20 @@
       "action": "resume with tnl auth login wait \u003coperation-id\u003e"
     },
     {
+      "code": "TNL_CLIENT_BACKGROUND_NOT_FOUND",
+      "slug": "background-not-found",
+      "class": "not_found",
+      "message": "the background job is not running in the selected state directory",
+      "action": "run tnl status --bg with the same state directory to see current jobs"
+    },
+    {
+      "code": "TNL_CLIENT_BACKGROUND_START_FAILED",
+      "slug": "background-start-failed",
+      "class": "unavailable",
+      "message": "the background job did not start",
+      "action": "run the same command without --bg or --background to see what failed, then retry"
+    },
+    {
       "code": "TNL_CLIENT_BROWSER_OPEN_FAILED",
       "slug": "browser-open-failed",
       "class": "unavailable",
@@ -230,7 +244,7 @@
       "slug": "connect-mode-invalid",
       "class": "invalid",
       "message": "connect options select incompatible modes",
-      "action": "select one of --foreground, --detach, or --install; --stdio takes none of these, --listen, or --output=json"
+      "action": "select one of --foreground, --bg, or --install; --stdio takes none of these, --listen, or --output=json"
     },
     {
       "code": "TNL_CLIENT_CONNECT_PROTOCOL_MISMATCH",
@@ -301,20 +315,6 @@
       "class": "invalid",
       "message": "the built-in demo chooses its own public URL",
       "action": "remove --name or --hostname from tnl publish --demo"
-    },
-    {
-      "code": "TNL_CLIENT_DETACHED_NOT_FOUND",
-      "slug": "detached-not-found",
-      "class": "not_found",
-      "message": "the detached publication is not running",
-      "action": "run tnl detached list to see current publications"
-    },
-    {
-      "code": "TNL_CLIENT_DETACHED_START_FAILED",
-      "slug": "detached-start-failed",
-      "class": "unavailable",
-      "message": "the detached publication did not start",
-      "action": "run tnl publish without --detach to see the failure, then retry"
     },
     {
       "code": "TNL_CLIENT_DNS_PENDING",
@@ -415,11 +415,11 @@
       "action": "set packageManager to pnpm, npm, yarn, or bun, then run tnl init again"
     },
     {
-      "code": "TNL_CLIENT_INSTALLED_JOB_AMBIGUOUS",
-      "slug": "installed-job-ambiguous",
+      "code": "TNL_CLIENT_INSTALLED_JOB_REGISTRY_LEGACY",
+      "slug": "installed-job-registry-legacy",
       "class": "conflict",
-      "message": "more than one installed publication has this name",
-      "action": "run tnl service list and use the job ID for start, stop, or remove"
+      "message": "installed jobs still use the previous ID format",
+      "action": "use the previous tnl binary to inventory, stop, and remove these jobs, then refresh the supervisor and recreate the jobs with this binary; do not reset client state"
     },
     {
       "code": "TNL_CLIENT_INSTALLED_PUBLISHER_SELECTION_MISSING",

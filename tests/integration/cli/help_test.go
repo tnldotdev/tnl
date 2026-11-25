@@ -29,8 +29,9 @@ func TestIntegrationCLIHelpAudiences(t *testing.T) {
 	checkOrder := func(text string, agentFirst bool) {
 		t.Helper()
 		human := strings.Index(text, "\n  tnl publish 3000\n")
-		machine := strings.Index(text, "\n  tnl publish 3000 --output ndjson\n")
-		if human < 0 || machine < 0 || (machine < human) != agentFirst {
+		machine := strings.Index(text, "\n  tnl publish 3000 --bg --output json\n")
+		streaming := strings.Index(text, "\n  tnl publish 3000 --output ndjson\n")
+		if human < 0 || machine < 0 || streaming < 0 || (machine < human) != agentFirst {
 			t.Fatalf("wrong example order, agent first=%v:\n%s", agentFirst, text)
 		}
 	}
@@ -66,9 +67,20 @@ func TestIntegrationCLIHelpAudiences(t *testing.T) {
 			t.Fatalf("incomplete reference:\n%s", text)
 		}
 	}
+	for _, topic := range [][]string{{"publish"}, {"connect", "start"}, {"publisher", "serve"}} {
+		text := helpText(nil, append(topic, "--help")...)
+		for _, flag := range []string{"--bg", "--background", "--foreground", "--install"} {
+			if !strings.Contains(text, flag) {
+				t.Fatalf("%v help omitted %s:\n%s", topic, flag, text)
+			}
+		}
+		if strings.Contains(text, "--detach") {
+			t.Fatalf("%v help still advertises --detach:\n%s", topic, text)
+		}
+	}
 	// this run-mode conflict fails before project evaluation or sign-in.
 	// an audience hint must not even change how execution failures are printed.
-	args := []string{"publish", "3000", "--detach", "--foreground"}
+	args := []string{"publish", "3000", "--bg", "--foreground"}
 	probed := runBuiltCLI(t, dir, agentEnv, args...)
 	ordinary := runBuiltCLI(t, dir, nil, args...)
 	if probed != ordinary || ordinary.exit != 1 || ordinary.stdout != "" || !strings.HasPrefix(ordinary.stderr, "Error: ") {

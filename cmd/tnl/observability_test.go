@@ -18,7 +18,7 @@ func TestObservabilityRoleFollowsOwningCommand(t *testing.T) {
 		}
 	}
 	var flags cli
-	flags.Publish.Detach = true
+	flags.Publish.Background = true
 	if commandObservabilityRole("publish <service-or-target>", flags) != observability.RoleClient {
 		t.Fatal("launcher was classified as publisher")
 	}

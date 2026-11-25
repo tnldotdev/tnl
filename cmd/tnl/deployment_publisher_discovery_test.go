@@ -150,7 +150,7 @@ func TestDeploymentPublisherDiscoveryShutdownJoinsAWSLookupsAndWorkers(t *testin
 					t.Fatal(err)
 				}
 				defer registry.Close()
-				if err := registry.InstallDeployment(t.Context(), fixture.Job, *fixture.Job.DeploymentMember, fixture.Key); err != nil {
+				if _, err := registry.InstallDeployment(t.Context(), fixture.Job, *fixture.Job.DeploymentMember, fixture.Key); err != nil {
 					t.Fatal(err)
 				}
 				engine := installedjobs.Engine{Registry: registry, PollInterval: 5 * time.Millisecond, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, deadline func() time.Time, shutdown context.Context) error {

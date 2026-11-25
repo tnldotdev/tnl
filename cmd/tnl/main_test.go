@@ -49,7 +49,7 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 		"url access show", "url access set", "auth browser", "team feedback get", "team feedback set",
 		"share invite create", "share invite accept", "share invite list", "share invite revoke",
 		"publisher enroll", "publisher setup", "publisher provision", "publisher current", "publisher list", "publisher revoke", "publisher grant add", "publisher grant revoke",
-		"service install", "service start", "service stop", "service remove", "service list", "detached list", "detached stop",
+		"service install", "service start", "service remove", "stop",
 		"admin server status", "admin relays list", "admin relays drain", "admin maintenance list",
 		"admin maintenance allow", "admin maintenance block",
 	} {
@@ -72,8 +72,8 @@ func TestCLIExposesTeamDomainRouteAndFinalAdminCommands(t *testing.T) {
 	if _, err := parser([]string{"compose", "up"}); err == nil {
 		t.Fatal("compose lifecycle command was accepted")
 	}
-	if _, err := parser([]string{"publish", "3000", "--bg"}); err == nil {
-		t.Fatal("obsolete --bg flag was accepted")
+	if _, err := parser([]string{"publish", "3000", "--detach"}); err == nil {
+		t.Fatal("obsolete --detach flag was accepted")
 	}
 }
 
@@ -322,8 +322,8 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 		{[]string{"share", "invite", "accept", "secret"}, "share invite accept <secret>"},
 		{[]string{"share", "invite", "list", "app.example"}, "share invite list <url>"},
 		{[]string{"share", "invite", "revoke", "app.example", "inv_1"}, "share invite revoke <url> <invitation-id>"},
-		{[]string{"service", "start", "orders"}, "service start <job>"},
-		{[]string{"service", "stop", "orders"}, "service stop <job>"},
+		{[]string{"service", "start", testExactJobID}, "service start <job-id>"},
+		{[]string{"stop", testExactJobID}, "stop <job-id>"},
 		{[]string{"runtime", "endpoint", "--directory", "/tmp/project", "--service", "web"}, "runtime endpoint"},
 		{[]string{"runtime", "owner-endpoint", "--directory", "/tmp/project"}, "runtime owner-endpoint"},
 	} {

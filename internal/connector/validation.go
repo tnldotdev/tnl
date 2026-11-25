@@ -40,7 +40,7 @@ type Profile struct {
 	ConnectorRequired bool                     `json:"connector_required"`
 	Authentication    connectionAuthentication `json:"authentication"`
 	Instructions      []string                 `json:"instructions,omitempty"`
-	DetachedID        string                   `json:"detached_id,omitempty"`
+	JobID             string                   `json:"job_id,omitempty"`
 	Command           []string                 `json:"command"`
 	URL               string                   `json:"url,omitempty"`
 	TLS               string                   `json:"tls"`

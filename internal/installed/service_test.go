@@ -318,7 +318,7 @@ func TestOneUserSupervisorAcceptsNewJobsWithoutReinstall(t *testing.T) {
 			t.Fatal(err)
 		}
 		job, identity, private := fixture(t, name)
-		if err := registry.Install(t.Context(), job, identity, private); err != nil {
+		if _, err := registry.Install(t.Context(), job, identity, private); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -119,7 +119,7 @@ func TestBackgroundInstallsEnrolledHTTPJobWithLocalTarget(t *testing.T) {
 		t.Fatalf("installed jobs: %+v, %v", jobs, err)
 	}
 	job := jobs[0]
-	if job.ID != installedjobs.ServiceJobKey(flags.ServerURL, c.service.Id) || job.Name != "database" || job.Protocol != config.ProtocolHTTP || job.Target != flags.Target || job.Trust != nil || job.PublisherIdentityID != a.identity.ClientId {
+	if !opaqueid.Valid(job.ID, opaqueid.JobPrefix) || job.Name != "database" || job.Protocol != config.ProtocolHTTP || job.Target != flags.Target || job.Trust != nil || job.PublisherIdentityID != a.identity.ClientId {
 		t.Fatalf("private target settings: %+v", job)
 	}
 	if a.redemptions != 1 {

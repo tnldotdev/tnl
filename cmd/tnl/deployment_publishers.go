@@ -25,7 +25,7 @@ func validateFixedDeploymentRuntime(f publisherServeCommand) error {
 	if f.Deployment != "" || f.ProjectKey != "" || f.ServerURL != "" || f.Team != "" || f.AccessToken != "" || f.EnrollmentKey != "" || f.Instance != "" && f.Instance != "default" {
 		return publisherCLIError("fixed-list publishers use each identity's server, team, deployment, project, and instance; omit selection and enrollment overrides")
 	}
-	if f.Detach || f.Install || f.System || f.SystemStateDir != "" || f.DetachedChild != "" {
+	if f.Background || f.Install || f.System || f.SystemStateDir != "" || f.Output == statusOutputJSON {
 		return publisherCLIError("run fixed-list publishers in the foreground under your process supervisor")
 	}
 	if _, present := os.LookupEnv("TNL_DEPLOYMENT_IDENTITY"); present {
@@ -61,19 +61,21 @@ func readFixedDeploymentRuntime(f publisherServeCommand) ([]fixedDeploymentInput
 		bindings[binding.Scope] = binding
 	}
 	startup, providers := installedjobs.NewOperationLimiter(4), installedjobs.NewOperationLimiter(8)
-	seenPublishers, seenReplicas := map[string]bool{}, map[string]bool{}
+	type publisherKey struct{ server, identity string }
+	type replicaKey struct{ server, deployment, instance string }
+	seenPublishers, seenReplicas := map[publisherKey]bool{}, map[replicaKey]bool{}
 	inputs := make([]fixedDeploymentInput, 0, len(f.IdentityFile))
 	for _, path := range f.IdentityFile {
 		value, err := credentialfile.ReadDeployment(path)
 		if err != nil {
 			return nil, err
 		}
-		publisherKey := installedjobs.JobKey(value.ControlURL, "publisher", value.Member.PublisherIdentityId)
-		replicaKey := installedjobs.JobKey(value.ControlURL, "deployment", value.Member.DeploymentId+":"+value.Instance)
-		if seenPublishers[publisherKey] || seenReplicas[replicaKey] {
+		publisher := publisherKey{value.ControlURL, value.Member.PublisherIdentityId}
+		replica := replicaKey{value.ControlURL, value.Member.DeploymentId, value.Instance}
+		if seenPublishers[publisher] || seenReplicas[replica] {
 			return nil, installedjobs.ErrJobExists
 		}
-		seenPublishers[publisherKey], seenReplicas[replicaKey] = true, true
+		seenPublishers[publisher], seenReplicas[replica] = true, true
 		scope := installedjobs.ScopeForDeployment(value)
 		var selected *installedjobs.DeploymentBinding
 		if binding, found := bindings[scope]; found {
@@ -84,7 +86,7 @@ func readFixedDeploymentRuntime(f publisherServeCommand) ([]fixedDeploymentInput
 		if err != nil {
 			return nil, err
 		}
-		job := installedjobs.Job{Kind: installedjobs.KindDeployment, ID: replicaKey, Name: value.Member.DeploymentName + "-" + value.Instance, Server: value.ControlURL, PublisherIdentityID: value.Member.PublisherIdentityId, DeploymentMember: &value.Member, DeploymentInstance: value.Instance, ServerCAPEM: trust}
+		job := installedjobs.Job{Kind: installedjobs.KindDeployment, Name: value.Member.DeploymentName + "-" + value.Instance, Server: value.ControlURL, PublisherIdentityID: value.Member.PublisherIdentityId, DeploymentMember: &value.Member, DeploymentInstance: value.Instance, ServerCAPEM: trust}
 		inputs = append(inputs, fixedDeploymentInput{value, runner, job})
 	}
 	if len(bindings) != 0 {
@@ -125,15 +127,26 @@ func runFixedDeploymentRuntime(ctx context.Context, flags publisherServeCommand,
 		input.job.IdentityDir = profile.IdentityDirectory()
 		input.job.TelemetryDisabled = flags.telemetryDisabled
 		jobs = append(jobs, installedjobs.DeploymentInstall{Job: input.job, Private: private})
-		runners[input.job.ID] = input.runner
 	}
 	var outputMu sync.Mutex
-	engine := installedjobs.Engine{Telemetry: flags.telemetry, Registry: registry, Initialize: func(ctx context.Context) error { return registry.ReplaceDeployments(ctx, jobs) }, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, deadline func() time.Time, shutdown context.Context) error {
+	engine := installedjobs.Engine{Telemetry: flags.telemetry, Registry: registry, Initialize: func(ctx context.Context) error {
+		saved, err := registry.ReplaceDeployments(ctx, jobs)
+		if err != nil {
+			return err
+		}
+		for i, job := range saved {
+			runners[job.ID] = inputs[i].runner
+		}
+		return nil
+	}, Deployment: func(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, observe func(int64, bool) error, deadline func() time.Time, shutdown context.Context) error {
+		runner, ok := runners[job.ID]
+		if !ok {
+			return installedjobs.ErrScope
+		}
 		_, private, profile, err := registry.DeploymentIdentity(ctx, job)
 		if err != nil {
 			return err
 		}
-		runner := runners[job.ID]
 		runner.Telemetry = telemetry
 		runner.ShutdownDeadline = deadline
 		runner.ShutdownContext = shutdown

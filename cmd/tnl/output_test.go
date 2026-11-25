@@ -110,11 +110,11 @@ func TestPublishOutputWithoutURLShowsNamedConnectorCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output.connectCommand = publishedConnectCommand(t.Context(), publishCommand{}, "list", true)
+	output.connectCommand = publishedConnectArgs(t.Context(), publishCommand{}, "available", true)
 	if err := output.ready("", 1); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(stderr.String(), "tnl connect start list\n") || stdout.Len() != 0 {
+	if !strings.HasPrefix(stderr.String(), "tnl connect start available\n") || stdout.Len() != 0 {
 		t.Fatalf("stdout = %q; diagnostics = %q", &stdout, &stderr)
 	}
 }
