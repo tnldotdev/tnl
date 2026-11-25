@@ -30,7 +30,11 @@ await Promise.all([
     outfile: path.join(output, WORKER_PATH),
     // a blob Worker has no relative module path. this is the SDK asset base;
     // the worker reads the WASM from its verified local copy, not this URL.
-    define: { ...define, "import.meta.url": "keepaliveModuleURL" },
+    define: {
+      ...define,
+      "import.meta.url": "keepaliveModuleURL",
+      KEEPALIVE_RAMP_UPLOAD_TRACE: JSON.stringify(values.fleet === "ramp"),
+    },
     banner: {
       js: "const keepaliveModuleURL = new URL('/hosting/worker.js', self.location.origin).href;",
     },
@@ -59,5 +63,9 @@ await build({
   ...options,
   entryPoints: ["src/edge/worker.ts"],
   outfile: path.join(dist, "worker.mjs"),
-  define: { ...define, KEEPALIVE_RELEASE: JSON.stringify(release) },
+  define: {
+    ...define,
+    KEEPALIVE_RELEASE: JSON.stringify(release),
+    KEEPALIVE_RAMP_PROXY_TRACE: JSON.stringify(values.fleet === "ramp"),
+  },
 });

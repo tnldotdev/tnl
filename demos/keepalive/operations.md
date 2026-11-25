@@ -43,6 +43,17 @@ Use the separate `ramp` deployment for load tests. It has its own Worker
 (`wrangler.ramp.jsonc`), credential, and certificate under
 `*.ramp.hosts.keepthisalive.com`. Production deploys do not use it.
 
+For a failed asset fetch, look for `keepalive_proxy_file` in the ramp Worker's
+logs. Filter by the browser's `CF-Ray` value. The entry shows how many hosts the
+Worker could try and the outcome and timing for each attempt, including when it
+recovered by using another host. Requests that succeed without an upstream
+failure don't emit an entry. This tracing is temporary and is disabled in
+production builds.
+
+For volunteer admissions on ramp, capture `keepalive_donor_upload` from the
+inviter's browser console. It records the exact inviter run, bytes received,
+elapsed time, and outcome, without recording the invitation or upload body.
+
 To check certificate reuse on an empty ramp fleet, run from the repo root:
 
 ```sh

@@ -9,6 +9,7 @@ import { createProxy, siteHeaders } from "./proxy.ts";
 import { ARTIFACT_PREFIX, RELEASE_PATH, contentType, releaseSchema } from "../release.ts";
 
 declare const KEEPALIVE_RELEASE: unknown;
+declare const KEEPALIVE_RAMP_PROXY_TRACE: boolean;
 const release = releaseSchema.parse(KEEPALIVE_RELEASE);
 
 type Bindings = CredentialBindings & {
@@ -19,7 +20,13 @@ type Bindings = CredentialBindings & {
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
-const proxy = createProxy(release);
+const proxy = createProxy(
+  release,
+  fetch,
+  typeof KEEPALIVE_RAMP_PROXY_TRACE !== "undefined" && KEEPALIVE_RAMP_PROXY_TRACE
+    ? (trace) => console.info({ event: "keepalive_proxy_file", ...trace })
+    : undefined,
+);
 
 app.use("*", async (c, next) => {
   const url = new URL(c.req.url);
