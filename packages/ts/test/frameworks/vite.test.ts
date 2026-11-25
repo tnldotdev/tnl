@@ -1,7 +1,10 @@
+import { CONNREFUSED, NODATA, NOTFOUND, SERVFAIL, TIMEOUT } from "node:dns";
+import { Resolver } from "node:dns/promises";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
-import type { ConfigEnv, Plugin, UserConfig } from "vite";
+import type { ConfigEnv, LogLevel, Plugin, UserConfig } from "vite";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
 import * as z from "zod";
 import {
@@ -19,7 +22,7 @@ import {
   findAvailableLoopbackPort,
   waitForWebSocketMessage,
 } from "../helpers/http-websocket.js";
-import { startTestBootstrap } from "../helpers/bootstrap.js";
+import { startTestBootstrap, type BootstrapOptions } from "../helpers/bootstrap.js";
 import { withProcessEnvironment } from "../helpers/environment.js";
 import { startFrameworkFixture } from "../helpers/framework.js";
 import { viteClientConnection } from "../helpers/vite-client.js";
@@ -74,6 +77,7 @@ const buildEnvironment: ConfigEnv = {
   isSsrBuild: false,
   mode: "production",
 };
+const previewURLLine = "  ➜  tnl:     https://api.member.example";
 
 test.each(["default", "option-off", "environment-off"] as const)(
   "Vite sends its %s telemetry choice through normal preparation",
@@ -251,6 +255,7 @@ describe("tnl", () => {
     });
     const server = {
       close,
+      config: {},
       httpServer: { address: () => null },
       listen: vi.fn(async () => undefined),
       printUrls: vi.fn(),
@@ -273,48 +278,103 @@ describe("tnl", () => {
   });
 
   test("prints the preview URL only after registering the initial and restarted listeners", async () => {
-    const bootstrap = await startTestBootstrap();
-    const plugin = tnl();
-    await withProcessEnvironment(bootstrap.environment, async () => {
-      await runConfigHook(plugin, {});
+    const dns = vi.spyOn(Resolver.prototype, "resolve").mockRejectedValue(dnsFailure(NOTFOUND));
+    const { bootstrap, info, printUrls, server, publicLine, setPort } = await fakeViteServer(() => {
+      server.printUrls();
+      expect(info.mock.calls).toEqual([["local URLs"]]);
+      info.mockClear();
     });
-    let port = 5200;
-    const close = vi.fn(async () => {});
-    const info = vi.fn();
-    const printUrls = vi.fn(() => info("local URLs"));
-    const server = {
-      close,
-      config: { logger: { info } },
-      httpServer: {
-        listening: true,
-        address: () => ({ address: "127.0.0.1", port }),
-        once: () => {},
-        off: () => {},
-        close: () => {},
-      },
-      listen: vi.fn(async () => {
-        server.printUrls();
-        expect(info.mock.calls).toEqual([["local URLs"]]);
-        info.mockClear();
-      }),
-      printUrls,
-    };
-    const configureServer = plugin.configureServer;
-    if (typeof configureServer !== "function") throw new Error("missing Vite server hook");
-    configureServer.call({} as never, server as never);
     await server.listen();
     expect(bootstrap.requests[1]?.body).toMatchObject({ target: "http://127.0.0.1:5200" });
+    expect(dns).not.toHaveBeenCalled();
     server.printUrls();
-    expect(info.mock.calls).toEqual([["local URLs"], ["  ➜  tnl:     https://api.member.example"]]);
+    expect(info.mock.calls).toEqual([["local URLs"]]);
+    await expect(publicLine).resolves.toBe(`${previewURLLine} (waiting for DNS)`);
+    expect(dns.mock.calls).toEqual([
+      ["api.member.example", "A"],
+      ["api.member.example", "AAAA"],
+    ]);
+
     info.mockClear();
-    port = 5201;
-    await server.listen();
-    expect(bootstrap.requests[2]?.body).toMatchObject({ target: "http://127.0.0.1:5201" });
     server.printUrls();
-    expect(info.mock.calls).toEqual([["local URLs"], ["  ➜  tnl:     https://api.member.example"]]);
-    expect(printUrls).toHaveBeenCalledTimes(4);
-    expect(close).not.toHaveBeenCalled();
+    expect(info.mock.calls).toEqual([["local URLs"], [previewURLLine]]);
+    expect(dns).toHaveBeenCalledTimes(2);
+
+    info.mockClear();
+    setPort(5201);
+    await server.listen(undefined, true);
+    expect(bootstrap.requests[2]?.body).toMatchObject({ target: "http://127.0.0.1:5201" });
+    // vite doesn't always reprint urls on a restart, but the shortcut still works.
+    await nextTurn();
+    server.printUrls();
+    expect(info.mock.calls).toEqual([["local URLs"], [previewURLLine]]);
+    expect(dns).toHaveBeenCalledTimes(2);
+    expect(printUrls).toHaveBeenCalledTimes(5);
+    expect(server.close).not.toHaveBeenCalled();
   });
+
+  test.each([
+    ["IPv4 only", ["192.0.2.1"], NODATA, false],
+    ["IPv6 only", NODATA, ["2001:db8::1"], false],
+    ["no address records", NODATA, NODATA, true],
+    ["resolver timeout", NOTFOUND, TIMEOUT, false],
+    ["resolver failure", SERVFAIL, NODATA, false],
+    ["resolver unavailable", CONNREFUSED, CONNREFUSED, false],
+  ] as const)("prints the correct startup URL with %s", async (_case, a, aaaa, waiting) => {
+    vi.spyOn(Resolver.prototype, "resolve").mockImplementation(async (_hostname, type) => {
+      const answer = type === "A" ? a : aaaa;
+      if (typeof answer === "string") throw dnsFailure(answer);
+      return [...answer];
+    });
+    const { server, publicLine } = await fakeViteServer();
+    await server.listen();
+    server.printUrls();
+    await expect(publicLine).resolves.toBe(
+      waiting ? `${previewURLLine} (waiting for DNS)` : previewURLLine,
+    );
+  });
+
+  test("prints a plain URL at the DNS deadline and discards late negatives", async () => {
+    const late = Promise.withResolvers<string[]>();
+    const dns = vi.spyOn(Resolver.prototype, "resolve");
+    dns.mockRejectedValueOnce(dnsFailure(NOTFOUND));
+    dns.mockReturnValueOnce(late.promise);
+    const cancel = vi.spyOn(Resolver.prototype, "cancel");
+    const { info, server, publicLine } = await fakeViteServer();
+    await server.listen();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      server.printUrls();
+      await vi.advanceTimersByTimeAsync(199);
+      expect(info.mock.calls).toEqual([["local URLs"]]);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(publicLine).resolves.toBe(previewURLLine);
+      expect(cancel).toHaveBeenCalledOnce();
+      late.reject(dnsFailure(NOTFOUND));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(info.mock.calls).toEqual([["local URLs"], [previewURLLine]]);
+      expect(dns).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test.each(["connector-only", "silent"] as const)(
+    "does not check DNS in %s mode",
+    async (mode) => {
+      const dns = vi.spyOn(Resolver.prototype, "resolve").mockRejectedValue(dnsFailure(NOTFOUND));
+      const { bootstrap, info, server } = await fakeViteServer(
+        undefined,
+        mode === "connector-only" ? { responseBody: JSON.stringify(testPrivateAssignment()) } : {},
+        mode === "silent" ? "silent" : "info",
+      );
+      await server.listen();
+      expect(bootstrap.requests[1]?.path).toBe("/v1/register");
+      server.printUrls();
+      expect(info.mock.calls).toEqual([["local URLs"]]);
+      expect(dns).not.toHaveBeenCalled();
+    },
+  );
 });
 
 test.each([
@@ -388,6 +448,7 @@ test(
 );
 
 test("optional Vite registration failure does not close a working local listener", async () => {
+  const dns = vi.spyOn(Resolver.prototype, "resolve").mockRejectedValue(dnsFailure(NOTFOUND));
   const bootstrap = await startTestBootstrap({
     status: 503,
     failurePath: "/v1/register",
@@ -418,6 +479,7 @@ test("optional Vite registration failure does not close a working local listener
   server.printUrls();
   expect(printUrls).toHaveBeenCalledOnce();
   expect(info).not.toHaveBeenCalled();
+  expect(dns).not.toHaveBeenCalled();
   expect(close).not.toHaveBeenCalled();
   expect(bootstrap.requests.at(-1)?.path).toBe("/v1/unregister");
 });
@@ -594,7 +656,7 @@ test(
   { timeout: 60_000 },
   async () => {
     const fixture = await startViteFixture(await findAvailableLoopbackPort());
-    const announcement = "  ➜  tnl:     https://api.member.example";
+    const announcement = `${previewURLLine} (waiting for DNS)`;
     const targetSchema = z.object({ target: z.string().url() });
 
     await fixture.diagnose(async () => {
@@ -707,6 +769,51 @@ async function runConfigHook(
     throw new Error("tnl plugin does not have a configuration hook");
   }
   return await hook.call({} as never, config, environment);
+}
+
+async function fakeViteServer(
+  onListen?: () => void,
+  bootstrapOptions?: BootstrapOptions,
+  logLevel?: LogLevel,
+) {
+  const bootstrap = await startTestBootstrap(bootstrapOptions);
+  const plugin = tnl();
+  await withProcessEnvironment(bootstrap.environment, () => runConfigHook(plugin, {}));
+  const publicLine = Promise.withResolvers<string>();
+  const info = vi.fn((line: string) => {
+    if (line.startsWith(previewURLLine)) publicLine.resolve(line);
+  });
+  const printUrls = vi.fn(() => info("local URLs"));
+  let port = 5200;
+  const server = {
+    close: vi.fn(async () => {}),
+    config: { logLevel, logger: { info } },
+    httpServer: {
+      listening: true,
+      address: () => ({ address: "127.0.0.1", port }),
+      once: () => {},
+      off: () => {},
+      close: () => {},
+    },
+    listen: vi.fn(async (_port?: number, _isRestart?: boolean) => onListen?.()),
+    printUrls,
+  };
+  if (typeof plugin.configureServer !== "function") throw new Error("missing Vite server hook");
+  plugin.configureServer.call({} as never, server as never);
+  return {
+    bootstrap,
+    info,
+    printUrls,
+    server,
+    publicLine: publicLine.promise,
+    setPort: (value: number) => {
+      port = value;
+    },
+  };
+}
+
+function dnsFailure(code: string) {
+  return Object.assign(new Error("fixture DNS query failed"), { code });
 }
 
 function startViteFixture(

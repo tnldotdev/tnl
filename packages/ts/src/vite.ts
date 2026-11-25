@@ -1,5 +1,7 @@
 import { serviceHostnames, serializeRuntimePayload } from "./internal/project/runtime.js";
 import { canonicalLoopbackTarget } from "./internal/publisher/target.js";
+import { NODATA, NOTFOUND } from "node:dns";
+import { Resolver } from "node:dns/promises";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import type { Plugin } from "vite";
@@ -18,6 +20,7 @@ import * as z from "zod";
 import { parseValue } from "./internal/validation.js";
 
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
+const dnsHintBudget = 200;
 const allowedHostsSchema = z.union([z.literal(true), z.array(z.string())]).optional();
 const sdkWasmFiles = new Set(
   ["connector.wasm", "publisher.wasm"].map((name) =>
@@ -101,18 +104,34 @@ export default function tnl(options: FrameworkOptions = {}): Plugin {
         throw new TnlError("sdk.target_invalid");
       }
       const listener = server.httpServer;
-      let registered = false;
+      const { hostname, publicURL } = configured;
+      const urlLine =
+        publicURL !== undefined && (server.config.logLevel ?? "info") === "info"
+          ? `  ➜  tnl:     ${publicURL}`
+          : undefined;
+      let announcement: { startup: boolean } | undefined;
       const originalPrintUrls = server.printUrls.bind(server);
       server.printUrls = () => {
         originalPrintUrls();
-        if (registered && configured.publicURL !== undefined) {
-          server.config.logger.info(`  ➜  tnl:     ${configured.publicURL}`);
+        if (announcement === undefined || urlLine === undefined) return;
+        const { startup } = announcement;
+        const printed = { startup: false };
+        announcement = printed;
+        if (!startup || hostname === undefined) {
+          server.config.logger.info(urlLine);
+          return;
         }
+        void waitingForDns(hostname).then((waiting) => {
+          if (announcement === printed && listener.listening) {
+            server.config.logger.info(waiting ? `${urlLine} (waiting for DNS)` : urlLine);
+          }
+        });
       };
       const originalListen = server.listen.bind(server);
       server.listen = (port, isRestart) =>
         operation(isRestart === true ? "vite.restart" : "vite.register", async () => {
-          registered = false;
+          announcement = undefined;
+          let registered = false;
           let listening;
           try {
             listening = await originalListen(port, isRestart);
@@ -137,10 +156,54 @@ export default function tnl(options: FrameworkOptions = {}): Plugin {
           } catch (error) {
             return await closeAfterFailure(server.close.bind(server), error);
           }
+          if (registered && urlLine !== undefined) {
+            const pending = { startup: true };
+            announcement = pending;
+            // vite prints startup urls immediately after listen. if a restart doesn't
+            // print them, don't treat a later shortcut as startup.
+            setImmediate(() => {
+              pending.startup = false;
+            }).unref();
+          }
           return listening;
         });
     },
   };
+}
+
+async function waitingForDns(hostname: string): Promise<boolean> {
+  try {
+    const resolver = new Resolver({ tries: 1 });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const addresses = Promise.any(
+        (["A", "AAAA"] as const).map(async (type) => resolver.resolve(hostname, type)),
+      );
+      return await Promise.race([
+        // a positive answer in either family is enough. only two definite
+        // negatives (NXDOMAIN or no data) justify the hint.
+        addresses.then(
+          () => false,
+          (error: unknown) =>
+            error instanceof AggregateError &&
+            error.errors.every(
+              (cause: unknown) =>
+                cause instanceof Error &&
+                "code" in cause &&
+                (cause.code === NOTFOUND || cause.code === NODATA),
+            ),
+        ),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(resolve, dnsHintBudget, false).unref();
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+      resolver.cancel();
+    }
+  } catch {
+    return false;
+  }
 }
 
 async function closeAfterFailure(close: () => Promise<void>, error: unknown): Promise<never> {
