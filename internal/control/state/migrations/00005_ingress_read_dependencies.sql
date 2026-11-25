@@ -54,11 +54,14 @@ CREATE TRIGGER invalidate_ingress_run AFTER INSERT OR DELETE OR UPDATE OF id,ser
     FOR EACH ROW EXECUTE FUNCTION control.invalidate_read_dependency('ingress','id');
 CREATE TRIGGER invalidate_ingress_policy AFTER INSERT OR UPDATE OR DELETE ON control.visitor_policies
     FOR EACH ROW EXECUTE FUNCTION control.invalidate_read_dependency('ingress','resource_id');
-CREATE TRIGGER invalidate_ingress_identity AFTER INSERT OR UPDATE OR DELETE ON control.publisher_identities
+-- a cached run already references its identity, grant and key. inserting a
+-- new credential cannot change that run. taking bucket locks during enrollment
+-- would conflict with other enrollments holding the team's registered-key row.
+CREATE TRIGGER invalidate_ingress_identity AFTER UPDATE OR DELETE ON control.publisher_identities
     FOR EACH ROW EXECUTE FUNCTION control.invalidate_read_dependency('ingress','id');
-CREATE TRIGGER invalidate_ingress_grant AFTER INSERT OR UPDATE OR DELETE ON control.publisher_grants
+CREATE TRIGGER invalidate_ingress_grant AFTER UPDATE OR DELETE ON control.publisher_grants
     FOR EACH ROW EXECUTE FUNCTION control.invalidate_read_dependency('ingress','id');
-CREATE TRIGGER invalidate_ingress_key AFTER INSERT OR UPDATE OR DELETE ON control.publisher_identity_keys
+CREATE TRIGGER invalidate_ingress_key AFTER UPDATE OR DELETE ON control.publisher_identity_keys
     FOR EACH ROW EXECUTE FUNCTION control.invalidate_read_dependency('ingress','id');
 CREATE TRIGGER invalidate_ingress_guest AFTER INSERT OR UPDATE OR DELETE ON control.guest_trials
     FOR EACH ROW EXECUTE FUNCTION control.invalidate_read_dependency('ingress','id');

@@ -121,6 +121,18 @@ func TestIntegrationPublisherEnrollmentConcurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := publisherEnrollment(t, d, actor, PublisherScope{TeamID: actor.TeamID, Kind: "service", ServiceID: service.ID}, now)
+	// hold every ingress bucket so a collision is certain. enrollment must not
+	// need one while it holds the team's registered-key watch row.
+	writer, err := d.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, writer)
+	if _, err := writer.Exec(t.Context(), `INSERT INTO control.read_dependency_versions AS v(topic,bucket)
+		SELECT 'ingress',s FROM generate_series(-1,255) s
+		ON CONFLICT(topic,bucket) DO UPDATE SET revision=v.revision+1`); err != nil {
+		t.Fatal(err)
+	}
 	keys := make([]ed25519.PublicKey, 2)
 	for i := range keys {
 		keys[i], _, _ = ed25519.GenerateKey(rand.Reader)
