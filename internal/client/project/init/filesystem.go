@@ -101,17 +101,37 @@ func replaceRecognizedInitFile(path string, expected, replacement []byte) error 
 	return nil
 }
 
-func ensureTnlGitignore(root string) (bool, error) {
+type fileEdit struct {
+	path                string
+	before, replacement []byte
+}
+
+func (edit fileEdit) status() string {
+	switch {
+	case edit.replacement == nil:
+		return "unchanged"
+	case edit.before == nil:
+		return "created"
+	default:
+		return "updated"
+	}
+}
+
+func (edit fileEdit) apply() error {
+	if edit.replacement == nil {
+		return nil
+	}
+	return replaceRecognizedInitFile(edit.path, edit.before, edit.replacement)
+}
+
+func planTnlGitignore(root string) (fileEdit, error) {
 	path := filepath.Join(root, ".gitignore")
 	data, err := readInitFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := createInitFile(path, []byte("# tnl\n"+LocalIgnoreRule+"\n")); err != nil {
-			return false, err
-		}
-		return true, nil
+		return fileEdit{path: path, replacement: []byte("# tnl\n" + LocalIgnoreRule + "\n")}, nil
 	}
 	if err != nil {
-		return false, err
+		return fileEdit{}, err
 	}
 	lines := strings.SplitAfter(string(data), "\n")
 	newline := "\n"
@@ -138,10 +158,7 @@ func ensureTnlGitignore(root string) (bool, error) {
 		replacement = append(replacement, []byte("# tnl"+newline+LocalIgnoreRule+newline)...)
 	}
 	if bytes.Equal(data, replacement) {
-		return false, nil
+		return fileEdit{path: path}, nil
 	}
-	if err := replaceRecognizedInitFile(path, data, replacement); err != nil {
-		return false, err
-	}
-	return true, nil
+	return fileEdit{path: path, before: data, replacement: replacement}, nil
 }

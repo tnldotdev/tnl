@@ -32,6 +32,15 @@ type API interface {
 	ListTeamDomains(context.Context, string) (authorityv1.DomainPage, error)
 }
 
+type SelectionSource string
+
+const (
+	SourceFlag    SelectionSource = "flag"
+	SourceProject SelectionSource = "project"
+	SourceSaved   SelectionSource = "saved"
+	SourceInitial SelectionSource = "initial"
+)
+
 // Session owns the database opened by Open and selects teams from one identity.
 type Session struct {
 	database      *clientstate.Database
@@ -98,7 +107,7 @@ func (s *Session) ProjectTeam() string                   { return s.projectTeam 
 func (s *Session) SelectedTeam() string                  { return s.selectedTeam }
 
 func (s *Session) Current(ctx context.Context) (Context, error) {
-	membership, err := s.CurrentMembership(ctx)
+	membership, source, err := s.currentMembership(ctx)
 	if err != nil {
 		return Context{}, err
 	}
@@ -106,7 +115,7 @@ func (s *Session) Current(ctx context.Context) (Context, error) {
 	if err != nil {
 		return Context{}, err
 	}
-	current := Context{team: selected, membership: membership}
+	current := Context{team: selected, membership: membership, source: source}
 	if s.authenticated != nil {
 		current.mode = naming.ManagedURLMode(s.authenticated.Discovery.ManagedUrlMode)
 	}
@@ -127,34 +136,35 @@ func (s *Session) CurrentWithDomains(ctx context.Context) (Context, error) {
 }
 
 func (s *Session) CurrentMembership(ctx context.Context) (authorityv1.Membership, error) {
+	membership, _, err := s.currentMembership(ctx)
+	return membership, err
+}
+
+func (s *Session) currentMembership(ctx context.Context) (authorityv1.Membership, SelectionSource, error) {
 	if s.selectedTeam != "" {
-		return s.ResolveMembership(ctx, s.selectedTeam)
+		membership, err := s.ResolveMembership(ctx, s.selectedTeam)
+		return membership, SourceFlag, err
 	}
 	if s.projectTeam != "" {
 		selected, err := s.ResolveMembership(ctx, s.projectTeam)
 		if err != nil {
-			return authorityv1.Membership{}, failure.Wrap("resolve project team", failure.TeamNotFound,
+			return authorityv1.Membership{}, "", failure.Wrap("resolve project team", failure.TeamNotFound,
 				fmt.Errorf("resolve project team %q: %w (use --team to override or tnl team list to find a membership)", s.projectTeam, err))
 		}
-		return selected, nil
+		return selected, SourceProject, nil
 	}
 	teamID, _, err := s.store.SelectedTeam(ctx)
 	if err != nil {
-		return authorityv1.Membership{}, err
+		return authorityv1.Membership{}, "", err
 	}
-	membership, found := membershipForTeam(s.identity.Memberships, teamID)
-	if !found {
-		teamID = s.InitialTeam()
-		membership, found = membershipForTeam(s.identity.Memberships, teamID)
-		if !found {
-			return authorityv1.Membership{}, failure.Wrap("select personal team", failure.TeamNotFound,
-				errors.New("authenticated identity has no personal-team membership"))
-		}
+	if membership, found := membershipForTeam(s.identity.Memberships, teamID); found {
+		return membership, SourceSaved, nil
 	}
-	if err := s.store.SaveSelectedTeam(ctx, teamID); err != nil {
-		return authorityv1.Membership{}, err
+	if membership, found := membershipForTeam(s.identity.Memberships, s.InitialTeam()); found {
+		return membership, SourceInitial, nil
 	}
-	return membership, nil
+	return authorityv1.Membership{}, "", failure.Wrap("select personal team", failure.TeamNotFound,
+		errors.New("authenticated identity has no personal-team membership"))
 }
 
 func (s *Session) InitialTeam() string {

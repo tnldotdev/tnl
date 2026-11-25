@@ -44,10 +44,10 @@ func Write(ctx context.Context, projectRoot string, metadata Metadata) error {
 	if err != nil {
 		return err
 	}
-	return writeLocalJSON(ctx, projectRoot, JSONName, data)
+	return writeLocalJSON(ctx, projectRoot, JSONName, data, nil)
 }
 
-func writeLocalJSON(ctx context.Context, projectRoot, name string, data []byte) error {
+func writeLocalJSON(ctx context.Context, projectRoot, name string, data []byte, outcomes *[]ArtifactOutcome) error {
 	if err := context.Cause(ctx); err != nil {
 		return err
 	}
@@ -88,9 +88,15 @@ func writeLocalJSON(ctx context.Context, projectRoot, name string, data []byte) 
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	record := func(status string) {
+		if outcomes != nil {
+			*outcomes = append(*outcomes, ArtifactOutcome{Path: filepath.Join(projectRoot, DirectoryName, name), Status: status})
+		}
+	}
 	if info != nil && info.Size() == int64(len(data)) {
 		previous, err := local.ReadFile(name)
 		if err == nil && bytes.Equal(previous, data) {
+			record("unchanged")
 			return nil
 		}
 	}
@@ -104,5 +110,13 @@ func writeLocalJSON(ctx context.Context, projectRoot, name string, data []byte) 
 	if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
 		return err
 	}
-	return local.Rename(temporary, name)
+	if err := local.Rename(temporary, name); err != nil {
+		return err
+	}
+	if info == nil {
+		record("created")
+	} else {
+		record("updated")
+	}
+	return nil
 }

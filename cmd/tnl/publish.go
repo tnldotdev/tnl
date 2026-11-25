@@ -220,7 +220,7 @@ func (a *commandApp) newPublishCommand() *cobra.Command {
 
 func (a *commandApp) publish(call commandCall) error {
 	ctx, flags := call.ctx, a.flags
-	flags.Publish.projectArgs = configArgv(flags.NoConfig, flags.ConfigPath)
+	flags.Publish.projectArgs = scopedConfigArgv(*flags)
 	if flags.Publish.Foreground && (flags.Publish.Install || flags.Publish.Background) {
 		return publisherCLIError("select only one of --foreground, --bg, or --install")
 	}

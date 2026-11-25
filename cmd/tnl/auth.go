@@ -44,11 +44,15 @@ type loginCommand struct {
 
 type authLoginCommand struct {
 	loginCommand `embed:""`
-	Run          struct{}
+	Run          authLoginRunCommand
 	Start        struct{}
 	Wait         authOperationCommand
 	Inspect      authOperationCommand
 	Cancel       authOperationCommand
+}
+
+type authLoginRunCommand struct {
+	CopyCode bool `name:"copy-code" help:"Copy the approval code to the local clipboard."`
 }
 
 type authOperationCommand struct {
@@ -61,32 +65,45 @@ type logoutCommand struct {
 	Output    statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
-func authLoginConfig(flags loginCommand, server string, state *clientstate.Database, input io.Reader, diagnostics io.Writer) auth.Config {
-	config := auth.Config{ServerEndpoint: server, State: state, Diagnostics: diagnostics,
-		Team:                 flags.Team,
-		LoginTimeout:         flags.Timeout,
-		AuthenticationPrompt: authenticationPrompt(diagnostics, "tnl auth login")}
-	if flags.Open && flags.Output != statusOutputJSON {
-		config.OpenURL = interactiveBrowserOpener(input)
+func authLoginConfig(flags loginCommand, server string, state *clientstate.Database, diagnostics io.Writer) auth.Config {
+	return auth.Config{
+		ServerEndpoint: server, State: state, Diagnostics: diagnostics,
+		Team: flags.Team, LoginTimeout: flags.Timeout,
 	}
-	return config
 }
 
-func runLogin(ctx context.Context, flags loginCommand, input io.Reader, output, errorOutput io.Writer) error {
+func runLogin(ctx context.Context, flags loginCommand, actions loginDesktopActions, output, diagnostics io.Writer) error {
 	serverURL, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
 	}
 	defer state.Close()
-	config := authLoginConfig(flags, serverURL, state, input, errorOutput)
-	var id string
+	config := authLoginConfig(flags, serverURL, state, diagnostics)
+	var id, writtenResume string
 	config.ObserveLogin = func(op clientstate.AuthOperation) error {
 		id = op.ID
-		return writeWaitingLogin(errorOutput, op, flags.Output, config.OpenURL != nil && op.Phase == clientstate.AuthPending)
+		approval := loginNeedsApproval(op)
+		desktop := approval && (actions.openURL != nil || actions.copyCode != nil)
+		var resume string
+		if desktop {
+			resume = flags.resumeCommand(ctx, state, op)
+		}
+		if err := writeWaitingLogin(diagnostics, op, flags.Output, approval && actions.openURL != nil, resume); err != nil {
+			return err
+		}
+		writtenResume = resume
+		if desktop {
+			return actions.run(ctx, op, flags.Output, diagnostics)
+		}
+		return nil
 	}
 	_, err = auth.Login(ctx, config)
 	if err != nil {
-		return interruptedLogin(ctx, config, id, flags, errorOutput, err)
+		if writtenResume != "" {
+			// the prompt already carried the exact command; don't print it again.
+			return &commandFollowup{error: err}
+		}
+		return interruptedLogin(ctx, config, id, flags, diagnostics, err)
 	}
 	return writeLoginResult(ctx, config, output, flags.Output)
 }
@@ -105,13 +122,13 @@ func writeLoginResult(ctx context.Context, config auth.Config, output io.Writer,
 	return writeAuthStatus(output, status, mode)
 }
 
-func runAuthLoginStart(ctx context.Context, flags loginCommand, input io.Reader, output, diagnostics io.Writer) error {
+func runAuthLoginStart(ctx context.Context, flags loginCommand, output, diagnostics io.Writer) error {
 	server, state, err := resolveServer(ctx, flags.StateDir, flags.ServerURL)
 	if err != nil {
 		return err
 	}
 	defer state.Close()
-	config := authLoginConfig(flags, server, state, input, diagnostics)
+	config := authLoginConfig(flags, server, state, diagnostics)
 	op, err := auth.StartLogin(ctx, config)
 	if err != nil {
 		return err
@@ -139,7 +156,7 @@ func runAuthLoginOperation(ctx context.Context, flags loginCommand, id, action s
 				if flags.Open {
 					open = interactiveBrowserOpener(os.Stdin)
 				}
-				if err := writeWaitingLogin(diagnostics, pending, flags.Output, open != nil); err != nil {
+				if err := writeWaitingLogin(diagnostics, pending, flags.Output, open != nil, ""); err != nil {
 					return err
 				}
 				if open != nil {
@@ -169,12 +186,16 @@ func loginNeedsApproval(op clientstate.AuthOperation) bool {
 	return (op.Phase == clientstate.AuthPending || op.Phase == clientstate.AuthExchanging) && op.ApprovalURL != "" && op.ExpiresAt.After(time.Now())
 }
 
-func writeWaitingLogin(output io.Writer, op clientstate.AuthOperation, mode statusOutputMode, opening bool) error {
+func writeWaitingLogin(output io.Writer, op clientstate.AuthOperation, mode statusOutputMode, opening bool, resume string) error {
 	if mode == statusOutputJSON || !loginNeedsApproval(op) {
 		return writeAuthOperation(output, op, mode, "")
 	}
 	blocks := approvalBlocks(op.ApprovalURL, op.UserCode, opening)
-	return writeResult(output, append(blocks, clioutput.Text("Waiting for approval..."))...)
+	blocks = append(blocks, clioutput.Text("Waiting for approval..."))
+	if resume != "" {
+		blocks = append(blocks, clioutput.Section("Resume login", clioutput.Literal(resume)))
+	}
+	return writeResult(output, blocks...)
 }
 
 func writeSignedIn(output io.Writer, server string) error {
@@ -317,7 +338,7 @@ func (a *commandApp) newAuthCommand() *cobra.Command {
 	loginFlags := func(call commandCall) loginCommand {
 		flags := f.Auth.Login.loginCommand
 		flags.projectServer = call.project.Config.Server
-		flags.configArgs = configArgs(f.NoConfig, f.ConfigPath)
+		flags.configArgs = scopedConfigArgs(*f)
 		return flags
 	}
 	cAuth := &cobra.Command{Use: "auth", Short: "Sign in, check your session, or sign out.", GroupID: "start"}
@@ -340,13 +361,21 @@ func (a *commandApp) newAuthCommand() *cobra.Command {
 	cliflags.Bind(cAuthLogin, &f.Auth.Login.loginCommand, true)
 	cAuthLoginRun := &cobra.Command{Use: "run", Short: "", Hidden: true}
 	a.leaf(cAuthLoginRun, &f.Auth.Login.Run, func(call commandCall) error {
-		return runLogin(call.ctx, loginFlags(call), os.Stdin, a.out, a.errOut)
+		flags := loginFlags(call)
+		var actions loginDesktopActions
+		if flags.Open {
+			actions.openURL = openLoginApprovalURL
+		}
+		if f.Auth.Login.Run.CopyCode {
+			actions.copyCode = copyLoginApprovalCode
+		}
+		return runLogin(call.ctx, flags, actions, a.out, a.errOut)
 	})
 	cAuthLogin.AddCommand(cAuthLoginRun)
 	a.useDefault(cAuthLogin, cAuthLoginRun)
 	cAuthLoginStart := &cobra.Command{Use: "start", Short: "Print an approval URL and operation ID without waiting."}
 	a.leaf(cAuthLoginStart, &f.Auth.Login.Start, func(call commandCall) error {
-		return runAuthLoginStart(call.ctx, loginFlags(call), os.Stdin, a.out, a.errOut)
+		return runAuthLoginStart(call.ctx, loginFlags(call), a.out, a.errOut)
 	})
 	cAuthLogin.AddCommand(cAuthLoginStart)
 	cAuthLoginWait := &cobra.Command{Use: "wait", Short: "Wait for approval and save credentials for this operation."}

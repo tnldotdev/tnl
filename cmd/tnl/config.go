@@ -34,7 +34,7 @@ func projectOptions(flags cli) resolve.Options {
 			deployment = selection.Deployment
 		}
 	}
-	return resolve.Options{ConfigPath: flags.ConfigPath, EnvironmentPath: os.Getenv("TNL_CONFIG"), NoConfig: flags.NoConfig, Deployment: deployment}
+	return resolve.Options{Directory: flags.Cwd, ConfigPath: flags.ConfigPath, EnvironmentPath: os.Getenv("TNL_CONFIG"), NoConfig: flags.NoConfig, Deployment: deployment}
 }
 
 func selectProjectConfiguration(ctx context.Context, flags cli) (clientproject.Selection, string, error) {
@@ -382,7 +382,7 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		if contextErr != nil {
 			return
 		}
-		remote.configArgs = configArgs(flags.NoConfig, flags.ConfigPath)
+		remote.configArgs = scopedConfigArgs(*flags)
 		remote.projectServer = project.Config.Server
 		remote.ServerURL, _, contextErr = resolve.Server(remote.ServerURL, project.Config.Server, remote.AccessToken)
 		if contextErr == nil && useTeam {

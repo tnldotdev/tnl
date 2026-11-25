@@ -45,7 +45,7 @@ func Bind(cmd *cobra.Command, options any, persistent bool) {
 			if name == "" {
 				name = kebab(field.Name)
 			}
-			val := &setting{value: value, path: tag.Get("type") == "path"}
+			val := &setting{value: value, path: tag.Get("type") == "path", relativePath: tag.Get("type") == "relative-path"}
 			if choices := tag.Get("enum"); choices != "" {
 				val.choices = strings.Split(choices, ",")
 			}
@@ -151,6 +151,7 @@ func Resolve(flags *pflag.FlagSet) error {
 type setting struct {
 	value           reflect.Value
 	path            bool
+	relativePath    bool
 	choices         []string
 	declaredDefault string
 	replace         bool
@@ -211,7 +212,7 @@ func ArgumentHelp(cmd *cobra.Command, name string) (Help, bool) {
 func FlagHelp(f *pflag.Flag) Help {
 	h := Help{Usage: f.Usage, Default: f.DefValue, Required: f.Annotations["required"] != nil || f.Annotations[cobra.BashCompOneRequiredFlag] != nil}
 	if s, ok := f.Value.(*setting); ok {
-		h.Default, h.Choices, h.Path = s.declaredDefault, s.choices, s.path
+		h.Default, h.Choices, h.Path = s.declaredDefault, s.choices, s.path || s.relativePath
 	}
 	return h
 }
@@ -263,6 +264,8 @@ func (s *setting) Set(raw string) error {
 	case reflect.String:
 		if s.path {
 			raw = ExpandPath(raw)
+		} else if s.relativePath {
+			raw = expandHome(raw)
 		}
 		v.SetString(raw)
 	case reflect.Bool:
@@ -335,16 +338,21 @@ func splitValues(s string, sep byte) []string {
 }
 
 func ExpandPath(path string) string {
+	path = expandHome(path)
 	if path == "" || filepath.IsAbs(path) {
 		return path
 	}
+	if full, err := filepath.Abs(path); err == nil {
+		return full
+	}
+	return path
+}
+
+func expandHome(path string) string {
 	if strings.HasPrefix(path, "~/") {
 		if u, err := user.Current(); err == nil {
 			return filepath.Join(u.HomeDir, path[2:])
 		}
-	}
-	if full, err := filepath.Abs(path); err == nil {
-		return full
 	}
 	return path
 }

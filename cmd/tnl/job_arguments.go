@@ -24,6 +24,7 @@ func registerBackgroundFlag(cmd *cobra.Command) {
 // backgroundInvocation carries parsed options privately, not a second command
 // line. changed flags distinguish explicit overrides from environment values.
 type backgroundInvocation struct {
+	Cwd         string
 	ConfigPath  string
 	NoConfig    bool
 	NoProgress  bool
@@ -35,7 +36,7 @@ type backgroundInvocation struct {
 }
 
 func parsedBackgroundInvocation(f *cli, cmd *cobra.Command, kind background.Kind) backgroundInvocation {
-	inv := backgroundInvocation{ConfigPath: f.ConfigPath, NoConfig: f.NoConfig, NoProgress: f.NoProgress, NoTelemetry: f.NoTelemetry}
+	inv := backgroundInvocation{Cwd: f.Cwd, ConfigPath: f.ConfigPath, NoConfig: f.NoConfig, NoProgress: f.NoProgress, NoTelemetry: f.NoTelemetry}
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
 		inv.Changed = append(inv.Changed, flag.Name)
 	})
@@ -57,7 +58,7 @@ func parsedBackgroundInvocation(f *cli, cmd *cobra.Command, kind background.Kind
 }
 
 func (inv backgroundInvocation) restore(f *cli, kind background.Kind, root string) ([]string, error) {
-	f.ConfigPath, f.NoConfig = inv.ConfigPath, inv.NoConfig
+	f.Cwd, f.ConfigPath, f.NoConfig = inv.Cwd, inv.ConfigPath, inv.NoConfig
 	f.NoProgress, f.NoTelemetry = inv.NoProgress, inv.NoTelemetry
 	switch kind {
 	case background.KindPublish:

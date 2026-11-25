@@ -223,9 +223,10 @@ func commandForRecommendation(manager string, packages []string) []string {
 
 // Install describes what init would run or ask the user to run.
 type Install struct {
-	Command string
-	Manual  bool
-	args    []string
+	Command    string
+	Manual     bool
+	args       []string
+	manualArgs []string
 }
 
 func (plan Plan) PackageInstall(noInstall bool) Install {
@@ -233,7 +234,8 @@ func (plan Plan) PackageInstall(noInstall bool) Install {
 		return Install{}
 	}
 	args := packageInstallCommand(plan.PackageManager, plan.MissingPackages)
-	return Install{Command: shellCommand(commandForRecommendation(plan.PackageManager, plan.MissingPackages)), Manual: noInstall || args == nil, args: args}
+	manual := commandForRecommendation(plan.PackageManager, plan.MissingPackages)
+	return Install{Command: shellCommand(manual), Manual: noInstall || args == nil, args: args, manualArgs: manual}
 }
 
 func shellCommand(arguments []string) string {

@@ -3,8 +3,10 @@ package meta
 import (
 	"bytes"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/config"
@@ -84,6 +86,36 @@ func TestArtifactReadOnlyChecksAndFixedOutputs(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(directory, "manifest.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("generated an ownership manifest")
+	}
+}
+
+func TestArtifactWriteOutcomes(t *testing.T) {
+	directory := artifactDirectory(t)
+	files := artifactFiles(t)
+	var outcomes []ArtifactOutcome
+	if err := writeArtifactOutcomes(directory, files, false, &outcomes); err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != len(files) || slices.ContainsFunc(outcomes, func(file ArtifactOutcome) bool { return file.Status != "created" }) {
+		t.Fatalf("initial outputs = %+v", outcomes)
+	}
+	writeArtifactFixture(t, filepath.Join(directory, "project.d.ts"), []byte("stale"))
+	writeArtifactFixture(t, filepath.Join(directory, "workloads.json"), []byte("obsolete"))
+	outcomes = nil
+	if err := writeArtifactOutcomes(directory, files, false, &outcomes); err != nil {
+		t.Fatal(err)
+	}
+	got, want := map[string]string{}, map[string]string{}
+	for _, outcome := range outcomes {
+		got[outcome.Path] = outcome.Status
+	}
+	for name := range files {
+		want[filepath.Join(directory, name)] = "unchanged"
+	}
+	want[filepath.Join(directory, "project.d.ts")] = "updated"
+	want[filepath.Join(directory, "workloads.json")] = "removed"
+	if !maps.Equal(got, want) {
+		t.Fatalf("outcomes = %v, want %v", got, want)
 	}
 }
 

@@ -94,12 +94,26 @@ func completionFacts(cmd *cobra.Command) meta.Completion {
 	if f := cmd.Flags().Lookup("config"); f != nil && f.Changed {
 		path = f.Value.String()
 	}
-	if path != "" {
-		return meta.ReadCompletion(filepath.Dir(path))
+	var dir string
+	if flag := cmd.Flags().Lookup("cwd"); flag != nil && flag.Changed {
+		var err error
+		dir, err = resolveCheckout(flag.Value.String())
+		if err != nil || dir == "" {
+			return meta.Completion{}
+		}
 	}
-	dir, err := os.Getwd()
-	if err != nil {
-		return meta.Completion{}
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			return meta.Completion{}
+		}
+	}
+	if path != "" {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(dir, path)
+		}
+		return meta.ReadCompletion(filepath.Dir(path))
 	}
 	for {
 		for _, name := range clientproject.ConfigNames() {

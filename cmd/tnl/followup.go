@@ -47,7 +47,7 @@ func observationFollowup(err error, flags cli) error {
 	if reason != failure.AppReadinessTimeout && reason != failure.AppCursorExpired {
 		return err
 	}
-	args := []string{"tnl"}
+	args := append([]string{"tnl"}, checkoutFlags(flags.Cwd)...)
 	if flags.NoConfig {
 		args = append(args, "--no-config")
 	} else if path := flags.ConfigPath; path != "" {

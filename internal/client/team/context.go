@@ -16,6 +16,7 @@ type Context struct {
 	membership authorityv1.Membership
 	domains    []authorityv1.Domain
 	mode       naming.ManagedURLMode
+	source     SelectionSource
 }
 
 func NewContext(selected authorityv1.Team, membership authorityv1.Membership, domains []authorityv1.Domain, mode naming.ManagedURLMode) Context {
@@ -26,6 +27,7 @@ func (c Context) Team() authorityv1.Team             { return c.team }
 func (c Context) Membership() authorityv1.Membership { return c.membership }
 func (c Context) Domains() []authorityv1.Domain      { return c.domains }
 func (c Context) Mode() naming.ManagedURLMode        { return c.mode }
+func (c Context) Source() SelectionSource            { return c.source }
 
 func (c Context) Namespace(domain authorityv1.Domain) (string, bool) {
 	return naming.PublicURLNamespace(naming.NamespaceFacts{

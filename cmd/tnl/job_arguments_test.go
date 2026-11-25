@@ -37,7 +37,7 @@ func TestBackgroundInvocationCarriesParsedValues(t *testing.T) {
 	t.Setenv("TNL_SERVER", "https://control.example")
 	t.Setenv("TNL_STATE_DIR", "/private/client state")
 	parse := commandForTest(&flags, io.Discard)
-	cmd, err := parse([]string{"--no-config", "publish", "3000", "--background", "--ip", "10.0.0.0/8", "--ip=192.168.0.0/16", "--team", "team", "--target-tls=false", "--output=json"})
+	cmd, err := parse([]string{"--cwd", "/checkout with spaces", "--no-config", "publish", "3000", "--background", "--ip", "10.0.0.0/8", "--ip=192.168.0.0/16", "--team", "team", "--target-tls=false", "--output=json"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestBackgroundInvocationCarriesParsedValues(t *testing.T) {
 	var restored cli
 	path, err := decoded.restore(&restored, background.KindPublish, "/canonical/client state")
 	publish := restored.Publish
-	if err != nil || !slices.Equal(path, []string{"publish"}) || !restored.NoConfig ||
+	if err != nil || !slices.Equal(path, []string{"publish"}) || !restored.NoConfig || restored.Cwd != "/checkout with spaces" ||
 		publish.Target != "3000" || publish.Background || publish.Output != publishOutputHuman ||
 		publish.StateDir != "/canonical/client state" || publish.ServerURL != "https://control.example" || publish.Team != "team" ||
 		!slices.Equal(publish.IP, []string{"10.0.0.0/8", "192.168.0.0/16"}) || publish.TargetTLS == nil || *publish.TargetTLS ||
