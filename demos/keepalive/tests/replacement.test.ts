@@ -28,6 +28,8 @@ it("allows five seconds at the donor plus time for the request to reach it", asy
   };
   const lifetime = new AbortController();
   const donor = peerServer(release, [origin], async () => new Response(), lifetime.signal);
+  vi.stubGlobal("KEEPALIVE_RAMP_UPLOAD_TRACE", true);
+  const trace = vi.spyOn(console, "info").mockImplementation(() => {});
   let bodyDelay = 5_001;
   let attempts = 0;
   vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
@@ -41,8 +43,9 @@ it("allows five seconds at the donor plus time for the request to reach it", asy
     let timer: ReturnType<typeof setTimeout>;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
+        controller.enqueue(new Uint8Array(UPLOAD_BYTES / 2));
         timer = setTimeout(() => {
-          controller.enqueue(new Uint8Array(UPLOAD_BYTES));
+          controller.enqueue(new Uint8Array(UPLOAD_BYTES / 2));
           controller.close();
         }, bodyDelay);
       },
@@ -76,6 +79,26 @@ it("allows five seconds at the donor plus time for the request to reach it", asy
     await vi.advanceTimersByTimeAsync(900 + bodyDelay);
     expect(await healthy).toBe(true);
     expect(attempts).toBe(2);
+    expect(trace.mock.calls).toEqual([
+      [
+        `keepalive_donor_upload ${JSON.stringify({
+          host: host.origin,
+          runID: host.runID,
+          outcome: "read_timeout",
+          bytes: UPLOAD_BYTES / 2,
+          elapsedMs: 5000,
+        })}`,
+      ],
+      [
+        `keepalive_donor_upload ${JSON.stringify({
+          host: host.origin,
+          runID: host.runID,
+          outcome: "ok",
+          bytes: UPLOAD_BYTES,
+          elapsedMs: 4800,
+        })}`,
+      ],
+    ]);
   } finally {
     lifetime.abort();
     await donor.stop();

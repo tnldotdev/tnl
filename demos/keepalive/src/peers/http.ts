@@ -43,11 +43,14 @@ import {
 import {
   NoReachableHost,
   PEER_REQUEST_MS,
+  TransportFailure,
   noReachableHost,
   request as sendRequest,
   requireStatus,
   retryOnce,
 } from "../network.ts";
+
+declare const KEEPALIVE_RAMP_UPLOAD_TRACE: boolean;
 
 const CHECK_PATH = "/__keepalive/check";
 const WAIT_PATH = "/__keepalive/wait";
@@ -441,20 +444,59 @@ export function peerServer(
       return c.body(null, 409);
     pending.reading = true;
     pending.uploads++;
+    const readTimeout = AbortSignal.timeout(UPLOAD_MS);
+    const requestSignal = c.req.raw.signal;
+    const deadline = AbortSignal.any([signal, requestSignal, readTimeout]);
+    let bytes = 0;
+    let outcome = "ok";
+    const tracing =
+      typeof KEEPALIVE_RAMP_UPLOAD_TRACE !== "undefined" && KEEPALIVE_RAMP_UPLOAD_TRACE;
+    const started = tracing ? performance.now() : 0;
     try {
-      const deadline = AbortSignal.any([signal, c.req.raw.signal, AbortSignal.timeout(UPLOAD_MS)]);
-      await readBytes(new Response(c.req.raw.body), UPLOAD_BYTES, deadline, UPLOAD_BYTES);
+      await readBytes(
+        new Response(c.req.raw.body),
+        UPLOAD_BYTES,
+        deadline,
+        UPLOAD_BYTES,
+        tracing
+          ? (received) => {
+              bytes = received;
+            }
+          : undefined,
+      );
       const now = Date.now();
-      if (promotion !== pending || pending.endsAt <= now || deadline.aborted)
+      if (promotion !== pending || pending.endsAt <= now || deadline.aborted) {
+        outcome = "invitation_no_longer_current";
         return c.body(null, 409);
+      }
       pending.uploadPassed = true;
       pending.endsAt = now + STARTUP_MS;
       gossip?.confirmStart(pending.endsAt);
       return c.body(null, 204);
-    } catch {
+    } catch (error) {
+      if (tracing) {
+        if (readTimeout.aborted && deadline.reason === readTimeout.reason) outcome = "read_timeout";
+        else if (requestSignal.aborted && deadline.reason === requestSignal.reason)
+          outcome = "request_canceled";
+        else if (signal.aborted) outcome = "donor_stopped";
+        else if (error instanceof TransportFailure) outcome = "transport_error";
+        else outcome = "body_read_failed";
+      }
       return c.body(null, 422);
     } finally {
       pending.reading = false;
+      if (tracing) {
+        console.info(
+          "keepalive_donor_upload " +
+            JSON.stringify({
+              host: gossip?.self.origin,
+              runID: gossip?.self.runID,
+              outcome,
+              bytes,
+              elapsedMs: Math.round(performance.now() - started),
+            }),
+        );
+      }
     }
   });
   app.post(PEERS_PATH, async (c) => {

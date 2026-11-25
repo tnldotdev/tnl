@@ -50,6 +50,10 @@ recovered by using another host. Requests that succeed without an upstream
 failure don't emit an entry. This tracing is temporary and is disabled in
 production builds.
 
+For volunteer admissions on ramp, capture `keepalive_donor_upload` from the
+inviter's browser console. It records the exact inviter run, bytes received,
+elapsed time, and outcome, without recording the invitation or upload body.
+
 To check certificate reuse on an empty ramp fleet, run from the repo root:
 
 ```sh
