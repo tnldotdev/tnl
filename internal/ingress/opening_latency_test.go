@@ -15,7 +15,7 @@ import (
 func TestPublicOpeningLatency(t *testing.T) {
 	f := newAdmissionTransportFixture(t)
 	const samples = 32
-	worker := ingressWorker(t, func() { _ = f.publisher.Close() }, func() error {
+	worker := ingressWorker(t, f.closePublisher, func() error {
 		for range samples + 1 {
 			incoming, err := f.publisher.AcceptServiceForwardingStream(ingressContext(t))
 			if err != nil {
