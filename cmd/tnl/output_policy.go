@@ -64,7 +64,7 @@ func environmentOutput(cmd *cobra.Command, value func(string) string, passthroug
 		}
 		return "", nil
 	default:
-		return "", errors.New("Set TNL_OUTPUT to human, machine, or auto.")
+		return "", errors.New("invalid TNL_OUTPUT value")
 	}
 }
 
@@ -84,7 +84,7 @@ func (a *commandApp) selectOutput(cmd *cobra.Command) error {
 			return ""
 		}, cmd.ArgsLenAtDash() > 0 && cmd.ArgsLenAtDash() < flags.NArg())
 		if err != nil {
-			return invalidCommandInput(cmd, err, err.Error())
+			return invalidCommandInput(cmd, err, "Set TNL_OUTPUT to human, machine, or auto.")
 		}
 		if format != "" {
 			if err := output.Value.Set(format); err != nil {
