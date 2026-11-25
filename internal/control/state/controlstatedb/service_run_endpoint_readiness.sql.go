@@ -40,33 +40,33 @@ func (q *Queries) LockServiceRunFirstReadyEndpoint(ctx context.Context, arg Lock
 }
 
 const serviceRunPublicEndpointReady = `-- name: ServiceRunPublicEndpointReady :one
-SELECT EXISTS(
-    SELECT 1 FROM control.service_endpoints endpoint
-    JOIN control.ingress_pools pool ON pool.id=endpoint.ingress_pool_id
-    WHERE endpoint.service_id=$1::text
-      AND endpoint.hostname=$2::text AND endpoint.domain_id=$3::text
-      AND endpoint.ingress_pool_id=$4::text
+WITH reachable AS MATERIALIZED (
+    SELECT endpoint.hostname FROM control.service_endpoints endpoint
+    WHERE endpoint.service_id=$3::text
+      AND endpoint.hostname IN ($1::text,$2::text) AND endpoint.domain_id=$4::text
+      AND endpoint.ingress_pool_id=$5::text
       AND endpoint.public AND endpoint.retired_at IS NULL
-      AND (endpoint.service_run_id IS NULL OR endpoint.service_run_id=$5::text)
-      AND control.publisher_alias_dns_until(endpoint,$6::timestamptz) IS NOT NULL
-      AND (pool.state IN('enabled','draining') OR pool.id=$7::text AND pool.state='disabled')
+      AND (endpoint.service_run_id IS NULL OR endpoint.service_run_id=$6::text)
+      AND control.publisher_alias_dns_until(endpoint,$7::timestamptz) IS NOT NULL
+      AND EXISTS (SELECT 1 FROM control.ingress_pools pool WHERE pool.id=$5::text
+        AND (pool.state IN('enabled','draining') OR pool.id=$8::text AND pool.state='disabled'))
       AND EXISTS(SELECT 1 FROM control.service_connection_slots slot
         JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id
           AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
-        WHERE slot.service_run_id=$5::text AND slot.state='ready' AND slot.session_open
-          AND NOT relay.draining AND relay.lease_expires_at>$6::timestamptz)
-      AND EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=$4::text
-        AND (CASE WHEN $8::text='http' THEN ingress.https ELSE $9::integer <@ ingress.service_port_ranges END)
-        AND NOT ingress.draining AND ingress.lease_expires_at>$6::timestamptz)
-      AND NOT EXISTS(SELECT 1 FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=$4::text
-        AND NOT (CASE WHEN $8::text='http' THEN ingress.https ELSE $9::integer <@ ingress.service_port_ranges END)
-        AND NOT ingress.draining AND ingress.lease_expires_at>$6::timestamptz)
-) AS ready
+        WHERE slot.service_run_id=$6::text AND slot.state='ready' AND slot.session_open
+          AND NOT relay.draining AND relay.lease_expires_at>$7::timestamptz)
+      AND (SELECT bool_and(CASE WHEN $9::text='http' THEN ingress.https ELSE $10::integer <@ ingress.service_port_ranges END)
+        FROM control.ingress_leases ingress WHERE ingress.ingress_pool_id=$5::text
+        AND NOT ingress.draining AND ingress.lease_expires_at>$7::timestamptz)
+)
+SELECT EXISTS(SELECT 1 FROM reachable WHERE hostname=$1) AS canonical,
+    EXISTS(SELECT 1 FROM reachable WHERE hostname=$2) AS alias
 `
 
 type ServiceRunPublicEndpointReadyParams struct {
-	ServiceID            string
 	Hostname             string
+	AliasHostname        string
+	ServiceID            string
 	DomainID             string
 	IngressPoolID        string
 	ServiceRunID         string
@@ -76,12 +76,18 @@ type ServiceRunPublicEndpointReadyParams struct {
 	ServicePort          int32
 }
 
+type ServiceRunPublicEndpointReadyRow struct {
+	Canonical bool
+	Alias     bool
+}
+
 // the caller holds the service lock and validates the run's preparation facts.
 // use current DNS, relay, and ingress facts without authorizing visitor access.
-func (q *Queries) ServiceRunPublicEndpointReady(ctx context.Context, arg ServiceRunPublicEndpointReadyParams) (bool, error) {
+func (q *Queries) ServiceRunPublicEndpointReady(ctx context.Context, arg ServiceRunPublicEndpointReadyParams) (ServiceRunPublicEndpointReadyRow, error) {
 	row := q.db.QueryRow(ctx, serviceRunPublicEndpointReady,
-		arg.ServiceID,
 		arg.Hostname,
+		arg.AliasHostname,
+		arg.ServiceID,
 		arg.DomainID,
 		arg.IngressPoolID,
 		arg.ServiceRunID,
@@ -90,7 +96,7 @@ func (q *Queries) ServiceRunPublicEndpointReady(ctx context.Context, arg Service
 		arg.Protocol,
 		arg.ServicePort,
 	)
-	var ready bool
-	err := row.Scan(&ready)
-	return ready, err
+	var i ServiceRunPublicEndpointReadyRow
+	err := row.Scan(&i.Canonical, &i.Alias)
+	return i, err
 }

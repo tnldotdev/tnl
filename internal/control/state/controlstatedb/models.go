@@ -858,6 +858,12 @@ type ControlPublisherRuntime struct {
 	DeploymentFirstObservedAt pgtype.Timestamptz
 }
 
+type ControlReadDependencyVersion struct {
+	Topic    string
+	Bucket   int32
+	Revision int64
+}
+
 type ControlRegisteredKeyWatchVersion struct {
 	TeamID     string
 	ProjectKey string

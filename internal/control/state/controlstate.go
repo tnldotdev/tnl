@@ -24,7 +24,7 @@ import (
 
 const (
 	// serving roles require the latest embedded migration or a newer schema.
-	minimumSchemaVersion int64 = 3
+	minimumSchemaVersion int64 = 4
 	versionTable               = "control.goose_db_version"
 	bootstrapRetryDelay        = 25 * time.Millisecond
 )
@@ -73,6 +73,7 @@ type Database struct {
 	storageKey              *storagekey.Keyring
 	managedURLMode          naming.ManagedURLMode
 	diagnosticsMu           sync.Mutex
+	watchBookmarks          watchBookmarkCache
 	activity                *queryActivity
 	connections             *connectionActivity
 }

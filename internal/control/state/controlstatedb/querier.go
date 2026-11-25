@@ -70,10 +70,6 @@ type Querier interface {
 	CompanySessionRefreshValid(ctx context.Context, arg CompanySessionRefreshValidParams) (pgtype.Bool, error)
 	CompanySubjectDeadline(ctx context.Context, arg CompanySubjectDeadlineParams) (pgtype.Timestamptz, error)
 	CompanySubjectSessionAuthorized(ctx context.Context, arg CompanySubjectSessionAuthorizedParams) (bool, error)
-	// an untouched run starts at zero. a missing or closed run has no version.
-	// filter the live bookmark view before joining it to the caller's cursor.
-	// otherwise a hash join can compute every run's bookmark for each batch.
-	CompareConnectorPeerWatchVersions(ctx context.Context, arg CompareConnectorPeerWatchVersionsParams) ([]CompareConnectorPeerWatchVersionsRow, error)
 	// only a checked publisher report can advance this startup barrier. a retry
 	// retains a newer report, capped by the currently checked delivery authority.
 	ConfirmConnectorPeerPairPrepared(ctx context.Context, arg ConfirmConnectorPeerPairPreparedParams) (int64, error)
@@ -324,6 +320,7 @@ type Querier interface {
 	ListPublisherCertificateCheckpoints(ctx context.Context, publisherIdentityID string) ([][]byte, error)
 	ListPublisherGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGrant, error)
 	ListPublisherIdentities(ctx context.Context, arg ListPublisherIdentitiesParams) ([]ControlPublisherIdentity, error)
+	ListReadDependencyVersions(ctx context.Context, topic string) ([]ListReadDependencyVersionsRow, error)
 	// aggregate replica runs before building one redirect per service hostname.
 	ListReadyShareServices(ctx context.Context, arg ListReadyShareServicesParams) ([]ListReadyShareServicesRow, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
@@ -464,6 +461,8 @@ type Querier interface {
 	ReadConnectorPeerClaimBounds(ctx context.Context, pairID string) ([]ReadConnectorPeerClaimBoundsRow, error)
 	// relay leases are current-state recheck deadlines, not pair renewals.
 	ReadConnectorPeerObservationRelayBounds(ctx context.Context, arg ReadConnectorPeerObservationRelayBoundsParams) ([]ReadConnectorPeerObservationRelayBoundsRow, error)
+	// called only for scopes whose change records differ, in the same snapshot.
+	ReadConnectorPeerWatchVersions(ctx context.Context, runIds []string) ([]ReadConnectorPeerWatchVersionsRow, error)
 	ReadPlacementAssignmentTotals(ctx context.Context, ids []string) ([]ReadPlacementAssignmentTotalsRow, error)
 	ReadPublisherGrant(ctx context.Context, arg ReadPublisherGrantParams) (ControlPublisherGrant, error)
 	ReadPublisherIdentity(ctx context.Context, id string) (ControlPublisherIdentity, error)
@@ -563,7 +562,7 @@ type Querier interface {
 	ServicePublicEndpointBinding(ctx context.Context, visitorConnectionID string) (ServicePublicEndpointBindingRow, error)
 	// the caller holds the service lock and validates the run's preparation facts.
 	// use current DNS, relay, and ingress facts without authorizing visitor access.
-	ServiceRunPublicEndpointReady(ctx context.Context, arg ServiceRunPublicEndpointReadyParams) (bool, error)
+	ServiceRunPublicEndpointReady(ctx context.Context, arg ServiceRunPublicEndpointReadyParams) (ServiceRunPublicEndpointReadyRow, error)
 	SetDNSReadyDomainDefault(ctx context.Context, arg SetDNSReadyDomainDefaultParams) (int64, error)
 	SetDomainAuthorityRevision(ctx context.Context, arg SetDomainAuthorityRevisionParams) error
 	SetIdentityInitialTeam(ctx context.Context, arg SetIdentityInitialTeamParams) error

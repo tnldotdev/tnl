@@ -836,11 +836,7 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if err = d.guestServiceSource(ctx, q, run.GuestID.String, publisherRequestSource(ctx), clock.current()); err != nil {
 		return result, err
 	}
-	endpointReady, err := serviceRunPublicEndpointReady(ctx, tx, endpoint, run, clock.current())
-	if err != nil {
-		return result, err
-	}
-	aliasReady, err := serviceRunAliasReady(ctx, tx, endpoint, run, endpointReady, clock.current())
+	readiness, err := serviceRunEndpointReadiness(ctx, tx, endpoint, run, clock.current(), false)
 	if err != nil {
 		return result, err
 	}
@@ -874,8 +870,8 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	return ServiceRunState{ServiceID: serviceID, RunID: runID, RunNumber: run.RunNumber,
 		RenewAfter:         controloutage.RenewalDelay(lease/3, now, minTime(run.PublisherExpiresAt.Time, run.ServingUntil.Time)),
 		PolicyConfirmation: confirmations.canonical, AliasPolicyConfirmation: confirmations.alias,
-		EndpointRevision: endpoint.revision, PublicEndpointReady: endpointReady,
-		RunHostname: run.RunHostname, RunAliasReady: aliasReady,
+		EndpointRevision: endpoint.revision, PublicEndpointReady: readiness.Canonical,
+		RunHostname: run.RunHostname, RunAliasReady: readiness.Alias,
 		Healthy: run.Healthy, StreamCapacity: run.StreamCapacity, ReportedStreams: run.ReportedStreams,
 		State: run.State, ExpiresAt: run.PublisherExpiresAt.Time, ObservedAt: run.ServingObservedAt.Time, ServingUntil: run.ServingUntil.Time,
 		Connections: connections}, nil

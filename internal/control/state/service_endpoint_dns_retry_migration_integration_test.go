@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestIntegrationServiceEndpointDNSRetryMigration(t *testing.T) {
-	for _, prior := range []int64{1, 2} {
+	for _, prior := range []int64{1, 2, 3} {
 		t.Run(fmt.Sprintf("from-v%d", prior), func(t *testing.T) {
 			checkPopulatedDNSSchemaUpgrade(t, prior)
 		})
@@ -31,7 +32,7 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 		t.Fatal(err)
 	}
 	sqlDB := stdlib.OpenDB(*cfg)
-	defer sqlDB.Close()
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := ensureMigrationLock(ctx, sqlDB); err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +120,27 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 		return value
 	}
 	before := snapshot()
+	runtimeURL := rollingMigrationRuntimeURL(t, sqlDB, url, cfg.Database+"_read_runtime")
+	// some installations grant writes to future tables by default. the runtime
+	// needs the same read-only change records in both configurations.
+	if priorVersion == 2 {
+		if _, err := sqlDB.ExecContext(ctx, `ALTER DEFAULT PRIVILEGES IN SCHEMA control GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO `+pgx.Identifier{cfg.Database + "_read_runtime"}.Sanitize()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime, err := pgxpool.New(ctx, runtimeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	oldRead := func(pool *pgxpool.Pool) {
+		t.Helper()
+		var name string
+		if err := pool.QueryRow(ctx, `SELECT name FROM control.services WHERE id=$1`, serviceID).Scan(&name); err != nil || name != "app" {
+			t.Fatal("old service read", name, err)
+		}
+	}
+	oldRead(runtime)
 	if version, err := readSchemaVersion(ctx, pool); err != nil || version != priorVersion {
 		t.Fatal("fixture is not on the previous schema", version, err)
 	}
@@ -158,6 +180,33 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 		t.Fatal(err)
 	}
 	defer d.Close()
+	oldRead(runtime)
+	if _, err := runtime.Exec(ctx, `SELECT control.touch_visitor_policy_watch($1)`, serviceID); err != nil {
+		t.Fatal("old write after migration", err)
+	}
+	var recorded bool
+	if err := runtime.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.read_dependency_versions WHERE topic='watch' AND bucket=(hashtext($1)&255))`, serviceID).Scan(&recorded); err != nil || !recorded {
+		t.Fatal("runtime could not read committed invalidation", err)
+	}
+	if _, err := runtime.Exec(ctx, `DELETE FROM control.read_dependency_versions WHERE false`); err == nil {
+		t.Fatal("reader can erase change records")
+	}
+	reopened, err := Open(ctx, runtimeURL, testStorageKey, "", naming.ManagedURLModeGenerated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if err := reopened.Readiness(ctx); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := reopened.CompareConnectorPeerWatchVersions(ctx, []ConnectorPeerWatchVersion{{RunID: "srun_0123456789ABCDEFGHIJKL"}})
+	if err != nil || len(changes) != 1 || changes[0].Revision != -1 {
+		t.Fatal("watch on prepared run after migration", changes, err)
+	}
+	if err := reopened.pool.QueryRow(ctx, `SELECT control.publisher_alias_dns_until(e,$2) IS NOT NULL
+		FROM control.service_endpoints e WHERE e.hostname=$1`, aliasHost, now).Scan(&recorded); err != nil || !recorded {
+		t.Fatal("older runtime cannot check alias DNS after migration", err)
+	}
 	var legacyExact bool
 	if err := pool.QueryRow(ctx, `SELECT NOT wildcard_dns AND dns_automation AND dns_state='published'
 	    FROM control.service_endpoints WHERE hostname=$1 AND publisher_identity_id='publisher'`, aliasHost).Scan(&legacyExact); err != nil || !legacyExact {

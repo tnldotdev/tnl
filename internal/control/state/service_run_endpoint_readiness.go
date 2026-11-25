@@ -48,44 +48,31 @@ func (d *Database) lockRenewalEndpoint(ctx context.Context, tx pgx.Tx, service s
 	return endpoint, err
 }
 
-func serviceRunAliasReady(ctx context.Context, tx pgx.Tx, endpoint serviceRunEndpoint, run controlstatedb.ControlServiceRun, canonicalReady bool, now time.Time) (bool, error) {
-	if !canonicalReady || run.RunHostname == "" || run.RunAliasParent != endpoint.aliasParent {
-		return false, nil
-	}
-	return controlstatedb.New(tx).ServiceRunPublicEndpointReady(ctx, controlstatedb.ServiceRunPublicEndpointReadyParams{
-		ServiceID: endpoint.id, Hostname: run.RunHostname, DomainID: endpoint.domain.String,
-		IngressPoolID: endpoint.pool, PrimaryIngressPoolID: PrimaryIngressPoolID,
-		ServiceRunID: run.ID, Protocol: endpoint.protocol, ServicePort: endpoint.port, Now: timestamptz(now),
-	})
-}
-
-func serviceRunPublicEndpointReady(ctx context.Context, tx pgx.Tx, endpoint serviceRunEndpoint, run controlstatedb.ControlServiceRun, now time.Time) (bool, error) {
-	if serviceRunLifecycleState(run.State) != serviceRunReady {
-		return false, nil
-	}
-	return serviceRunPublicEndpointPrerequisitesReady(ctx, tx, endpoint, run, now)
-}
-
 // the starting candidate is only for a guest's first readiness. the shared
 // readiness operation also requires two current connections before committing.
-// observations must use serviceRunPublicEndpointReady instead.
-func serviceRunPublicEndpointPrerequisitesReady(ctx context.Context, tx pgx.Tx, endpoint serviceRunEndpoint, run controlstatedb.ControlServiceRun, now time.Time) (bool, error) {
+func serviceRunEndpointReadiness(ctx context.Context, tx pgx.Tx, endpoint serviceRunEndpoint, run controlstatedb.ControlServiceRun, now time.Time, firstGuest bool) (controlstatedb.ServiceRunPublicEndpointReadyRow, error) {
 	candidate := run.State == string(serviceRunReady) ||
-		run.GuestID.Valid && run.State == string(serviceRunStarting) && !run.ReadyAt.Valid
+		firstGuest && run.GuestID.Valid && run.State == string(serviceRunStarting) && !run.ReadyAt.Valid
 	if !endpoint.public || endpoint.revision < 1 || !endpoint.domain.Valid ||
 		run.ServiceID != endpoint.id || run.CertificateHostname != endpoint.hostname || run.CertificateDomainID != endpoint.domain ||
 		!candidate || !run.Healthy || run.ClosedAt.Valid ||
 		!run.PublisherExpiresAt.Time.After(now) || !run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now) {
-		return false, nil
+		return controlstatedb.ServiceRunPublicEndpointReadyRow{}, nil
 	}
 	// use the DNS worker's current relay and ingress capability facts. an
 	// automated endpoint cannot bypass publication by claiming unmanaged DNS.
 	// the primary pool retains its externally addressed fallback semantics.
-	return controlstatedb.New(tx).ServiceRunPublicEndpointReady(ctx, controlstatedb.ServiceRunPublicEndpointReadyParams{
-		ServiceID: endpoint.id, Hostname: endpoint.hostname, DomainID: endpoint.domain.String,
+	var alias string
+	if !firstGuest && run.RunAliasParent == endpoint.aliasParent {
+		alias = run.RunHostname
+	}
+	ready, err := controlstatedb.New(tx).ServiceRunPublicEndpointReady(ctx, controlstatedb.ServiceRunPublicEndpointReadyParams{
+		ServiceID: endpoint.id, Hostname: endpoint.hostname, AliasHostname: alias, DomainID: endpoint.domain.String,
 		IngressPoolID: endpoint.pool, PrimaryIngressPoolID: PrimaryIngressPoolID,
 		ServiceRunID: run.ID, Protocol: endpoint.protocol, ServicePort: endpoint.port, Now: timestamptz(now),
 	})
+	ready.Alias = ready.Canonical && alias != "" && ready.Alias
+	return ready, err
 }
 
 func serviceRunFirstReadyGuestEndpointReady(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, run controlstatedb.ControlServiceRun, clock authorizationClock) (bool, error) {
@@ -107,5 +94,6 @@ func serviceRunFirstReadyGuestEndpointReady(ctx context.Context, tx pgx.Tx, q *c
 	if err != nil {
 		return false, err
 	}
-	return serviceRunPublicEndpointPrerequisitesReady(ctx, tx, endpoint, run, clock.current())
+	ready, err := serviceRunEndpointReadiness(ctx, tx, endpoint, run, clock.current(), true)
+	return ready.Canonical, err
 }
