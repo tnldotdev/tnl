@@ -614,7 +614,7 @@ func (a *commandApp) servePublisher(call commandCall) error {
 		// the owning child consumes the injected secret before loading project
 		// configuration; clear the launching process's copy after handoff too.
 		defer os.Unsetenv("TNL_DEPLOYMENT_IDENTITY")
-		return detachPublish(ctx, a.argv, serve.StateDir, a.out, "tnl publisher serve")
+		return detachPublish(ctx, a.argv, serve.StateDir, a.out, nil)
 	}
 	if err := prepareDeploymentIdentity(serve); err != nil {
 		return err

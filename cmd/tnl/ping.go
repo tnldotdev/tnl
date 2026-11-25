@@ -21,12 +21,14 @@ type pingCommand struct {
 	Output statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
-func runPing(ctx context.Context, flags pingCommand, output io.Writer) error {
+func runPing(ctx context.Context, flags pingCommand, output, diagnostics io.Writer) error {
 	address, protocol, err := publisherapp.PingAddress(flags.URL)
 	if err != nil {
 		return failure.Wrap("select visitor address", failure.InvalidCommand, &pingFailure{state: "invalid address", cause: err})
 	}
+	stopProgress := clioutput.StartProgress(ctx, output, diagnostics, flags.Output != statusOutputJSON, "Checking HTTP response")
 	result := publisherapp.Ping(ctx, address, protocol)
+	stopProgress()
 	if flags.Output == statusOutputJSON {
 		if err := json.NewEncoder(output).Encode(result); err != nil {
 			return err
@@ -95,7 +97,7 @@ func (a *commandApp) newPingCommand() *cobra.Command {
 		Long: "Send a GET request from this machine without following redirects. Use the full URL, including http:// or https://. The command exits 0 when the app sends any HTTP response, even a 404 or 500. Use tnl wait to check configured readiness.",
 	}
 	a.leaf(cPing, &f.Ping, func(call commandCall) error {
-		return runPing(call.ctx, f.Ping, a.out)
+		return runPing(call.ctx, f.Ping, a.out, a.errOut)
 	})
 	return cPing
 }

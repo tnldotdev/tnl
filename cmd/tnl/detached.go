@@ -37,7 +37,7 @@ func detachedStopCommandLine(id, stateDir string) string {
 	return stop
 }
 
-func detachPublish(ctx context.Context, args []string, stateDir string, output io.Writer, title string) error {
+func detachPublish(ctx context.Context, args []string, stateDir string, output io.Writer, ready func(root, id string) error) error {
 	root, err := clientStateRoot(stateDir)
 	if err != nil {
 		return err
@@ -58,14 +58,8 @@ func detachPublish(ctx context.Context, args []string, stateDir string, output i
 	}
 	childArgs = append(childArgs, "--detached-child="+id)
 	return detached.Launch(ctx, root, id, binary, childArgs, func(root, pid string) error {
-		if title == "tnl connect" {
-			mode := statusOutputHuman
-			for i, arg := range args {
-				if arg == "--output=json" || arg == "--output" && i+1 < len(args) && args[i+1] == "json" {
-					mode = statusOutputJSON
-				}
-			}
-			return writeDetachedConnection(root, id, mode, output)
+		if ready != nil {
+			return ready(root, id)
 		}
 		return writeResult(output, clioutput.Text("Publishing in the background. To stop:"), clioutput.Literal(detachedStopCommandLine(id, stateDir)))
 	})

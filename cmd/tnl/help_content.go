@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -8,16 +9,12 @@ import (
 
 func addClientHelpContent(cmd *cobra.Command) {
 	path := cmd.CommandPath()
-	switch path {
-	case "tnl help":
-		cmd.Short = "Show help for a command."
-		cmd.Long = cmd.Short
-	case "tnl completion":
+	if path == "tnl completion" {
 		cmd.Short = "Generate a shell completion script."
 		cmd.Long = "Choose your shell. Its help page shows how to load the script."
 	}
-	if examples := clientHelpExamples[path]; examples != "" {
-		cmd.Example = examples
+	if examples := clientHelpExamples[path]; len(examples) != 0 {
+		cmd.Example = formatExamples(examples)
 	}
 	if !cmd.Runnable() {
 		cmd.Args = cobra.NoArgs
@@ -34,38 +31,80 @@ type clientExample struct {
 	pages, caption, args string
 }
 
-func examplePages(examples []clientExample) map[string]string {
-	pages := make(map[string]string)
+func examplePages(examples []clientExample) map[string][]clientExample {
+	pages := make(map[string][]clientExample)
 	for _, example := range examples {
-		text := "  # " + example.caption + "\n  tnl " + example.args
 		for page := range strings.SplitSeq(example.pages, ", ") {
 			path := "tnl"
 			if page != "." {
 				path += " " + page
 			}
-			if pages[path] != "" {
-				pages[path] += "\n\n"
-			}
-			pages[path] += text
+			pages[path] = append(pages[path], example)
 		}
 	}
 	return pages
 }
 
-var clientHelpExamples = examplePages([]clientExample{
-	{"., publish", "Try a tunnel without starting an app.", "publish --demo"},
+func formatExamples(examples []clientExample) string {
+	var text strings.Builder
+	for i, example := range examples {
+		if i != 0 {
+			text.WriteString("\n\n")
+		}
+		text.WriteString("  # " + example.caption + "\n  tnl " + example.args)
+	}
+	return text.String()
+}
+
+func helpExamples(cmd *cobra.Command, view helpView) string {
+	path := cmd.CommandPath()
+	switch path {
+	case "tnl":
+		if view.audience == helpAgent {
+			return formatExamples(leadHelpExample(clientHelpExamples[path], rootGuideExample))
+		}
+	case "tnl publish":
+		examples := clientHelpExamples[path]
+		if !view.reference {
+			examples = publishStartExamples
+		}
+		if view.audience == helpAgent {
+			examples = leadHelpExample(examples, publishStreamExample)
+		}
+		return formatExamples(examples)
+	}
+	return cmd.Example
+}
+
+func leadHelpExample(examples []clientExample, first clientExample) []clientExample {
+	i := slices.Index(examples, first)
+	if i <= 0 {
+		return examples
+	}
+	return slices.Concat(examples[i:i+1], examples[:i], examples[i+1:])
+}
+
+var rootGuideExample = clientExample{".", "Get automation recipes for this version of tnl.", "agent-guide"}
+var publishStreamExample = clientExample{"publish", "Read url from the ready event on stdout. Keep tnl running to serve the URL.", "publish 3000 --output ndjson"}
+
+var publishStartExamples = []clientExample{
 	{"., publish", "Give the app on port 3000 an HTTPS URL.", "publish 3000"},
+	{"publish, detached", "Keep a tunnel running after the terminal closes.", "publish 3000 --detach"},
+	publishStreamExample,
+}
+
+var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clientExample{
 	{"., init", "Set up this project, then start your app as usual.", "init"},
-	{"., share", "Share this checkout's preview for a week.", "share --expires-in 7d"},
-	{"., connect", "Connect to orders in the production deployment.", "connect orders --deployment production"},
+	{"., connect", "Connect to a private service.", "connect orders --deployment production"},
+	rootGuideExample,
 
 	{"init", "Preview what setup would change.", "init --dry-run"},
 	{"init", "Set up the files, but run the dependency install yourself.", "init --no-install"},
+	{"publish", "Try a tunnel without starting an app.", "publish --demo"},
 	{"publish", "Reuse an exact hostname you manage.", "publish 3000 --hostname app.tnl.example.com"},
 	{"publish", "Open a configured public service in your browser.", "publish app --open"},
 	{"publish", "Remove the URL when this tunnel stops.", "publish 3000 --ephemeral"},
 	{"publish", "Only admit visitors from your current public IP.", "publish 3000 --ip current"},
-	{"publish, detached", "Keep a tunnel running after the terminal closes.", "publish 3000 --detach"},
 	{"publish", "Publish a local PostgreSQL server for connector access.", "publish 127.0.0.1:5432 --protocol postgres --name orders"},
 	{"connect, connect available", "Find the services your account can reach.", "connect available"},
 	{"connect, connect start", "Open psql for the orders service.", "connect orders --deployment production --client psql"},
@@ -108,6 +147,7 @@ var clientHelpExamples = examplePages([]clientExample{
 	{"webhook, webhook use", "Receive payments events in this ready worktree.", "webhook use payments"},
 	{"webhook, webhook release", "Release this worktree's selection.", "webhook release payments"},
 
+	{"share", "Share this checkout's preview for a week.", "share --expires-in 7d"},
 	{"share, share create", "Share just the app service for four hours.", "share create --service app --expires-in 4h"},
 	{"share, share list", "Find the ID of a link you created.", "share list"},
 	{"share revoke", "End access for a share ID from tnl share list.", `share revoke "$SHARE_ID"`},
@@ -201,6 +241,7 @@ var clientHelpExamples = examplePages([]clientExample{
 	{"audit, audit list", "Read the last hour of service audit events as a team manager.", "audit list --since 1h"},
 	{"agent-guide", "Print the guide as an installable Markdown skill.", "agent-guide --skill"},
 	{"help", "Read help for a nested command.", "help share service"},
+	{"help", "Read the publish reference with automation examples first.", "help publish --audience agent"},
 	{"completion, completion zsh", "Print the completion script for zsh.", "completion zsh"},
 	{"completion bash", "Print the completion script for bash.", "completion bash"},
 	{"completion fish", "Print the completion script for fish.", "completion fish"},
@@ -209,4 +250,4 @@ var clientHelpExamples = examplePages([]clientExample{
 	{"telemetry on", "Enable usage telemetry in this client state directory.", "telemetry on"},
 	{"telemetry off", "Disable usage telemetry in this client state directory.", "telemetry off"},
 	{"version", "Check the installed release.", "version"},
-})
+}))

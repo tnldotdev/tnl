@@ -196,7 +196,7 @@ func TestWaitUsesActualOwnerAndFreshPublicTargetProbe(t *testing.T) {
 	start := time.Now()
 	go func() {
 		var value waitResult
-		value.err = runAppWait(t.Context(), project, state.Root(), waitCommand{Service: []string{"web"}, Timeout: 3 * time.Second, Output: "json"}, &value.output)
+		value.err = runAppWait(t.Context(), project, state.Root(), waitCommand{Service: []string{"web"}, Timeout: 3 * time.Second, Output: "json"}, &value.output, nil)
 		result <- value
 	}()
 	select {

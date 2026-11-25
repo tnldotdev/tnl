@@ -32,6 +32,12 @@ func commandDiagnosticFor(err error) commandDiagnostic {
 	err = classifyCommandError(err)
 	presented := presentFailure(err)
 	result := commandDiagnostic{Reason: string(presented.reason), Message: presented.message, Action: presented.action}
+	if guidance := commandGuidanceOf(err); guidance != nil {
+		if guidance.message != "" {
+			result.Message = guidance.message
+		}
+		result.Action, result.Command = "", guidance.help
+	}
 	if _, keychain := errors.AsType[*failure.ClientKeychainError](err); keychain {
 		if variant := failure.CaseFor(presented.reason, failure.KnownCase(err)); variant != nil {
 			result.Action = variant.Action
@@ -64,12 +70,6 @@ func commandDiagnosticFor(err error) commandDiagnostic {
 		result.Action = "run tnl auth login explicitly, then retry this command"
 		result.Command = []string{"tnl", "auth", "login", "start", "--output", "json"}
 	}
-	switch failure.Reason(result.Reason) {
-	case failure.AppCursorExpired:
-		result.Command = []string{"tnl", "watch", "--output", "ndjson"}
-	case failure.AppReadinessTimeout:
-		result.Command = []string{"tnl", "status", "--scope", "local", "--output", "json"}
-	}
 	var limited *clientcontrol.RateLimitError
 	var authorityLimited *clientauthority.RateLimitError
 	delay := time.Duration(0)
@@ -88,26 +88,6 @@ func commandDiagnosticFor(err error) commandDiagnostic {
 type machineCommandError struct{ error }
 
 func (e *machineCommandError) Unwrap() error { return e.error }
-
-// machineOutputRequested recognizes output intent before parsing. passthrough
-// arguments belong to the child process and cannot choose the CLI error format.
-func machineOutputRequested(args []string) bool {
-	for index, argument := range args {
-		if argument == "--" {
-			break
-		}
-		if argument == "runtime" && index+1 < len(args) && args[index+1] == "connections" {
-			return true
-		}
-		if argument == "--output=json" || argument == "--output=ndjson" {
-			return true
-		}
-		if argument == "--output" && index+1 < len(args) && (args[index+1] == "json" || args[index+1] == "ndjson") {
-			return true
-		}
-	}
-	return false
-}
 
 func writeMachineCommandError(output io.Writer, err error) {
 	_ = json.NewEncoder(output).Encode(struct {

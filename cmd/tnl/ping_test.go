@@ -57,7 +57,7 @@ func TestPingReportsHTTPResultAndExitsZeroOnAppErrors(t *testing.T) {
 			defer server.Close()
 			var out bytes.Buffer
 			flags := pingCommand{URL: server.URL, Output: statusOutputHuman}
-			err := runPing(t.Context(), flags, &out)
+			err := runPing(t.Context(), flags, &out, nil)
 			if (err != nil) != (tt.code != "") || out.String() != tt.want+"  "+server.URL+"\n" {
 				t.Fatalf("ping = %q, %v", &out, err)
 			}
@@ -71,7 +71,7 @@ func TestPingReportsHTTPResultAndExitsZeroOnAppErrors(t *testing.T) {
 			if tt.status == http.StatusNotModified {
 				flags.Output = statusOutputJSON
 				out.Reset()
-				if err := runPing(t.Context(), flags, &out); err != nil || !strings.Contains(out.String(), `"state":"redirected (not followed)"`) {
+				if err := runPing(t.Context(), flags, &out, nil); err != nil || !strings.Contains(out.String(), `"state":"redirected (not followed)"`) {
 					t.Fatalf("304 machine result = %q, %v", &out, err)
 				}
 			}
@@ -83,7 +83,7 @@ func TestPingConnectionFailureExplainsTheVisitorCheck(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	server.Close()
 	var out, diag bytes.Buffer
-	err := runPing(t.Context(), pingCommand{URL: server.URL}, &out)
+	err := runPing(t.Context(), pingCommand{URL: server.URL}, &out, nil)
 	if err == nil || out.String() != "No HTTP response  "+server.URL+"\n" {
 		t.Fatalf("ping = %q, %v", &out, err)
 	}
@@ -95,7 +95,7 @@ func TestPingConnectionFailureExplainsTheVisitorCheck(t *testing.T) {
 
 func TestPingInvalidURLShowsExpectedInput(t *testing.T) {
 	var out, diag bytes.Buffer
-	err := runPing(t.Context(), pingCommand{URL: "app"}, &out)
+	err := runPing(t.Context(), pingCommand{URL: "app"}, &out, nil)
 	if err == nil || out.Len() != 0 {
 		t.Fatalf("ping = %q, %v", &out, err)
 	}

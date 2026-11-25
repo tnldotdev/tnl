@@ -10,15 +10,26 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tnldotdev/tnl/internal/cliflags"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 func configureClientHelp(root *cobra.Command) {
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
-		out := cmd.OutOrStdout()
-		if _, err := io.WriteString(out, clientHelp(cmd, clioutput.TerminalWidth(out, 80))); err != nil {
+		if err := writeClientHelp(cmd, helpView{audience: currentHelpAudience("")}); err != nil {
 			cmd.PrintErrln(err)
 		}
 	})
+}
+
+type helpView struct {
+	audience  helpAudience
+	reference bool
+}
+
+func writeClientHelp(cmd *cobra.Command, view helpView) error {
+	out := cmd.OutOrStdout()
+	_, err := io.WriteString(out, clientHelp(cmd, clioutput.TerminalWidth(out, 80), view))
+	return failure.Wrap("write help", failure.OutputUnavailable, err)
 }
 
 type helpPage struct {
@@ -26,10 +37,12 @@ type helpPage struct {
 	width int
 }
 
-func clientHelp(cmd *cobra.Command, width int) string {
+func clientHelp(cmd *cobra.Command, width int, view helpView) string {
 	p := helpPage{width: min(width, 112)}
+	publish := cmd.CommandPath() == "tnl publish"
+	briefPublish := publish && !view.reference
 	desc := cmd.Long
-	if desc == "" {
+	if desc == "" || briefPublish {
 		desc = cmd.Short
 	}
 	if desc != "" {
@@ -79,9 +92,9 @@ func clientHelp(cmd *cobra.Command, width int) string {
 	}
 	p.rows("Arguments", args)
 
-	if cmd.HasExample() {
+	if examples := helpExamples(cmd, view); examples != "" {
 		p.heading("Examples")
-		for line := range strings.SplitSeq(strings.Trim(cmd.Example, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.Trim(examples, "\n"), "\n") {
 			text := strings.TrimSpace(line)
 			switch {
 			case text == "":
@@ -93,6 +106,18 @@ func clientHelp(cmd *cobra.Command, width int) string {
 				p.line(line)
 			}
 		}
+	}
+
+	if briefPublish {
+		p.line("")
+		p.prose("See all options and examples:", "", "")
+		p.line("  tnl help publish")
+	}
+	if publish && view.reference {
+		p.heading("Output and readiness")
+		p.prose("A foreground tunnel stays attached until stopped. Human lifecycle messages go to stderr. With --output ndjson, read events from stdout instead.", "  ", "  ")
+		p.prose("A ready event means the tunnel can receive visitors. It does not grant anonymous access or prove your app returned HTTP 200.", "  ", "  ")
+		p.prose("Use only one of --foreground, --detach, or --install. With --detach, tnl exits after the tunnel is ready and prints a stop command. --detach and --install require human output.", "  ", "  ")
 	}
 
 	commands := make(map[string][]helpRow)
@@ -108,7 +133,7 @@ func clientHelp(cmd *cobra.Command, width int) string {
 
 	flags := make(map[string][]helpRow)
 	collect := func(f *pflag.Flag) {
-		if f.Hidden {
+		if f.Hidden || briefPublish && !publishQuickFlag(cmd, f) {
 			return
 		}
 		meta := cliflags.FlagHelp(f)
@@ -135,6 +160,14 @@ func clientHelp(cmd *cobra.Command, width int) string {
 		p.prose("Add --help to a command for its options and examples.", "", "")
 	}
 	return p.String()
+}
+
+func publishQuickFlag(cmd *cobra.Command, f *pflag.Flag) bool {
+	switch f.Name {
+	case "demo", "open", "foreground", "detach", "install", "output":
+		return true
+	}
+	return flagGroup(cmd, f) == "Global flags"
 }
 
 type helpRow struct{ label, description string }

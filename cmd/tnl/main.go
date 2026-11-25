@@ -30,6 +30,7 @@ import (
 type cli struct {
 	ConfigPath  string `name:"config" help:"Use a project configuration file; put this flag before the command." type:"path"`
 	NoConfig    bool   `name:"no-config" help:"Skip project configuration; put this flag before the command."`
+	NoProgress  bool   `name:"no-progress" help:"Do not show terminal progress."`
 	NoTelemetry bool   `name:"no-telemetry" env:"TNL_NO_TELEMETRY" help:"Disable pseudonymous usage telemetry."`
 	Init        initCommand
 	Apply       applyCommand
@@ -428,8 +429,8 @@ func classifyCommandError(err error) error {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories ...telemetryFactory) (result error) {
+	a := commandApp{flags: &cli{}, out: stdout, errOut: stderr, argv: args, factories: factories}
 	command := ""
-	machineIntent := false
 	defer func() {
 		result = classifyCommandError(result)
 		if result != nil {
@@ -443,25 +444,35 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories
 			result = clioutput.WrapCommand(command, result)
 		}
 		var reported *reportedError
-		if result != nil && (machineIntent || machineOutputRequested(args)) && !errors.As(result, &reported) {
+		if result != nil && a.machineOutput && !errors.As(result, &reported) {
 			result = &machineCommandError{result}
 		}
 	}()
-	a := commandApp{flags: &cli{}, out: stdout, errOut: stderr, argv: args, factories: factories}
 	root := a.root()
 	root.SetArgs(args)
 	selected, err := root.ExecuteContextC(ctx)
 	if selected != nil && selected != root {
 		command = clioutput.CommandTitle("tnl", commandID(selected))
-		machineIntent = strings.HasPrefix(commandID(selected), "runtime connections ")
+	}
+	if err != nil && !a.outputSelected {
+		a.machineOutput = machineDiagnosticForInput(selected, args)
 	}
 	return err
 }
 
 func (a *commandApp) execute(parsed *cobra.Command, handle func(commandCall) error) (result error) {
 	ctx, flags := parsed.Context(), a.flags
+	if err := a.selectOutput(parsed); err != nil {
+		return err
+	}
+	if flags.NoProgress {
+		ctx = clioutput.WithoutProgress(ctx)
+	}
 	factories := a.factories
 	parsedCommand := commandID(parsed)
+	if parsedCommand == "wait" || parsedCommand == "watch" {
+		defer func() { result = observationFollowup(result, *flags) }()
+	}
 	applyTunnelCLIUnits(parsed, flags)
 	if parsedCommand == "version" || parsedCommand == "generate" || parsedCommand == "check" || parsedCommand == "init" && flags.Init.DryRun {
 		return handle(commandCall{ctx: ctx})

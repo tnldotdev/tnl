@@ -16,6 +16,7 @@ import (
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/connector"
+	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -114,7 +115,16 @@ func runConnectStart(ctx context.Context, flags connectStartCommand, output, dia
 }
 
 func validateConnectMode(flags connectStartCommand) error {
-	return connector.ValidateMode(flags.options())
+	err := connector.ValidateMode(flags.options())
+	if reason, _ := failure.ReasonOf(err); reason == failure.ConnectModeInvalid && flags.Output == statusOutputJSON {
+		switch {
+		case flags.Stdio:
+			return &commandGuidance{error: err, message: "--stdio carries a raw stream. Remove --output=json to use it."}
+		case flags.Client != "" || len(flags.clientArgs) > 0:
+			return &commandGuidance{error: err, message: "The client owns the output. Remove --output=json to run it."}
+		}
+	}
+	return err
 }
 
 func runInstalledConnector(ctx context.Context, job installedjobs.Job, telemetry *clienttelemetry.Collector, ready func() error, deadline func() time.Time, shutdown context.Context) error {
@@ -166,22 +176,34 @@ func runConnectJobs(ctx context.Context, flags connectListCommand, name, action 
 	if err != nil {
 		return err
 	}
-	if name != "" && action == "remove" {
-		return writeResult(output, clioutput.Line("Removed connector "+jobs[0].Name))
-	}
 	if name != "" {
 		if len(jobs) == 0 {
 			return installedjobs.ErrJobNotFound
 		}
-		if flags.Output != statusOutputJSON {
-			return writeJobStopResult(output, jobs[0])
-		}
-		return renderSystemJobs(output, "tnl connect stop", jobs, jobs[0].ID)
+		return writeConnectorJobAction(output, flags.Output, jobs[0], action)
 	}
 	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(jobs)
 	}
 	return renderSystemJobs(output, "tnl connect "+strings.TrimSpace(action), jobs, "")
+}
+
+func writeConnectorJobAction(output io.Writer, mode statusOutputMode, job installedjobs.Job, action string) error {
+	state := string(job.Status.State)
+	if action == "remove" {
+		state = "removed"
+	}
+	if mode == statusOutputJSON {
+		return json.NewEncoder(output).Encode(struct {
+			SchemaVersion int    `json:"schema_version"`
+			JobID         string `json:"job_id"`
+			State         string `json:"state"`
+		}{1, job.ID, state})
+	}
+	if action == "remove" {
+		return writeResult(output, clioutput.Line("Removed connector "+job.Name))
+	}
+	return writeJobStopResult(output, job)
 }
 
 func runConnectAvailable(ctx context.Context, command connectAvailableCommand, output, diagnostics io.Writer) error {
@@ -300,7 +322,11 @@ func (a *commandApp) startConnector(call commandCall) error {
 	}
 	if connect.Detach {
 		// resolve and validate the service mode before creating a child.
-		connect.detach = func() error { return detachPublish(ctx, a.argv, connect.StateDir, a.out, "tnl connect") }
+		connect.detach = func() error {
+			return detachPublish(ctx, a.argv, connect.StateDir, a.out, func(root, id string) error {
+				return writeDetachedConnection(root, id, connect.Output, a.out)
+			})
+		}
 	}
 	root, err := clientStateRoot(connect.StateDir)
 	if err != nil {

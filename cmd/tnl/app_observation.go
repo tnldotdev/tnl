@@ -237,7 +237,7 @@ func (entry snapshotObservation) watchRow() observationRow {
 	return row
 }
 
-func runAppObservation(ctx context.Context, flags cli, command string, output io.Writer) error {
+func runAppObservation(ctx context.Context, flags cli, command string, output, diagnostics io.Writer) error {
 	stateDir := flags.Wait.StateDir
 	if command == "watch" {
 		stateDir = flags.Watch.StateDir
@@ -256,10 +256,10 @@ func runAppObservation(ctx context.Context, flags cli, command string, output io
 	if command == "watch" {
 		return runAppWatch(ctx, project, root, flags.Watch, output)
 	}
-	return runAppWait(ctx, project, root, flags.Wait, output)
+	return runAppWait(ctx, project, root, flags.Wait, output, diagnostics)
 }
 
-func runAppWait(ctx context.Context, project projectConfiguration, root string, flags waitCommand, output io.Writer) error {
+func runAppWait(ctx context.Context, project projectConfiguration, root string, flags waitCommand, output, diagnostics io.Writer) error {
 	if flags.Timeout <= 0 {
 		return failure.Wrap("wait for apps", failure.InvalidCommand, errors.New("timeout must be positive"))
 	}
@@ -293,6 +293,12 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, flags.Timeout)
 	defer cancel()
+	label := "Checking services"
+	if len(flags.Service) == 1 {
+		label = "Checking " + flags.Service[0]
+	}
+	stopProgress := clioutput.StartProgress(ctx, output, diagnostics, flags.Output != "json", label)
+	defer stopProgress()
 	var latest publisherapp.Snapshot
 	checkSource := "local publisher process unavailable"
 	for attempt := 0; ; attempt++ {
@@ -333,6 +339,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 		}
 		latest = snapshot
 		if ready {
+			stopProgress()
 			return writeAppWait(output, flags.Output, latest, "ready", checkSource)
 		}
 		if ctx.Err() != nil {
@@ -348,6 +355,7 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 			break
 		}
 	}
+	stopProgress()
 	if err := writeAppWait(output, flags.Output, latest, "timed out", checkSource); err != nil {
 		return err
 	}
@@ -512,7 +520,7 @@ func (a *commandApp) newWaitCommand() *cobra.Command {
 		Long: "Ask this worktree's running tnl process to check readiness. Wait for all local services, or repeat --service to select which ones must be ready.",
 	}
 	a.leaf(cWait, &f.Wait, func(call commandCall) error {
-		return runAppObservation(call.ctx, *f, "wait", a.out)
+		return runAppObservation(call.ctx, *f, "wait", a.out, a.errOut)
 	})
 	return cWait
 }
@@ -524,7 +532,7 @@ func (a *commandApp) newWatchCommand() *cobra.Command {
 		Long: "Follow local publication events as they happen. To resume, use the last event cursor from the same worktree and client state directory.",
 	}
 	a.leaf(cWatch, &f.Watch, func(call commandCall) error {
-		return runAppObservation(call.ctx, *f, "watch", a.out)
+		return runAppObservation(call.ctx, *f, "watch", a.out, a.errOut)
 	})
 	return cWatch
 }
