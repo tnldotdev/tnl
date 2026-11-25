@@ -7,9 +7,83 @@ import {
   releaseInvitation,
   waitForWork,
 } from "../src/peers/http.ts";
-import { INVITATION_ACK_MS, STARTUP_MS, UPLOAD_BYTES } from "../src/policy.ts";
+import { INVITATION_ACK_MS, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "../src/policy.ts";
 import { INVITATION_PATH, READY_HEADER } from "../src/enrollment.ts";
 import { Gossip, HOST_PARENT, PEERS_PATH, type Host } from "../src/peers/gossip.ts";
+
+it("allows time to reach the donor without extending its upload read deadline", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    const timeout = new AbortController();
+    setTimeout(() => timeout.abort(new DOMException("timeout", "TimeoutError")), ms);
+    return timeout.signal;
+  });
+  const origin = "https://keepthisalive.com";
+  const release = "a".repeat(64);
+  const host = {
+    origin: `https://p-${"a".repeat(26)}.${HOST_PARENT}`,
+    publisherID: `pub_${"A".repeat(22)}`,
+    runID: `srun_${"A".repeat(22)}`,
+    runNumber: "1",
+  };
+  const lifetime = new AbortController();
+  const donor = peerServer(release, [origin], async () => new Response(), lifetime.signal);
+  let bodyDelay = UPLOAD_MS + 1;
+  let attempts = 0;
+  vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
+    const headers = new Headers(init.headers);
+    headers.set("Origin", origin);
+    if (url.pathname !== "/__keepalive/upload")
+      return donor.fetch(new Request(url, { ...init, headers }));
+    attempts++;
+    await new Promise<void>((ok) => setTimeout(ok, 900));
+    init.signal?.throwIfAborted();
+    let timer: ReturnType<typeof setTimeout>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        timer = setTimeout(() => {
+          controller.enqueue(new Uint8Array(UPLOAD_BYTES));
+          controller.close();
+        }, bodyDelay);
+      },
+      cancel() {
+        clearTimeout(timer);
+      },
+    });
+    const reply = await donor.fetch(
+      new Request(url, { ...init, headers, body, duplex: "half" } as RequestInit),
+    );
+    init.signal?.throwIfAborted();
+    return reply;
+  });
+  try {
+    await donor.start(
+      host,
+      Date.now(),
+      undefined,
+      undefined,
+      () => {},
+      () => false,
+    );
+    const invitation = await waitForWork(host, lifetime.signal);
+    expect(invitation).toBeTruthy();
+    if (invitation === null) throw new Error("expected invitation");
+    const slow = checkUpload(host, invitation, lifetime.signal);
+    await vi.advanceTimersByTimeAsync(900 + UPLOAD_MS + 1);
+    expect(await slow).toBe(false);
+    bodyDelay = UPLOAD_MS - 200;
+    const healthy = checkUpload(host, invitation, lifetime.signal);
+    await vi.advanceTimersByTimeAsync(900 + bodyDelay);
+    expect(await healthy).toBe(true);
+    expect(attempts).toBe(2);
+  } finally {
+    lifetime.abort();
+    await donor.stop();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
+});
 
 it.each([false, true])(
   "confirms the exact replacement run (lost upload and confirmation replies: %s)",

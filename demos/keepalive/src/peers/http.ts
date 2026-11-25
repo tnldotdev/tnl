@@ -108,7 +108,9 @@ export async function checkUpload(host: Host, invitation: string, signal: AbortS
   }
   return retryOnce(signal, async () => {
     const response = await sendRequest(new URL(UPLOAD_PATH, host.origin), {
-      ...options(signal, UPLOAD_MS),
+      // allow for preflight, connection setup and the return trip. the donor
+      // still has only UPLOAD_MS to read the complete body.
+      ...options(signal, UPLOAD_MS + 2_000),
       method: "POST",
       headers: { [READY_HEADER]: invitation },
       body: bytes,
