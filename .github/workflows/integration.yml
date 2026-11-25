@@ -142,7 +142,7 @@ jobs:
           )
           sudo apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
           if [ "$TEST_SUITE" = deployment-database ]; then
-            sudo apt-get "${apt_options[@]}" install --yes --no-install-recommends postgresql-client-16
+            sudo apt-get "${apt_options[@]}" install --yes --no-install-recommends postgresql-client
           else
             sudo apt-get "${apt_options[@]}" install --yes --no-install-recommends openssh-server
             sudo install -d -m 0755 /run/sshd
