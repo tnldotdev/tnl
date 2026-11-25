@@ -250,15 +250,13 @@ func (c *webSocketNetwork) Write(p []byte) (int, error) {
 func (c *webSocketNetwork) Close() error {
 	// abort the socket before TLS close-notify or the websocket close handshake.
 	// CloseNow then joins the websocket's readers and writers.
+	var socketErr error
 	if secure, ok := c.peer.(*tls.Conn); ok {
-		_ = secure.NetConn().Close()
+		socketErr = socketCloseError(secure.NetConn().Close())
 	}
-	err := c.websocket.CloseNow()
-	_ = c.Conn.Close() // stop NetConn's deadline timers after the socket is closed
-	if errors.Is(err, net.ErrClosed) {
-		return nil
-	}
-	return err
+	err := socketCloseError(c.websocket.CloseNow())
+	// stop NetConn's deadline timers after the socket is closed.
+	return errors.Join(socketErr, err, socketCloseError(c.Conn.Close()))
 }
 func (c *webSocketNetwork) LocalAddr() net.Addr  { return c.peer.LocalAddr() }
 func (c *webSocketNetwork) RemoteAddr() net.Addr { return c.peer.RemoteAddr() }
