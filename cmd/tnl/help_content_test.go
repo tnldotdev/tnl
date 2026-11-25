@@ -23,11 +23,20 @@ func TestClientHelpExamplesParse(t *testing.T) {
 		if cmd.Short == "" || cmd.Example == "" {
 			t.Errorf("%s has no summary or examples", cmd.CommandPath())
 		}
+		pages := make(map[int]string)
+		for _, width := range []int{36, 68, 126} {
+			pages[width] = clientHelp(cmd, width, helpView{reference: true})
+		}
 		for _, example := range clientHelpExamples[cmd.CommandPath()] {
 			line := "tnl " + example.args
 			if example.caption == "" || strings.Contains(example.args, "\n") || !strings.Contains(cmd.Example, line) {
 				t.Errorf("%s: expected an intact example: %s", cmd.CommandPath(), line)
 				continue
+			}
+			for width, page := range pages {
+				if !strings.Contains(page, "\n  "+line+"\n") {
+					t.Errorf("%s at width %d: example changed: %s", cmd.CommandPath(), width, line)
+				}
 			}
 			if seen[line] {
 				continue

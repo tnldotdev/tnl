@@ -120,13 +120,26 @@ func clientHelp(cmd *cobra.Command, width int, view helpView) string {
 	}
 	if publish && view.reference {
 		p.heading("Output and readiness")
-		p.prose("Choose one of --foreground, --bg, or --install. --background is the same as --bg. A foreground tunnel stays attached until stopped; its human lifecycle messages go to stderr.", "  ", "  ")
+		for _, constraint := range commandHelpConstraints(cmd) {
+			p.prose(constraint, "  ", "  ")
+		}
 		for _, result := range commandResultHelp(cmd) {
 			p.line("")
 			p.prose(result.Mode+" ("+result.Format+"):", "  ", "  ")
-			p.prose("stdout: "+result.Stdout, "    ", "    ")
-			p.prose("stderr: "+result.Stderr, "    ", "    ")
+			if result.Stdout != "" {
+				p.prose("stdout: "+result.Stdout, "    ", "    ")
+			}
+			if result.Stderr != "" {
+				p.prose("stderr: "+result.Stderr, "    ", "    ")
+			}
+			p.prose(result.Ends, "    ", "    ")
 			p.prose(result.Proves, "    ", "    ")
+			if len(result.Fields) != 0 {
+				p.prose("Fields (some optional): "+strings.Join(result.Fields, ", "), "    ", "    ")
+			}
+			if len(result.Events) != 0 {
+				p.prose("Events: "+strings.Join(result.Events, ", "), "    ", "    ")
+			}
 		}
 	}
 

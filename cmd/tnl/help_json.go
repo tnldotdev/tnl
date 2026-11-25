@@ -40,6 +40,7 @@ type helpReference struct {
 	ChildArgs      bool            `json:"child_args,omitempty"`
 	Examples       []helpExample   `json:"examples"`
 	Results        []helpResult    `json:"results"`
+	Constraints    []string        `json:"constraints,omitempty"`
 }
 
 type helpInput struct {
@@ -156,6 +157,7 @@ func clientHelpReference(cmd *cobra.Command) helpReference {
 		})
 	}
 	reference.Results = append(reference.Results, commandResultHelp(cmd)...)
+	reference.Constraints = commandHelpConstraints(cmd)
 	return reference
 }
 

@@ -2,10 +2,26 @@ package main
 
 import "github.com/spf13/cobra"
 
+func commandHelpConstraints(cmd *cobra.Command) []string {
+	if selectedPath(cmd) != "publish" {
+		return nil
+	}
+	return []string{
+		"Choose one of --foreground, --bg, or --install. --background is the same as --bg.",
+		"Foreground supports human or NDJSON. Background supports human or JSON.",
+		"--install requires a configured service and human output. It keeps its definition across restarts.",
+		"--system, --service-name, --system-state-dir, and --server-ca-file require --install.",
+		"--bg cannot read an enrollment key from stdin. Use --publisher-identity or --publisher-credential-file.",
+	}
+}
+
 func commandResultHelp(cmd *cobra.Command) []helpResult {
 	switch selectedPath(cmd) {
 	case "publish":
 		return []helpResult{
+			{Mode: "foreground", Format: "human",
+				Stderr: "Lifecycle messages, the address, and diagnostics.",
+				Ends:   "When the foreground tunnel stops.", Proves: "Readiness is not an app response or a grant of anonymous access."},
 			{Mode: "background, public HTTP", Format: "human",
 				Stdout: "The address alone.", Stderr: "A command to stop this job, and any diagnostics.",
 				Ends: "When the job reports readiness.", Proves: "The tunnel can accept visitors. The app's response and visitor permission are separate."},
@@ -15,8 +31,9 @@ func commandResultHelp(cmd *cobra.Command) []helpResult {
 				Ends: "When the job reports readiness.", Proves: "The selected job was started. Use its exact job_id to stop it."},
 			{Mode: "foreground HTTP tunnel", Format: "ndjson",
 				Stdout: "One lifecycle event per line. Read url from the ready event.", Stderr: "Command errors before or outside the stream.",
-				Fields: []string{"schema_version", "type", "tunnel_id", "url"}, Events: []string{"starting", "provisioning", "ready", "stopped"},
-				Ends: "When the foreground tunnel stops.", Proves: "A ready event says the tunnel can accept visitors, not that an HTTP request succeeded."},
+				Fields: []string{"schema_version", "type", "cursor", "tunnel_id", "target", "url", "publish_run_number", "message", "code", "help_url", "retryable", "retry_at", "reason", "transport"},
+				Events: []string{string(publishEventStarting), string(publishEventReady), string(publishEventWarning), string(publishEventError), string(publishEventStopped)},
+				Ends:   "When the foreground tunnel stops.", Proves: "A ready event says the tunnel can accept visitors, not that an HTTP request succeeded."},
 		}
 	case "connect start":
 		return []helpResult{
@@ -48,7 +65,7 @@ func commandResultHelp(cmd *cobra.Command) []helpResult {
 			Proves: "Exit zero means the configured checks passed now. checked_by distinguishes a target-only check from a public-path check."}}
 	case "watch":
 		return []helpResult{{Format: "ndjson", Stdout: "An initial snapshot unless --after is set, then matching new events.", Stderr: "Diagnostics.",
-			Fields: []string{"type", "cursor"}, Events: []string{"snapshot"}, Ends: "On --count, --timeout, or interruption. The initial snapshot does not count.",
+			Fields: []string{"type", "snapshot.cursor", "cursor"}, Ends: "On --count, --timeout, or interruption. The initial snapshot does not count.",
 			Proves: "Received events describe this worktree. Save the cursor with its worktree and state directory."}}
 	case "share create":
 		return []helpResult{
@@ -63,7 +80,7 @@ func commandResultHelp(cmd *cobra.Command) []helpResult {
 			Proves: "The exact share ID was revoked."}}
 	case "auth login start":
 		return []helpResult{{Format: "json", Stdout: "One approval operation.", Stderr: "Diagnostics.",
-			Fields: []string{"operation_id", "approval_url", "user_code"}, Ends: "After saving the local login operation.",
+			Fields: []string{"schema_version", "operation_id", "approval_url", "user_code"}, Ends: "After saving the local login operation.",
 			Proves: "The user can approve the operation. A session is not signed in yet."}}
 	case "init":
 		return []helpResult{{Format: "json", Stdout: "One plan with --dry-run or one report of actual edits.", Stderr: "Diagnostics.",

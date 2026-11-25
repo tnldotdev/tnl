@@ -56,6 +56,8 @@ var guideRecipes = []guideRecipe{
 	}},
 }
 
+const guideInputs = "Use the same checkout, server, and state directory throughout. Replace example service names and ports with yours, and set each $VARIABLE from the earlier result."
+
 func (a *commandApp) newAgentGuideCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "agent-guide", Short: "Print the automation guide for this binary.", GroupID: "tools", Args: cobra.NoArgs}
 	skill := cmd.Flags().Bool("skill", false, "Print Markdown with skill front matter for a SKILL.md file.")
@@ -64,6 +66,7 @@ func (a *commandApp) newAgentGuideCommand() *cobra.Command {
 		if *skill {
 			var text strings.Builder
 			fmt.Fprintf(&text, "---\nname: tnl\ndescription: Use the installed tnl CLI to publish, check, share, connect, and stop the exact jobs you start.\n---\n\n# tnl automation\n\n%s\n", version)
+			fmt.Fprintf(&text, "\n%s\n\nReview exact arguments and results with `tnl help COMMAND --output json`.\n", guideInputs)
 			for _, recipe := range guideRecipes {
 				fmt.Fprintf(&text, "\n## %s\n", recipe.title)
 				for _, step := range recipe.steps {
@@ -73,7 +76,8 @@ func (a *commandApp) newAgentGuideCommand() *cobra.Command {
 			_, err := fmt.Fprint(a.out, text.String())
 			return err
 		}
-		blocks := []clioutput.Block{clioutput.Text(version)}
+		blocks := []clioutput.Block{clioutput.Text(version), clioutput.Text(guideInputs),
+			clioutput.Text("Review exact arguments and results:"), clioutput.Literal("tnl help COMMAND --output json")}
 		for _, recipe := range guideRecipes {
 			var steps []clioutput.Block
 			for _, step := range recipe.steps {
