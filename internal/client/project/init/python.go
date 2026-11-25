@@ -1,7 +1,6 @@
 package init
 
 import (
-	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -18,19 +17,5 @@ func (plan Plan) PythonInstall(noInstall bool) (Install, error) {
 	}
 	args := []string{"uv", "add", "--editable", "./.tnl/generated/python"}
 	_, err := exec.LookPath(args[0])
-	return Install{Command: shellCommand(args), Manual: noInstall || err != nil, args: args}, nil
-}
-
-func wirePythonProject(ctx context.Context, root string, noInstall bool) (bool, []string, error) {
-	install, err := (Plan{Root: root}).PythonInstall(noInstall)
-	if err != nil || install.Command == "" {
-		return false, nil, err
-	}
-	if install.Manual {
-		return false, []string{install.Command}, nil
-	}
-	if err := runInitInstall(ctx, root, install.args); err != nil {
-		return false, nil, err
-	}
-	return true, nil, nil
+	return Install{Command: shellCommand(args), Manual: noInstall || err != nil, args: args, manualArgs: args}, nil
 }

@@ -15,9 +15,17 @@ func TestInitPythonWithoutUvRecommendsProjectLocalDependency(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", t.TempDir())
-	updated, actions, err := wirePythonProject(t.Context(), root, false)
-	if err != nil || updated || !slices.Equal(actions, []string{"uv add --editable ./.tnl/generated/python"}) {
-		t.Fatalf("Python result = %t, %v, %v", updated, actions, err)
+	install, err := (Plan{Root: root}).PythonInstall(false)
+	var report Report
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := report.install(t.Context(), root, "install_python", install, false); err != nil {
+		t.Fatal(err)
+	}
+	if !install.Manual || install.Command != "uv add --editable ./.tnl/generated/python" || len(report.Steps) != 1 ||
+		report.Steps[0].Status != "outstanding" || !slices.Equal(report.Steps[0].Argv, []string{"uv", "add", "--editable", "./.tnl/generated/python"}) {
+		t.Fatalf("Python install = %+v, steps = %+v", install, report.Steps)
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != string(before) {
 		t.Fatalf("Python project changed: %s, %v", data, err)

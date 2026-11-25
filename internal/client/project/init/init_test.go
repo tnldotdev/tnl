@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -42,7 +43,7 @@ func TestInitApplyOwnsInstallEditsGenerationAndTypeWiringOrder(t *testing.T) {
 			generationCalls := 0
 			result, err := plan.Apply(t.Context(), Options{
 				NoInstall: noInstall,
-				Generate: func(ctx context.Context, selectedRoot, path string) error {
+				Generate: func(ctx context.Context, selectedRoot, path string) ([]meta.ArtifactOutcome, error) {
 					generationCalls++
 					if selectedRoot != root || path != filepath.Join(root, "tnl.config.ts") || ctx != t.Context() {
 						t.Fatalf("generation selection = %s, %s", selectedRoot, path)
@@ -56,9 +57,9 @@ func TestInitApplyOwnsInstallEditsGenerationAndTypeWiringOrder(t *testing.T) {
 						t.Fatalf("types were wired before generation: %s, %v", data, err)
 					}
 					if err := os.MkdirAll(filepath.Join(root, ".tnl/generated"), 0o755); err != nil {
-						return err
+						return nil, err
 					}
-					return os.WriteFile(filepath.Join(root, ".tnl/generated/python-ready"), nil, 0o600)
+					return nil, os.WriteFile(filepath.Join(root, ".tnl/generated/python-ready"), nil, 0o600)
 				},
 			})
 			if err != nil {
@@ -84,6 +85,11 @@ func TestInitApplyOwnsInstallEditsGenerationAndTypeWiringOrder(t *testing.T) {
 				want := fmt.Sprintf("pnpm:%s:1:add --save-dev --reporter=silent @tnldotdev/tnl\nuv:%s:1:add --editable ./.tnl/generated/python\n", canonical, canonical)
 				if string(data) != want || !result.PythonInstalled || !slices.Equal(result.InstalledPackages, []string{"@tnldotdev/tnl"}) || len(result.Actions) != 0 {
 					t.Fatalf("result = %+v, invocation = %q, want %q", result, data, want)
+				}
+				for _, step := range result.Report.Steps {
+					if step.Status != "executed" {
+						t.Fatalf("completed setup reported step %+v", step)
+					}
 				}
 			}
 			if len(plan.Actions) != 0 {
@@ -115,7 +121,7 @@ func TestInitApplyStopsBeforePythonAndTypesWhenGenerationFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := errors.New("generation stopped")
-	_, err = plan.Apply(t.Context(), Options{Generate: func(context.Context, string, string) error { return want }})
+	_, err = plan.Apply(t.Context(), Options{Generate: func(context.Context, string, string) ([]meta.ArtifactOutcome, error) { return nil, want }})
 	if !errors.Is(err, want) {
 		t.Fatalf("generation cause = %v", err)
 	}
@@ -167,9 +173,9 @@ func TestInitApplyRefusesServerChangedAfterPlanning(t *testing.T) {
 	if err := os.WriteFile(plan.ServerPath, custom, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = plan.Apply(t.Context(), Options{NoInstall: true, Generate: func(context.Context, string, string) error {
+	_, err = plan.Apply(t.Context(), Options{NoInstall: true, Generate: func(context.Context, string, string) ([]meta.ArtifactOutcome, error) {
 		t.Fatal("generated after refusing changed source")
-		return nil
+		return nil, nil
 	}})
 	if err == nil || !strings.Contains(err.Error(), "changed during initialization") {
 		t.Fatalf("changed source error = %v", err)

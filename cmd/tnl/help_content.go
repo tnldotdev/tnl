@@ -115,7 +115,7 @@ var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clie
 	{"connect start", "Connect to a service whose name is also a command.", "connect start list"},
 	{"connect, connect start", "Start an orders connector and return its job ID and connection settings.", "connect orders --deployment production --bg --output json"},
 
-	{"auth, auth login", "Open the approval URL in your browser.", "auth login --open"},
+	{"auth, auth login", "Open the approval URL and copy the code.", "auth login --open --copy-code"},
 	{"auth, auth status", "Check your credentials with the server.", "auth status --check"},
 	{"auth login, auth login start", "Start a sign-in that a script can resume.", "auth login start --output json"},
 	{"auth login, auth login wait", "Use the operation ID from tnl auth login start.", `auth login wait "$OPERATION_ID"`},

@@ -554,7 +554,7 @@ func statusServicesForProject(services []controlv1.ServiceSummary, ids map[strin
 }
 
 func currentProjectRoot(ctx context.Context) (string, error) {
-	cwd, err := os.Getwd()
+	cwd, err := invocationDirectory(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -583,7 +583,9 @@ func (a *commandApp) newStatusCommand() *cobra.Command {
 		if f.Status.configPath == "" {
 			f.Status.configPath = os.Getenv("TNL_CONFIG")
 		}
-		f.Status.configArgs = configArgs(f.NoConfig, f.Status.configPath)
+		scope := *f
+		scope.ConfigPath = f.Status.configPath
+		f.Status.configArgs = scopedConfigArgs(scope)
 		if !f.Status.All {
 			var err error
 			f.Status.Project, err = projectRoot(call.ctx, *f)

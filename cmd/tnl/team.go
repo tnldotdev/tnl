@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -31,6 +33,7 @@ type teamCommand struct {
 
 type teamCurrentCommand struct {
 	scopedTeamFlags `embed:""`
+	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 type teamListCommand struct {
 	remoteFlags `embed:""`
@@ -95,12 +98,31 @@ type teamMemberRemoveCommand struct {
 	MembershipID    string `arg:"" name:"membership-id" required:"" help:"Membership ID to remove."`
 }
 
+type teamCurrentResult struct {
+	SchemaVersion int                  `json:"schema_version"`
+	TeamID        string               `json:"team_id"`
+	TeamName      string               `json:"team_name"`
+	Role          authorityv1.TeamRole `json:"role"`
+	Source        team.SelectionSource `json:"source"`
+}
+
 func runTeamCurrent(ctx context.Context, command teamCurrentCommand, output, diagnostics io.Writer) error {
 	session, err := openTeamSession(ctx, command.selection(), "tnl team current", diagnostics)
 	if err != nil {
 		return err
 	}
 	defer session.Close()
+	if command.Output == statusOutputJSON {
+		current, err := session.Current(ctx)
+		if err != nil {
+			return err
+		}
+		err = json.NewEncoder(output).Encode(teamCurrentResult{
+			SchemaVersion: 1, TeamID: current.Team().Id, TeamName: current.Team().DisplayName,
+			Role: current.Membership().Role, Source: current.Source(),
+		})
+		return failure.Wrap("write current team", failure.OutputUnavailable, err)
+	}
 	current, err := session.CurrentWithDomains(ctx)
 	if err != nil {
 		return err

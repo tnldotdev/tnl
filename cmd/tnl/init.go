@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,14 +11,17 @@ import (
 	"github.com/spf13/cobra"
 
 	projectinit "github.com/tnldotdev/tnl/internal/client/project/init"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"golang.org/x/term"
 )
 
 type initCommand struct {
-	DryRun    bool `name:"dry-run" help:"Preview setup without writing files or installing packages."`
-	NoInstall bool `name:"no-install" help:"Print the dependency command instead of running it."`
+	DryRun    bool             `name:"dry-run" help:"Preview setup without writing files or installing packages."`
+	NoInstall bool             `name:"no-install" help:"Write project files but leave dependency installation outstanding."`
+	Output    statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 func runInit(ctx context.Context, flags initCommand, stdout, stderr io.Writer) error {
@@ -26,25 +29,39 @@ func runInit(ctx context.Context, flags initCommand, stdout, stderr io.Writer) e
 }
 
 func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, interactive bool, stdout, stderr io.Writer) error {
-	cwd, err := os.Getwd()
+	cwd, err := invocationDirectory(ctx)
 	if err != nil {
-		return fmt.Errorf("read working directory: %w", err)
+		return err
 	}
 	plan, err := projectinit.NewPlan(ctx, cwd, initRecoveryAction)
 	if err != nil {
 		return err
 	}
 	if flags.DryRun {
+		if flags.Output == statusOutputJSON {
+			report, err := plan.Preview(ctx, flags.NoInstall)
+			if err != nil {
+				return err
+			}
+			return writeInitJSON(stdout, flags, plan.Root, report)
+		}
 		return writeInitPlan(stdout, plan, flags.NoInstall)
 	}
 	result, err := plan.Apply(ctx, projectinit.Options{
 		NoInstall: flags.NoInstall,
-		Generate: func(ctx context.Context, root, configurationPath string) error {
-			return runGenerate(ctx, cli{ConfigPath: configurationPath, Generate: generateCommand{OutputDir: ".tnl/generated"}}, io.Discard)
+		Generate: func(ctx context.Context, _, configurationPath string) ([]meta.ArtifactOutcome, error) {
+			project, err := resolve.LoadWithSalt(ctx, resolve.Options{Directory: cwd, ConfigPath: configurationPath}, [32]byte{})
+			if err != nil {
+				return nil, err
+			}
+			return meta.GenerateWithOutcomes(ctx, project)
 		},
 	})
 	if err != nil {
 		return err
+	}
+	if flags.Output == statusOutputJSON {
+		return writeInitJSON(stdout, flags, result.Root, result.Report)
 	}
 	var blocks []clioutput.Block
 	if result.ConfigurationCreated {
@@ -66,11 +83,22 @@ func runInitWithInput(ctx context.Context, flags initCommand, input io.Reader, i
 	if len(result.Actions) != 0 {
 		blocks = append(blocks, clioutput.Section("Finish setup", initManualSteps(result.Actions)...))
 	} else if result.Changed {
-		blocks = append(blocks, clioutput.Text("Start your app normally, then run:"), clioutput.Literal("tnl wait"))
+		blocks = append(blocks, clioutput.Text("Start your app normally, then run:"), clioutput.Literal(checkoutCommand(ctx, "wait")))
 	} else {
 		blocks = append(blocks, clioutput.Text("Project is already configured."))
 	}
 	return writeResult(stdout, blocks...)
+}
+
+func writeInitJSON(output io.Writer, flags initCommand, root string, report projectinit.Report) error {
+	err := json.NewEncoder(output).Encode(struct {
+		SchemaVersion int    `json:"schema_version"`
+		Project       string `json:"project"`
+		DryRun        bool   `json:"dry_run"`
+		NoInstall     bool   `json:"no_install"`
+		projectinit.Report
+	}{1, root, flags.DryRun, flags.NoInstall, report})
+	return failure.Wrap("write init result", failure.OutputUnavailable, err)
 }
 
 func writeInitPlan(output io.Writer, plan projectinit.Plan, noInstall bool) error {
@@ -137,7 +165,7 @@ func (a *commandApp) newInitCommand() *cobra.Command {
 	f := a.flags
 	cInit := &cobra.Command{
 		Use: "init", Short: "Set up tnl in this project.", GroupID: "start",
-		Long: "Set up project configuration and the framework integration for your app. Start the app with its usual development command. Sign in with tnl auth login for a shareable HTTPS URL.",
+		Long: "Set up project configuration and the framework integration for your app. Use --dry-run --output json to see the plan without evaluating configuration, or --no-install --output json to see the file changes and remaining steps. Start the app with its usual development command. Sign in with tnl auth login for a shareable HTTPS URL.",
 	}
 	a.leaf(cInit, &f.Init, func(call commandCall) error {
 		return runInit(call.ctx, f.Init, a.out, a.errOut)

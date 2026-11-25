@@ -97,7 +97,7 @@ func classifyInputErrors(root *cobra.Command) {
 
 type commandFollowup struct {
 	error
-	block clioutput.Block
+	block clioutput.Block // nil if the follow-up was already printed
 }
 
 func (e *commandFollowup) Unwrap() error { return e.error }
