@@ -52,11 +52,24 @@ func TestConnectionOwnerKernelDeathRecovery(t *testing.T) {
 	if err := OwnerStopped(handle); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("live connector owner was replaceable", err)
 	}
+	record := filepath.Join(directory, "stopped.json")
+	if err := os.WriteFile(record, []byte(`{"schema":1,"clean":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := OwnerJoined(handle); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("a stop record did not yet prove the owner had released its lock", err)
+	}
+	if err := os.Remove(record); err != nil {
+		t.Fatal(err)
+	}
 	if err := child.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
 	_ = child.Wait()
 	if err := OwnerStopped(handle); err != nil {
 		t.Fatal("kernel did not release the dead connector owner's lock", err)
+	}
+	if err := OwnerJoined(handle); !errors.Is(err, ErrCleanup) {
+		t.Fatal("kernel lock release alone was treated as joined cleanup", err)
 	}
 }

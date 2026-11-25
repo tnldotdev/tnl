@@ -16,7 +16,6 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -168,23 +167,6 @@ func TestShareCreateRejectsInvalidExpiryBeforeAuthentication(t *testing.T) {
 	err := run(t.Context(), []string{"--no-config", "share", "link", "create", "--state-dir", filepath.Join(t.TempDir(), "state"), "--expires-in", "0d"}, io.Discard, io.Discard)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ShareInputInvalid {
 		t.Fatalf("share create dispatch error = %v", err)
-	}
-}
-
-func TestShareServiceURLsUseConfiguredNames(t *testing.T) {
-	project := projectConfiguration{}
-	project.Config.Services = config.Services{"web": {Public: new(true)}, "api": {}, "docs": {Public: new(true)}}
-	routes := []controlv1.ServiceSummary{
-		{Id: "svc_web", Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.example.test", Public: true}, Protocol: controlv1.ServiceProtocolHTTP},
-		{Id: "svc_docs", Endpoint: &controlv1.ServiceEndpoint{Hostname: "docs.example.test", Public: true}, Protocol: controlv1.ServiceProtocolHTTP},
-	}
-	services := shareServiceURLs(project, routes, map[string]string{"api": "web.example.test", "web": "web.example.test", "docs": "docs.example.test"})
-	if len(services) != 2 || services["docs"].PublicURL != "https://docs.example.test" || services["web"].ServiceID != "svc_web" {
-		t.Fatalf("unexpected share service mapping: %+v", services)
-	}
-	encoded, err := json.Marshal(services)
-	if err != nil || strings.Contains(string(encoded), "__tnl/share") || strings.Contains(string(encoded), `"api"`) {
-		t.Fatalf("unexpected share URL in ordinary service mapping: %s, %v", encoded, err)
 	}
 }
 

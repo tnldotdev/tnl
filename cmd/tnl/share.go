@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -94,32 +93,13 @@ type shareListCommand struct {
 
 type shareRevokeCommand struct {
 	scopedTeamFlags `embed:""`
-	ShareID         string           `arg:"" name:"share-id" required:"" help:"Share ID to revoke."`
+	ShareID         string           `arg:"" name:"share-id" required:"" help:"Exact share ID (shr_) from the creation receipt or share list."`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
 type shareServiceResult struct {
 	ServiceID string `json:"service_id"`
 	PublicURL string `json:"public_url"`
-}
-
-func shareServiceURLs(project projectConfiguration, routes []controlv1.ServiceSummary, hostnames map[string]string) map[string]shareServiceResult {
-	byHostname := make(map[string]controlv1.ServiceSummary, len(routes))
-	for _, service := range routes {
-		if service.Protocol == controlv1.ServiceProtocolHTTP && service.Endpoint != nil && service.Endpoint.Public {
-			byHostname[service.Endpoint.Hostname] = service
-		}
-	}
-	services := make(map[string]shareServiceResult, len(routes))
-	for name, service := range project.Config.Services {
-		if service.Public == nil || !*service.Public {
-			continue
-		}
-		if saved, found := byHostname[hostnames[name]]; found {
-			services[name] = shareServiceResult{ServiceID: saved.Id, PublicURL: "https://" + saved.Endpoint.Hostname}
-		}
-	}
-	return services
 }
 
 func parseShareLifetime(value string) (time.Duration, error) {
@@ -181,7 +161,7 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 		if service != "" && name != service {
 			continue
 		}
-		if definition.Public == nil || !*definition.Public {
+		if !checkoutShareEligible(definition) {
 			continue
 		}
 		names = append(names, name)
@@ -194,21 +174,21 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 	}
 	source := project.LocalPublicationIdentity()
 	routes := make([]controlv1.ServiceSummary, 0, len(names))
-	hostnames := make(map[string]string, len(names))
 	for _, name := range names {
 		effective, err := project.EffectiveService(name)
 		if err != nil {
 			session.Close()
 			return nil, controlv1.Preview{}, nil, err
 		}
-		if config.Protocol(project.Config.Services[name]) != "http" {
-			continue
-		}
 		expected := controlv1.LocalServiceSource{ProjectKey: source.Key, SourceFingerprint: source.Fingerprint, WorktreeKey: project.LocalWorktreeKey(), Service: name}
 		var saved controlv1.ServiceSummary
 		for _, candidate := range inventory {
 			if candidate.TeamId != current.Team().Id || candidate.Source == nil || *candidate.Source != expected {
 				continue
+			}
+			if !opaqueid.Valid(candidate.Id, opaqueid.ServicePrefix) {
+				session.Close()
+				return nil, controlv1.Preview{}, nil, failure.Wrap("resolve preview services", failure.ServerResponseInvalid, errors.New("server returned an invalid preview service ID"))
 			}
 			if saved.Id != "" {
 				session.Close()
@@ -232,11 +212,13 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 				return nil, controlv1.Preview{}, nil, failure.Wrap("resolve preview service domain", failure.PreviewStateConflict, fmt.Errorf("service %q has another saved domain; start it with its tnl integration", name))
 			}
 		}
+		publicURL, err := servicePublicAddress(saved.Protocol, saved.Endpoint)
+		if err != nil {
+			session.Close()
+			return nil, controlv1.Preview{}, nil, err
+		}
 		routes = append(routes, saved)
-		hostnames[name] = saved.Endpoint.Hostname
-	}
-	for name, service := range shareServiceURLs(project, routes, hostnames) {
-		services[name] = service
+		services[name] = shareServiceResult{ServiceID: saved.Id, PublicURL: publicURL}
 	}
 	return session, preview, routes, nil
 }
@@ -407,9 +389,11 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	var session *clientteam.Session
 	var preview controlv1.Preview
 	var routes []controlv1.ServiceSummary
+	var teamID string
 	services := make(map[string]shareServiceResult)
 	if flags.Preview || flags.URL == "" {
 		session, preview, routes, err = previewShares(ctx, flags.selection(), project, command, flags.service, diagnostics, services)
+		teamID = preview.TeamId
 	} else {
 		session, err = openTeamSession(ctx, flags.selection(), command, diagnostics)
 		if err == nil {
@@ -417,7 +401,9 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 			if currentErr != nil {
 				err = currentErr
 			} else {
-				routes, err = session.Authenticated().Control.ListServices(ctx, current.Team().Id)
+				teamID = current.Team().Id
+				routes, err = session.Authenticated().Control.ListServices(ctx, teamID)
+				routes = slices.DeleteFunc(routes, func(service controlv1.ServiceSummary) bool { return service.TeamId != teamID })
 			}
 		}
 	}
@@ -453,17 +439,20 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	if flags.Preview {
 		previewID = &preview.Id
 	}
-	return createShareCredential(ctx, session.Authenticated().Control, request, previewID, selected.TeamId, *selected.Endpoint, token, flags.Output, shareServices(services, flags.Preview), output)
+	return createShareCredential(ctx, session.Authenticated().Control, request, previewID, teamID, *selected.Endpoint, token, flags.Output, shareServices(services, flags.Preview), output)
 }
 
 func createShareCredential(ctx context.Context, control *clientcontrol.Client, request controlv1.CreateShareRequest, previewID *string, teamID string, endpoint controlv1.ServiceEndpoint, token bool, mode statusOutputMode, services map[string]shareServiceResult, output io.Writer) error {
-	if _, err := servicePublicAddress(controlv1.ServiceProtocolHTTP, &endpoint); err != nil {
+	publicURL, err := servicePublicAddress(controlv1.ServiceProtocolHTTP, &endpoint)
+	if err != nil {
 		return err
 	}
 	key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 	if err != nil {
 		return err
 	}
+	// control stores share deadlines at microsecond precision.
+	request.ExpiresAt = request.ExpiresAt.UTC().Truncate(time.Microsecond)
 	var creation controlv1.ShareCreation
 	if previewID != nil {
 		creation, err = control.CreateShare(ctx, *previewID, key, request)
@@ -474,16 +463,17 @@ func createShareCredential(ctx context.Context, control *clientcontrol.Client, r
 		return err
 	}
 	share := creation.Share
-	entryURL, entryErr := url.Parse(creation.Link)
 	expectedScope := "service"
 	if previewID != nil {
 		expectedScope = "preview"
 	}
-	if !opaqueid.Valid(share.Id, opaqueid.SharePrefix) || share.TeamId != teamID || string(share.Scope) != expectedScope || !slices.Equal(share.ServiceIds, request.ServiceIds) || share.EntryServiceId != request.EntryServiceId || previewID != nil && (share.PreviewId == nil || *share.PreviewId != *previewID) || previewID == nil && share.PreviewId != nil ||
-		creation.TokenSource.Kind != controlv1.VisitorTokenShare || creation.TokenSource.ShareId != share.Id || !serviceShareSecret(share.Id+"."+creation.TokenSource.Secret, share.Id) ||
-		!share.ExpiresAt.After(time.Now()) || share.ExpiresAt.After(request.ExpiresAt.Add(time.Microsecond)) ||
-		entryErr != nil || entryURL.Scheme != "https" || entryURL.Host != endpoint.Hostname || entryURL.User != nil || entryURL.Path != "/__tnl/share/"+share.Id+"."+creation.TokenSource.Secret || entryURL.RawQuery != "" || entryURL.ForceQuery || entryURL.Fragment != "" {
-		return failure.Wrap("create share", failure.ServerResponseInvalid, errors.New("server returned a share with different public URLs"))
+	credential := share.Id + "." + creation.TokenSource.Secret
+	if !opaqueid.Valid(share.Id, opaqueid.SharePrefix) || share.TeamId != teamID || string(share.Scope) != expectedScope ||
+		!slices.Equal(share.ServiceIds, request.ServiceIds) || share.EntryServiceId != request.EntryServiceId || !sameSharePreview(share.PreviewId, previewID) ||
+		share.RevokedAt != nil || !share.ExpiresAt.Equal(request.ExpiresAt) || !share.ExpiresAt.After(time.Now()) ||
+		creation.TokenSource.Kind != controlv1.VisitorTokenShare || creation.TokenSource.ShareId != share.Id || !serviceShareSecret(credential, share.Id) ||
+		creation.Link != publicURL+"/__tnl/share/"+credential {
+		return failure.Wrap("create share", failure.ServerResponseInvalid, errors.New("server did not return the requested share and link"))
 	}
 	if token {
 		source, err := json.Marshal(creation.TokenSource)
@@ -520,10 +510,17 @@ func createShareCredential(ctx context.Context, control *clientcontrol.Client, r
 			ServiceIDs    []string                      `json:"service_ids"`
 			Services      map[string]shareServiceResult `json:"services,omitempty"`
 			ExpiresAt     time.Time                     `json:"expires_at"`
-		}{1, share.Id, share.PreviewId, entry, request.ServiceIds, services, share.ExpiresAt}))
+		}{1, share.Id, share.PreviewId, entry, share.ServiceIds, services, share.ExpiresAt}))
 	}
 	_, err = fmt.Fprintln(output, entry)
 	return failure.Wrap("write share URL", failure.OutputUnavailable, err)
+}
+
+func sameSharePreview(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func anonymousPreviewServiceIDs(routes []controlv1.ServiceSummary) []string {
@@ -806,30 +803,39 @@ func runShareRevoke(ctx context.Context, flags shareRevokeCommand, output, diagn
 		return err
 	}
 	share, err := session.Authenticated().Control.GetShare(ctx, flags.ShareID)
-	if err != nil || share.TeamId != current.Team().Id {
-		if err != nil {
-			return err
-		}
+	if err != nil {
+		return err
+	}
+	if share.Id != flags.ShareID {
+		return failure.Wrap("read share", failure.ServerResponseInvalid, errors.New("server returned a different share ID"))
+	}
+	if share.TeamId != current.Team().Id {
 		return clientcontrol.ErrNotFound
 	}
-	if _, err := session.Authenticated().Control.RevokeShare(ctx, share.Id); err != nil {
+	revoked, err := session.Authenticated().Control.RevokeShare(ctx, flags.ShareID)
+	if err != nil {
 		return err
+	}
+	if revoked.Id != flags.ShareID || revoked.TeamId != share.TeamId || revoked.RevokedAt == nil || revoked.RevokedAt.IsZero() ||
+		revoked.Scope != share.Scope || !sameSharePreview(revoked.PreviewId, share.PreviewId) ||
+		revoked.EntryServiceId != share.EntryServiceId || !slices.Equal(revoked.ServiceIds, share.ServiceIds) {
+		return failure.Wrap("revoke share", failure.ServerResponseInvalid, errors.New("server did not confirm revocation of the selected share"))
 	}
 	if flags.Output == statusOutputJSON {
 		return failure.Wrap("write share revocation", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
 			SchemaVersion int    `json:"schema_version"`
 			ShareID       string `json:"share_id"`
 			Revoked       bool   `json:"revoked"`
-		}{1, share.Id, true}))
+		}{1, revoked.Id, true}))
 	}
-	return writeResult(output, clioutput.Line("Revoked share "+share.Id))
+	return writeResult(output, clioutput.Line("Revoked share "+revoked.Id))
 }
 
 func (a *commandApp) newShareCommand() *cobra.Command {
 	f := a.flags
 	cShare := &cobra.Command{
 		Use: "share", Short: "Create a share link for this checkout's preview.", GroupID: "access",
-		Long: "Print one link to this checkout's current public HTTP services. It expires after 24 hours by default. Pass a service name or use --service to include just one service. Use tnl share revoke to end access early.",
+		Long: "Print one link to this checkout's current public HTTP services. It expires after 24 hours by default. Pass a service name or use --service to include just one service. Use --output=json to get the link and its share ID together. Pass that ID to tnl share revoke to end access early. To select by service ID or address, use tnl share link create.",
 	}
 	cShareCreate := &cobra.Command{Use: "create", Short: "Print a share link for this checkout; create is optional."}
 	a.leaf(cShareCreate, &f.Share.Create, func(call commandCall) error {
@@ -950,6 +956,17 @@ func (a *commandApp) newShareCommand() *cobra.Command {
 	a.leaf(cShareRevoke, &f.Share.Revoke, func(call commandCall) error {
 		return runShareRevoke(call.ctx, f.Share.Revoke, a.out, a.errOut)
 	})
+	bindRevoke := cShareRevoke.Args
+	cShareRevoke.Args = func(cmd *cobra.Command, args []string) error {
+		if err := bindRevoke(cmd, args); err != nil {
+			return err
+		}
+		if !opaqueid.Valid(f.Share.Revoke.ShareID, opaqueid.SharePrefix) {
+			const message = "Pass an exact share ID (shr_), not a share link. Use the receipt or tnl share list to find it."
+			return &commandGuidance{error: failure.Wrap("select share", failure.ShareInputInvalid, errors.New("invalid share ID")), message: message}
+		}
+		return nil
+	}
 	cShare.AddCommand(cShareRevoke)
 	return cShare
 }

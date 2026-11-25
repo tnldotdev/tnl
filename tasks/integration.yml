@@ -187,10 +187,12 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./tests/integration/connector -run='^TestPostgresLocalDeployment$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   deployment-database:
-    desc: Query verified TLS PostgreSQL through scoped deployment setup, native publication, and a connector
+    desc: Run psql through a staged deployment and check verified TLS, connector shutdown, and revocation
     preconditions:
       - sh: test "$(uname -s)" = Linux
         msg: Deployment CLI integration requires Linux for isolated credential protection
+      - sh: command -v psql >/dev/null && psql --version | awk '{split($3, version, "."); exit !(version[1] >= 16)}'
+        msg: Deployment database integration requires psql 16 or newer on PATH
     cmds:
       - go -C tools/testharness run . deployment-database -- go test -race -v ./cmd/tnl -run='^TestDeploymentDatabaseWorkflow$' -count=1 -timeout=4m -args -tnl-test-tier=integration
 
