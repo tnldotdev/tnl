@@ -15,7 +15,7 @@ CREATE FUNCTION control.invalidate_read_dependency() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE old_key text; new_key text; slot integer;
 BEGIN
-    IF TG_OP='TRUNCATE' THEN
+    IF TG_OP='TRUNCATE' OR TG_NARGS=1 THEN
         INSERT INTO control.read_dependency_versions AS v(topic,bucket) VALUES(TG_ARGV[0],-1)
         ON CONFLICT(topic,bucket) DO UPDATE SET revision=v.revision+1;
         RETURN NULL;
@@ -38,6 +38,14 @@ REVOKE ALL ON FUNCTION control.invalidate_read_dependency() FROM PUBLIC;
 DO $$
 DECLARE reader record;
 BEGIN
+    -- default privileges can grant more than this table needs. replace its
+    -- non-owner grants rather than adding select to an existing write grant.
+    FOR reader IN SELECT DISTINCT acl.grantee FROM pg_class c,
+        LATERAL aclexplode(c.relacl) acl WHERE c.oid='control.read_dependency_versions'::regclass
+        AND acl.grantee<>c.relowner LOOP
+        EXECUTE format('REVOKE ALL ON control.read_dependency_versions FROM %s',
+            CASE WHEN reader.grantee=0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(reader.grantee)) END);
+    END LOOP;
     FOR reader IN SELECT DISTINCT acl.grantee FROM pg_class c,
         LATERAL aclexplode(c.relacl) acl WHERE c.oid='control.connector_peer_watch_versions'::regclass
         AND acl.privilege_type='SELECT' AND acl.grantee<>c.relowner LOOP

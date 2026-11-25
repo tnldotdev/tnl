@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -120,6 +121,13 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 	}
 	before := snapshot()
 	runtimeURL := rollingMigrationRuntimeURL(t, sqlDB, url, cfg.Database+"_read_runtime")
+	// some installations grant writes to future tables by default. the runtime
+	// needs the same read-only change records in both configurations.
+	if priorVersion == 2 {
+		if _, err := sqlDB.ExecContext(ctx, `ALTER DEFAULT PRIVILEGES IN SCHEMA control GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO `+pgx.Identifier{cfg.Database + "_read_runtime"}.Sanitize()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	runtime, err := pgxpool.New(ctx, runtimeURL)
 	if err != nil {
 		t.Fatal(err)
