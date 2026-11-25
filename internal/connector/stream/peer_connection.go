@@ -259,10 +259,12 @@ func connectorOwnedCancellationOnly(err, cause error) bool {
 		return false
 	}
 	if attempt, ok := err.(*connectorLegAttemptError); ok {
-		if attempt.count == 0 || attempt.cleanup != nil || !connectorOwnedCancellationOnly(attempt.context, cause) {
+		if attempt.cleanup != nil || !connectorOwnedCancellationOnly(attempt.context, cause) {
 			return false
 		}
-		stopped := false
+		// an authenticated candidate may be closed after the owner stops while
+		// the race joins its disabled alternate. the joined close must succeed.
+		stopped := attempt.accepted && attempt.context != nil
 		for _, candidate := range attempt.candidates[:attempt.count] {
 			if candidate.stage != connectorAttemptConnect && candidate.stage != connectorAttemptHello && candidate.stage != connectorAttemptActivation ||
 				candidate.cleanup != nil {
