@@ -184,6 +184,29 @@ func TestIntegrationIngressServicesDropsUnavailableRuns(t *testing.T) {
 	}
 }
 
+func TestIntegrationIngressServicesGrantExpiresWithoutWrite(t *testing.T) {
+	f := newPublicServiceHTTPAdmissionFixture(t)
+	ctx := t.Context()
+	lease := registerServiceHTTPAdmissionIngress(t, ctx, f, "routing-expiry")
+	deadline := f.now.Add(3 * time.Second)
+	if _, err := f.database.pool.Exec(ctx, `UPDATE control.publisher_grants SET expires_at=$2 WHERE id=(SELECT publisher_grant_id FROM control.service_runs WHERE id=$1)`, f.run.RunID, deadline); err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range []time.Time{f.now, f.now.Add(time.Second), deadline} {
+		snapshot, err := f.database.ReadIngressServices(ctx, lease.IngressLeaseIdentity, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if at.Before(deadline) {
+			if len(snapshot.Runs) != 1 || snapshot.Runs[0].ValidUntil.After(deadline) {
+				t.Fatal("grant deadline lost before expiry")
+			}
+		} else if len(snapshot.Runs) != 0 {
+			t.Fatal("cached grant survived expiry without a write")
+		}
+	}
+}
+
 func TestIntegrationPublicEndpointPolicyChangesWithoutRevokingRunPolicy(t *testing.T) {
 	f := newPublicServiceHTTPAdmissionFixture(t)
 	ctx := t.Context()

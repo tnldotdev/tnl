@@ -66,9 +66,13 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 	if err != nil {
 		return result, err
 	}
-	rows, err := q.ListIngressServiceRuns(ctx, controlstatedb.ListIngressServiceRunsParams{
+	live, err := q.ListLiveIngressRuns(ctx, controlstatedb.ListLiveIngressRunsParams{
 		IngressPoolID: lease.IngressPoolID, Now: timestamptz(now),
 	})
+	if err != nil {
+		return result, err
+	}
+	rows, err := d.readIngressObservations(ctx, q, lease.IngressPoolID, live, now)
 	if err != nil {
 		return result, err
 	}
@@ -77,10 +81,14 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 	result.Runs = make([]IngressServiceRun, 0, len(rows))
 	ids := make([]string, 0, len(rows))
 	serviceIDs := make([]string, 0, len(rows))
-	for _, row := range rows {
-		ids = append(ids, row.ControlServiceRun.ID)
-		if len(serviceIDs) == 0 || serviceIDs[len(serviceIDs)-1] != row.ControlService.ID {
-			serviceIDs = append(serviceIDs, row.ControlService.ID)
+	for _, run := range live {
+		o, ok := rows[run.ID]
+		if !ok {
+			continue
+		}
+		ids = append(ids, run.ID)
+		if len(serviceIDs) == 0 || serviceIDs[len(serviceIDs)-1] != o.row.ServiceID {
+			serviceIDs = append(serviceIDs, o.row.ServiceID)
 		}
 	}
 	configurations, err := d.serviceConfigurations(ctx, q, serviceIDs)
@@ -103,43 +111,47 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 			LeaseExpiresAt: slot.LeaseExpiresAt.Time, ServingUntil: slot.ServingUntil.Time,
 		})
 	}
-	for _, row := range rows {
-		service, run := row.ControlService, row.ControlServiceRun
-		if service.Protocol == "http" && !lease.Https ||
-			service.Protocol != "http" && !ports.Contains(int(service.ServicePort.Int32)) {
+	for _, run := range live {
+		o, ok := rows[run.ID]
+		if !ok {
+			continue
+		}
+		row := o.row
+		if row.Protocol == "http" && !lease.Https ||
+			row.Protocol != "http" && !ports.Contains(int(row.ServicePort.Int32)) {
 			continue
 		}
 		connected := relays[run.ID]
 		if len(connected) == 0 {
 			continue
 		}
-		until := minTime(result.ValidUntil, row.ValidUntil.Time)
-		if service.ExpiresAt.Valid {
-			until = minTime(until, service.ExpiresAt.Time)
+		until := minTime(result.ValidUntil, run.ValidUntil.Time)
+		if row.PermissionUntil.Valid {
+			until = minTime(until, row.PermissionUntil.Time)
 		}
 		// source proofs use whole seconds. omit a run with no usable deadline
 		// instead of failing every other service's refresh.
 		if until.Unix() <= now.Unix() {
 			continue
 		}
-		entry := IngressServiceRun{ServiceID: service.ID, RunID: run.ID, RunNumber: run.RunNumber,
-			Protocol: service.Protocol, Hostname: service.CertificateHostname, Port: int(service.ServicePort.Int32),
-			EndpointRevision: service.EndpointRevision, ValidUntil: until, Relays: connected}
+		entry := IngressServiceRun{ServiceID: row.ServiceID, RunID: run.ID, RunNumber: row.RunNumber,
+			Protocol: row.Protocol, Hostname: row.CertificateHostname, Port: int(row.ServicePort.Int32),
+			EndpointRevision: row.EndpointRevision, ValidUntil: until, Relays: connected}
 		if row.AliasHostname != "" {
 			entry.RunHostname = &row.AliasHostname
 			if row.AliasDnsUntil.Valid {
 				entry.AliasDNSUntil = new(minTime(until, row.AliasDnsUntil.Time))
 			}
 		}
-		if row.RecoveryEpisodeID.Valid {
-			entry.RecoveryEpisodeID = &row.RecoveryEpisodeID.Int64
+		if run.RecoveryEpisodeID.Valid {
+			entry.RecoveryEpisodeID = &run.RecoveryEpisodeID.Int64
 		}
-		entry.Traffic, err = decodeRunTraffic(run.TrafficLimits)
+		entry.Traffic, err = decodeRunTraffic(row.TrafficLimits)
 		if err != nil {
 			return result, err
 		}
 		var settings *config.HTTPService
-		declaration, found := configurations[service.ID]
+		declaration, found := configurations[row.ServiceID]
 		if !found {
 			return result, ErrServiceAccess
 		}
@@ -147,9 +159,9 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 			settings = declaration.HTTP
 		}
 		if settings != nil && settings.Access != nil {
-			entry.Anonymous = service.Protocol == "http" && settings.Access.VisitorMode() == "anonymous"
+			entry.Anonymous = row.Protocol == "http" && settings.Access.VisitorMode() == "anonymous"
 			if len(settings.Access.IP) != 0 {
-				key, err := d.storageKey.IPPolicyKey(d.storageKey.CurrentID(), "visitor-policy:service:"+service.ID)
+				key, err := d.storageKey.IPPolicyKey(d.storageKey.CurrentID(), "visitor-policy:service:"+row.ServiceID)
 				if err != nil {
 					return result, err
 				}
@@ -169,12 +181,12 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 				}
 			}
 		}
-		master, err := visitortoken.ServiceVisitorSourceKey(run.RunTokenDigest, run.ID, uint64(run.RunNumber))
+		master, err := visitortoken.ServiceVisitorSourceKey(run.RunTokenDigest, run.ID, uint64(row.RunNumber))
 		if err != nil {
 			return result, err
 		}
 		authority, key, err := visitortoken.IssueVisitorSourceAuthority(master, tunnelv1.VisitorSourceAuthority{
-			ServiceID: service.ID, ServiceRunID: run.ID, RunNumber: uint64(run.RunNumber), EndpointRevision: service.EndpointRevision,
+			ServiceID: row.ServiceID, ServiceRunID: run.ID, RunNumber: uint64(row.RunNumber), EndpointRevision: row.EndpointRevision,
 			IngressID: identity.IngressID, IngressRunID: identity.IngressRunID,
 			IngressLeaseRevision: identity.IngressLeaseRevision, VisitorPolicyRevision: row.VisitorPolicyRevision,
 			ValidUntil: until.Unix(),
@@ -189,5 +201,9 @@ func (d *Database) ReadIngressServices(ctx context.Context, identity IngressLeas
 		entry.SourceKey = key[:]
 		result.Runs = append(result.Runs, entry)
 	}
-	return result, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return result, err
+	}
+	d.ingressReads.replace(lease.IngressPoolID, rows)
+	return result, nil
 }

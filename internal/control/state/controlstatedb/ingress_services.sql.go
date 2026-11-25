@@ -79,9 +79,13 @@ func (q *Queries) ListIngressServiceRelays(ctx context.Context, arg ListIngressS
 }
 
 const listIngressServiceRuns = `-- name: ListIngressServiceRuns :many
-SELECT service.id, service.team_id, service.guest_id, service.name, service.name_scope, service.placement_worktree_key, service.placement_worktree_label, service.protocol, service.tls_metadata, service.configuration_ciphertext, service.storage_key_id, service.trust_revision, service.endpoint_revision, service.service_revision, service.visitor_revision, service.publisher_pool, service.ephemeral, service.expires_at, service.require_post_quantum, service.domain_id, service.certificate_hostname, service.certificate_scope, service.run_alias_parent, service.service_port, service.ingress_pool_id, service.public, service.created_by_identity_id, service.idempotency_key, service.request_digest, service.enabled, service.next_run_number, service.created_at, service.updated_at, service.deleted_at,run.preferred_regions, run.traffic_limits, run.id, run.service_id, run.team_id, run.guest_id, run.protocol, run.run_number, run.publisher_identity_id, run.publisher_grant_id, run.publisher_key_id, run.idempotency_key, run.request_digest, run.preparation_expires_at, run.assignment_seed_ciphertext, run.assignment_seed_storage_key_id, run.run_token_digest, run.started_at, run.state, run.healthy, run.stream_capacity, run.reported_streams, run.certificate_cache_key, run.certificate_scope, run.certificate_identifiers, run.certificate_domain_id, run.certificate_hostname, run.certificate_namespace, run.run_hostname, run.run_alias_parent, run.require_post_quantum, run.certificate_issuance_id, run.supplied_certificate_sha256, run.certificate_expires_at, run.created_at, run.publisher_expires_at, run.serving_observed_at, run.serving_until, run.ready_at, run.closed_at, run.assignments_open,
-    LEAST(run.serving_until,run.certificate_expires_at,permission.expires_at)::timestamptz AS valid_until,
-    policy.revision AS visitor_policy_revision,recovery.id AS recovery_episode_id,
+SELECT service.id AS service_id,run.id AS run_id,run.run_number,service.protocol,service.certificate_hostname,
+    service.service_port,service.endpoint_revision,run.traffic_limits,policy.revision AS visitor_policy_revision,
+    permission.expires_at::timestamptz AS permission_until,
+    (SELECT min(valid_until) FROM control.company_eligibility WHERE eligible AND valid_until>$1)::timestamptz AS recheck_at,
+    ARRAY[hashtext(service.id)&255,hashtext(run.id)&255,hashtext(run.publisher_identity_id)&255,
+        hashtext(run.publisher_grant_id)&255,hashtext(run.publisher_key_id)&255,hashtext(COALESCE(service.guest_id,''))&255,
+        hashtext(service.certificate_hostname)&255,hashtext(run.run_hostname)&255,hashtext(run.run_alias_parent)&255]::integer[] AS buckets,
     CASE WHEN alias.dns_until IS NOT NULL THEN alias.hostname ELSE '' END::text AS alias_hostname,
     NULLIF(alias.dns_until,'infinity'::timestamptz)::timestamptz AS alias_dns_until
 FROM control.services service
@@ -94,17 +98,12 @@ LEFT JOIN LATERAL (
       AND endpoint.ingress_pool_id=service.ingress_pool_id AND endpoint.public AND endpoint.retired_at IS NULL
 ) alias ON true
 JOIN control.visitor_policies policy ON policy.resource_id=service.id
-LEFT JOIN control.service_recovery_episodes recovery ON recovery.service_run_id=run.id AND recovery.state='open'
 JOIN LATERAL control.publisher_service_permission(run.publisher_identity_id,run.publisher_grant_id,service.id,$1) permission ON true
 JOIN control.publisher_grants grant_record ON grant_record.id=run.publisher_grant_id
 JOIN control.publisher_identity_keys signing ON signing.id=run.publisher_key_id
     AND signing.publisher_identity_id=run.publisher_identity_id
     AND (grant_record.kind='service' OR signing.retired_at IS NULL)
-WHERE service.ingress_pool_id=$2 AND service.public AND service.enabled
-    AND service.deleted_at IS NULL AND (service.expires_at IS NULL OR service.expires_at>$1)
-    AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
-    AND run.serving_until>$1 AND run.certificate_expires_at>$1
-    AND run.certificate_hostname=service.certificate_hostname
+WHERE run.id=ANY($2::text[]) AND run.certificate_hostname=service.certificate_hostname
     AND run.certificate_domain_id IS NOT DISTINCT FROM service.domain_id
     AND EXISTS(SELECT 1 FROM control.service_endpoints endpoint
         WHERE endpoint.service_id=service.id AND endpoint.hostname=service.certificate_hostname
@@ -113,23 +112,31 @@ ORDER BY service.id,run.run_number
 `
 
 type ListIngressServiceRunsParams struct {
-	Now           pgtype.Timestamptz
-	IngressPoolID string
+	Now    pgtype.Timestamptz
+	RunIds []string
 }
 
 type ListIngressServiceRunsRow struct {
-	ControlService        ControlService
-	ControlServiceRun     ControlServiceRun
-	ValidUntil            pgtype.Timestamptz
+	ServiceID             string
+	RunID                 string
+	RunNumber             int64
+	Protocol              string
+	CertificateHostname   string
+	ServicePort           pgtype.Int4
+	EndpointRevision      int64
+	TrafficLimits         []byte
 	VisitorPolicyRevision int64
-	RecoveryEpisodeID     pgtype.Int8
+	PermissionUntil       pgtype.Timestamptz
+	RecheckAt             pgtype.Timestamptz
+	Buckets               []int32
 	AliasHostname         string
 	AliasDnsUntil         pgtype.Timestamptz
 }
 
-// routing is read from one snapshot, never changed by a visitor connection.
+// only recompute permission and DNS for runs with changed inputs. membership
+// eligibility may expire without changing a row or the grant's own deadline.
 func (q *Queries) ListIngressServiceRuns(ctx context.Context, arg ListIngressServiceRunsParams) ([]ListIngressServiceRunsRow, error) {
-	rows, err := q.db.Query(ctx, listIngressServiceRuns, arg.Now, arg.IngressPoolID)
+	rows, err := q.db.Query(ctx, listIngressServiceRuns, arg.Now, arg.RunIds)
 	if err != nil {
 		return nil, err
 	}
@@ -138,86 +145,69 @@ func (q *Queries) ListIngressServiceRuns(ctx context.Context, arg ListIngressSer
 	for rows.Next() {
 		var i ListIngressServiceRunsRow
 		if err := rows.Scan(
-			&i.ControlService.ID,
-			&i.ControlService.TeamID,
-			&i.ControlService.GuestID,
-			&i.ControlService.Name,
-			&i.ControlService.NameScope,
-			&i.ControlService.PlacementWorktreeKey,
-			&i.ControlService.PlacementWorktreeLabel,
-			&i.ControlService.Protocol,
-			&i.ControlService.TlsMetadata,
-			&i.ControlService.ConfigurationCiphertext,
-			&i.ControlService.StorageKeyID,
-			&i.ControlService.TrustRevision,
-			&i.ControlService.EndpointRevision,
-			&i.ControlService.ServiceRevision,
-			&i.ControlService.VisitorRevision,
-			&i.ControlService.PublisherPool,
-			&i.ControlService.Ephemeral,
-			&i.ControlService.ExpiresAt,
-			&i.ControlService.RequirePostQuantum,
-			&i.ControlService.DomainID,
-			&i.ControlService.CertificateHostname,
-			&i.ControlService.CertificateScope,
-			&i.ControlService.RunAliasParent,
-			&i.ControlService.ServicePort,
-			&i.ControlService.IngressPoolID,
-			&i.ControlService.Public,
-			&i.ControlService.CreatedByIdentityID,
-			&i.ControlService.IdempotencyKey,
-			&i.ControlService.RequestDigest,
-			&i.ControlService.Enabled,
-			&i.ControlService.NextRunNumber,
-			&i.ControlService.CreatedAt,
-			&i.ControlService.UpdatedAt,
-			&i.ControlService.DeletedAt,
-			&i.ControlServiceRun.PreferredRegions,
-			&i.ControlServiceRun.TrafficLimits,
-			&i.ControlServiceRun.ID,
-			&i.ControlServiceRun.ServiceID,
-			&i.ControlServiceRun.TeamID,
-			&i.ControlServiceRun.GuestID,
-			&i.ControlServiceRun.Protocol,
-			&i.ControlServiceRun.RunNumber,
-			&i.ControlServiceRun.PublisherIdentityID,
-			&i.ControlServiceRun.PublisherGrantID,
-			&i.ControlServiceRun.PublisherKeyID,
-			&i.ControlServiceRun.IdempotencyKey,
-			&i.ControlServiceRun.RequestDigest,
-			&i.ControlServiceRun.PreparationExpiresAt,
-			&i.ControlServiceRun.AssignmentSeedCiphertext,
-			&i.ControlServiceRun.AssignmentSeedStorageKeyID,
-			&i.ControlServiceRun.RunTokenDigest,
-			&i.ControlServiceRun.StartedAt,
-			&i.ControlServiceRun.State,
-			&i.ControlServiceRun.Healthy,
-			&i.ControlServiceRun.StreamCapacity,
-			&i.ControlServiceRun.ReportedStreams,
-			&i.ControlServiceRun.CertificateCacheKey,
-			&i.ControlServiceRun.CertificateScope,
-			&i.ControlServiceRun.CertificateIdentifiers,
-			&i.ControlServiceRun.CertificateDomainID,
-			&i.ControlServiceRun.CertificateHostname,
-			&i.ControlServiceRun.CertificateNamespace,
-			&i.ControlServiceRun.RunHostname,
-			&i.ControlServiceRun.RunAliasParent,
-			&i.ControlServiceRun.RequirePostQuantum,
-			&i.ControlServiceRun.CertificateIssuanceID,
-			&i.ControlServiceRun.SuppliedCertificateSha256,
-			&i.ControlServiceRun.CertificateExpiresAt,
-			&i.ControlServiceRun.CreatedAt,
-			&i.ControlServiceRun.PublisherExpiresAt,
-			&i.ControlServiceRun.ServingObservedAt,
-			&i.ControlServiceRun.ServingUntil,
-			&i.ControlServiceRun.ReadyAt,
-			&i.ControlServiceRun.ClosedAt,
-			&i.ControlServiceRun.AssignmentsOpen,
-			&i.ValidUntil,
+			&i.ServiceID,
+			&i.RunID,
+			&i.RunNumber,
+			&i.Protocol,
+			&i.CertificateHostname,
+			&i.ServicePort,
+			&i.EndpointRevision,
+			&i.TrafficLimits,
 			&i.VisitorPolicyRevision,
-			&i.RecoveryEpisodeID,
+			&i.PermissionUntil,
+			&i.RecheckAt,
+			&i.Buckets,
 			&i.AliasHostname,
 			&i.AliasDnsUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveIngressRuns = `-- name: ListLiveIngressRuns :many
+SELECT run.id,run.run_token_digest,LEAST(run.serving_until,run.certificate_expires_at,service.expires_at)::timestamptz AS valid_until,
+    recovery.id AS recovery_episode_id
+FROM control.service_runs run JOIN control.services service ON service.id=run.service_id
+LEFT JOIN control.service_recovery_episodes recovery ON recovery.service_run_id=run.id AND recovery.state='open'
+WHERE service.ingress_pool_id=$1 AND service.public AND service.enabled AND service.deleted_at IS NULL
+    AND (service.expires_at IS NULL OR service.expires_at>$2) AND run.state='ready' AND run.healthy AND run.closed_at IS NULL
+    AND run.serving_until>$2 AND run.certificate_expires_at>$2
+ORDER BY service.id,run.run_number
+`
+
+type ListLiveIngressRunsParams struct {
+	IngressPoolID string
+	Now           pgtype.Timestamptz
+}
+
+type ListLiveIngressRunsRow struct {
+	ID                string
+	RunTokenDigest    []byte
+	ValidUntil        pgtype.Timestamptz
+	RecoveryEpisodeID pgtype.Int8
+}
+
+// heartbeat deadlines and signing input always come from the current snapshot.
+func (q *Queries) ListLiveIngressRuns(ctx context.Context, arg ListLiveIngressRunsParams) ([]ListLiveIngressRunsRow, error) {
+	rows, err := q.db.Query(ctx, listLiveIngressRuns, arg.IngressPoolID, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveIngressRunsRow
+	for rows.Next() {
+		var i ListLiveIngressRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunTokenDigest,
+			&i.ValidUntil,
+			&i.RecoveryEpisodeID,
 		); err != nil {
 			return nil, err
 		}

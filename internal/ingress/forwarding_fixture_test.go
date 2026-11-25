@@ -127,7 +127,9 @@ func startForwardingTestServerWithCertificate(t *testing.T, material forwardingT
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	// t.Context is canceled before cleanups run. keep the relay socket alive
+	// until the forwarder's cleanup closes its session, then stop the server.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
 	server := &forwardingTestServer{listener: listener, cancel: cancel, errors: make(chan error, 16)}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}
 	done := make(chan struct{})

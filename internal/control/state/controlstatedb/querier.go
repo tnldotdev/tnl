@@ -307,8 +307,11 @@ type Querier interface {
 	ListIdentityTeamDomains(ctx context.Context, arg ListIdentityTeamDomainsParams) ([]ListIdentityTeamDomainsRow, error)
 	ListIdentityTeams(ctx context.Context, identityID string) ([]ListIdentityTeamsRow, error)
 	ListIngressServiceRelays(ctx context.Context, arg ListIngressServiceRelaysParams) ([]ListIngressServiceRelaysRow, error)
-	// routing is read from one snapshot, never changed by a visitor connection.
+	// only recompute permission and DNS for runs with changed inputs. membership
+	// eligibility may expire without changing a row or the grant's own deadline.
 	ListIngressServiceRuns(ctx context.Context, arg ListIngressServiceRunsParams) ([]ListIngressServiceRunsRow, error)
+	// heartbeat deadlines and signing input always come from the current snapshot.
+	ListLiveIngressRuns(ctx context.Context, arg ListLiveIngressRunsParams) ([]ListLiveIngressRunsRow, error)
 	ListMaintenanceControls(ctx context.Context) ([]ControlMaintenanceControl, error)
 	ListOperatorNameserverHostnames(ctx context.Context) ([]string, error)
 	ListPreviewServices(ctx context.Context, previewID string) ([]string, error)
